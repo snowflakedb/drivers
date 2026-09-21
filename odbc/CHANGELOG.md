@@ -11,6 +11,7 @@ Changes:
 
 - Changed leftover ODBC connection-string logging keywords such as `LogLevel` and `LogPath` to be accepted and ignored, posting SQLSTATE `01000` on connect. Each warning names the `sf.odbc.ini` key that configures the same behavior (for example `LogFileCount` points at `LogMaxCount`). (snowflakedb/drivers#2052)
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
+- Changed `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection-string keywords to be accepted and ignored, posting SQLSTATE `01000` on connect. (snowflakedb/drivers#2102)
 
 Bug fixes:
 

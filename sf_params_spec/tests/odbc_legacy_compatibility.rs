@@ -102,6 +102,8 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("CURLVerboseMode", "curl_verbose_mode"),
     ("EnablePidLogFileNames", "enable_pid_log_file_names"),
     ("CLIENT_CONFIG_FILE", "client_config_file"),
+    ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
+    ("DEFAULT_BINARY_SIZE", "default_binary_size"),
 ];
 
 /// Accepted by snowflake-odbc but not a registry parameter. Grouped by why
@@ -131,8 +133,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "CRL_DOWNLOAD_TIMEOUT",
     "ValidateSessionParam",
     "GET_SIZE_THRESHOLD",
-    "DEFAULT_VARCHAR_SIZE",
-    "DEFAULT_BINARY_SIZE",
     "MapToLongVarchar",
     "ODBC_SCHEMA_CACHING",
     "OUT_OF_RANGE_TIMESTAMP_EXCEPTION",

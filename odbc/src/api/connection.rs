@@ -3272,6 +3272,32 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_registry_param_warnings_cover_default_size_keys() {
+        let params =
+            parse_connection_string("DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1").unwrap();
+        let warnings = deprecated_registry_param_warnings(&params);
+        let messages: Vec<String> = warnings
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation,
+                } => deprecation.message_for(parameter),
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                "Parameter 'DEFAULT_BINARY_SIZE' is deprecated and has no effect. \
+                 BINARY column sizes come from result-set metadata; this connection-string key is not applied.",
+                "Parameter 'DEFAULT_VARCHAR_SIZE' is deprecated and has no effect. \
+                 VARCHAR column sizes come from result-set metadata; this connection-string key is not applied.",
+            ]
+        );
+    }
+
+    #[test]
     fn normalize_connection_string_options_forwards_oauth_keys_with_canonical_names() {
         let options = normalize_connection_string_options(HashMap::from([
             ("OAUTH_CLIENT_ID".to_owned(), "client-123".to_owned()),
@@ -3669,6 +3695,16 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_default_size_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("DEFAULT_VARCHAR_SIZE".to_owned(), "1".to_owned()),
+            ("DEFAULT_BINARY_SIZE".to_owned(), "1".to_owned()),
+        ]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         // A key unknown to the registry (e.g. a Snowflake server session
         // parameter) is forwarded uppercased and verbatim, so core can pass it
@@ -4021,6 +4057,14 @@ mod tests {
             "DSN=my_dsn;LogLevel=DEBUG;LogPath=/tmp;LogFileSize=10;LogFileCount=2;CURLVerboseMode=true;EnablePidLogFileNames=true;CLIENT_CONFIG_FILE=/tmp/sf.json",
         )
         .unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_default_size_keys() {
+        let params =
+            parse_connection_string("DSN=my_dsn;DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1")
+                .unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 

@@ -240,7 +240,7 @@ odbc:
         - "odbc_tests/tests/odbc-api/terminating_connection/**"
       tests:
         odbc:
-          e2e: "connecting|disconnect|free_handle|alloc_handle"
+          e2e: "connecting|disconnect|free_handle|alloc_handle|e2e_logging"
 
     - name: authentication
       paths:

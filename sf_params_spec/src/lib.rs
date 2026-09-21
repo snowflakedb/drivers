@@ -300,7 +300,7 @@ pub mod param_names {
     pub const SQL_LEVEL: ParamKey = ParamKey("sqllevel");
     pub const CONNECT_FUNCTIONS: ParamKey = ParamKey("connectfunctions");
     pub const TRACING: ParamKey = ParamKey("tracing");
-    // ── Deprecated ODBC connection-string logging keys ────────────────
+    // ── Deprecated ODBC connection-string keys ────────────────────────
     pub const LOG_LEVEL: ParamKey = ParamKey("log_level");
     pub const LOG_PATH: ParamKey = ParamKey("log_path");
     pub const LOG_FILE_SIZE: ParamKey = ParamKey("log_file_size");
@@ -308,6 +308,8 @@ pub mod param_names {
     pub const CURL_VERBOSE_MODE: ParamKey = ParamKey("curl_verbose_mode");
     pub const ENABLE_PID_LOG_FILE_NAMES: ParamKey = ParamKey("enable_pid_log_file_names");
     pub const CLIENT_CONFIG_FILE: ParamKey = ParamKey("client_config_file");
+    pub const DEFAULT_VARCHAR_SIZE: ParamKey = ParamKey("default_varchar_size");
+    pub const DEFAULT_BINARY_SIZE: ParamKey = ParamKey("default_binary_size");
 }
 
 /// Default `retry_max_attempts` for general HTTP calls (mirrors the `ParamDef`).
@@ -2369,7 +2371,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     ignored_odbc_param(param_names::SQL_LEVEL.as_str()),
     ignored_odbc_param(param_names::CONNECT_FUNCTIONS.as_str()),
     ignored_odbc_param(param_names::TRACING.as_str()),
-    // ── Deprecated ODBC connection-string logging keys ────────────────
+    // ── Deprecated ODBC connection-string keys ────────────────────────
     odbc_deprecated(
         param_names::LOG_LEVEL.as_str(),
         aliases![Odbc; "LogLevel"],
@@ -2424,6 +2426,22 @@ static PARAM_DEFS: &[ParamDef] = &[
         "Legacy sf_client_config.json path. The driver accepts the key and does not apply it",
         Deprecation::Ignored {
             guidance: "Configure driver logging in sf.odbc.ini; sf_client_config.json is not read.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::DEFAULT_VARCHAR_SIZE.as_str(),
+        aliases![],
+        "Legacy DEFAULT_VARCHAR_SIZE. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "VARCHAR column sizes come from result-set metadata; this connection-string key is not applied.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::DEFAULT_BINARY_SIZE.as_str(),
+        aliases![],
+        "Legacy DEFAULT_BINARY_SIZE. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "BINARY column sizes come from result-set metadata; this connection-string key is not applied.",
         },
     ),
 ];
@@ -2996,6 +3014,50 @@ mod tests {
             assert!(
                 guidance.contains("sf.odbc.ini"),
                 "{canonical} guidance should point at sf.odbc.ini, got {guidance:?}"
+            );
+            assert!(def.ignored, "{canonical} should be ignored");
+            assert_eq!(def.visible_to, visible_to!(Odbc));
+            assert!(r.resolve(canonical).is_none());
+            for wrapper in [
+                Wrapper::Jdbc,
+                Wrapper::Python,
+                Wrapper::NodeJs,
+                Wrapper::DotNet,
+            ] {
+                assert!(
+                    r.resolve_for(wrapper, key).is_none(),
+                    "{key} must not resolve for {wrapper:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn odbc_deprecated_default_size_keys_resolve_only_for_odbc() {
+        let r = registry();
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "DEFAULT_VARCHAR_SIZE",
+                "default_varchar_size",
+                "VARCHAR column sizes come from result-set metadata",
+            ),
+            (
+                "DEFAULT_BINARY_SIZE",
+                "default_binary_size",
+                "BINARY column sizes come from result-set metadata",
+            ),
+        ];
+        for (key, canonical, guidance_prefix) in cases {
+            let def = r
+                .resolve_for(Wrapper::Odbc, key)
+                .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
+            assert_eq!(def.canonical_name, *canonical);
+            let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
+                panic!("{canonical} should be deprecated with guidance");
+            };
+            assert!(
+                guidance.contains(guidance_prefix),
+                "{canonical} guidance should name the metadata source, got {guidance:?}"
             );
             assert!(def.ignored, "{canonical} should be ignored");
             assert_eq!(def.visible_to, visible_to!(Odbc));
