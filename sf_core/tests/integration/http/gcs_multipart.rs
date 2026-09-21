@@ -76,11 +76,10 @@ struct GcsMockState {
     /// (transient) instead of the normal 200+Location success. `0` (the
     /// default) means never fail.
     initiate_fail_first_n: AtomicUsize,
-    /// The chunk `PUT` whose 1-based ordinal (across the whole test, i.e.
-    /// counting every session's chunk PUTs) equals this value returns `401`
-    /// instead of the normal 308/200. `0` (the default) means never fail.
-    /// Because the ordinal is a running total, it fires exactly once even
-    /// across a full session re-initiate.
+    /// The chunk `PUT` whose 1-based ordinal (across the whole test) equals
+    /// this value returns `401` instead of the normal 308/200. `0` (the
+    /// default) means never fail. The ordinal is a running total, so it fires
+    /// exactly once even if a later retry of that chunk succeeds.
     fail_chunk_put_number: AtomicUsize,
 }
 
@@ -465,8 +464,10 @@ impl StageInfoRefresher for GcsChunkFakeRefresher {
     }
 }
 
-/// Runs the resumable mid-chunk token-refresh scenario for either overwrite mode.
-async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite: bool) {
+/// Runs the resumable mid-chunk token-refresh scenario for either overwrite mode:
+/// a 401 on the first chunk PUT rotates the bearer and retries that chunk against
+/// the same session (no re-initiate).
+async fn assert_resumes_gcs_resumable_chunk_after_401(overwrite: bool) {
     let payload = make_payload(PAYLOAD_LEN);
     let digest =
         compute_sha256_digest(&ByteSource::Bytes(payload.clone().into())).expect("compute digest");
@@ -478,9 +479,8 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
         payload: payload.clone(),
         digest: digest.clone(),
         base_url: server.uri(),
-        // Fail the very first chunk PUT of the whole test (the first chunk
-        // of the first, doomed session) with a 401, so the first attempt
-        // sends exactly one chunk PUT before aborting.
+        // Fail the very first chunk PUT with a 401; the retry of that chunk
+        // and every later chunk succeed.
         fail_chunk_put_number: 1.into(),
         ..Default::default()
     });
@@ -524,7 +524,7 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
         TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
     )
     .await
-    .expect("401 mid-chunk should trigger a full re-initiate via token refresh and then succeed");
+    .expect("401 on one chunk should rotate the token and resume that chunk");
     assert_eq!(upload_result.status, "UPLOADED");
 
     assert_eq!(
@@ -534,25 +534,21 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
     );
     assert_eq!(
         state.initiate_calls.load(Ordering::Relaxed),
-        2,
-        "one aborted session (first attempt) plus one fresh session (second, successful attempt)"
+        1,
+        "per-chunk resume must not recreate the resumable session"
     );
     assert_eq!(
         state.head_calls.load(Ordering::Relaxed),
-        usize::from(!overwrite) * 2,
-        "only conditional-upload attempts repeat the 404 HEAD probe"
+        usize::from(!overwrite),
+        "conditional-upload HEAD probe runs once; overwrite skips it"
     );
     assert_eq!(
         state.put_chunk_calls.load(Ordering::Relaxed),
         1 + expected_chunks,
-        "one chunk PUT from the aborted first attempt (the one that got 401'd) \
-         plus a full set of chunk PUTs from the second, successful attempt"
+        "one 401'd chunk PUT plus a full set of successful chunk PUTs \
+         (the failed chunk's retry, then the rest once)"
     );
 
-    // Pin that the resumable path actually re-reads the rotated token, not
-    // just that it blindly retries: the failed chunk PUT (ordinal ==
-    // fail_chunk_put_number, i.e. the first one seen) must have carried the
-    // stale token, and every chunk PUT after it must carry the fresh one.
     let received = server
         .received_requests()
         .await
@@ -561,12 +557,13 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
         .iter()
         .filter(|request| request.method.as_str() == "POST")
         .collect();
-    assert_eq!(initiations.len(), 2);
-    assert!(
-        initiations.iter().all(|request| {
-            request.headers.contains_key("x-goog-if-generation-match") != overwrite
-        }),
-        "both stale- and fresh-token session initiations must match overwrite mode"
+    assert_eq!(initiations.len(), 1);
+    assert_eq!(
+        initiations[0]
+            .headers
+            .contains_key("x-goog-if-generation-match"),
+        !overwrite,
+        "the single session initiation must match overwrite mode"
     );
     let chunk_put_auth_headers: Vec<String> = received
         .iter()
@@ -592,16 +589,15 @@ async fn assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(overwrite:
     );
 }
 
-/// The unconditional resumable path must retain token-refresh behavior and
-/// omit the generation precondition on both session initiations.
+/// The unconditional resumable path resumes only the failed chunk on 401.
 #[tokio::test(flavor = "multi_thread")]
-async fn should_reinitiate_overwrite_gcs_resumable_session_after_401_mid_chunk() {
-    assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(/* overwrite */ true).await;
+async fn should_resume_overwrite_gcs_resumable_chunk_after_401() {
+    assert_resumes_gcs_resumable_chunk_after_401(/* overwrite */ true).await;
 }
 
-/// The conditional resumable path must retain token-refresh behavior and
-/// preserve the generation-zero precondition on both session initiations.
+/// The conditional resumable path resumes only the failed chunk on 401 and
+/// keeps the generation-zero precondition on the (single) session initiation.
 #[tokio::test(flavor = "multi_thread")]
-async fn should_reinitiate_conditional_gcs_resumable_session_after_401_mid_chunk() {
-    assert_reinitiates_gcs_resumable_session_after_401_mid_chunk(/* overwrite */ false).await;
+async fn should_resume_conditional_gcs_resumable_chunk_after_401() {
+    assert_resumes_gcs_resumable_chunk_after_401(/* overwrite */ false).await;
 }

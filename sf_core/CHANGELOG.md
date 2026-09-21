@@ -75,6 +75,7 @@ Bug fixes:
 - Fixed `ConnectionAbortQuery` silently collapsing genuine errors (invalid connection handle, transport failures) into a declined-abort outcome; these now surface as proper errors instead. The response also now reports a typed `AbortQueryOutcome` (`ABORTED` / `NOT_RUNNING`) instead of a bare `success` bool. (snowflakedb/drivers#TBD)
 - Fixed string `private_key` to accept plaintext PEM (as already documented), not only base64-encoded material. (snowflakedb/drivers#953)
 - Fixed Workload Identity Federation attestation failures reporting an internally inconsistent error type, which could have caused non-Python bindings to surface the wrong exception category. (snowflakedb/drivers#TBD)
+- Fixed large GCS uploads restarting from the beginning when an access token expired mid-transfer. The driver now refreshes the token and retries only the failed chunk. (snowflakedb/drivers#1923)
 
 Internal improvements:
 

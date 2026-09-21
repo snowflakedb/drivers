@@ -108,7 +108,9 @@ impl<'a> GcsUploadHeaders<'a> {
 ///   `refresher.refresh()` (coalesced, 10-min window) and retries with the
 ///   rotated creds. A second consecutive 401 with the same bearer surfaces
 ///   the existing `GcsUploadError::TokenExpired` — matching libsfclient's
-///   `m_lastRefreshTokenSec` gate (`FileTransferAgent.cpp:412`).
+///   `m_lastRefreshTokenSec` gate (`FileTransferAgent.cpp:412`). A 401 on a
+///   resumable chunk PUT refreshes and retries that chunk against the same
+///   session; an initiate 401 still uses this outer loop.
 /// - On HTTP 400 in presigned mode: an outer loop calls
 ///   `refresher.refresh_url()` (no coalesce) and retries with the rotated
 ///   `presignedUrl` from the cache. A second consecutive 400 surfaces the
@@ -222,11 +224,14 @@ pub async fn upload_to_gcs_or_skip(
                             conditional_create,
                             cleanup: tx.cleanup,
                             scheduler,
+                            refresher,
+                            stage_info: &stage_info,
                         },
                         prepared,
                         body_len,
                     )
                     .await
+                    .map_err(|e| e.map_other(GcsUploadError::from))
                 } else {
                     upload_to_gcs(
                         &client,
@@ -238,20 +243,22 @@ pub async fn upload_to_gcs_or_skip(
                         scheduler,
                     )
                     .await
+                    .map_err(map_gcs_request_error_for_attempt)
                 };
 
                 match upload {
                     Ok(()) => Ok(UploadStatus::Uploaded),
-                    Err(GcsRequestError::GcsHttp {
-                        status_code: 412, ..
-                    }) if conditional_create => {
+                    Err(GcsAttemptError::Other(GcsUploadError::GcsHttp {
+                        status_code: 412,
+                        ..
+                    })) if conditional_create => {
                         tracing::info!(
                             "GCS conditional upload for {key} returned 412 Precondition Failed; \
                              treating as Skipped"
                         );
                         Ok(UploadStatus::Skipped)
                     }
-                    Err(e) => Err(map_gcs_request_error_for_attempt(e)),
+                    Err(e) => Err(e),
                 }
             }
         }
@@ -835,6 +842,8 @@ struct GcsResumableUploadCtx<'a> {
     conditional_create: bool,
     cleanup: Option<&'a CleanupScope>,
     scheduler: &'a TransferScheduler,
+    refresher: Option<&'a dyn StageInfoRefresher>,
+    stage_info: &'a StageInfo,
 }
 
 /// Uploads `prepared` to GCS via the XML-API **resumable** protocol: a single
@@ -855,6 +864,13 @@ struct GcsResumableUploadCtx<'a> {
 /// protocol used here.)
 /// <https://cloud.google.com/storage/docs/resumable-uploads>
 ///
+/// A 401 on one chunk PUT rotates the bearer and retries just that chunk
+/// against the same session. An initiate 401 still returns `GcsAttemptError::TokenExpired`
+/// so the outer per-file loop can start a new session; any error surfacing from
+/// the chunk loop is force-wrapped as `GcsAttemptError::Other` — including a
+/// leftover 401 the refresher declined to rotate again — so it cannot be read
+/// as that same restart signal once the session already exists.
+///
 /// Used only on the access-token path for files at/above the multipart
 /// threshold; the presigned-URL path and smaller files take the single
 /// `Put`-object path in [`upload_to_gcs`]. Mirrors the Node.js connector's
@@ -865,7 +881,7 @@ async fn gcs_resumable_upload(
     upload_ctx: GcsResumableUploadCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
-) -> Result<(), GcsRequestError> {
+) -> Result<(), GcsAttemptError<GcsRequestError>> {
     let GcsResumableUploadCtx {
         client,
         object_url,
@@ -874,13 +890,14 @@ async fn gcs_resumable_upload(
         conditional_create,
         cleanup,
         scheduler,
+        refresher,
+        ..
     } = upload_ctx;
-    let chunk_size =
-        multipart::compute_part_size(body_len, &MultipartConfig::GCS).map_err(|e| {
-            GcsRequestError::FileTooLarge {
-                detail: e.to_string(),
-            }
-        })?;
+    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::GCS)
+        .map_err(|e| GcsRequestError::FileTooLarge {
+            detail: e.to_string(),
+        })
+        .map_err(GcsAttemptError::Other)?;
 
     // Digest + CSE metadata ride on the initiation POST (the GCS analogue of
     // Azure's metadata-on-commit), not on the per-chunk PUTs. CSE params (cloud
@@ -895,12 +912,14 @@ async fn gcs_resumable_upload(
         .as_ref()
         .map(|enc_meta| serde_json::to_string(&build_encryption_metadata_json(enc_meta)))
         .transpose()
-        .context(SerializationSnafu)?;
+        .context(SerializationSnafu)
+        .map_err(GcsAttemptError::Other)?;
     let mat_desc_str = encryption_metadata
         .as_ref()
         .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
         .transpose()
-        .context(SerializationSnafu)?;
+        .context(SerializationSnafu)
+        .map_err(GcsAttemptError::Other)?;
 
     let cse_headers = encryption_data_str
         .as_deref()
@@ -916,17 +935,32 @@ async fn gcs_resumable_upload(
         digest: &digest,
         cse: cse_headers,
     };
-    let session_url =
-        gcs_resumable_initiate(client, object_url, token, body_len, headers, policy).await?;
+    let session_url = gcs_resumable_initiate(client, object_url, token, body_len, headers, policy)
+        .await
+        .map_err(map_gcs_request_error_for_attempt)?;
 
     // Built after `gcs_resumable_initiate`: until it returns there is no session to
-    // delete. When the failure is a token expiry this delete uses the same expired
-    // token and fails itself (logged, not fatal); GCS then expires the abandoned
-    // session on its own after a week.
+    // delete. Reads the refresher's cache at abort time rather than closing over
+    // the initiate-time bearer: after a chunk rotation, that original token is
+    // the one GCS just 401'd, so a DELETE sent with it would likely 401 too and
+    // leave the session live for up to a week. Falls back to the initiate token
+    // when there is no refresher or no rotation has happened yet.
     let abort = {
-        let (client, url, token) = (client.clone(), session_url.clone(), token.to_string());
+        let client = client.clone();
+        let url = session_url.clone();
+        let fallback = token.to_string();
+        let cache = refresher.map(|r| r.cache().clone());
         move || {
-            let (client, url, token) = (client.clone(), url.clone(), token.clone());
+            let client = client.clone();
+            let url = url.clone();
+            let token = cache
+                .as_ref()
+                .and_then(|c| {
+                    gcs_token_from_creds(&c.snapshot().creds)
+                        .ok()
+                        .map(str::to_owned)
+                })
+                .unwrap_or_else(|| fallback.clone());
             async move { gcs_resumable_delete(&client, &url, &token).await }
         }
     };
@@ -941,26 +975,26 @@ async fn gcs_resumable_upload(
         let mut offset: u64 = 0;
         let mut committed = false;
         while let Some(part) = rx.recv().await {
-            let part = part.map_err(|source| GcsRequestError::SourceIo { source })?;
+            let part = part
+                .map_err(|source| GcsAttemptError::Other(GcsRequestError::SourceIo { source }))?;
             let len = part.body.len() as u64;
             // One slot per session chunk. A resumable session commits chunks in
             // order, so this file only ever holds one slot at a time — the rest
             // of the budget stays available to the batch's other files.
             let done = {
                 let _slot = scheduler.acquire_request().await;
-                gcs_put_one_chunk(
-                    client,
+                gcs_put_chunk_with_refresh(
+                    upload_ctx,
                     &session_url,
-                    token,
                     part.body,
                     ChunkRange {
                         offset,
                         len,
                         total: body_len,
                     },
-                    policy,
                 )
-                .await?
+                .await
+                .map_err(GcsAttemptError::Other)?
             };
             offset += len;
             if done {
@@ -969,16 +1003,16 @@ async fn gcs_resumable_upload(
             }
         }
         if !committed {
-            return Err(GcsRequestError::Resumable {
+            return Err(GcsAttemptError::Other(GcsRequestError::Resumable {
                 detail: format!(
                     "resumable upload ended without a terminal 2xx commit after {offset} of {body_len} bytes"
                 ),
-            });
+            }));
         }
         if offset != body_len {
-            return Err(GcsRequestError::Resumable {
+            return Err(GcsAttemptError::Other(GcsRequestError::Resumable {
                 detail: format!("resumable upload ended after {offset} of {body_len} bytes"),
-            });
+            }));
         }
         tracing::debug!("GCS resumable upload committed ({body_len} bytes)");
         Ok(())
@@ -1125,6 +1159,42 @@ async fn gcs_put_one_chunk(
             }
         }
     }
+}
+
+/// PUTs one resumable chunk under the token-refresh layer: a 401 rotates the
+/// bearer and retries just this chunk. No refresher → a 401 is terminal. Any
+/// error escaping here — including a leftover 401 the refresher declined to
+/// rotate again — is mid-session; the caller wraps it as `GcsAttemptError::Other`
+/// so the outer file loop does not recreate the session.
+async fn gcs_put_chunk_with_refresh(
+    upload_ctx: GcsResumableUploadCtx<'_>,
+    session_url: &str,
+    body: Bytes,
+    range: ChunkRange,
+) -> Result<bool, GcsRequestError> {
+    run_gcs_with_token_refresh(
+        upload_ctx.refresher,
+        upload_ctx.stage_info,
+        |e| StageInfoRefreshSnafu.into_error(e),
+        move |snapshot| {
+            let body = body.clone();
+            async move {
+                let token = gcs_token_from_creds(&snapshot.creds)
+                    .map_err(map_gcs_request_error_for_attempt)?;
+                gcs_put_one_chunk(
+                    upload_ctx.client,
+                    session_url,
+                    token,
+                    body,
+                    range,
+                    upload_ctx.policy,
+                )
+                .await
+                .map_err(map_gcs_request_error_for_attempt)
+            }
+        },
+    )
+    .await
 }
 
 /// Best-effort `DELETE` of a resumable session URL to release a half-staged
@@ -1337,20 +1407,18 @@ fn resolve_url_and_token<'a>(
         return Ok((presigned.clone(), None));
     }
 
-    // Extract token reference — avoids copying into a non-zeroized String
-    let token = match &stage_info.creds {
-        CloudCredentials::Gcs { gcs_access_token } => {
-            gcs_access_token.as_ref().map(|t| t.reveal().as_str())
-        }
-        _ => return Err(GcsRequestError::MissingGcsCredentials),
-    };
-
-    if token.is_none() {
-        return Err(GcsRequestError::MissingGcsCredentials);
-    }
-
+    let token = gcs_token_from_creds(&stage_info.creds)?;
     let url = build_gcs_url(stage_info, key);
-    Ok((url, token))
+    Ok((url, Some(token)))
+}
+
+fn gcs_token_from_creds(creds: &CloudCredentials) -> Result<&str, GcsRequestError> {
+    match creds {
+        CloudCredentials::Gcs {
+            gcs_access_token: Some(token),
+        } => Ok(token.reveal().as_str()),
+        _ => Err(GcsRequestError::MissingGcsCredentials),
+    }
 }
 
 /// Whether a GCS V4 signed URL authorizes every `x-goog-*` header emitted by
@@ -1837,6 +1905,18 @@ enum GcsAttemptError<E> {
     Other(E),
 }
 
+impl<E> GcsAttemptError<E> {
+    fn map_other<F, E2>(self, f: F) -> GcsAttemptError<E2>
+    where
+        F: FnOnce(E) -> E2,
+    {
+        match self {
+            GcsAttemptError::TokenExpired => GcsAttemptError::TokenExpired,
+            GcsAttemptError::Other(e) => GcsAttemptError::Other(f(e)),
+        }
+    }
+}
+
 /// Maps the internal `GcsRequestError` into a per-attempt error so the token
 /// refresh loop can catch 401 separately from everything else. Anything that
 /// isn't 401 — including the new reactive 400 (presigned-URL expired) — goes
@@ -1998,6 +2078,11 @@ enum GcsRequestError {
     TempFile { detail: String },
     #[snafu(display("GCS endpoint did not honor Range header: {detail}"))]
     RangeNotHonored { detail: String },
+    #[snafu(display("stage info refresh failed"))]
+    StageInfoRefresh {
+        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
+        source: Box<StageInfoRefreshError>,
+    },
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -2044,6 +2129,9 @@ impl From<GcsRequestError> for GcsUploadError {
             // the conversion stays total (it cannot actually occur on upload).
             GcsRequestError::RangeNotHonored { detail } => {
                 gcs_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
+            GcsRequestError::StageInfoRefresh { source } => {
+                gcs_upload_error::StageInfoRefreshSnafu.into_error(*source)
             }
         }
     }
@@ -2105,6 +2193,12 @@ impl From<GcsRequestError> for GcsDownloadError {
             }
             GcsRequestError::RangeNotHonored { detail } => {
                 gcs_download_error::RangeNotHonoredSnafu { detail }.build()
+            }
+            // The per-chunk resumable-upload retry loop is the only current
+            // producer of this variant, so it cannot actually occur on the
+            // download path; still needs a total mapping.
+            GcsRequestError::StageInfoRefresh { source } => {
+                gcs_download_error::StageInfoRefreshSnafu.into_error(*source)
             }
         }
     }
@@ -3020,6 +3114,20 @@ mod tests {
         })
     }
 
+    fn authorization(req: &Request) -> &str {
+        req.headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    }
+
+    fn content_range(req: &Request) -> &str {
+        req.headers
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+    }
+
     fn policy_with_retryable_412(using_presigned_url: bool) -> RetryPolicy {
         let mut policy = test_policy(using_presigned_url, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         policy.extra_retryable_statuses.insert(412);
@@ -3340,6 +3448,289 @@ mod tests {
                 "every chunk PUT must carry a Content-Range header"
             );
         }
+    }
+
+    /// A 401 on one resumable chunk PUT rotates the bearer and retries just
+    /// that chunk against the same session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_401_on_one_chunk_resends_only_that_chunk() {
+        use crate::file_manager::internal::FakeStageInfoRefresher;
+        use std::sync::atomic::Ordering;
+
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/one-chunk-401";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // 9 MiB / 8 MiB = 2 chunks. Chunk 1's first PUT 401s; the retry and
+        // chunk 2 succeed.
+        let counter = Arc::new(AtomicU64::new(0));
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(
+                move |_req: &Request| match counter.fetch_add(1, Ordering::Relaxed) {
+                    0 => ResponseTemplate::new(401),
+                    1 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
+                    _ => ResponseTemplate::new(200),
+                },
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Gcs {
+            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
+        });
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                7u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let status = upload_to_gcs_or_skip(
+            prepared,
+            &stage,
+            "one-chunk.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect("a single chunk 401 must resume just that chunk");
+        assert_eq!(status, UploadStatus::Uploaded);
+
+        assert_eq!(
+            fake.refresh_call_count(),
+            1,
+            "exactly one refresh for the single chunk 401"
+        );
+        let received = server.received_requests().await.unwrap();
+        let posts = received
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(
+            posts, 1,
+            "per-chunk resume must not recreate the resumable session"
+        );
+        let puts: Vec<_> = received
+            .iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .collect();
+        assert_eq!(
+            puts.len(),
+            3,
+            "chunk 1 (401 + retry) + chunk 2 = 3 PUTs; a whole-session \
+             restart would redo both chunks"
+        );
+        assert!(
+            authorization(puts[0]).ends_with("fake-token"),
+            "the 401'd chunk PUT carries the original bearer"
+        );
+        assert!(
+            puts[1..]
+                .iter()
+                .all(|r| authorization(r).ends_with("refreshed-token")),
+            "the retried chunk and every later chunk PUT carry the rotated bearer"
+        );
+        assert_eq!(
+            content_range(puts[0]),
+            content_range(puts[1]),
+            "the 401 retry must repeat chunk 1's Content-Range, not advance past it"
+        );
+        assert_ne!(
+            content_range(puts[1]),
+            content_range(puts[2]),
+            "chunk 2 must be the next span, not a re-send of chunk 1"
+        );
+    }
+
+    /// A leftover chunk 401 (refresher declines to rotate again) is terminal
+    /// for the existing session — it must not recreate it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_second_chunk_401_after_refresh_does_not_recreate_session() {
+        use crate::file_manager::internal::FakeStageInfoRefresher;
+        use std::sync::atomic::Ordering;
+
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/second-chunk-401";
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(201).insert_header(
+                "location",
+                format!("{}{session_path}", server.uri()).as_str(),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let counter = Arc::new(AtomicU64::new(0));
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with(
+                move |_req: &Request| match counter.fetch_add(1, Ordering::Relaxed) {
+                    0 => ResponseTemplate::new(401),
+                    1 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
+                    _ => ResponseTemplate::new(401),
+                },
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Gcs {
+            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
+        });
+
+        let error = upload_to_gcs_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    7u8;
+                    9 << 20
+                ])),
+                digest: "0".repeat(64),
+                cse: None,
+            },
+            &stage,
+            "second-chunk.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect_err("a second chunk 401 with no new rotation is terminal");
+        assert!(
+            matches!(error, GcsUploadError::TokenExpired { .. }),
+            "exhausted chunk 401 still surfaces as TokenExpired, got {error:?}"
+        );
+
+        assert_eq!(
+            fake.refresh_call_count(),
+            2,
+            "chunk 1 rotates; chunk 2 asks again and is declined"
+        );
+        let received = server.received_requests().await.unwrap();
+        let posts = received
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(
+            posts, 1,
+            "exhausted chunk 401 must not recreate the resumable session"
+        );
+        let deletes: Vec<_> = received
+            .iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .collect();
+        assert_eq!(deletes.len(), 1, "terminal chunk 401 aborts the session");
+        assert!(
+            authorization(deletes[0]).ends_with("refreshed-token"),
+            "abort after a rotation must use the rotated bearer, not the initiate token"
+        );
+    }
+
+    /// An initiate 401 still belongs to the outer per-file loop.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn gcs_resumable_401_on_initiate_restarts_session() {
+        use crate::file_manager::internal::FakeStageInfoRefresher;
+        use std::sync::atomic::Ordering;
+
+        let server = MockServer::start().await;
+        let session_path = "/resumable-session/initiate-401";
+        let posts = Arc::new(AtomicU64::new(0));
+        let location = format!("{}{session_path}", server.uri());
+        Mock::given(method("POST"))
+            .respond_with(
+                move |_req: &Request| match posts.fetch_add(1, Ordering::Relaxed) {
+                    0 => ResponseTemplate::new(401),
+                    _ => ResponseTemplate::new(201).insert_header("location", location.as_str()),
+                },
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path(session_path))
+            .respond_with({
+                let puts = Arc::new(AtomicU64::new(0));
+                move |_req: &Request| match puts.fetch_add(1, Ordering::Relaxed) {
+                    0 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
+                    _ => ResponseTemplate::new(200),
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(session_path))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_for_mock(&server.uri());
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Gcs {
+            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
+        });
+
+        let status = upload_to_gcs_or_skip(
+            PreparedUpload {
+                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                    7u8;
+                    9 << 20
+                ])),
+                digest: "0".repeat(64),
+                cse: None,
+            },
+            &stage,
+            "initiate-401.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
+            ),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect("an initiate 401 must refresh and start a new session");
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(fake.refresh_call_count(), 1);
     }
 
     /// The precondition header rides on the initiation POST, so Cloud Storage
