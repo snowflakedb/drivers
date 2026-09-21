@@ -83,18 +83,24 @@ enum S3WriteProtocol {
 ///   the object write after ambiguous HTTP 409 conflicts (and therefore
 ///   restarts the full multipart lifecycle);
 /// - [`run_s3_with_sts_refresh`] remains outside this operation and recreates
-///   the client/probe/write attempt after an expired credential, which restarts
-///   the conflict count with a fresh [`S3ConflictRetryBudget`]. The shared
-///   transfer deadline, not the attempt count, is what bounds that product.
+///   the client/probe/write attempt after an expired credential on
+///   `PutObject` / `CreateMultipartUpload`, which restarts the conflict count
+///   with a fresh [`S3ConflictRetryBudget`]. The shared transfer deadline, not
+///   the attempt count, is what bounds that product. Part and complete expiry
+///   retry in place against the same `upload_id`.
 struct S3ConditionalWrite<'a> {
     prepared: &'a PreparedUpload,
     client: &'a S3Client,
+    client_cache: &'a BatchS3ClientCache,
     stage_info: &'a StageInfo,
     key: &'a str,
     overwrite: bool,
     cleanup: Option<&'a CleanupScope>,
     scheduler: &'a TransferScheduler,
     protocol: S3WriteProtocol,
+    refresher: Option<&'a dyn StageInfoRefresher>,
+    policy: &'a RetryPolicy,
+    http_client: Option<&'a reqwest::Client>,
 }
 
 /// Attempt/backoff state for replaying ambiguous S3 conditional conflicts.
@@ -163,10 +169,14 @@ impl S3ConditionalWrite<'_> {
                 s3_multipart_upload(
                     S3MultipartCtx {
                         client: self.client,
+                        client_cache: self.client_cache,
                         stage_info: self.stage_info,
                         key: self.key,
                         overwrite: self.overwrite,
                         cleanup: self.cleanup,
+                        refresher: self.refresher,
+                        policy: self.policy,
+                        http_client: self.http_client,
                     },
                     self.prepared.clone(),
                     body_len,
@@ -181,10 +191,9 @@ impl S3ConditionalWrite<'_> {
     /// when AWS returns `ConditionalRequestConflict`.
     async fn execute_with_conflict_retry(
         &self,
-        policy: &RetryPolicy,
         transfer_started: Instant,
     ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
-        let mut budget = S3ConflictRetryBudget::new(policy, transfer_started);
+        let mut budget = S3ConflictRetryBudget::new(self.policy, transfer_started);
 
         loop {
             match self.execute_once().await {
@@ -228,13 +237,15 @@ impl S3ConditionalWrite<'_> {
 /// the upload regardless of which path would otherwise have run.
 ///
 /// On AWS `ExpiredToken` the `refresher` (if any) is invoked to fetch fresh
-/// STS credentials, which it writes into the shared `StageInfoCache`; the
-/// upload then retries with the new creds (the whole multipart upload restarts,
-/// after aborting the in-flight one). The refresher is responsible for
-/// coalescing rapid-fire calls (the production implementation caches a
-/// successful refresh for 10 minutes, matching ODBC's `m_lastRefreshTokenSec`
-/// gate). The refreshed credentials are visible to other files in the batch
-/// via the shared cache — no return-value plumbing required.
+/// STS credentials, which it writes into the shared `StageInfoCache`. A
+/// `PutObject` or `CreateMultipartUpload` expiry retries the whole attempt
+/// with a new client. An `UploadPart` or `CompleteMultipartUpload` expiry
+/// refreshes and retries only that request against the same `upload_id`.
+/// The refresher is responsible for coalescing rapid-fire calls (the
+/// production implementation caches a successful refresh for 10 minutes,
+/// matching ODBC's `m_lastRefreshTokenSec` gate). The refreshed credentials
+/// are visible to other files in the batch via the shared cache — no
+/// return-value plumbing required.
 ///
 /// S3 callers only project `creds` out of `StageInfoSnapshot`; the GCS-only
 /// `presigned_url` / `presigned_urls` fields are ignored here.
@@ -275,6 +286,8 @@ pub(super) async fn upload_to_s3_or_skip(
     // no-skip path saves a round-trip. The predicate is shared so every cloud's
     // "when to probe" stays coupled to the classifier — see `super::head_needed`.
     let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
+    let local_s3_client_cache = BatchS3ClientCache::new();
+    let s3_client_cache = tx.s3_client_cache.unwrap_or(&local_s3_client_cache);
 
     let attempt = |creds: CloudCredentials| {
         let prepared = prepared.clone();
@@ -283,7 +296,7 @@ pub(super) async fn upload_to_s3_or_skip(
         let policy = policy.clone();
         async move {
             let s3_client = resolve_s3_client(
-                tx.s3_client_cache,
+                Some(s3_client_cache),
                 &stage_info,
                 SNOWFLAKE_UPLOAD_PROVIDER,
                 &policy,
@@ -325,14 +338,18 @@ pub(super) async fn upload_to_s3_or_skip(
             S3ConditionalWrite {
                 prepared: &prepared,
                 client: &s3_client,
+                client_cache: s3_client_cache,
                 stage_info: &stage_info,
                 key: &s3_key,
                 overwrite,
                 cleanup: tx.cleanup,
                 scheduler,
                 protocol,
+                refresher: tx.refresher,
+                policy: &policy,
+                http_client: tx.http_client,
             }
-            .execute_with_conflict_retry(&policy, transfer_started)
+            .execute_with_conflict_retry(transfer_started)
             .await
         }
     };
@@ -424,6 +441,26 @@ where
     }
 }
 
+async fn execute_s3_with_sts_refresh<F, Fut, T, E>(
+    refresher: Option<&dyn StageInfoRefresher>,
+    initial_creds: &CloudCredentials,
+    map_refresh_err: impl Fn(StageInfoRefreshError) -> E + Send,
+    attempt: F,
+) -> Result<T, S3AttemptError<E>>
+where
+    F: Fn(CloudCredentials) -> Fut,
+    Fut: Future<Output = Result<T, S3AttemptError<E>>>,
+    E: Send,
+{
+    match refresher {
+        Some(r) => {
+            let mut sts_refresher = S3StsRefresher::new(r, map_refresh_err);
+            execute_with_refresh(&mut sts_refresher, attempt).await
+        }
+        None => attempt(initial_creds.clone()).await,
+    }
+}
+
 /// Runs `attempt` once (no refresher) or in a refresh-retry loop (with
 /// refresher), folding `S3AttemptError<E>` back to `E` at the boundary so
 /// callers see a uniform error type. With no refresher, an `StsExpired`
@@ -445,13 +482,8 @@ where
     Fut: Future<Output = Result<T, S3AttemptError<E>>>,
     E: Send,
 {
-    let outcome = match refresher {
-        Some(r) => {
-            let mut sts_refresher = S3StsRefresher::new(r, map_refresh_err);
-            execute_with_refresh(&mut sts_refresher, attempt).await
-        }
-        None => attempt(initial_creds.clone()).await,
-    };
+    let outcome =
+        execute_s3_with_sts_refresh(refresher, initial_creds, map_refresh_err, attempt).await;
     outcome.map_err(|e| match e {
         S3AttemptError::ConditionalConflict(err) | S3AttemptError::Other(err) => err,
         S3AttemptError::StsExpired(aws_err) => map_sts_err(aws_err),
@@ -820,16 +852,21 @@ async fn put_object(
 }
 
 /// Shared context for every part + complete request in one multipart upload
-/// (client, stage, key, conditional-create flag, and cancellation cleanup).
-/// All borrows → `Copy`, so concurrent part futures share one coordinator;
-/// bundled to avoid `too_many_arguments`.
+/// (create-time client, batch client cache, stage, key, conditional-create
+/// flag, cancellation cleanup, STS refresher, retry policy, shared HTTP
+/// client). All borrows → `Copy`, so concurrent part futures share one
+/// coordinator; bundled to avoid `too_many_arguments`.
 #[derive(Clone, Copy)]
 struct S3MultipartCtx<'a> {
     client: &'a S3Client,
+    client_cache: &'a BatchS3ClientCache,
     stage_info: &'a StageInfo,
     key: &'a str,
     overwrite: bool,
     cleanup: Option<&'a CleanupScope>,
+    refresher: Option<&'a dyn StageInfoRefresher>,
+    policy: &'a RetryPolicy,
+    http_client: Option<&'a reqwest::Client>,
 }
 
 /// Uploads `prepared` to S3 with the multipart protocol:
@@ -838,7 +875,8 @@ struct S3MultipartCtx<'a> {
 /// **Abort discipline:** once the upload is created, *any* subsequent failure
 /// (a part upload, the completion call, or a read error from the source) aborts
 /// the multipart upload before the error propagates, so partially-uploaded
-/// parts don't linger as billable orphans. This is the fix for the
+/// parts don't linger as billable orphans. A recovered part or complete expiry
+/// is not a failure, so it does not abort. This is the fix for the
 /// libsnowflakeclient `// TODO abort existing upload` gap. An abort that itself
 /// fails is logged but never masks the original error. Encryption metadata is
 /// attached to `CreateMultipartUpload` only — the S3 API rejects per-object
@@ -854,23 +892,22 @@ async fn s3_multipart_upload(
     body_len: u64,
     scheduler: &TransferScheduler,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
-    let S3MultipartCtx {
-        client: s3_client,
-        stage_info,
-        key: s3_key,
-        overwrite,
-        cleanup,
-    } = multipart_ctx;
-
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
         .context(upload_file_error::FileTooLargeSnafu)
         .map_err(S3AttemptError::Other)?;
     let concurrency = scheduler.multipart().concurrency;
 
-    let upload_id = s3_create_multipart_upload(&prepared, s3_client, stage_info, s3_key).await?;
+    let upload_id = s3_create_multipart_upload(
+        &prepared,
+        multipart_ctx.client,
+        multipart_ctx.stage_info,
+        multipart_ctx.key,
+    )
+    .await?;
     tracing::debug!(
-        "S3 multipart upload started: key={s3_key:?} upload_id={upload_id:?} \
-         body_len={body_len} chunk_size={chunk_size} concurrency={concurrency}"
+        "S3 multipart upload started: key={:?} upload_id={upload_id:?} \
+         body_len={body_len} chunk_size={chunk_size} concurrency={concurrency}",
+        multipart_ctx.key
     );
 
     // Parts read sequentially from the (optionally encrypting) source, uploaded
@@ -882,30 +919,65 @@ async fn s3_multipart_upload(
         multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
 
     // Built here, not before `CreateMultipartUpload`: until it returns there is no
-    // `upload_id` to abort. When the failure is an expired token this abort uses the
-    // same expired client and fails itself (logged, not fatal); the STS-refresh retry
-    // then re-creates the upload with fresh creds, and a bucket lifecycle rule reaps
-    // the parts from the abandoned attempt.
+    // `upload_id` to abort. Re-signs from the credential cache so a leftover
+    // expiry does not abort with a dead token.
     let abort = std::sync::Arc::new({
-        let (client, info, key, id) = (
-            s3_client.clone(),
-            stage_info.clone(),
-            s3_key.to_string(),
-            upload_id.clone(),
-        );
+        let client_cache = multipart_ctx.client_cache.clone();
+        let info = multipart_ctx.stage_info.clone();
+        let key = multipart_ctx.key.to_string();
+        let id = upload_id.clone();
+        let creds_cache = multipart_ctx.refresher.map(|r| r.cache().clone());
+        let policy = multipart_ctx.policy.clone();
+        let shared = multipart_ctx.http_client.cloned();
         move || {
-            let (client, info, key, id) = (client.clone(), info.clone(), key.clone(), id.clone());
-            async move { s3_abort_multipart_upload(&client, &info, &key, &id).await }
+            let client_cache = client_cache.clone();
+            let info = info.clone();
+            let key = key.clone();
+            let id = id.clone();
+            let creds_cache = creds_cache.clone();
+            let policy = policy.clone();
+            let shared = shared.clone();
+            async move {
+                let creds = creds_cache
+                    .map(|cache| cache.snapshot().creds)
+                    .unwrap_or_else(|| info.creds.clone());
+                let abort_info = with_creds(&info, creds);
+                match resolve_s3_client(
+                    Some(&client_cache),
+                    &abort_info,
+                    SNOWFLAKE_UPLOAD_PROVIDER,
+                    &policy,
+                    shared.as_ref(),
+                )
+                .await
+                {
+                    Ok(client) => s3_abort_multipart_upload(&client, &abort_info, &key, &id).await,
+                    Err(error) => {
+                        tracing::error!(
+                            cause = std::any::type_name_of_val(&error),
+                            key = ?key,
+                            upload_id = ?id,
+                            "Failed to resolve S3 client for AbortMultipartUpload"
+                        );
+                        tracing::debug!(
+                            "Failed to resolve S3 client for AbortMultipartUpload: {error:?}"
+                        );
+                    }
+                };
+            }
         }
     });
 
     let abort_on_unwind = std::sync::Arc::clone(&abort);
     let outcome = with_abort_on_unwind(
-        cleanup,
+        multipart_ctx.cleanup,
         move || (*abort_on_unwind)(),
         // Boxed to keep this large future off the frame — see clippy.toml.
         Box::pin(upload_parts_and_complete(
-            s3_client, stage_info, s3_key, &upload_id, parts_rx, scheduler, overwrite,
+            multipart_ctx,
+            &upload_id,
+            parts_rx,
+            scheduler,
         )),
     )
     .await;
@@ -984,14 +1056,14 @@ async fn s3_create_multipart_upload(
 /// `buffer_unordered`; the first failure short-circuits (the caller then
 /// aborts). Completed parts are sorted by part number before the commit, since
 /// `buffer_unordered` yields them out of order.
+///
+/// Each part and the commit run the existing STS-refresh loop, so an
+/// `ExpiredToken` retries only that request against the same `upload_id`.
 async fn upload_parts_and_complete(
-    s3_client: &S3Client,
-    stage_info: &StageInfo,
-    s3_key: &str,
+    multipart_ctx: S3MultipartCtx<'_>,
     upload_id: &str,
     parts_rx: tokio::sync::mpsc::Receiver<std::io::Result<multipart::UploadPart>>,
     scheduler: &TransferScheduler,
-    overwrite: bool,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let mut completed: Vec<CompletedPart> = ReceiverStream::new(parts_rx)
         .map(|part| async move {
@@ -1004,7 +1076,7 @@ async fn upload_parts_and_complete(
                 )
             })?;
             let _slot = scheduler.acquire_request().await;
-            upload_one_part(s3_client, stage_info, s3_key, upload_id, part).await
+            s3_upload_part_with_refresh(multipart_ctx, upload_id, part).await
         })
         .buffer_unordered(scheduler.multipart().concurrency)
         .try_collect()
@@ -1025,6 +1097,136 @@ async fn upload_parts_and_complete(
 
     // S3 requires the completed-part list in ascending part-number order.
     completed.sort_by_key(|p| p.part_number());
+
+    s3_complete_multipart_upload_with_refresh(multipart_ctx, upload_id, completed).await
+}
+
+async fn s3_client_from_creds(
+    cache: &BatchS3ClientCache,
+    stage_info: &StageInfo,
+    creds: CloudCredentials,
+    policy: &RetryPolicy,
+    shared: Option<&reqwest::Client>,
+) -> Result<S3Client, S3AttemptError<UploadFileError>> {
+    resolve_s3_client(
+        Some(cache),
+        &with_creds(stage_info, creds),
+        SNOWFLAKE_UPLOAD_PROVIDER,
+        policy,
+        shared,
+    )
+    .await
+    .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))
+}
+
+/// Uploads one part under the STS-refresh layer: an `ExpiredToken` rotates
+/// credentials and retries just this part. No refresher → an expiry is
+/// terminal. A leftover expiry is `Other` so the outer file loop does not
+/// recreate the upload. `UploadPart` cannot produce HTTP 409, so
+/// `ConditionalConflict` is not mapped here.
+async fn s3_upload_part_with_refresh(
+    multipart_ctx: S3MultipartCtx<'_>,
+    upload_id: &str,
+    part: multipart::UploadPart,
+) -> Result<CompletedPart, S3AttemptError<UploadFileError>> {
+    let number = part.number;
+    let body = part.body;
+    let upload_id = upload_id.to_string();
+    let outcome = execute_s3_with_sts_refresh(
+        multipart_ctx.refresher,
+        &multipart_ctx.stage_info.creds,
+        |e| upload_file_error::StageInfoRefreshSnafu.into_error(e),
+        move |creds| {
+            let body = body.clone();
+            let upload_id = upload_id.clone();
+            async move {
+                let client = s3_client_from_creds(
+                    multipart_ctx.client_cache,
+                    multipart_ctx.stage_info,
+                    creds,
+                    multipart_ctx.policy,
+                    multipart_ctx.http_client,
+                )
+                .await?;
+                upload_one_part(
+                    &client,
+                    multipart_ctx.stage_info,
+                    multipart_ctx.key,
+                    &upload_id,
+                    multipart::UploadPart { number, body },
+                )
+                .await
+            }
+        },
+    )
+    .await;
+    match outcome {
+        Err(S3AttemptError::StsExpired(aws_err)) => Err(S3AttemptError::Other(
+            upload_file_error::S3UploadPartSnafu {
+                part_number: number,
+                detail: aws_err.to_string(),
+            }
+            .build(),
+        )),
+        other => other,
+    }
+}
+
+/// Commits under the STS-refresh layer. Leftover `StsExpired` is `Other` so
+/// the outer file loop does not recreate the upload; `ConditionalConflict` is
+/// preserved so a 409 still restarts from `CreateMultipartUpload`.
+async fn s3_complete_multipart_upload_with_refresh(
+    multipart_ctx: S3MultipartCtx<'_>,
+    upload_id: &str,
+    completed: Vec<CompletedPart>,
+) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+    let attempt = |creds: CloudCredentials| {
+        let completed = completed.clone();
+        let upload_id = upload_id.to_string();
+        async move {
+            let client = s3_client_from_creds(
+                multipart_ctx.client_cache,
+                multipart_ctx.stage_info,
+                creds,
+                multipart_ctx.policy,
+                multipart_ctx.http_client,
+            )
+            .await?;
+            s3_complete_multipart_upload(&client, multipart_ctx, &upload_id, completed).await
+        }
+    };
+    let outcome = execute_s3_with_sts_refresh(
+        multipart_ctx.refresher,
+        &multipart_ctx.stage_info.creds,
+        |e| upload_file_error::StageInfoRefreshSnafu.into_error(e),
+        attempt,
+    )
+    .await;
+    match outcome {
+        Ok(status) => Ok(status),
+        Err(S3AttemptError::StsExpired(aws_err)) => Err(S3AttemptError::Other(
+            upload_file_error::S3MultipartCompleteSnafu {
+                detail: aws_err.to_string(),
+            }
+            .build(),
+        )),
+        Err(other) => Err(other),
+    }
+}
+
+/// Issues `CompleteMultipartUpload` over the staged parts. A conditional commit
+/// that loses the publication race is `Ok(Skipped)`; the ambiguous HTTP 409 is
+/// `ConditionalConflict`, which replays the whole write from
+/// `CreateMultipartUpload`.
+async fn s3_complete_multipart_upload(
+    s3_client: &S3Client,
+    multipart_ctx: S3MultipartCtx<'_>,
+    upload_id: &str,
+    completed: Vec<CompletedPart>,
+) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+    let stage_info = multipart_ctx.stage_info;
+    let s3_key = multipart_ctx.key;
+    let overwrite = multipart_ctx.overwrite;
 
     let completed_upload = CompletedMultipartUpload::builder()
         .set_parts(Some(completed))
@@ -1693,8 +1895,9 @@ fn to_aws_timeout_config(policy: &RetryPolicy) -> AwsTimeoutConfig {
 
 /// One `S3Client` per PUT/GET command, shared across concurrent files.
 /// Rebuilt when the STS session token (or key id) changes after refresh.
+#[derive(Clone)]
 pub(crate) struct BatchS3ClientCache {
-    inner: AsyncMutex<Option<CachedS3Client>>,
+    inner: std::sync::Arc<AsyncMutex<Option<CachedS3Client>>>,
 }
 
 struct CachedS3Client {
@@ -1705,7 +1908,7 @@ struct CachedS3Client {
 impl BatchS3ClientCache {
     pub(crate) fn new() -> Self {
         Self {
-            inner: AsyncMutex::new(None),
+            inner: std::sync::Arc::new(AsyncMutex::new(None)),
         }
     }
 }
@@ -3475,6 +3678,8 @@ mod tests {
     const COMPLETE_MP_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Location>http://example/f.dat</Location><Bucket>test-bucket</Bucket><Key>prefix/f.dat</Key><ETag>"final-etag"</ETag></CompleteMultipartUploadResult>"#;
 
+    const EXPIRED_TOKEN_XML: &str = "<Error><Code>ExpiredToken</Code></Error>";
+
     fn mp_stage(uri: String) -> StageInfo {
         StageInfo {
             location_type: crate::file_manager::types::LocationType::S3,
@@ -3498,6 +3703,45 @@ mod tests {
     /// the multipart path, at the resolved concurrency.
     fn always_multipart() -> MultipartParams {
         MultipartParams::from_server(Some(1), Some(4))
+    }
+
+    fn mp_prepared(body: Bytes) -> PreparedUpload {
+        PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(body),
+            digest: "0".repeat(64),
+            cse: None,
+        }
+    }
+
+    fn xml_ok(body: &'static str) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_raw(body, "application/xml")
+    }
+
+    fn expired_token() -> ResponseTemplate {
+        ResponseTemplate::new(400).set_body_raw(EXPIRED_TOKEN_XML, "application/xml")
+    }
+
+    fn part_number(req: &Request) -> Option<u32> {
+        req.url
+            .query_pairs()
+            .find(|(key, _)| key == "partNumber")
+            .and_then(|(_, value)| value.parse().ok())
+    }
+
+    async fn mount_create_counted(
+        mock: &MockServer,
+        creates: &Arc<AtomicUsize>,
+        respond: impl Fn(usize) -> ResponseTemplate + Send + Sync + 'static,
+    ) {
+        let creates = creates.clone();
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(move |_: &Request| {
+                let n = creates.fetch_add(1, MpOrdering::SeqCst);
+                respond(n)
+            })
+            .mount(mock)
+            .await;
     }
 
     /// A 20 MiB SSE body splits into three S3 parts (8 + 8 + 4 MiB) at the
@@ -3770,6 +4014,255 @@ mod tests {
             aborts.load(MpOrdering::SeqCst),
             1,
             "the multipart upload must be aborted exactly once on failure"
+        );
+    }
+
+    /// An `ExpiredToken` on one `UploadPart` rotates credentials and retries
+    /// just that part against the same `upload_id`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_expired_token_on_one_part_resends_only_that_part() {
+        let mock = MockServer::start().await;
+        let creates = Arc::new(AtomicUsize::new(0));
+        let parts = Arc::new(AtomicUsize::new(0));
+        let aborts = Arc::new(AtomicUsize::new(0));
+
+        mount_create_counted(&mock, &creates, |_| xml_ok(CREATE_MP_XML)).await;
+
+        let parts_c = parts.clone();
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(move |_: &Request| {
+                let n = parts_c.fetch_add(1, MpOrdering::SeqCst);
+                if n == 0 {
+                    expired_token()
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header("ETag", format!("\"etag-{n}\"").as_str())
+                }
+            })
+            .mount(&mock)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(xml_ok(COMPLETE_MP_XML))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let aborts_c = aborts.clone();
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(move |_: &Request| {
+                aborts_c.fetch_add(1, MpOrdering::SeqCst);
+                ResponseTemplate::new(204)
+            })
+            .mount(&mock)
+            .await;
+
+        let stage = mp_stage(mock.uri());
+        let fake = FakeRefresher::new(stage.creds.clone());
+        fake.arm(s3_creds("AKIA-ROTATED"));
+
+        let status = upload_to_s3_or_skip(
+            mp_prepared(Bytes::from(vec![7u8; 9 << 20])),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &base_policy_with_attempts(1),
+            always_multipart(),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect("an expired token on one part must resume that part");
+
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(
+            fake.refresh_calls.load(AtomicOrdering::SeqCst),
+            1,
+            "exactly one rotation for the single expired part"
+        );
+        assert_eq!(
+            creates.load(MpOrdering::SeqCst),
+            1,
+            "resuming a part must not create a second multipart upload"
+        );
+        assert_eq!(
+            parts.load(MpOrdering::SeqCst),
+            3,
+            "the expired part is re-sent once and the other part is not re-sent"
+        );
+        assert_eq!(
+            aborts.load(MpOrdering::SeqCst),
+            0,
+            "a recovered part expiry is not a failure, so nothing is aborted"
+        );
+
+        // Parts upload concurrently, so PUT arrival order doesn't line up with
+        // part number — group by `partNumber` instead of by position.
+        let puts: Vec<_> = mock
+            .received_requests()
+            .await
+            .expect("wiremock should retain multipart requests")
+            .into_iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .collect();
+        let mut by_part: std::collections::HashMap<Option<u32>, u32> =
+            std::collections::HashMap::new();
+        for put in &puts {
+            *by_part.entry(part_number(put)).or_insert(0) += 1;
+        }
+        assert_eq!(
+            by_part.values().filter(|&&count| count == 2).count(),
+            1,
+            "exactly one partNumber must be sent twice — the expired-token part and its retry, got {by_part:?}"
+        );
+        assert_eq!(
+            by_part.values().filter(|&&count| count == 1).count(),
+            1,
+            "the other part must be sent exactly once, not re-sent, got {by_part:?}"
+        );
+    }
+
+    /// A leftover `ExpiredToken` after the refresher declines is terminal for
+    /// this `upload_id` — it must not recreate the multipart upload.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_leftover_expired_token_does_not_recreate_upload() {
+        let mock = MockServer::start().await;
+        let creates = Arc::new(AtomicUsize::new(0));
+        let abort_auth = Arc::new(std::sync::Mutex::new(String::new()));
+
+        mount_create_counted(&mock, &creates, |_| xml_ok(CREATE_MP_XML)).await;
+
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"etag-1\""))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(expired_token())
+            .mount(&mock)
+            .await;
+
+        let abort_auth_c = abort_auth.clone();
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(move |req: &Request| {
+                if let Some(v) = req.headers.get("authorization") {
+                    *abort_auth_c.lock().unwrap() = v.to_str().unwrap_or("").to_string();
+                }
+                ResponseTemplate::new(204)
+            })
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = mp_stage(mock.uri());
+        let fake = FakeRefresher::new(stage.creds.clone());
+        fake.arm(s3_creds("AKIA-ROTATED"));
+
+        let error = upload_to_s3_or_skip(
+            mp_prepared(Bytes::from_static(b"x")),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &base_policy_with_attempts(1),
+            always_multipart(),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect_err("a leftover complete expiry with no further rotation is terminal");
+
+        assert!(
+            matches!(error, UploadFileError::S3MultipartComplete { .. }),
+            "exhausted complete expiry still surfaces as a complete failure, got {error:?}"
+        );
+        assert_eq!(
+            fake.refresh_calls.load(AtomicOrdering::SeqCst),
+            2,
+            "complete expires, rotates, retries, then is declined"
+        );
+        assert_eq!(
+            creates.load(MpOrdering::SeqCst),
+            1,
+            "leftover expiry must not recreate the multipart upload"
+        );
+        let abort_auth = abort_auth.lock().unwrap();
+        assert!(
+            abort_auth.contains("AKIA-ROTATED"),
+            "abort must re-sign with rotated creds, got {abort_auth}"
+        );
+    }
+
+    /// `CreateMultipartUpload` `ExpiredToken` still belongs to the outer
+    /// per-file loop.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_multipart_expired_token_on_create_restarts_upload() {
+        let mock = MockServer::start().await;
+        let creates = Arc::new(AtomicUsize::new(0));
+
+        mount_create_counted(&mock, &creates, |n| {
+            if n == 0 {
+                expired_token()
+            } else {
+                xml_ok(CREATE_MP_XML)
+            }
+        })
+        .await;
+
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(200).insert_header("ETag", "\"etag-1\""))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(xml_ok(COMPLETE_MP_XML))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "test-upload-id"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&mock)
+            .await;
+
+        let stage = mp_stage(mock.uri());
+        let fake = FakeRefresher::new(stage.creds.clone());
+        fake.arm(s3_creds("AKIA-ROTATED"));
+
+        let status = upload_to_s3_or_skip(
+            mp_prepared(Bytes::from_static(b"x")),
+            &stage,
+            "f.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            &base_policy_with_attempts(1),
+            always_multipart(),
+            TransferCtx::with_refresher(&fake),
+        )
+        .await
+        .expect("an expired token on create must restart the upload");
+
+        assert_eq!(status, UploadStatus::Uploaded);
+        assert_eq!(
+            fake.refresh_calls.load(AtomicOrdering::SeqCst),
+            1,
+            "exactly one rotation for the create expiry"
+        );
+        assert_eq!(
+            creates.load(MpOrdering::SeqCst),
+            2,
+            "create expiry retries via the outer file loop"
         );
     }
 
