@@ -1,7 +1,9 @@
-use std::io::Write;
+use std::error::Error;
+use std::io::{ErrorKind, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
@@ -96,6 +98,50 @@ async fn spawn_tls_proxy() -> (SocketAddr, tempfile::NamedTempFile) {
     (proxy_addr, pem_file)
 }
 
+/// Public `E2E_TLS_SERVER` GETs (CI uses https://snowflakecomputing.com) can
+/// RST mid-connect. Merge-queue already reruns the whole suite once; that still
+/// failed twice on `Connection reset by peer` (run 34608711236). Retry only
+/// transient transport errors — TLS/cert failures stay fatal.
+fn is_transient_public_get(err: &reqwest::Error) -> bool {
+    if err.is_timeout() || err.is_connect() {
+        return true;
+    }
+    let mut source: Option<&dyn Error> = Some(err);
+    while let Some(e) = source {
+        if let Some(io) = e.downcast_ref::<std::io::Error>() {
+            return matches!(
+                io.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+                    | ErrorKind::TimedOut
+                    | ErrorKind::UnexpectedEof
+            );
+        }
+        source = e.source();
+    }
+    false
+}
+
+async fn get_public_server(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    const ATTEMPTS: u32 = 4;
+    let mut last = None;
+    for attempt in 1..=ATTEMPTS {
+        match client.get(url).send().await {
+            Ok(resp) => return Ok(resp),
+            Err(err) if attempt < ATTEMPTS && is_transient_public_get(&err) => {
+                tokio::time::sleep(Duration::from_millis(250 * u64::from(attempt))).await;
+                last = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last.expect("retry loop"))
+}
+
 #[tokio::test]
 async fn should_complete_handshake_with_default_roots() {
     // Given a TLS client configured with default roots
@@ -106,10 +152,13 @@ async fn should_complete_handshake_with_default_roots() {
     let client =
         create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlWorker::shared_lazy())
             .expect("client");
-    let resp = client.get(server_url).send().await;
+    let resp = get_public_server(&client, &server_url).await;
 
     // Then the request attempt should be successful
-    assert!(resp.is_ok());
+    assert!(
+        resp.is_ok(),
+        "default roots should trust the public server: {resp:?}"
+    );
 }
 
 #[tokio::test]
@@ -127,7 +176,7 @@ async fn should_complete_handshake_with_custom_pem_roots() {
             std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
 
         // When GET request is sent to the server URL
-        let resp = client.get(server_url).send().await;
+        let resp = get_public_server(&client, &server_url).await;
 
         // Then the request attempt should be successful
         assert!(resp.is_ok(), "Custom PEM roots should enable TLS handshake");
@@ -163,7 +212,7 @@ async fn should_replace_default_roots_with_custom_root_store() {
     let default_client =
         create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlWorker::shared_lazy())
             .expect("default client");
-    let default_response = default_client.get(&server_url).send().await;
+    let default_response = get_public_server(&default_client, &server_url).await;
     assert!(
         default_response.is_ok(),
         "default roots should trust the public server: {default_response:?}"
@@ -224,7 +273,7 @@ async fn should_keep_default_roots_when_extra_root_store_is_configured() {
         std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
 
     // When a request is sent to a server signed by a default root
-    let response = client.get(server_url).send().await;
+    let response = get_public_server(&client, &server_url).await;
 
     // Then the default root remains trusted
     assert!(
