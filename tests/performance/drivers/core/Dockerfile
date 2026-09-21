@@ -20,6 +20,9 @@ ENV CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
 
+# Same as .cargo/config.toml. This image does not copy .cargo/.
+ENV AWS_LC_SYS_NO_JITTER_ENTROPY=1
+
 # Stage 2: Planner - generate recipe for dependencies
 FROM chef AS planner
 

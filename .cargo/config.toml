@@ -1,3 +1,9 @@
+# Read by the aws-lc-sys build script. Drops the CPU jitter entropy source so
+# the first TLS handshake does not seed it. aws-lc-fips-sys does not honor this,
+# so --features fips builds are unchanged.
+[env]
+AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
+
 [target.aarch64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=-crt-static"]
 
