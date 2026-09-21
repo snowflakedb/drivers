@@ -331,24 +331,34 @@ class TestFromConnectionArgs:
         config = ConnectionConfig.from_connection_args(connections_file_path=pathlib.Path("/path/to/file"), user="u")
         assert config.connections_file_path == str(pathlib.Path("/path/to/file"))
 
-    def test_connections_file_path_accepts_pathlib_path_with_config_object(self):
-        existing = ConnectionConfig(user="u")
-        config = ConnectionConfig.from_connection_args(
-            config=existing, connections_file_path=pathlib.Path("/path/to/file")
-        )
-        assert config.connections_file_path == str(pathlib.Path("/path/to/file"))
+    def test_config_object_raises(self):
+        existing = ConnectionConfig(user="u", account="a")
+        with pytest.raises(ProgrammingError, match="from_connection_args"):
+            ConnectionConfig.from_connection_args(config=existing)
 
-    def test_config_and_kwargs_raises(self):
+    def test_config_object_with_kwargs_raises(self):
         existing = ConnectionConfig(user="u")
-        with pytest.raises(ProgrammingError, match="Cannot pass both"):
+        with pytest.raises(ProgrammingError, match="from_connection_args"):
             ConnectionConfig.from_connection_args(config=existing, account="a")
 
-    def test_config_object_passthrough(self):
-        existing = ConnectionConfig(user="u", account="a")
-        config = ConnectionConfig.from_connection_args(config=existing)
-        assert config.user == "u"
-        assert config.account == "a"
+    def test_config_object_with_connections_file_path_raises(self):
+        existing = ConnectionConfig(user="u")
+        with pytest.raises(ProgrammingError, match="from_connection_args"):
+            ConnectionConfig.from_connection_args(config=existing, connections_file_path=pathlib.Path("/path/to/file"))
+
+    def test_finalize_fills_identity_on_fresh_typed_config(self):
+        from snowflake.connector.version import __version__
+
+        config = ConnectionConfig._finalize(ConnectionConfig(user="u", account="a"))
         assert config.application == "PythonConnector"
+        assert config.client_app_id == "PythonConnector"
+        assert config.client_app_version == __version__
+
+    def test_finalize_preserves_existing_identity(self):
+        existing = ConnectionConfig(user="u", client_app_id="SnowSQL", client_app_version="1.2.3")
+        config = ConnectionConfig._finalize(existing)
+        assert config.client_app_id == "SnowSQL"
+        assert config.client_app_version == "1.2.3"
 
     def test_application_default(self):
         config = ConnectionConfig.from_connection_args(user="u")

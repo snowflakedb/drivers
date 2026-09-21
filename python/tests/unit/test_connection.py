@@ -1248,6 +1248,103 @@ class TestInternalApplicationName:
         request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["client_app_version"] == ConfigSetting(string_value=__version__)
 
+    def test_reused_config_keeps_internal_application_overrides(self, mock_db_api):
+        first = Connection(
+            user="u",
+            account="a",
+            internal_application_name="SnowSQL",
+            internal_application_version="1.2.3",
+        )
+        Connection(config=first.config)
+
+        request = mock_db_api.connection_set_options.call_args_list[1][0][0]
+        assert mock_db_api.connection_set_options.call_count == 2
+        assert request.options["client_app_id"] == ConfigSetting(string_value="SnowSQL")
+        assert request.options["client_app_version"] == ConfigSetting(string_value="1.2.3")
+
+    def test_config_and_kwargs_raises(self, mock_db_api):
+        first = Connection(user="u", account="a")
+        with pytest.raises(ProgrammingError, match="Cannot pass both"):
+            Connection(config=first.config, user="other")
+
+
+class TestConnectionConfigPassthrough:
+    """connect(config=...) clones, overlays, and runs the same finalization as kwargs."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_application_detection(self, isolate_application_detection):
+        pass
+
+    def test_fresh_config_fills_identity_defaults(self, mock_db_api):
+        from snowflake.connector import connect
+        from snowflake.connector.connection import CLIENT_NAME
+        from snowflake.connector.connection_config import ConnectionConfig
+        from snowflake.connector.version import __version__
+
+        conn = connect(config=ConnectionConfig(user="u", account="a"))
+
+        assert mock_db_api.connection_set_options.call_count == 1
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert conn.config.application == "PythonConnector"
+        assert conn.config.client_app_id == CLIENT_NAME
+        assert conn.config.client_app_version == __version__
+        assert request.options["application"] == ConfigSetting(string_value="PythonConnector")
+        assert request.options["client_app_id"] == ConfigSetting(string_value=CLIENT_NAME)
+        assert request.options["client_app_version"] == ConfigSetting(string_value=__version__)
+
+    def test_fresh_config_application(self, mock_db_api):
+        from snowflake.connector.connection_config import ConnectionConfig
+
+        conn = Connection(config=ConnectionConfig(user="u", account="a", application="MyApp"))
+        assert conn.config.application == "MyApp"
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert request.options["application"] == ConfigSetting(string_value="MyApp")
+
+    def test_fresh_config_autocommit(self, mock_db_api):
+        from snowflake.connector.connection_config import ConnectionConfig
+
+        conn = Connection(config=ConnectionConfig(user="u", account="a", autocommit=True))
+        assert conn.config.session_parameters["AUTOCOMMIT"] == "true"
+        params = mock_db_api.connection_set_session_parameters.call_args[0][0].parameters
+        assert params["AUTOCOMMIT"] == "true"
+
+    def test_fresh_config_private_key(self, mock_db_api):
+        from snowflake.connector.connection_config import ConnectionConfig
+
+        with patch(
+            "snowflake.connector._internal.connection_config_mixin.normalize_private_key",
+            return_value="normalized",
+        ):
+            conn = Connection(config=ConnectionConfig(user="u", account="a", private_key="raw_key"))
+        assert conn.config.private_key == "normalized"
+
+    def test_connections_file_path_overlay_does_not_mutate_source(self, mock_db_api):
+        import pathlib
+
+        first = Connection(user="u", account="a")
+        source = first.config
+        path = pathlib.Path("/path/to/file")
+        conn = Connection(config=source, connections_file_path=path)
+
+        assert source.connections_file_path is None
+        assert conn.config is not source
+        assert conn.config.connections_file_path == str(path)
+        assert mock_db_api.connection_set_options.call_count == 2
+        request = mock_db_api.connection_set_options.call_args_list[1][0][0]
+        assert request.connections_file_path == str(path)
+
+    def test_connection_name_overlay_does_not_mutate_source(self, mock_db_api):
+        first = Connection(user="u", account="a")
+        source = first.config
+        conn = Connection(config=source, connection_name="myconn")
+
+        assert source.connection_name is None
+        assert conn.config is not source
+        assert conn.config.connection_name == "myconn"
+        assert mock_db_api.connection_set_options.call_count == 2
+        request = mock_db_api.connection_set_options.call_args_list[1][0][0]
+        assert request.options["connection_name"] == ConfigSetting(string_value="myconn")
+
 
 class TestDisableRequestPoolingRemoved:
     """BD#88: Connection.disable_request_pooling is not part of the public API."""

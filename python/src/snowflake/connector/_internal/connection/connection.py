@@ -110,12 +110,23 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
         self._errorhandler = Error.default_errorhandler
         self._client_param_telemetry_enabled = True
 
-        self.config = ConnectionConfig.from_connection_args(
-            connection_name=connection_name,
-            connections_file_path=connections_file_path,
-            config=config,
-            **kwargs,
-        )
+        if config is not None:
+            if kwargs:
+                raise ProgrammingError(
+                    "Cannot pass both a ConnectionConfig object and keyword arguments. Use one or the other."
+                )
+            config = config._clone()
+            if connection_name is not None:
+                config.connection_name = connection_name
+            if connections_file_path is not None:
+                config.connections_file_path = os.fspath(connections_file_path)
+            self.config = ConnectionConfig._finalize(config)
+        else:
+            self.config = ConnectionConfig.from_connection_args(
+                connection_name=connection_name,
+                connections_file_path=connections_file_path,
+                **kwargs,
+            )
 
         if self.config.client_prefetch_threads is not None:
             self.config.client_prefetch_threads = clamp_client_prefetch_threads(self.config.client_prefetch_threads)

@@ -19,7 +19,7 @@ import sys
 import warnings
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, ClassVar, TypeVar
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
@@ -169,7 +169,7 @@ class ConnectionConfigMixin:
     wire (CLIENT_APP_ID / CLIENT_APP_VERSION) and are owned by the wrapper, not
     the caller. Setting them via user-facing kwargs raises ``ProgrammingError``;
     the wrapper itself assigns them through ``ConnectionConfig`` attribute
-    access in ``from_connection_args``."""
+    access in :meth:`_finalize`."""
 
     _LEGACY_REWRITES: ClassVar[dict[str, str | tuple[str, Callable[[Any], Any]]]] = {
         # Old snowflake-connector-python CRL kwargs -> universal-driver core
@@ -473,28 +473,30 @@ class ConnectionConfigMixin:
         config._extra = extra
         return config
 
+    def _clone(self: _Self) -> _Self:
+        """Return a copy that does not share ``session_parameters`` or ``_extra`` with ``self``."""
+        cloned = replace(self)
+        if cloned.session_parameters is not None:
+            cloned.session_parameters = dict(cloned.session_parameters)
+        cloned._extra = dict(cloned._extra)
+        return cloned
+
     @classmethod
-    def from_connection_args(
+    def _finalize(
         cls: type[_Self],
-        connection_name: str | None = None,
-        connections_file_path: str | os.PathLike[str] | None = None,
-        config: _Self | None = None,
-        **kwargs: Any,
+        config: _Self,
+        *,
+        application_explicit: bool = False,
+        internal_app_name: Any = None,
+        internal_app_version: Any = None,
     ) -> _Self:
-        """Build a ConnectionConfig from Connection constructor arguments.
+        """Normalize a config so ``to_options()`` can consume it.
 
-        Merges ``connection_name``, ``connections_file_path``, an optional
-        pre-built ``config``, and any remaining ``**kwargs`` into a single
-        :class:`ConnectionConfig`.  Raises ``ProgrammingError`` when both *config*
-        and *kwargs* are supplied.
-
-        ``connections_file_path`` accepts ``str`` or any ``os.PathLike``
-        (``pathlib.Path``, as the old connector typed it) and is stored as
-        ``str``.
-
-        Performs all value normalisation and validation so that the returned
-        config is ready to be consumed by ``to_options()`` without further
-        processing:
+        Used both after kwargs construction and for ``connect(config=...)``.
+        Already-set ``client_app_id`` / ``client_app_version`` are kept so a
+        reused SnowSQL/Snow CLI config does not fall back to the Python driver
+        identity; missing identity fields still receive the same defaults as
+        kwargs ``connect()``.
 
         * ``private_key`` - normalises RSAPrivateKey / bytes / str via
           :func:`normalize_private_key`.
@@ -507,12 +509,11 @@ class ConnectionConfigMixin:
           tools that re-host the driver (SnowSQL, Snow CLI) can override it via
           ``internal_application_name``.
         * ``internal_application_name`` / ``internal_application_version`` -
-          popped from kwargs and mapped to ``client_app_id`` (CLIENT_APP_ID)
-          and ``client_app_version`` (CLIENT_APP_VERSION) respectively. When
-          omitted, ``client_app_id`` defaults to ``_APPLICATION_NAME`` and
+          mapped to ``client_app_id`` (CLIENT_APP_ID) and ``client_app_version``
+          (CLIENT_APP_VERSION). When omitted and the fields are unset,
+          ``client_app_id`` defaults to ``_APPLICATION_NAME`` and
           ``client_app_version`` defaults to the Python driver's own
-          ``__version__`` — matching the old connector, which sends its own
-          version on the wire when the caller does not override it.
+          ``__version__``.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
         * ``timezone`` - type-checked (must be ``str``), then merged into
@@ -521,68 +522,11 @@ class ConnectionConfigMixin:
         * ``interpolate_empty_sequences`` - type-checked (must be ``bool``).
         * ``reuse_results`` - type-checked (must be ``bool``).
         """
-        if config is not None and kwargs:
-            raise ProgrammingError(
-                "Cannot pass both a ConnectionConfig object and keyword arguments. Use one or the other."
-            )
-
-        internal_app_name: Any = None
-        internal_app_version: Any = None
-        # Bare connect() = caller passed no connection options beyond
-        # ``connections_file_path``.  This is the legacy ``is_kwargs_empty``
-        # condition and the sole trigger for the default-profile fallback in
-        # sf_core.  Computed from the raw caller input below; an explicit
-        # ``config`` object is never a bare connect.
-        no_connection_details = False
-        # Legacy ``SnowflakeConnection.__init__`` only sniffs when
-        # ``"application" not in kwargs``. Keep that so ``application=None``
-        # still means "use PythonConnector", not "run partner detection".
-        application_explicit = False
-        if connections_file_path is not None:
-            connections_file_path = os.fspath(connections_file_path)
-
-        if config is None:
-            if connection_name is not None:
-                kwargs["connection_name"] = connection_name
-            # Pop the ``internal_application_*`` overrides before
-            # ``from_kwargs`` runs: they are wrapper-internal levers that
-            # ultimately populate ``client_app_id`` / ``client_app_version``,
-            # which ``_INTERNAL_PARAMS`` forbids end users from setting
-            # directly.
-            internal_app_name = kwargs.pop("internal_application_name", None)
-            internal_app_version = kwargs.pop("internal_application_version", None)
-            application_explicit = any(k.lower() == "application" for k in kwargs)
-
-            # Capture emptiness AFTER stripping wrapper-internal levers —
-            # matching the old driver version ``is_kwargs_empty = not kwargs``
-            # (computed before any bookkeeping injection).  ``connect(user="alice")``
-            # is NOT bare and must not silently load the default profile.
-            # ``connections_file_path`` is a parameter of its own in the old
-            # driver too, so it never reaches ``kwargs`` and never counts here:
-            # ``connect(connections_file_path=p)`` loads the default profile out
-            # of ``p``.  It is folded into ``kwargs`` only after this point.
-            no_connection_details = connection_name is None and not kwargs
-            if connections_file_path is not None:
-                kwargs["connections_file_path"] = connections_file_path
-            config = cls.from_kwargs(**kwargs)
-        else:
-            if connection_name is not None:
-                config.connection_name = connection_name  # type: ignore[attr-defined]
-            if connections_file_path is not None:
-                config.connections_file_path = connections_file_path
-
-        config._no_connection_details = no_connection_details
-
-        # ``private_key`` is defined on the generated subclass (a PARAM_DEFS field);
-        # mypy can't see it through the TypeVar, so the attribute access is suppressed.
         if config.private_key is not None:  # type: ignore[attr-defined]
             config.private_key = normalize_private_key(config.private_key)  # type: ignore[attr-defined]
 
         application = config.application  # type: ignore[attr-defined]
         if application is None and not application_explicit:
-            # Match the legacy connector: only sniff when the caller omitted
-            # ``application``. An explicit empty string still falls through to
-            # the PythonConnector default below.
             detected = cls._detect_application()
             if detected:
                 application = detected
@@ -594,22 +538,14 @@ class ConnectionConfigMixin:
                 raise ProgrammingError(f"Invalid application name: {application!r}")
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
-        # CLIENT_APP_ID is the driver identity. Defaults to the driver name,
-        # but can be overridden via ``internal_application_name`` (used e.g.
-        # by SnowSQL / Snow CLI to identify themselves to the server).
-        # CLIENT_ENVIRONMENT.APPLICATION (server-side ``application``) carries
-        # the user-facing application name; the two values are independent.
+
         if isinstance(internal_app_name, str) and internal_app_name:
             config.client_app_id = internal_app_name  # type: ignore[attr-defined]
-        else:
+        elif not config.client_app_id:  # type: ignore[attr-defined]
             config.client_app_id = cls._APPLICATION_NAME  # type: ignore[attr-defined]
-        # CLIENT_APP_VERSION defaults to the Python driver's own ``__version__``,
-        # mirroring the old connector (which seeds its ``internal_application_version``
-        # kwarg with ``CLIENT_VERSION`` so the wire field always carries the
-        # driver's version when the caller does not override it).
         if isinstance(internal_app_version, str) and internal_app_version:
             config.client_app_version = internal_app_version  # type: ignore[attr-defined]
-        else:
+        elif not config.client_app_version:  # type: ignore[attr-defined]
             config.client_app_version = _DRIVER_VERSION  # type: ignore[attr-defined]
 
         if config.autocommit is not None:
@@ -640,6 +576,75 @@ class ConnectionConfigMixin:
             raise ProgrammingError(f"Invalid reuse_results parameter: {config.reuse_results!r}. Pass True or False.")
 
         return config
+
+    @classmethod
+    def from_connection_args(
+        cls: type[_Self],
+        connection_name: str | None = None,
+        connections_file_path: str | os.PathLike[str] | None = None,
+        config: _Self | None = None,
+        **kwargs: Any,
+    ) -> _Self:
+        """Build a ConnectionConfig from Connection constructor arguments.
+
+        Merges ``connection_name``, ``connections_file_path``, and ``**kwargs``.
+        The ``config`` parameter is rejected with ``ProgrammingError`` so a
+        pre-built object cannot land in ``_extra``; pass it to
+        ``connect(config=...)``, which clones, overlays path fields, and runs
+        :meth:`_finalize`.
+
+        ``connections_file_path`` accepts ``str`` or any ``os.PathLike``
+        (``pathlib.Path``, as the old connector typed it) and is stored as
+        ``str``.
+        """
+        if config is not None:
+            raise ProgrammingError(
+                "from_connection_args() builds a ConnectionConfig from connection "
+                "arguments, not from an existing config. Pass a pre-built config to "
+                "connect(config=...) instead."
+            )
+
+        # Bare connect() = caller passed no connection options beyond
+        # ``connections_file_path``.  This is the legacy ``is_kwargs_empty``
+        # condition and the sole trigger for the default-profile fallback in
+        # sf_core.  Computed from the raw caller input below.
+        if connections_file_path is not None:
+            connections_file_path = os.fspath(connections_file_path)
+
+        if connection_name is not None:
+            kwargs["connection_name"] = connection_name
+        # Pop the ``internal_application_*`` overrides before
+        # ``from_kwargs`` runs: they are wrapper-internal levers that
+        # ultimately populate ``client_app_id`` / ``client_app_version``,
+        # which ``_INTERNAL_PARAMS`` forbids end users from setting
+        # directly.
+        internal_app_name = kwargs.pop("internal_application_name", None)
+        internal_app_version = kwargs.pop("internal_application_version", None)
+        # Legacy ``SnowflakeConnection.__init__`` only sniffs when
+        # ``"application" not in kwargs``. Keep that so ``application=None``
+        # still means "use PythonConnector", not "run partner detection".
+        application_explicit = any(k.lower() == "application" for k in kwargs)
+
+        # Capture emptiness AFTER stripping wrapper-internal levers —
+        # matching the old driver version ``is_kwargs_empty = not kwargs``
+        # (computed before any bookkeeping injection).  ``connect(user="alice")``
+        # is NOT bare and must not silently load the default profile.
+        # ``connections_file_path`` is a parameter of its own in the old
+        # driver too, so it never reaches ``kwargs`` and never counts here:
+        # ``connect(connections_file_path=p)`` loads the default profile out
+        # of ``p``.  It is folded into ``kwargs`` only after this point.
+        no_connection_details = connection_name is None and not kwargs
+        if connections_file_path is not None:
+            kwargs["connections_file_path"] = connections_file_path
+        config = cls.from_kwargs(**kwargs)
+
+        config._no_connection_details = no_connection_details
+        return cls._finalize(
+            config,
+            application_explicit=application_explicit,
+            internal_app_name=internal_app_name,
+            internal_app_version=internal_app_version,
+        )
 
     # -- Serialisation --------------------------------------------------------
     def to_options(
