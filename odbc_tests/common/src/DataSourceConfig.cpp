@@ -94,7 +94,11 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.parameters_["SERVER"] = get_string(
       params, "SNOWFLAKE_TEST_HOST", get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "") + ".snowflakecomputing.com");
   config.parameters_["PORT"] = "443";
+#ifdef SNOWFLAKE_OLD_DRIVER
   config.parameters_["SSL"] = "on";
+#else
+  config.parameters_["PROTOCOL"] = "https";
+#endif
   config.parameters_["UID"] = get_string(params, "SNOWFLAKE_TEST_USER", "");
   config.parameters_["ACCOUNT"] = get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "");
   config.parameters_["AUTHENTICATOR"] = "SNOWFLAKE_JWT";

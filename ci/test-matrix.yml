@@ -265,6 +265,13 @@ odbc:
         odbc:
           e2e: "e2e_tls|crl"
 
+    - name: logging
+      paths:
+        - "odbc_tests/tests/e2e/logging/**"
+      tests:
+        odbc:
+          e2e: "e2e_logging"
+
     - name: odbc_api
       paths:
         - "odbc/src/api/descriptor.rs"

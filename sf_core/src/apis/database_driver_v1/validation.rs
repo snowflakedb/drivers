@@ -175,13 +175,11 @@ pub fn resolve_options(
                     continue;
                 }
 
-                if let Some(replacement) = param_def.deprecated_by {
+                if let Some(deprecation) = param_def.deprecated {
                     issues.push(ValidationIssue {
                         severity: ValidationSeverity::Warning,
                         parameter: key.clone(),
-                        message: format!(
-                            "Parameter '{key}' is deprecated, use '{replacement}' instead"
-                        ),
+                        message: deprecation.message_for(&key),
                         code: ValidationCode::DeprecatedParameter,
                     });
                 }

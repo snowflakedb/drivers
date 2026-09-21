@@ -77,6 +77,7 @@ add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
 add_odbc_test(e2e_tls_version_enforcement tls/tls_version.cpp)
 
 # logging
+add_odbc_test(e2e_logging_deprecated_connection_string_keys logging/deprecated_connection_string_keys.cpp)
 add_odbc_test(e2e_logging_odbc_logging logging/odbc_logging.cpp)
 add_odbc_test(e2e_logging_troubleshooting logging/troubleshooting.cpp)
 

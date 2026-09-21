@@ -18,7 +18,9 @@
 //! `snowflake.connector._internal.connection_config_mixin.ConnectionConfigMixin`
 //! that the generated class inherits from.
 
-use sf_params_spec::{DefaultValue, ParamDef, ParamScope, Required, ValueType, Wrapper, registry};
+use sf_params_spec::{
+    DefaultValue, Deprecation, ParamDef, ParamScope, Required, ValueType, Wrapper, registry,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -363,8 +365,15 @@ __all__ = ["ConnectionConfig", "OptionsModifier"]
                 doc_parts.push("Required".to_string());
             }
         }
-        if let Some(dep) = p.deprecated_by {
-            doc_parts.push(format!("Deprecated: use {} instead", to_python_field(dep)));
+        if let Some(dep) = p.deprecated {
+            match dep {
+                Deprecation::ReplacedBy(name) => {
+                    doc_parts.push(format!("Deprecated: use {} instead", to_python_field(name)));
+                }
+                Deprecation::Ignored { guidance } => {
+                    doc_parts.push(format!("Deprecated and ignored. {guidance}"));
+                }
+            }
         }
         // Render the docstring on a single line when it fits in 120
         // columns, otherwise spread it across multiple lines so ruff's

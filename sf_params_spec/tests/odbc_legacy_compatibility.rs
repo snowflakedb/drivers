@@ -95,24 +95,20 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("SQLLevel", "sqllevel"),
     ("ConnectFunctions", "connectfunctions"),
     ("TRACING", "tracing"),
+    ("LogLevel", "log_level"),
+    ("LogPath", "log_path"),
+    ("LogFileSize", "log_file_size"),
+    ("LogFileCount", "log_file_count"),
+    ("CURLVerboseMode", "curl_verbose_mode"),
+    ("EnablePidLogFileNames", "enable_pid_log_file_names"),
+    ("CLIENT_CONFIG_FILE", "client_config_file"),
 ];
 
 /// Accepted by snowflake-odbc but not a registry parameter. Grouped by why
 /// the key stays out of the registry.
 const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
-    // Wrapper-owned logging and Simba diagnostics. These configure the
-    // driver's logger, not `sf_core`. `CPTIMEOUT` is the installer
-    // connection-pool idle timeout; the legacy driver accepted the key and
-    // never applied it. `CLIENT_CONFIG_FILE` is the `sf_client_config.json`
-    // path: `Snowflake.h` defines it and `SFConnection` reads it, but it is
-    // not in `initAcceptedConnectionKeys`.
-    "LogLevel",
-    "LogPath",
-    "LogFileSize",
-    "LogFileCount",
-    "CURLVerboseMode",
-    "EnablePidLogFileNames",
-    "CLIENT_CONFIG_FILE",
+    // `CPTIMEOUT` is the installer connection-pool idle timeout; the old
+    // driver accepted the key and never applied it.
     "CPTIMEOUT",
     // Test-only injectors from `Snowflake.h`.
     "INJECT_CURL_TIMEOUT",

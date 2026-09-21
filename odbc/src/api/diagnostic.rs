@@ -330,8 +330,8 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         }
         Warning::DeprecatedParameter {
             parameter,
-            replacement,
-        } => format!("Parameter '{parameter}' is deprecated, use '{replacement}' instead"),
+            deprecation,
+        } => deprecation.message_for(parameter),
     };
     let sql_state = match warning {
         Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
@@ -871,6 +871,7 @@ fn query_type_to_dynamic_function(qt: QueryType) -> (&'static str, sql::Integer)
 mod tests {
     use super::*;
     use crate::api::types::ToSqlReturn;
+    use sf_core::config::param_registry::Deprecation;
 
     /// The class-origin helpers take `&str`, but the only values that reach them
     /// are `SqlState::as_str()` results — a closed enum that
@@ -961,13 +962,31 @@ mod tests {
     fn from_warning_deprecated_parameter_maps_to_01000() {
         let rec = from_warning(&crate::conversion::warning::Warning::DeprecatedParameter {
             parameter: "PUT_MAXRETRIES".to_owned(),
-            replacement: "PUT_GET_MAX_ATTEMPTS",
+            deprecation: Deprecation::ReplacedBy("PUT_GET_MAX_ATTEMPTS"),
         });
         assert_eq!(rec.sql_state, SqlState::GeneralWarning);
         assert_eq!(rec.sql_state.as_str(), "01000");
         assert_eq!(
             rec.message_text,
             "Parameter 'PUT_MAXRETRIES' is deprecated, use 'PUT_GET_MAX_ATTEMPTS' instead"
+        );
+        assert!(rec.sql_state.is_warning());
+    }
+
+    #[test]
+    fn from_warning_ignored_deprecated_parameter_maps_to_01000() {
+        let rec = from_warning(&crate::conversion::warning::Warning::DeprecatedParameter {
+            parameter: "LOGLEVEL".to_owned(),
+            deprecation: Deprecation::Ignored {
+                guidance: "Set LogLevel in sf.odbc.ini to configure driver log verbosity.",
+            },
+        });
+        assert_eq!(rec.sql_state, SqlState::GeneralWarning);
+        assert_eq!(rec.sql_state.as_str(), "01000");
+        assert_eq!(
+            rec.message_text,
+            "Parameter 'LOGLEVEL' is deprecated and has no effect. \
+             Set LogLevel in sf.odbc.ini to configure driver log verbosity."
         );
         assert!(rec.sql_state.is_warning());
     }

@@ -3193,3 +3193,47 @@ behavior_differences:
       (SQLBindParameter spec: if the source does not support default parameters, return
       SQL_ERROR and SQLSTATE 07S01). HY000 was a generic fallback. User-visible outcome
       is identical: the call fails. No SKIP_OLD_DRIVER references exist for this entry.
+
+  154:
+    name: "Connection-string logging keys are ignored and warn as deprecated"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      Process-wide `sf.odbc.ini` logging cannot be driven from a connection
+      string. Keeping the keys recognized avoids 01S00 on leftover DSNs; the
+      01000 warning matches PUT_MAXRETRIES / GET_MAXRETRIES so callers move off
+      the deprecated keys. `CLIENT_CONFIG_FILE` already drew 01S00 from the old
+      driver, so warning on it is not a new diagnostic, only a clearer one.
+    old_driver_behavior: |
+      `LogLevel`, `LogPath`, `LogFileSize`, `LogFileCount`, `CURLVerboseMode`,
+      and `EnablePidLogFileNames` in a DSN or connection string configure the old
+      driver's file logger, and connect returns `SQL_SUCCESS`.
+      `CLIENT_CONFIG_FILE` names an `sf_client_config.json` whose `log_level` and
+      `log_path` apply when `LogLevel` and `LogPath` are absent; the old driver
+      applies that file and still returns `SQL_SUCCESS_WITH_INFO` with SQLSTATE
+      01S00, "1 invalid keys are found in the connection string:
+      CLIENT_CONFIG_FILE". No key draws a deprecation diagnostic.
+    new_driver_behavior: |
+      All seven keys are accepted and ignored. Connect posts SQLSTATE 01000
+      ("Parameter 'LOGPATH' is deprecated and has no effect. Set LogPath in
+      sf.odbc.ini to choose the driver log directory.") and returns
+      `SQL_SUCCESS_WITH_INFO`; each key's warning names the `sf.odbc.ini` key
+      that configures the same behavior. `CLIENT_CONFIG_FILE` draws that same
+      01000 warning rather than 01S00, and no `sf_client_config.json` is read.
+      Driver logging is configured only through `sf.odbc.ini` (`LogLevel`,
+      `LogPath`, …) or troubleshooting env vars.
+    description: |
+      Connection-string logging keys cannot drive process-wide `sf.odbc.ini`
+      logging. They stay recognized so they do not draw 01S00, and they warn so
+      callers move configuration off the DSN. `CLIENT_CONFIG_FILE` is the one key
+      the old driver reads without listing among its accepted connection keys, so
+      the old driver both applies it and reports it as invalid; the new driver
+      has no `sf_client_config.json` support, so it reports the key as deprecated
+      instead. Pinned by
+      `odbc_tests/tests/e2e/logging/deprecated_connection_string_keys.cpp`.
+      iODBC's driver manager drops the SQLDriverConnect SUCCESS_WITH_INFO
+      diagnostic (BD#61); that suite still asserts the return code and checks the
+      diagnostic text on unixODBC / Windows.

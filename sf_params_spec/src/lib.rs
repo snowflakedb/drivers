@@ -300,6 +300,14 @@ pub mod param_names {
     pub const SQL_LEVEL: ParamKey = ParamKey("sqllevel");
     pub const CONNECT_FUNCTIONS: ParamKey = ParamKey("connectfunctions");
     pub const TRACING: ParamKey = ParamKey("tracing");
+    // ── Deprecated ODBC connection-string logging keys ────────────────
+    pub const LOG_LEVEL: ParamKey = ParamKey("log_level");
+    pub const LOG_PATH: ParamKey = ParamKey("log_path");
+    pub const LOG_FILE_SIZE: ParamKey = ParamKey("log_file_size");
+    pub const LOG_FILE_COUNT: ParamKey = ParamKey("log_file_count");
+    pub const CURL_VERBOSE_MODE: ParamKey = ParamKey("curl_verbose_mode");
+    pub const ENABLE_PID_LOG_FILE_NAMES: ParamKey = ParamKey("enable_pid_log_file_names");
+    pub const CLIENT_CONFIG_FILE: ParamKey = ParamKey("client_config_file");
 }
 
 /// Default `retry_max_attempts` for general HTTP calls (mirrors the `ParamDef`).
@@ -507,8 +515,9 @@ pub struct ParamDef {
     /// Human-readable description.
     pub description: &'static str,
 
-    /// If deprecated, the canonical name of the replacement parameter.
-    pub deprecated_by: Option<&'static str>,
+    /// If set, the parameter is deprecated. [`Deprecation::ReplacedBy`] names
+    /// the successor; [`Deprecation::Ignored`] carries guidance instead.
+    pub deprecated: Option<Deprecation>,
 
     /// Which API layer(s) may write this parameter. A parameter may be valid at
     /// more than one level (e.g. `QUERY_TAG` is settable both at the
@@ -554,6 +563,30 @@ pub enum Required {
     Never,
 }
 
+/// Why a [`ParamDef`] is deprecated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Deprecation {
+    /// Superseded by the named parameter, which the driver still applies.
+    ReplacedBy(&'static str),
+    /// Accepted for compatibility and no longer applied. `guidance` is a
+    /// sentence naming the supported way to get the behavior.
+    Ignored { guidance: &'static str },
+}
+
+impl Deprecation {
+    /// The diagnostic every wrapper reports for `parameter`.
+    pub fn message_for(&self, parameter: &str) -> String {
+        match self {
+            Self::ReplacedBy(replacement) => {
+                format!("Parameter '{parameter}' is deprecated, use '{replacement}' instead")
+            }
+            Self::Ignored { guidance } => {
+                format!("Parameter '{parameter}' is deprecated and has no effect. {guidance}")
+            }
+        }
+    }
+}
+
 impl ParamDef {
     pub const fn builder() -> ParamDefBuilder {
         ParamDefBuilder {
@@ -569,7 +602,7 @@ impl ParamDef {
             additional_value_type: None,
             required: Required::Never,
             default: None,
-            deprecated_by: None,
+            deprecated: None,
             visible_to: VisibleTo::All,
             ignored: false,
         }
@@ -641,7 +674,7 @@ pub struct ParamDefBuilder {
     additional_value_type: Option<ValueType>,
     required: Required,
     default: Option<DefaultValue>,
-    deprecated_by: Option<&'static str>,
+    deprecated: Option<Deprecation>,
     visible_to: VisibleTo,
     ignored: bool,
 }
@@ -707,8 +740,13 @@ impl ParamDefBuilder {
         self
     }
 
+    pub const fn deprecated(mut self, value: Deprecation) -> Self {
+        self.deprecated = Some(value);
+        self
+    }
+
     pub const fn deprecated_by(mut self, value: &'static str) -> Self {
-        self.deprecated_by = Some(value);
+        self.deprecated = Some(Deprecation::ReplacedBy(value));
         self
     }
 
@@ -760,7 +798,7 @@ impl ParamDefBuilder {
             additional_value_type: self.additional_value_type,
             required: self.required,
             default: self.default,
-            deprecated_by: self.deprecated_by,
+            deprecated: self.deprecated,
             visible_to: self.visible_to,
             ignored: self.ignored,
         }
@@ -2331,6 +2369,63 @@ static PARAM_DEFS: &[ParamDef] = &[
     ignored_odbc_param(param_names::SQL_LEVEL.as_str()),
     ignored_odbc_param(param_names::CONNECT_FUNCTIONS.as_str()),
     ignored_odbc_param(param_names::TRACING.as_str()),
+    // ── Deprecated ODBC connection-string logging keys ────────────────
+    odbc_deprecated(
+        param_names::LOG_LEVEL.as_str(),
+        aliases![Odbc; "LogLevel"],
+        "Legacy connection-string LogLevel. The driver accepts the key and does not apply it; file logging is configured in sf.odbc.ini",
+        Deprecation::Ignored {
+            guidance: "Set LogLevel in sf.odbc.ini to configure driver log verbosity.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::LOG_PATH.as_str(),
+        aliases![Odbc; "LogPath"],
+        "Legacy connection-string LogPath. The driver accepts the key and does not apply it; file logging is configured in sf.odbc.ini",
+        Deprecation::Ignored {
+            guidance: "Set LogPath in sf.odbc.ini to choose the driver log directory.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::LOG_FILE_SIZE.as_str(),
+        aliases![Odbc; "LogFileSize"],
+        "Legacy connection-string LogFileSize. The driver accepts the key and does not apply it; file logging is configured in sf.odbc.ini",
+        Deprecation::Ignored {
+            guidance: "Set LogMaxSize in sf.odbc.ini to cap the driver log file size.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::LOG_FILE_COUNT.as_str(),
+        aliases![Odbc; "LogFileCount"],
+        "Legacy connection-string LogFileCount. The driver accepts the key and does not apply it; file logging is configured in sf.odbc.ini",
+        Deprecation::Ignored {
+            guidance: "Set LogMaxCount in sf.odbc.ini to cap how many rotated driver log files are kept.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::CURL_VERBOSE_MODE.as_str(),
+        aliases![Odbc; "CURLVerboseMode"],
+        "Legacy curl verbose-mode switch. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "Set LogLevel=DEBUG in sf.odbc.ini for verbose request logging.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::ENABLE_PID_LOG_FILE_NAMES.as_str(),
+        aliases![Odbc; "EnablePidLogFileNames"],
+        "Legacy PID log-file-name switch. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "Set LogFile in sf.odbc.ini to name the driver log file.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::CLIENT_CONFIG_FILE.as_str(),
+        aliases![],
+        "Legacy sf_client_config.json path. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "Configure driver logging in sf.odbc.ini; sf_client_config.json is not read.",
+        },
+    ),
 ];
 
 const fn ignored_odbc_param(canonical: &'static str) -> ParamDef {
@@ -2340,6 +2435,28 @@ const fn ignored_odbc_param(canonical: &'static str) -> ParamDef {
         .sensitive(false)
         .auth(false)
         .description("ODBC keyword the driver accepts and does not apply.")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .ignored(true)
+        .visible_to(visible_to!(Odbc))
+        .build()
+}
+
+const fn odbc_deprecated(
+    canonical: &'static str,
+    aliases: &'static [Alias],
+    description: &'static str,
+    deprecated: Deprecation,
+) -> ParamDef {
+    ParamDef::builder()
+        .canonical_name(canonical)
+        .aliases(aliases)
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(false)
+        .description(description)
+        .deprecated(deprecated)
         .scopes(&[ParamScope::Connection])
         .used_at_connect(false)
         .mutable_after_connect(false)
@@ -2808,7 +2925,7 @@ mod tests {
             assert!(!DEF.sensitive);
             assert!(!DEF.auth);
         }
-        assert_eq!(DEF.deprecated_by, None);
+        assert_eq!(DEF.deprecated, None);
         assert_eq!(DEF.visible_to, VisibleTo::All);
         const {
             assert!(!DEF.ignored);
@@ -2842,6 +2959,47 @@ mod tests {
                 r.resolve(key).is_none(),
                 "{key} must not resolve without wrapper context"
             );
+            for wrapper in [
+                Wrapper::Jdbc,
+                Wrapper::Python,
+                Wrapper::NodeJs,
+                Wrapper::DotNet,
+            ] {
+                assert!(
+                    r.resolve_for(wrapper, key).is_none(),
+                    "{key} must not resolve for {wrapper:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn odbc_deprecated_logging_dsn_keys_resolve_only_for_odbc() {
+        let r = registry();
+        let cases: &[(&str, &str)] = &[
+            ("LogLevel", "log_level"),
+            ("LogPath", "log_path"),
+            ("LogFileSize", "log_file_size"),
+            ("LogFileCount", "log_file_count"),
+            ("CURLVerboseMode", "curl_verbose_mode"),
+            ("EnablePidLogFileNames", "enable_pid_log_file_names"),
+            ("CLIENT_CONFIG_FILE", "client_config_file"),
+        ];
+        for (key, canonical) in cases {
+            let def = r
+                .resolve_for(Wrapper::Odbc, key)
+                .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
+            assert_eq!(def.canonical_name, *canonical);
+            let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
+                panic!("{canonical} should be deprecated with guidance");
+            };
+            assert!(
+                guidance.contains("sf.odbc.ini"),
+                "{canonical} guidance should point at sf.odbc.ini, got {guidance:?}"
+            );
+            assert!(def.ignored, "{canonical} should be ignored");
+            assert_eq!(def.visible_to, visible_to!(Odbc));
+            assert!(r.resolve(canonical).is_none());
             for wrapper in [
                 Wrapper::Jdbc,
                 Wrapper::Python,

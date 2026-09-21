@@ -46,7 +46,7 @@ use crate::api::{
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
-use sf_core::config::param_registry::{Wrapper, param_names};
+use sf_core::config::param_registry::{Deprecation, Wrapper, param_names};
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::sensitive::SensitiveString;
 use snafu::{OptionExt, ResultExt};
@@ -183,14 +183,33 @@ fn deprecated_put_get_retry_warnings(params: &HashMap<String, String>) -> Vec<Wa
     aliases
         .into_iter()
         .map(|parameter| {
-            tracing::warn!(
-                parameter = %parameter,
-                replacement = PUT_GET_MAX_ATTEMPTS_ODBC_KEY,
-                "Parameter '{parameter}' is deprecated, use '{PUT_GET_MAX_ATTEMPTS_ODBC_KEY}' instead"
-            );
+            let deprecation = Deprecation::ReplacedBy(PUT_GET_MAX_ATTEMPTS_ODBC_KEY);
+            tracing::warn!(parameter = %parameter, "{}", deprecation.message_for(&parameter));
             Warning::DeprecatedParameter {
                 parameter,
-                replacement: PUT_GET_MAX_ATTEMPTS_ODBC_KEY,
+                deprecation,
+            }
+        })
+        .collect()
+}
+
+fn deprecated_registry_param_warnings(params: &HashMap<String, String>) -> Vec<Warning> {
+    let registry = sf_core::config::param_registry::registry();
+    let mut items: Vec<(String, Deprecation)> = params
+        .keys()
+        .filter_map(|key| {
+            let def = registry.resolve_for(Wrapper::Odbc, key)?;
+            Some((key.to_ascii_uppercase(), def.deprecated?))
+        })
+        .collect();
+    items.sort_by(|(left, _), (right, _)| left.cmp(right));
+    items
+        .into_iter()
+        .map(|(parameter, deprecation)| {
+            tracing::warn!(parameter = %parameter, "{}", deprecation.message_for(&parameter));
+            Warning::DeprecatedParameter {
+                parameter,
+                deprecation,
             }
         })
         .collect()
@@ -204,7 +223,8 @@ fn deprecated_put_get_retry_warnings(params: &HashMap<String, String>) -> Vec<Wa
 /// spellings. Keys unknown to the registry are forwarded uppercased as
 /// session/unknown parameters (matching how ODBC passes server session params
 /// through). Registry entries marked `ignored` (ODBC driver-manager metadata
-/// such as `DRIVER` and `DSN`, and leftover `TRACING`) are dropped.
+/// such as `DRIVER` and `DSN`, leftover `TRACING`, and deprecated
+/// connection-string logging keys such as `LogLevel`) are dropped.
 fn normalize_connection_string_option(
     key: String,
     value: String,
@@ -310,7 +330,7 @@ fn apply_global_ssl_version_override(
 /// Connection-string keys that do not resolve through the `sf_core` registry
 /// under the ODBC flavor, sorted for a stable diagnostic. A key the registry
 /// resolves stays recognized, including `ignored` entries, so leftover
-/// driver-manager and `TRACING` keywords do not draw 01S00.
+/// driver-manager, `TRACING`, and deprecated logging keywords do not draw 01S00.
 fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
     let registry = sf_core::config::param_registry::registry();
     let mut keys: Vec<String> = params
@@ -647,6 +667,7 @@ fn connect_with_params(
         oauth::redacted_param_map(&params)
     );
     warnings.extend(deprecated_put_get_retry_warnings(&params));
+    warnings.extend(deprecated_registry_param_warnings(&params));
 
     // The caller supplied literally no connection-identifying details (no
     // UID/PWD, no connection-string keys, and any named DSN resolved to
@@ -3163,7 +3184,7 @@ mod tests {
             )])),
             vec![Warning::DeprecatedParameter {
                 parameter: "PUT_MAXRETRIES".to_owned(),
-                replacement: "PUT_GET_MAX_ATTEMPTS",
+                deprecation: Deprecation::ReplacedBy("PUT_GET_MAX_ATTEMPTS"),
             }]
         );
         assert_eq!(
@@ -3174,12 +3195,78 @@ mod tests {
             vec![
                 Warning::DeprecatedParameter {
                     parameter: "GET_MAXRETRIES".to_owned(),
-                    replacement: "PUT_GET_MAX_ATTEMPTS",
+                    deprecation: Deprecation::ReplacedBy("PUT_GET_MAX_ATTEMPTS"),
                 },
                 Warning::DeprecatedParameter {
                     parameter: "PUT_MAXRETRIES".to_owned(),
-                    replacement: "PUT_GET_MAX_ATTEMPTS",
+                    deprecation: Deprecation::ReplacedBy("PUT_GET_MAX_ATTEMPTS"),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn deprecated_registry_param_warnings_cover_ignored_logging_keys() {
+        let params = HashMap::from([
+            ("LogLevel".to_owned(), "DEBUG".to_owned()),
+            ("DSN".to_owned(), "my_dsn".to_owned()),
+            ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
+            ("LogPath".to_owned(), "/tmp".to_owned()),
+        ]);
+        let messages: Vec<String> = deprecated_registry_param_warnings(&params)
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation,
+                } => deprecation.message_for(parameter),
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                "Parameter 'LOGLEVEL' is deprecated and has no effect. \
+                 Set LogLevel in sf.odbc.ini to configure driver log verbosity.",
+                "Parameter 'LOGPATH' is deprecated and has no effect. \
+                 Set LogPath in sf.odbc.ini to choose the driver log directory.",
+            ]
+        );
+    }
+
+    #[test]
+    fn deprecated_registry_param_warnings_cover_all_ignored_logging_keys() {
+        let params = parse_connection_string(
+            "LogLevel=DEBUG;LogPath=/tmp;LogFileSize=10;LogFileCount=2;CURLVerboseMode=true;EnablePidLogFileNames=true;CLIENT_CONFIG_FILE=/tmp/sf.json",
+        )
+        .unwrap();
+        let warnings = deprecated_registry_param_warnings(&params);
+        let keys: Vec<&str> = warnings
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation: Deprecation::Ignored { guidance },
+                } => {
+                    assert!(
+                        guidance.contains("sf.odbc.ini"),
+                        "{parameter} guidance should point at sf.odbc.ini, got {guidance:?}"
+                    );
+                    parameter.as_str()
+                }
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "CLIENT_CONFIG_FILE",
+                "CURLVERBOSEMODE",
+                "ENABLEPIDLOGFILENAMES",
+                "LOGFILECOUNT",
+                "LOGFILESIZE",
+                "LOGLEVEL",
+                "LOGPATH",
             ]
         );
     }
@@ -3567,6 +3654,21 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_deprecated_logging_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("LogLevel".to_owned(), "DEBUG".to_owned()),
+            ("LogPath".to_owned(), "/tmp/logs".to_owned()),
+            ("LogFileSize".to_owned(), "10".to_owned()),
+            ("LogFileCount".to_owned(), "2".to_owned()),
+            ("CURLVerboseMode".to_owned(), "true".to_owned()),
+            ("EnablePidLogFileNames".to_owned(), "true".to_owned()),
+            ("CLIENT_CONFIG_FILE".to_owned(), "/tmp/sf.json".to_owned()),
+        ]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         // A key unknown to the registry (e.g. a Snowflake server session
         // parameter) is forwarded uppercased and verbatim, so core can pass it
@@ -3910,6 +4012,15 @@ mod tests {
     #[test]
     fn unrecognized_connection_string_keys_ignores_legacy_tracing() {
         let params = parse_connection_string("DSN=my_dsn;TRACING=6").unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_deprecated_logging_keys() {
+        let params = parse_connection_string(
+            "DSN=my_dsn;LogLevel=DEBUG;LogPath=/tmp;LogFileSize=10;LogFileCount=2;CURLVerboseMode=true;EnablePidLogFileNames=true;CLIENT_CONFIG_FILE=/tmp/sf.json",
+        )
+        .unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 
