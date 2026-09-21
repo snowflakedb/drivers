@@ -357,6 +357,12 @@ pub enum BindingError {
         location: Location,
     },
 
+    #[snafu(display("SQL_DEFAULT_PARAM (-5) is not supported"))]
+    DefaultParameter {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
     Serialization {
         source: serde_json::Error,

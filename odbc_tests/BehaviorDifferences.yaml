@@ -3169,3 +3169,27 @@ behavior_differences:
       the process temp directory. Nested directories in a configured
       `PUT_TEMPDIR` are created; empty `PUT_TEMPDIR` uses the same process temp
       directory as unset.
+
+  153:
+    name: "SQL_DEFAULT_PARAM (-5) indicator returns SQLSTATE 07S01 instead of HY000"
+    status: fixed
+    type: bug
+    reviewed: true
+    status_rationale: |
+      Both drivers reject SQL_DEFAULT_PARAM with SQL_ERROR; only the SQLSTATE differs.
+      07S01 is the ODBC-specified state for this condition; HY000 was a generic fallback.
+      User-visible outcome is identical (the call fails), so no compatibility risk.
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLExecute / SQLExecDirect returns SQL_ERROR with SQLSTATE HY000 when any bound
+      parameter has StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5).
+    new_driver_behavior: |
+      SQLExecute / SQLExecDirect returns SQL_ERROR with SQLSTATE 07S01 (Invalid use of
+      default parameter) when any bound parameter has StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5).
+    description: |
+      SNOW-3990009. Both drivers reject SQL_DEFAULT_PARAM with SQL_ERROR; only the
+      SQLSTATE differs. 07S01 is the ODBC-specified state for this condition
+      (SQLBindParameter spec: if the source does not support default parameters, return
+      SQL_ERROR and SQLSTATE 07S01). HY000 was a generic fallback. User-visible outcome
+      is identical: the call fails. No SKIP_OLD_DRIVER references exist for this entry.

@@ -690,6 +690,7 @@ fn binding_error_to_sql_state(source: &BindingError) -> SqlState {
         | BindingError::InvalidCharacterValueForCast { .. } => {
             SqlState::InvalidCharacterValueForCast
         }
+        BindingError::DefaultParameter { .. } => SqlState::InvalidUseOfDefaultParameter,
         _ => SqlState::GeneralError,
     }
 }
@@ -1270,8 +1271,8 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, InvalidBooleanValueSnafu,
-        InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
+        BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, DefaultParameterSnafu,
+        InvalidBooleanValueSnafu, InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
         NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
     };
 
@@ -1818,6 +1819,19 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::DatetimeFieldOverflow);
+    }
+
+    #[test]
+    fn default_parameter_maps_to_07s01() {
+        let json_err = DefaultParameterSnafu.build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: Box::new(json_err),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidUseOfDefaultParameter
+        );
     }
 
     #[test]

@@ -22,10 +22,10 @@ use super::date::SnowflakeDate;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
 use super::error::{
-    BindingError, BindingNumericOutOfRangeSnafu, InvalidCharacterValueForCastSnafu,
-    InvalidParameterIndicesSnafu, NullPointerSnafu, NumericMagnitudeOverflowSnafu,
-    SerializationSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
-    WCharConversionSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, DefaultParameterSnafu,
+    InvalidCharacterValueForCastSnafu, InvalidParameterIndicesSnafu, NullPointerSnafu,
+    NumericMagnitudeOverflowSnafu, SerializationSnafu, UnsupportedCDataTypeSnafu,
+    UnsupportedParameterTypeSnafu, WCharConversionSnafu,
 };
 use super::interval::{
     SnowflakeIntervalDayTime, SnowflakeIntervalYearMonth, day_time_subtype_from_sql,
@@ -424,6 +424,9 @@ pub(crate) fn odbc_bindings_to_json_into(
             }
             let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
 
+            if is_default_param_indicator(&binding) {
+                return DefaultParameterSnafu.fail();
+            }
             // NULL rows are emitted as JSON `null`; the per-parameter
             // `type` is taken from the first non-NULL row (Snowflake's
             // wire format expects one type per parameter, not per cell).
@@ -513,6 +516,9 @@ pub(crate) fn odbc_bindings_to_csv_into(
 
             let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
 
+            if is_default_param_indicator(&binding) {
+                return DefaultParameterSnafu.fail();
+            }
             if is_null_indicator(&binding) {
                 continue;
             }
@@ -658,9 +664,16 @@ fn append_escaped_csv_cell(out: &mut String, s: &str) {
 // Helpers — raw pointer reads
 // =============================================================================
 
+const SQL_DEFAULT_PARAM: sql::Len = -5;
+
 fn is_null_indicator(binding: &ParameterBinding) -> bool {
     !binding.str_len_or_ind_ptr.is_null()
         && unsafe { *binding.str_len_or_ind_ptr == sql::NULL_DATA }
+}
+
+fn is_default_param_indicator(binding: &ParameterBinding) -> bool {
+    !binding.str_len_or_ind_ptr.is_null()
+        && unsafe { *binding.str_len_or_ind_ptr == SQL_DEFAULT_PARAM }
 }
 
 /// Read a fixed-size value using `read_unaligned` for ODBC pointer safety.
@@ -2371,6 +2384,40 @@ mod tests {
             std::ptr::null_mut(),
         )]);
         assert!(odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).is_err());
+    }
+
+    #[test]
+    fn should_reject_sql_default_param_indicator_in_json_binding() {
+        let val: i32 = 0;
+        let mut ind: sql::Len = SQL_DEFAULT_PARAM;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            4,
+            &mut ind,
+        )]);
+        let err =
+            odbc_bindings_to_json(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).unwrap_err();
+        assert!(matches!(err, BindingError::DefaultParameter { .. }));
+    }
+
+    #[test]
+    fn should_reject_sql_default_param_indicator_in_csv_binding() {
+        let val: i32 = 0;
+        let mut ind: sql::Len = SQL_DEFAULT_PARAM;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            4,
+            &mut ind,
+        )]);
+        let err =
+            odbc_bindings_to_csv(&apd, &ipd, apd.desc_count().max(ipd.desc_count())).unwrap_err();
+        assert!(matches!(err, BindingError::DefaultParameter { .. }));
     }
 
     #[test]

@@ -506,7 +506,9 @@ tests:
   - test_name: BindSingleValue
     ud_tests: []
   - test_name: Error on SQL_DEFAULT_PARAM
-    ud_tests: []
+    ud_tests:
+      - odbc/src/conversion/param_binding.rs::should_reject_sql_default_param_indicator_in_json_binding
+      - odbc/src/conversion/param_binding.rs::should_reject_sql_default_param_indicator_in_csv_binding
   - test_name: Exceed max number of parameters
     ud_tests: []
   - test_name: Stage binding disable
