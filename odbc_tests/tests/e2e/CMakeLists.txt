@@ -67,6 +67,7 @@ add_odbc_test(e2e_query_sf_stmt_attrs query/sf_stmt_attrs.cpp)
 add_odbc_test(e2e_query_query_tag query/query_tag.cpp)
 add_odbc_test(e2e_query_async_execution query/async_execution.cpp)
 add_odbc_test(e2e_query_large_bindings query/large_bindings.cpp)
+add_odbc_test(e2e_query_parameter_binding query/parameter_binding.cpp)
 
 # tls
 add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
@@ -82,6 +83,7 @@ add_odbc_test(e2e_session_connection_params session/connection_params.cpp)
 add_odbc_test(e2e_session_logout session/logout.cpp)
 add_odbc_test(e2e_session_proxy session/proxy.cpp)
 add_odbc_test(e2e_session_transaction session/transaction.cpp)
+add_odbc_test(e2e_session_auto_commit session/auto_commit.cpp)
 
 # types
 add_odbc_test(e2e_types_binary types/binary.cpp)

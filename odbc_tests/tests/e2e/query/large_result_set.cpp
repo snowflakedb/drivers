@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "odbc_cast.hpp"
 
 Connection get_connection() { return Connection(); }
 
@@ -58,4 +59,27 @@ TEST_CASE("should process one million row result set", "[large_result_set]") {
   REQUIRE_ODBC(ret, stmt);
   REQUIRE(num_cols == 1);
   verify_row_count_and_sequential_numbering(stmt, 1000000);
+}
+
+TEST_CASE("should process ten thousand string rows when initial chunk is empty", "[large_result_set]") {
+  // Given Snowflake client is logged in
+  auto conn = get_connection();
+
+  // When Query "select L_COMMENT from SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM limit 10000" is executed
+  auto stmt = conn.createStatement();
+  char sql[] = "select L_COMMENT from SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM limit 10000";
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(sql), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then there are 10000 rows returned
+  int row_count = 0;
+  while (true) {
+    ret = SQLFetch(stmt.getHandle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE_ODBC(ret, stmt);
+    row_count++;
+  }
+  REQUIRE(row_count == 10000);
 }

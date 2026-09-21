@@ -1,4 +1,4 @@
-@python @jdbc
+@python @jdbc @odbc
 Feature: Parameter binding
 
   # Core-specific parameter binding tests live in core/query/parameters_bind.feature.
@@ -7,13 +7,15 @@ Feature: Parameter binding
   #                        Basic type binding                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should bind basic types with positional parameters
     Given Snowflake client is logged in
     When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
     Then Result should contain values matching the bound parameters
 
-  @python_e2e @jdbc_e2e
+  # ODBC bind markers are `?` via SQLBindParameter. `:1` numeric placeholders
+  # are Python/JDBC paramstyle, not an ODBC SQL convention.
+  @python_e2e @jdbc_e2e @odbc_not_needed
   Scenario: should bind positional parameters with numeric placeholders
     Given Snowflake client is logged in
     When Query "SELECT :1, :2, :3" is executed with positional parameters [100, "test", True]
@@ -23,7 +25,7 @@ Feature: Parameter binding
   #                         Table operations                                   #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should insert single row with parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
@@ -31,7 +33,7 @@ Feature: Parameter binding
     And Query "SELECT * FROM table" is executed
     Then Result should contain the inserted row [1, "Alice", True]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should insert multiple rows sequentially with parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -39,7 +41,7 @@ Feature: Parameter binding
     And Query "SELECT * FROM table ORDER BY id" is executed
     Then Result should contain 3 rows with correct values
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should update row with parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -48,7 +50,7 @@ Feature: Parameter binding
     And Query "SELECT * FROM table" is executed
     Then Result should contain [1, "Alice Updated"]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should delete row with parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -57,7 +59,7 @@ Feature: Parameter binding
     And Query "SELECT * FROM table" is executed
     Then Result should contain only [2, "Bob"]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select with WHERE clause parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
@@ -69,13 +71,13 @@ Feature: Parameter binding
   #                            Edge cases                                      #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle NULL values in parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?, ?, ?" is executed with parameters [None, 42, None]
     Then Result should contain [NULL, 42, NULL]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle special characters in string binding
     Given Snowflake client is logged in
     When Query "SELECT ?::VARCHAR" is executed with parameter containing special characters
@@ -88,37 +90,39 @@ Feature: Parameter binding
     #   - Escaped sequences as literal: "\\n\\t\\r\\\\"
     Then Result should contain the exact special character string
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle Unicode characters in parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::VARCHAR, ?::VARCHAR" is executed with parameters ["日本語", "⛄"]
     Then Result should contain Unicode strings ["日本語", "⛄"]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should bind zero values
     Given Snowflake client is logged in
     When Query "SELECT ?, ?::FLOAT, ?::VARCHAR" is executed with parameters [0, 0.0, ""]
     Then Result should contain zero and empty values [0, 0.0, ""]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle mixed type casting with parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
     Then Result should match the type-casted parameters [42, "hello", True]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should silently ignore extra positional parameters
     Given Snowflake client is logged in
     When Query with 2 placeholders is executed with 3 arguments
     Then Query should successfully execute, ignoring the extra argument
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should raise error for too few positional parameters
     Given Snowflake client is logged in
     When Query with 3 placeholders is executed with 1 argument
     Then Error should be raised for the unbound placeholders
 
-  @python_e2e
+  # ODBC bind types are SQL C types the application chooses. There is no
+  # Python paramstyle or unrecognized-host-type ProgrammingError path.
+  @python_e2e @odbc_not_needed
   Scenario Outline: should raise error for unsupported bind type with <paramstyle>
     Given Snowflake client is logged in with <paramstyle> paramstyle
     When Query "SELECT <placeholder_sql>" is executed with a value of an unrecognized Python type
@@ -133,7 +137,7 @@ Feature: Parameter binding
   #                        Multirow binding                                   #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should insert multiple rows using multirow binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
@@ -141,19 +145,24 @@ Feature: Parameter binding
     And Query "SELECT * FROM table ORDER BY id" is executed
     Then Result should contain 3 rows with correct values
 
-  @python_e2e @jdbc_e2e
+  # ODBC array binding is SQL_ATTR_PARAMSET_SIZE plus one buffer per parameter.
+  # An empty host sequence is not an ODBC API; zero rows means SQLExecute is not
+  # called.
+  @python_e2e @jdbc_e2e @odbc_not_needed
   Scenario: should handle empty sequence in multirow binding
     Given Snowflake client is logged in
     When Multirow binding is called with empty sequence
     Then No error should be raised
 
-  @python_e2e @jdbc_e2e
+  # ODBC array binding requires every parameter array to have PARAMSET_SIZE
+  # elements. Ragged row lengths are a Python/JDBC list-of-tuples shape.
+  @python_e2e @jdbc_e2e @odbc_not_needed
   Scenario: should validate parameter length in multirow binding
     Given Snowflake client is logged in
     When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
     Then Error should be raised indicating parameter sequence length mismatch
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle NULL values in multirow binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, value VARCHAR) exists
@@ -165,13 +174,13 @@ Feature: Parameter binding
   #                        Complex scenarios                                   #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should bind many parameters
     Given Snowflake client is logged in
     When Query with 20 positional parameters is executed with values [0..19]
     Then Result should contain all 20 values in order
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should bind parameters with OR clause for multiple value matching
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists

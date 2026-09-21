@@ -9,7 +9,9 @@ Feature: Session Logout
   #                          Token Cleanup
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  # ODBC does not expose session or master tokens on the connection handle.
+  # SQLDisconnect invalidates the DBC; applications cannot observe Connection.tokens.
+  @core_e2e @python_e2e @odbc_not_needed
   Scenario Outline: should cleanup all tokens on close regardless of whether logout was sent
     # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in
@@ -37,7 +39,7 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  @core_e2e @python_e2e @odbc_e2e
   Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully

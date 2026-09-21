@@ -1,5 +1,6 @@
 #include <sql.h>
 #include <sqlext.h>
+#include <sqltypes.h>
 
 #include <atomic>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
+#include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
@@ -22,6 +24,34 @@ static ConnectionHandleWrapper connect_to_wiremock(EnvironmentHandleWrapper& env
                                    SQL_DRIVER_NOPROMPT);
   REQUIRE_ODBC(ret, dbc);
   return dbc;
+}
+
+TEST_CASE("should reject queries client-side after connection is closed", "[session][logout]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // And Simple query SELECT 1 executes successfully
+  {
+    const auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
+    REQUIRE_ODBC(ret, stmt);
+    ret = SQLFetch(stmt.getHandle());
+    REQUIRE_ODBC(ret, stmt);
+    REQUIRE(get_data<SQL_C_SLONG>(stmt, 1) == 1);
+    ret = SQLCloseCursor(stmt.getHandle());
+    REQUIRE_ODBC(ret, stmt);
+  }
+
+  // When Connection is closed
+  SQLRETURN ret = SQLDisconnect(conn.handleWrapper().getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And Query is attempted on closed connection
+  SQLHSTMT closed_stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, conn.handleWrapper().getHandle(), &closed_stmt);
+
+  // Then the query fails with a connection-closed error
+  REQUIRE_EXPECTED_ERROR(ret, "08003", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE("should be idempotent when close called multiple times", "[session][logout]") {
