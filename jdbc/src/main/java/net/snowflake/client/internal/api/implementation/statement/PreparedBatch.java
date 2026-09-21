@@ -93,17 +93,30 @@ final class PreparedBatch {
     return result;
   }
 
+  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
+    return executeWithBindings(stmt, sql, useStageBinding(stmt));
+  }
+
   /**
    * Manual try/finally rather than try-with-resources: a close-throws-after-RPC-success would
    * otherwise be caught by the outer catch and falsely mark the batch as failed.
+   *
+   * <p>Recurses at most once: a stage-binding-disabled failure on the stage-bound path retries with
+   * inline JSON bindings, whose own failure is rethrown rather than retried again.
    */
-  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
+  private long executeWithBindings(
+      SnowflakePreparedStatementImpl stmt, String sql, boolean useStage) {
     PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        useStageBinding(stmt)
+        useStage
             ? PreparedStatementCsvBindings.serialize(snapshot(), rowCount)
             : PreparedStatementBindingSerializer.serialize(snapshot());
     try {
       return stmt.executeLargeUpdateWithBindings(sql, nativeBindings);
+    } catch (CoreException e) {
+      if (useStage && e.isStageBindingDisabled()) {
+        return executeWithBindings(stmt, sql, false);
+      }
+      throw e;
     } finally {
       try {
         nativeBindings.close();

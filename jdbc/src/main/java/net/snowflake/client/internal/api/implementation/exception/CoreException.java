@@ -4,6 +4,7 @@ import java.sql.SQLException;
 import lombok.Getter;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 
 /**
  * Carrier for a core (Rust) failure surfaced through {@link
@@ -41,6 +42,11 @@ public class CoreException extends SnowflakeSQLExceptionCarrier {
       return attached;
     }
     return (error != null && error.hasQueryId()) ? error.getQueryId() : null;
+  }
+
+  /** True when the core rejected a request because the SYSTEM$BIND stage is disabled. */
+  public boolean isStageBindingDisabled() {
+    return error != null && error.getKind() == ErrorKind.ERROR_KIND_STAGE_BINDING;
   }
 
   /**
