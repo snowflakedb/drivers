@@ -539,23 +539,65 @@ fn is_reauthentication_required(code: i32, m: &LoginMethod) -> bool {
     code_is_reauth_shaped(code) && driver_can_reacquire_credential(m)
 }
 
+/// Duo TOTP length. Must match GS `DuoSecurityAuthnPlugin.DUO_SECURITY_PASSCODE_LENGTH`.
+const DUO_PASSCODE_LENGTH: usize = 6;
+
+/// Last six ASCII digits of an appended TOTP, if the suffix is a complete
+/// character sequence. `None` when the password is too short, the cut would
+/// split a multibyte character, or the suffix is not digits.
+fn split_appended_duo_passcode(password: &str) -> Option<(&str, &str)> {
+    if password.len() <= DUO_PASSCODE_LENGTH {
+        return None;
+    }
+    let split_at = password.len() - DUO_PASSCODE_LENGTH;
+    if !password.is_char_boundary(split_at) {
+        return None;
+    }
+    let (real_password, code) = password.split_at(split_at);
+    if !code.as_bytes().iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    Some((real_password, code))
+}
+
+/// If `PASSWORD` ends in 6 ASCII digits, move those digits out and keep
+/// the remainder as `PASSWORD`. Returns the peeled code when the split
+/// succeeds. Used both for the TOTP wire format and so a cached MFA
+/// token still presents the real first-factor password, not `password+totp`.
+fn peel_appended_duo_passcode(data: &mut AuthRequestData) -> Option<SensitiveString> {
+    let password = data.password.take()?;
+    if let Some((real_password, code)) = split_appended_duo_passcode(password.reveal()) {
+        data.password = Some(real_password.into());
+        Some(code.into())
+    } else {
+        data.password = Some(password);
+        None
+    }
+}
+
 /// Sets the DUO second-factor fields on the login request.
-/// Matches the behavior of the old JDBC, .NET, and ODBC drivers:
-/// always sends `EXT_AUTHN_DUO_METHOD`, defaulting to `"push"` when
-/// no passcode is provided.
+/// Always sends `EXT_AUTHN_DUO_METHOD`, defaulting to `"push"` when no
+/// passcode is provided.
+///
+/// When `passcodeInPassword` is set, peel the last 6 ASCII digits off
+/// `PASSWORD` into `PASSCODE` before the request leaves the client.
+/// That matches the working `PASSCODE=` wire format. If the password
+/// cannot be split, keep the original `PASSWORD` and send `"push"`
+/// rather than a concatenated passcode login.
 fn set_duo_authn_fields(
     data: &mut AuthRequestData,
     passcode_in_password: bool,
-    passcode: Option<SensitiveString>,
+    mut passcode: Option<SensitiveString>,
 ) {
-    data.ext_authn_duo_method = Some(if passcode.is_some() || passcode_in_password {
+    if passcode_in_password {
+        passcode = peel_appended_duo_passcode(data);
+    }
+    data.ext_authn_duo_method = Some(if passcode.is_some() {
         "passcode".to_string()
     } else {
         "push".to_string()
     });
-    if !passcode_in_password {
-        data.passcode = passcode;
-    }
+    data.passcode = passcode;
 }
 
 async fn try_get_cached_token(
@@ -945,11 +987,20 @@ pub async fn auth_request_data(
                 data.password = Some(password);
                 data.authenticator = Some(authenticator::USERNAME_PASSWORD_MFA.to_string());
 
+                // Peel before the cached-token short-circuit. MFA token cache
+                // defaults on, so a prior PASSCODE= login in the same OS
+                // keyring (auth-browser CTest/JUnit) would otherwise send
+                // `password+totp` as the first factor and GS returns 390100.
+                let mut passcode = passcode;
+                if passcode_in_password && let Some(code) = peel_appended_duo_passcode(&mut data) {
+                    passcode = Some(code);
+                }
+
                 if let Some(cached_token) = cached_mfa_token {
                     data.token = Some(cached_token);
                     data.token_from_cache_used = true;
                 } else {
-                    set_duo_authn_fields(&mut data, passcode_in_password, passcode.clone());
+                    set_duo_authn_fields(&mut data, false, passcode);
                     if store_temp_cred {
                         // Both session params are sent to enable backend switch in the future
                         let session_params =
@@ -3006,6 +3057,103 @@ mod tests {
             ID_TOKEN_INVALID_LOGIN_REQUEST,
             &mfa
         ));
+    }
+
+    #[test]
+    fn set_duo_authn_fields_splits_appended_totp_out_of_password() {
+        let mut data = AuthRequestData {
+            password: Some("secret123456".into()), // pragma: allowlist secret
+            ..Default::default()
+        };
+
+        set_duo_authn_fields(&mut data, true, None);
+
+        assert_eq!(data.ext_authn_duo_method.as_deref(), Some("passcode"));
+        assert_eq!(
+            data.password.as_ref().map(|p| p.reveal().as_str()),
+            Some("secret")
+        );
+        assert_eq!(
+            data.passcode.as_ref().map(|p| p.reveal().as_str()),
+            Some("123456")
+        );
+    }
+
+    #[test]
+    fn set_duo_authn_fields_sends_explicit_passcode_without_splitting_password() {
+        let mut data = AuthRequestData {
+            password: Some("secret".into()), // pragma: allowlist secret
+            ..Default::default()
+        };
+
+        set_duo_authn_fields(&mut data, false, Some("654321".into()));
+
+        assert_eq!(data.ext_authn_duo_method.as_deref(), Some("passcode"));
+        assert_eq!(
+            data.password.as_ref().map(|p| p.reveal().as_str()),
+            Some("secret")
+        );
+        assert_eq!(
+            data.passcode.as_ref().map(|p| p.reveal().as_str()),
+            Some("654321")
+        );
+    }
+
+    #[test]
+    fn set_duo_authn_fields_does_not_split_short_password() {
+        let mut data = AuthRequestData {
+            password: Some("123456".into()), // pragma: allowlist secret
+            ..Default::default()
+        };
+
+        set_duo_authn_fields(&mut data, true, None);
+
+        assert_eq!(data.ext_authn_duo_method.as_deref(), Some("push"));
+        assert_eq!(
+            data.password.as_ref().map(|p| p.reveal().as_str()),
+            Some("123456")
+        );
+        assert!(data.passcode.is_none());
+    }
+
+    #[test]
+    fn set_duo_authn_fields_splits_multibyte_password_plus_ascii_totp() {
+        let mut data = AuthRequestData {
+            password: Some("café123456".into()), // pragma: allowlist secret
+            ..Default::default()
+        };
+
+        set_duo_authn_fields(&mut data, true, None);
+
+        assert_eq!(data.ext_authn_duo_method.as_deref(), Some("passcode"));
+        assert_eq!(
+            data.password.as_ref().map(|p| p.reveal().as_str()),
+            Some("café")
+        );
+        assert_eq!(
+            data.passcode.as_ref().map(|p| p.reveal().as_str()),
+            Some("123456")
+        );
+    }
+
+    #[test]
+    fn peel_appended_duo_passcode_does_not_set_second_factor_fields() {
+        // Cached MFA login peels first-factor PASSWORD but must not attach
+        // PASSCODE / EXT_AUTHN_DUO_METHOD — the cached token is the second factor.
+        let mut data = AuthRequestData {
+            password: Some("secret123456".into()), // pragma: allowlist secret
+            ..Default::default()
+        };
+
+        let code = peel_appended_duo_passcode(&mut data);
+
+        assert_eq!(
+            data.password.as_ref().map(|p| p.reveal().as_str()),
+            Some("secret")
+        );
+        assert_eq!(code.as_ref().map(|p| p.reveal().as_str()), Some("123456"));
+        assert!(data.ext_authn_duo_method.is_none());
+        assert!(data.passcode.is_none());
     }
 
     struct StubTokenCache {

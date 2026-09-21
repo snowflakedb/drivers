@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.authentication;
 
+import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,9 +51,16 @@ class NativeOktaTests implements WithQueryUtils, WithConnect {
     // Then Connection fails with authentication error
     SQLException exception = assertThrows(SQLException.class, connect);
     String msg = exception.getMessage().toLowerCase();
-    assertTrue(
-        msg.contains("okta"),
-        () -> "Expected error to mention Okta, got: " + exception.getMessage());
+    if (isNewDriver()) {
+      assertTrue(
+          msg.contains("okta"),
+          () -> "Expected error to mention Okta, got: " + exception.getMessage());
+    } else {
+      // Legacy JDBC surfaces Okta's 401 as a communication error rather than naming Okta.
+      assertTrue(
+          msg.contains("okta") || msg.contains("http status=401"),
+          () -> "Expected Okta auth failure or HTTP 401, got: " + exception.getMessage());
+    }
   }
 
   @Test

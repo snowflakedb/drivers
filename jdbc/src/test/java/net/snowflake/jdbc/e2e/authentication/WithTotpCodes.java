@@ -16,12 +16,10 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import org.junit.jupiter.api.Assumptions;
@@ -37,54 +35,37 @@ interface WithTotpCodes extends WithNodeScripts {
   int MIN_TOTP_VALIDITY_SECONDS = 8;
   int MAX_TOTP_WINDOWS = 3;
 
-  // JVM-wide on purpose: Snowflake rejects TOTP replay within a time window, so any test in this
-  // process — including parallel runs — must not resend a code another test already used.
-  Set<String> USED_TOTP_CODES = ConcurrentHashMap.newKeySet();
+  // JVM-wide on purpose: Snowflake rejects TOTP replay of the same 30s step, so any test
+  // in this process — including parallel runs — must not submit another passcode from a
+  // window that was already used. Passcodes themselves are never stored.
+  Set<Long> USED_TOTP_WINDOWS = ConcurrentHashMap.newKeySet();
   // Circuit breaker for the shared MFA Jenkins user.
   // 394512: mark + skip this test. Budget exhaust after >=1 submit: mark + fail.
   // Zero submits: fail without marking.
   AtomicBoolean SHARED_MFA_EXHAUSTED = new AtomicBoolean();
-
-  final class CachedTotp {
-    final long window;
-    final String seed;
-    final String code;
-
-    CachedTotp(long window, String seed, String code) {
-      this.window = window;
-      this.seed = seed;
-      this.code = code;
-    }
-
-    boolean matches(long otherWindow, String otherSeed) {
-      return window == otherWindow && Objects.equals(seed, otherSeed);
-    }
-  }
-
-  AtomicReference<CachedTotp> CACHED_TOTP = new AtomicReference<>();
 
   default String acquireTotpPasscode(String seed) {
     Assumptions.assumeFalse(
         isSharedMfaExhausted(), "Shared MFA account already exhausted TOTP retries in this run");
     int advances = 0;
     while (advances < MAX_TOTP_WINDOWS) {
-      String passcode = freshTotpCode(seed);
-      if (passcode != null) {
-        return passcode;
+      MintedTotp minted = freshTotpCode(seed);
+      if (minted != null) {
+        return minted.code;
       }
       // Parameterized form: the reference driver has no info(String) overload.
-      logger.info("[mfa-helper] {}", "No unused codes in this window, advancing");
+      logger.info("[mfa-helper] {}", "Current TOTP window already used, advancing");
       sleepToNextTotpWindow();
       advances++;
     }
     throw new RuntimeException(
-        "No unused TOTP passcodes available after " + MAX_TOTP_WINDOWS + " windows");
+        "Could not mint a TOTP for an unused window after " + MAX_TOTP_WINDOWS + " windows");
   }
 
   /**
-   * Connect with USERNAME_PASSWORD_MFA, retrying once per unused TOTP submit. A code already used
-   * in this JVM is skipped (does not consume the submit budget); after a retryable rejection, wait
-   * only if still in that window rather than submitting adjacent-window codes.
+   * Connect with USERNAME_PASSWORD_MFA, minting a TOTP per attempt. A window already used in this
+   * JVM is skipped (does not consume the submit budget); after a retryable rejection, wait only if
+   * still in that window, then mint a new passcode.
    */
   default Connection connectWithTotpRetry(
       Properties baseProps, String totpSeed, boolean passcodeInPassword) {
@@ -97,18 +78,19 @@ interface WithTotpCodes extends WithNodeScripts {
     int advances = 0;
 
     while (submits < MAX_TOTP_WINDOWS) {
-      String passcode = freshTotpCode(totpSeed);
-      if (passcode == null) {
+      MintedTotp minted = freshTotpCode(totpSeed);
+      if (minted == null) {
         if (advances >= MAX_TOTP_WINDOWS) {
           break;
         }
-        logger.info("[mfa-helper] {}", "No unused codes in this window, advancing");
+        logger.info("[mfa-helper] {}", "Current TOTP window already used, advancing");
         sleepToNextTotpWindow();
         advances++;
         continue;
       }
 
-      long windowId = totpWindowId();
+      String passcode = minted.code;
+      long windowId = minted.windowId;
       submits++;
 
       Properties props = new Properties();
@@ -141,7 +123,8 @@ interface WithTotpCodes extends WithNodeScripts {
     }
 
     if (submits == 0) {
-      throw new RuntimeException("No unused TOTP passcodes after " + MAX_TOTP_WINDOWS + " windows");
+      throw new RuntimeException(
+          "Could not mint a TOTP for an unused window after " + MAX_TOTP_WINDOWS + " windows");
     }
     markSharedMfaExhausted();
     throw new RuntimeException(
@@ -154,6 +137,7 @@ interface WithTotpCodes extends WithNodeScripts {
     if (msg == null) {
       return false;
     }
+    // 390100 is first-factor rejection, not a bad TOTP. Do not retry it.
     return msg.contains("TOTP Invalid")
         || msg.toLowerCase(Locale.ROOT).contains("invalid passcode");
   }
@@ -180,9 +164,25 @@ interface WithTotpCodes extends WithNodeScripts {
     return System.currentTimeMillis() / 1000 / TOTP_STEP_SECONDS;
   }
 
-  static String freshTotpCode(String seed) {
+  /** Passcode plus the 30s window the digits belong to. */
+  class MintedTotp {
+    final String code;
+    final long windowId;
+
+    MintedTotp(String code, long windowId) {
+      this.code = code;
+      this.windowId = windowId;
+    }
+  }
+
+  /**
+   * Mint a TOTP and claim the window that code belongs to. Sample the window id after generate:
+   * totpGenerator.js (and the pre-generate boundary wait) can cross a 30s step.
+   */
+  static MintedTotp freshTotpCode(String seed) {
     String code = getCurrentTotpCode(seed);
-    return claimTotpCode(code) ? code : null;
+    long windowId = totpWindowId();
+    return claimTotpWindow(windowId) ? new MintedTotp(code, windowId) : null;
   }
 
   static String mfaBuildTag() {
@@ -201,8 +201,8 @@ interface WithTotpCodes extends WithNodeScripts {
     return Paths.get(root, ".ud-mfa-totp-state", mfaBuildTag());
   }
 
-  static Path usedCodesPath() {
-    return mfaStateDir().resolve("ud-mfa-used-totp-codes");
+  static Path usedWindowsPath() {
+    return mfaStateDir().resolve("ud-mfa-used-totp-windows");
   }
 
   static Path exhaustedFlagPath() {
@@ -227,12 +227,13 @@ interface WithTotpCodes extends WithNodeScripts {
     }
   }
 
-  static boolean fileContainsCode(Path path, String code) throws IOException {
+  static boolean fileContainsWindow(Path path, long windowId) throws IOException {
     if (!Files.exists(path)) {
       return false;
     }
+    String expected = Long.toString(windowId);
     for (String line : Files.readAllLines(path, StandardCharsets.UTF_8)) {
-      if (code.equals(line.trim())) {
+      if (expected.equals(line.trim())) {
         return true;
       }
     }
@@ -240,16 +241,16 @@ interface WithTotpCodes extends WithNodeScripts {
   }
 
   /**
-   * Exclusive check-then-append within this JVM; Java channel.lock() and ODBC/Python flock() are
-   * independent lock spaces on Linux.
+   * Exclusive check-then-append of a TOTP window id within this JVM; Java channel.lock() and
+   * ODBC/Python flock() are independent lock spaces on Linux.
    */
-  static boolean claimTotpCode(String code) {
-    if (USED_TOTP_CODES.contains(code)) {
+  static boolean claimTotpWindow(long windowId) {
+    if (USED_TOTP_WINDOWS.contains(windowId)) {
       return false;
     }
     try {
       Files.createDirectories(mfaStateDir());
-      Path path = usedCodesPath();
+      Path path = usedWindowsPath();
       try (FileChannel channel =
               FileChannel.open(
                   path,
@@ -257,28 +258,23 @@ interface WithTotpCodes extends WithNodeScripts {
                   StandardOpenOption.READ,
                   StandardOpenOption.WRITE);
           FileLock ignored = channel.lock()) {
-        if (fileContainsCode(path, code)) {
-          USED_TOTP_CODES.add(code);
+        if (fileContainsWindow(path, windowId)) {
+          USED_TOTP_WINDOWS.add(windowId);
           return false;
         }
         Files.write(
-            path, (code + "\n").getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
-        USED_TOTP_CODES.add(code);
+            path, (windowId + "\n").getBytes(StandardCharsets.UTF_8), StandardOpenOption.APPEND);
+        USED_TOTP_WINDOWS.add(windowId);
         return true;
       }
     } catch (IOException e) {
-      logger.warn("[mfa-helper] claimTotpCode failed: {}", e.getMessage());
+      logger.warn("[mfa-helper] claimTotpWindow failed: {}", e.getMessage());
       return false;
     }
   }
 
   static String getCurrentTotpCode(String seed) {
     waitIfNearTotpBoundary();
-    long window = totpWindowId();
-    CachedTotp cached = CACHED_TOTP.get();
-    if (cached != null && cached.matches(window, seed)) {
-      return cached.code;
-    }
     List<String> codes =
         WithNodeScripts.runNodeCapture(TOTP_GENERATOR_SCRIPT, 40, "SNOWFLAKE_AUTH_MFA_SEED", seed);
     List<String> tokens = new ArrayList<>();
@@ -288,14 +284,11 @@ interface WithTotpCodes extends WithNodeScripts {
       }
     }
     if (tokens.size() == 1) {
-      CACHED_TOTP.set(new CachedTotp(totpWindowId(), seed, tokens.get(0)));
       return tokens.get(0);
     }
     if (tokens.size() == 2 || tokens.size() == 3) {
       // Image :4: past/current/future or current/future. Second-to-last is current.
-      String code = tokens.get(tokens.size() - 2);
-      CACHED_TOTP.set(new CachedTotp(totpWindowId(), seed, code));
-      return code;
+      return tokens.get(tokens.size() - 2);
     }
     throw new RuntimeException(
         "totpGenerator.js produced " + tokens.size() + " 6-digit tokens; expected 1 or 2-3");

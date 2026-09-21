@@ -61,7 +61,9 @@ pub fn login_success_passcode_in_password() -> Mock {
         .and(body_partial_json(json!({
             "data": {
                 "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
-                "EXT_AUTHN_DUO_METHOD": "passcode"
+                "EXT_AUTHN_DUO_METHOD": "passcode",
+                "PASSWORD": "test_password",
+                "PASSCODE": "123456"
             }
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -83,6 +85,31 @@ pub fn login_success_with_cached_token() -> Mock {
             "data": {
                 "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
                 "TOKEN": "cached_mfa_token"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_session_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345
+            }
+        })))
+}
+
+/// Cached MFA login that also requires the real first-factor password.
+///
+/// `login_success_with_cached_token` only matches TOKEN, so it would still
+/// succeed if the client sent `password+totp` as PASSWORD. This mapping
+/// rejects that: PASSWORD must already be peeled.
+pub fn login_success_with_cached_token_and_password() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
+                "TOKEN": "cached_mfa_token",
+                "PASSWORD": "test_password"
             }
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({

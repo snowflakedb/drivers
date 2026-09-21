@@ -45,6 +45,10 @@
 // (/externalbrowser/totpGenerator.js generates TOTP passcodes for the MFA test user).
 // Mirrors python/tests/e2e/authentication/auth_helpers.py.
 //
+// Each connect mints a passcode at execution time. The digits are never written to
+// disk. Catch2 processes only share TOTP window ids so Snowflake does not see a
+// replay of the same 30s step.
+//
 // Callers must invoke ensure_driver_installed() before allocating an ODBC environment
 // handle — unixODBC reads ODBCSYSINI at SQLAllocHandle(SQL_HANDLE_ENV) time.
 
@@ -56,10 +60,12 @@ constexpr int TOTP_STEP_SECONDS = 30;
 // internally; callers must skip a soon-to-expire current window themselves.
 constexpr int MIN_TOTP_VALIDITY_SECONDS = 8;
 
-inline std::set<std::string>& used_totp_codes() {
-  static std::set<std::string> codes;
-  return codes;
+#ifdef _WIN32
+inline std::set<long>& used_totp_windows() {
+  static std::set<long> windows;
+  return windows;
 }
+#endif
 
 inline std::string mfa_build_tag() {
   const char* tag = std::getenv("BUILD_TAG");
@@ -108,7 +114,7 @@ inline void ensure_mfa_state_dir() {
 #endif
 }
 
-inline std::string used_codes_path() { return mfa_state_dir() + "/ud-mfa-used-totp-codes"; }
+inline std::string used_windows_path() { return mfa_state_dir() + "/ud-mfa-used-totp-windows"; }
 
 inline std::string exhausted_flag_path() { return mfa_state_dir() + "/ud-mfa-connect-exhausted"; }
 
@@ -156,37 +162,54 @@ inline void mark_shared_mfa_exhausted() {
 #endif
 }
 
-inline bool claim_totp_code(const std::string& code) {
+inline bool parse_totp_window_id(const std::string& line, long& window_id) {
+  if (line.empty()) {
+    return false;
+  }
+  char* end = nullptr;
+  errno = 0;
+  const long value = std::strtol(line.c_str(), &end, 10);
+  if (errno != 0 || end == line.c_str() || *end != '\0') {
+    return false;
+  }
+  window_id = value;
+  return true;
+}
+
+// Records that this 30s TOTP step was submitted. Stores the window id only —
+// never the one-time passcode.
+inline bool claim_totp_window(long window_id) {
 #ifndef _WIN32
   ensure_mfa_state_dir();
-  FileLock lock(used_codes_path());
-  std::set<std::string> codes;
-  std::ifstream in(used_codes_path());
+  FileLock lock(used_windows_path());
+  std::set<long> windows;
+  std::ifstream in(used_windows_path());
   std::string line;
   while (std::getline(in, line)) {
     while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
       line.pop_back();
     }
-    if (!line.empty()) {
-      codes.insert(line);
+    long parsed = 0;
+    if (parse_totp_window_id(line, parsed)) {
+      windows.insert(parsed);
     }
   }
   in.close();
-  if (codes.count(code) != 0) {
+  if (windows.count(window_id) != 0) {
     return false;
   }
-  std::ofstream out(used_codes_path(), std::ios::app);
+  std::ofstream out(used_windows_path(), std::ios::app);
   if (!out) {
     return false;
   }
-  out << code << '\n';
+  out << window_id << '\n';
   return static_cast<bool>(out);
 #else
-  auto& codes = used_totp_codes();
-  if (codes.count(code) != 0) {
+  auto& windows = used_totp_windows();
+  if (windows.count(window_id) != 0) {
     return false;
   }
-  codes.insert(code);
+  windows.insert(window_id);
   return true;
 #endif
 }
@@ -335,9 +358,16 @@ inline std::string get_current_totp_code(const std::string& seed) {
   return codes.size() == 1 ? codes.front() : codes[codes.size() - 2];
 }
 
-inline std::string fresh_totp_code(const std::string& seed) {
+inline std::pair<std::string, long> fresh_totp_code(const std::string& seed) {
+  // Sample the window id after generate: totpGenerator.js (and the pre-generate
+  // boundary wait) can cross a 30s step. The returned digits belong to the
+  // window that is current when generation finishes.
   const std::string code = get_current_totp_code(seed);
-  return claim_totp_code(code) ? code : "";
+  const long window_id = totp_window_id();
+  if (!claim_totp_window(window_id)) {
+    return {"", 0};
+  }
+  return {code, window_id};
 }
 
 inline void sleep_to_next_totp_window() {
@@ -357,14 +387,14 @@ inline void sleep_if_still_in_window(long window_id) {
 inline std::string acquire_totp_passcode(const std::string& seed, int max_windows = 3) {
   int advances = 0;
   while (advances < max_windows) {
-    const std::string passcode = fresh_totp_code(seed);
-    if (!passcode.empty()) {
-      return passcode;
+    const auto minted = fresh_totp_code(seed);
+    if (!minted.first.empty()) {
+      return minted.first;
     }
     sleep_to_next_totp_window();
     ++advances;
   }
-  FAIL("No unused TOTP passcodes available after " << max_windows << " windows");
+  FAIL("Could not mint a TOTP for an unused window after " << max_windows << " windows");
   return "";
 }
 
@@ -377,6 +407,7 @@ inline bool message_has_ci_insensitive(const std::string& msg, const char* needl
 }
 
 inline bool is_totp_retryable_error(const std::vector<DiagRec>& records) {
+  // 390100 is first-factor rejection, not a bad TOTP. Do not retry it.
   for (const auto& record : records) {
     const std::string& msg = record.messageText;
     if (msg.find("TOTP Invalid") != std::string::npos || message_has_ci_insensitive(msg, "invalid passcode")) {
@@ -431,8 +462,8 @@ inline ConnectionHandleWrapper connect_with_totp_retry(
   int submits = 0;
   int advances = 0;
   while (submits < max_windows) {
-    const std::string passcode = fresh_totp_code(totp_seed);
-    if (passcode.empty()) {
+    const auto minted = fresh_totp_code(totp_seed);
+    if (minted.first.empty()) {
       if (advances >= max_windows) {
         break;
       }
@@ -441,7 +472,8 @@ inline ConnectionHandleWrapper connect_with_totp_retry(
       continue;
     }
 
-    const long window_id = totp_window_id();
+    const std::string& passcode = minted.first;
+    const long window_id = minted.second;
     ++submits;
     const std::string password = passcode_in_password ? base_password + passcode : base_password;
     const std::string* passcode_ptr = passcode_in_password ? nullptr : &passcode;
@@ -472,7 +504,7 @@ inline ConnectionHandleWrapper connect_with_totp_retry(
   }
 
   if (submits == 0) {
-    FAIL("No unused TOTP passcodes after " << max_windows << " windows");
+    FAIL("Could not mint a TOTP for an unused window after " << max_windows << " windows");
   }
   mark_shared_mfa_exhausted();
   FAIL("Failed to connect after " << submits << " TOTP submits. Last error: " << last_error);

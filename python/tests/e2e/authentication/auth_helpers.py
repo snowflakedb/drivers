@@ -109,7 +109,11 @@ def clean_browser_processes():
 
 
 def is_totp_retryable_error(exc: Exception) -> bool:
-    """Return True when the error indicates an expired/invalid TOTP code."""
+    """True when a new TOTP should be minted and the connect retried.
+
+    390100 is first-factor rejection (incorrect username or password), not a
+    bad TOTP. Retrying it burns unused windows and does not recover.
+    """
     msg = str(exc)
     return "TOTP Invalid" in msg or "invalid passcode" in msg.lower()
 
@@ -124,18 +128,15 @@ TOTP_STEP_SECONDS = 30
 # internally; callers must skip a soon-to-expire current window themselves.
 MIN_TOTP_VALIDITY_SECONDS = 8
 
-# Passcodes already sent to Snowflake in this pytest process. Snowflake rejects
-# TOTP replay within a time window, so serial MFA tests must not reuse codes.
-_USED_TOTP_CODES: set[str] = set()
+# TOTP windows already submitted in this pytest process. Snowflake rejects
+# replay of the same 30s step; passcodes themselves are never stored.
+_USED_TOTP_WINDOWS: set[int] = set()
 # Circuit breaker for the shared MFA Jenkins user.
 # - 394512: mark + skip this test (infra lockout). Later tests skip.
 # - Retry-budget exhaustion after >=1 Snowflake submit: mark + fail this
 #   test (keep CI red). Later tests skip so they do not spend 3 more attempts.
 # - Zero submits: fail without marking (Snowflake was not hit).
 _MFA_CONNECT_EXHAUSTED = False
-_CACHED_TOTP_WINDOW: int | None = None
-_CACHED_TOTP_SEED: str | None = None
-_CACHED_TOTP_CODE: str | None = None
 
 
 def _totp_window_id(now: float | None = None) -> int:
@@ -164,12 +165,8 @@ def _parse_current_totp_code(stdout: str) -> str:
 
 
 def get_current_totp_code(seed: str) -> str:
-    """Generate the currently valid TOTP code via the browser helper."""
-    global _CACHED_TOTP_WINDOW, _CACHED_TOTP_SEED, _CACHED_TOTP_CODE
+    """Mint the currently valid TOTP code via the browser helper. Not cached."""
     _wait_if_near_totp_boundary()
-    window = _totp_window_id()
-    if _CACHED_TOTP_CODE is not None and _CACHED_TOTP_WINDOW == window and _CACHED_TOTP_SEED == seed:
-        return _CACHED_TOTP_CODE
     result = subprocess.run(
         ["node", TOTP_GENERATOR_SCRIPT, seed],
         timeout=40,
@@ -180,12 +177,7 @@ def get_current_totp_code(seed: str) -> str:
         stderr = result.stderr.strip()
         raise RuntimeError(f"totpGenerator.js failed (rc={result.returncode}): {stderr}")
 
-    code = _parse_current_totp_code(result.stdout)
-    # Window after generate: Node may have waited into the next step.
-    _CACHED_TOTP_WINDOW = _totp_window_id()
-    _CACHED_TOTP_SEED = seed
-    _CACHED_TOTP_CODE = code
-    return code
+    return _parse_current_totp_code(result.stdout)
 
 
 def _mfa_build_tag() -> str:
@@ -197,8 +189,8 @@ def _mfa_state_dir() -> Path:
     return Path(root) / ".ud-mfa-totp-state" / _mfa_build_tag()
 
 
-def _used_codes_path() -> Path:
-    return _mfa_state_dir() / "ud-mfa-used-totp-codes"
+def _used_windows_path() -> Path:
+    return _mfa_state_dir() / "ud-mfa-used-totp-windows"
 
 
 def _exhausted_flag_path() -> Path:
@@ -220,8 +212,8 @@ def _mark_shared_mfa_exhausted() -> None:
 
 
 @contextmanager
-def _used_codes_lock():
-    path = _used_codes_path()
+def _used_windows_lock():
+    path = _used_windows_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+") as handle:
         if fcntl is not None:
@@ -233,26 +225,49 @@ def _used_codes_lock():
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _claim_totp_code(code: str) -> bool:
-    if code in _USED_TOTP_CODES:
+def _parse_window_ids(text: str) -> set[int]:
+    windows: set[int] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            windows.add(int(line))
+        except ValueError:
+            continue
+    return windows
+
+
+def _claim_totp_window(window_id: int) -> bool:
+    if window_id in _USED_TOTP_WINDOWS:
         return False
     try:
-        with _used_codes_lock() as handle:
+        with _used_windows_lock() as handle:
             handle.seek(0)
-            if code in {line.strip() for line in handle.read().splitlines()}:
-                _USED_TOTP_CODES.add(code)
+            used = _parse_window_ids(handle.read())
+            if window_id in used:
+                _USED_TOTP_WINDOWS.add(window_id)
                 return False
-            handle.write(code + "\n")
+            handle.write(f"{window_id}\n")
             handle.flush()
     except OSError:
         return False
-    _USED_TOTP_CODES.add(code)
+    _USED_TOTP_WINDOWS.add(window_id)
     return True
 
 
-def _fresh_totp_code(seed: str) -> str | None:
+def _fresh_totp_code(seed: str) -> tuple[str, int] | None:
+    """Mint a TOTP and claim the window that code belongs to.
+
+    Sample the window id *after* generate: totpGenerator.js (and the
+    pre-generate boundary wait) can cross a 30s step, and the returned
+    digits belong to the window that is current when generation finishes.
+    """
     code = get_current_totp_code(seed)
-    return code if _claim_totp_code(code) else None
+    window_id = _totp_window_id()
+    if not _claim_totp_window(window_id):
+        return None
+    return code, window_id
 
 
 def _sleep_to_next_totp_window() -> None:
@@ -270,16 +285,16 @@ def _sleep_if_still_in_window(window_id: int) -> None:
 
 
 def acquire_totp_passcode(seed: str, *, max_windows: int = 3) -> str:
-    """Return one unused TOTP passcode, advancing to the next window if needed."""
+    """Mint a TOTP for an unused 30s window, advancing if the current step is taken."""
     advances = 0
     while advances < max_windows:
-        passcode = _fresh_totp_code(seed)
-        if passcode is not None:
-            return passcode
-        print("[mfa-helper] No unused codes in this window, advancing")
+        minted = _fresh_totp_code(seed)
+        if minted is not None:
+            return minted[0]
+        print("[mfa-helper] Current TOTP window already used, advancing")
         _sleep_to_next_totp_window()
         advances += 1
-    raise RuntimeError(f"No unused TOTP passcodes available after {max_windows} windows")
+    raise RuntimeError(f"Could not mint a TOTP for an unused window after {max_windows} windows")
 
 
 def connect_with_totp_retry(
@@ -290,11 +305,12 @@ def connect_with_totp_retry(
     max_windows: int = 3,
     **connect_kwargs,
 ):
-    """Connect using USERNAME_PASSWORD_MFA with TOTP dedup across tests.
+    """Connect using USERNAME_PASSWORD_MFA, minting a TOTP per attempt.
 
-    Snowflake rejects reused TOTP codes within a time window. A code already
-    consumed in this pytest process is skipped (does not consume the submit
-    budget); after a retryable rejection, wait only if still in that window.
+    Snowflake rejects replay of the same 30s TOTP step. A window already
+    submitted in this pytest process is skipped (does not consume the submit
+    budget). After a retryable rejection, wait only if still in that window,
+    then mint a new passcode.
     """
     if _shared_mfa_exhausted():
         pytest.skip("Shared MFA account already exhausted TOTP retries in this run")
@@ -305,16 +321,16 @@ def connect_with_totp_retry(
     advances = 0
 
     while submits < max_windows:
-        passcode = _fresh_totp_code(totp_seed)
-        if passcode is None:
+        minted = _fresh_totp_code(totp_seed)
+        if minted is None:
             if advances >= max_windows:
                 break
-            print("[mfa-helper] No unused codes in this window, advancing")
+            print("[mfa-helper] Current TOTP window already used, advancing")
             _sleep_to_next_totp_window()
             advances += 1
             continue
 
-        window_id = _totp_window_id()
+        passcode, window_id = minted
         submits += 1
         kwargs = dict(connect_kwargs)
         if passcode_in_password:
@@ -337,7 +353,7 @@ def connect_with_totp_retry(
                 _sleep_if_still_in_window(window_id)
 
     if submits == 0:
-        raise AssertionError(f"No unused TOTP passcodes after {max_windows} windows")
+        raise AssertionError(f"Could not mint a TOTP for an unused window after {max_windows} windows")
     _mark_shared_mfa_exhausted()
     raise AssertionError(f"Failed to connect after {submits} TOTP submits. Last error: {last_error}") from last_error
 

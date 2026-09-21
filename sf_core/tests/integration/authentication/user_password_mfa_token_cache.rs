@@ -81,6 +81,56 @@ fn should_authenticate_with_cached_mfa_token_via_wiremock() {
 }
 
 #[test]
+fn should_peel_appended_totp_before_using_cached_mfa_token() {
+    // Given an MFA token is already cached and the caller appended TOTP to
+    // the password with passcodeInPassword=true
+    let user = "mfa_cache_passcode_in_password_user";
+    let fixture = MfaTestFixture::with_user(user);
+    fixture.set_option("client_store_temporary_credential", "true");
+    fixture.set_option("password", "test_password123456"); // pragma: allowlist secret
+    fixture.set_option("passcodeInPassword", "true");
+    fixture
+        .mock
+        .mount(mfa::login_success_with_cached_token_and_password());
+
+    let cache = KeyringTokenCache::new().expect("token cache should be available");
+    let server_url = fixture.mock.http_url();
+    let key = CacheKey {
+        token_type: TokenType::MfaToken,
+        idp: String::new(),
+        snowflake: normalize_url(&server_url),
+        username: normalize_identifier(user),
+        role: String::new(),
+    };
+    cache
+        .add_token(&key, "cached_mfa_token")
+        .expect("failed to seed token cache");
+
+    struct CacheCleanup<'a> {
+        cache: &'a KeyringTokenCache,
+        key: &'a CacheKey,
+    }
+    impl Drop for CacheCleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.cache.remove_token(self.key);
+        }
+    }
+    let _cleanup = CacheCleanup {
+        cache: &cache,
+        key: &key,
+    };
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Login succeeds with the real password (not password+totp) plus the cached token
+    fixture.expecting_success_result(
+        result,
+        "cached MFA login with passcodeInPassword to peel TOTP first",
+    );
+}
+
+#[test]
 fn should_rotate_cached_mfa_token_across_successive_logins() {
     // Given Wiremock is running with three successive MFA login mappings: a
     // fresh (no-cache) DUO push login that seeds the first token, a login
