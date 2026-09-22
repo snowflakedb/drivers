@@ -16,7 +16,38 @@ pub(crate) struct StsCallerIdentityProvider;
 impl CallerIdentityProvider for StsCallerIdentityProvider {
     fn caller_identity_arn(&self) -> BoxFuture<'_, Option<String>> {
         async move {
-            let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+            // Route the SDK through the driver's reqwest transport rather than
+            // aws-smithy-http-client's bundled TLS stack, for the same reason
+            // as `workload_identity::aws::sdk_config_with_shared_transport`:
+            // the bundled stack resolves its own crypto backend at runtime.
+            // Built here rather than sharing the detector's general client
+            // because SDK calls need the SDK-constrained transport (no
+            // redirects/gzip/HTTP2 -- see `tls::aws_http_client`); default TLS
+            // matches the plain client platform detection already uses.
+            let sdk_http =
+                match crate::tls::aws_http_client::AwsSdkReqwestClient::with_default_tls() {
+                    Ok(sdk_http) => sdk_http,
+                    Err(err) => {
+                        // `warn`, not `debug`: the probe reports absence of an
+                        // AWS identity, so a transport failure here is recorded
+                        // as "not running on AWS". That is a wrong answer rather
+                        // than a missing one, and in a `fips-tls` build the
+                        // likeliest cause is a refused crypto provider, which
+                        // says nothing about the platform.
+                        tracing::warn!(
+                            error = ?err,
+                            "failed to build STS HTTP client; has_aws_identity reported as false, \
+                             which may misattribute the platform",
+                        );
+                        return None;
+                    }
+                };
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+                    sdk_http,
+                ))
+                .load()
+                .await;
             let client = aws_sdk_sts::Client::new(&config);
             match client.get_caller_identity().send().await {
                 Ok(response) => response.arn,

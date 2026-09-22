@@ -4,6 +4,7 @@
 
 New features:
 
+- Added an opt-in `fips-tls` build that routes TLS through AWS-LC-FIPS and fails closed if a non-FIPS crypto provider is active. (snowflakedb/drivers#2055)
 - Added a `put_compress_level` connection setting that selects the gzip level (0–9) used when PUT AUTO_COMPRESS rewrites a file. (snowflakedb/drivers#2083)
 - Added a `put_tempdir` connection setting that selects the directory for gzip tempfiles created by PUT AUTO_COMPRESS. Unset and empty values keep the process temp directory. Nested directories are created. (snowflakedb/drivers#2084)
 - Added a `proxy_scheme` connection parameter so the hop to the proxy can use HTTPS. An `https://` proxy URL and JDBC `proxyProtocol=https` now open TLS to the proxy instead of HTTP. (snowflakedb/drivers#2013)

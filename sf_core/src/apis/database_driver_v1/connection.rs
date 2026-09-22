@@ -495,6 +495,7 @@ impl DatabaseDriverV1 {
                     &retry_policy,
                     prebuilt_credentials,
                     xp_backend.as_deref(),
+                    self.crl_worker.clone(),
                 );
 
                 let login_result = if let Some(budget) = timeout_config.login_timeout {

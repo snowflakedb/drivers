@@ -1990,11 +1990,12 @@ async fn create_s3_client(
     // through one shared implementation. Fails the build on a bad custom root
     // store or CRL verifier, matching Azure/GCS.
     let http_client = cloud_http::shared_or_build_client(shared, || {
-        crate::tls::aws_http_client::build_s3_reqwest_client(
+        crate::tls::aws_http_client::AwsSdkReqwestClient::build(
             &stage_info.tls_config,
             Some(&stage_info.proxy_config),
             stage_info.crl_worker.clone(),
         )
+        .map(crate::tls::aws_http_client::AwsSdkReqwestClient::into_shared)
     })
     .map_err(CreateS3ClientError::HttpClient)?;
 
@@ -2004,7 +2005,7 @@ async fn create_s3_client(
         .retry_config(to_aws_retry_config(policy))
         .timeout_config(to_aws_timeout_config(policy))
         .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
-            http_client,
+            crate::tls::aws_http_client::AwsSdkReqwestClient::from_shared(http_client),
         ));
     let config = loader.load().await;
 
@@ -3576,6 +3577,10 @@ mod tests {
         let config = aws_config::defaults(BehaviorVersion::latest())
             .credentials_provider(creds)
             .region(Region::new("us-east-1"))
+            .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+                crate::tls::aws_http_client::AwsSdkReqwestClient::with_default_tls()
+                    .expect("default-TLS SDK client must build"),
+            ))
             .load()
             .await;
         build_s3_client(&config, Some(uri.to_string()))

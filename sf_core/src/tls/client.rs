@@ -58,6 +58,18 @@ pub(crate) fn build_tls_client_and_rustls_config(
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
+    // Must precede every `Client::build()` below, including the insecure
+    // early-return: reqwest resolves its crypto backend at build time, and
+    // with the `-no-provider` feature selection it has no fallback to resolve
+    // to, so a client built before the provider is installed panics with
+    // "No provider set".
+    super::ensure_crypto_provider();
+    // Fail closed rather than serve traffic on a non-approved module: in
+    // `fips-tls` builds this refuses to build a client when the provider that
+    // won the process-global slot is not FIPS. Compiles away without the
+    // feature.
+    super::require_fips_provider()?;
+
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         let builder = apply_reqwest_tls_versions(
@@ -74,7 +86,6 @@ pub(crate) fn build_tls_client_and_rustls_config(
         return Ok((client, need_diag_config.then(build_insecure_rustls_config)));
     }
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let protocol_versions = tls_config.versions.enabled_rustls_versions();
 
     let root_certificates = load_root_certificates(tls_config)?;
@@ -190,6 +201,11 @@ pub(crate) fn configure_tls_builder(
     proxy: Option<&ProxyConfig>,
     crl_worker: SharedCrlWorker,
 ) -> Result<ClientBuilder, TlsError> {
+    // Same ordering constraint as `build_tls_client_and_rustls_config`: the
+    // returned builder is `.build()`-ed by the caller, so the provider has to
+    // be in place before this function hands the builder back.
+    super::ensure_crypto_provider();
+    super::require_fips_provider()?;
     let builder = apply_proxy_to_builder(builder, proxy)?;
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
@@ -197,8 +213,6 @@ pub(crate) fn configure_tls_builder(
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true));
     }
-
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let root_certificates = load_root_certificates(tls_config)?;
 
@@ -227,8 +241,8 @@ pub(crate) fn configure_tls_builder(
     }
 }
 
-/// [`configure_tls_builder`] plus `.no_gzip()`, for the storage clients
-/// (Azure, GCS, S3) that move opaque, possibly CSE-encrypted bytes whose
+/// [`configure_tls_builder`] plus `.no_gzip()`, for the Azure and GCS
+/// transfers that move opaque, possibly CSE-encrypted bytes whose
 /// downstream SHA-256 digest / Content-Length / ranged-download checks
 /// assume wire bytes == body bytes. Without it, a response carrying
 /// `Content-Encoding: gzip` (e.g. from `gsutil cp -Z`, BigQuery exports, or
@@ -240,9 +254,11 @@ pub(crate) fn configure_tls_builder(
 /// (`storage_client.py:54-59`).
 ///
 /// The GS/REST client still wants gzip, so this can't be folded into
-/// `configure_tls_builder` itself. S3 then chains `.redirect(Policy::none())`
-/// in [`crate::tls::aws_http_client::build_s3_reqwest_client`]. All three
-/// storage clients pin `.http1_only()` on their own builders.
+/// `configure_tls_builder` itself. S3 does not come through here: it reaches
+/// the AWS SDK through [`AwsSdkReqwestClient`](crate::tls::aws_http_client::AwsSdkReqwestClient),
+/// which calls `configure_tls_builder` directly and then applies `.no_gzip()`
+/// alongside the two SDK-only adjustments (`.redirect(Policy::none())`,
+/// `.http1_only()`) that cannot be set on an already-built client.
 pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
@@ -313,7 +329,7 @@ fn build_plain_rustls_client_config(
 /// false-negative TLS failures in environments with custom or self-signed CAs, which is
 /// exactly the case where users reach for `verify_certificates=false`.
 pub(crate) fn build_insecure_rustls_config() -> Arc<rustls::ClientConfig> {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    super::ensure_crypto_provider();
     Arc::new(
         rustls::ClientConfig::builder()
             .dangerous()

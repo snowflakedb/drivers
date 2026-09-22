@@ -141,6 +141,7 @@ fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
         | RestError::ExternalBrowser { .. }
         | RestError::OAuthFlow { .. }
         | RestError::WorkloadIdentityAttestation { .. }
+        | RestError::WifSdkHttpClient { .. }
         | RestError::LoginError { .. }
         | RestError::SessionRefresh { .. }
         | RestError::SessionRefreshFailed { .. }
@@ -170,8 +171,11 @@ fn kind_of(error: &ApiError) -> ErrorKind {
 
         ApiError::InvalidColumnMetadata { .. } => ErrorKind::InvalidArgument,
         ApiError::InvalidWifProvider { .. } => ErrorKind::InvalidParameterValue,
-        // Use InvalidParameterValue so Python callers see ProgrammingError,
-        // matching the legacy connector's exception class for this function.
+        ApiError::WorkloadIdentityAttestation { source, .. }
+            if source.is_fips_mode_unavailable() =>
+        {
+            ErrorKind::AuthenticationError
+        }
         ApiError::WorkloadIdentityAttestation { .. } => ErrorKind::InvalidParameterValue,
 
         ApiError::Login { source, .. } => match source.as_ref() {
@@ -386,6 +390,46 @@ mod tests {
     fn query_session_expired_projects_authentication_kind() {
         let err = query(RestError::SessionExpired { location: loc() });
         assert_eq!(err.kind(), ErrorKind::AuthenticationError);
+    }
+
+    #[test]
+    fn wif_sdk_fips_failure_projects_authentication_kind() {
+        let err = query(RestError::WifSdkHttpClient {
+            source: Box::new(crate::tls::error::TlsError::FipsModeUnavailable { location: loc() }),
+            location: loc(),
+        });
+        assert_eq!(err.kind(), ErrorKind::AuthenticationError);
+    }
+
+    #[test]
+    fn attestation_fips_failure_projects_authentication_kind() {
+        let err = ApiError::WorkloadIdentityAttestation {
+            source: Box::new(
+                crate::rest::snowflake::workload_identity::AttestationError::CryptoProvider {
+                    source: Box::new(crate::tls::error::TlsError::FipsModeUnavailable {
+                        location: loc(),
+                    }),
+                    location: loc(),
+                },
+            ),
+            location: loc(),
+        };
+        assert_eq!(err.kind(), ErrorKind::AuthenticationError);
+    }
+
+    #[test]
+    fn non_fips_attestation_failure_keeps_legacy_kind() {
+        let err = ApiError::WorkloadIdentityAttestation {
+            source: Box::new(
+                crate::rest::snowflake::workload_identity::AttestationError::DisallowedHost {
+                    host: "not-snowflake.example".to_owned(),
+                    reason: "not allowed",
+                    location: loc(),
+                },
+            ),
+            location: loc(),
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidParameterValue);
     }
 
     #[test]

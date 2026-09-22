@@ -766,6 +766,7 @@ async fn credentials_for_login(
     create_credentials(login_parameters).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -774,6 +775,7 @@ pub async fn auth_request_data(
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
     prebuilt_credentials: Option<Credentials>,
+    crl_worker: SharedCrlWorker,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
     data.spcs_token = login_parameters.spcs_token.clone();
@@ -909,9 +911,26 @@ pub async fn auth_request_data(
             // fetching cloud credentials. See workload_identity::host_allowlist.
             workload_identity::ensure_allowed_host(&login_parameters.server_url)
                 .context(WorkloadIdentityAttestationSnafu)?;
-            let attestation = workload_identity::create_attestation(client, cfg)
-                .await
-                .context(WorkloadIdentityAttestationSnafu)?;
+            let aws_sdk_http = if matches!(
+                cfg.provider,
+                crate::config::rest_parameters::WifProvider::Aws
+            ) {
+                let tls_config = aws_wif_tls_config(&login_parameters.client_info.tls_config);
+                Some(
+                    crate::tls::aws_http_client::AwsSdkReqwestClient::build(
+                        &tls_config,
+                        Some(&login_parameters.client_info.proxy_config),
+                        crl_worker,
+                    )
+                    .context(WifSdkHttpClientSnafu)?,
+                )
+            } else {
+                None
+            };
+            let attestation =
+                workload_identity::create_attestation(client, aws_sdk_http.as_ref(), cfg)
+                    .await
+                    .context(WorkloadIdentityAttestationSnafu)?;
             data.authenticator = Some(authenticator::WORKLOAD_IDENTITY.to_string());
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
@@ -1123,7 +1142,7 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
     crl_worker: SharedCrlWorker,
 ) -> Result<LoginResult, RestError> {
-    let client = build_tls_http_client(&login_parameters.client_info, crl_worker)?;
+    let client = build_tls_http_client(&login_parameters.client_info, crl_worker.clone())?;
     let policy = RetryPolicy::default();
     snowflake_login_with_client(
         &client,
@@ -1134,6 +1153,7 @@ pub async fn snowflake_login(
         &policy,
         None,
         None,
+        crl_worker,
     )
     .await
 }
@@ -1146,7 +1166,8 @@ pub async fn snowflake_login(
         token_cache,
         retry_policy,
         prebuilt_credentials,
-        xp_backend
+        xp_backend,
+        crl_worker
     ),
     fields(account_name, login_name)
 )]
@@ -1160,6 +1181,7 @@ pub async fn snowflake_login_with_client(
     retry_policy: &RetryPolicy,
     prebuilt_credentials: Option<Credentials>,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
+    crl_worker: SharedCrlWorker,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -1298,6 +1320,7 @@ pub async fn snowflake_login_with_client(
         prompt_locks,
         retry_policy,
         prebuilt_credentials,
+        crl_worker.clone(),
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -1358,6 +1381,7 @@ pub async fn snowflake_login_with_client(
                     prompt_locks,
                     retry_policy,
                     None,
+                    crl_worker.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -1415,6 +1439,7 @@ pub async fn snowflake_login_with_client(
                     prompt_locks,
                     retry_policy,
                     None,
+                    crl_worker.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest { data: retry_data };
@@ -2679,6 +2704,13 @@ fn build_tls_http_client(
     .context(CrlValidationSnafu)
 }
 
+fn aws_wif_tls_config(tls_config: &crate::tls::TlsConfig) -> crate::tls::TlsConfig {
+    let mut tls_config = tls_config.clone();
+    tls_config.verify_certificates = true;
+    tls_config.verify_hostname = true;
+    tls_config
+}
+
 pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {
     let value = format!("Snowflake Token=\"{session_token}\"");
     header::HeaderValue::from_str(&value).expect("authorization header construction must succeed")
@@ -2788,6 +2820,18 @@ pub enum RestError {
     #[snafu(display("TLS client creation failed"))]
     CrlValidation {
         source: TlsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    /// Building the AWS SDK transport for Workload Identity failed. Distinct
+    /// from [`RestError::CrlValidation`] so a refused crypto provider in a
+    /// `fips-tls` build does not surface as a generic CRL-named TLS error: the
+    /// cause travels in the message, which is what support and compliance need
+    /// to see first.
+    #[snafu(display("Failed to build the Workload Identity HTTP client: {source}"))]
+    WifSdkHttpClient {
+        #[snafu(source(from(TlsError, Box::new)))]
+        source: Box<TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -2979,6 +3023,22 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn aws_wif_tls_config_keeps_peer_verification_enabled() {
+        let input = crate::tls::TlsConfig {
+            verify_certificates: false,
+            verify_hostname: false,
+            ..Default::default()
+        };
+
+        let output = aws_wif_tls_config(&input);
+
+        assert!(output.verify_certificates);
+        assert!(output.verify_hostname);
+        assert!(!input.verify_certificates);
+        assert!(!input.verify_hostname);
+    }
 
     #[test]
     fn instant_to_epoch_ms_puts_a_live_token_ahead_of_the_current_time() {
@@ -3344,6 +3404,7 @@ mod tests {
             &RetryPolicy::default(),
             None,
             Some(&backend),
+            crate::crl::worker::CrlWorker::shared_lazy(),
         )
         .await;
 
@@ -3853,6 +3914,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3887,6 +3949,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -3987,6 +4050,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4015,6 +4079,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4041,6 +4106,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4072,6 +4138,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4113,6 +4180,7 @@ mod tests {
                     None,
                     &RetryPolicy::default(),
                     None,
+                    crate::crl::worker::CrlWorker::shared_lazy(),
                 ))
                 .unwrap();
             assert_eq!(
@@ -4137,6 +4205,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4160,6 +4229,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             ))
             .unwrap();
 
@@ -4258,6 +4328,7 @@ mod tests {
                 &RetryPolicy::default(),
                 None,
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             )
             .await
         }
@@ -5097,6 +5168,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             )
             .await
             .expect_err("disallowed WIF host must fail closed");
@@ -5131,6 +5203,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
             )
             .await
             .expect_err("missing OIDC token must fail");

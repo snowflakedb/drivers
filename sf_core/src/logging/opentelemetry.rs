@@ -20,6 +20,7 @@ fn resource() -> Resource {
 
 // Construct MeterProvider for MetricsLayer
 pub fn _init_meter_provider() -> Result<SdkMeterProvider, LogError> {
+    crate::tls::ensure_crypto_provider();
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_http()
         .with_temporality(opentelemetry_sdk::metrics::Temporality::default())
@@ -48,6 +49,7 @@ pub fn _init_meter_provider() -> Result<SdkMeterProvider, LogError> {
 
 // Construct TracerProvider for OpenTelemetryLayer
 pub fn init_tracer() -> Result<Tracer, LogError> {
+    crate::tls::ensure_crypto_provider();
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_endpoint("http://localhost:8318/v1/traces")

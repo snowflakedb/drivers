@@ -145,6 +145,7 @@ impl RestError {
             | RestError::Communication { .. }
             | RestError::RequestConstruction { .. }
             | RestError::CrlValidation { .. }
+            | RestError::WifSdkHttpClient { .. }
             | RestError::UrlJoin { .. }
             | RestError::SessionRefresh { .. }
             | RestError::TokenRequestHttp { .. }

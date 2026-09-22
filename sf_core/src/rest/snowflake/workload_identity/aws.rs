@@ -33,6 +33,7 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::collections::BTreeMap;
 
 use crate::config::rest_parameters::WorkloadIdentityConfig;
+use crate::tls::aws_http_client::AwsSdkReqwestClient;
 
 use super::AttestationEndpoints;
 
@@ -51,6 +52,13 @@ type HmacSha256 = Hmac<Sha256>;
 pub enum AwsAttestationError {
     #[snafu(display("No AWS credentials provider configured"))]
     NoCredentialsProvider {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build the AWS SDK HTTP client"))]
+    SdkHttpClient {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -110,14 +118,14 @@ pub enum AwsAttestationError {
 /// `workload_identity_aws_use_outbound_token=true` or
 /// `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true`.
 pub(super) async fn get_attestation_token(
-    client: &reqwest::Client,
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     if enable_outbound_token(config) {
-        get_web_identity_token(client, config, endpoints).await
+        get_web_identity_token(sdk_http, config, endpoints).await
     } else {
-        get_caller_identity_token(config, endpoints).await
+        get_caller_identity_token(sdk_http, config, endpoints).await
     }
 }
 
@@ -138,11 +146,12 @@ fn enable_outbound_token(config: &WorkloadIdentityConfig) -> bool {
 /// Build a pre-signed STS `GetCallerIdentity` request and return it
 /// base64-encoded as `{"url":…,"method":"POST","headers":{…}}`.
 async fn get_caller_identity_token(
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     let region = resolve_region(endpoints).await;
-    let credentials = resolve_credentials(config, &region).await?;
+    let credentials = resolve_credentials(sdk_http, config, &region).await?;
 
     let now = chrono::Utc::now();
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -241,22 +250,19 @@ fn build_signed_caller_identity_request(
 ///
 /// Only called when `SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN=true`.
 async fn get_web_identity_token(
-    _client: &reqwest::Client,
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     endpoints: &AttestationEndpoints,
 ) -> Result<String, AwsAttestationError> {
     let region = resolve_region(endpoints).await;
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(region.clone()))
-        .load()
-        .await;
+    let sdk_config = sdk_config_with_shared_transport(sdk_http, &region, None).await;
 
     let sts_client = StsClient::new(&sdk_config);
 
     let credentials = if config.impersonation_path.is_empty() {
         None
     } else {
-        Some(chain_assume_role(&region, &config.impersonation_path).await?)
+        Some(chain_assume_role(sdk_http, &region, &config.impersonation_path).await?)
     };
 
     let final_sts_client = if let Some(creds) = credentials {
@@ -306,17 +312,43 @@ fn sts_sdk_error_status<E>(err: &aws_sdk_sts::error::SdkError<E>) -> Option<u16>
     }
 }
 
+/// Builds an AWS SDK config whose HTTP client is the driver's shared reqwest
+/// transport, the same adapter S3 transfers use.
+///
+/// The AWS SDK's default HTTP client is disabled at compile time, so SDK calls
+/// cannot be built without an explicit transport. Supplying the shared
+/// transport keeps WIF on the connection's TLS and proxy policy and the same
+/// crypto backend as the rest of the driver.
+///
+/// Takes [`AwsSdkReqwestClient`] rather than a bare `reqwest::Client` because
+/// these are SigV4-signed SDK calls: the transport must not follow redirects,
+/// auto-decompress, or negotiate HTTP/2 (see `tls::aws_http_client`), and the
+/// newtype is what guarantees a general-purpose client cannot end up here.
+async fn sdk_config_with_shared_transport(
+    sdk_http: &AwsSdkReqwestClient,
+    region: &str,
+    credentials: Option<&Credentials>,
+) -> aws_config::SdkConfig {
+    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(region.to_string()))
+        .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
+            sdk_http.clone(),
+        ));
+    if let Some(creds) = credentials {
+        loader = loader.credentials_provider(SharedCredentialsProvider::new(creds.clone()));
+    }
+    loader.load().await
+}
+
 /// Resolve final credentials: load ambient creds and optionally walk an
 /// impersonation chain via `sts:AssumeRole`.
 async fn resolve_credentials(
+    sdk_http: &AwsSdkReqwestClient,
     config: &WorkloadIdentityConfig,
     region: &str,
 ) -> Result<Credentials, AwsAttestationError> {
     if config.impersonation_path.is_empty() {
-        let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-            .region(Region::new(region.to_string()))
-            .load()
-            .await;
+        let sdk_config = sdk_config_with_shared_transport(sdk_http, region, None).await;
         let provider = sdk_config
             .credentials_provider()
             .context(NoCredentialsProviderSnafu)?;
@@ -326,7 +358,7 @@ async fn resolve_credentials(
             .boxed()
             .context(CredentialsLoadSnafu)
     } else {
-        chain_assume_role(region, &config.impersonation_path).await
+        chain_assume_role(sdk_http, region, &config.impersonation_path).await
     }
 }
 
@@ -348,6 +380,7 @@ trait AssumeRoleProvider: Send + Sync {
 /// Production [`AssumeRoleProvider`]: issues a real `sts:AssumeRole` call
 /// via `aws_sdk_sts::Client`.
 struct StsAssumeRoleProvider {
+    sdk_http: AwsSdkReqwestClient,
     region: String,
 }
 
@@ -358,12 +391,8 @@ impl AssumeRoleProvider for StsAssumeRoleProvider {
         credentials: Option<&'a Credentials>,
     ) -> BoxFuture<'a, Result<Credentials, AwsAttestationError>> {
         async move {
-            let mut loader = aws_config::defaults(BehaviorVersion::latest())
-                .region(Region::new(self.region.clone()));
-            if let Some(creds) = credentials {
-                loader = loader.credentials_provider(SharedCredentialsProvider::new(creds.clone()));
-            }
-            let sdk_config = loader.load().await;
+            let sdk_config =
+                sdk_config_with_shared_transport(&self.sdk_http, &self.region, credentials).await;
             let client = StsClient::new(&sdk_config);
 
             let session_name = format!("snowflake-wif-{}", std::process::id());
@@ -410,10 +439,12 @@ impl AssumeRoleProvider for StsAssumeRoleProvider {
 /// Walk an impersonation chain via `sts:AssumeRole`, returning the
 /// credentials obtained after assuming all roles in `region`.
 async fn chain_assume_role(
+    sdk_http: &AwsSdkReqwestClient,
     region: &str,
     role_arns: &[String],
 ) -> Result<Credentials, AwsAttestationError> {
     let provider = StsAssumeRoleProvider {
+        sdk_http: sdk_http.clone(),
         region: region.to_string(),
     };
     chain_assume_role_via(&provider, role_arns).await
@@ -460,6 +491,7 @@ async fn resolve_region(endpoints: &AttestationEndpoints) -> String {
 }
 
 async fn try_imds_region(imds_base_url: &str) -> Option<String> {
+    crate::tls::ensure_crypto_provider();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
@@ -551,8 +583,131 @@ mod tests {
     use super::*;
     use crate::config::rest_parameters::WifProvider;
     use std::sync::Mutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn proxy_content_length(head: &[u8]) -> usize {
+        std::str::from_utf8(head)
+            .unwrap_or("")
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    async fn start_recording_proxy() -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Receiver<Vec<u8>>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind proxy listener");
+        let addr = listener.local_addr().expect("proxy address");
+        let (request_tx, request_rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let mut request_tx = Some(request_tx);
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut head = Vec::with_capacity(512);
+                let mut byte = [0u8; 1];
+                loop {
+                    match socket.read(&mut byte).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) => {}
+                    }
+                    head.push(byte[0]);
+                    if head.ends_with(b"\r\n\r\n") || head.len() > 8192 {
+                        break;
+                    }
+                }
+                let body_len = proxy_content_length(&head);
+                if body_len > 0 {
+                    let mut body = vec![0u8; body_len];
+                    if socket.read_exact(&mut body).await.is_err() {
+                        continue;
+                    }
+                }
+                let is_sts = head.starts_with(b"POST http://sts-target.invalid/");
+                let body = b"<ErrorResponse><Error><Code>InvalidAction</Code><Message>test</Message></Error><RequestId>test</RequestId></ErrorResponse>";
+                let response = format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.write_all(body).await;
+                let _ = socket.flush().await;
+                let _ = socket.shutdown().await;
+                if is_sts {
+                    let _ = request_tx.take().map(|tx| tx.send(head));
+                    return;
+                }
+            }
+        });
+        (addr, request_rx)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sts_sdk_uses_the_supplied_reqwest_transport() {
+        let (proxy_addr, request_rx) = start_recording_proxy().await;
+        let proxy = crate::tls::ProxyConfig {
+            host: Some(proxy_addr.ip().to_string()),
+            port: Some(i64::from(proxy_addr.port())),
+            ..Default::default()
+        };
+        let sdk_http = AwsSdkReqwestClient::build(
+            &crate::tls::TlsConfig::default(),
+            Some(&proxy),
+            crate::crl::CrlWorker::shared_lazy(),
+        )
+        .expect("SDK HTTP client must build");
+        let credentials = Credentials::new("test-key", "test-secret", None, None, "test");
+        let sdk_config =
+            sdk_config_with_shared_transport(&sdk_http, "us-east-1", Some(&credentials)).await;
+        // Retries are off and the timeouts are explicit so a transport
+        // regression surfaces as the assertion below rather than as a hang:
+        // under the SDK's default standard retry mode a first attempt that
+        // looks like a connection error is replayed, and the replay races the
+        // proxy's accept loop.
+        let sts_config = StsConfigBuilder::from(&sdk_config)
+            .endpoint_url("http://sts-target.invalid")
+            .retry_config(aws_config::retry::RetryConfig::disabled())
+            .timeout_config(
+                aws_config::timeout::TimeoutConfig::builder()
+                    .operation_timeout(std::time::Duration::from_secs(2))
+                    .operation_attempt_timeout(std::time::Duration::from_secs(2))
+                    .build(),
+            )
+            .build();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            StsClient::from_conf(sts_config)
+                .get_caller_identity()
+                .send(),
+        )
+        .await
+        .expect("STS call must not hang");
+        let request = tokio::time::timeout(std::time::Duration::from_secs(5), request_rx)
+            .await
+            .expect("proxy observation must not hang")
+            .expect("proxy must receive the STS request");
+        let request = String::from_utf8(request).expect("request head must be utf-8");
+
+        assert!(result.is_err(), "the test proxy returns an STS error");
+        assert!(
+            request.starts_with("POST http://sts-target.invalid/ HTTP/1.1\r\n"),
+            "proxy received unexpected request head: {request}"
+        );
+    }
 
     /// `resolve_region` returns the region from the EC2 IMDS response.
     #[tokio::test]
@@ -779,7 +934,9 @@ mod tests {
                 ("AWS_EC2_METADATA_DISABLED", Some("true")),
             ],
             async {
-                let err = resolve_credentials(&config, "us-east-1")
+                let sdk_http = AwsSdkReqwestClient::with_default_tls()
+                    .expect("default-TLS SDK client must build");
+                let err = resolve_credentials(&sdk_http, &config, "us-east-1")
                     .await
                     .expect_err("expected no ambient AWS credentials to be found");
                 assert!(

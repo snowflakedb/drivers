@@ -117,6 +117,7 @@ fn should_refresh_session_proactively() {
             &policy,
             None,
             None,
+            sf_core::crl::CrlWorker::shared_lazy(),
         )
         .await
         .expect("Login should succeed");
