@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createLiveConnection } from './utils/fixtures.js';
-import { executeAsync } from './utils/index.js';
+import { executeAsync, randomizeName } from './utils/index.js';
 
 describe('Connection session context options', () => {
   it('should use the warehouse from connection options', async () => {
@@ -33,5 +33,19 @@ describe('Connection session context options', () => {
     const { rows } = await executeAsync(connection, 'SELECT CURRENT_WAREHOUSE() AS WAREHOUSE_NAME');
 
     expect(rows[0].WAREHOUSE_NAME).toBe(warehouse.toUpperCase());
+  });
+
+  it('should use the database from connection options', async () => {
+    const database = randomizeName('NODEJS_CONNECTION_OPTION_DATABASE_');
+    const setupConnection = await createLiveConnection();
+    await executeAsync(setupConnection, `CREATE DATABASE ${database}`);
+    onTestFinished(async () => {
+      await executeAsync(setupConnection, `DROP DATABASE IF EXISTS ${database}`);
+    });
+
+    const connection = await createLiveConnection({ database });
+    const { rows } = await executeAsync(connection, 'SELECT CURRENT_DATABASE() AS DATABASE_NAME');
+
+    expect(rows[0].DATABASE_NAME).toBe(database.toUpperCase());
   });
 });
