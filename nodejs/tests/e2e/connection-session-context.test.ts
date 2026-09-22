@@ -62,4 +62,22 @@ describe('Connection session context options', () => {
 
     expect(rows[0].SCHEMA_NAME).toBe(schema.toUpperCase());
   });
+
+  it('should use the role from connection options', async () => {
+    const role = 'PUBLIC';
+
+    // Switching to PUBLIC only proves the option was applied if the connection
+    // would not have landed on PUBLIC anyway.
+    const setupConnection = await createLiveConnection();
+    const { rows: sessionRows } = await executeAsync(
+      setupConnection,
+      'SELECT CURRENT_ROLE() AS ROLE_NAME',
+    );
+    expect(String(sessionRows[0].ROLE_NAME).toUpperCase()).not.toBe(role);
+
+    const connection = await createLiveConnection({ role });
+    const { rows } = await executeAsync(connection, 'SELECT CURRENT_ROLE() AS ROLE_NAME');
+
+    expect(rows[0].ROLE_NAME).toBe(role);
+  });
 });
