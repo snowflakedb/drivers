@@ -52,7 +52,9 @@ class TestNumpyDatatypeBinding:
     ):
         # Given Snowflake client is logged in with numpy=True and pyformat paramstyle
         epoch_time = time.time()
-        current_datetime = datetime.datetime.fromtimestamp(epoch_time)
+        # datetime64 has no tzinfo; pyformat serializes it as UTC (`str(value) + "+00:00"`).
+        # Naive fromtimestamp() uses the host TZ, so TIMESTAMP_LTZ is off by the local offset.
+        current_datetime = datetime.datetime.fromtimestamp(epoch_time, datetime.UTC).replace(tzinfo=None)
         current_datetime64 = np.datetime64(current_datetime)
         expected_specific_date = specific_date.astype(datetime.datetime)
         table_name = f"{tmp_schema}.test_numpy_binding_{tz.replace('/', '_')}"
