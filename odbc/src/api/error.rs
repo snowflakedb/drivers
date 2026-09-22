@@ -576,6 +576,14 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Insecure file permissions on {path}: {reason}"))]
+    InsecureFilePermissions {
+        path: String,
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid connection string: {reason}"))]
     InvalidConnectionString {
         reason: String,
@@ -779,6 +787,7 @@ impl OdbcError {
             OdbcError::InvalidFreeStmtOption { .. } => ErrorSource::ApiMisuse,
             OdbcError::OdbcRuntime { .. } => ErrorSource::InternalError,
             OdbcError::DataSourceNotFound { .. } => ErrorSource::ConfigParsing,
+            OdbcError::InsecureFilePermissions { .. } => ErrorSource::ConfigParsing,
             OdbcError::InvalidConnectionString { .. } => ErrorSource::ConfigParsing,
             OdbcError::DaeRequired { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDuringDae { .. } => ErrorSource::ApiMisuse,
@@ -1115,6 +1124,7 @@ impl OdbcError {
             OdbcError::DataSourceNotFound { .. } => {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
+            OdbcError::InsecureFilePermissions { .. } => SqlState::GeneralError,
             OdbcError::InvalidConnectionString { .. } => SqlState::GeneralError,
             OdbcError::DaeRequired { .. } => SqlState::GeneralError,
             OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,

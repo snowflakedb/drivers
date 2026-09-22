@@ -992,22 +992,57 @@ fn merge_dsn_config_impl(
 /// On Windows: reads from the registry under HKCU then HKLM SOFTWARE\ODBC\ODBC.INI\<DSN>.
 #[cfg(not(windows))]
 fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
+    use std::path::PathBuf;
+
     let mut paths = Vec::new();
     if let Ok(p) = std::env::var("ODBCINI") {
-        paths.push(p);
+        paths.push(PathBuf::from(p));
     }
     if let Ok(home) = std::env::var("HOME") {
-        paths.push(format!("{}/.odbc.ini", home));
+        paths.push(PathBuf::from(format!("{}/.odbc.ini", home)));
     }
     if let Ok(p) = std::env::var("ODBCSYSINI") {
-        paths.push(format!("{}/odbc.ini", p));
+        paths.push(PathBuf::from(format!("{}/odbc.ini", p)));
     }
-    paths.push("/etc/odbc.ini".to_string());
+    paths.push(PathBuf::from("/etc/odbc.ini"));
 
-    for path in &paths {
-        if let Ok(content) = std::fs::read_to_string(path)
-            && let Some(params) = parse_ini_section(&content, dsn)
-        {
+    read_dsn_config_from_paths(dsn, &paths)
+}
+
+#[cfg(not(windows))]
+fn read_dsn_config_from_paths(
+    dsn: &str,
+    paths: &[std::path::PathBuf],
+) -> OdbcResult<HashMap<String, String>> {
+    use crate::api::error::{InsecureFilePermissionsSnafu, OdbcError};
+    use sf_core::config::toml_loader::{FilePermissionCheck, check_file_permissions};
+
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        if let Err(e) = check_file_permissions(path, FilePermissionCheck::Enabled) {
+            match e {
+                sf_core::config::ConfigError::InsecurePermissions { reason, .. } => {
+                    return InsecureFilePermissionsSnafu {
+                        path: path.display().to_string(),
+                        reason,
+                    }
+                    .fail();
+                }
+                other => {
+                    return Err(OdbcError::InternalError {
+                        message: other.to_string(),
+                        location: snafu::location!(),
+                    });
+                }
+            }
+        }
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if let Some(params) = parse_ini_section(&content, dsn) {
             tracing::debug!("connect: found DSN {:?} in {:?}", dsn, path);
             return Ok(params);
         }
@@ -4467,6 +4502,74 @@ Server = myserver
             let ini = "[mydsn]\nServer = foo\n";
             let params = parse_ini_section(ini, "MyDSN").unwrap();
             assert_eq!(params.get("SERVER").unwrap(), "foo");
+        }
+
+        #[test]
+        fn read_dsn_config_from_paths_loads_restrictive_file() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::tempdir().unwrap();
+            let ini_path = dir.path().join("odbc.ini");
+            std::fs::write(
+                &ini_path,
+                "[TestDSN]\nServer = myhost\nAccount = myaccount\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&ini_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+            let params = read_dsn_config_from_paths("TestDSN", &[ini_path]).unwrap();
+            assert_eq!(params.get("SERVER").unwrap(), "myhost");
+            assert_eq!(params.get("ACCOUNT").unwrap(), "myaccount");
+        }
+
+        #[test]
+        fn read_dsn_config_from_paths_rejects_world_writable_file() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::tempdir().unwrap();
+            let ini_path = dir.path().join("odbc.ini");
+            std::fs::write(
+                &ini_path,
+                "[TestDSN]\nServer = myhost\nAccount = myaccount\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&ini_path, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+            let err = read_dsn_config_from_paths("TestDSN", &[ini_path]).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Insecure file permissions"),
+                "expected insecure-permissions error, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn read_dsn_config_from_paths_rejects_group_writable_file() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::tempdir().unwrap();
+            let ini_path = dir.path().join("odbc.ini");
+            std::fs::write(&ini_path, "[TestDSN]\nServer = s\n").unwrap();
+            std::fs::set_permissions(&ini_path, std::fs::Permissions::from_mode(0o620)).unwrap();
+
+            let err = read_dsn_config_from_paths("TestDSN", &[ini_path]).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Insecure file permissions"),
+                "expected insecure-permissions error, got: {msg}"
+            );
+        }
+
+        #[test]
+        fn read_dsn_config_from_paths_skips_missing_files() {
+            let dir = tempfile::tempdir().unwrap();
+            let missing = dir.path().join("does_not_exist.ini");
+
+            let err = read_dsn_config_from_paths("TestDSN", &[missing]).unwrap_err();
+            assert!(
+                err.to_string().contains("not found"),
+                "missing files should lead to DSN-not-found, got: {err}"
+            );
         }
     }
 }

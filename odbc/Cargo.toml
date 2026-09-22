@@ -62,6 +62,7 @@ rustc_version = "0.4"
 [dev-dependencies]
 test-case = "3.3.1"
 temp-env = "0.3.6"
+tempfile = "3"
 criterion = "0.5"
 arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 odbc-sys = "0.25.1"
