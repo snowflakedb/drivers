@@ -2438,7 +2438,7 @@ behavior_differences:
     name: "Catalog REMARKS / COLUMN_DEF return SQL_NULL_DATA when absent (not empty string)"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     status_rationale: |
@@ -2547,11 +2547,15 @@ behavior_differences:
 
   125:
     name: "SQLColumns SQL_DATA_TYPE returns verbose SQL_DATETIME (9) for date/time types"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      Col 14 must be the verbose SQL_DATETIME (9) for date/time types, with the
+      subtype in SQL_DATETIME_SUB. 3.x copied the concise DATA_TYPE into that
+      column; the new values match the ODBC catalog spec.
     old_driver_behavior: |
       For DATE/TIME/TIMESTAMP rows, SQLColumns col 14 (SQL_DATA_TYPE) equals
       col 5 (DATA_TYPE): 91 / 92 / 93. Col 15 (SQL_DATETIME_SUB) is still filled
@@ -2567,11 +2571,15 @@ behavior_differences:
 
   126:
     name: "A second SQLFreeHandle on an already-freed statement returns SQL_INVALID_HANDLE under iODBC instead of SQL_ERROR + HY000 on the connection"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
+    status_rationale: |
+      A second SQLFreeHandle on an already-freed statement is an invalid handle.
+      SQL_INVALID_HANDLE on every DM matches the spec; 3.x's iODBC SQL_ERROR +
+      HY000 on the parent connection does not.
     old_driver_behavior: |
       Under iODBC, SQLFreeHandle(SQL_HANDLE_STMT) on a statement that was already
       freed returns SQL_ERROR and posts SQLSTATE HY000 on the parent connection
@@ -2591,9 +2599,13 @@ behavior_differences:
     name: "SQLGetFunctions ODBC3 bitmap reports SQLFreeConnect / SQLFreeEnv as supported under iODBC instead of omitting them"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      The driver exports SQLFreeConnect and SQLFreeEnv, so the ODBC 3 bitmap
+      should report them on every DM. 3.x omitted those bits under iODBC even
+      though the manager still maps the calls to SQLFreeHandle.
     old_driver_behavior: |
       Under iODBC, SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) omits
       SQL_API_SQLFREECONNECT and SQL_API_SQLFREEENV from the returned bitmap.
@@ -2612,12 +2624,16 @@ behavior_differences:
       odbc-api/driver_info/get_functions_tests.cpp.
 
   128:
-    name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale (not fixed 35)"
-    status: unknown
+    name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale instead of fixed 35"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      ODBC column size for TIMESTAMP is 20 + scale (19 when scale is 0), not a
+      fixed 35. 3.x advertised the worst-case TIMESTAMP_TZ string width for every
+      TIMESTAMP flavor.
     old_driver_behavior: |
       SQLColumns COLUMN_SIZE (col 7) for TIMESTAMP_NTZ / LTZ / TZ is a fixed 35
       (worst-case TIMESTAMP_TZ string), regardless of scale.
@@ -2629,12 +2645,16 @@ behavior_differences:
       Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/column-size
 
   129:
-    name: "SQLColumns TIMESTAMP BUFFER_LENGTH is 16 (not legacy 35)"
-    status: unknown
+    name: "SQLColumns TIMESTAMP BUFFER_LENGTH is 16 instead of 35"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      BUFFER_LENGTH is the SQL_C_DEFAULT transfer octet length
+      (sizeof SQL_TIMESTAMP_STRUCT = 16), not a copy of COLUMN_SIZE. 3.x returned
+      35 because it copied COLUMN_SIZE.
     old_driver_behavior: |
       SQLColumns BUFFER_LENGTH (col 8) for TIMESTAMP* copies COLUMN_SIZE and
       therefore returns 35.
@@ -2647,12 +2667,16 @@ behavior_differences:
       Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
 
   130:
-    name: "SQLColumns VARIANT/OBJECT/ARRAY size follows VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (not 128M)"
-    status: unknown
+    name: "SQLColumns VARIANT/OBJECT/ARRAY size follows VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT instead of hardcoded 128M"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      VARIANT, OBJECT, and ARRAY catalog sizes should follow the session VARCHAR
+      maximum rather than a hardcoded 128 MB TEXT constant. The default 16 MB
+      matches VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT.
     old_driver_behavior: |
       SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
       VARIANT / OBJECT / ARRAY are hardcoded to 134217728 (128 MB,
@@ -2675,18 +2699,17 @@ behavior_differences:
     name: "PUT resolves relative source paths to absolute canonical form before upload"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     status_rationale: |
-      Aligns the universal ODBC driver with legacy JDBC's `getCanonicalPath` behaviour. The legacy
-      ODBC driver (libsnowflakeclient) passed relative PUT source patterns straight to the
+      The 3.x ODBC driver (libsnowflakeclient) passed relative PUT source patterns straight to the
       platform directory-listing routines without normalizing them, so a relative path worked only
       because it was resolved against the process CWD at expansion time and stored un-normalized.
       This change only makes the stored path stable and well-formed; it does not change which files
       are uploaded in the common case.
     old_driver_behavior: |
-      The legacy ODBC driver (libsnowflakeclient) does not normalize PUT source paths: relative
+      The 3.x ODBC driver (libsnowflakeclient) does not normalize PUT source paths: relative
       paths (e.g. `./data/*.csv`) are passed verbatim to `opendir`/`FindFirstFile`, matched against
       the process CWD, and stored un-normalized. `..` segments and symlinks are not resolved, so the
       stored path can change meaning if the process CWD changes between glob expansion and file
@@ -2696,43 +2719,32 @@ behavior_differences:
       `dunce::canonicalize` (equivalent to `std::fs::canonicalize` on Unix; strips the `\\?\`
       verbatim prefix for ordinary local-disk paths on Windows — UNC paths and paths needing
       long-path support keep the prefix). This resolves the process CWD, collapses `..`
-      segments, and follows symlinks — matching legacy JDBC's `file.getCanonicalPath()`. A
-      symlinked source uploads under the symlink target's basename (JDBC parity). Matches are
+      segments, and follows symlinks. A symlinked source uploads under the symlink target's basename. Matches are
       also deduplicated by canonical path, so a glob that matches both a symlink and its target
-      (or two symlinks to the same target) uploads once, not twice — matching legacy JDBC's
-      `HashSet<String>` dedup keyed on canonical path. A genuinely nonexistent literal source
+      (or two symlinks to the same target) uploads once, not twice. A genuinely nonexistent literal source
       path is unaffected by this change: `glob`'s directory-listing walk never enqueues it, so
       it still surfaces as `NoFilesMatched` exactly as before. The new case that does hit
       canonicalization is a **dangling symlink** matched by a glob (it passes the existence
       check used to enqueue candidates but fails to resolve): that now produces a
       canonicalization error at expansion time rather than an `is_file` check failure; the PUT
       still fails, but the error message names the canonicalization failure explicitly.
-    description: |
-      Reference: JDBC `SnowflakeFileTransferAgent.expandFileNames` (stores
-      `file.getCanonicalPath()`, dedups matches via a `HashSet<String>` keyed on canonical
-      path). Also documented in python/BehaviorDifferences.yaml (BD#81): the Python surface
-      deviates from legacy Python's `os.path.abspath` only for symlinked sources, which now
-      upload under the target's basename rather than the symlink's own name. Applications that
-      passed relative paths continue to work; only symlink-heavy PUT workflows see the stage
-      object name change to the resolved target name, or (for a glob matching a symlink and its
-      target) one upload instead of two.
 
   132:
     name: "Query context cache handles duplicate-priority new IDs via capacity eviction instead of displacement"
-    status: unknown
-    type: bugfix
-    reviewed: false
+    status: todo
+    type: bug
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      To be aligned with the behavior from 3.x
     old_driver_behavior: |
-      The legacy ODBC driver's query context cache behavior for duplicate-priority entries
-      is inherited from the C/C++ implementation and is not explicitly documented.
+      New ID at an occupied priority displaces the occupant immediately.
     new_driver_behavior: |
       The universal driver inserts new entries alongside existing entries at the same
       priority. Multiple entries with the same priority coexist in the cache. When the
       cache exceeds capacity, the entry with the highest priority number and lowest
-      timestamp is evicted. This differs from JDBC's displacement strategy where a new
-      ID at an occupied priority replaces the existing entry immediately.
+      timestamp is evicted.
     description: |
       The query context cache is an opaque optimization layer between the driver and the
       server. The cache content is not exposed to end users. The behavioral difference
@@ -2740,12 +2752,16 @@ behavior_differences:
       priorities, which may influence which context is sent in subsequent requests.
 
   133:
-    name: "SQLColumns DATE/TIME BUFFER_LENGTH is 6 (not legacy 10 / 18)"
-    status: unknown
+    name: "SQLColumns DATE/TIME BUFFER_LENGTH is 6 instead of 10 / 18"
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      BUFFER_LENGTH for DATE and TIME is sizeof SQL_DATE_STRUCT / SQL_TIME_STRUCT
+      (6), not a copy of COLUMN_SIZE. SQL_TIME_STRUCT has no fractional-seconds
+      field, so the length stays 6 even when COLUMN_SIZE is 18.
     old_driver_behavior: |
       SQLColumns BUFFER_LENGTH (col 8) for DATE and TIME copies COLUMN_SIZE:
       DATE returns 10 and TIME(9) returns 18.
@@ -2757,16 +2773,18 @@ behavior_differences:
     description: |
       Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
       SQL_TIME_STRUCT has no fractional-seconds field, so BUFFER_LENGTH stays 6
-      even when COLUMN_SIZE is 18. Sibling of BD#129 (TIMESTAMP BUFFER_LENGTH 16);
-      do not fold DATE/TIME into that entry.
+      even when COLUMN_SIZE is 18.
 
   134:
     name: "Flat Int64 TIMESTAMP_TZ Arrow layout is rejected"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      A flat Int64 TIMESTAMP_TZ layout is illegal on the wire. Inventing offset 0
+      hid that error; rejecting the converter is the closed failure.
     old_driver_behavior: |
       A TIMESTAMP_TZ column whose Arrow physical type is flat Int64 (no timezone
       child) can be fetched as a UTC instant with the offset dropped.
@@ -2775,15 +2793,18 @@ behavior_differences:
       The driver no longer invents offset 0 for that illegal layout.
     description: |
       Production GS TIMESTAMP_TZ results are Arrow structs with a timezone child.
-      Treating a flat Int64 as UTC hid a layout error. Dual-driver SQL cannot
-      produce this case; the difference only appears on synthetic Int64 TZ arrays.
+      Treating a flat Int64 as UTC hid a layout error.
+
   135:
     name: "GET warns when multiple files share a destination basename"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      The download outcome is unchanged. The extra WARN names colliding GET
+      destinations so callers can see a silent overwrite that 3.x left unlogged.
     old_driver_behavior: |
       A GET that downloads multiple stage files which reduce to the same local destination
       basename (e.g. files from different stage subdirectories) completes with no warning; the
@@ -2793,18 +2814,16 @@ behavior_differences:
       message per batch: "Downloading multiple files with the same name could cause failures.
       File names with multiple entries: [...]", naming every colliding basename. The download
       outcome is unchanged; the log message is the only new observable effect.
-    description: |
-      SNOW-3704981. The old Python connector already logs this exact message
-      (`file_transfer_agent.py`'s `basename_counts` check); the new driver now emits it for every
-      wrapper, including ODBC, which previously had no such warning.
 
   136:
     name: "Bare Driver-only connect loads the connections.toml default profile"
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: high
+    status_rationale: |
+      Driver behavior is aligned.
     old_driver_behavior: |
       A SQLDriverConnect with only Driver=SnowflakeDSIIDriver (no account or other
       locator params) loads the [default] profile from ~/.snowflake/connections.toml
@@ -2822,20 +2841,39 @@ behavior_differences:
 
   137:
     name: "MFA token-caching connection parameter renamed: CLIENT_REQUEST_MFA_TOKEN -> CLIENT_STORE_TEMPORARY_CREDENTIAL"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      The CLIENT_REQUEST_MFA_TOKEN parameter is doing something different than it describes.
+      DSNs that set CLIENT_REQUEST_MFA_TOKEN=true keep working because caching
+      already defaults on. DSNs that set CLIENT_REQUEST_MFA_TOKEN=false no longer
+      disable MFA caching; they must set CLIENT_STORE_TEMPORARY_CREDENTIAL=false
     old_driver_behavior: |
-      MFA token caching is enabled via the CLIENT_REQUEST_MFA_TOKEN=true connection-string
-      attribute.
+      MFA token caching is a dedicated connection-string attribute,
+      CLIENT_REQUEST_MFA_TOKEN. When true, the driver reads/writes the MFA token in
+      the OS credential store and sends session parameter CLIENT_REQUEST_MFA_TOKEN=true
+      on USERNAME_PASSWORD_MFA login. Default is true on Windows/macOS and false on
+      Linux. CLIENT_STORE_TEMPORARY_CREDENTIAL is a separate attribute and does not
+      control MFA caching (it controls external-browser ID-token and OAuth auth-code
+      caching only).
     new_driver_behavior: |
-      MFA token caching is enabled via CLIENT_STORE_TEMPORARY_CREDENTIAL=true. It is not yet
-      confirmed whether a backward-compatible CLIENT_REQUEST_MFA_TOKEN alias exists.
+      MFA token caching is enabled by CLIENT_STORE_TEMPORARY_CREDENTIAL=true (default true on every platform).
+      The same attribute also controls ID-token and OAuth token caching. When MFA caching is on, the login
+      request still includes both CLIENT_REQUEST_MFA_TOKEN=true and
+      CLIENT_STORE_TEMPORARY_CREDENTIAL=true in session parameters.
     description: |
-      Applications that set CLIENT_REQUEST_MFA_TOKEN=true for MFA token caching on the
-      old driver need to switch to CLIENT_STORE_TEMPORARY_CREDENTIAL=true on the new driver.
+      3.x ODBC (libsnowflakeclient) has two independent connection attributes:
+      CLIENT_REQUEST_MFA_TOKEN for USERNAME_PASSWORD_MFA token cache, and
+      CLIENT_STORE_TEMPORARY_CREDENTIAL for external-browser ID-token and OAuth
+      auth-code cache. 4.x consolidates both onto CLIENT_STORE_TEMPORARY_CREDENTIAL.
+      The login body still sends CLIENT_REQUEST_MFA_TOKEN=true as a session
+      parameter when MFA caching is on, so only the DSN/connection-string spelling
+      changed. Applications that set CLIENT_REQUEST_MFA_TOKEN=false to disable MFA
+      caching must switch to CLIENT_STORE_TEMPORARY_CREDENTIAL=false.
+
   138:
     name: "External browser / auth timeout connection parameter renamed: BROWSER_RESPONSE_TIMEOUT -> AUTHENTICATION_TIMEOUT (and timeout error message reworded)"
     status: allowed
@@ -2860,13 +2898,17 @@ behavior_differences:
       ignored on the new driver and fall back to the 120s AUTHENTICATION_TIMEOUT
       default. Applications must switch to AUTHENTICATION_TIMEOUT. Applications
       matching on the old timeout message must update to the new wording.
+
   139:
-    name: "External-browser (ID token) credential caching defaults on, matching the old driver"
+    name: "External-browser (ID token) credential caching defaults to off; 3.x driver cached it by default"
     status: fixed
-    type: enhancement
-    reviewed: false
+    type: bug
+    reviewed: true
     is_breaking_change: false
     impact: medium
+    status_rationale: |
+      Both drivers cache the external-browser ID token when the caller leaves
+      CLIENT_STORE_TEMPORARY_CREDENTIAL unset. The difference is closed.
     old_driver_behavior: |
       After a successful external-browser (SSO) login with no explicit caching
       parameter set, the old driver caches the ID token locally on every platform,
@@ -2882,7 +2924,7 @@ behavior_differences:
     name: "External-browser IDP-user-mismatch message carries a prefix and an error trace"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
       The mismatch stays discriminable and the server's sentence still reaches the
       application on the first line. GS detects the mismatch and answers with code
@@ -2913,9 +2955,9 @@ behavior_differences:
     name: "PUT_MAXRETRIES and GET_MAXRETRIES map to a shared PUT/GET attempt count"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     status_rationale: |
-      PUT and GET share one attempt budget in the new driver, matching the core
+      PUT and GET share one attempt budget in the 4.x driver, matching the core
       `put_get_max_attempts` setting rather than 3.x's independent retry counts.
       The 3.x spellings stay accepted so existing DSNs keep working, and connect
       posts SQLSTATE 01000 so callers move to PUT_GET_MAX_ATTEMPTS. The missing
@@ -2979,7 +3021,7 @@ behavior_differences:
       ^[A-Za-z0-9_\-\.]+$ (SFInvalidCharacterInConnectionParameter).
     new_driver_behavior: |
       `validate_settings` rejects URL-significant characters in `account`
-      (SNOW-3663586) before the host is derived. `port` is a typed integer.
+      before the host is derived. `port` is a typed integer.
       Explicit `host`/`server_url` is validated as a URL elsewhere. Database,
       schema, warehouse, and role are not rejected for embedded CR/LF at
       connect time; login sends them as percent-encoded query parameters.
@@ -2993,8 +3035,8 @@ behavior_differences:
     name: "Windows DSN Tracing(0-6) field removed; legacy TRACING connection attribute ignored"
     status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
+    reviewed: true
+    is_breaking_change: true
     impact: low
     status_rationale: |
       Logging is process-wide (`sf.odbc.ini` at env alloc), so the Windows
@@ -3019,7 +3061,7 @@ behavior_differences:
     name: "INTERVAL results are native SQL_INTERVAL_* types with ANSI literals"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     status_rationale: |
@@ -3042,11 +3084,15 @@ behavior_differences:
 
   146:
     name: "SQLColumns GEOGRAPHY/GEOMETRY sizes follow the session VARCHAR maximum"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      GEOGRAPHY and GEOMETRY report SQL_VARCHAR, so catalog sizes follow the
+      session VARCHAR maximum. 3.x hardcoded 128 MB independently of that
+      parameter.
     old_driver_behavior: |
       SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
       GEOGRAPHY and GEOMETRY are 134217728, independent of the session
@@ -3063,11 +3109,15 @@ behavior_differences:
 
   147:
     name: "SQLSetStmtAttr SQL_ATTR_ROW_BIND_TYPE misaligned value accepted on all platforms"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      A non-zero SQL_ATTR_ROW_BIND_TYPE is a row-wise byte stride with no
+      alignment requirement. Accepting 65540 on every platform matches the spec;
+      3.x's HY000/S1000 on aarch64 and macOS did not.
     old_driver_behavior: |
       SQLSetStmtAttr(SQL_ATTR_ROW_BIND_TYPE, 65540) returns SQL_SUCCESS on Windows and
       Linux x86_64 but SQL_ERROR with native error 11700 on Linux aarch64 and macOS.
@@ -3087,11 +3137,16 @@ behavior_differences:
 
   148:
     name: "MaxHttpRetries maps to retry_max_attempts with different default, floor, and zero semantics"
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      The 3.x spelling stays accepted so existing DSNs still set a retry cap.
+      retry_max_attempts is the shared 4.x contract (default 6, honor 1–6, treat
+      0 as unset). Reproducing 3.x's floor-at-7 and infinite-zero would fight that
+      contract.
     old_driver_behavior: |
       MaxHttpRetries (default 7) caps HTTP retries for all requests, including login.
       Values 1–6 are raised to 7. 0 retries indefinitely.
@@ -3105,11 +3160,16 @@ behavior_differences:
 
   149:
     name: "MAX_CON_RETRY_ATTEMPTS login-only retry cap is not recognized"
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
-    impact: medium
+    impact: low
+    status_rationale: |
+      retry_max_attempts already accepts values below 7, which is why 3.x needed
+      a separate login-only cap. A login-only alias would still leave query and
+      logout on a different budget; 01S00 on the unused key is the accepted 4.x
+      surface.
     old_driver_behavior: |
       MAX_CON_RETRY_ATTEMPTS caps login retries only. When both it and MaxHttpRetries
       are set, login uses the smaller of the two; query retries stay on MaxHttpRetries.
@@ -3124,11 +3184,13 @@ behavior_differences:
 
   150:
     name: "RetryOn403 is not recognized; 403 retry is opt-in via retry_extra_status_codes"
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      This was a legacy, one-time fix which should've been removed long time ago.
     old_driver_behavior: |
       RetryOn403=true retries HTTP 403 responses. The default is not to retry 403.
     new_driver_behavior: |
@@ -3142,11 +3204,15 @@ behavior_differences:
 
   151:
     name: "SQLGetTypeInfo TIMESTAMP COLUMN_SIZE is 29; ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
+    status_rationale: |
+      SQLGetTypeInfo COLUMN_SIZE 29 is the ODBC standard TIMESTAMP display size
+      (20 + default scale 9). 3.x defaulted to 35 and needed a toggle to get 29;
+      4.x always reports 29 and does not accept that toggle.
     old_driver_behavior: |
       SQLGetTypeInfo reports COLUMN_SIZE 35 for SQL_TYPE_TIMESTAMP. Setting
       ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE=true reports 29 instead.
@@ -3159,9 +3225,13 @@ behavior_differences:
     name: "PUT AUTO_COMPRESS gzip tempfiles use the process temp directory when PUT_TEMPDIR is unset"
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
+    status_rationale: |
+      Unset PUT_TEMPDIR using the process temp directory is the 4.x tempfile
+      contract. PUT still succeeds; only the gzip staging directory changes when
+      the caller does not set PUT_TEMPDIR.
     old_driver_behavior: |
       When `PUT_TEMPDIR` is unset, PUT AUTO_COMPRESS writes gzip tempfiles under
       `/tmp/snowflakeTmp_<user>`. During compression the old driver stages in an
@@ -3201,7 +3271,7 @@ behavior_differences:
     name: "Connection-string logging keys are ignored and warn as deprecated"
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     status_rationale: |
@@ -3215,7 +3285,7 @@ behavior_differences:
       and `EnablePidLogFileNames` in a DSN or connection string configure the old
       driver's file logger, and connect returns `SQL_SUCCESS`.
       `CLIENT_CONFIG_FILE` names an `sf_client_config.json` whose `log_level` and
-      `log_path` apply when `LogLevel` and `LogPath` are absent; the old driver
+      `log_path` apply when `LogLevel` and `LogPath` are absent; the driver
       applies that file and still returns `SQL_SUCCESS_WITH_INFO` with SQLSTATE
       01S00, "1 invalid keys are found in the connection string:
       CLIENT_CONFIG_FILE". No key draws a deprecation diagnostic.
@@ -3235,36 +3305,47 @@ behavior_differences:
       the old driver reads without listing among its accepted connection keys, so
       the old driver both applies it and reports it as invalid; the new driver
       has no `sf_client_config.json` support, so it reports the key as deprecated
-      instead. Pinned by
-      `odbc_tests/tests/e2e/logging/deprecated_connection_string_keys.cpp`.
-      iODBC's driver manager drops the SQLDriverConnect SUCCESS_WITH_INFO
-      diagnostic (BD#61); that suite still asserts the return code and checks the
-      diagnostic text on unixODBC / Windows.
+      instead.
 
   155:
     name: "SQLDriverConnect fails with SQLSTATE 28000 and native error 0 for an invalid WIF provider, missing OIDC token, or malformed JWT"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
+    status_rationale: |
+      3.x does not treat these as connection-parameter errors. An invalid
+      WORKLOAD_IDENTITY_PROVIDER or OIDC without TOKEN is only logged; login
+      still runs without a WIF attestation. A malformed TOKEN throws in the
+      JWT parser during login-body construction. The SQL_ERROR the application
+      sees is whatever Simba/the driver manager assign to that later failure
+      (08001, HY000, or 28000). 4.x rejects all three locally as authorization
+      parameter errors (28000 / native 0) with a diagnostic that names the
+      field.
     old_driver_behavior: |
-      SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR when
-      WORKLOAD_IDENTITY_PROVIDER is an invalid value, when WORKLOAD_IDENTITY_PROVIDER
-      is OIDC and TOKEN is absent, or when TOKEN is not a valid JWT. The SQLSTATE is
-      08001, HY000, or 28000 depending on the connect path and the driver manager.
+      SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR
+      for WORKLOAD_IDENTITY_PROVIDER=INVALID_CLOUD, for provider=OIDC with no
+      TOKEN, and for TOKEN=not-a-valid-jwt. None of those paths is a 
+      required-setting check. Invalid provider and missing OIDC token are
+      logged in libsnowflakeclient and login proceeds without TOKEN/PROVIDER
+      on the wire. Malformed JWT raises JwtException while building the login
+      body. The diagnostic SQLSTATE is 08001, HY000, or 28000 depending on
+      the Simba/driver-manager wrapping of that later failure; native error
+      is not 20032; the message does not consistently name
+      workload_identity_provider or token.
     new_driver_behavior: |
-      SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR, SQLSTATE
-      28000, and native error 0 when WORKLOAD_IDENTITY_PROVIDER is an invalid value,
-      when WORKLOAD_IDENTITY_PROVIDER is OIDC and TOKEN is absent, or when TOKEN is
-      not a valid JWT. The diagnostic names workload_identity_provider, token, or a
-      malformed JWT or attestation, respectively.
+      SQLDriverConnect returns SQL_ERROR, SQLSTATE 28000, and native error 0
+      before any login request. Invalid WORKLOAD_IDENTITY_PROVIDER names
+      workload_identity_provider; OIDC without TOKEN names token; a
+      structurally invalid JWT reports that the token is not a valid JWT
+      (or an attestation error with the same SQLSTATE/native error).
 
   156:
     name: "Connection-string OCSP keys are ignored and warn as deprecated"
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     status_rationale: |
@@ -3285,8 +3366,7 @@ behavior_differences:
     description: |
       Leftover OCSP connection-string keys cannot drive CRL revocation.
       They stay recognized so they do not draw 01S00, and they warn so
-      callers migrate to `CRL_MODE`. Pinned by the ODBC unit tests in
-      `odbc/src/api/connection.rs` and `sf_params_spec` registry coverage.
+      callers migrate to `CRL_MODE`.
 
   157:
     name: "SQL_RESET_PARAMS sets IPD SQL_DESC_COUNT to 0"
