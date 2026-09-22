@@ -291,6 +291,10 @@ impl DatabaseDriverV1 {
                     )
                     .context(ConfigurationSnafu)?;
                     normalize_host_underscores(&mut resolved);
+                    crate::xp_backend::seed_settings_for_host_backend(
+                        &mut resolved,
+                        self.xp_slot.running_inside_xp(),
+                    );
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);

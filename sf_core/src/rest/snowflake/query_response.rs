@@ -156,11 +156,22 @@ pub struct QueryContext {
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct QueryContextEntry {
-    #[serde(rename = "id")]
+    // Lenient because a host backend may relay these as floats; the cache keys
+    // on id/timestamp/priority. See crate::xp_backend::response_compat.
+    #[serde(
+        rename = "id",
+        deserialize_with = "crate::xp_backend::deserialize_lenient_i64"
+    )]
     pub id: i64,
-    #[serde(rename = "timestamp")]
+    #[serde(
+        rename = "timestamp",
+        deserialize_with = "crate::xp_backend::deserialize_lenient_i64"
+    )]
     pub timestamp: i64,
-    #[serde(rename = "priority")]
+    #[serde(
+        rename = "priority",
+        deserialize_with = "crate::xp_backend::deserialize_lenient_i64"
+    )]
     pub priority: i64,
     #[serde(rename = "context")]
     pub context: Option<String>,

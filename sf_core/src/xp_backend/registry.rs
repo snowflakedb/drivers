@@ -167,6 +167,10 @@ impl XpSlot {
                 .ok_or_else(BackendError::not_registered),
         }
     }
+
+    pub fn running_inside_xp(&self) -> bool {
+        matches!(self.mode, XpMode::Xp(_))
+    }
 }
 
 pub fn env_running_inside_xp() -> bool {
@@ -207,11 +211,18 @@ mod tests {
     fn ordinary_client_uses_http() {
         let slot = XpSlot::new(false, None);
 
+        assert!(!slot.running_inside_xp());
         assert!(
             slot.active()
                 .expect("HTTP mode should not require a backend")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn xp_mode_is_independent_of_whether_a_backend_is_registered() {
+        assert!(XpSlot::new(true, None).running_inside_xp());
+        assert!(XpSlot::new(true, Some(Arc::new(TestBackend))).running_inside_xp());
     }
 
     #[test]

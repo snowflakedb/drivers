@@ -17,12 +17,16 @@ use async_trait::async_trait;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::snowflake::{LoginResult, QueryExecutionMode, QueryInput, query_response};
 
+mod connection_settings;
 /// C ABI used by Snowflake's execution platform. XP does not run on Windows,
 /// so this module is compiled only for unix.
 #[cfg(unix)]
 pub mod ffi;
 pub(crate) mod registry;
+mod response_compat;
+pub(crate) use connection_settings::seed_settings_for_host_backend;
 pub(crate) use registry::XpSlot;
+pub(crate) use response_compat::deserialize_lenient_i64;
 
 /// Driver-originated failures. All negative, so a caller can tell them from a
 /// Snowflake server error code, which a host passes through as a positive value.
