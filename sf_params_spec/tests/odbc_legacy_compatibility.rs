@@ -102,6 +102,12 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("CURLVerboseMode", "curl_verbose_mode"),
     ("EnablePidLogFileNames", "enable_pid_log_file_names"),
     ("CLIENT_CONFIG_FILE", "client_config_file"),
+    ("INJECT_CURL_TIMEOUT", "inject_curl_timeout"),
+    ("INJECT_INCIDENT1", "inject_incident1"),
+    ("CURL_NO_IDLE_CHECK", "curl_no_idle_check"),
+    ("DisableStageBindFallback", "disable_stage_bind_fallback"),
+    ("StageBindMaxFileSize", "stage_bind_max_file_size"),
+    ("StageBindThreshold", "stage_bind_threshold"),
     ("DisableOCSPCheck", "disable_ocsp_check"),
     ("OCSP_FAIL_OPEN", "ocsp_fail_open"),
     ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
@@ -114,10 +120,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     // `CPTIMEOUT` is the installer connection-pool idle timeout; the old
     // driver accepted the key and never applied it.
     "CPTIMEOUT",
-    // Test-only injectors from `Snowflake.h`.
-    "INJECT_CURL_TIMEOUT",
-    "INJECT_INCIDENT1",
-    "CURL_NO_IDLE_CHECK",
     // Deprecated Simba translation-DLL key.
     "TRANSLATE",
     // `CRL_ADVISORY` combines with `CRL_CHECK` in the legacy driver to
@@ -165,10 +167,7 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "disableConsoleLogin",
     "disablePlatformDetection",
     "platformDetectionTimeoutMs",
-    // Hidden stage-bind safeguards.
-    "DisableStageBindFallback",
-    "StageBindMaxFileSize",
-    "StageBindThreshold",
+    // Hidden stage-bind safeguard not registered (no 1:1 UD equivalent).
     "StageBindCompressLevel",
     // Session parameters. The connection-string parser forwards unknown
     // keys as session parameters, so they do not need registry aliases.

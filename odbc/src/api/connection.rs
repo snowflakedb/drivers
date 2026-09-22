@@ -199,6 +199,9 @@ fn deprecated_registry_param_warnings(params: &HashMap<String, String>) -> Vec<W
         .keys()
         .filter_map(|key| {
             let def = registry.resolve_for(Wrapper::Odbc, key)?;
+            if !def.ignored {
+                return None;
+            }
             Some((key.to_ascii_uppercase(), def.deprecated?))
         })
         .collect();
@@ -223,8 +226,9 @@ fn deprecated_registry_param_warnings(params: &HashMap<String, String>) -> Vec<W
 /// spellings. Keys unknown to the registry are forwarded uppercased as
 /// session/unknown parameters (matching how ODBC passes server session params
 /// through). Registry entries marked `ignored` (ODBC driver-manager metadata
-/// such as `DRIVER` and `DSN`, leftover `TRACING`, and deprecated
-/// connection-string logging keys such as `LogLevel`) are dropped.
+/// such as `DRIVER` and `DSN`, leftover `TRACING`, deprecated
+/// connection-string logging keys such as `LogLevel`, and removed test-only
+/// knobs such as `INJECT_CURL_TIMEOUT`) are dropped.
 fn normalize_connection_string_option(
     key: String,
     value: String,
@@ -330,8 +334,8 @@ fn apply_global_ssl_version_override(
 /// Connection-string keys that do not resolve through the `sf_core` registry
 /// under the ODBC flavor, sorted for a stable diagnostic. A key the registry
 /// resolves stays recognized, including `ignored` entries, so leftover
-/// driver-manager, `TRACING`, deprecated logging, and deprecated OCSP keywords
-/// do not draw 01S00.
+/// driver-manager, `TRACING`, deprecated logging keywords, deprecated OCSP
+/// keywords, and removed test-only knobs do not draw 01S00.
 fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
     let registry = sf_core::config::param_registry::registry();
     let mut keys: Vec<String> = params
@@ -3213,6 +3217,7 @@ mod tests {
             ("DSN".to_owned(), "my_dsn".to_owned()),
             ("PUT_MAXRETRIES".to_owned(), "3".to_owned()),
             ("LogPath".to_owned(), "/tmp".to_owned()),
+            ("SSL".to_owned(), "on".to_owned()),
         ]);
         let messages: Vec<String> = deprecated_registry_param_warnings(&params)
             .iter()
@@ -3268,6 +3273,42 @@ mod tests {
                 "LOGFILESIZE",
                 "LOGLEVEL",
                 "LOGPATH",
+            ]
+        );
+    }
+
+    #[test]
+    fn deprecated_registry_param_warnings_cover_all_ignored_test_only_knobs() {
+        let params = parse_connection_string(
+            "INJECT_CURL_TIMEOUT=1;INJECT_INCIDENT1=1;CURL_NO_IDLE_CHECK=1;DisableStageBindFallback=true;StageBindMaxFileSize=1;StageBindThreshold=1",
+        )
+        .unwrap();
+        let warnings = deprecated_registry_param_warnings(&params);
+        let keys: Vec<&str> = warnings
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation: Deprecation::Ignored { guidance },
+                } => {
+                    assert_eq!(
+                        *guidance,
+                        "There is no replacement; remove this key from the connection string."
+                    );
+                    parameter.as_str()
+                }
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "CURL_NO_IDLE_CHECK",
+                "DISABLESTAGEBINDFALLBACK",
+                "INJECT_CURL_TIMEOUT",
+                "INJECT_INCIDENT1",
+                "STAGEBINDMAXFILESIZE",
+                "STAGEBINDTHRESHOLD",
             ]
         );
     }
@@ -3720,6 +3761,20 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_deprecated_test_only_knobs() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("INJECT_CURL_TIMEOUT".to_owned(), "1".to_owned()),
+            ("INJECT_INCIDENT1".to_owned(), "1".to_owned()),
+            ("CURL_NO_IDLE_CHECK".to_owned(), "1".to_owned()),
+            ("DisableStageBindFallback".to_owned(), "true".to_owned()),
+            ("StageBindMaxFileSize".to_owned(), "1".to_owned()),
+            ("StageBindThreshold".to_owned(), "1".to_owned()),
+        ]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_drops_deprecated_ocsp_keys() {
         let options = normalize_connection_string_options(HashMap::from([
             ("DisableOCSPCheck".to_owned(), "true".to_owned()),
@@ -4090,6 +4145,15 @@ mod tests {
     fn unrecognized_connection_string_keys_ignores_deprecated_logging_keys() {
         let params = parse_connection_string(
             "DSN=my_dsn;LogLevel=DEBUG;LogPath=/tmp;LogFileSize=10;LogFileCount=2;CURLVerboseMode=true;EnablePidLogFileNames=true;CLIENT_CONFIG_FILE=/tmp/sf.json",
+        )
+        .unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_deprecated_test_only_knobs() {
+        let params = parse_connection_string(
+            "DSN=my_dsn;INJECT_CURL_TIMEOUT=1;INJECT_INCIDENT1=1;CURL_NO_IDLE_CHECK=1;DisableStageBindFallback=true;StageBindMaxFileSize=1;StageBindThreshold=1",
         )
         .unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());

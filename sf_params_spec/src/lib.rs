@@ -308,6 +308,13 @@ pub mod param_names {
     pub const CURL_VERBOSE_MODE: ParamKey = ParamKey("curl_verbose_mode");
     pub const ENABLE_PID_LOG_FILE_NAMES: ParamKey = ParamKey("enable_pid_log_file_names");
     pub const CLIENT_CONFIG_FILE: ParamKey = ParamKey("client_config_file");
+    // ── Deprecated ODBC test-only connection-string knobs ─────────────
+    pub const INJECT_CURL_TIMEOUT: ParamKey = ParamKey("inject_curl_timeout");
+    pub const INJECT_INCIDENT1: ParamKey = ParamKey("inject_incident1");
+    pub const CURL_NO_IDLE_CHECK: ParamKey = ParamKey("curl_no_idle_check");
+    pub const DISABLE_STAGE_BIND_FALLBACK: ParamKey = ParamKey("disable_stage_bind_fallback");
+    pub const STAGE_BIND_MAX_FILE_SIZE: ParamKey = ParamKey("stage_bind_max_file_size");
+    pub const STAGE_BIND_THRESHOLD: ParamKey = ParamKey("stage_bind_threshold");
     // ── Deprecated ODBC OCSP keys (revocation is CRL) ─────────────────
     pub const DISABLE_OCSP_CHECK: ParamKey = ParamKey("disable_ocsp_check");
     pub const OCSP_FAIL_OPEN: ParamKey = ParamKey("ocsp_fail_open");
@@ -2431,6 +2438,55 @@ static PARAM_DEFS: &[ParamDef] = &[
             guidance: "Configure driver logging in sf.odbc.ini; sf_client_config.json is not read.",
         },
     ),
+    // ── Deprecated ODBC test-only connection-string knobs ─────────────
+    odbc_deprecated(
+        param_names::INJECT_CURL_TIMEOUT.as_str(),
+        aliases![],
+        "Legacy test-only curl timeout injector. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
+    odbc_deprecated(
+        param_names::INJECT_INCIDENT1.as_str(),
+        aliases![],
+        "Legacy test-only incident injector. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
+    odbc_deprecated(
+        param_names::CURL_NO_IDLE_CHECK.as_str(),
+        aliases![],
+        "Legacy test-only curl idle-check skip. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
+    odbc_deprecated(
+        param_names::DISABLE_STAGE_BIND_FALLBACK.as_str(),
+        aliases![Odbc; "DisableStageBindFallback"],
+        "Legacy test-only stage-bind fallback switch. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
+    odbc_deprecated(
+        param_names::STAGE_BIND_MAX_FILE_SIZE.as_str(),
+        aliases![Odbc; "StageBindMaxFileSize"],
+        "Legacy test-only stage-bind max file size. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
+    odbc_deprecated(
+        param_names::STAGE_BIND_THRESHOLD.as_str(),
+        aliases![Odbc; "StageBindThreshold"],
+        "Legacy test-only stage-bind threshold. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE,
+        },
+    ),
     // ── Deprecated ODBC OCSP keys (revocation is CRL) ─────────────────
     odbc_deprecated(
         param_names::DISABLE_OCSP_CHECK.as_str(),
@@ -2465,6 +2521,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         },
     ),
 ];
+
+const ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE: &str =
+    "There is no replacement; remove this key from the connection string.";
 
 const fn ignored_odbc_param(canonical: &'static str) -> ParamDef {
     ParamDef::builder()
@@ -2998,6 +3057,43 @@ mod tests {
                 r.resolve(key).is_none(),
                 "{key} must not resolve without wrapper context"
             );
+            for wrapper in [
+                Wrapper::Jdbc,
+                Wrapper::Python,
+                Wrapper::NodeJs,
+                Wrapper::DotNet,
+            ] {
+                assert!(
+                    r.resolve_for(wrapper, key).is_none(),
+                    "{key} must not resolve for {wrapper:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn odbc_deprecated_test_only_dsn_keys_resolve_only_for_odbc() {
+        let r = registry();
+        let cases: &[(&str, &str)] = &[
+            ("INJECT_CURL_TIMEOUT", "inject_curl_timeout"),
+            ("INJECT_INCIDENT1", "inject_incident1"),
+            ("CURL_NO_IDLE_CHECK", "curl_no_idle_check"),
+            ("DisableStageBindFallback", "disable_stage_bind_fallback"),
+            ("StageBindMaxFileSize", "stage_bind_max_file_size"),
+            ("StageBindThreshold", "stage_bind_threshold"),
+        ];
+        for (key, canonical) in cases {
+            let def = r
+                .resolve_for(Wrapper::Odbc, key)
+                .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
+            assert_eq!(def.canonical_name, *canonical);
+            let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
+                panic!("{canonical} should be deprecated with guidance");
+            };
+            assert_eq!(guidance, ODBC_TEST_ONLY_KNOB_REMOVED_GUIDANCE);
+            assert!(def.ignored, "{canonical} should be ignored");
+            assert_eq!(def.visible_to, visible_to!(Odbc));
+            assert!(r.resolve(canonical).is_none());
             for wrapper in [
                 Wrapper::Jdbc,
                 Wrapper::Python,
