@@ -14,17 +14,19 @@ mod timestamp_ntz;
 mod timestamp_tz;
 mod timezone;
 mod util;
+mod vector;
 
 #[cfg(test)]
 mod test_util;
 
 use arrow::array::{
-    BinaryArray, BooleanArray, Date32Array, Float64Array, StringArray, StructArray,
+    BinaryArray, BooleanArray, Date32Array, FixedSizeListArray, Float64Array, StringArray,
+    StructArray,
 };
 use pyo3::prelude::*;
 use sf_types::{
     SnowflakeBinary, SnowflakeBoolean, SnowflakeDate, SnowflakeDecfloat, SnowflakeReal,
-    SnowflakeText, SnowflakeTimestampTz,
+    SnowflakeText, SnowflakeTimestampTz, SnowflakeVector,
 };
 
 use self::binary::BinaryMaterializer;
@@ -40,6 +42,7 @@ use self::time::TimeColumn;
 use self::timestamp_ltz::TimestampLtzColumn;
 use self::timestamp_ntz::TimestampNtzColumn;
 use self::timestamp_tz::TimestampTzMaterializer;
+use self::vector::VectorMaterializer;
 
 pub(crate) use context::{ConversionContext, RowShape};
 
@@ -57,6 +60,7 @@ pub(crate) enum Column {
     TimestampTz(TypedColumn<StructArray, SnowflakeTimestampTz, TimestampTzMaterializer>),
     IntervalYearMonth(IntervalYearMonthColumn),
     IntervalDayTime(IntervalDayTimeColumn),
+    Vector(TypedColumn<FixedSizeListArray, SnowflakeVector, VectorMaterializer>),
 }
 
 impl Column {
@@ -75,6 +79,7 @@ impl Column {
             Self::TimestampTz(column) => column.to_py(py, row),
             Self::IntervalYearMonth(column) => column.to_py(py, row),
             Self::IntervalDayTime(column) => column.to_py(py, row),
+            Self::Vector(column) => column.to_py(py, row),
         }
     }
 }

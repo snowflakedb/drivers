@@ -35,8 +35,9 @@ pub(crate) enum VectorElementType {
 /// Copied from `odbc/src/conversion/mod.rs` (`SnowflakeFieldType`). Variants
 /// hold the same data the ODBC `Snowflake*` types store; `BOOLEAN` is a ZST
 /// there (`SnowflakeBoolean`) so it is a unit variant here until that reader
-/// lands. `OBJECT` / `ARRAY` / `VARIANT` are `Varchar` with
-/// `is_semi_structured: true`, matching ODBC.
+/// lands. `OBJECT` / `ARRAY` / `VARIANT` / `MAP` are `Varchar` with
+/// `is_semi_structured: true`. The server sends those as Utf8 JSON today,
+/// including structured `ARRAY(T)`, `OBJECT(...)`, and `MAP(K, V)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SnowflakeFieldType {
     Varchar {
@@ -166,7 +167,9 @@ impl SnowflakeFieldType {
             "DECFLOAT" => Ok(Self::Decfloat {
                 precision: get_field_metadata(field, "precision")?,
             }),
-            "OBJECT" | "ARRAY" | "VARIANT" => {
+            // The server sends these as Utf8 JSON today, including structured
+            // ARRAY(T), OBJECT(...), and MAP(K, V). They share the TEXT path.
+            "OBJECT" | "ARRAY" | "VARIANT" | "MAP" => {
                 let len = match get_field_metadata(field, "charLength") {
                     Ok(len) => len,
                     Err(PlanError::MissingMetadata { .. }) => SF_DEFAULT_VARCHAR_MAX_LEN,
@@ -307,6 +310,9 @@ mod tests {
             ),
             field_with_metadata("s", DataType::Utf8, logical_meta("TEXT", &[])),
             field_with_metadata("v", DataType::Utf8, logical_meta("VARIANT", &[])),
+            field_with_metadata("a", DataType::Utf8, logical_meta("ARRAY", &[])),
+            field_with_metadata("o", DataType::Utf8, logical_meta("OBJECT", &[])),
+            field_with_metadata("m", DataType::Utf8, logical_meta("MAP", &[])),
             field_with_metadata("b", DataType::Boolean, logical_meta("BOOLEAN", &[])),
             field_with_metadata(
                 "t",
@@ -331,6 +337,18 @@ mod tests {
                 SnowflakeFieldType::Varchar {
                     len: SF_DEFAULT_VARCHAR_MAX_LEN,
                     is_semi_structured: false,
+                },
+                SnowflakeFieldType::Varchar {
+                    len: SF_DEFAULT_VARCHAR_MAX_LEN,
+                    is_semi_structured: true,
+                },
+                SnowflakeFieldType::Varchar {
+                    len: SF_DEFAULT_VARCHAR_MAX_LEN,
+                    is_semi_structured: true,
+                },
+                SnowflakeFieldType::Varchar {
+                    len: SF_DEFAULT_VARCHAR_MAX_LEN,
+                    is_semi_structured: true,
                 },
                 SnowflakeFieldType::Varchar {
                     len: SF_DEFAULT_VARCHAR_MAX_LEN,

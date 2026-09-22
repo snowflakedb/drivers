@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use arrow::array::ArrayRef;
 use arrow::record_batch::RecordBatch;
-use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 
@@ -23,6 +22,7 @@ use super::timestamp_ltz;
 use super::timestamp_ntz;
 use super::timestamp_tz;
 use super::timezone::TimezoneProvider;
+use super::vector;
 
 pub(crate) enum RowShape {
     Tuple,
@@ -121,10 +121,7 @@ impl ConversionContext {
             SnowflakeFieldType::IntervalDayTime => {
                 interval::day_time_from_column(array, field_type)
             }
-            SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
-                "native Arrow conversion is not implemented for logical type {}",
-                field_type.logical_type_name()
-            ))),
+            SnowflakeFieldType::Vector { .. } => vector::from_column(array, field_type),
         }
     }
 }
