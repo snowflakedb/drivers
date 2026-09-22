@@ -51,6 +51,8 @@ final class SnowflakeConnectionImplTestFixtures {
         .thenReturn(ConnectionNewResponse.newBuilder().setConnHandle(DEFAULT_CONN_HANDLE).build());
     when(mockCoreApi.connectionSetOptions(any(), any()))
         .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
+    when(mockCoreApi.connectionSetOptionsForDefaultProfile(any(), any()))
+        .thenReturn(ConnectionSetOptionsResponse.getDefaultInstance());
     when(mockCoreApi.connectionSetAutocommit(any(), anyBoolean()))
         .thenReturn(ConnectionSetAutocommitResponse.getDefaultInstance());
     when(mockCoreApi.connectionInit(any(), any(), any()))

@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
+import static net.snowflake.client.internal.util.StringUtil.isBlank;
+
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -140,10 +142,6 @@ public final class AutoConnectionUrl {
 
     String fromEnvironment = environment.apply(DEFAULT_CONNECTION_NAME_ENV);
     return isBlank(fromEnvironment) ? null : fromEnvironment;
-  }
-
-  private static boolean isBlank(String value) {
-    return value == null || value.trim().isEmpty();
   }
 
   public static boolean isConnectionName(String key) {

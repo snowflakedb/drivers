@@ -1302,3 +1302,40 @@ behavior_differences:
       The old driver's GCS download path leaves ciphertext on disk while still reporting
       DOWNLOADED. Tracked as SNOW-4143382 on the old driver. Drop the new-driver-only content
       assertion in GcsVirtualUrlEnvTest when the reference driver is a release that decrypts.
+  71:
+    name: "JDBC auto-configuration uses shared profile resolution"
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      Profiles are read only from `connections.toml`. The exact, case-sensitive `connectionName`
+      URL key overrides `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, then falls back to `default`.
+      Auto URL queries are parsed loosely, and duplicate aliases in JDBC `Properties` are rejected
+      even when their values agree. A missing profile reports
+      `The Connection <name> not found in connections.toml file.` with no SQLState and vendor code
+      zero.
+    new_driver_behavior: |
+      Profiles can also come from `[connections.<name>]` in `config.toml`, with
+      `connections.toml` taking precedence. JDBC `Properties` override URL options and selectors;
+      `connectionName` and `connection_name` are matched case-insensitively. Selection then falls
+      back through `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, `config.toml`'s
+      `default_connection_name`, and `default`.
+      A direct `url` entry in JDBC `Properties` supplies the auto URL when the public JDBC URL
+      argument is blank; inherited `Properties` defaults do not.
+
+      Auto URL queries and selector types are validated strictly. Malformed queries, fragments,
+      duplicate aliases, and non-string JDBC `Properties` selectors report
+      `INVALID_PARAMETER_VALUE`. `Driver.getPropertyInfo` uses the same fail-closed auto URL parse
+      as `connect` instead of reporting `INVALID_CONNECTION_STRING`. Equal alias values in JDBC
+      `Properties` are accepted. A missing profile keeps the old driver's message but reports
+      SQLState `22023` and vendor code `200047`.
+
+      Profile option names, OAuth token files, configuration paths, and Unix file permissions
+      follow the shared configuration rules. As a result, some JDBC-only TOML aliases and the old
+      driver's default token path and permission-skip environment variable are not honored.
+    description: |
+      JDBC auto URLs use the same profile resolution and validation rules as the shared
+      configuration layer while preserving JDBC `Properties` precedence and a classifiable
+      missing-profile error.

@@ -143,6 +143,45 @@ class ConnectionOptionsResolverTest {
   }
 
   @Test
+  public void shouldTreatBareAutoUrlAsDefaultProfileWhenNoConnectionNameResolves() {
+    Properties input = new Properties();
+    Properties resolved = ConnectionOptionsResolver.resolve("jdbc:snowflake:auto", input);
+
+    assertTrue(
+        ConnectionOptionsResolver.usesDefaultAutoProfile("jdbc:snowflake:auto", input, resolved));
+  }
+
+  @Test
+  public void shouldNotTreatNamedAutoUrlAsDefaultProfile() {
+    Properties input = new Properties();
+    Properties resolved =
+        ConnectionOptionsResolver.resolve("jdbc:snowflake:auto?connectionName=readOnly", input);
+
+    assertFalse(
+        ConnectionOptionsResolver.usesDefaultAutoProfile(
+            "jdbc:snowflake:auto?connectionName=readOnly", input, resolved));
+  }
+
+  @Test
+  public void shouldTreatHashtableUrlAsDefaultAutoProfileWhenUrlArgumentIsBlank() {
+    Properties input = new Properties();
+    input.setProperty("url", "jdbc:snowflake:auto");
+    Properties resolved = ConnectionOptionsResolver.resolve(null, input);
+
+    assertTrue(ConnectionOptionsResolver.usesDefaultAutoProfile(null, input, resolved));
+  }
+
+  @Test
+  public void shouldIgnoreInheritedAutoUrlDefaultWhenDetectingDefaultProfile() {
+    Properties defaults = new Properties();
+    defaults.setProperty("url", "jdbc:snowflake:auto");
+    Properties input = new Properties(defaults);
+    Properties resolved = ConnectionOptionsResolver.resolve(null, input);
+
+    assertFalse(ConnectionOptionsResolver.usesDefaultAutoProfile(null, input, resolved));
+  }
+
+  @Test
   public void shouldPreferADirectPropertyAliasOverAnInheritedAlias() {
     Properties defaults = new Properties();
     defaults.setProperty("loginTimeout", "5");

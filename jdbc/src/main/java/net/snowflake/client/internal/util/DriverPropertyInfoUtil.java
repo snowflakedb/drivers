@@ -13,12 +13,13 @@ import lombok.NoArgsConstructor;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 
 /** Resolves and validates JDBC driver property information for {@code Driver.getPropertyInfo}. */
 @NoArgsConstructor(access = PRIVATE)
 public final class DriverPropertyInfoUtil {
   public static DriverPropertyInfo[] getPropertyInfo(String url, Properties info) {
-    if (isNullOrEmpty(url)) {
+    if (isNullOrEmpty(url) && !ConnectionOptionsResolver.isAutoConnection(url, info)) {
       return new DriverPropertyInfo[] {
         propertyInfo(
             "serverURL",
@@ -55,6 +56,9 @@ public final class DriverPropertyInfoUtil {
   }
 
   static Properties resolve(String url, Properties info) {
+    if (ConnectionOptionsResolver.isAutoConnection(url, info)) {
+      return ConnectionOptionsResolver.resolve(url, info);
+    }
     ConnectionString parsed = ConnectionString.parse(url, info);
     if (!parsed.isValid()) {
       throw SFSQLException.fromErrorCode(ErrorCode.INVALID_CONNECTION_STRING);

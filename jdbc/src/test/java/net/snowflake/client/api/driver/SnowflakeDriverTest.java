@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Properties;
 import java.util.stream.Stream;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.jdbc.utils.DriverCompatibility;
 import net.snowflake.jdbc.utils.SkipOldDriver;
@@ -276,6 +277,18 @@ public class SnowflakeDriverTest {
   public void testConnectReturnsNullForNonSnowflakePrefix() throws SQLException {
     SnowflakeDriver driver = new SnowflakeDriver();
     assertNull(driver.connect("jdbc:nonsnowflake://host:3306/database", new Properties()));
+  }
+
+  @Test
+  @SkipOldDriver("BD#71")
+  public void testConnectRejectsAutoUrlWithFragment() {
+    SnowflakeDriver driver = new SnowflakeDriver();
+    SQLException ex =
+        assertThrows(
+            SQLException.class,
+            () -> driver.connect("jdbc:snowflake:auto#fragment", new Properties()));
+    assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getSqlState(), ex.getSQLState());
+    assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getMessageCode(), ex.getErrorCode());
   }
 
   @Test

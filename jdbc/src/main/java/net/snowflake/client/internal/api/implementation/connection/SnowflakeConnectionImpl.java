@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.UploadStreamConfig;
 import net.snowflake.client.api.driver.SnowflakeDriver;
@@ -130,8 +131,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   SnowflakeConnectionImpl(String url, Properties properties, CoreDriverApi coreDriverApi) {
+    this(url, properties, coreDriverApi, System::getenv);
+  }
+
+  SnowflakeConnectionImpl(
+      String url,
+      Properties properties,
+      CoreDriverApi coreDriverApi,
+      Function<String, String> environment) {
     Properties resolvedProperties =
-        ProxyOptionsResolver.resolve(ConnectionOptionsResolver.resolve(url, properties));
+        ProxyOptionsResolver.resolve(
+            ConnectionOptionsResolver.resolve(url, properties, environment));
     try {
       Jdk14LoggerBootstrap.initFromConnectionIfConfigured(resolvedProperties);
     } catch (IOException e) {
@@ -140,6 +150,9 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
     this.coreDriverApi = coreDriverApi;
 
+    boolean useDefaultAutoProfile =
+        ConnectionOptionsResolver.usesDefaultAutoProfile(url, properties, resolvedProperties);
+
     DatabaseHandle dbHandle = null;
     ConnectionHandle connHandle = null;
     try {
@@ -147,7 +160,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       coreDriverApi.databaseInit(dbHandle);
       connHandle = coreDriverApi.connectionNew().getConnHandle();
 
-      SQLWarning sqlWarnings = setOptions(connHandle, resolvedProperties);
+      SQLWarning sqlWarnings = setOptions(connHandle, resolvedProperties, useDefaultAutoProfile);
 
       WrapperIdentity identity = wrapperIdentity();
       coreDriverApi.connectionInit(connHandle, dbHandle, identity);
@@ -180,7 +193,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     return identityBuilder.build();
   }
 
-  private SQLWarning setOptions(ConnectionHandle connHandle, Properties resolvedProperties) {
+  private SQLWarning setOptions(
+      ConnectionHandle connHandle, Properties resolvedProperties, boolean useDefaultAutoProfile) {
     Map<String, ConfigSetting> options = new HashMap<>();
 
     // JDBC convention: Connection.close() must not throw on logout failure.
@@ -203,7 +217,9 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
     if (!options.isEmpty()) {
       ConnectionSetOptionsResponse response =
-          coreDriverApi.connectionSetOptions(connHandle, options);
+          useDefaultAutoProfile
+              ? coreDriverApi.connectionSetOptionsForDefaultProfile(connHandle, options)
+              : coreDriverApi.connectionSetOptions(connHandle, options);
       for (ValidationIssue warning : response.getWarningsList()) {
         logger.warn(
             "Connection option warning: severity={}, parameter={}, code={}, message={}",

@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
+import static net.snowflake.client.internal.util.StringUtil.isBlank;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -197,10 +199,6 @@ public final class ProxyOptionsResolver {
   private static boolean isLegacyEnabled(Object value) {
     String stringValue = stringValue(value);
     return "true".equalsIgnoreCase(stringValue) || "on".equalsIgnoreCase(stringValue);
-  }
-
-  private static boolean isBlank(String value) {
-    return value == null || value.trim().isEmpty();
   }
 
   private static String stringValue(Object value) {

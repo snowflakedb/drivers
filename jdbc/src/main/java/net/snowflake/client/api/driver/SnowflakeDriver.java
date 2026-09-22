@@ -13,7 +13,9 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.exception.AutoConnectionExceptionMapper;
 import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMapper;
+import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
@@ -26,6 +28,15 @@ import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
  */
 public class SnowflakeDriver implements Driver {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeDriver.class);
+  private final ConnectionFactory connectionFactory;
+
+  public SnowflakeDriver() {
+    this(SnowflakeConnectionImpl::new);
+  }
+
+  SnowflakeDriver(ConnectionFactory connectionFactory) {
+    this.connectionFactory = connectionFactory;
+  }
 
   // Up to 9 digits keeps the result within Integer.MAX_VALUE so parseInt cannot overflow.
   // Declared before the constants below because their initializers call parseVersionComponent.
@@ -71,22 +82,33 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public Connection connect(String url, Properties info) throws SQLException {
-    if (ConnectionString.hasUnsupportedPrefix(url)) {
-      logger.debug("Connect strings must start with jdbc:snowflake://");
+    boolean autoConnectionUrl = ConnectionOptionsResolver.isAutoConnection(url, info);
+    if (!autoConnectionUrl && ConnectionString.hasUnsupportedPrefix(url)) {
+      logger.debug(
+          "Connect strings must start with jdbc:snowflake:// or equal jdbc:snowflake:auto");
       return null;
     }
-    ConnectionString parsed = ConnectionString.parse(url, info);
-    if (!parsed.isValid()) {
+    if (autoConnectionUrl) {
+      SqlExceptionMapper.call(() -> ConnectionOptionsResolver.resolve(url, info));
+    } else if (!ConnectionString.parse(url, info).isValid()) {
       throw new SnowflakeSQLException("Connection string is invalid. Unable to parse.");
     }
-    // The connection constructor performs login and throws unchecked driver carriers on failure.
-    // Because a constructor runs before any instance exists, the @JdbcBoundary decorator cannot
-    // wrap
-    // it — so translate here to honor connect()'s throws SQLException contract instead of letting a
-    // carrier (e.g. CoreException on a bad login) escape the public JDBC entry point.
-    SnowflakeConnectionImpl connection =
-        SqlExceptionMapper.call(() -> new SnowflakeConnectionImpl(url, info));
+    SnowflakeConnectionImpl connection = createConnection(url, info, autoConnectionUrl);
     return Decorators.connection(connection, connection.getTelemetry());
+  }
+
+  private SnowflakeConnectionImpl createConnection(
+      String url, Properties info, boolean autoConnectionUrl) throws SQLException {
+    // Login happens in the constructor, before @JdbcBoundary can wrap the instance, so translate
+    // unchecked carriers here to honor connect()'s throws SQLException contract.
+    return SqlExceptionMapper.call(
+        () -> {
+          try {
+            return connectionFactory.create(url, info);
+          } catch (RuntimeException e) {
+            throw AutoConnectionExceptionMapper.remapMissingProfile(e, autoConnectionUrl);
+          }
+        });
   }
 
   @Override

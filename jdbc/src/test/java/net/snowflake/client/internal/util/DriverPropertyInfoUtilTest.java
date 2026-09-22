@@ -155,6 +155,22 @@ class DriverPropertyInfoUtilTest {
     assertEquals(ErrorCode.INVALID_CONNECTION_STRING, exception.getErrorCode());
   }
 
+  @Test
+  void shouldResolveAutoConnectionUrlsThroughSharedResolver() {
+    Properties resolved = resolve("jdbc:snowflake:auto?warehouse=TEST_WH", new Properties());
+
+    assertEquals("TEST_WH", resolved.getProperty("warehouse"));
+  }
+
+  @Test
+  void shouldRejectMalformedAutoConnectionUrlsDuringPropertyInfo() {
+    SFSQLException exception =
+        assertThrows(
+            SFSQLException.class, () -> resolve("jdbc:snowflake:auto#fragment", new Properties()));
+
+    assertEquals(ErrorCode.INVALID_PARAMETER_VALUE, exception.getErrorCode());
+  }
+
   @ParameterizedTest
   @NullAndEmptySource
   void shouldReportServerUrlWhenUrlIsUnspecified(String url) {

@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
+import static net.snowflake.client.internal.util.StringUtil.isBlank;
+
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
@@ -19,14 +21,14 @@ public final class ConnectionOptionsResolver {
   }
 
   /** Resolves connection options using the supplied environment lookup. */
-  static Properties resolve(
+  public static Properties resolve(
       String url, Properties properties, Function<String, String> environment) {
     Properties resolved = new Properties();
     if (properties != null) {
       resolved.putAll(properties);
     }
 
-    String effectiveUrl = firstNonBlank(url, resolved.getProperty("url"));
+    String effectiveUrl = effectiveUrl(url, properties);
     if (effectiveUrl != null) {
       if (AutoConnectionUrl.isAutoConnectionUrl(effectiveUrl)) {
         copyInheritedDefaults(properties, resolved);
@@ -37,6 +39,23 @@ public final class ConnectionOptionsResolver {
       populateFromConnectionString(effectiveUrl, resolved);
     }
     return resolved;
+  }
+
+  public static boolean usesDefaultAutoProfile(
+      String url, Properties properties, Properties resolvedProperties) {
+    return isAutoConnection(url, properties) && !resolvedProperties.containsKey("connection_name");
+  }
+
+  public static boolean isAutoConnection(String url, Properties properties) {
+    return AutoConnectionUrl.isAutoConnectionUrl(effectiveUrl(url, properties));
+  }
+
+  static String effectiveUrl(String url, Properties properties) {
+    Properties hashtableView = new Properties();
+    if (properties != null) {
+      hashtableView.putAll(properties);
+    }
+    return firstNonBlank(url, hashtableView.getProperty("url"));
   }
 
   private static void copyInheritedDefaults(Properties source, Properties resolved) {
@@ -171,16 +190,12 @@ public final class ConnectionOptionsResolver {
   }
 
   private static String firstNonBlank(String first, String second) {
-    if (first != null && !first.trim().isEmpty()) {
+    if (!isBlank(first)) {
       return first;
     }
-    if (second != null && !second.trim().isEmpty()) {
+    if (!isBlank(second)) {
       return second;
     }
     return null;
-  }
-
-  private static boolean isBlank(String value) {
-    return value == null || value.trim().isEmpty();
   }
 }
