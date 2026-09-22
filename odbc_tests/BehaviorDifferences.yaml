@@ -3407,3 +3407,22 @@ behavior_differences:
       Neither driver supports binding a parameter typed SQL_GUID. The new
       driver uses the restricted-data-type SQLSTATE instead of the old
       driver's general-error SQLSTATE.
+
+  159:
+    name: "Non-contiguous ExecDirect parameter bindings fail with HY000 instead of 42601"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      Binding only parameters 1 and 3 for SQLExecDirect("SELECT ?, ?, ?")
+      returns SQL_ERROR with SQLSTATE 42601 and reports that a bind variable
+      was not set.
+    new_driver_behavior: |
+      The same call returns SQL_ERROR with SQLSTATE HY000 and reports that
+      parameter bindings must be contiguous and start at 1.
+    description: |
+      Both drivers reject the malformed bind set. The new driver detects it
+      before submitting the statement, while the old driver reports the
+      server's SQL compilation error.

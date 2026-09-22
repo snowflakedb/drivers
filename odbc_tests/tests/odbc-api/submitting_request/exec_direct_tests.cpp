@@ -322,6 +322,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes with bound para
   REQUIRE(result == 77);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects non-contiguous parameter bindings",
+                 "[odbc-api][execdirect][submitting_request][error]") {
+  SQLINTEGER first = 1;
+  SQLINTEGER third = 3;
+  SQLLEN first_ind = 0;
+  SQLLEN third_ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &first, 0, &first_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLBindParameter(stmt_handle(), 3, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &third, 0, &third_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?, ?, ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#159") { REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT); }
+  OLD_DRIVER_ONLY("BD#159") { REQUIRE_EXPECTED_ERROR(ret, "42601", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_NEED_DATA with data-at-execution parameter",
                  "[odbc-api][execdirect][submitting_request]") {
   SQLLEN dae_ind = SQL_DATA_AT_EXEC;
