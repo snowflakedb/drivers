@@ -7,6 +7,7 @@ import type {
   Column,
   RowMode,
   RowOptions,
+  QueryStatus,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import ErrorCode from './constants/ErrorCode.js';
@@ -14,6 +15,8 @@ import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
   CoreQueryBindings,
+  coreIsAnError,
+  coreIsStillRunning,
   type CoreConnectionInstance,
   type CoreStatementInstance,
 } from './core/index.js';
@@ -50,6 +53,7 @@ export {
   type CustomParser,
   type XMlParserConfigOption,
   type ConfigureOptions,
+  type QueryStatus,
 };
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
@@ -256,12 +260,12 @@ export class Connection {
     throw new Error('Not implemented');
   }
 
-  isStillRunning(): boolean {
-    throw new Error('Not implemented');
+  isStillRunning(status: QueryStatus): boolean {
+    return coreIsStillRunning(status);
   }
 
-  isAnError(): boolean {
-    throw new Error('Not implemented');
+  isAnError(status: QueryStatus): boolean {
+    return coreIsAnError(status);
   }
 
   fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {

@@ -53,9 +53,12 @@ export const CoreConnection = core.Connection;
 export const CoreStatement = core.Statement;
 export const CoreColumn = core.Column;
 export const CoreQueryBindingFormat = core.QueryBindingFormat;
+export const coreIsAnError = core.isAnError;
+export const coreIsStillRunning = core.isStillRunning;
 
 export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
 export type CoreStatementInstance = InstanceType<typeof CoreStatement>;
 export type CoreColumnInstance = InstanceType<typeof CoreColumn>;
 export type CoreQueryBindings = CoreBinary.QueryBindings;
 export type CoreKnownSessionParameters = CoreBinary.KnownSessionParameters;
+export type QueryStatus = CoreBinary.QueryStatus;

@@ -831,3 +831,33 @@ behavior_differences:
       The warning tells the caller to fetch as a string or BigInt. The old driver still
       converts the cell to Number first, so the warning fires even when fetchAsString
       already returned the exact digits.
+
+  41:
+    name: 'BLOCKED query status is still-running, not an error'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Query status BLOCKED means that the query is not running and resulted in an error.
+    new_driver_behavior: |
+      Query status BLOCKED means that the query is still running.
+    status_rationale: |
+      BLOCKED in GS is described as non-terminal state. Python connector correctly treats
+      BLOCKED as still running.
+
+  42:
+    name: 'isAnError is typed to take a QueryStatus argument'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types isAnError as a zero-argument method. At runtime the method accepts and uses
+      a status argument, matching isStillRunning(status).
+    new_driver_behavior: |
+      isAnError(status: QueryStatus) is typed to take the status the runtime already required.
+    status_rationale: |
+      The old published types were wrong; runtime behavior is unchanged.

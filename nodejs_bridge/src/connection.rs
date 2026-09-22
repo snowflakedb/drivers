@@ -292,6 +292,8 @@ impl Connection {
         )
     }
 
+    // TODO: destroy does not release core handles when the connection was never
+    // established.
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
         // Held for the whole close, so the handles cannot be released — by a

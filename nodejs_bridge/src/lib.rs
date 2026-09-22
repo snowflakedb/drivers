@@ -16,6 +16,7 @@
 
 mod connection;
 mod error;
+mod query;
 mod session_params;
 mod statement;
 

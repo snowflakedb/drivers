@@ -1,7 +1,7 @@
 import type { RowStatement as OldRowStatement } from 'snowflake-sdk-old';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
-import newSnowflakeSDK from 'snowflake-sdk';
+import newSnowflakeSDK, { type Connection as NewSnowflakeConnection } from 'snowflake-sdk';
 import oldSnowflakeSDK from 'snowflake-sdk-old';
 import { resetGlobalConfig as resetGlobalConfigInNewDriver } from 'snowflake-sdk/dist/global-config.js';
 import { expect } from 'vitest';
@@ -9,6 +9,7 @@ import type {
   Connection,
   ConnectionOptions,
   FileAndStageBindStatement,
+  QueryStatus,
   RowStatement,
   StatementOption,
 } from '../../types/sdk-types.js';
@@ -89,6 +90,13 @@ export async function connectAsyncWithErrorBD(connection: Connection): Promise<v
       connection.connect((error) => (error ? reject(error) : resolve()));
     });
   }
+}
+
+export function connectionIsAnErrorWithBD(connection: Connection, status: QueryStatus): boolean {
+  if (isRunningNewDriverWithBD('BD#42')) {
+    return (connection as NewSnowflakeConnection).isAnError(status);
+  }
+  return (connection.isAnError as (queryStatus: QueryStatus) => boolean)(status);
 }
 
 export async function destroyConnectionAsync(connection: Connection): Promise<void> {

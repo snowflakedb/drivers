@@ -41,3 +41,5 @@ export interface FetchRowsOptions {
   each: (row: unknown) => boolean | void;
   end: (err: SnowflakeError | undefined, stmt: RowStatement | FileAndStageBindStatement) => void;
 }
+
+export type { QueryStatus } from '../core/index.js';

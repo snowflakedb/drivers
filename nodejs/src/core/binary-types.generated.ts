@@ -70,6 +70,10 @@ export declare class Statement {
   cancel(): Promise<void>
 }
 
+export declare function isAnError(status: QueryStatus): boolean
+
+export declare function isStillRunning(status: QueryStatus): boolean
+
 /**
  * The session parameters the Node.js driver reads and knows the type of. Every
  * field is resolved from the server-provided parameter set, so the parameters
@@ -94,3 +98,17 @@ export interface QueryBindings {
   format: QueryBindingFormat
   data: string
 }
+
+export type QueryStatus =  'RUNNING'|
+'ABORTING'|
+'SUCCESS'|
+'FAILED_WITH_ERROR'|
+'ABORTED'|
+'QUEUED'|
+'FAILED_WITH_INCIDENT'|
+'DISCONNECTED'|
+'RESUMING_WAREHOUSE'|
+'QUEUED_REPARING_WAREHOUSE'|
+'RESTARTED'|
+'BLOCKED'|
+'NO_DATA';

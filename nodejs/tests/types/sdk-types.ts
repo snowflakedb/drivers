@@ -14,8 +14,8 @@ export type RowStatement = newSnowflakeSdk.RowStatement | oldSnowflakeSdk.RowSta
 export type StatementOption = newSnowflakeSdk.StatementOption | oldSnowflakeSdk.StatementOption;
 export type Binds = newSnowflakeSdk.Binds | oldSnowflakeSdk.Binds;
 export type RowMode = newSnowflakeSdk.RowMode | oldSnowflakeSdk.RowMode;
+export type QueryStatus = newSnowflakeSdk.QueryStatus | oldSnowflakeSdk.QueryStatus;
 
 // TODO: Not yet implemented in the new driver, so falling back to the old one
 export type Pool<T> = oldSnowflakeSdk.Pool<T>;
 export type FileAndStageBindStatement = oldSnowflakeSdk.FileAndStageBindStatement;
-export type QueryStatus = oldSnowflakeSdk.QueryStatus;
