@@ -75,7 +75,7 @@ TEST_CASE("SF_GLOBAL_SSL_VERSION with unrecognized value fails with a configurat
   std::ostringstream ss;
   configure_driver_string(ss);
   ss << "SERVER=localhost;PORT=443;ACCOUNT=testaccount;UID=testuser;PWD=testpass;";
-  ss << "SSL=on;VERIFY_CERTIFICATES=false;DisableOCSPCheck=true;";
+  ss << "SSL=on;VERIFY_CERTIFICATES=false;";
   auto env = Connection::initEnv();
   auto dbc = env.createConnectionHandle();
   SQLRETURN ret = driver_connect(dbc, ss.str());

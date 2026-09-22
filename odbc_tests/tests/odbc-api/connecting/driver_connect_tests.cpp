@@ -719,7 +719,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake NETWORK_TIME
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake DisableOCSPCheck parameter",
                  "[odbc-api][driverconnect][dsn][integration][snowflake][security]") {
-  // Note: DisableOCSPCheck is a Snowflake-specific parameter that controls OCSP certificate validation
   const std::string connStr = "DSN=" + dsn_name() + ";DisableOCSPCheck=true";
 
   SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,

@@ -102,6 +102,8 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("CURLVerboseMode", "curl_verbose_mode"),
     ("EnablePidLogFileNames", "enable_pid_log_file_names"),
     ("CLIENT_CONFIG_FILE", "client_config_file"),
+    ("DisableOCSPCheck", "disable_ocsp_check"),
+    ("OCSP_FAIL_OPEN", "ocsp_fail_open"),
     ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
     ("DEFAULT_BINARY_SIZE", "default_binary_size"),
 ];
@@ -118,9 +120,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "CURL_NO_IDLE_CHECK",
     // Deprecated Simba translation-DLL key.
     "TRANSLATE",
-    // OCSP knobs. UD has no OCSP check (BD#124).
-    "DisableOCSPCheck",
-    "OCSP_FAIL_OPEN",
     // `CRL_ADVISORY` combines with `CRL_CHECK` in the legacy driver to
     // choose ENABLED vs ADVISORY. Two keys cannot 1:1-alias one HashMap
     // entry (last write wins), so this key is not a registry alias.

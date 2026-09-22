@@ -308,6 +308,9 @@ pub mod param_names {
     pub const CURL_VERBOSE_MODE: ParamKey = ParamKey("curl_verbose_mode");
     pub const ENABLE_PID_LOG_FILE_NAMES: ParamKey = ParamKey("enable_pid_log_file_names");
     pub const CLIENT_CONFIG_FILE: ParamKey = ParamKey("client_config_file");
+    // ── Deprecated ODBC OCSP keys (revocation is CRL) ─────────────────
+    pub const DISABLE_OCSP_CHECK: ParamKey = ParamKey("disable_ocsp_check");
+    pub const OCSP_FAIL_OPEN: ParamKey = ParamKey("ocsp_fail_open");
     pub const DEFAULT_VARCHAR_SIZE: ParamKey = ParamKey("default_varchar_size");
     pub const DEFAULT_BINARY_SIZE: ParamKey = ParamKey("default_binary_size");
 }
@@ -2428,6 +2431,23 @@ static PARAM_DEFS: &[ParamDef] = &[
             guidance: "Configure driver logging in sf.odbc.ini; sf_client_config.json is not read.",
         },
     ),
+    // ── Deprecated ODBC OCSP keys (revocation is CRL) ─────────────────
+    odbc_deprecated(
+        param_names::DISABLE_OCSP_CHECK.as_str(),
+        aliases![Odbc; "DisableOCSPCheck"],
+        "Legacy OCSP disable switch. The driver accepts the key and does not apply it; certificate revocation uses CRL",
+        Deprecation::Ignored {
+            guidance: "Set CRL_MODE=DISABLED to skip revocation checks.",
+        },
+    ),
+    odbc_deprecated(
+        param_names::OCSP_FAIL_OPEN.as_str(),
+        aliases![],
+        "Legacy OCSP fail-open switch. The driver accepts the key and does not apply it; certificate revocation uses CRL",
+        Deprecation::Ignored {
+            guidance: "Set CRL_MODE=ADVISORY for fail-open revocation checking or CRL_MODE=ENABLED for fail-close.",
+        },
+    ),
     odbc_deprecated(
         param_names::DEFAULT_VARCHAR_SIZE.as_str(),
         aliases![],
@@ -2772,6 +2792,7 @@ mod tests {
             // UD-ODBC's own CRL DSN keys (legacy spelled the family `CRL_CHECK`).
             ("CRL_MODE", "crl_check_mode", &[Odbc]),
             ("CRL_ENABLED", "crl_check_mode", &[Odbc]),
+            ("DisableOCSPCheck", "disable_ocsp_check", &[Odbc]),
             // 3.x ODBC PUT/GET DSN keys (`Snowflake.h`
             // `SF_CON_PUT_MAXRETRIES` / `SF_CON_GET_MAXRETRIES`). Both map
             // onto the shared `put_get_max_attempts` setting.
@@ -3015,6 +3036,47 @@ mod tests {
                 guidance.contains("sf.odbc.ini"),
                 "{canonical} guidance should point at sf.odbc.ini, got {guidance:?}"
             );
+            assert!(def.ignored, "{canonical} should be ignored");
+            assert_eq!(def.visible_to, visible_to!(Odbc));
+            assert!(r.resolve(canonical).is_none());
+            for wrapper in [
+                Wrapper::Jdbc,
+                Wrapper::Python,
+                Wrapper::NodeJs,
+                Wrapper::DotNet,
+            ] {
+                assert!(
+                    r.resolve_for(wrapper, key).is_none(),
+                    "{key} must not resolve for {wrapper:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn odbc_deprecated_ocsp_dsn_keys_resolve_only_for_odbc() {
+        let r = registry();
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "DisableOCSPCheck",
+                "disable_ocsp_check",
+                "Set CRL_MODE=DISABLED to skip revocation checks.",
+            ),
+            (
+                "OCSP_FAIL_OPEN",
+                "ocsp_fail_open",
+                "Set CRL_MODE=ADVISORY for fail-open revocation checking or CRL_MODE=ENABLED for fail-close.",
+            ),
+        ];
+        for (key, canonical, expected_guidance) in cases {
+            let def = r
+                .resolve_for(Wrapper::Odbc, key)
+                .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
+            assert_eq!(def.canonical_name, *canonical);
+            let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
+                panic!("{canonical} should be deprecated with guidance");
+            };
+            assert_eq!(guidance, *expected_guidance);
             assert!(def.ignored, "{canonical} should be ignored");
             assert_eq!(def.visible_to, visible_to!(Odbc));
             assert!(r.resolve(canonical).is_none());

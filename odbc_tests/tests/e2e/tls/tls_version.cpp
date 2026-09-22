@@ -62,7 +62,7 @@ TEST_CASE("should reject the configuration when the minimum exceeds the maximum"
   std::ostringstream ss;
   configure_driver_string(ss);
   ss << "SERVER=localhost;PORT=443;ACCOUNT=testaccount;UID=testuser;PWD=testpass;";
-  ss << "SSL=on;VERIFY_CERTIFICATES=false;DisableOCSPCheck=true;";
+  ss << "SSL=on;VERIFY_CERTIFICATES=false;";
   ss << "MIN_TLS_VERSION=tls13;MAX_TLS_VERSION=tls12;";
   auto conn_str = ss.str();
   // When the TLS configuration is built from settings

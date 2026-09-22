@@ -330,7 +330,8 @@ fn apply_global_ssl_version_override(
 /// Connection-string keys that do not resolve through the `sf_core` registry
 /// under the ODBC flavor, sorted for a stable diagnostic. A key the registry
 /// resolves stays recognized, including `ignored` entries, so leftover
-/// driver-manager, `TRACING`, and deprecated logging keywords do not draw 01S00.
+/// driver-manager, `TRACING`, deprecated logging, and deprecated OCSP keywords
+/// do not draw 01S00.
 fn unrecognized_connection_string_keys(params: &HashMap<String, String>) -> Vec<String> {
     let registry = sf_core::config::param_registry::registry();
     let mut keys: Vec<String> = params
@@ -3272,6 +3273,30 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_registry_param_warnings_cover_ignored_ocsp_keys() {
+        let params = parse_connection_string("DisableOCSPCheck=true;OCSP_FAIL_OPEN=false").unwrap();
+        let messages: Vec<String> = deprecated_registry_param_warnings(&params)
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation,
+                } => deprecation.message_for(parameter),
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                "Parameter 'DISABLEOCSPCHECK' is deprecated and has no effect. \
+                 Set CRL_MODE=DISABLED to skip revocation checks.",
+                "Parameter 'OCSP_FAIL_OPEN' is deprecated and has no effect. \
+                 Set CRL_MODE=ADVISORY for fail-open revocation checking or CRL_MODE=ENABLED for fail-close.",
+            ]
+        );
+    }
+
+    #[test]
     fn deprecated_registry_param_warnings_cover_default_size_keys() {
         let params =
             parse_connection_string("DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1").unwrap();
@@ -3695,6 +3720,16 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_deprecated_ocsp_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("DisableOCSPCheck".to_owned(), "true".to_owned()),
+            ("OCSP_FAIL_OPEN".to_owned(), "false".to_owned()),
+        ]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_drops_default_size_keys() {
         let options = normalize_connection_string_options(HashMap::from([
             ("DEFAULT_VARCHAR_SIZE".to_owned(), "1".to_owned()),
@@ -4057,6 +4092,14 @@ mod tests {
             "DSN=my_dsn;LogLevel=DEBUG;LogPath=/tmp;LogFileSize=10;LogFileCount=2;CURLVerboseMode=true;EnablePidLogFileNames=true;CLIENT_CONFIG_FILE=/tmp/sf.json",
         )
         .unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_deprecated_ocsp_keys() {
+        let params =
+            parse_connection_string("DSN=my_dsn;DisableOCSPCheck=true;OCSP_FAIL_OPEN=true")
+                .unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 

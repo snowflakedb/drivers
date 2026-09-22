@@ -43,7 +43,6 @@ static std::string eb_conn_str_with_caching(const WiremockClient& wm) {
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
   ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=true;";
   ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
   return ss.str();
 }
 
@@ -58,7 +57,6 @@ static std::string eb_conn_str_with_locking_disabled(const WiremockClient& wm) {
   ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=true;";
   ss << "DISABLE_PARALLEL_USER_PROMPT=false;";
   ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
   return ss.str();
 }
 
@@ -72,7 +70,6 @@ static std::string eb_conn_str_no_caching(const WiremockClient& wm) {
   ss << "AUTHENTICATOR=EXTERNALBROWSER;";
   ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
   return ss.str();
 }
 
@@ -228,7 +225,7 @@ TEST_CASE("should show only one MFA prompt when multiple connections authenticat
   mfa_ss << "UID=mfa_lock_user;PWD=test_password;";  // pragma: allowlist secret
   mfa_ss << "AUTHENTICATOR=USERNAME_PASSWORD_MFA;";
   mfa_ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=true;";
-  mfa_ss << "SSL=off;DisableOCSPCheck=true;";
+  mfa_ss << "SSL=off;";
   auto mfa_conn_str = mfa_ss.str();
 
   SQLRETURN ret1{SQL_SUCCESS}, ret2{SQL_SUCCESS};

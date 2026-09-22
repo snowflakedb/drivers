@@ -43,7 +43,6 @@ std::string build_unresolvable_connection_string(const std::string& extra) {
   ss << "UID=testuser;";
   ss << "PWD=testpass;";
   ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
   ss << extra;
   return ss.str();
 }

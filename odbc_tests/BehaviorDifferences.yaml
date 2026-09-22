@@ -2536,8 +2536,11 @@ behavior_differences:
       `OCSP_FAIL_OPEN`, `DisableOCSPCheck`, and `SF_OCSP_RESPONSE_CACHE_SERVER_URL`.
     new_driver_behavior: |
       OCSP is not implemented. Certificate revocation uses CRLs, configured via
-      CRL parameters (`crl_check_mode`, `crl_enable_memory_caching`,
-      `crl_enable_disk_caching`, etc.). OCSP-specific connection parameters are not accepted.
+      CRL parameters (`CRL_MODE`, `crl_enable_memory_caching`,
+      `crl_enable_disk_caching`, etc.). Leftover OCSP connection-string keys
+      `DisableOCSPCheck` and `OCSP_FAIL_OPEN` are accepted and ignored with SQLSTATE
+      01000 (BD#156). Other OCSP keys such as `SF_OCSP_RESPONSE_CACHE_SERVER_URL`
+      remain unrecognized.
     description: |
       The universal core performs TLS revocation checking in Rust with CRL support shared
       across wrappers. OCSP was not ported; callers must migrate to CRL configuration.
@@ -3256,3 +3259,31 @@ behavior_differences:
       when WORKLOAD_IDENTITY_PROVIDER is OIDC and TOKEN is absent, or when TOKEN is
       not a valid JWT. The diagnostic names workload_identity_provider, token, or a
       malformed JWT or attestation, respectively.
+
+  156:
+    name: "Connection-string OCSP keys are ignored and warn as deprecated"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    status_rationale: |
+      The 4.x driver has no OCSP path (BD#124). Keeping `DisableOCSPCheck` and
+      `OCSP_FAIL_OPEN` recognized avoids 01S00 on leftover DSNs; the 01000
+      warning matches leftover logging keys (BD#154) so callers move to
+      `CRL_MODE`.
+    old_driver_behavior: |
+      `DisableOCSPCheck` and `OCSP_FAIL_OPEN` in a DSN or connection string
+      control OCSP certificate revocation. Connect succeeds without a
+      deprecation diagnostic.
+    new_driver_behavior: |
+      Those keys are accepted and ignored. Connect posts SQLSTATE 01000
+      ("Parameter 'DISABLEOCSPCHECK' is deprecated and has no effect. Set
+      CRL_MODE=DISABLED to skip revocation checks.") and returns
+      `SQL_SUCCESS_WITH_INFO`. `OCSP_FAIL_OPEN` points at `CRL_MODE=ADVISORY`
+      (fail-open) or `CRL_MODE=ENABLED` (fail-close).
+    description: |
+      Leftover OCSP connection-string keys cannot drive CRL revocation.
+      They stay recognized so they do not draw 01S00, and they warn so
+      callers migrate to `CRL_MODE`. Pinned by the ODBC unit tests in
+      `odbc/src/api/connection.rs` and `sf_params_spec` registry coverage.

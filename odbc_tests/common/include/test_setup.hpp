@@ -271,7 +271,6 @@ inline std::string get_wiremock_connection_string(const WiremockClient& wm) {
   ss << "PWD=testpass;";
   ss << "CLIENT_STORE_TEMPORARY_CREDENTIAL=false;";
   ss << "SSL=off;";
-  ss << "DisableOCSPCheck=true;";
   return ss.str();
 }
 
@@ -285,7 +284,6 @@ inline std::string get_wiremock_https_connection_string(const WiremockClient& wm
   ss << "PWD=testpass;";
   ss << "SSL=on;";
   ss << "VERIFY_CERTIFICATES=false;";
-  ss << "DisableOCSPCheck=true;";
   ss << extra;
   return ss.str();
 }
