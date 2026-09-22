@@ -271,6 +271,24 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid Par
   REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQL_GUID parameter type fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQLGUID value = {0x01234567, 0x89AB, 0xCDEF, {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}};
+  SQLLEN indicator = sizeof(value);
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_GUID, SQL_GUID, 0, 0, &value, sizeof(value),
+                                   &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#158") { REQUIRE_EXPECTED_ERROR(ret, "07006", stmt_handle(), SQL_HANDLE_STMT); }
+  OLD_DRIVER_ONLY("BD#158") {
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+    const auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].nativeError == 18);
+  }
+}
+
 // ============================================================================
 // SQLBindParameter - Reset Parameters
 // ============================================================================

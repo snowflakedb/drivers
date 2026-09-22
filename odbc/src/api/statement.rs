@@ -1818,9 +1818,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
         FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameter bindings");
             inner.clear_active_apd_records();
-            if let Some(count) = inner.prepared_param_count {
-                inner.ipd.records.retain(|&k, _| k <= count);
-            }
+            inner.ipd.records.clear();
         }
     }
 

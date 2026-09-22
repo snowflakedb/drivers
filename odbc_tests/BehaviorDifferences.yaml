@@ -3287,3 +3287,43 @@ behavior_differences:
       They stay recognized so they do not draw 01S00, and they warn so
       callers migrate to `CRL_MODE`. Pinned by the ODBC unit tests in
       `odbc/src/api/connection.rs` and `sf_params_spec` registry coverage.
+
+  157:
+    name: "SQL_RESET_PARAMS sets IPD SQL_DESC_COUNT to 0"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SQLFreeStmt(SQL_RESET_PARAMS) releases APD bindings but leaves IPD records
+      in place. SQLGetDescField(IPD, SQL_DESC_COUNT) keeps the previous highest
+      bound parameter number after SQLExecDirect, SQLPrepare/SQLExecute, or a
+      reset with no execute.
+    new_driver_behavior: |
+      SQLFreeStmt(SQL_RESET_PARAMS) sets IPD SQL_DESC_COUNT to 0 on every
+      statement, including SQLExecDirect and SQLPrepare/SQLExecute.
+    description: |
+      SQLSetDescField documents that SQL_RESET_PARAMS sets SQL_DESC_COUNT to 0
+      in both the APD and the IPD. The old driver never clears the IPD; the new
+      driver does. Execution after reset still follows rebound APD records and,
+      for prepared statements, the prepared parameter count.
+
+
+  158:
+    name: "SQL_GUID parameter binding reports 07006 instead of HY000"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SQLBindParameter accepts SQL_GUID as ParameterType. SQLExecDirect then
+      returns SQL_ERROR with SQLSTATE HY000 and native error 18.
+    new_driver_behavior: |
+      SQLBindParameter accepts SQL_GUID as ParameterType. SQLExecDirect then
+      returns SQL_ERROR with SQLSTATE 07006.
+    description: |
+      Neither driver supports binding a parameter typed SQL_GUID. The new
+      driver uses the restricted-data-type SQLSTATE instead of the old
+      driver's general-error SQLSTATE.
