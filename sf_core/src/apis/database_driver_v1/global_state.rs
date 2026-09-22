@@ -195,6 +195,10 @@ pub struct DriverProviders {
     /// When `None`, [`DatabaseDriverV1::with_providers`] reads
     /// [`crate::env_vars::SNOWFLAKE_RUNNING_INSIDE_XP`].
     pub running_inside_xp: Option<bool>,
+    /// Inject a token cache so a wrapper can store tokens outside the default
+    /// keyring. Production code uses `None` and lazily constructs
+    /// [`KeyringTokenCache`] on first [`DatabaseDriverV1::token_cache`] call.
+    pub token_cache: Option<Arc<dyn TokenCache>>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -256,7 +260,10 @@ impl DatabaseDriverV1 {
             results: HandleManager::new(),
             upload_streams: HandleManager::new(),
             download_streams: HandleManager::new(),
-            token_cache: once_cell::sync::OnceCell::new(),
+            token_cache: providers
+                .token_cache
+                .map(once_cell::sync::OnceCell::from)
+                .unwrap_or_default(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
             platforms: tokio::sync::OnceCell::const_new(),
             log_manager: providers.log_manager,
@@ -426,6 +433,88 @@ mod tests {
         assert!(
             Arc::ptr_eq(&first, &second),
             "token_cache() should return the same instance on repeated calls"
+        );
+    }
+
+    #[test]
+    fn token_cache_returns_injected_instance() {
+        use crate::token_cache::{CacheKey, TokenType, build_cache_key};
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+
+        struct StubTokenCache {
+            store: Mutex<HashMap<String, String>>,
+        }
+
+        impl TokenCache for StubTokenCache {
+            fn add_token(&self, key: &CacheKey, token_value: &str) -> Result<(), TokenCacheError> {
+                self.store
+                    .lock()
+                    .unwrap()
+                    .insert(build_cache_key(key), token_value.to_string());
+                Ok(())
+            }
+
+            fn remove_token(&self, key: &CacheKey) -> Result<(), TokenCacheError> {
+                self.store.lock().unwrap().remove(&build_cache_key(key));
+                Ok(())
+            }
+
+            fn get_token(&self, key: &CacheKey) -> Result<Option<String>, TokenCacheError> {
+                Ok(self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .get(&build_cache_key(key))
+                    .cloned())
+            }
+        }
+
+        let injected: Arc<dyn TokenCache> = Arc::new(StubTokenCache {
+            store: Mutex::new(HashMap::new()),
+        });
+        let driver = DatabaseDriverV1::with_providers(DriverProviders {
+            token_cache: Some(Arc::clone(&injected)),
+            ..Default::default()
+        });
+
+        let first = driver
+            .token_cache()
+            .expect("injected cache should be available");
+        assert!(
+            Arc::ptr_eq(&first, &injected),
+            "token_cache() should return the injected instance, not KeyringTokenCache"
+        );
+
+        let key = CacheKey {
+            token_type: TokenType::MfaToken,
+            idp: String::new(),
+            snowflake: "acct.snowflakecomputing.com".into(),
+            username: "test_user".into(),
+            role: String::new(),
+        };
+        first
+            .add_token(&key, "mfa-token")
+            .expect("add through injected cache");
+        assert_eq!(
+            first
+                .get_token(&key)
+                .expect("get through injected cache")
+                .as_deref(),
+            Some("mfa-token")
+        );
+        first
+            .remove_token(&key)
+            .expect("remove through injected cache");
+        assert_eq!(
+            first.get_token(&key).expect("get after remove").as_deref(),
+            None
+        );
+
+        let second = driver.token_cache().expect("second call failed");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "repeated token_cache() calls should keep returning the injected instance"
         );
     }
 

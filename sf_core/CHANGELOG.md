@@ -82,6 +82,7 @@ Bug fixes:
 
 Internal improvements:
 
+- Added a `DriverProviders` injection point for the token cache so a wrapper can supply its own `TokenCache` instead of the default keyring store. (snowflakedb/drivers#2166)
 - Added a per-statement cloud-request budget for PUT/GET: every request that moves object bytes or reads object metadata takes a slot from one shared `TransferScheduler` sized from the server's `PARALLEL`, so part-level and file-level concurrency cannot multiply into `PARALLEL²` simultaneous requests now that file fan-out has landed. (snowflakedb/drivers#1449)
 - Changed PUT/GET to build one HTTP client per batch and reuse it across every file in an S3/GCS/Azure transfer, instead of a fresh TLS handshake per file. A credential refresh mid-batch still rebuilds the signed request but keeps the same underlying connection pool. (snowflakedb/drivers#1748)
 - Replaced the per-statement in-flight `requestId` slot and the `StatementCancel` RPC with operation-handle cancellation: a wrapper cancels the handle it dispatched under, and the core fires the abort-request from inside the cancelled operation. The abort now has exactly one emitter, cancelling also covers phases `StatementCancel` could not reach (such as a bind-variable stage upload), and a cancel can no longer abort a query that was never submitted. (snowflakedb/drivers#1491)
