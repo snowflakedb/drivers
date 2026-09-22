@@ -126,10 +126,26 @@ impl ReadArrowType<StructArray> for SnowflakeTimestampTz {
     }
 }
 
+/// `10^n` for `n` in `0..=9`. Looked up instead of `i64::pow` on the CHAR
+/// fetch hot path (Snowflake's default TIMESTAMP_NTZ scale is 9).
+const POW10_I64: [i64; 10] = [
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+];
+
 /// Split a raw scaled epoch into `(epoch_seconds, nanoseconds)`.
 ///
-/// Scale 0 → seconds, 3 → milliseconds, 6 → microseconds; other 0–9 use
-/// `10^scale`. Uses `div_euclid` so pre-epoch values floor correctly.
+/// Scale 0 → seconds, 3 → milliseconds, 6 → microseconds, 9 → nanoseconds;
+/// other 0–9 use `POW10_I64`. Uses `div_euclid` so pre-epoch values floor
+/// correctly.
 pub fn split_scaled_epoch(raw: i64, scale: u32) -> Result<(i64, u32), ReadArrowError> {
     if scale > 9 {
         return InvalidArrowValueSnafu {
@@ -149,14 +165,65 @@ pub fn split_scaled_epoch(raw: i64, scale: u32) -> Result<(i64, u32), ReadArrowE
             let micros = raw.rem_euclid(1_000_000) as u32;
             (secs, micros * 1_000)
         }
-        _ => {
-            let divisor = 10i64.pow(scale);
+        9 => {
+            let secs = raw.div_euclid(1_000_000_000);
+            let nanos = raw.rem_euclid(1_000_000_000) as u32;
+            (secs, nanos)
+        }
+        other => {
+            let divisor = POW10_I64[other as usize];
             let secs = raw.div_euclid(divisor);
             let frac = raw.rem_euclid(divisor) as u32;
             let nanos = frac * (1_000_000_000u32 / divisor as u32);
             (secs, nanos)
         }
     })
+}
+
+#[cfg(test)]
+mod split_scaled_epoch_tests {
+    use super::split_scaled_epoch;
+
+    #[test]
+    fn scale_9_is_epoch_nanoseconds() {
+        assert_eq!(
+            split_scaled_epoch(1_700_000_000_123_456_789, 9).expect("scale 9"),
+            (1_700_000_000, 123_456_789)
+        );
+        assert_eq!(
+            split_scaled_epoch(-1_000_000_001, 9).expect("negative scale 9"),
+            (-2, 999_999_999)
+        );
+    }
+
+    #[test]
+    fn all_legal_scales_match_pow10_split() {
+        let raw = 1_700_000_000_123_456_789i64;
+        for scale in 0..=9u32 {
+            let divisor = 10i64.pow(scale);
+            let expected_secs = raw.div_euclid(divisor);
+            let expected_nanos = if scale == 0 {
+                0
+            } else {
+                let frac = raw.rem_euclid(divisor) as u32;
+                frac * (1_000_000_000u32 / divisor as u32)
+            };
+            assert_eq!(
+                split_scaled_epoch(raw, scale).expect("legal scale"),
+                (expected_secs, expected_nanos),
+                "scale {scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn scale_above_9_is_rejected() {
+        let err = split_scaled_epoch(0, 10).expect_err("scale 10");
+        assert!(
+            matches!(err, super::ReadArrowError::InvalidArrowValue { .. }),
+            "expected InvalidArrowValue, got {err:?}"
+        );
+    }
 }
 
 /// 2-child `{epoch: Int64, fraction: Int32}` timestamp (NTZ/LTZ and TZ 3-col

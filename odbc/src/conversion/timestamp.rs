@@ -341,18 +341,51 @@ fn format_epoch_timestamp_fast<'s>(
     let ts_buf: &mut [u8; 48] = (&mut scratch[..48])
         .try_into()
         .expect("scratch is CHAR_SCRATCH_LEN=384 bytes, always >= 48");
-    let rendered = format_timestamp_parts_into(
-        year,
-        month,
-        day,
-        seconds / 3_600,
-        (seconds / 60) % 60,
-        seconds % 60,
-        nanos,
-        ts_buf,
-    )
+    let rendered = if nanos == 0 && seconds == 0 {
+        format_midnight_timestamp_into(year, month, day, ts_buf)
+    } else {
+        format_timestamp_parts_into(
+            year,
+            month,
+            day,
+            seconds / 3_600,
+            (seconds / 60) % 60,
+            seconds % 60,
+            nanos,
+            ts_buf,
+        )
+    }
     .context(crate::conversion::error::WriteOdbcValueSnafu)?;
     Ok(Some(rendered))
+}
+
+const MIDNIGHT_WALLCLOCK_SUFFIX: &[u8; 9] = b" 00:00:00";
+
+fn format_midnight_timestamp_into(
+    year: i32,
+    month: u32,
+    day: u32,
+    buf: &mut [u8; 48],
+) -> Result<&str, WriteOdbcError> {
+    let needed = int_fmt::year_width(year) + 6 + MIDNIGHT_WALLCLOCK_SUFFIX.len();
+    if needed > buf.len() {
+        return NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "timestamp value does not fit in the {}-byte format buffer",
+                buf.len()
+            ),
+        }
+        .fail();
+    }
+    let mut p = int_fmt::put_year(buf, 0, year);
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, month, 2);
+    buf[p] = b'-';
+    p = int_fmt::put_padded(buf, p + 1, day, 2);
+    buf[p..p + MIDNIGHT_WALLCLOCK_SUFFIX.len()].copy_from_slice(MIDNIGHT_WALLCLOCK_SUFFIX);
+    p += MIDNIGHT_WALLCLOCK_SUFFIX.len();
+    // SAFETY: only ASCII digits, '-', ':', and ' ' were written above.
+    Ok(unsafe { std::str::from_utf8_unchecked(&buf[..p]) })
 }
 
 /// Format a `TzInstant` as a wall-clock literal followed by the requested
@@ -1364,6 +1397,45 @@ impl CharKernel for TimestampTzCharKernel {
             outputs,
             |batch_idx, binding, scratch| self.write_non_null(array, batch_idx, binding, scratch),
         )
+    }
+}
+
+#[cfg(test)]
+mod format_epoch_timestamp_fast_tests {
+    use super::format_epoch_timestamp_fast;
+    use crate::conversion::batch::CHAR_SCRATCH_LEN;
+    use crate::conversion::traits::Binding;
+
+    fn fmt(secs: i64, nanos: u32) -> String {
+        let binding = Binding {
+            buffer_length: 64,
+            ..Default::default()
+        };
+        let mut scratch = [0u8; CHAR_SCRATCH_LEN];
+        format_epoch_timestamp_fast(secs, nanos, &binding, &mut scratch)
+            .expect("format_epoch_timestamp_fast")
+            .expect("in-range timestamp")
+            .to_string()
+    }
+
+    #[test]
+    fn midnight_uses_constant_suffix() {
+        assert_eq!(fmt(0, 0), "1970-01-01 00:00:00");
+        assert_eq!(fmt(86_400, 0), "1970-01-02 00:00:00");
+        assert_eq!(fmt(-86_400, 0), "1969-12-31 00:00:00");
+    }
+
+    #[test]
+    fn midnight_with_fraction_is_not_the_shortcut() {
+        assert_eq!(fmt(0, 1), "1970-01-01 00:00:00.000000001");
+        assert_eq!(fmt(86_400, 123_000_000), "1970-01-02 00:00:00.123");
+    }
+
+    #[test]
+    fn non_midnight_matches_full_formatter() {
+        assert_eq!(fmt(1, 0), "1970-01-01 00:00:01");
+        assert_eq!(fmt(1_700_000_000, 0), "2023-11-14 22:13:20");
+        assert_eq!(fmt(-1_000, 0), "1969-12-31 23:43:20");
     }
 }
 
