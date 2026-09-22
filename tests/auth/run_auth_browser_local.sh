@@ -8,6 +8,9 @@
 #   ./tests/auth/run_auth_browser_local.sh odbc
 #   ./tests/auth/run_auth_browser_local.sh jdbc
 #   ./tests/auth/run_auth_browser_local.sh nodejs
+#   ./tests/auth/run_auth_browser_local.sh nodejs tests/e2e/authentication/oauth.test.ts
+#   ./tests/auth/run_auth_browser_local.sh nodejs reference
+#   ./tests/auth/run_auth_browser_local.sh nodejs reference tests/e2e/authentication/oauth.test.ts -t "should authenticate"
 
 set -euo pipefail
 

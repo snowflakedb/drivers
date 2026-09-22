@@ -13,8 +13,15 @@ const CHROMIUM_PORT = 9222;
  * (`tests/docker/external-browser/Dockerfile`), which bundles Chromium and the
  * Playwright helpers that drive the OAuth, PAT, and MFA/TOTP flows.
  *
- * Run them with `tests/auth/run_auth_browser_local.sh nodejs` (builds the image and
- * runs the suite in the container) or, in CI, `tests/auth/run_auth_browser.sh nodejs`.
+ * Run them with `tests/auth/run_auth_browser_local.sh` (builds the image) or, in
+ * CI, `tests/auth/run_auth_browser.sh`. If the next argument is not `universal`
+ * or `reference`, mode stays `universal` and that argument is a vitest arg.
+ * Paths are relative to `nodejs/` and default to `tests/e2e/authentication/`:
+ *
+ * - `... nodejs` — new driver, full auth suite
+ * - `... nodejs tests/e2e/authentication/oauth.test.ts -t "should authenticate"` — new driver, one test
+ * - `... nodejs reference` — old driver, full auth suite
+ * - `... nodejs reference tests/e2e/authentication/oauth.test.ts -t "should authenticate"` — old driver, one test
  *
  * Those scripts set `SF_TEST_HEADLESS_BROWSER=true` in the container; a plain
  * `npm run test:e2e` leaves the flag unset, so these tests are skipped.

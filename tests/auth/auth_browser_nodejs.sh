@@ -9,10 +9,10 @@ source "${SCRIPT_DIR}/auth_browser_common.sh"
 
 case "${AUTH_BROWSER_MODE:-universal}" in
     universal)
-        VITEST_PROJECT=e2e
+        NPM_SCRIPT=test:e2e
         ;;
     reference)
-        VITEST_PROJECT=e2e-old-driver
+        NPM_SCRIPT=test:e2e-old-driver
         ;;
     *)
         echo "ERROR: unknown AUTH_BROWSER_MODE '${AUTH_BROWSER_MODE:-}'" >&2
@@ -20,11 +20,17 @@ case "${AUTH_BROWSER_MODE:-universal}" in
         ;;
 esac
 
+# Extra arguments go to vitest as-is: a path relative to nodejs/, plus any flags
+# such as -t <name>. Without them the whole auth directory runs.
+if [ "$#" -eq 0 ]; then
+    set -- tests/e2e/authentication/
+fi
+
 cd "${WORKSPACE_ROOT}/nodejs"
 
 echo "=== Installing Node.js dependencies ==="
 npm install
 
 echo ""
-echo "=== Running Node.js authentication E2E tests ==="
-npx vitest run --project "${VITEST_PROJECT}" tests/e2e/authentication/
+echo "=== Running Node.js authentication E2E tests (${NPM_SCRIPT} $*) ==="
+npm run "${NPM_SCRIPT}" -- "$@"
