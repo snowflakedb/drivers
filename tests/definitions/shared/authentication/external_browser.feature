@@ -1,4 +1,4 @@
-@core @python @odbc @jdbc
+@core @python @odbc @jdbc @nodejs
 Feature: External Browser Authentication
 
   External browser SSO: user configures authenticator as EXTERNALBROWSER
@@ -9,13 +9,13 @@ Feature: External Browser Authentication
   # E2E Tests - Real External Browser Authentication (headless browser container)
   # =============================================================================
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should authenticate with external browser via Okta IdP
     Given External browser authentication is configured with valid Okta user
     When Trying to Connect with headless browser providing valid credentials
     Then Login is successful and simple query can be executed
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should reuse cached ID token without browser interaction
     Given External browser authentication is configured with caching enabled and a token has been cached from a previous connection
     When Trying to Connect without browser interaction

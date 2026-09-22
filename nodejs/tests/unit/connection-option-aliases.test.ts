@@ -44,6 +44,22 @@ describe('normalizeConnectionOptions', () => {
     });
   });
 
+  it('should convert browserActionTimeout milliseconds to authentication_timeout seconds', () => {
+    expect(
+      normalizeConnectionOptions({
+        browserActionTimeout: 120000,
+      }),
+    ).toEqual({
+      authentication_timeout: '120',
+    });
+  });
+
+  it('should reject a non-positive browserActionTimeout', () => {
+    expect(() => normalizeConnectionOptions({ browserActionTimeout: -1 })).toThrow(
+      'browserActionTimeout must be a positive number',
+    );
+  });
+
   it('throws on a key that is not in the alias map', () => {
     expect(() =>
       normalizeConnectionOptions({

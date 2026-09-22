@@ -1,8 +1,5 @@
-const assert = require('assert');
 const connParameters = require('./connectionParameters');
 const AuthTest = require('./authTestsBaseClass.js');
-const authUtil = require('../../lib/authentication/authentication_util');
-const AuthenticationTypes = require('../../lib/authentication/authentication_types');
 
 describe('External browser authentication tests', function () {
   const provideBrowserCredentialsPath = '/externalbrowser/provideBrowserCredentials.js';
@@ -20,21 +17,16 @@ describe('External browser authentication tests', function () {
   });
 
   describe('External browser tests', async () => {
-    it('Successful connection', async () => {
-      const connectionOption = {
-        ...connParameters.externalBrowser,
-        clientStoreTemporaryCredential: false,
-      };
-      authTest.createConnection(connectionOption);
-      const provideCredentialsPromise = authTest.execWithTimeout(
-        'node',
-        [provideBrowserCredentialsPath, 'success', login, password],
-        15000,
-      );
-      await authTest.connectAndProvideCredentials(provideCredentialsPromise);
-      authTest.verifyNoErrorWasThrown();
-      await authTest.verifyConnectionIsUp();
-    });
+    // The "Successful connection" and "ID Token authentication tests" describe
+    // blocks that used to live here have been migrated to
+    // nodejs/tests/e2e/authentication/external-browser.test.ts (Okta happy path
+    // and cached-ID-token reuse) and
+    // sf_core/tests/integration/authentication/external_browser_id_token_cache.rs
+    // (store / reuse / evict / retry-with-browser).
+    //
+    // The remaining live-IdP cases have no UD Gherkin counterpart. The timeout
+    // cases use the legacy browserActionTimeout option and do not replace the
+    // mocked no-callback integration scenario.
 
     it('Mismatched Username', async () => {
       const connectionOption = {
@@ -95,70 +87,6 @@ describe('External browser authentication tests', function () {
         'Error while getting SAML token: Browser action timed out after 100 ms.',
       );
       await authTest.verifyConnectionIsNotUp();
-    });
-  });
-
-  describe('ID Token authentication tests', async () => {
-    const connectionOption = {
-      ...connParameters.externalBrowser,
-      clientStoreTemporaryCredential: true,
-    };
-    const idTokenKey = authUtil.buildOauthAccessTokenCacheKey(
-      connectionOption.host,
-      connectionOption.username,
-      AuthenticationTypes.ID_TOKEN_AUTHENTICATOR,
-    );
-
-    let firstIdToken;
-
-    before(async () => {
-      await authUtil.removeFromCache(idTokenKey);
-    });
-
-    after(async () => {
-      await authUtil.removeFromCache(idTokenKey);
-    });
-
-    it('obtains the id token from the server and saves it on the local storage', async function () {
-      authTest.createConnection(connectionOption);
-      const provideCredentialsPromise = authTest.execWithTimeout(
-        'node',
-        [provideBrowserCredentialsPath, 'success', login, password],
-        15000,
-      );
-      await authTest.connectAndProvideCredentials(provideCredentialsPromise);
-      authTest.verifyNoErrorWasThrown();
-      await authTest.verifyConnectionIsUp();
-    });
-
-    it('the token is saved in the credential manager', async function () {
-      firstIdToken = await authUtil.removeFromCache(idTokenKey);
-      assert.notStrictEqual(firstIdToken, null);
-    });
-
-    it('authenticates by token, browser credentials not needed', async function () {
-      authTest.createConnection(connectionOption);
-      await authTest.connectAsync();
-      authTest.verifyNoErrorWasThrown();
-      await authTest.verifyConnectionIsUp();
-    });
-
-    it('opens browser again when token is incorrect', async function () {
-      await authUtil.removeFromCache(idTokenKey);
-      authTest.createConnection(connectionOption);
-      const provideCredentialsPromise = authTest.execWithTimeout(
-        'node',
-        [provideBrowserCredentialsPath, 'success', login, password],
-        15000,
-      );
-      await authTest.connectAndProvideCredentials(provideCredentialsPromise);
-      authTest.verifyNoErrorWasThrown();
-      await authTest.verifyConnectionIsUp();
-    });
-
-    it('refreshes the token for credential cache key', async function () {
-      const newToken = await authUtil.readCache(idTokenKey);
-      assert.notStrictEqual(firstIdToken, newToken);
     });
   });
 });

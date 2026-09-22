@@ -180,10 +180,9 @@ export class Connection {
     }
 
     this.#core = new CoreConnection(
-      // Cast until options are typed across the bridge, which takes strings only.
       normalizeConnectionOptions({
-        ...(coreOptions as Record<string, string>),
-        useEnvProxy: String(GlobalConfig.useEnvProxy),
+        ...coreOptions,
+        useEnvProxy: GlobalConfig.useEnvProxy,
       }),
       sessionParameters,
     );

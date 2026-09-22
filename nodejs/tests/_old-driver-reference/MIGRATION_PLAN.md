@@ -27,8 +27,13 @@ Deferred work — covered **last**, only once the corresponding feature support 
 - [`auth-workload-identity-e2e.ts`](./auth-workload-identity-e2e.ts) — migrate when we add
   Workload Identity Federation (WIF) support.
 - Everything under [`authentication/`](./authentication/) — migrate **one file at a time**, each
-  one only when support for the corresponding auth provider (External Browser, Key Pair, MFA,
-  OAuth, Okta, PAT, session-token renewal) lands in the new driver.
+  one only when support for the corresponding auth provider (Key Pair, MFA, OAuth, Okta, PAT,
+  session-token renewal) lands in the new driver.
+  - [`authentication/testExternalBrowser.js`](./authentication/testExternalBrowser.js) —
+    Okta happy path and cached-ID-token reuse live in
+    `nodejs/tests/e2e/authentication/external-browser.test.ts`. ID-token store / evict /
+    retry-with-browser internals live in
+    `sf_core/tests/integration/authentication/external_browser_id_token_cache.rs`.
 
 ## Integration tests (`integration/`), sorted by priority
 
