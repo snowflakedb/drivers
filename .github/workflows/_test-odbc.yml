@@ -104,15 +104,11 @@ jobs:
 
       - name: Build ODBC driver (Windows)
         if: runner.os == 'Windows'
-        # PowerShell (not bash): openssl-src Configure must see Strawberry Perl,
-        # not Git's MSYS perl (missing Locale::Maketext::Simple). Explicitly
-        # prepend perl/bin only — never Strawberry c/bin (gcc/link) ahead of MSVC.
+        # pwsh for the explicit $LASTEXITCODE propagation below. The Strawberry
+        # Perl PATH prepend that used to sit here went with F2: no step compiles
+        # OpenSSL from source any more, so nothing needs Perl.
         shell: pwsh
         run: |
-          if (Test-Path "C:\Strawberry\perl\bin") {
-            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-          }
-          Write-Host "perl: $((Get-Command perl -ErrorAction SilentlyContinue).Source)"
           cargo build --locked --package odbc ${{ matrix.cargo_extra }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:

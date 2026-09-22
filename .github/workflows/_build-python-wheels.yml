@@ -414,15 +414,9 @@ jobs:
           CARGO_LIB: ${{ matrix.cargo_lib }}
         shell: bash
         run: |
-          # Prefer Strawberry Perl over Git's MSYS perl. openssl-src's Configure
-          # needs Locale::Maketext::Simple (and friends) which Git usr/bin perl
-          # lacks; cold builds that compile vendored OpenSSL fail otherwise.
-          # Only prepend perl/bin — not Strawberry c/bin (gcc/link), which would
-          # shadow MSVC tools if anything ever stops using absolute paths.
-          if [[ -d "/c/Strawberry/perl/bin" ]]; then
-            export PATH="/c/Strawberry/perl/bin:$PATH"
-          fi
-          echo "perl: $(command -v perl)"
+          # No Strawberry Perl prepend here any more: it existed for
+          # openssl-src's Configure, and F2 removed the last thing that compiled
+          # OpenSSL from source.
           mkdir -p python/src/snowflake/connector/_core
           for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
             PY="$(uv python find "$V")"

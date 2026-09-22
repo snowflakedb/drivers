@@ -192,14 +192,11 @@ jobs:
           wix-version: ${{ env.WIX_VERSION }}
 
       - name: Build ODBC driver
-        # PowerShell (not bash): openssl-src Configure must see Strawberry Perl,
-        # not Git's MSYS perl. Prepend perl/bin only — never Strawberry c/bin.
+        # pwsh for the explicit $LASTEXITCODE propagation below. The Strawberry
+        # Perl PATH prepend that used to sit here went with F2: no step compiles
+        # OpenSSL from source any more, so nothing needs Perl.
         shell: pwsh
         run: |
-          if (Test-Path "C:\Strawberry\perl\bin") {
-            $env:PATH = "C:\Strawberry\perl\bin;$env:PATH"
-          }
-          Write-Host "perl: $((Get-Command perl -ErrorAction SilentlyContinue).Source)"
           cargo build --locked ${{ matrix.cargo_profile }} --package odbc ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
