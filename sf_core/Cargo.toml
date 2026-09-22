@@ -24,9 +24,10 @@ sonic-json = ["sonic-rs"]
 #
 # The name stays because the *claim* is not yet complete:
 #   - SigV4 request signing computes HMAC-SHA256 outside the module:
-#     `aws-sigv4` uses RustCrypto unconditionally, and `aws-sdk-s3` enables
-#     `sigv4a` by default, which links ring. That is every stage transfer, not
-#     an edge case; see F7.
+#     `aws-sigv4` uses RustCrypto unconditionally. That is every stage
+#     transfer, not an edge case; see F7. `ring` itself is no longer linked --
+#     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
+#     block below) -- so this bullet is now about RustCrypto alone.
 #   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
 #     rather than the module's DRBG; see F8.
 #   - The linked module is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
@@ -114,7 +115,45 @@ prost = { version = "0.14.1", optional = true }
 proto_utils = { path = "../proto_utils", optional = true }
 
 # AWS SDK dependencies
-aws-sdk-s3 = { version = "1.106.0", default-features = false, features = ["rt-tokio", "sigv4a"] }
+#
+# Feature selection here is about crypto provenance, not build size. The
+# `default-features = false` lines below keep the SDK's legacy ring-backed TLS
+# stack out of the build (an older rustls 0.21 on hyper 0.14). Two features
+# that would each re-link `ring` are then deliberately left off: `sigv4a` and
+# `sso`. With both off, `ring` is absent from the normal dependency graph
+# entirely -- `cargo tree -p sf_core -e normal -i ring` finds nothing, and all
+# four binding crates report the same. It does still have a `Cargo.lock`
+# entry, reached only through `rcgen` under `[dev-dependencies]` for test
+# certificate generation; nothing shipped links it.
+#
+# `sigv4a` is OFF. It pulls `aws-runtime/sigv4a` -> `aws-sigv4/sigv4a` ->
+# `dep:ring`, and it only signs S3 multi-region access point ARNs. Snowflake
+# stages are ordinary region-scoped buckets, so nothing here can reach that
+# signer.
+#
+# This does **not** disable request signing. SigV4 and SigV4a are separate
+# algorithms in separate modules: plain SigV4 is `aws-sigv4::sign::v4`, carries
+# no `#[cfg]` on this feature, and still signs every S3 request. Only the
+# asymmetric variant (`sign::v4a`, and the `SigningParams::V4a` arm) is gated
+# off. Turning `sigv4a` back on to "restore signing" would be a misreading --
+# it would only re-link ring.
+#
+# `sso` is OFF. It hard-requires `dep:ring` with no aws-lc-backed equivalent to
+# swap in, because it is the IAM Identity Center *credential provider* rather
+# than a transport -- so it cannot be ported, only carried or dropped. Leaving
+# it out takes Identity Center out of the SDK's default credential chain, which
+# is a support decision rather than an oversight: Identity Center is not
+# supported on this core, matching JDBC and .NET.
+#
+# Nothing that needs ambient credentials loses them. The default chain still
+# resolves env keys, IMDS, IRSA / web-identity tokens, instance roles and
+# `credentials-process`, which is the whole set the two ambient call sites use
+# -- `workload_identity/aws.rs`, where WIF is discovering a *workload*
+# identity rather than a human's cached `aws sso login` session, and
+# `telemetry/platform_detection/aws.rs`, which passes no provider at all.
+# `file_manager/s3_transfer.rs` is unaffected either way; it supplies explicit
+# Snowflake-issued credentials.
+aws-sdk-s3 = { version = "1.106.0", default-features = false, features = ["rt-tokio"] }
 aws-sdk-sts = { version = "1.96.0", default-features = false, features = ["rt-tokio"] }
 aws-config = { version = "1.8.12", default-features = false, features = ["rt-tokio", "credentials-process"] }
 aws-runtime = { version = "1.5.18", default-features = false }
