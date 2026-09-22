@@ -2,6 +2,7 @@
 #define COMPATIBILITY_HPP
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -20,8 +21,6 @@
 #define GET_PROCESS_ID() _getpid()
 #else
 #include <unistd.h>
-
-#include <cstring>
 #define GET_PROCESS_ID() getpid()
 #endif
 
@@ -294,5 +293,41 @@ class PinDriverManagerEncoding {
   std::filesystem::path path_;
   EnvOverride env_;
 };
+
+// Excel PowerQuery replays record SQL_ATTR_LOGIN_TIMEOUT=15. Windows CI
+// (x86/x64) occasionally returns HYT00 on a later SQLDriverConnect in the
+// same replay while earlier connects succeeded. Retry the connect; do not
+// change product login-timeout defaults (SNOW-4160000).
+inline bool odbc_dbc_sqlstate_is(SQLHDBC dbc, const char* expected) {
+  SQLCHAR state[8] = {};
+  SQLCHAR message[256] = {};
+  SQLINTEGER native = 0;
+  SQLSMALLINT message_len = 0;
+  const SQLRETURN diag = SQLGetDiagRec(SQL_HANDLE_DBC, dbc, 1, state, &native, message, sizeof(message), &message_len);
+  if (diag != SQL_SUCCESS && diag != SQL_SUCCESS_WITH_INFO) {
+    return false;
+  }
+  return std::strncmp(reinterpret_cast<const char*>(state), expected, 5) == 0;
+}
+
+inline SQLRETURN sql_driver_connect_retry_hyt00(SQLHDBC connection_handle, SQLHWND window_handle,
+                                                SQLCHAR* in_connection_string, SQLSMALLINT string_length_1,
+                                                SQLCHAR* out_connection_string, SQLSMALLINT buffer_length,
+                                                SQLSMALLINT* string_length_2_ptr, SQLUSMALLINT driver_completion) {
+  constexpr int kMaxAttempts = 3;
+  SQLRETURN ret = SQL_ERROR;
+  for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    ret = SQLDriverConnect(connection_handle, window_handle, in_connection_string, string_length_1,
+                           out_connection_string, buffer_length, string_length_2_ptr, driver_completion);
+    if (SQL_SUCCEEDED(ret)) {
+      return ret;
+    }
+    if (attempt + 1 == kMaxAttempts || connection_handle == SQL_NULL_HDBC ||
+        !odbc_dbc_sqlstate_is(connection_handle, "HYT00")) {
+      return ret;
+    }
+  }
+  return ret;
+}
 
 #endif  // COMPATIBILITY_HPP
