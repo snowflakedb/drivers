@@ -301,6 +301,7 @@ pub mod param_names {
     pub const CONNECT_FUNCTIONS: ParamKey = ParamKey("connectfunctions");
     pub const TRACING: ParamKey = ParamKey("tracing");
     // ── Deprecated ODBC connection-string keys ────────────────────────
+    pub const TRANSLATE: ParamKey = ParamKey("translate");
     pub const LOG_LEVEL: ParamKey = ParamKey("log_level");
     pub const LOG_PATH: ParamKey = ParamKey("log_path");
     pub const LOG_FILE_SIZE: ParamKey = ParamKey("log_file_size");
@@ -2383,6 +2384,14 @@ static PARAM_DEFS: &[ParamDef] = &[
     ignored_odbc_param(param_names::TRACING.as_str()),
     // ── Deprecated ODBC connection-string keys ────────────────────────
     odbc_deprecated(
+        param_names::TRANSLATE.as_str(),
+        aliases![],
+        "Legacy Simba TRANSLATE key. The driver accepts the key and does not apply it",
+        Deprecation::Ignored {
+            guidance: "Character-set translation DLLs are not supported; this connection-string key is not applied.",
+        },
+    ),
+    odbc_deprecated(
         param_names::LOG_LEVEL.as_str(),
         aliases![Odbc; "LogLevel"],
         "Legacy connection-string LogLevel. The driver accepts the key and does not apply it; file logging is configured in sf.odbc.ini",
@@ -3231,6 +3240,36 @@ mod tests {
                     "{key} must not resolve for {wrapper:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn odbc_deprecated_translate_key_resolves_only_for_odbc() {
+        let r = registry();
+        let key = "TRANSLATE";
+        let canonical = "translate";
+        let expected_guidance = "Character-set translation DLLs are not supported; this connection-string key is not applied.";
+        let def = r
+            .resolve_for(Wrapper::Odbc, key)
+            .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
+        assert_eq!(def.canonical_name, canonical);
+        let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
+            panic!("{canonical} should be deprecated with guidance");
+        };
+        assert_eq!(guidance, expected_guidance);
+        assert!(def.ignored, "{canonical} should be ignored");
+        assert_eq!(def.visible_to, visible_to!(Odbc));
+        assert!(r.resolve(canonical).is_none());
+        for wrapper in [
+            Wrapper::Jdbc,
+            Wrapper::Python,
+            Wrapper::NodeJs,
+            Wrapper::DotNet,
+        ] {
+            assert!(
+                r.resolve_for(wrapper, key).is_none(),
+                "{key} must not resolve for {wrapper:?}"
+            );
         }
     }
 

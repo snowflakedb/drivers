@@ -112,6 +112,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("OCSP_FAIL_OPEN", "ocsp_fail_open"),
     ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
     ("DEFAULT_BINARY_SIZE", "default_binary_size"),
+    ("TRANSLATE", "translate"),
 ];
 
 /// Accepted by snowflake-odbc but not a registry parameter. Grouped by why
@@ -120,8 +121,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     // `CPTIMEOUT` is the installer connection-pool idle timeout; the old
     // driver accepted the key and never applied it.
     "CPTIMEOUT",
-    // Deprecated Simba translation-DLL key.
-    "TRANSLATE",
     // `CRL_ADVISORY` combines with `CRL_CHECK` in the legacy driver to
     // choose ENABLED vs ADVISORY. Two keys cannot 1:1-alias one HashMap
     // entry (last write wins), so this key is not a registry alias.

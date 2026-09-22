@@ -14,6 +14,7 @@ Changes:
 - Changed leftover ODBC connection-string OCSP keywords `DisableOCSPCheck` and `OCSP_FAIL_OPEN` to be accepted and ignored, posting SQLSTATE `01000` on connect. Certificate revocation uses CRL; set `CRL_MODE` to `DISABLED`, `ENABLED`, or `ADVISORY`. (snowflakedb/drivers#2100)
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
 - Changed `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection-string keywords to be accepted and ignored, posting SQLSTATE `01000` on connect. (snowflakedb/drivers#2102)
+- Changed leftover ODBC connection-string keyword `TRANSLATE` to be accepted and ignored, posting SQLSTATE `01000` on connect. Character-set translation DLLs are not supported. (snowflakedb/drivers#2195)
 
 Bug fixes:
 

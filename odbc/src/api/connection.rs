@@ -3364,6 +3364,29 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_registry_param_warnings_cover_translate_key() {
+        let params = parse_connection_string("TRANSLATE=libsftranslate.so").unwrap();
+        let warnings = deprecated_registry_param_warnings(&params);
+        let messages: Vec<String> = warnings
+            .iter()
+            .map(|warning| match warning {
+                Warning::DeprecatedParameter {
+                    parameter,
+                    deprecation,
+                } => deprecation.message_for(parameter),
+                other => panic!("unexpected warning: {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                "Parameter 'TRANSLATE' is deprecated and has no effect. \
+                 Character-set translation DLLs are not supported; this connection-string key is not applied.",
+            ]
+        );
+    }
+
+    #[test]
     fn normalize_connection_string_options_forwards_oauth_keys_with_canonical_names() {
         let options = normalize_connection_string_options(HashMap::from([
             ("OAUTH_CLIENT_ID".to_owned(), "client-123".to_owned()),
@@ -3795,6 +3818,16 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_drops_translate_key() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "TRANSLATE".to_owned(),
+            "libsftranslate.so".to_owned(),
+        )]));
+
+        assert!(options.is_empty());
+    }
+
+    #[test]
     fn normalize_connection_string_options_preserves_unrecognized_keys() {
         // A key unknown to the registry (e.g. a Snowflake server session
         // parameter) is forwarded uppercased and verbatim, so core can pass it
@@ -4172,6 +4205,12 @@ mod tests {
         let params =
             parse_connection_string("DSN=my_dsn;DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1")
                 .unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_translate_key() {
+        let params = parse_connection_string("DSN=my_dsn;TRANSLATE=libsftranslate.so").unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 
