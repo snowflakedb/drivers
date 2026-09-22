@@ -101,7 +101,7 @@ Feature: Large (stage-based) parameter binding
   # driver-side path is already covered by the
   # `json_all_param_ignore_yields_empty_value_arrays` unit test.
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should fall back to per-row execution for non-INSERT statements
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists

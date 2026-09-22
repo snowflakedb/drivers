@@ -122,8 +122,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   /**
    * Whether the server's describe reports this statement as array-bind capable (INSERT-shaped).
    * Triggers the cached prepare, matching legacy {@code executeBatch}, which reads {@code
-   * isArrayBindSupported()} off the describe. Guards stage binding to INSERTs until the non-INSERT
-   * per-row fallback lands (see the feature file's deferred scenarios).
+   * isArrayBindSupported()} off the describe.
    */
   boolean arrayBindSupported() {
     return getPrepareResult().getArrayBindSupported();

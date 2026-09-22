@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.notNull;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -32,11 +33,13 @@ import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -65,6 +68,7 @@ public class SnowflakePreparedStatementImplTest {
         .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
     when(mockCoreApi.statementRelease(any()))
         .thenReturn(StatementReleaseResponse.getDefaultInstance());
+    when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(true));
   }
 
   private SnowflakePreparedStatementImpl createPreparedStatement(String sql) {
@@ -116,6 +120,88 @@ public class SnowflakePreparedStatementImplTest {
         new int[] {Statement.SUCCESS_NO_INFO, Statement.SUCCESS_NO_INFO},
         counts,
         "non-matching aggregate must fan out to one SUCCESS_NO_INFO per batch row");
+  }
+
+  @Test
+  void shouldExecuteNonInsertBatchOneRowAtATimeWithOrderedUpdateCounts() throws Exception {
+    SnowflakePreparedStatementImpl ps =
+        createPreparedStatement("UPDATE t SET value = ? WHERE id = ?");
+    when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(false));
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenReturn(insertResponse(1L, "qid-update-1"))
+        .thenReturn(insertResponse(2L, "qid-update-2"))
+        .thenReturn(insertResponse(3L, "qid-update-3"));
+
+    for (int row = 1; row <= 3; row++) {
+      ps.setInt(1, row * 10);
+      ps.setInt(2, row);
+      ps.addBatch();
+    }
+
+    assertArrayEquals(new int[] {1, 2, 3}, ps.executeBatch());
+    verify(mockCoreApi, times(3)).statementExecuteQuery(any(), notNull(QueryBindings.class));
+    assertArrayEquals(
+        new String[] {"qid-update-1", "qid-update-2", "qid-update-3"},
+        ps.getBatchQueryIDs().toArray(new String[0]));
+  }
+
+  @Test
+  void shouldContinueNonInsertBatchAfterFailureAndPreservePerRowResults() throws Exception {
+    SnowflakePreparedStatementImpl impl =
+        createPreparedStatement("UPDATE t SET value = ? WHERE id = ?");
+    PreparedStatement ps = new DecoratedSnowflakePreparedStatementImpl(impl, Telemetry.NOOP);
+    when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(false));
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenReturn(insertResponse(1L, "qid-update-1"))
+        .thenThrow(
+            new CoreException(
+                DriverException.newBuilder()
+                    .setMessage("row failed")
+                    .setSqlState("42000")
+                    .setVendorCode(7)
+                    .build(),
+                null))
+        .thenReturn(insertResponse(3L, "qid-update-3"));
+
+    for (int row = 1; row <= 3; row++) {
+      ps.setInt(1, row * 10);
+      ps.setInt(2, row);
+      ps.addBatch();
+    }
+
+    BatchUpdateException ex = assertThrows(BatchUpdateException.class, ps::executeBatch);
+    assertArrayEquals(new int[] {1, Statement.EXECUTE_FAILED, 3}, ex.getUpdateCounts());
+    assertEquals("42000", ex.getSQLState());
+    assertEquals(7, ex.getErrorCode());
+    verify(mockCoreApi, times(3)).statementExecuteQuery(any(), notNull(QueryBindings.class));
+    assertArrayEquals(
+        new String[] {"qid-update-1", null, "qid-update-3"},
+        impl.getBatchQueryIDs().toArray(new String[0]));
+    assertEquals(0, ps.executeBatch().length, "batch is cleared after per-row execution");
+  }
+
+  @Test
+  void shouldMapNoUpdateCountToSuccessNoInfoOnNonInsertExecuteLargeBatch() throws Exception {
+    try (SnowflakePreparedStatementImpl ps =
+        spy(createPreparedStatement("UPDATE t SET value = ? WHERE id = ?"))) {
+      when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(false));
+      long largeCount = (long) Integer.MAX_VALUE + 1L;
+      doReturn(StatementTypeClassifier.NO_UPDATE_COUNT, largeCount)
+          .when(ps)
+          .executeLargeUpdateWithBindings(anyString(), any());
+
+      ps.setInt(1, 10);
+      ps.setInt(2, 1);
+      ps.addBatch();
+      ps.setInt(1, 20);
+      ps.setInt(2, 2);
+      ps.addBatch();
+
+      assertArrayEquals(
+          new long[] {Statement.SUCCESS_NO_INFO, largeCount},
+          ps.executeLargeBatch(),
+          "NO_UPDATE_COUNT maps to SUCCESS_NO_INFO; out-of-int counts stay as longs");
+    }
   }
 
   @Test
@@ -346,6 +432,12 @@ public class SnowflakePreparedStatementImplTest {
     DriverException error =
         DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();
     return new CoreException(error, null);
+  }
+
+  private static StatementPrepareResponse prepareResponse(boolean arrayBindSupported) {
+    return StatementPrepareResponse.newBuilder()
+        .setResult(PrepareResult.newBuilder().setArrayBindSupported(arrayBindSupported).build())
+        .build();
   }
 
   private static ExecuteQueryResponse insertResponse(long rowsAffected) {

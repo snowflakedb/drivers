@@ -63,10 +63,9 @@ final class PreparedBatch {
   }
 
   /**
-   * Single-roundtrip array-bind execution. Returns one entry per row: per-row {@code 1} when the
-   * server's aggregate count equals {@code batchSize} (SNOW-14034), else {@link
-   * Statement#SUCCESS_NO_INFO}. On failure throws {@link SFBatchUpdateException} with all entries
-   * set to {@link Statement#EXECUTE_FAILED}.
+   * Executes array-bind-capable statements in one round trip and other statements one row at a
+   * time. Array-bind counts expand to per-row {@code 1} when the server's aggregate count equals
+   * {@code batchSize} (SNOW-14034), else {@link Statement#SUCCESS_NO_INFO}.
    */
   long[] executeAll(SnowflakePreparedStatementImpl stmt, String sql) {
     final int batchSize = size();
@@ -75,12 +74,21 @@ final class PreparedBatch {
       stmt.finalizeBatch(null);
       return new long[0];
     }
-    long[] result = new long[0];
+    long[] result = new long[batchSize];
     SFBatchUpdateException pending = null;
     try {
-      long updateCount = serializeAndExecute(stmt, sql);
-      result = expandUpdateCounts(updateCount, batchSize);
-      stmt.recordBatchQueryId();
+      if (stmt.arrayBindSupported()) {
+        long updateCount = serializeBatchAndExecute(stmt, sql);
+        result = expandUpdateCounts(updateCount, batchSize);
+        stmt.recordBatchQueryId();
+      } else {
+        CoreException firstFailure = executeRows(stmt, sql, result);
+        if (firstFailure != null) {
+          pending =
+              SnowflakeStatementImpl.buildBatchFailureException(
+                  firstFailure, toIntUpdateCounts(result));
+        }
+      }
     } catch (CoreException e) {
       pending = SnowflakeStatementImpl.buildBatchFailureException(e, allFailed(batchSize));
       stmt.recordBatchQueryId();
@@ -93,15 +101,12 @@ final class PreparedBatch {
     return result;
   }
 
-  private long serializeAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
+  private long serializeBatchAndExecute(SnowflakePreparedStatementImpl stmt, String sql) {
     return executeWithBindings(stmt, sql, useStageBinding(stmt));
   }
 
   /**
-   * Manual try/finally rather than try-with-resources: a close-throws-after-RPC-success would
-   * otherwise be caught by the outer catch and falsely mark the batch as failed.
-   *
-   * <p>Recurses at most once: a stage-binding-disabled failure on the stage-bound path retries with
+   * Recurses at most once: a stage-binding-disabled failure on the stage-bound path retries with
    * inline JSON bindings, whose own failure is rethrown rather than retried again.
    */
   private long executeWithBindings(
@@ -111,12 +116,56 @@ final class PreparedBatch {
             ? PreparedStatementCsvBindings.serialize(snapshot(), rowCount)
             : PreparedStatementBindingSerializer.serialize(snapshot());
     try {
-      return stmt.executeLargeUpdateWithBindings(sql, nativeBindings);
+      return executeWithBindings(stmt, sql, nativeBindings);
     } catch (CoreException e) {
       if (useStage && e.isStageBindingDisabled()) {
         return executeWithBindings(stmt, sql, false);
       }
       throw e;
+    }
+  }
+
+  private CoreException executeRows(
+      SnowflakePreparedStatementImpl stmt, String sql, long[] updateCounts) {
+    CoreException firstFailure = null;
+    for (int row = 0; row < rowCount; row++) {
+      CoreException rowFailure = executeRow(stmt, sql, row, updateCounts);
+      if (rowFailure != null && firstFailure == null) {
+        firstFailure = rowFailure;
+      }
+    }
+    return firstFailure;
+  }
+
+  private CoreException executeRow(
+      SnowflakePreparedStatementImpl stmt, String sql, int row, long[] updateCounts) {
+    try {
+      PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+          PreparedStatementBindingSerializer.serialize(snapshotRow(row));
+      long updateCount = executeWithBindings(stmt, sql, nativeBindings);
+      updateCounts[row] =
+          updateCount == StatementTypeClassifier.NO_UPDATE_COUNT
+              ? Statement.SUCCESS_NO_INFO
+              : updateCount;
+      return null;
+    } catch (CoreException e) {
+      updateCounts[row] = Statement.EXECUTE_FAILED;
+      return e;
+    } finally {
+      stmt.recordBatchQueryId();
+    }
+  }
+
+  /**
+   * Manual try/finally rather than try-with-resources: a close-throws-after-RPC-success would
+   * otherwise be caught by the outer catch and falsely mark the batch as failed.
+   */
+  private long executeWithBindings(
+      SnowflakePreparedStatementImpl stmt,
+      String sql,
+      PreparedStatementBindingSerializer.NativeBindings nativeBindings) {
+    try {
+      return stmt.executeLargeUpdateWithBindings(sql, nativeBindings);
     } finally {
       try {
         nativeBindings.close();
@@ -128,8 +177,8 @@ final class PreparedBatch {
 
   /**
    * Stage-bind decision, mirroring legacy {@code SFStatement}: {@code 0 < threshold && threshold <=
-   * cells}, where {@code cells = rows × columns}. {@code arrayBindSupported} keeps non-INSERT
-   * batches on the JSON path, standing in for legacy's per-row fallback.
+   * cells}, where {@code cells = rows × columns}. Called only from the array-bind path; non-INSERT
+   * batches execute one row at a time with JSON bindings.
    */
   private boolean useStageBinding(SnowflakePreparedStatementImpl stmt) {
     int threshold = stmt.stageArrayBindingThreshold();
@@ -148,6 +197,25 @@ final class PreparedBatch {
     int[] failed = new int[batchSize];
     Arrays.fill(failed, Statement.EXECUTE_FAILED);
     return failed;
+  }
+
+  private static int[] toIntUpdateCounts(long[] updateCounts) {
+    int[] result = new int[updateCounts.length];
+    for (int i = 0; i < updateCounts.length; i++) {
+      result[i] = SnowflakeStatementImpl.toBatchInt(updateCounts[i]);
+    }
+    return result;
+  }
+
+  private Map<Integer, ParameterValue> snapshotRow(int row) {
+    Map<Integer, ParameterValue> values = new HashMap<>();
+    for (Map.Entry<Integer, ParameterValue> entry : columns.entrySet()) {
+      ParameterValue column = entry.getValue();
+      @SuppressWarnings("unchecked")
+      List<String> columnValues = (List<String>) column.value();
+      values.put(entry.getKey(), new ParameterValue(column.bindType(), columnValues.get(row)));
+    }
+    return values;
   }
 
   private void commit(int parameterIndex, Map<Integer, ParameterValue> currentValues) {

@@ -1,5 +1,6 @@
 package net.snowflake.jdbc.e2e.query;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -11,16 +12,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
-import net.snowflake.jdbc.utils.DriverCompatibility;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
  * Stage (SYSTEM$BIND) array-binding coverage for the shared scenarios in {@code
- * large_bindings.feature}. Stage detection ({@code LIST @SYSTEM$BIND} count deltas) is asserted
- * only on the universal driver via {@link DriverCompatibility#isNewDriver()}; the round-trip
- * SELECTs run on both drivers.
+ * large_bindings.feature}. Both drivers upload to {@code @SYSTEM$BIND}, so stage detection ({@code
+ * LIST @SYSTEM$BIND} count deltas) and round-trip SELECTs run on both.
  */
 public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
@@ -52,11 +51,9 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeFirst,
-          "First bulk insert should upload a bind file to SYSTEM$BIND at the default threshold");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeFirst,
+        "First bulk insert should upload a bind file to SYSTEM$BIND at the default threshold");
 
     // When 33000 rows generated as [[33000 + i, "second-" + i] for i in 0..33000] are inserted
     // using
@@ -66,11 +63,9 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeSecond,
-          "Second bulk insert should upload another bind file, reusing the SYSTEM$BIND stage");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeSecond,
+        "Second bulk insert should upload another bind file, reusing the SYSTEM$BIND stage");
 
     // And Query "SELECT id, name FROM {table} ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
@@ -119,11 +114,9 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeInsert,
-          "All-types bulk insert should upload a bind file to SYSTEM$BIND");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeInsert,
+        "All-types bulk insert should upload a bind file to SYSTEM$BIND");
 
     // And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
@@ -177,11 +170,9 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeInsert,
-          "CSV-hazard bulk insert should upload a bind file to SYSTEM$BIND");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeInsert,
+        "CSV-hazard bulk insert should upload a bind file to SYSTEM$BIND");
 
     // And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
@@ -226,12 +217,10 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
       try (ResultSet resultSet = preparedStatement.executeQuery()) {
         // Then the bind file on SYSTEM$BIND from the last execute should not contain the bound
         // parameter values
-        if (DriverCompatibility.isNewDriver()) {
-          assertEquals(
-              beforeExecute,
-              countSystemBindFiles(connection),
-              "A scalar execute must not upload a bind file even below the threshold");
-        }
+        assertEquals(
+            beforeExecute,
+            countSystemBindFiles(connection),
+            "A scalar execute must not upload a bind file even below the threshold");
 
         // And the result should equal 42
         assertTrue(resultSet.next(), "Expected one row");
@@ -259,12 +248,10 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
     insertNamedRows(connection, tableName, 0, 10, "json-");
 
     // Then no new bind file should have been uploaded to SYSTEM$BIND
-    if (DriverCompatibility.isNewDriver()) {
-      assertEquals(
-          beforeInsert,
-          countSystemBindFiles(connection),
-          "20 cells below the threshold of 100 must stay on the inline JSON path");
-    }
+    assertEquals(
+        beforeInsert,
+        countSystemBindFiles(connection),
+        "20 cells below the threshold of 100 must stay on the inline JSON path");
 
     // And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
@@ -300,11 +287,9 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeInsert,
-          "10 rows x 2 columns == the threshold of 20 must stage-bind (cells >= threshold)");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeInsert,
+        "10 rows x 2 columns == the threshold of 20 must stage-bind (cells >= threshold)");
 
     // And Query "SELECT id, name FROM {table} WHERE id IN (0, 9) ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
@@ -340,12 +325,10 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
     insertAllNullRow(connection, tableName);
 
     // Then no new bind file should have been uploaded to SYSTEM$BIND
-    if (DriverCompatibility.isNewDriver()) {
-      assertEquals(
-          beforeInsert,
-          countSystemBindFiles(connection),
-          "A disabled threshold (0) must keep the all-NULL batch on the inline JSON path");
-    }
+    assertEquals(
+        beforeInsert,
+        countSystemBindFiles(connection),
+        "A disabled threshold (0) must keep the all-NULL batch on the inline JSON path");
 
     // And every column of the round-tripped row reads back as SQL NULL
     assertRowIsAllNull(connection, tableName);
@@ -369,14 +352,60 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
 
     // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
     // the bound parameters
-    if (DriverCompatibility.isNewDriver()) {
-      assertTrue(
-          countSystemBindFiles(connection) > beforeInsert,
-          "6 bound cells == the threshold of 6 must stage-bind the all-NULL row to SYSTEM$BIND");
-    }
+    assertTrue(
+        countSystemBindFiles(connection) > beforeInsert,
+        "6 bound cells == the threshold of 6 must stage-bind the all-NULL row to SYSTEM$BIND");
 
     // And every column of the round-tripped row reads back as SQL NULL
     assertRowIsAllNull(connection, tableName);
+  }
+
+  @Test
+  public void shouldFallBackToPerRowExecutionForNonInsertStatements() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
+    // And A temporary table with columns (id NUMBER, name VARCHAR) exists
+    String tableName = createTempTable(connection, "ud_large_bindings_", "id NUMBER, name VARCHAR");
+    try (Statement statement = connection.createStatement()) {
+      statement.execute(
+          "INSERT INTO " + tableName + " VALUES (1, 'old-1'), (2, 'old-2'), (3, 'old-3')");
+    }
+
+    // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
+    execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 1");
+
+    // When an UPDATE with array bindings above the threshold is executed via executemany
+    long beforeUpdate = countSystemBindFiles(connection);
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("UPDATE " + tableName + " SET name = ? WHERE id = ?")) {
+      for (int id = 1; id <= 3; id++) {
+        preparedStatement.setString(1, "new-" + id);
+        preparedStatement.setInt(2, id);
+        preparedStatement.addBatch();
+      }
+      assertArrayEquals(new int[] {1, 1, 1}, preparedStatement.executeBatch());
+    }
+
+    // Then all updated rows reflect the new values
+    try (Statement statement = connection.createStatement();
+        ResultSet resultSet =
+            statement.executeQuery("SELECT id, name FROM " + tableName + " ORDER BY id")) {
+      for (int id = 1; id <= 3; id++) {
+        assertTrue(resultSet.next(), "Expected updated row for id " + id);
+        assertEquals(id, resultSet.getInt(1));
+        assertFalse(resultSet.wasNull(), "Expected non-null id");
+        assertEquals("new-" + id, resultSet.getString(2));
+        assertFalse(resultSet.wasNull(), "Expected non-null name");
+      }
+      assertFalse(resultSet.next(), "Expected exactly three updated rows");
+    }
+
+    // And no new bind file should have been uploaded
+    assertEquals(
+        beforeUpdate,
+        countSystemBindFiles(connection),
+        "A non-INSERT batch must execute per row without uploading to SYSTEM$BIND");
   }
 
   private String createAllNullableColumnsTable(Connection connection) throws Exception {
