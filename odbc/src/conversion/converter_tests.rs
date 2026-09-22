@@ -398,6 +398,59 @@ mod tests {
     }
 
     #[test]
+    fn convert_arrow_range_marks_null_and_renders_leap_day() {
+        use crate::api::{CDataType, SQL_NULL_DATA};
+        use crate::conversion::BindingStrides;
+        use crate::conversion::traits::Binding;
+        use arrow::array::Date32Array;
+        use arrow::datatypes::Date32Type;
+        use chrono::NaiveDate;
+        use odbc_sys as sql;
+
+        let leap = Date32Type::from_naive_date(NaiveDate::from_ymd_opt(2024, 2, 29).unwrap());
+        let array = Date32Array::from(vec![None, Some(leap)]);
+
+        const CELL: usize = 48;
+        let n = array.len();
+        let mut buf = vec![0u8; n * CELL];
+        let mut inds = vec![0 as sql::Len; n];
+        let base = Binding {
+            target_type: CDataType::Char,
+            target_value_ptr: buf.as_mut_ptr() as sql::Pointer,
+            buffer_length: CELL as sql::Len,
+            octet_length_ptr: inds.as_mut_ptr(),
+            indicator_ptr: inds.as_mut_ptr(),
+            ..Default::default()
+        };
+        let mut outputs: Vec<Result<crate::conversion::warning::Warnings, ConversionError>> =
+            (0..n).map(|_| Ok(Vec::new())).collect();
+
+        date_converter().convert_arrow_range(
+            &array,
+            0..n,
+            &base,
+            0,
+            BindingStrides {
+                bind_type: 0,
+                bind_offset: 0,
+            },
+            &mut outputs,
+        );
+
+        assert!(outputs[0].is_ok(), "null row errored: {:?}", outputs[0]);
+        assert_eq!(inds[0], SQL_NULL_DATA, "null cell must set SQL_NULL_DATA");
+
+        assert!(outputs[1].is_ok(), "leap-day row errored: {:?}", outputs[1]);
+        let cell = &buf[CELL..2 * CELL];
+        let s = std::ffi::CStr::from_bytes_until_nul(cell)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(s, "2024-02-29");
+        assert_eq!(inds[1], "2024-02-29".len() as sql::Len);
+    }
+
+    #[test]
     fn convert_arrow_range_strides_varchar_variable_size() {
         use arrow::array::StringArray;
         let array = StringArray::from(vec!["a", "bb", "ccc", "dddd"]);

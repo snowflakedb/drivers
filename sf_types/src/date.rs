@@ -81,12 +81,39 @@ mod tests {
     }
 
     #[test]
+    fn should_read_typical_mid_range_date() {
+        let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+        let date = NaiveDate::from_ymd_opt(2023, 6, 15).unwrap();
+        let array =
+            PrimitiveArray::<Date32Type>::from(vec![Some((date - epoch).num_days() as i32)]);
+        assert_eq!(SnowflakeDate.read_arrow_type(&array, 0).unwrap(), date);
+    }
+
+    #[test]
+    fn should_read_leap_day() {
+        let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+        let leap_day = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let array =
+            PrimitiveArray::<Date32Type>::from(vec![Some((leap_day - epoch).num_days() as i32)]);
+        assert_eq!(SnowflakeDate.read_arrow_type(&array, 0).unwrap(), leap_day);
+    }
+
+    #[test]
     fn should_report_null_cell_as_null_value_error() {
         let array = PrimitiveArray::<Date32Type>::from(vec![None, Some(0)]);
         let err = SnowflakeDate.read_arrow_type(&array, 0).unwrap_err();
         assert!(
             matches!(err, ReadArrowError::NullValue { .. }),
             "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn should_read_non_null_cell_after_null_cell() {
+        let array = PrimitiveArray::<Date32Type>::from(vec![None, Some(0)]);
+        assert_eq!(
+            SnowflakeDate.read_arrow_type(&array, 1).unwrap(),
+            NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
         );
     }
 

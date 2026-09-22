@@ -541,6 +541,31 @@ mod tests {
         assert_eq!(reader.read(1), JsCell::Null);
     }
 
+    #[test]
+    fn date_reads_boundaries_epoch_and_leap_day() {
+        let dates = [
+            NaiveDate::from_ymd_opt(1, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(1969, 12, 31).unwrap(),
+            NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap(),
+            NaiveDate::from_ymd_opt(9999, 12, 31).unwrap(),
+        ];
+        let field = field("DATE", DataType::Date32, &[]);
+        let array = PrimitiveArray::<Date32Type>::from(
+            dates
+                .iter()
+                .map(|d| Some(Date32Type::from_naive_date(*d)))
+                .collect::<Vec<_>>(),
+        );
+        let reader = reader(&field, &array);
+        for (row, date) in dates.iter().enumerate() {
+            assert_eq!(
+                reader.read(row),
+                JsCell::Date(date.and_time(NaiveTime::MIN))
+            );
+        }
+    }
+
     fn vector_field(child: DataType, dimension: i32) -> Field {
         let child_field = Arc::new(Field::new("item", child, false));
         field(
