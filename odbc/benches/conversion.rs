@@ -292,6 +292,29 @@ fn bench(c: &mut Criterion) {
             })
         });
     }
+
+    let real_field = field(DataType::Float64, "REAL", &[]);
+    let real_converter = make_converter(&real_field);
+
+    // Mirrors TPCH L_EXTENDEDPRICE::DOUBLE: positive currency-like values
+    // whose source column has two decimal places.
+    let double_hundredths_array = Float64Array::from_iter_values(
+        (0..N).map(|i| ((90_000 + i.wrapping_mul(7_919) % 100_000_000) as f64) / 100.0),
+    );
+    let mut double_hundredths_buf = vec![0u8; N * 64];
+    let mut double_hundredths_inds = vec![0 as sql::Len; N];
+    group.bench_function("double_hundredths", |b| {
+        b.iter(|| {
+            run(
+                real_converter.as_ref(),
+                &double_hundredths_array,
+                64,
+                &mut double_hundredths_buf,
+                &mut double_hundredths_inds,
+            )
+        })
+    });
+
     group.finish();
 }
 

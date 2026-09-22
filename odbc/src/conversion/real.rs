@@ -1,4 +1,4 @@
-use std::io::{Cursor, Write as _};
+use std::fmt::{self, Write as _};
 
 use arrow::array::Float64Array;
 use odbc_sys as sql;
@@ -27,6 +27,7 @@ use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteWire};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
+use snafu::ResultExt;
 
 pub(crate) use sf_types::SnowflakeReal;
 
@@ -46,7 +47,80 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
     }
 }
 
-/// Format an `f64` using its `Display` representation into `buf`, returning
+/// `fmt::Write` adapter over a stack buffer. Prefer this over `io::Cursor`:
+/// `write!(cursor, "{value}")` goes through `std::io::Write`, which is heavier
+/// than the `fmt::Write` path `Display` already uses.
+struct SliceWriter<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl fmt::Write for SliceWriter<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        let end = self.pos + bytes.len();
+        if end > self.buf.len() {
+            return Err(fmt::Error);
+        }
+        self.buf[self.pos..end].copy_from_slice(bytes);
+        self.pos = end;
+        Ok(())
+    }
+}
+
+/// Format values that are exactly representable as integer hundredths without
+/// entering the general floating-point formatter. This matches the shape of
+/// TPCH `L_EXTENDEDPRICE::DOUBLE`, while declining any value whose scaled
+/// representation is not exactly reversible.
+#[inline]
+fn try_format_exact_hundredths(value: f64, buf: &mut [u8; CHAR_SCRATCH_LEN]) -> Option<usize> {
+    // Keep this deliberately close to the TPCH currency-shaped workload. At
+    // much larger magnitudes, adjacent hundredths collapse onto the same f64
+    // and `Display` can legitimately choose a shorter one-decimal spelling.
+    const MAX_SCALED_MAGNITUDE: f64 = 1_000_000_000.0;
+
+    if !value.is_finite() || (value == 0.0 && value.is_sign_negative()) {
+        return None;
+    }
+
+    let scaled = value * 100.0;
+    if scaled.abs() > MAX_SCALED_MAGNITUDE {
+        return None;
+    }
+    let scaled = scaled.round() as i64;
+    if scaled as f64 / 100.0 != value {
+        return None;
+    }
+
+    let negative = scaled < 0;
+    let magnitude = scaled.unsigned_abs();
+    let whole = magnitude / 100;
+    let hundredths = (magnitude % 100) as u8;
+    let mut pos = usize::from(negative);
+    if negative {
+        buf[0] = b'-';
+    }
+
+    let mut digits_buf = [0u8; 39];
+    let digits = crate::conversion::int_fmt::uint_digits(whole as u128, &mut digits_buf);
+    buf[pos..pos + digits.len()].copy_from_slice(digits);
+    pos += digits.len();
+
+    if hundredths != 0 {
+        buf[pos] = b'.';
+        buf[pos + 1] = b'0' + hundredths / 10;
+        pos += 2;
+        if !hundredths.is_multiple_of(10) {
+            buf[pos] = b'0' + hundredths % 10;
+            pos += 1;
+        }
+    }
+
+    Some(pos)
+}
+
+/// Formats `value` using its `Display` representation into `buf`, returning
 /// the filled slice as `&str` without any heap allocation.
 ///
 /// Output is byte-identical to `f64::to_string()` — same branch cuts, same
@@ -54,24 +128,36 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
 /// roundtrippable" representation.
 ///
 /// The buffer must be at least ~330 bytes to hold the widest possible
-/// `Display` output (`1e308` prints as 309 digits; `1e-300` as ~325). 384
-/// bytes covers every current case with headroom. If `<f64 as Display>` ever
-/// widens enough to overflow the buffer, the caller receives a typed
-/// `NumericValueOutOfRange` error rather than a silent truncation through
-/// the unsafe `from_utf8_unchecked` below.
-fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> Result<&str, WriteOdbcError> {
+/// `Display` output (`1e308` prints as 309 digits; `1e-300` as ~325).
+/// `CHAR_SCRATCH_LEN` covers every current case with headroom. If
+/// `<f64 as Display>` ever widens enough to overflow the buffer, the caller
+/// receives a typed `NumericValueOutOfRange` error rather than a silent
+/// truncation through the unsafe `from_utf8_unchecked` below.
+fn format_f64_display_into(
+    value: f64,
+    buf: &mut [u8; CHAR_SCRATCH_LEN],
+) -> Result<&str, WriteOdbcError> {
+    if let Some(len) = try_format_exact_hundredths(value, buf) {
+        // SAFETY: the fast path writes only an optional '-', decimal digits,
+        // and '.'.
+        return Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) });
+    }
+
     let len = {
-        let mut cur = Cursor::new(&mut buf[..]);
-        if write!(cur, "{value}").is_err() {
+        let mut writer = SliceWriter {
+            buf: &mut buf[..],
+            pos: 0,
+        };
+        if write!(writer, "{value}").is_err() {
             return NumericValueOutOfRangeSnafu {
                 reason: format!(
                     "f64 value {value} does not fit in the {}-byte Display format buffer",
-                    buf.len()
+                    CHAR_SCRATCH_LEN
                 ),
             }
             .fail();
         }
-        cur.position() as usize
+        writer.pos
     };
     // SAFETY: `<f64 as Display>::fmt` only emits ASCII characters.
     Ok(unsafe { std::str::from_utf8_unchecked(&buf[..len]) })
@@ -89,7 +175,10 @@ fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> Result<&str, Writ
 /// fetch-side format, so the two constants intentionally do not share a
 /// string literal. NaN is left to `format_f64_display_into` (`"NaN"`), matching
 /// both the legacy driver and the bind-side wire format.
-fn format_f64_for_char_fetch(value: f64, buf: &mut [u8; 384]) -> Result<&str, WriteOdbcError> {
+fn format_f64_for_char_fetch(
+    value: f64,
+    buf: &mut [u8; CHAR_SCRATCH_LEN],
+) -> Result<&str, WriteOdbcError> {
     if value == f64::INFINITY {
         return Ok("INFINITY");
     }
@@ -317,7 +406,7 @@ impl WriteODBCType for SnowflakeReal {
                 }
             }
             CDataType::Char => {
-                let mut num_buf = [0u8; 384];
+                let mut num_buf = [0u8; CHAR_SCRATCH_LEN];
                 let num_str = format_f64_for_char_fetch(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_char_string(num_str, get_data_offset);
                 if warnings
@@ -339,7 +428,7 @@ impl WriteODBCType for SnowflakeReal {
                 Ok(warnings)
             }
             CDataType::WChar => {
-                let mut num_buf = [0u8; 384];
+                let mut num_buf = [0u8; CHAR_SCRATCH_LEN];
                 let num_str = format_f64_for_char_fetch(snowflake_value, &mut num_buf)?;
                 let warnings = binding.write_wchar_string(num_str, get_data_offset);
                 if warnings
@@ -593,14 +682,35 @@ impl CharKernel for RealCharKernel {
         }
         Ok(())
     }
+
+    #[inline]
+    fn write_non_null(
+        &self,
+        array: &Float64Array,
+        idx: usize,
+        binding: &Binding,
+        scratch: &mut [u8; CHAR_SCRATCH_LEN],
+    ) -> Result<bool, ConversionError> {
+        // Non-null is guaranteed by `convert_char_range`; skip `read_arrow_type`.
+        let s = format_f64_for_char_fetch(array.value(idx), scratch)
+            .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+        let truncated = binding.write_ascii_char_string_once(s);
+        // `whole_digits_len(s) <= s.len()`, so a value that already fits in the
+        // cell cannot trip the 22003 whole-digits check.
+        if s.len() >= binding.buffer_length as usize {
+            self.post_write_check(s, binding)
+                .context(crate::conversion::error::WriteOdbcValueSnafu)?;
+        }
+        Ok(truncated)
+    }
 }
 
 #[cfg(test)]
 mod format_f64_display_into_tests {
-    use super::format_f64_display_into;
+    use super::{CHAR_SCRATCH_LEN, format_f64_display_into, try_format_exact_hundredths};
 
     fn assert_matches(value: f64) {
-        let mut buf = [0u8; 384];
+        let mut buf = [0u8; CHAR_SCRATCH_LEN];
         let actual = format_f64_display_into(value, &mut buf).expect("format_f64_display_into");
         let expected = value.to_string();
         assert_eq!(actual, expected, "mismatch for {value}");
@@ -641,5 +751,76 @@ mod format_f64_display_into_tests {
         assert_matches(f64::INFINITY);
         assert_matches(f64::NEG_INFINITY);
         assert_matches(f64::NAN);
+    }
+
+    #[test]
+    fn randomized_display_oracle_sample() {
+        let samples = [
+            667_082_108_456_853.3,
+            -667_082_108_456_853.3,
+            9007199254740992.0,
+            -9007199254740993.0,
+            0.0000000000000001,
+            -0.0000000000000001,
+        ];
+        for value in samples {
+            assert_matches(value);
+        }
+
+        let mut bits: u64 = 0x1234_5678_9abc_def0;
+        for _ in 0..20_000 {
+            bits = bits.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            assert_matches(f64::from_bits(bits));
+        }
+    }
+
+    #[test]
+    fn exact_hundredths_fast_path_matches_display_across_tpch_range() {
+        let mut buf = [0u8; CHAR_SCRATCH_LEN];
+        for scaled in (9_000_000i64..=109_000_000).step_by(97) {
+            for signed in [scaled, -scaled] {
+                let value = signed as f64 / 100.0;
+                let len = try_format_exact_hundredths(value, &mut buf)
+                    .expect("TPCH-shaped hundredths should use fast path");
+                // SAFETY: the helper only writes ASCII.
+                let actual = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+                assert_eq!(actual, value.to_string(), "mismatch for {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn exact_hundredths_fast_path_matches_display_across_supported_magnitudes() {
+        let mut buf = [0u8; CHAR_SCRATCH_LEN];
+        let in_bound_scaled: [i64; 10] =
+            [0, 1, 9, 10, 11, 99, 100, 101, 1_000_000_000, -1_000_000_000];
+        for scaled in in_bound_scaled {
+            let value = scaled as f64 / 100.0;
+            let len = try_format_exact_hundredths(value, &mut buf)
+                .unwrap_or_else(|| panic!("expected fast path to accept {value}"));
+            // SAFETY: the helper only writes ASCII.
+            let actual = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+            assert_eq!(actual, value.to_string(), "mismatch for {value}");
+        }
+
+        for scaled in [1_000_000_001i64, -1_000_000_001] {
+            let value = scaled as f64 / 100.0;
+            assert!(
+                try_format_exact_hundredths(value, &mut buf).is_none(),
+                "expected fast path to decline {value}"
+            );
+        }
+
+        let mut state = 0x1234_5678_9abc_def0u64;
+        for _ in 0..200_000 {
+            state = state.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            let scaled = (state % 2_000_000_001) as i64 - 1_000_000_000;
+            let value = scaled as f64 / 100.0;
+            let len = try_format_exact_hundredths(value, &mut buf)
+                .unwrap_or_else(|| panic!("expected fast path to accept {value}"));
+            // SAFETY: the helper only writes ASCII.
+            let actual = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+            assert_eq!(actual, value.to_string(), "mismatch for {value}");
+        }
     }
 }
