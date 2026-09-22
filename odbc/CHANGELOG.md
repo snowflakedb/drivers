@@ -11,6 +11,7 @@ Changes:
 
 - Changed leftover ODBC connection-string logging keywords such as `LogLevel` and `LogPath` to be accepted and ignored, posting SQLSTATE `01000` on connect. Each warning names the `sf.odbc.ini` key that configures the same behavior (for example `LogFileCount` points at `LogMaxCount`). (snowflakedb/drivers#2052)
 - Changed leftover ODBC test-only connection-string knobs (`INJECT_CURL_TIMEOUT`, `INJECT_INCIDENT1`, `CURL_NO_IDLE_CHECK`, `DisableStageBindFallback`, `StageBindMaxFileSize`, `StageBindThreshold`) to be accepted and ignored, posting SQLSTATE `01000` on connect. These knobs have no replacement; remove them from the DSN. (snowflakedb/drivers#2095)
+- Changed the ODBC Driver Manager `CPTimeout` connection-string keyword to be accepted and ignored instead of treated as an unknown session parameter. (snowflakedb/drivers#2196)
 - Changed leftover ODBC connection-string OCSP keywords `DisableOCSPCheck` and `OCSP_FAIL_OPEN` to be accepted and ignored, posting SQLSTATE `01000` on connect. Certificate revocation uses CRL; set `CRL_MODE` to `DISABLED`, `ENABLED`, or `ADVISORY`. (snowflakedb/drivers#2100)
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
 - Changed `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection-string keywords to be accepted and ignored, posting SQLSTATE `01000` on connect. (snowflakedb/drivers#2102)

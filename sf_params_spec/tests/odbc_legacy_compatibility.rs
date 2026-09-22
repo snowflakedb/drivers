@@ -95,6 +95,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("SQLLevel", "sqllevel"),
     ("ConnectFunctions", "connectfunctions"),
     ("TRACING", "tracing"),
+    ("CPTIMEOUT", "cptimeout"),
     ("LogLevel", "log_level"),
     ("LogPath", "log_path"),
     ("LogFileSize", "log_file_size"),
@@ -118,9 +119,6 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
 /// Accepted by snowflake-odbc but not a registry parameter. Grouped by why
 /// the key stays out of the registry.
 const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
-    // `CPTIMEOUT` is the installer connection-pool idle timeout; the old
-    // driver accepted the key and never applied it.
-    "CPTIMEOUT",
     // `CRL_ADVISORY` combines with `CRL_CHECK` in the legacy driver to
     // choose ENABLED vs ADVISORY. Two keys cannot 1:1-alias one HashMap
     // entry (last write wins), so this key is not a registry alias.

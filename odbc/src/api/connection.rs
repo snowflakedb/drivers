@@ -3892,6 +3892,7 @@ mod tests {
             ("APILevel".to_owned(), "1".to_owned()),
             ("SQLLevel".to_owned(), "1".to_owned()),
             ("ConnectFunctions".to_owned(), "YYY".to_owned()),
+            ("CPTimeout".to_owned(), "60".to_owned()),
             ("SERVER".to_owned(), "example.com".to_owned()),
         ]));
 
@@ -4206,6 +4207,12 @@ mod tests {
     #[test]
     fn unrecognized_connection_string_keys_ignores_legacy_tracing() {
         let params = parse_connection_string("DSN=my_dsn;TRACING=6").unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_ignores_cptimeout() {
+        let params = parse_connection_string("DSN=my_dsn;CPTIMEOUT=60").unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 

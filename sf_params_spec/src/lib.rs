@@ -300,6 +300,7 @@ pub mod param_names {
     pub const SQL_LEVEL: ParamKey = ParamKey("sqllevel");
     pub const CONNECT_FUNCTIONS: ParamKey = ParamKey("connectfunctions");
     pub const TRACING: ParamKey = ParamKey("tracing");
+    pub const CPTIMEOUT: ParamKey = ParamKey("cptimeout");
     // ── Deprecated ODBC connection-string keys ────────────────────────
     pub const TRANSLATE: ParamKey = ParamKey("translate");
     pub const LOG_LEVEL: ParamKey = ParamKey("log_level");
@@ -2382,6 +2383,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     ignored_odbc_param(param_names::SQL_LEVEL.as_str()),
     ignored_odbc_param(param_names::CONNECT_FUNCTIONS.as_str()),
     ignored_odbc_param(param_names::TRACING.as_str()),
+    ignored_odbc_param(param_names::CPTIMEOUT.as_str()),
     // ── Deprecated ODBC connection-string keys ────────────────────────
     odbc_deprecated(
         param_names::TRANSLATE.as_str(),
@@ -3055,6 +3057,7 @@ mod tests {
             ("SQLLevel", "sqllevel"),
             ("ConnectFunctions", "connectfunctions"),
             ("TRACING", "tracing"),
+            ("CPTimeout", "cptimeout"),
         ] {
             let def = r
                 .resolve_for(Wrapper::Odbc, key)
