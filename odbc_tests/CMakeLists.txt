@@ -53,10 +53,12 @@ function(add_odbc_test name)
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
   endif()
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/../odbc/include)
-  # Windows: Catch2 POST_BUILD and vcpkg z-applocal copy DLLs next to the
-  # executable. Sharing CMAKE_CURRENT_BINARY_DIR (tests/e2e has ~200 binaries)
-  # races under parallel Ninja ("being used by another process"). Isolate each
-  # test's runtime dir so copies do not collide; ctest uses TARGET_FILE.
+  # Windows: Catch2 POST_BUILD writes ${CMAKE_CURRENT_BINARY_DIR}/${target}-<hash>_tests.cmake
+  # as a BYPRODUCT of the link edge, and vcpkg z-applocal copies DLLs next to the
+  # exe. #2094 isolated RUNTIME_OUTPUT_DIRECTORY but left discovery cmake files in
+  # the shared tests/e2e dir (~200 binaries), so ARM64 Ninja still hit
+  # "being used by another process". Catch2 has no CTEST_FILE_DIR; point
+  # CMAKE_CURRENT_BINARY_DIR at the per-target dir for discover only.
   if(WIN32)
     set(_odbc_test_outdir "${CMAKE_CURRENT_BINARY_DIR}/${name}")
     set_target_properties(${name} PROPERTIES
@@ -64,9 +66,21 @@ function(add_odbc_test name)
       RUNTIME_OUTPUT_DIRECTORY_DEBUG "${_odbc_test_outdir}"
       RUNTIME_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
       RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
-      RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}")
+      RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}"
+      PDB_OUTPUT_DIRECTORY "${_odbc_test_outdir}"
+      PDB_OUTPUT_DIRECTORY_DEBUG "${_odbc_test_outdir}"
+      PDB_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
+      PDB_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
+      PDB_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}")
+    file(MAKE_DIRECTORY "${_odbc_test_outdir}")
+    set(_odbc_test_saved_bindir "${CMAKE_CURRENT_BINARY_DIR}")
+    set(CMAKE_CURRENT_BINARY_DIR "${_odbc_test_outdir}")
+    catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS
+      WORKING_DIRECTORY "${_odbc_test_outdir}")
+    set(CMAKE_CURRENT_BINARY_DIR "${_odbc_test_saved_bindir}")
+  else()
+    catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS)
   endif()
-  catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS)
 endfunction()
 
 add_subdirectory(tests)

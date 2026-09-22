@@ -260,8 +260,8 @@ jobs:
           }
 
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
-          # Per-target RUNTIME_OUTPUT_DIRECTORY on Windows isolates z-applocal /
-          # Catch2 POST_BUILD DLL copies, so ARM64 can use full $NPROC like x64.
+          # Per-target runtime + Catch2 discovery dirs isolate z-applocal and
+          # POST_BUILD *_tests.cmake writes, so ARM64 can use full $NPROC like x64.
           $parallelism = $NPROC
           Push-Location odbc_tests
           try {
