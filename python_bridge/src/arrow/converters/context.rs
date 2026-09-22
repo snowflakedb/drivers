@@ -19,8 +19,10 @@ use super::number;
 use super::real;
 use super::text;
 use super::time;
+use super::timestamp_ltz;
 use super::timestamp_ntz;
 use super::timestamp_tz;
+use super::timezone::TimezoneProvider;
 
 pub(crate) enum RowShape {
     Tuple,
@@ -30,30 +32,45 @@ pub(crate) enum RowShape {
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
     row_shape: Arc<RowShape>,
+    timezone: Arc<TimezoneProvider>,
 }
 
 impl ConversionContext {
+    #[cfg(test)]
     pub(crate) fn new(schema: &arrow::datatypes::Schema) -> PyResult<Self> {
-        Self::from_schema(schema, RowShape::Tuple)
+        Self::from_schema(schema, RowShape::Tuple, None)
+    }
+
+    pub(crate) fn with_session_timezone(
+        schema: &arrow::datatypes::Schema,
+        session_timezone: Option<String>,
+    ) -> PyResult<Self> {
+        Self::from_schema(schema, RowShape::Tuple, session_timezone)
     }
 
     pub(crate) fn with_dict_keys(
         py: Python<'_>,
         schema: &arrow::datatypes::Schema,
+        session_timezone: Option<String>,
     ) -> PyResult<Self> {
         let keys = schema
             .fields()
             .iter()
             .map(|field| PyString::intern(py, field.name()).unbind())
             .collect();
-        Self::from_schema(schema, RowShape::Dict { keys })
+        Self::from_schema(schema, RowShape::Dict { keys }, session_timezone)
     }
 
-    fn from_schema(schema: &arrow::datatypes::Schema, row_shape: RowShape) -> PyResult<Self> {
+    fn from_schema(
+        schema: &arrow::datatypes::Schema,
+        row_shape: RowShape,
+        session_timezone: Option<String>,
+    ) -> PyResult<Self> {
         let plan = LogicalPlan::from_schema(schema)?;
         Ok(Self {
             plan,
             row_shape: Arc::new(row_shape),
+            timezone: Arc::new(TimezoneProvider::new(session_timezone)),
         })
     }
 
@@ -92,6 +109,9 @@ impl ConversionContext {
             SnowflakeFieldType::TimestampNtz { scale } => {
                 timestamp_ntz::from_column(array, field_type, scale)
             }
+            SnowflakeFieldType::TimestampLtz { scale } => {
+                timestamp_ltz::from_column(array, field_type, scale, Arc::clone(&self.timezone))
+            }
             SnowflakeFieldType::TimestampTz { scale } => {
                 timestamp_tz::from_column(array, field_type, scale)
             }
@@ -101,12 +121,10 @@ impl ConversionContext {
             SnowflakeFieldType::IntervalDayTime => {
                 interval::day_time_from_column(array, field_type)
             }
-            SnowflakeFieldType::TimestampLtz { .. } | SnowflakeFieldType::Vector { .. } => {
-                Err(PyNotImplementedError::new_err(format!(
-                    "native Arrow conversion is not implemented for logical type {}",
-                    field_type.logical_type_name()
-                )))
-            }
+            SnowflakeFieldType::Vector { .. } => Err(PyNotImplementedError::new_err(format!(
+                "native Arrow conversion is not implemented for logical type {}",
+                field_type.logical_type_name()
+            ))),
         }
     }
 }

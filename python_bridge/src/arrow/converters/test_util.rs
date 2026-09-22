@@ -130,6 +130,41 @@ pub(crate) fn assert_py_datetime(
     );
 }
 
+pub(crate) fn assert_py_datetime_aware(
+    value: &Bound<'_, PyAny>,
+    date: (i32, u8, u8),
+    time: (u8, u8, u8, u32),
+    tz_name: &str,
+) {
+    assert!(
+        value.is_instance_of::<PyDateTime>(),
+        "expected datetime.datetime, got {}",
+        value.get_type().name().unwrap()
+    );
+    let datetime = value.cast::<PyDateTime>().unwrap();
+    assert_eq!(
+        (
+            datetime.get_year(),
+            datetime.get_month(),
+            datetime.get_day(),
+            datetime.get_hour(),
+            datetime.get_minute(),
+            datetime.get_second(),
+            datetime.get_microsecond()
+        ),
+        (date.0, date.1, date.2, time.0, time.1, time.2, time.3)
+    );
+    let tzinfo = datetime
+        .get_tzinfo()
+        .expect("expected tz-aware datetime, got naive");
+    let actual_tz: String = tzinfo
+        .getattr("key")
+        .unwrap_or_else(|_| panic!("expected zoneinfo.ZoneInfo with key, got {tzinfo}"))
+        .extract()
+        .unwrap();
+    assert_eq!(actual_tz, tz_name);
+}
+
 pub(crate) fn assert_py_datetime_tz(
     value: &Bound<'_, PyAny>,
     date: (i32, u8, u8),
@@ -157,10 +192,10 @@ pub(crate) fn assert_py_datetime_tz(
     let tzinfo = datetime
         .get_tzinfo()
         .expect("expected tz-aware datetime, got naive");
-    let tz_type = tzinfo.get_type().name().unwrap().to_string();
-    assert!(
-        tz_type == "timezone" || tz_type == "_FixedOffset",
-        "expected datetime.timezone or pytz.FixedOffset, got {tz_type}"
+    assert_eq!(
+        tzinfo.get_type().name().unwrap(),
+        "timezone",
+        "expected datetime.timezone, got {tzinfo}"
     );
     let offset_total_seconds = datetime
         .call_method0("utcoffset")

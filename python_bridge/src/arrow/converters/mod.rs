@@ -9,8 +9,10 @@ mod number;
 mod real;
 mod text;
 mod time;
+mod timestamp_ltz;
 mod timestamp_ntz;
 mod timestamp_tz;
+mod timezone;
 mod util;
 
 #[cfg(test)]
@@ -35,6 +37,7 @@ use self::number::NumberColumn;
 use self::real::RealMaterializer;
 use self::text::TextMaterializer;
 use self::time::TimeColumn;
+use self::timestamp_ltz::TimestampLtzColumn;
 use self::timestamp_ntz::TimestampNtzColumn;
 use self::timestamp_tz::TimestampTzMaterializer;
 
@@ -50,6 +53,7 @@ pub(crate) enum Column {
     Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
     Time(TimeColumn),
     TimestampNtz(TimestampNtzColumn),
+    TimestampLtz(TimestampLtzColumn),
     TimestampTz(TypedColumn<StructArray, SnowflakeTimestampTz, TimestampTzMaterializer>),
     IntervalYearMonth(IntervalYearMonthColumn),
     IntervalDayTime(IntervalDayTimeColumn),
@@ -67,6 +71,7 @@ impl Column {
             Self::Date(column) => column.to_py(py, row),
             Self::Time(column) => column.to_py(py, row),
             Self::TimestampNtz(column) => column.to_py(py, row),
+            Self::TimestampLtz(column) => column.to_py(py, row),
             Self::TimestampTz(column) => column.to_py(py, row),
             Self::IntervalYearMonth(column) => column.to_py(py, row),
             Self::IntervalDayTime(column) => column.to_py(py, row),

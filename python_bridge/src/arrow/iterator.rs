@@ -28,8 +28,8 @@ impl ArrowStreamIterator {
         session_timezone: Option<String>,
         use_dict_result: bool,
     ) -> PyResult<Self> {
-        let _ = session_timezone;
-        Self::construct(py, stream_ptr, use_dict_result).map_err(|err| wrap_row_conversion(py, err))
+        Self::construct(py, stream_ptr, session_timezone, use_dict_result)
+            .map_err(|err| wrap_row_conversion(py, err))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -53,12 +53,17 @@ impl ArrowStreamIterator {
 }
 
 impl ArrowStreamIterator {
-    fn construct(py: Python<'_>, stream_ptr: i64, use_dict_result: bool) -> PyResult<Self> {
+    fn construct(
+        py: Python<'_>,
+        stream_ptr: i64,
+        session_timezone: Option<String>,
+        use_dict_result: bool,
+    ) -> PyResult<Self> {
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
         let context = if use_dict_result {
-            ConversionContext::with_dict_keys(py, stream.schema().as_ref())?
+            ConversionContext::with_dict_keys(py, stream.schema().as_ref(), session_timezone)?
         } else {
-            ConversionContext::new(stream.schema().as_ref())?
+            ConversionContext::with_session_timezone(stream.schema().as_ref(), session_timezone)?
         };
         let mut this = Self {
             stream: Mutex::new(stream),
@@ -138,9 +143,9 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use arrow::array::{BooleanArray, RecordBatch};
+    use arrow::array::{BooleanArray, Int64Array, RecordBatch};
     use arrow::datatypes::{DataType, Field, Schema};
-    use pyo3::types::PyDict;
+    use pyo3::types::{PyDateAccess, PyDateTime, PyDict, PyTimeAccess, PyTzInfoAccess};
 
     use super::*;
     use crate::arrow::test_support::stream_ptr_from_batches;
@@ -268,6 +273,52 @@ mod tests {
             assert_eq!(row.len(), 1);
             let value = row.get_item("n").unwrap().unwrap();
             assert!(!value.extract::<bool>().unwrap());
+        });
+    }
+
+    #[test]
+    fn timestamp_ltz_uses_session_timezone_from_iterator() {
+        Python::initialize();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ts", DataType::Int64, true).with_metadata(HashMap::from([
+                ("logicalType".to_string(), "TIMESTAMP_LTZ".to_string()),
+                ("scale".to_string(), "0".to_string()),
+            ])),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![Some(1_705_314_600)]))],
+        )
+        .unwrap();
+        let mut iterator = Python::attach(|py| {
+            ArrowStreamIterator::new(
+                py,
+                stream_ptr_from_batches(vec![batch], schema),
+                Some("America/New_York".to_string()),
+                false,
+            )
+            .unwrap()
+        });
+
+        Python::attach(|py| {
+            let row = iterator.__next__(py).unwrap().unwrap();
+            let value = row.bind(py).get_item(0).unwrap();
+            let datetime = value.cast::<PyDateTime>().unwrap();
+            assert_eq!(
+                (
+                    datetime.get_year(),
+                    datetime.get_month(),
+                    datetime.get_day(),
+                    datetime.get_hour(),
+                    datetime.get_minute(),
+                    datetime.get_second(),
+                    datetime.get_microsecond()
+                ),
+                (2024, 1, 15, 5, 30, 0, 0)
+            );
+            let tzinfo = datetime.get_tzinfo().expect("expected tz-aware datetime");
+            let tz_name: String = tzinfo.getattr("key").unwrap().extract().unwrap();
+            assert_eq!(tz_name, "America/New_York");
         });
     }
 }
