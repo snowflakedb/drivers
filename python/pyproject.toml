@@ -349,9 +349,9 @@ install-wheel = [
   "uv pip install {env:WHEEL_PATH:dist/*.whl}",
   "python hatch_native_arrow.py",
 ]
-# BOOLEAN, REAL, TEXT, BINARY, NUMBER, DECFLOAT, DATE, and TIME converters are live.
+# BOOLEAN, REAL, TEXT, BINARY, NUMBER, DECFLOAT, DATE, TIME, and DictCursor are live.
 # Table and insert cases can run because execute_query status rows are NUMBER.
-cov = "pytest tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py tests/e2e/types/test_decfloat.py tests/e2e/types/test_date.py tests/e2e/types/test_time.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+cov = "pytest tests/unit/test_arrow_stream_utils.py tests/integ/test_cursor.py::TestDictCursorCreation tests/integ/test_cursor.py::TestDictCursorFetchOne tests/integ/test_cursor.py::TestDictCursorFetchMany tests/integ/test_cursor.py::TestDictCursorFetchAll tests/integ/test_cursor.py::TestDictCursorIteration tests/integ/test_cursor.py::TestDictCursorLargeResults tests/integ/test_cursor.py::TestDictCursorMultipleQueries tests/e2e/types/test_boolean.py tests/e2e/types/test_float.py tests/e2e/types/test_string.py tests/e2e/types/test_binary.py tests/e2e/types/test_number.py tests/e2e/types/test_int.py tests/e2e/types/test_decfloat.py tests/e2e/types/test_date.py tests/e2e/types/test_time.py --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Pandas and NumPy consumer CI test environment
 [tool.hatch.envs.test-pandas]

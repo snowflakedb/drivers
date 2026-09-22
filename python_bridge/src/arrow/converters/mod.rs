@@ -38,7 +38,7 @@ use self::time::TimeColumn;
 use self::timestamp_ntz::TimestampNtzColumn;
 use self::timestamp_tz::TimestampTzMaterializer;
 
-pub(crate) use context::ConversionContext;
+pub(crate) use context::{ConversionContext, RowShape};
 
 pub(crate) enum Column {
     Bool(TypedColumn<BooleanArray, SnowflakeBoolean, BoolMaterializer>),

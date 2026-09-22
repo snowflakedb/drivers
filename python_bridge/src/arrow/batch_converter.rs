@@ -1,20 +1,34 @@
+use std::sync::Arc;
+
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyTuple};
+use pyo3::types::PyList;
+
+use crate::arrow::converters::RowShape;
 
 pub(crate) struct BatchConverter {
     columns: Vec<crate::arrow::converters::Column>,
+    row_shape: Arc<RowShape>,
     row_index: usize,
     row_count: usize,
     num_cols_ssize: ffi::Py_ssize_t,
 }
 
 impl BatchConverter {
-    pub(crate) fn new(columns: Vec<crate::arrow::converters::Column>, row_count: usize) -> Self {
+    pub(crate) fn new(
+        columns: Vec<crate::arrow::converters::Column>,
+        row_count: usize,
+        row_shape: Arc<RowShape>,
+    ) -> Self {
         let num_cols = columns.len();
         debug_assert!(num_cols <= ffi::Py_ssize_t::MAX as usize);
+        debug_assert!(match &*row_shape {
+            RowShape::Tuple => true,
+            RowShape::Dict { keys } => keys.len() == num_cols,
+        });
         Self {
             columns,
+            row_shape,
             row_index: 0,
             row_count,
             num_cols_ssize: num_cols as ffi::Py_ssize_t,
@@ -22,7 +36,7 @@ impl BatchConverter {
     }
 
     pub(crate) fn exhausted() -> Self {
-        Self::new(Vec::new(), 0)
+        Self::new(Vec::new(), 0, Arc::new(RowShape::Tuple))
     }
 
     #[inline]
@@ -39,41 +53,33 @@ impl BatchConverter {
         &self,
         py: Python<'py>,
         row: usize,
-    ) -> PyResult<Bound<'py, PyTuple>> {
+    ) -> PyResult<Bound<'py, PyAny>> {
         let num_cols = self.columns.len();
-
-        // SAFETY: `PyTuple_New` returns a new owned tuple with NULL slots, or NULL
-        // on allocation failure. We uniquely own it until `from_owned_ptr` / DECREF.
-        let tuple = unsafe { ffi::PyTuple_New(self.num_cols_ssize) };
-        if tuple.is_null() {
-            return Err(PyErr::fetch(py));
-        }
+        let row_obj = alloc_empty_row(py, &self.row_shape, self.num_cols_ssize)?;
 
         for col in 0..num_cols {
             match self.cell_at(py, col, row) {
-                Ok(value) => unsafe {
-                    // SAFETY: exclusive owner; slot `col` is still NULL. SET_ITEM
-                    // steals `value`'s owned reference into that slot.
-                    ffi::PyTuple_SET_ITEM(tuple, col as ffi::Py_ssize_t, value.into_ptr());
-                },
-                Err(err) => {
-                    // Remaining slots are NULL; pad so tuple dealloc is defined.
-                    unsafe {
-                        Self::pad_remaining_tuple_slots(tuple, col, num_cols);
-                        ffi::Py_DECREF(tuple);
+                Ok(value) => {
+                    if let Err(err) =
+                        place_cell(py, &self.row_shape, row_obj, col, value.into_ptr())
+                    {
+                        unsafe { discard_row(&self.row_shape, row_obj, col + 1, num_cols) };
+                        return Err(err);
                     }
+                }
+                Err(err) => {
+                    unsafe { discard_row(&self.row_shape, row_obj, col, num_cols) };
                     return Err(err);
                 }
             }
         }
 
-        // SAFETY: `tuple` is a `PyTuple` from `PyTuple_New` with every slot filled;
-        // `from_owned_ptr` takes the owned reference, `cast_into_unchecked` skips
-        // the type check because `PyTuple_New` cannot return a non-tuple.
-        Ok(unsafe { Bound::from_owned_ptr(py, tuple).cast_into_unchecked() })
+        // SAFETY: `row_obj` is the owned tuple or dict we allocated above, with
+        // every cell placed. `from_owned_ptr` takes that owned reference.
+        Ok(unsafe { Bound::from_owned_ptr(py, row_obj) })
     }
 
-    pub(crate) fn take_row(&mut self, py: Python<'_>) -> PyResult<Py<PyTuple>> {
+    pub(crate) fn take_row(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         debug_assert!(self.row_index < self.row_count);
         let row = self.materialize_row(py, self.row_index)?;
         self.row_index += 1;
@@ -84,8 +90,8 @@ impl BatchConverter {
         self.row_count.saturating_sub(self.row_index)
     }
 
-    pub(crate) fn column_count(&self) -> usize {
-        self.columns.len()
+    pub(crate) fn row_list<'py>(&self, py: Python<'py>) -> BatchPyList<'py> {
+        BatchPyList::new(py, self.columns.len(), Arc::clone(&self.row_shape))
     }
 
     pub(crate) fn append_rows_column_major<'py>(
@@ -128,21 +134,23 @@ impl BatchConverter {
     }
 }
 
-/// Owns a Python list of tuples while its slots are filled column-by-column.
+/// Owns a Python list of rows while they are filled column-by-column.
 pub(crate) struct BatchPyList<'py> {
     list: Bound<'py, PyList>,
     columns: usize,
     rows: usize,
     column_fills: Vec<usize>,
+    row_shape: Arc<RowShape>,
 }
 
 impl<'py> BatchPyList<'py> {
-    pub(crate) fn new(py: Python<'py>, columns: usize) -> Self {
+    pub(crate) fn new(py: Python<'py>, columns: usize, row_shape: Arc<RowShape>) -> Self {
         Self {
             list: PyList::empty(py),
             columns,
             rows: 0,
             column_fills: vec![0; columns],
+            row_shape,
         }
     }
 
@@ -159,15 +167,15 @@ impl<'py> BatchPyList<'py> {
         debug_assert!(col < self.columns);
         let row = self.column_fills[col];
         if row == self.rows {
-            self.append_empty_tuple(py)?;
+            self.append_empty_row(py)?;
         }
 
-        // SAFETY: `row` identifies an existing tuple exclusively owned by this
-        // builder. This column's slot is NULL because each column advances once
-        // per successful call. SET_ITEM steals `value`'s owned reference.
+        // SAFETY: `row` identifies an existing row exclusively owned by this
+        // builder. Tuple slots for this column are still NULL because each
+        // column advances once per successful call.
         unsafe {
-            let tuple = ffi::PyList_GET_ITEM(self.list.as_ptr(), row as ffi::Py_ssize_t);
-            ffi::PyTuple_SET_ITEM(tuple, col as ffi::Py_ssize_t, value.into_ptr());
+            let row_obj = ffi::PyList_GET_ITEM(self.list.as_ptr(), row as ffi::Py_ssize_t);
+            place_cell(py, &self.row_shape, row_obj, col, value.into_ptr())?;
         }
         self.column_fills[col] += 1;
         Ok(())
@@ -178,30 +186,29 @@ impl<'py> BatchPyList<'py> {
         self.list.clone().unbind()
     }
 
-    fn append_empty_tuple(&mut self, py: Python<'py>) -> PyResult<()> {
+    fn append_empty_row(&mut self, py: Python<'py>) -> PyResult<()> {
         debug_assert!(self.columns <= ffi::Py_ssize_t::MAX as usize);
-        // SAFETY: `PyTuple_New` returns a new owned tuple with NULL slots. The
-        // private list is exclusively owned. PyList_Append adds a reference;
-        // the local reference is released after the append. On append failure,
-        // slots are filled before releasing the tuple.
+        let row_obj = alloc_empty_row(py, &self.row_shape, self.columns as ffi::Py_ssize_t)?;
+        // SAFETY: `row_obj` is a new owned tuple (NULL slots) or dict. The list is
+        // exclusively owned by this builder. PyList_Append adds a reference; the
+        // local reference is released after the append. On append failure, tuple
+        // slots are padded before releasing the row.
         unsafe {
-            let tuple = ffi::PyTuple_New(self.columns as ffi::Py_ssize_t);
-            if tuple.is_null() {
+            if ffi::PyList_Append(self.list.as_ptr(), row_obj) < 0 {
+                discard_row(&self.row_shape, row_obj, 0, self.columns);
                 return Err(PyErr::fetch(py));
             }
-            if ffi::PyList_Append(self.list.as_ptr(), tuple) < 0 {
-                BatchConverter::pad_remaining_tuple_slots(tuple, 0, self.columns);
-                ffi::Py_DECREF(tuple);
-                return Err(PyErr::fetch(py));
-            }
-            ffi::Py_DECREF(tuple);
+            ffi::Py_DECREF(row_obj);
         }
         self.rows += 1;
         Ok(())
     }
 
     fn fill_null_slots(&mut self) {
-        // SAFETY: every list item was created by `append_empty_tuple` and is a
+        if !matches!(&*self.row_shape, RowShape::Tuple) {
+            return;
+        }
+        // SAFETY: every new list item was created by `append_empty_row` as a
         // tuple exclusively owned by this builder. Unfilled slots are NULL.
         unsafe {
             let none = ffi::Py_None();
@@ -221,4 +228,65 @@ impl Drop for BatchPyList<'_> {
     fn drop(&mut self) {
         self.fill_null_slots();
     }
+}
+
+fn alloc_empty_row(
+    py: Python<'_>,
+    shape: &RowShape,
+    num_cols_ssize: ffi::Py_ssize_t,
+) -> PyResult<*mut ffi::PyObject> {
+    // SAFETY: `PyTuple_New` / `PyDict_New` return a new owned object or NULL.
+    let row_obj = unsafe {
+        if matches!(shape, RowShape::Tuple) {
+            ffi::PyTuple_New(num_cols_ssize)
+        } else {
+            ffi::PyDict_New()
+        }
+    };
+    if row_obj.is_null() {
+        Err(PyErr::fetch(py))
+    } else {
+        Ok(row_obj)
+    }
+}
+
+fn place_cell(
+    py: Python<'_>,
+    shape: &RowShape,
+    row_obj: *mut ffi::PyObject,
+    col: usize,
+    value: *mut ffi::PyObject,
+) -> PyResult<()> {
+    match shape {
+        RowShape::Tuple => {
+            // SAFETY: exclusive owner; slot `col` is still NULL. SET_ITEM steals
+            // `value`'s owned reference into that slot.
+            unsafe { ffi::PyTuple_SET_ITEM(row_obj, col as ffi::Py_ssize_t, value) };
+            Ok(())
+        }
+        RowShape::Dict { keys } => {
+            // SAFETY: `row_obj` is an owned dict; `keys[col]` is interned and kept
+            // alive by `RowShape`. `PyDict_SetItem` increfs `value` and does not
+            // steal, so the owned reference is released after the call.
+            let result = unsafe { ffi::PyDict_SetItem(row_obj, keys[col].as_ptr(), value) };
+            unsafe { ffi::Py_DECREF(value) };
+            if result != 0 {
+                Err(PyErr::fetch(py))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+unsafe fn discard_row(
+    shape: &RowShape,
+    row_obj: *mut ffi::PyObject,
+    from_col: usize,
+    num_cols: usize,
+) {
+    if matches!(shape, RowShape::Tuple) {
+        unsafe { BatchConverter::pad_remaining_tuple_slots(row_obj, from_col, num_cols) };
+    }
+    unsafe { ffi::Py_DECREF(row_obj) };
 }

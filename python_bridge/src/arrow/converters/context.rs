@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use arrow::array::ArrayRef;
 use arrow::record_batch::RecordBatch;
 use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 
 use crate::arrow::batch_converter::BatchConverter;
 use crate::arrow::plan::{LogicalPlan, SnowflakeFieldType};
@@ -19,14 +22,39 @@ use super::time;
 use super::timestamp_ntz;
 use super::timestamp_tz;
 
+pub(crate) enum RowShape {
+    Tuple,
+    Dict { keys: Vec<Py<PyString>> },
+}
+
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
+    row_shape: Arc<RowShape>,
 }
 
 impl ConversionContext {
     pub(crate) fn new(schema: &arrow::datatypes::Schema) -> PyResult<Self> {
+        Self::from_schema(schema, RowShape::Tuple)
+    }
+
+    pub(crate) fn with_dict_keys(
+        py: Python<'_>,
+        schema: &arrow::datatypes::Schema,
+    ) -> PyResult<Self> {
+        let keys = schema
+            .fields()
+            .iter()
+            .map(|field| PyString::intern(py, field.name()).unbind())
+            .collect();
+        Self::from_schema(schema, RowShape::Dict { keys })
+    }
+
+    fn from_schema(schema: &arrow::datatypes::Schema, row_shape: RowShape) -> PyResult<Self> {
         let plan = LogicalPlan::from_schema(schema)?;
-        Ok(Self { plan })
+        Ok(Self {
+            plan,
+            row_shape: Arc::new(row_shape),
+        })
     }
 
     pub(crate) fn batch_converter(&self, batch: RecordBatch) -> PyResult<BatchConverter> {
@@ -38,7 +66,11 @@ impl ConversionContext {
             .zip(self.plan.field_types.iter())
             .map(|(array, field_type)| self.converter_from_column(array, field_type))
             .collect::<PyResult<Vec<_>>>()?;
-        Ok(BatchConverter::new(columns, row_count))
+        Ok(BatchConverter::new(
+            columns,
+            row_count,
+            Arc::clone(&self.row_shape),
+        ))
     }
 
     pub(crate) fn converter_from_column(

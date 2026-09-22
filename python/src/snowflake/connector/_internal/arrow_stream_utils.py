@@ -55,13 +55,10 @@ def create_row_iterator(
     nanoarrow iterator.
     """
     if sf_core_python.native_arrow_enabled():
-        if use_numpy or use_dict_result:
+        if use_numpy:
             release_arrow_stream(stream_ptr)
             raise NotSupportedError(
-                msg=(
-                    "Native Arrow row path does not support use_numpy / use_dict_result. "
-                    "Disable SF_NATIVE_ARROW or drop use_numpy/use_dict_result."
-                )
+                msg="Native Arrow row path does not support use_numpy. Disable SF_NATIVE_ARROW or drop use_numpy."
             )
         # Class is only exported when built with ``native-arrow``; stub_gen
         # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
@@ -76,7 +73,11 @@ def create_row_iterator(
             )
         return cast(
             ArrowRowIterator,
-            iterator_cls(stream_ptr, session_timezone=context.timezone),
+            iterator_cls(
+                stream_ptr,
+                session_timezone=context.timezone,
+                use_dict_result=use_dict_result,
+            ),
         )
     return CythonArrowStreamIterator(
         stream_ptr,

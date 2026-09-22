@@ -2,10 +2,10 @@ use std::sync::Mutex;
 
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyTuple};
+use pyo3::types::PyList;
 use sf_core::utils::sync::MutexRecoverExt;
 
-use crate::arrow::batch_converter::{BatchConverter, BatchPyList};
+use crate::arrow::batch_converter::BatchConverter;
 use crate::arrow::converters::ConversionContext;
 use crate::arrow::error::{wrap_row_conversion, wrap_rows_conversion};
 use crate::arrow::stream::RowStream;
@@ -21,21 +21,22 @@ pub struct ArrowStreamIterator {
 #[pymethods]
 impl ArrowStreamIterator {
     #[new]
-    #[pyo3(signature = (stream_ptr, session_timezone=None))]
+    #[pyo3(signature = (stream_ptr, session_timezone=None, use_dict_result=false))]
     pub(crate) fn new(
         py: Python<'_>,
         stream_ptr: i64,
         session_timezone: Option<String>,
+        use_dict_result: bool,
     ) -> PyResult<Self> {
         let _ = session_timezone;
-        Self::construct(py, stream_ptr).map_err(|err| wrap_row_conversion(py, err))
+        Self::construct(py, stream_ptr, use_dict_result).map_err(|err| wrap_row_conversion(py, err))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    pub(crate) fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyTuple>>> {
+    pub(crate) fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.next_row(py)
             .map_err(|err| wrap_row_conversion(py, err))
     }
@@ -52,9 +53,13 @@ impl ArrowStreamIterator {
 }
 
 impl ArrowStreamIterator {
-    fn construct(py: Python<'_>, stream_ptr: i64) -> PyResult<Self> {
+    fn construct(py: Python<'_>, stream_ptr: i64, use_dict_result: bool) -> PyResult<Self> {
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
-        let context = ConversionContext::new(stream.schema().as_ref())?;
+        let context = if use_dict_result {
+            ConversionContext::with_dict_keys(py, stream.schema().as_ref())?
+        } else {
+            ConversionContext::new(stream.schema().as_ref())?
+        };
         let mut this = Self {
             stream: Mutex::new(stream),
             context,
@@ -66,7 +71,7 @@ impl ArrowStreamIterator {
         Ok(this)
     }
 
-    fn next_row(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyTuple>>> {
+    fn next_row(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         if self.converter.is_exhausted() {
             match self.load_next_batch_converter(py)? {
                 Some(next) => self.converter = next,
@@ -81,7 +86,7 @@ impl ArrowStreamIterator {
             return Ok(PyList::empty(py).unbind());
         }
 
-        let mut result = BatchPyList::new(py, self.converter.column_count());
+        let mut result = self.converter.row_list(py);
         while result.len() < size {
             if self.converter.is_exhausted() {
                 match self.load_next_batch_converter(py)? {
@@ -99,7 +104,7 @@ impl ArrowStreamIterator {
     }
 
     fn fetch_all_inner(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
-        let mut result = BatchPyList::new(py, self.converter.column_count());
+        let mut result = self.converter.row_list(py);
         loop {
             if self.converter.is_exhausted() {
                 match self.load_next_batch_converter(py)? {
@@ -125,5 +130,144 @@ impl ArrowStreamIterator {
             Some(batch) => Ok(Some(self.context.batch_converter(batch)?)),
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use arrow::array::{BooleanArray, RecordBatch};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use pyo3::types::PyDict;
+
+    use super::*;
+    use crate::arrow::test_support::stream_ptr_from_batches;
+
+    fn new_iterator(stream_ptr: i64) -> ArrowStreamIterator {
+        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, false).unwrap())
+    }
+
+    fn new_dict_iterator(stream_ptr: i64) -> ArrowStreamIterator {
+        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, true).unwrap())
+    }
+
+    fn boolean_field(name: &str) -> Field {
+        Field::new(name, DataType::Boolean, true).with_metadata(HashMap::from([(
+            "logicalType".to_string(),
+            "BOOLEAN".to_string(),
+        )]))
+    }
+
+    fn boolean_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![boolean_field("b")]))
+    }
+
+    fn boolean_batch(values: Vec<Option<bool>>, schema: &Arc<Schema>) -> RecordBatch {
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(BooleanArray::from(values))]).unwrap()
+    }
+
+    fn dict_bool(row: &Bound<'_, PyDict>) -> Option<bool> {
+        let value = row.get_item("b").unwrap().unwrap();
+        if value.is_none() {
+            None
+        } else {
+            Some(value.extract::<bool>().unwrap())
+        }
+    }
+
+    #[test]
+    fn fetch_many_returns_up_to_size() {
+        Python::initialize();
+        let schema = boolean_schema();
+        let batch = boolean_batch(vec![Some(true), Some(false)], &schema);
+        let mut iterator = new_iterator(stream_ptr_from_batches(vec![batch], schema));
+
+        Python::attach(|py| {
+            let rows = iterator.fetch_many(py, 5).unwrap();
+            assert_eq!(rows.bind(py).len(), 2);
+            assert_eq!(
+                rows.bind(py)
+                    .get_item(0)
+                    .unwrap()
+                    .extract::<(bool,)>()
+                    .unwrap(),
+                (true,)
+            );
+            assert_eq!(
+                rows.bind(py)
+                    .get_item(1)
+                    .unwrap()
+                    .extract::<(bool,)>()
+                    .unwrap(),
+                (false,)
+            );
+        });
+    }
+
+    #[test]
+    fn dict_rows_materialize_across_next_fetch_many_and_fetch_all() {
+        Python::initialize();
+        let schema = boolean_schema();
+        let batch = boolean_batch(vec![Some(true), Some(false), None, Some(true)], &schema);
+        let mut iterator = new_dict_iterator(stream_ptr_from_batches(vec![batch], schema));
+
+        Python::attach(|py| {
+            let first = iterator.__next__(py).unwrap().unwrap();
+            let first = first.bind(py).cast::<PyDict>().unwrap();
+            assert_eq!(dict_bool(first), Some(true));
+
+            let middle = iterator.fetch_many(py, 2).unwrap();
+            let middle = middle.bind(py);
+            let second = middle.get_item(0).unwrap().cast_into::<PyDict>().unwrap();
+            assert_eq!(dict_bool(&second), Some(false));
+            let third = middle.get_item(1).unwrap().cast_into::<PyDict>().unwrap();
+            assert_eq!(dict_bool(&third), None);
+
+            let rest = iterator.fetch_all(py).unwrap();
+            let rest = rest.bind(py);
+            assert_eq!(rest.len(), 1);
+            let fourth = rest.get_item(0).unwrap().cast_into::<PyDict>().unwrap();
+            assert_eq!(dict_bool(&fourth), Some(true));
+        });
+    }
+
+    #[test]
+    fn dict_duplicate_column_names_last_write_wins() {
+        Python::initialize();
+        let schema = Arc::new(Schema::new(vec![boolean_field("n"), boolean_field("n")]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(BooleanArray::from(vec![Some(true)])),
+                Arc::new(BooleanArray::from(vec![Some(false)])),
+            ],
+        )
+        .unwrap();
+        let mut iterator =
+            new_dict_iterator(stream_ptr_from_batches(vec![batch.clone()], schema.clone()));
+
+        Python::attach(|py| {
+            let row = iterator.__next__(py).unwrap().unwrap();
+            let row = row.bind(py).cast::<PyDict>().unwrap();
+            assert_eq!(row.len(), 1);
+            let value = row.get_item("n").unwrap().unwrap();
+            assert!(!value.extract::<bool>().unwrap());
+        });
+
+        let mut iterator = new_dict_iterator(stream_ptr_from_batches(vec![batch], schema));
+        Python::attach(|py| {
+            let rows = iterator.fetch_all(py).unwrap();
+            let row = rows
+                .bind(py)
+                .get_item(0)
+                .unwrap()
+                .cast_into::<PyDict>()
+                .unwrap();
+            assert_eq!(row.len(), 1);
+            let value = row.get_item("n").unwrap().unwrap();
+            assert!(!value.extract::<bool>().unwrap());
+        });
     }
 }
