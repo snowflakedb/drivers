@@ -12,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "EnvOverride.hpp"
+#include "utils.hpp"
 
 // Cross-platform process ID
 #ifdef _WIN32
@@ -81,6 +82,11 @@ extern bool is_iodbc_test_suite();
 // Use WINDOWS_ONLY / UNIX_ONLY to gate platform-specific assertions.
 #define WINDOWS_ONLY if (get_platform() == PLATFORM::PLATFORM_WINDOWS)
 #define UNIX_ONLY if (get_platform() == PLATFORM::PLATFORM_LINUX || get_platform() == PLATFORM::PLATFORM_MACOS)
+
+// Snowflake JSON result format serializes REAL with fewer decimal digits than
+// Arrow. Unset QUERY_RESULT_FORMAT is Arrow (the default).
+#define JSON_ONLY(...) if (test_utils::get_query_result_format() == "JSON")
+#define ARROW_ONLY(...) if (test_utils::get_query_result_format() != "JSON")
 
 inline bool is_ascii_locale() {
 #ifdef _WIN32

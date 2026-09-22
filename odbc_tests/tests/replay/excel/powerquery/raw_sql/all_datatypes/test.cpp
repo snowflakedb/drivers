@@ -4168,7 +4168,8 @@ TEST_CASE("Replay: excel powerquery raw_sql all_datatypes", "[excel][powerquery]
     SQLRETURN ret = SQLGetData(stmt1, 9, SQL_C_DOUBLE, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt1), OdbcMatchers::IsSuccess());
     CHECK(ind == 8);
-    CHECK((*reinterpret_cast<double*>(buf.data())) == 2.718281828459045);
+    JSON_ONLY("JSON DOUBLE precision") { CHECK((*reinterpret_cast<double*>(buf.data())) == 2.718281828); }
+    ARROW_ONLY("JSON DOUBLE precision") { CHECK((*reinterpret_cast<double*>(buf.data())) == 2.718281828459045); }
   }
 
   // SQLGetData col 10
