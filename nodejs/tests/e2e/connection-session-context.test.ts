@@ -48,4 +48,18 @@ describe('Connection session context options', () => {
 
     expect(rows[0].DATABASE_NAME).toBe(database.toUpperCase());
   });
+
+  it('should use the schema from connection options', async () => {
+    const schema = randomizeName('NODEJS_CONNECTION_OPTION_SCHEMA_');
+    const setupConnection = await createLiveConnection();
+    await executeAsync(setupConnection, `CREATE SCHEMA ${schema}`);
+    onTestFinished(async () => {
+      await executeAsync(setupConnection, `DROP SCHEMA IF EXISTS ${schema}`);
+    });
+
+    const connection = await createLiveConnection({ schema });
+    const { rows } = await executeAsync(connection, 'SELECT CURRENT_SCHEMA() AS SCHEMA_NAME');
+
+    expect(rows[0].SCHEMA_NAME).toBe(schema.toUpperCase());
+  });
 });
