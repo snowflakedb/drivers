@@ -50,7 +50,7 @@ pub(crate) fn ensure_crypto_provider() {
     }
 
     #[cfg(feature = "fips-tls")]
-    if !fips_mode_active() {
+    if !tls_provider_is_fips() {
         tracing::error!(
             "driver was built with the `fips-tls` feature but the active rustls crypto \
              provider is not in FIPS mode; TLS is NOT FIPS compliant"
@@ -58,11 +58,21 @@ pub(crate) fn ensure_crypto_provider() {
     }
 }
 
-/// Whether the crypto provider actually in force is operating in FIPS mode.
+/// Whether the TLS crypto provider carrying the driver's traffic is
+/// FIPS-approved.
 ///
-/// Reports on the provider that carries the driver's traffic -- the compiled
-/// module's own -- rather than on build flags. A build without `fips-tls`
-/// links non-FIPS aws-lc-sys and so reports `false`.
+/// Named for the TLS provider because that is its scope. It forwards rustls's
+/// `CryptoProvider::fips()`, which is a conjunction over *that provider's own*
+/// cipher suites, key-exchange groups, signature algorithms, RNG, and key
+/// provider. The driver also does crypto outside TLS -- JWT signing, private
+/// key loading, client-side file encryption -- and this answers for none of
+/// it.
+///
+/// The artifact-level question, the one a customer or a compliance
+/// questionnaire actually asks -- "is the linked module in approved mode" --
+/// is `aws_lc_rs::try_fips_mode()`, asserted by `aws_lc_reports_fips_mode` in
+/// the test module below. That test stays the source of truth; this accessor
+/// must not be presented as a substitute for it.
 ///
 /// Deliberately not gated on the feature. The wrappers will surface this as a
 /// customer-facing accessor (plan Phase 4), and a function that is *absent*
@@ -86,14 +96,14 @@ pub(crate) fn ensure_crypto_provider() {
 /// validate. The intent is unchanged: answer for whatever is actually doing
 /// the work.
 ///
-/// That makes this a *necessary but not sufficient* FIPS answer, which is why
-/// it is not the whole gate. Only the CRL-enabled paths hand their config to
-/// reqwest; elsewhere reqwest still resolves the global provider for the
+/// That makes this *necessary but not sufficient* even within TLS, which is
+/// why it is not the whole gate. Only the CRL-enabled paths hand their config
+/// to reqwest; elsewhere reqwest still resolves the global provider for the
 /// handshake itself, so `require_fips_provider` checks that too. See its docs
 /// for why the two can diverge and why closing the gap properly is a separate
 /// change.
-pub fn fips_mode_active() -> bool {
-    crypto_module::CryptoModule::get().fips()
+pub fn tls_provider_is_fips() -> bool {
+    crypto_module::CryptoModule::get().provider_is_fips()
 }
 
 /// Fails closed in `fips-tls` builds unless *both* the linked crypto module and
@@ -143,7 +153,7 @@ pub fn fips_mode_active() -> bool {
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     #[cfg(feature = "fips-tls")]
     {
-        if !fips_mode_active() {
+        if !tls_provider_is_fips() {
             return Err(error::FipsModeUnavailableSnafu.build());
         }
         // `None` fails closed as well: `ensure_crypto_provider` runs before
