@@ -105,3 +105,18 @@ pub const AZURE_FEDERATED_TOKEN_FILE: &str = "AZURE_FEDERATED_TOKEN_FILE";
 /// connection configuration cannot influence the allowlist. Entries are
 /// additive: they extend the recognized-host list and cannot disable it.
 pub const SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES: &str = "SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES";
+
+/// Operator/CI override read only from the process environment, never from the
+/// DSN, connection parameters, or the server. When set to a truthy value
+/// (`true`, `1`, or `yes`, case-insensitive), GCS object URLs use the
+/// virtual-host style (`{bucket}.storage.googleapis.com`) even when the stage
+/// payload omits `useVirtualUrl`.
+pub const SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS: &str =
+    "SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS";
+
+pub(crate) fn env_flag_is_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    )
+}

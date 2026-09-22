@@ -1284,3 +1284,21 @@ behavior_differences:
       and `password`, matching other username/password authenticators.
     description: |
       Username/password MFA still needs those credentials, so introspection asks for them.
+  70:
+    name: "GET of an encrypted GCS object reports DOWNLOADED while writing ciphertext"
+    status: todo
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQL GET from a client-side-encrypted GCS stage completes with STATUS = DOWNLOADED, but
+      the destination file contains the still-encrypted object bytes rather than the uploaded
+      payload.
+    new_driver_behavior: |
+      The same GET writes the decrypted payload to the destination, so the downloaded bytes
+      match what PUT uploaded.
+    description: |
+      The old driver's GCS download path leaves ciphertext on disk while still reporting
+      DOWNLOADED. Tracked as SNOW-4143382 on the old driver. Drop the new-driver-only content
+      assertion in GcsVirtualUrlEnvTest when the reference driver is a release that decrypts.

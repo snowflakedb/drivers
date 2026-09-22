@@ -1449,8 +1449,22 @@ fn presigned_url_signs_required_upload_headers(url: &str, headers: GcsUploadHead
     })
 }
 
+fn gcs_force_virtual_style_domains_from_env() -> bool {
+    std::env::var(crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS)
+        .map(|value| crate::env_vars::env_flag_is_truthy(&value))
+        .unwrap_or(false)
+}
+
 /// Builds the GCS URL based on endpoint/virtual/regional flags.
 fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
+    build_gcs_url_with(
+        stage_info,
+        key,
+        stage_info.use_virtual_url || gcs_force_virtual_style_domains_from_env(),
+    )
+}
+
+fn build_gcs_url_with(stage_info: &StageInfo, key: &str, use_virtual_host: bool) -> String {
     let encoded_key = percent_encode_path(key);
 
     // Strategy 2: custom endpoint
@@ -1466,7 +1480,7 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
     }
 
     // Strategy 3: virtual host
-    if stage_info.use_virtual_url {
+    if use_virtual_host {
         return format!(
             "https://{}.storage.googleapis.com/{encoded_key}",
             stage_info.bucket
@@ -2491,6 +2505,43 @@ mod tests {
         });
         let url = build_gcs_url(&stage, "file.csv.gz");
         assert_eq!(url, "https://my-bucket.storage.googleapis.com/file.csv.gz");
+    }
+
+    #[test]
+    fn url_virtual_host_when_override_forced() {
+        let stage = make_stage_info(StageInfoOverrides::default());
+        let url = build_gcs_url_with(&stage, "file.csv.gz", true);
+        assert_eq!(url, "https://my-bucket.storage.googleapis.com/file.csv.gz");
+    }
+
+    #[test]
+    fn url_custom_endpoint_takes_precedence_over_virtual_override() {
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some("testendpoint.googleapis.com".to_string()),
+            ..Default::default()
+        });
+        let url = build_gcs_url_with(&stage, "file.csv.gz", true);
+        assert_eq!(
+            url,
+            "https://testendpoint.googleapis.com/my-bucket/file.csv.gz"
+        );
+    }
+
+    #[test]
+    fn url_default_when_virtual_override_false() {
+        let stage = make_stage_info(StageInfoOverrides::default());
+        let url = build_gcs_url_with(&stage, "file.csv.gz", false);
+        assert_eq!(url, "https://storage.googleapis.com/my-bucket/file.csv.gz");
+    }
+
+    #[test]
+    fn gcs_env_flag_accepts_documented_truthy_values() {
+        for value in ["true", "TRUE", " True ", "1", "yes", "Yes"] {
+            assert!(crate::env_vars::env_flag_is_truthy(value), "{value}");
+        }
+        for value in ["", "false", "0", "no", "on", "trueish"] {
+            assert!(!crate::env_vars::env_flag_is_truthy(value), "{value}");
+        }
     }
 
     #[test]
