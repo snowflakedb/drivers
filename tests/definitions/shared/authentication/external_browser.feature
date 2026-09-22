@@ -45,6 +45,12 @@ Feature: External Browser Authentication
     When Trying to Connect
     Then Connection fails with authenticator error
 
+  @core_int
+  Scenario: should fail when authenticator-request reports SSO URL generation failure
+    Given Wiremock returns SSO URL generation failure for authenticator-request
+    When Trying to Connect
+    Then Connection fails with error 390511
+
   @core_int @python_int @odbc_int @jdbc_int
   Scenario: should fail with timeout when no browser callback arrives
     Given Wiremock returns valid ssoUrl and proofKey for authenticator-request

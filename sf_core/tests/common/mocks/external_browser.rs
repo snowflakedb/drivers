@@ -62,6 +62,22 @@ pub fn authenticator_request_logical_failure() -> Mock {
         })))
 }
 
+/// Authenticator-request that returns HTTP 200, `success: false`, and GS code 390511.
+pub fn authenticator_request_sso_url_error() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/authenticator-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "EXTERNALBROWSER"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390511",
+            "message": "SSO URL generation failed in External browser's SAML Request flow"
+        })))
+}
+
 // ─── Snowflake Login Request (after browser callback) ───────────────────────
 
 /// Successful login response for external browser auth.

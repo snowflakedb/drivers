@@ -183,6 +183,30 @@ fn should_fail_when_authenticator_request_returns_logical_failure() {
     );
 }
 
+#[test]
+fn should_fail_when_authenticator_request_reports_sso_url_generation_failure() {
+    // Given Wiremock returns SSO URL generation failure for authenticator-request
+    let fixture = ExternalBrowserTestFixture::new();
+    fixture
+        .mock
+        .mount(external_browser::authenticator_request_sso_url_error());
+
+    // When Trying to Connect
+    let error = fixture
+        .connect()
+        .expect_err("SSO URL generation failure to fail connect");
+
+    // Then Connection fails with error 390511
+    assert!(
+        error.contains("390511"),
+        "expected Snowflake code 390511 in connect error, got: {error}"
+    );
+    assert!(
+        error.contains("SSO URL generation failed in External browser's SAML Request flow"),
+        "expected GS message in connect error, got: {error}"
+    );
+}
+
 // =============================================================================
 // Error Handling - Timeout (no browser callback)
 // =============================================================================

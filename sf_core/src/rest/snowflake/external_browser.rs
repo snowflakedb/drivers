@@ -2,6 +2,7 @@ use crate::config::rest_parameters::LoginParameters;
 use crate::config::retry::RetryPolicy;
 use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
+use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode, header};
@@ -88,6 +89,13 @@ pub enum ExternalBrowserError {
         context: &'static str,
         status: StatusCode,
         body: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Snowflake authenticator-request (logical failure): {message}, code: {code}"))]
+    AuthenticatorRequestRejected {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },
@@ -233,8 +241,14 @@ pub(crate) async fn external_browser_authenticate(
 #[derive(Debug, Deserialize)]
 struct AuthenticatorRequestResponse {
     success: bool,
+    code: Option<String>,
     message: Option<String>,
     data: Option<AuthenticatorRequestData>,
+}
+
+fn parse_gs_code(code: Option<&str>) -> i32 {
+    code.and_then(|code| code.parse::<i32>().ok())
+        .unwrap_or(GS_CODE_UNAVAILABLE)
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,17 +313,14 @@ async fn request_authenticator(
 
     let resp: AuthenticatorRequestResponse = serde_json::from_str(&text).context(JsonParseSnafu)?;
     if !resp.success {
-        let msg = resp.message.unwrap_or_else(|| "Unknown error".to_string());
+        let code = parse_gs_code(resp.code.as_deref());
+        let message = resp.message.unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(
-            message = %msg,
+            code,
+            message = %message,
             "Snowflake authenticator-request returned logical failure"
         );
-        return HttpStatusSnafu {
-            context: "Snowflake authenticator-request (logical failure)",
-            status: StatusCode::BAD_REQUEST,
-            body: msg,
-        }
-        .fail();
+        return AuthenticatorRequestRejectedSnafu { message, code }.fail();
     }
 
     resp.data.ok_or_else(|| ExternalBrowserError::MissingField {
@@ -629,6 +640,30 @@ fn extract_header(request: &str, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn authenticator_request_rejection_renders_the_snowflake_code_and_message() {
+        let rendered = AuthenticatorRequestRejectedSnafu {
+            message: "SSO URL generation failed in External browser's SAML Request flow",
+            code: 390511,
+        }
+        .build()
+        .to_string();
+
+        assert!(rendered.contains("390511"), "{rendered}");
+        assert!(rendered.contains("logical failure"), "{rendered}");
+        assert!(
+            rendered.contains("SSO URL generation failed in External browser's SAML Request flow"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_non_numeric_code_falls_back_to_the_unavailable_sentinel() {
+        assert_eq!(parse_gs_code(Some("390511")), 390511);
+        assert_eq!(parse_gs_code(Some("not-a-number")), GS_CODE_UNAVAILABLE);
+        assert_eq!(parse_gs_code(None), GS_CODE_UNAVAILABLE);
+    }
 
     // ─── GET token extraction ────────────────────────────────────────────
 
