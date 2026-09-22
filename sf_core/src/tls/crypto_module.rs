@@ -61,7 +61,7 @@ static MODULE: LazyLock<CryptoModule> = LazyLock::new(|| {
     // disagree, and the build is not making the claim its name implies.
     tracing::debug!(
         linked = module.name(),
-        fips = module.fips(),
+        provider_is_fips = module.provider_is_fips(),
         "crypto module initialised"
     );
     module
@@ -90,12 +90,21 @@ impl CryptoModule {
         self.provider.signature_verification_algorithms
     }
 
-    /// Whether the linked module is operating in FIPS mode.
+    /// Whether this module's rustls provider is FIPS-approved.
     ///
-    /// Reports on the provider that actually carries our traffic, which under
-    /// `fips-tls` is the linked aws-lc-fips module. A standard build links
-    /// non-FIPS aws-lc-sys and answers `false`.
-    pub(crate) fn fips(&self) -> bool {
+    /// Scoped to the TLS provider, not to the artifact. rustls computes it as
+    /// a conjunction over *this provider's own* components -- every offered
+    /// cipher suite and key-exchange group, the signature-verification
+    /// algorithms, the RNG, and the key provider. For the aws-lc-rs backend
+    /// each of those bottoms out in `aws_lc_rs::try_fips_mode()`, so a
+    /// standard build (non-FIPS aws-lc-sys) answers `false`.
+    ///
+    /// That per-component conjunction is the reason this is not a synonym for
+    /// "the module is in approved mode": a provider carrying one non-approved
+    /// suite answers `false` with the C module still in FIPS mode. The
+    /// artifact-level question is `try_fips_mode()` itself, asserted by the
+    /// `aws_lc_reports_fips_mode` lib test.
+    pub(crate) fn provider_is_fips(&self) -> bool {
         self.provider.fips()
     }
 
@@ -103,8 +112,9 @@ impl CryptoModule {
     /// status.
     ///
     /// Tracks the Cargo feature rather than the runtime state: it answers
-    /// "which module was linked", while [`fips`](Self::fips) answers "is that
-    /// module in FIPS mode". Both are needed -- a `fips-tls` build whose
+    /// "which module was linked", while
+    /// [`provider_is_fips`](Self::provider_is_fips) answers "is that module's
+    /// provider FIPS-approved". Both are needed -- a `fips-tls` build whose
     /// module failed to enter FIPS mode must not look like a non-FIPS build.
     pub(crate) fn name(&self) -> &'static str {
         if cfg!(feature = "fips-tls") {
@@ -169,7 +179,7 @@ mod tests {
     #[test]
     fn non_fips_build_does_not_report_fips() {
         assert!(
-            !CryptoModule::get().fips(),
+            !CryptoModule::get().provider_is_fips(),
             "a build without `fips-tls` links aws-lc-sys and must report false"
         );
     }
