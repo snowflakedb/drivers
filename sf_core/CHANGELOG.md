@@ -51,6 +51,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed Python `ALTER SESSION SET` cache updates panicking or skipping the assignment when non-ASCII text appeared before the keyword. (snowflakedb/drivers#2209)
 - Fixed `SNOWFLAKE_CONNECTIONS` being read as a raw string instead of TOML, which made Snowpark `Session.builder.create()` fail with `TypeError: string indices must be integers`. (snowflakedb/drivers#2060)
 - Fixed intermittent key-pair connect failures on Windows when OpenSSL JWT signing ran after the rustls/aws-lc TLS client was initialized on the connect path. (snowflakedb/drivers#2073)
 - Fixed GET downloads from an S3-backed stage returning undecrypted, unreadable data for files written by a server-side unload (e.g. `COPY INTO` with `SINGLE=TRUE`) onto a client-side-encrypted stage, without treating git-stage objects as client-side-encrypted. (snowflakedb/drivers#1942)

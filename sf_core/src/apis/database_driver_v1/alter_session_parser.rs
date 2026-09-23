@@ -27,33 +27,15 @@ pub struct AlterSessionParameter {
 /// - Cannot parse parameter name or value
 /// - Statement is malformed
 pub fn parse_alter_session(sql: &str) -> Option<AlterSessionParameter> {
+    parse_next_alter_session(sql).map(|(param, _)| param)
+}
+
+fn parse_next_alter_session(sql: &str) -> Option<(AlterSessionParameter, &str)> {
     let sql = skip_leading_whitespace_and_comments(sql);
+    let sql = skip_keyword(sql, "ALTER")?;
+    let sql = skip_keyword(sql, "SESSION")?;
+    let sql = skip_keyword(sql, "SET")?;
 
-    // Check if this is an ALTER SESSION statement
-    if !sql.to_uppercase().starts_with("ALTER") {
-        return None;
-    }
-
-    // Skip "ALTER"
-    let sql = skip_token_and_whitespace(&sql[5..]);
-
-    // Check for "SESSION"
-    if !sql.to_uppercase().starts_with("SESSION") {
-        return None;
-    }
-
-    // Skip "SESSION"
-    let sql = skip_token_and_whitespace(&sql[7..]);
-
-    // Check for "SET"
-    if !sql.to_uppercase().starts_with("SET") {
-        return None;
-    }
-
-    // Skip "SET"
-    let sql = skip_token_and_whitespace(&sql[3..]);
-
-    // Extract parameter name (everything until '=')
     let eq_pos = sql.find('=')?;
     let param_name = sql[..eq_pos].trim().to_uppercase();
 
@@ -61,16 +43,16 @@ pub fn parse_alter_session(sql: &str) -> Option<AlterSessionParameter> {
         return None;
     }
 
-    // Skip '=' and whitespace
     let sql = sql[eq_pos + 1..].trim_start();
+    let (value, rest) = extract_value(sql)?;
 
-    // Extract value (handle quoted and unquoted values)
-    let value = extract_value(sql)?;
-
-    Some(AlterSessionParameter {
-        name: param_name,
-        value,
-    })
+    Some((
+        AlterSessionParameter {
+            name: param_name,
+            value,
+        },
+        rest,
+    ))
 }
 
 /// Parse all ALTER SESSION SET statements from a multistatement query.
@@ -86,34 +68,16 @@ pub fn parse_all_alter_sessions(sql: &str) -> Vec<AlterSessionParameter> {
     let mut remaining = sql;
 
     while !remaining.is_empty() {
-        // Try to find the next ALTER SESSION statement
-        let upper = remaining.to_uppercase();
+        let upper = remaining.to_ascii_uppercase();
         if let Some(alter_pos) = upper.find("ALTER") {
-            // Check if this is actually an ALTER SESSION SET statement
             let candidate = &remaining[alter_pos..];
-            if let Some(param) = parse_alter_session(candidate) {
+            if let Some((param, rest)) = parse_next_alter_session(candidate) {
                 results.push(param);
-
-                // Move past this ALTER SESSION statement to find the next one
-                // Find the end of this statement (semicolon or end of string)
-                let after_alter = &candidate[5..]; // Skip "ALTER"
-                if let Some(semi_pos) = after_alter.find(';') {
-                    remaining = &after_alter[semi_pos + 1..];
-                } else {
-                    // No semicolon found, but we might have more statements
-                    // Try to find the next ALTER keyword
-                    if let Some(next_alter) = after_alter.to_uppercase().find("ALTER") {
-                        remaining = &after_alter[next_alter..];
-                    } else {
-                        break;
-                    }
-                }
+                remaining = rest;
             } else {
-                // Not an ALTER SESSION SET, skip past this ALTER
                 remaining = &remaining[alter_pos + 5..];
             }
         } else {
-            // No more ALTER keywords found
             break;
         }
     }
@@ -121,8 +85,7 @@ pub fn parse_all_alter_sessions(sql: &str) -> Vec<AlterSessionParameter> {
     results
 }
 
-/// Extract the value from the SQL, handling quoted and unquoted values
-fn extract_value(sql: &str) -> Option<String> {
+fn extract_value(sql: &str) -> Option<(String, &str)> {
     if sql.is_empty() {
         return None;
     }
@@ -136,8 +99,7 @@ fn extract_value(sql: &str) -> Option<String> {
     }
 }
 
-/// Extract a single-quoted value, handling escaped quotes
-fn extract_single_quoted_value(sql: &str) -> Option<String> {
+fn extract_single_quoted_value(sql: &str) -> Option<(String, &str)> {
     if !sql.starts_with('\'') {
         return None;
     }
@@ -153,25 +115,21 @@ fn extract_single_quoted_value(sql: &str) -> Option<String> {
         } else if c == '\\' {
             escaped = true;
         } else if c == '\'' {
-            // Check for doubled single quote (SQL escape)
             if chars.as_str().starts_with('\'') {
-                chars.next(); // Skip the second quote
+                chars.next();
                 result.push('\'');
             } else {
-                // End of string
-                return Some(result);
+                return Some((result, chars.as_str()));
             }
         } else {
             result.push(c);
         }
     }
 
-    // Unterminated string - return what we have
-    Some(result)
+    Some((result, ""))
 }
 
-/// Extract a double-quoted value, handling escaped quotes
-fn extract_double_quoted_value(sql: &str) -> Option<String> {
+fn extract_double_quoted_value(sql: &str) -> Option<(String, &str)> {
     if !sql.starts_with('"') {
         return None;
     }
@@ -187,48 +145,41 @@ fn extract_double_quoted_value(sql: &str) -> Option<String> {
         } else if c == '\\' {
             escaped = true;
         } else if c == '"' {
-            // Check for doubled double quote (SQL escape)
             if chars.as_str().starts_with('"') {
-                chars.next(); // Skip the second quote
+                chars.next();
                 result.push('"');
             } else {
-                // End of string
-                return Some(result);
+                return Some((result, chars.as_str()));
             }
         } else {
             result.push(c);
         }
     }
 
-    // Unterminated string - return what we have
-    Some(result)
+    Some((result, ""))
 }
 
-/// Extract an unquoted value (everything until end of statement or semicolon/comment)
-fn extract_unquoted_value(sql: &str) -> Option<String> {
-    let mut result = String::new();
-    let mut chars = sql.chars().peekable();
+fn extract_unquoted_value(sql: &str) -> Option<(String, &str)> {
+    let mut end = 0;
+    let mut chars = sql.char_indices().peekable();
 
-    while let Some(&c) = chars.peek() {
+    while let Some(&(i, c)) = chars.peek() {
         match c {
-            // Semicolon always terminates the value
-            ';' => break,
-            // '--' starts a line comment, but a lone '-' is part of the value
-            '-' if chars.clone().nth(1) == Some('-') => break,
-            // '/*' starts a block comment, but a lone '/' is part of the value
-            '/' if chars.clone().nth(1) == Some('*') => break,
+            ';' | '\n' | '\r' => break,
+            '-' if chars.clone().nth(1).map(|(_, ch)| ch) == Some('-') => break,
+            '/' if chars.clone().nth(1).map(|(_, ch)| ch) == Some('*') => break,
             _ => {
-                result.push(c);
+                end = i + c.len_utf8();
                 chars.next();
             }
         }
     }
 
-    let result = result.trim().to_string();
+    let result = sql[..end].trim().to_string();
     if result.is_empty() {
         None
     } else {
-        Some(result)
+        Some((result, &sql[end..]))
     }
 }
 
@@ -261,9 +212,11 @@ fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     s
 }
 
-/// Skip a token and following whitespace/comments
-fn skip_token_and_whitespace(s: &str) -> &str {
-    skip_leading_whitespace_and_comments(s)
+fn skip_keyword<'a>(sql: &'a str, keyword: &str) -> Option<&'a str> {
+    if !sql.to_ascii_uppercase().starts_with(keyword) {
+        return None;
+    }
+    Some(skip_leading_whitespace_and_comments(&sql[keyword.len()..]))
 }
 
 #[cfg(test)]
@@ -549,5 +502,65 @@ mod tests {
         assert_eq!(results[0].value, "first");
         assert_eq!(results[1].value, "second");
         assert_eq!(results[2].value, "third");
+    }
+
+    fn param(name: &str, value: &str) -> AlterSessionParameter {
+        AlterSessionParameter {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    // `str::to_uppercase` is Unicode-aware and does not preserve UTF-8 length:
+    // 'ı' (U+0131, 2 bytes) uppercases to 'I' (1 byte) and 'ﬁ' (U+FB01, 3 bytes)
+    // to "FI" (2 bytes). A keyword offset taken from an uppercased copy is
+    // therefore not an offset into the original once such a character precedes
+    // it. Each of these queries is one the server accepts, so the parse runs.
+
+    #[test]
+    fn test_parse_all_shrinking_char_before_alter_in_literal_is_not_a_statement() {
+        let results = parse_all_alter_sessions("SELECT 'ıalter ego'");
+        assert!(
+            results.is_empty(),
+            "no ALTER SESSION SET is present, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_all_shrinking_char_before_alter_in_bind_value_is_not_a_statement() {
+        let results = parse_all_alter_sessions("INSERT INTO t VALUES ('ﬁalter')");
+        assert!(
+            results.is_empty(),
+            "no ALTER SESSION SET is present, got {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_all_finds_alter_after_shrinking_char_in_earlier_literal() {
+        let results = parse_all_alter_sessions("SELECT 'ı';ALTER SESSION SET QUERY_TAG = 'v'");
+        assert_eq!(results, vec![param("QUERY_TAG", "v")]);
+    }
+
+    #[test]
+    fn test_parse_all_finds_alter_after_shrinking_char_in_leading_comment() {
+        let results = parse_all_alter_sessions("/* ı */ALTER SESSION SET QUERY_TAG = 'v'");
+        assert_eq!(results, vec![param("QUERY_TAG", "v")]);
+    }
+
+    #[test]
+    fn test_unquoted_value_ends_at_end_of_line() {
+        let result = parse_alter_session("ALTER SESSION SET TIMEZONE = UTC\nSELECT 1");
+        assert_eq!(result, Some(param("TIMEZONE", "UTC")));
+    }
+
+    #[test]
+    fn test_parse_all_skips_alter_nested_in_an_already_parsed_value() {
+        let results = parse_all_alter_sessions(
+            "ALTER SESSION SET QUERY_TAG = 'has alter session set x=1 inside'",
+        );
+        assert_eq!(
+            results,
+            vec![param("QUERY_TAG", "has alter session set x=1 inside")]
+        );
     }
 }
