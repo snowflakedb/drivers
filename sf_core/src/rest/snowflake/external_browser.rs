@@ -8,6 +8,7 @@ use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode, header};
 use serde::Deserialize;
 use snafu::{Location, ResultExt, Snafu, ensure};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -37,14 +38,24 @@ pub(crate) struct ExternalBrowserAuthResult {
     pub consent_cache_id_token: Option<bool>,
 }
 
-/// Allows injecting a no-op browser opener in tests.
+/// Opens the SSO / authorize URL. Allows injecting a custom callback.
 pub(crate) trait BrowserOpener: Send + Sync {
     fn open(&self, url: &str) -> Result<(), String>;
 }
 
+pub(crate) type BrowserOpenFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 /// Default implementation that opens the system browser, unless the
 /// `SF_TEST_BROWSER_OPENER` env var is set to `noop` (for headless CI).
 pub(crate) struct DefaultBrowserOpener;
+
+pub(crate) struct FnBrowserOpener(pub(crate) BrowserOpenFn);
+
+impl BrowserOpener for FnBrowserOpener {
+    fn open(&self, url: &str) -> Result<(), String> {
+        (self.0)(url)
+    }
+}
 
 impl BrowserOpener for DefaultBrowserOpener {
     fn open(&self, url: &str) -> Result<(), String> {
@@ -981,6 +992,105 @@ mod tests {
         assert!(
             parsed.contains("abc123"),
             "body should be included, got: {parsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_opener_receives_sso_url_and_completes_callback() {
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        struct SsoRespond;
+        impl wiremock::Respond for SsoRespond {
+            fn respond(&self, request: &Request) -> ResponseTemplate {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&request.body).expect("json body");
+                let port = body["data"]["BROWSER_MODE_REDIRECT_PORT"]
+                    .as_str()
+                    .expect("BROWSER_MODE_REDIRECT_PORT");
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "ssoUrl": format!(
+                            "https://idp.snowflake.com/sso?browser_mode_redirect_port={port}"
+                        ),
+                        "proofKey": "proof"
+                    }
+                }))
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/authenticator-request"))
+            .respond_with(SsoRespond)
+            .mount(&server)
+            .await;
+
+        let seen = Arc::new(Mutex::new(None::<String>));
+        let seen_cb = Arc::clone(&seen);
+        let opener = FnBrowserOpener(Arc::new(move |url: &str| {
+            *seen_cb.lock().expect("lock") = Some(url.to_string());
+            let port: u16 = url::Url::parse(url)
+                .expect("sso url")
+                .query_pairs()
+                .find(|(k, _)| k == "browser_mode_redirect_port")
+                .expect("port query")
+                .1
+                .parse()
+                .expect("port");
+            std::thread::spawn(move || {
+                let mut stream =
+                    std::net::TcpStream::connect(("127.0.0.1", port)).expect("loopback connect");
+                stream
+                    .write_all(b"GET /?token=sso-token HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .expect("write token");
+                let mut buf = Vec::new();
+                let _ = stream.read_to_end(&mut buf);
+            });
+            Ok(())
+        }));
+
+        let login_parameters = crate::config::rest_parameters::LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: crate::config::rest_parameters::LoginMethod::ExternalBrowser {
+                username: "alice".to_string(),
+                authentication_timeout_secs: 30,
+                client_store_temporary_credential: false,
+            },
+            server_url: server.uri(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            secondary_roles: None,
+            client_info: crate::config::rest_parameters::test_fixtures::test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
+            disable_parallel_user_prompt: true,
+            validate_session_token: true,
+            browser_opener: None,
+        };
+
+        let result = external_browser_authenticate(
+            &reqwest::Client::new(),
+            &login_parameters,
+            "alice",
+            30,
+            &opener,
+            &crate::config::retry::RetryPolicy::default(),
+        )
+        .await
+        .expect("sso flow");
+
+        assert_eq!(result.token.reveal(), "sso-token");
+        assert_eq!(result.proof_key.reveal(), "proof");
+        let seen_url = seen.lock().expect("lock").clone().expect("opener called");
+        assert!(
+            seen_url.starts_with("https://idp.snowflake.com/sso?"),
+            "opener must receive the IdP URL, got {seen_url}"
         );
     }
 }

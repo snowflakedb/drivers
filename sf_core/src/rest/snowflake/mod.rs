@@ -11,6 +11,7 @@ mod native_okta;
 mod oauth;
 pub mod prompt_lock;
 pub mod workload_identity;
+pub(crate) use external_browser::BrowserOpenFn;
 /// Re-export of the browser-launcher closure type so that
 /// `crate::config::rest_parameters::OAuthAuthorizationCodeConfig` can
 /// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
@@ -47,7 +48,7 @@ use crate::rest::snowflake::auth::{
     AuthResponse, authenticator,
 };
 use crate::rest::snowflake::external_browser::{
-    DefaultBrowserOpener, external_browser_authenticate,
+    DefaultBrowserOpener, FnBrowserOpener, external_browser_authenticate,
 };
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
@@ -842,12 +843,17 @@ pub async fn auth_request_data(
                 data.token = Some(cached_token);
                 data.token_from_cache_used = true;
             } else {
+                let opener: Box<dyn external_browser::BrowserOpener> =
+                    match &login_parameters.browser_opener {
+                        Some(f) => Box::new(FnBrowserOpener(std::sync::Arc::clone(f))),
+                        None => Box::new(DefaultBrowserOpener),
+                    };
                 let result = external_browser_authenticate(
                     client,
                     login_parameters,
                     username,
                     *authentication_timeout_secs,
-                    &DefaultBrowserOpener,
+                    opener.as_ref(),
                     retry_policy,
                 )
                 .await
@@ -866,10 +872,16 @@ pub async fn auth_request_data(
         // OAUTH_TYPE=OAUTH_AUTHORIZATION_CODE so GS knows which flow
         // produced the token. LOGIN_NAME is always set.
         LoginMethod::OAuthAuthorizationCode(cfg) => {
+            let mut cfg = std::borrow::Cow::Borrowed(cfg);
+            if let Some(opener) = &login_parameters.browser_opener {
+                cfg.to_mut().browser_launcher = Some(oauth::launcher_from_url_opener(
+                    std::sync::Arc::clone(opener),
+                ));
+            }
             let acquired = oauth::run_oauth_authorization_code(
                 client,
                 &login_parameters.server_url,
-                cfg,
+                &cfg,
                 login_parameters.role.as_deref().unwrap_or(""),
                 token_cache.clone(),
                 login_parameters.disable_parallel_user_prompt,
@@ -3311,6 +3323,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: false,
             validate_session_token: true,
+            browser_opener: None,
         }
     }
 

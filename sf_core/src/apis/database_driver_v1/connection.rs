@@ -25,8 +25,8 @@ use crate::config::{
     param_registry::{ParamKey, param_names},
     resolver,
     rest_parameters::{
-        ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
-        resolve_log_query_parameters, resolve_log_query_text,
+        BrowserOpenFn, ClientInfo, LoginMethod, LoginParameters, QueryParameters,
+        resolve_log_max_query_length, resolve_log_query_parameters, resolve_log_query_text,
     },
     retry::{RetryPolicy, read_optional_duration_secs},
     settings::Settings,
@@ -276,7 +276,15 @@ impl DatabaseDriverV1 {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let database_seed = self.database_settings(db_handle).await?;
-                let (config, host, port, client_info, init_params, resolved_snapshot) = {
+                let (
+                    config,
+                    host,
+                    port,
+                    client_info,
+                    init_params,
+                    resolved_snapshot,
+                    browser_opener,
+                ) = {
                     let conn = conn_ptr.lock().await;
                     // TODO(sfc-gh-boler): Clone the mutable connection inputs under the mutex,
                     // then drop the lock before calling resolve/build. Those paths can do
@@ -370,6 +378,7 @@ impl DatabaseDriverV1 {
                         None => None,
                     };
 
+                    let browser_opener = conn.browser_opener.clone();
                     (
                         config,
                         host,
@@ -377,6 +386,7 @@ impl DatabaseDriverV1 {
                         client_info,
                         init_params,
                         resolved_snapshot,
+                        browser_opener,
                     )
                 };
 
@@ -391,6 +401,7 @@ impl DatabaseDriverV1 {
                     None,
                     read_spcs_token(self.fs_adapter().as_ref()),
                     self.wrapper_presets.validate_session_token,
+                    browser_opener,
                 );
 
                 let prebuilt_credentials =
@@ -899,6 +910,24 @@ impl DatabaseDriverV1 {
         }
     }
 
+    pub async fn connection_set_browser_opener(
+        &self,
+        conn_handle: Handle,
+        opener: BrowserOpenFn,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                conn.browser_opener = Some(opener);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+
     /// Store wrapper identity on a connection. Called once from `ConnectionInit`.
     ///
     /// In addition to storing the identity for telemetry, this injects the
@@ -1144,6 +1173,7 @@ pub struct Connection {
     /// Per-connection gate when session operations are serialized.
     /// Acquire this before [`Mutex<Connection>`].
     session_mutex: Arc<Mutex<()>>,
+    pub(crate) browser_opener: Option<BrowserOpenFn>,
 }
 
 impl Default for Connection {
@@ -1186,6 +1216,7 @@ impl Connection {
             xp_slot: Arc::new(XpSlot::new(false, None)),
             optimistic_alter_session_param_cache: false,
             session_mutex: Arc::new(Mutex::new(())),
+            browser_opener: None,
         }
     }
 
@@ -3831,6 +3862,37 @@ mod tests {
             Some(false)
         );
         drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_browser_opener_stores_the_callback() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        let seen = Arc::new(std::sync::Mutex::new(None::<String>));
+        let seen_cb = Arc::clone(&seen);
+        ds.connection_set_browser_opener(
+            handle,
+            Arc::new(move |url: &str| {
+                *seen_cb.lock().unwrap() = Some(url.to_string());
+                Ok(())
+            }),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        conn.browser_opener
+            .as_ref()
+            .expect("opener should be stored")("https://idp.snowflake.com/sso")
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            seen.lock().unwrap().as_deref(),
+            Some("https://idp.snowflake.com/sso")
+        );
         ds.connection_release(handle).unwrap();
     }
 

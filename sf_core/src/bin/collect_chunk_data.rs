@@ -343,6 +343,7 @@ fn build_login_params(
         spcs_token: None,
         disable_parallel_user_prompt: false,
         validate_session_token: true,
+        browser_opener: None,
     })
 }
 

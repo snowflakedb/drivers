@@ -33,6 +33,15 @@ Feature: External Browser Authentication
     Then Login is successful
     And Login request contains EXTERNALBROWSER authenticator, token, proof key, and login name
 
+  # The injected opener is an sf_core-level seam: a wrapper-supplied
+  # callback replaces the system-browser launch. Only core exercises it.
+  @core_int
+  Scenario: should login with external browser through injected opener
+    Given Wiremock returns an ssoUrl carrying the loopback redirect port and login endpoint returns success
+    And A browser opener callback is injected on the connection
+    When Trying to Connect
+    Then The injected opener receives the SSO URL and login is successful
+
   @core_int @python_int @odbc_int @jdbc_int
   Scenario: should fail when authenticator-request returns forbidden
     Given Wiremock returns HTTP 403 for authenticator-request

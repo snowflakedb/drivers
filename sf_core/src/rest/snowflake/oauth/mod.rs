@@ -30,6 +30,7 @@ mod token;
 /// reaching into `oauth::authorization_code` directly.
 pub(crate) use authorization_code::BrowserLaunchFn;
 pub(crate) use authorization_code::derive_idp_url;
+pub(crate) use authorization_code::launcher_from_url_opener;
 pub(crate) use authorization_code::run_oauth_authorization_code;
 pub(crate) use client_credentials::acquire_client_credentials;
 pub use error::OAuthError;

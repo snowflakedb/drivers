@@ -3,6 +3,7 @@ pub mod crypto_provider;
 pub mod arrow_deserialize;
 pub mod arrow_extract_value;
 pub mod arrow_result_helper;
+pub mod browser_opener;
 pub mod cloud_gating;
 pub mod config;
 pub mod connect_proxy;

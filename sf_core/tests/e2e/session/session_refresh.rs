@@ -98,6 +98,7 @@ fn should_refresh_session_proactively() {
             spcs_token: None,
             disable_parallel_user_prompt: false,
             validate_session_token: true,
+            browser_opener: None,
         };
 
         let http_client = create_tls_client_with_config(

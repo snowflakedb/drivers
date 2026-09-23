@@ -10,7 +10,7 @@ use super::token::{has_bearer_token, read_optional_bearer_token, read_required_b
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
-    ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
+    BrowserOpenFn, ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
     WifProvider, WorkloadIdentityConfig,
 };
@@ -589,6 +589,7 @@ impl LoginParameters {
         session_parameters: Option<HashMap<String, String>>,
         spcs_token: Option<SensitiveString>,
         validate_session_token: bool,
+        browser_opener: Option<BrowserOpenFn>,
     ) -> Self {
         Self {
             account_name: config.server.account.clone(),
@@ -604,6 +605,7 @@ impl LoginParameters {
             spcs_token,
             disable_parallel_user_prompt: config.disable_parallel_user_prompt,
             validate_session_token,
+            browser_opener,
         }
     }
 }

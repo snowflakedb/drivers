@@ -1,8 +1,13 @@
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 
+use crate::common::browser_opener::{connect_with_opener, get_loopback, opener_recording};
 use crate::common::mocks::external_browser;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
+use url::Url;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 // =============================================================================
 // Test Fixture
@@ -134,6 +139,67 @@ fn should_login_with_external_browser_using_simulated_callback() {
     assert_eq!(body["data"]["TOKEN"], "browser_sso_token_12345");
     assert_eq!(body["data"]["PROOF_KEY"], proof_key);
     assert_eq!(body["data"]["LOGIN_NAME"], "test_user");
+}
+
+struct EchoSsoPort;
+
+impl wiremock::Respond for EchoSsoPort {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&request.body).expect("json body");
+        let port = body["data"]["BROWSER_MODE_REDIRECT_PORT"]
+            .as_str()
+            .expect("BROWSER_MODE_REDIRECT_PORT");
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "data": {
+                "ssoUrl": format!(
+                    "https://idp.snowflake.com/sso?browser_mode_redirect_port={port}"
+                ),
+                "proofKey": "test_proof_key"
+            }
+        }))
+    }
+}
+
+#[tokio::test]
+async fn should_login_with_external_browser_through_injected_opener() {
+    // Given Wiremock returns an ssoUrl carrying the loopback redirect port and login endpoint returns success
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/session/authenticator-request"))
+        .respond_with(EchoSsoPort)
+        .mount(&server)
+        .await;
+    external_browser::login_success().mount(&server).await;
+
+    // And A browser opener callback is injected on the connection
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let opener = opener_recording(Arc::clone(&seen), |url| {
+        let parsed = Url::parse(url).expect("sso url");
+        let port = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "browser_mode_redirect_port")
+            .expect("port query")
+            .1
+            .into_owned();
+        std::thread::spawn(move || {
+            let loopback = Url::parse(&format!("http://127.0.0.1:{port}/?token=sso-token"))
+                .expect("loopback url");
+            get_loopback(&loopback).expect("sso loopback");
+        });
+    });
+
+    // When Trying to Connect
+    connect_with_opener(&server, &[("authenticator", "EXTERNALBROWSER")], opener)
+        .await
+        .expect("external browser login through injected opener");
+
+    // Then The injected opener receives the SSO URL and login is successful
+    let seen_url = seen.lock().expect("seen").clone().expect("opener called");
+    assert!(
+        seen_url.starts_with("https://idp.snowflake.com/sso?"),
+        "opener must receive the SSO URL, got {seen_url}"
+    );
 }
 
 // =============================================================================

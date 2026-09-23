@@ -15,34 +15,35 @@
 //! * §4 / §14 #12 — CC tokens are intentionally never cached.
 //! * §13         — IdP-error / missing-access-token surface area.
 //!
-//! Approach (per the integration-test plan): the AC interactive leg
-//! would otherwise hang on the loopback redirect, so happy-path tests
-//! pre-seed `KeyringTokenCache` with a cached access token (and / or
-//! refresh token) so `acquire_authorization_code` short-circuits before
-//! the loopback ever binds. Tests that intentionally exercise the
-//! interactive leg are gated by `#[ignore]`.
+//! Approach (per the integration-test plan): most AC tests pre-seed
+//! `KeyringTokenCache` so `acquire_authorization_code` short-circuits
+//! before the loopback binds. The interactive leg is covered by
+//! `should_login_with_authorization_code_through_injected_opener`,
+//! which drives loopback through `connection_set_browser_opener`.
 //!
 //! Cache hygiene: each test uses a unique username and removes the
 //! tokens it seeded as part of teardown (mirroring
 //! `user_password_mfa_token_cache.rs`).
 
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scopeguard::defer;
 
+use crate::common::browser_opener::{connect_with_opener, get_loopback, opener_recording};
 use crate::common::mocks::oauth;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
 use sf_core::token_cache::{
     CacheKey, KeyringTokenCache, TokenCache, TokenType, normalize_identifier, normalize_url,
 };
+use url::Url;
+use wiremock::MockServer;
 
-// The OAuth Authorization Code flow's interactive leg would otherwise
-// pop a real browser window against the wiremock IdP. We rely on the
-// `cfg(any(test, feature = "test-utils"))` default in
-// `OAuthAuthorizationCodeConfig::from_settings`, which installs a no-op
-// browser launcher automatically when `sf_core` is built with the
-// `test-utils` feature (as it is for the integration test binaries).
+// Cache-short-circuit AC tests rely on the test-utils no-op browser
+// launcher in `OAuthAuthorizationCodeConfig::from_settings`, so a
+// missed cache hit does not open a system browser. The injected-opener
+// test replaces that launcher via `connection_set_browser_opener`.
 
 // =============================================================================
 // Test Fixture
@@ -304,6 +305,71 @@ fn should_fail_legacy_oauth_when_snowflake_returns_390303() {
         result,
         &["390303", "OAuth", "login", "auth"],
         "legacy OAUTH 390303 failure",
+    );
+}
+
+// =============================================================================
+// Authorization Code — injected browser opener
+// =============================================================================
+
+#[tokio::test]
+async fn should_login_with_authorization_code_through_injected_opener() {
+    // Given Wiremock serves the IdP token endpoint and the Snowflake login endpoint
+    let server = MockServer::start().await;
+    oauth::idp_token_endpoint_success_authorization_code()
+        .mount(&server)
+        .await;
+    oauth::snowflake_login_success_oauth("ac-access-token-success")
+        .mount(&server)
+        .await;
+
+    let token_url = format!("{}/oauth/token-request", server.uri());
+
+    // And A browser opener callback is injected on the connection
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let opener = opener_recording(Arc::clone(&seen), |url| {
+        let parsed = Url::parse(url).expect("authorize url");
+        let redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("redirect_uri");
+        let state = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let mut loopback = Url::parse(&redirect).expect("redirect url");
+            loopback.set_query(Some(&format!("code=test-code&state={state}")));
+            get_loopback(&loopback).expect("oauth loopback");
+        });
+    });
+
+    // When Trying to Connect with OAUTH_AUTHORIZATION_CODE
+    connect_with_opener(
+        &server,
+        &[
+            ("authenticator", "OAUTH_AUTHORIZATION_CODE"),
+            ("oauth_client_id", "test-oauth-client-id"),
+            ("oauth_client_secret", "test-oauth-client-secret"),
+            (
+                "oauth_authorization_url",
+                "https://idp.snowflake.com/oauth/authorize",
+            ),
+            ("oauth_token_request_url", token_url.as_str()),
+            ("oauth_scope", "session:role:test_role"),
+        ],
+        opener,
+    )
+    .await
+    .expect("oauth authorization code login through injected opener");
+
+    // Then The injected opener receives the authorize URL and login is successful
+    let seen_url = seen.lock().expect("seen").clone().expect("opener called");
+    assert!(
+        seen_url.starts_with("https://idp.snowflake.com/oauth/authorize?"),
+        "opener must receive the authorize URL, got {seen_url}"
     );
 }
 

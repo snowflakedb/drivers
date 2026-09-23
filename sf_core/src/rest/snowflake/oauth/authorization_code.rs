@@ -175,6 +175,24 @@ fn launch_authorize_url(
     }
 }
 
+pub(crate) fn launcher_from_url_opener(
+    opener: crate::rest::snowflake::BrowserOpenFn,
+) -> std::sync::Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync> {
+    std::sync::Arc::new(move || {
+        let opener = std::sync::Arc::clone(&opener);
+        Box::new(move |authorize_url, _redirect_uri| {
+            Box::pin(async move {
+                let url = authorize_url.to_string();
+                launch_authorize_url(
+                    &url,
+                    |u| opener(u),
+                    || println!("Open this URL in your browser to continue: {url}"),
+                );
+            })
+        })
+    })
+}
+
 #[tracing::instrument(
     skip(client, config, token_cache),
     fields(server_url = %server_url, username = %config.username),
@@ -198,11 +216,6 @@ pub(crate) async fn run_oauth_authorization_code(
     let server_url_parsed = Url::parse(server_url).context(EndpointUrlParseSnafu {
         url: server_url.to_string(),
     })?;
-    // The launcher rides on the config (Arc'd factory ⇒ each call mints
-    // a fresh `FnOnce` so the retry-on-failure path can rebuild one).
-    // Production builds default to `None` ⇒ open the system browser;
-    // test/test-utils builds default to `Some(noop)` ⇒ never touch the
-    // OS browser. See `OAuthAuthorizationCodeConfig::from_settings`.
     let launch_browser = config
         .browser_launcher
         .as_ref()
@@ -1508,6 +1521,81 @@ mod tests {
         assert!(
             params.contains_key("redirect_uri") && !params["redirect_uri"].is_empty(),
             "authorize URL must carry a non-empty redirect_uri, got params: {params:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn url_opener_callback_drives_the_oauth_loopback() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains("code=THE-CODE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-FROM-CALLBACK","refresh_token":"RT-FROM-CALLBACK","token_type":"Bearer","expires_in":600}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.snowflake.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+
+        let seen = Arc::new(Mutex::new(None::<String>));
+        let seen_cb = Arc::clone(&seen);
+        let opener: crate::rest::snowflake::BrowserOpenFn = Arc::new(move |url: &str| {
+            *seen_cb.lock().expect("lock") = Some(url.to_string());
+            let parsed = Url::parse(url).expect("authorize url");
+            let redirect = parsed
+                .query_pairs()
+                .find(|(k, _)| k == "redirect_uri")
+                .map(|(_, v)| v.into_owned())
+                .expect("redirect_uri");
+            let state = parsed
+                .query_pairs()
+                .find(|(k, _)| k == "state")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            std::thread::spawn(move || {
+                let redirect_uri = Url::parse(&redirect).expect("redirect url");
+                let mut stream = std::net::TcpStream::connect((
+                    redirect_uri.host_str().unwrap(),
+                    redirect_uri.port().unwrap(),
+                ))
+                .expect("connect loopback");
+                use std::io::Write;
+                let req = format!(
+                    "GET /?code=THE-CODE&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                );
+                stream.write_all(req.as_bytes()).expect("write redirect");
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            });
+            Ok(())
+        });
+
+        let launch = super::launcher_from_url_opener(opener)();
+        let client = reqwest::Client::new();
+        let acquired = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect("interactive flow succeeds");
+        assert_eq!(acquired.access_token.reveal(), "AT-FROM-CALLBACK");
+        let seen_url = seen.lock().expect("lock").clone().expect("opener called");
+        assert!(
+            seen_url.starts_with("https://idp.snowflake.com/oauth/authorize?"),
+            "opener must receive the authorize URL, got {seen_url}"
         );
     }
 

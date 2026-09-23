@@ -239,6 +239,8 @@ pub mod test_fixtures {
     }
 }
 
+pub type BrowserOpenFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
 pub struct LoginParameters {
     pub account_name: String,
     pub login_method: LoginMethod,
@@ -258,6 +260,7 @@ pub struct LoginParameters {
     /// Set from `WrapperPresets::validate_session_token`, which documents the
     /// tradeoff. Inert for every login method but [`LoginMethod::SessionToken`].
     pub validate_session_token: bool,
+    pub browser_opener: Option<BrowserOpenFn>,
 }
 
 impl LoginParameters {
@@ -290,6 +293,7 @@ impl LoginParameters {
             disable_parallel_user_prompt: settings
                 .get_bool_or(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(), true),
             validate_session_token: true,
+            browser_opener: None,
         })
     }
 }
