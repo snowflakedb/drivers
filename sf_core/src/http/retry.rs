@@ -481,6 +481,53 @@ mod timeout_tests {
 }
 
 #[cfg(test)]
+mod jitter_tests {
+    use super::*;
+
+    /// Randomized jitter is sampled independently, so repeated calls with the
+    /// same previous delay must not always agree.
+    fn assert_jitter_varies_across_calls(jitter: Jitter) {
+        let backoff = BackoffConfig {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            cap: Duration::from_millis(10_000),
+            jitter: jitter.clone(),
+        };
+        let delays: Vec<f64> = (0..20).map(|_| next_delay_ms(1000.0, &backoff)).collect();
+        assert!(
+            delays.iter().any(|&d| d != delays[0]),
+            "{jitter:?} should not return the same delay on every call, got {delays:?}"
+        );
+    }
+
+    #[test]
+    fn decorrelated_jitter_produces_different_delays_across_calls() {
+        assert_jitter_varies_across_calls(Jitter::Decorrelated);
+    }
+
+    #[test]
+    fn full_jitter_produces_different_delays_across_calls() {
+        assert_jitter_varies_across_calls(Jitter::Full);
+    }
+
+    #[test]
+    fn no_jitter_is_deterministic() {
+        let backoff = BackoffConfig {
+            base: Duration::from_millis(100),
+            factor: 2.0,
+            cap: Duration::from_millis(10_000),
+            jitter: Jitter::None,
+        };
+        let delays: Vec<f64> = (0..5).map(|_| next_delay_ms(1000.0, &backoff)).collect();
+        assert!(
+            delays.iter().all(|&d| d == delays[0]),
+            "Jitter::None must be deterministic, got {delays:?}"
+        );
+        assert_eq!(delays[0], 2000.0);
+    }
+}
+
+#[cfg(test)]
 mod capped_body_tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

@@ -7,7 +7,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -304,10 +304,10 @@ async fn should_follow_307_redirect_to_a_relative_location() {
 
     let client = reqwest::Client::new();
     let url = format!("http://{}", addr);
-    let ctx = HttpContext::new(Method::GET, url.clone());
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
 
     // When the helper executes the request
-    let body = execute_bytes_with_retry(|| client.get(&url), &ctx, &RetryPolicy::default())
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default())
         .await
         .expect("redirect to be followed and request to succeed");
 
@@ -353,6 +353,95 @@ async fn should_follow_308_redirect_to_a_relative_location() {
         targets.lock().unwrap().as_slice(),
         ["/", "/redirected"],
         "second request must follow Location: /redirected"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_retry_get_after_429_too_many_requests() {
+    // Given a server that returns 429 once then succeeds
+    let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {
+        if attempt == 1 {
+            b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nRetry-After: 0\r\nConnection: close\r\n\r\n"
+                .to_vec()
+        } else {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec()
+        }
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}", addr);
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
+
+    // When the helper executes the request
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &RetryPolicy::default())
+        .await
+        .expect("retry to succeed");
+
+    // Then it should have retried once and returned the successful body
+    assert_eq!(body, b"ok");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_accumulate_backoff_wall_clock_across_retries() {
+    // Given a server that fails with a retryable status 3 times (no
+    // Retry-After header, so the computed backoff curve applies rather than
+    // a server-dictated delay), then succeeds on the 4th attempt. The retry
+    // loop seeds sleep_ms at `base` and computes each next delay as
+    // `max(prev, base) * factor`, so base=50ms/factor=2/no jitter yields the
+    // sequence 100ms, 200ms, 400ms between attempts.
+    let (addr, attempts, _targets, server) = spawn_test_server(4, |attempt| async move {
+        if attempt < 4 {
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_vec()
+        } else {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec()
+        }
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}", addr);
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
+    let policy = RetryPolicy {
+        http: HttpPolicy {
+            retry_safe_reads: true,
+            retry_idempotent_writes: true,
+            retry_post_patch: false,
+        },
+        max_attempts: 4,
+        backoff: BackoffConfig {
+            base: Duration::from_millis(50),
+            factor: 2.0,
+            cap: Duration::from_secs(10),
+            jitter: Jitter::None,
+        },
+        max_elapsed: None,
+        per_request_timeout: None,
+        extra_retryable_statuses: BTreeSet::new(),
+    };
+
+    // When the helper executes the request
+    let start = Instant::now();
+    let body = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &policy)
+        .await
+        .expect("retry to eventually succeed");
+    let elapsed = start.elapsed();
+
+    // Then it retries 3 times (backed off 100ms, 200ms, 400ms) before succeeding on attempt 4
+    assert_eq!(body, b"ok");
+    assert_eq!(attempts.load(Ordering::SeqCst), 4);
+
+    // And cumulative backoff wall-clock time is at least 100+200+400 = 700ms —
+    // the shape of the curve is unit-tested elsewhere, this proves the summed
+    // elapsed time actually observed end to end.
+    assert!(
+        elapsed >= Duration::from_millis(700),
+        "expected cumulative backoff >= 700ms (100+200+400), took {:?}",
+        elapsed
     );
     server.await.unwrap();
 }
