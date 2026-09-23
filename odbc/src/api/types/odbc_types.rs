@@ -250,6 +250,8 @@ pub enum InfoType {
     MaxTableNameLen = 35,
     /// `SQL_MULTIPLE_ACTIVE_TXN` (37) — whether more than one transaction can be active at once (string).
     MultipleActiveTxn = 37,
+    /// `SQL_OUTER_JOINS` (38) — ODBC 1.0 Y/N/P/F string.
+    OuterJoins = 38,
     /// `SQL_SCHEMA_TERM` (39) — DBMS term for schema (string). Aliased as `SQL_OWNER_TERM` in 2.x.
     SchemaTerm = 39,
     /// `SQL_CATALOG_NAME_SEPARATOR` (41) — catalog/schema separator character (string).
@@ -580,6 +582,7 @@ impl TryFrom<u16> for InfoType {
             35 => Ok(InfoType::MaxTableNameLen),
             36 => Ok(InfoType::MultResultSets),
             37 => Ok(InfoType::MultipleActiveTxn),
+            38 => Ok(InfoType::OuterJoins),
             39 => Ok(InfoType::SchemaTerm),
             40 => Ok(InfoType::ProcedureTerm),
             41 => Ok(InfoType::CatalogNameSeparator),
@@ -2666,6 +2669,7 @@ mod tests {
             (23, InfoType::CursorCommitBehavior),
             (24, InfoType::CursorRollbackBehavior),
             (29, InfoType::IdentifierQuoteChar),
+            (38, InfoType::OuterJoins),
             (39, InfoType::SchemaTerm),
             (41, InfoType::CatalogNameSeparator),
             (42, InfoType::CatalogTerm),

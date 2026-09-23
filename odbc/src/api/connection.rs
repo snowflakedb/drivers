@@ -2254,6 +2254,7 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::Procedures => write_str("N"),
         InfoType::ExpressionsInOrderby => write_str("Y"),
         InfoType::MultipleActiveTxn => write_str("Y"),
+        InfoType::OuterJoins => write_str("Y"),
         InfoType::ProcedureTerm => write_str("procedure"),
         InfoType::Integrity => write_str("N"),
         InfoType::Keywords => write_str(""),

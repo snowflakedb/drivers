@@ -1793,6 +1793,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_OJ_CAPABILITIES", "[odbc
   SQLDisconnect(dbc_handle());
 }
 
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_OUTER_JOINS", "[odbc-api][getinfo][driver_info]") {
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char outerJoins[8];
+  ret = SQLGetInfo(dbc_handle(), SQL_OUTER_JOINS, outerJoins, sizeof(outerJoins), nullptr);
+
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(outerJoins) == "Y");
+
+  SQLDisconnect(dbc_handle());
+}
+
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ORDER_BY_COLUMNS_IN_SELECT",
                  "[odbc-api][getinfo][driver_info]") {
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
