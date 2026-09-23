@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
 from tests.compatibility import is_old_driver
@@ -22,6 +23,15 @@ is_timedelta = pd.api.types.is_timedelta64_dtype
 is_string = pd.api.types.is_string_dtype
 
 NULL_FLOAT = float("nan")
+
+
+def assert_vector_equal(actual, expected) -> None:
+    if expected is None:
+        assert actual is None or pd.isna(actual)
+        return
+    assert np.array_equal(np.asarray(actual), np.asarray(expected)), (
+        f"vector mismatch: expected {expected!r}, got {actual!r} ({type(actual)!r})"
+    )
 
 
 def enable_decimal_mode(cursor) -> None:

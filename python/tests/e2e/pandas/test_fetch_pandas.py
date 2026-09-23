@@ -14,6 +14,7 @@ import pickle
 from datetime import time
 from decimal import Decimal
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -92,6 +93,20 @@ PANDAS_TYPE_CASES = [
         "NULL::OBJECT",
         lambda v: json.loads(v) == {"key": "value"},
         pd.api.types.is_string_dtype,
+    ),
+    (
+        "vector_int",
+        "[1, 2, 3]::VECTOR(INT, 3)",
+        "NULL::VECTOR(INT, 3)",
+        lambda v: np.array_equal(np.asarray(v), [1, 2, 3]),
+        pd.api.types.is_object_dtype,
+    ),
+    (
+        "vector_float",
+        "[1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)",
+        "NULL::VECTOR(FLOAT, 3)",
+        lambda v: np.array_equal(np.asarray(v, dtype=np.float32), np.array([1.5, 2.5, 3.5], dtype=np.float32)),
+        pd.api.types.is_object_dtype,
     ),
 ]
 

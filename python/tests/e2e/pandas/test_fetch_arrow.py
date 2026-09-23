@@ -61,6 +61,20 @@ ARROW_TYPE_CASES = [
         lambda v: json.loads(v) == {"key": "value"},
         pa.types.is_string,
     ),
+    (
+        "vector_int",
+        "[1, 2, 3]::VECTOR(INT, 3)",
+        "NULL::VECTOR(INT, 3)",
+        lambda v: list(v) == [1, 2, 3],
+        lambda t: pa.types.is_fixed_size_list(t) and t.list_size == 3,
+    ),
+    (
+        "vector_float",
+        "[1.5, 2.5, 3.5]::VECTOR(FLOAT, 3)",
+        "NULL::VECTOR(FLOAT, 3)",
+        lambda v: list(v) == pytest.approx([1.5, 2.5, 3.5], rel=1e-6),
+        lambda t: pa.types.is_fixed_size_list(t) and t.list_size == 3,
+    ),
 ]
 
 

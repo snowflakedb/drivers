@@ -181,7 +181,11 @@ tests:
   - test_name: test_to_arrow_datatypes
     ud_tests: []
   - test_name: test_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/types/test_vector.py
+      - python/tests/e2e/pandas/test_fetch_pandas.py
+      - python/tests/e2e/pandas/test_fetch_arrow.py
+    notes: Sync fetch_pandas/fetch_arrow VECTOR coverage; conversion is shared with the async cursor path.
   integ/aio_it/pandas_it/test_logging_async.py:
   - test_name: test_rand_table_log
     ud_tests: []
@@ -251,7 +255,8 @@ tests:
   - test_name: test_select_tinyint
     ud_tests: []
   - test_name: test_select_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_vector.py
   - test_name: test_select_with_bool
     ud_tests: []
   - test_name: test_select_with_empty_resultset
@@ -692,7 +697,8 @@ tests:
   - test_name: test_variant
     ud_tests: []
   - test_name: test_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_vector.py
   integ/aio_it/test_cursor_binding_async.py:
   - test_name: test_binding_list
     ud_tests: []
@@ -1213,7 +1219,10 @@ tests:
   - test_name: test_to_arrow_datatypes
     ud_tests: []
   - test_name: test_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/types/test_vector.py
+      - python/tests/e2e/pandas/test_fetch_pandas.py
+      - python/tests/e2e/pandas/test_fetch_arrow.py
   integ/pandas_it/test_error_arrow_pandas_stream.py:
   - test_name: test_connector_error_base64_stream_chunk_remove_random_length_bytes
     ud_tests: []
@@ -1370,7 +1379,8 @@ tests:
   - test_name: test_select_tinyint
     ud_tests: []
   - test_name: test_select_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_vector.py
   - test_name: test_select_with_bool
     ud_tests: []
   - test_name: test_select_with_empty_resultset
@@ -1829,7 +1839,8 @@ tests:
   - test_name: test_variant
     ud_tests: []
   - test_name: test_vector
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/types/test_vector.py
   integ/test_cursor_binding.py:
   - test_name: test_binding_list
     ud_tests: []
