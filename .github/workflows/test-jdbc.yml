@@ -32,8 +32,20 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Shrink workspace-crate debug info on *miss* rebuilds. Dependencies already
+  # use debug = 0 via [profile.dev.package."*"]. Do NOT bump jdbc-bridge-cache
+  # key-suffix for this alone: warm `debug-default` / `debug-vendored-openssl`
+  # hits stay valid; rebuilt libs gradually pick up line-tables-only.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
+  # Linux matrix + parity start immediately (parallel with Windows/macOS). Each
+  # cell hits jdbc-bridge-cache; cargo-cache restore/save only runs on a miss so
+  # the warm path skips multi-GB Rust target I/O. A prior revision serialized
+  # the matrix behind a shared build job + bumped cache keys to line-tables-v2,
+  # which added ~7 min before Linux tests and forced a cold Windows rebuild
+  # (wall-clock ~27 min vs ~17.5 min warm baseline).
   jdbc_tests:
     if: inputs.run_jdbc
     strategy:
@@ -95,28 +107,28 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
-      - name: Restore Rust cache
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "jdbc"
-
       - name: Restore Gradle cache
         id: gradle-cache
-        # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
         uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
+
+      # generateProtobuf runs `cargo run -p proto_generator` when outputs are
+      # missing (gitignored). Cache the generated Java across matrix cells.
+      - name: Restore generated protobuf Java
+        id: protobuf-gen-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
@@ -131,14 +143,21 @@ jobs:
         uses: ./.github/actions/jdbc-bridge-cache
         with:
           path: target/debug/libjdbc_bridge.so
+          # Keep stable suffix so warm main caches still hit (see env comment).
           key-suffix: debug-default
 
-      - name: Build Rust components
+      - name: Restore Rust cache
+        id: rust-cache
         if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
-        # jdbc_bridge depends on sf_core (as an rlib, statically linked into libjdbc_bridge.so),
-        # so a single `cargo build --package jdbc_bridge` transitively builds sf_core.
-        # No runtime consumer needs libsf_core.so directly — only libjdbc_bridge.so is loaded by
-        # the JDBC tests via CORE_PATH below.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Build jdbc_bridge
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
+        # jdbc_bridge embeds sf_core as an rlib; only libjdbc_bridge.so is loaded.
         run: cargo build --locked --package jdbc_bridge
 
       - name: Run JDBC tests
@@ -148,29 +167,39 @@ jobs:
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
           cd jdbc
-          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
+          # JaCoCo only on the primary Linux cell — coverage is the same across
+          # Java/cloud matrix rows; reporting on every cell burns wall-clock.
+          if [[ "${{ matrix.java-version }}" == "21" && "${{ matrix.cloud }}" == "aws" && "${{ matrix.result_format }}" == "default" ]]; then
+            bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
+          else
+            bash ./ci/gradlew_with_resolve_retry.sh test
+          fi
         env:
-          # Drives the @DisabledOnGCP / @RunOnAWS-style JUnit conditions (matches legacy
-          # snowflake-jdbc's CLOUD_PROVIDER env). Case-insensitive matchers, so lowercase is fine.
           CLOUD_PROVIDER: ${{ matrix.cloud }}
-          # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+          # One retry on PRs (flaky reliability); two in merge queue.
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
 
-      - name: Upload NEW driver test artifacts
+      - name: Upload NEW driver test results
         if: always() && matrix.result_format == 'default'
         uses: actions/upload-artifact@v7
         with:
-          # Disambiguate per Java version AND cloud — actions/upload-artifact@v7 requires
-          # unique names within a single workflow run, and Java 21 now runs on aws/gcp/azure.
           name: jdbc-tests-artifacts-java${{ matrix.java-version }}-${{ matrix.cloud }}
           path: |
             jdbc/build/test-results/test/**/*.xml
+          if-no-files-found: error
+
+      - name: Upload NEW driver coverage (primary Linux cell)
+        if: always() && matrix.java-version == '21' && matrix.cloud == 'aws' && matrix.result_format == 'default'
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-tests-coverage-java21-aws
+          path: |
             jdbc/build/jacoco/test.exec
             jdbc/build/reports/jacoco/test/**
           if-no-files-found: error
 
       - name: Print NEW driver overall coverage
-        if: always()
+        if: always() && matrix.java-version == '21' && matrix.cloud == 'aws' && matrix.result_format == 'default'
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
             --report jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
@@ -178,12 +207,17 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
+      - name: Save generated protobuf Java
+        if: always() && steps.protobuf-gen-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
       - name: Save Rust cache
-        if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
+        if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
@@ -195,8 +229,6 @@ jobs:
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
-        # Cache save is best-effort — see cargo-cache action for rationale.
-        # timeout-minutes + ZSTD_NBTHREADS guard against tar+zstdmt hangs.
         continue-on-error: true
         timeout-minutes: 10
         env:
@@ -206,7 +238,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
 
   # ── Windows / macOS smoke lanes ──────────────────────────────────────
   # The jdbc_tests matrix above is Linux-only. These two jobs run a single
@@ -245,17 +277,6 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
-      - name: Restore Rust cache
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        # The cargo-cache action keys target/ by runner.os, so this Windows cache
-        # never collides with the Linux "jdbc" caches despite the shared key.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "jdbc"
-
       - name: Restore Gradle cache
         id: gradle-cache-win
         continue-on-error: true
@@ -264,24 +285,37 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
+
+      - name: Restore generated protobuf Java
+        id: protobuf-gen-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
       - name: JDBC bridge cache
         id: jdbc-bridge-cache
         uses: ./.github/actions/jdbc-bridge-cache
         with:
           path: target/debug/jdbc_bridge.dll
+          # Stable suffix: warm main caches must still hit (see workflow env).
           key-suffix: debug-vendored-openssl
 
-      - name: Shrink MSVC debug info
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
+      - name: Restore Rust cache
+        id: rust-cache
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
+        # The cargo-cache action keys target/ by runner.os, so this Windows cache
+        # never collides with the Linux "jdbc" caches despite the shared key.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
 
       - name: Build Rust components
         if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
@@ -303,10 +337,14 @@ jobs:
           export PARAMETER_PATH="$(cygpath -w "$(pwd)/parameters.json")"
           export CORE_PATH="$(cygpath -w "$(pwd)/target/debug/jdbc_bridge.dll")"
           cd jdbc
-          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
+          # Skip JaCoCo on the wall-clock-critical Windows lane — coverage comes
+          # from the primary Linux cell. More forks: tests are mostly network-bound
+          # to Snowflake (default is 4).
+          bash ./ci/gradlew_with_resolve_retry.sh test
         env:
           CLOUD_PROVIDER: aws
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+          GRADLE_MAX_PARALLEL_FORKS: '6'
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
 
       - name: Upload NEW driver test artifacts
         if: always()
@@ -315,16 +353,19 @@ jobs:
           name: jdbc-tests-artifacts-java21-aws-windows
           path: |
             jdbc/build/test-results/test/**/*.xml
-            jdbc/build/jacoco/test.exec
-            jdbc/build/reports/jacoco/test/**
           if-no-files-found: error
 
+      - name: Save generated protobuf Java
+        if: always() && steps.protobuf-gen-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
       - name: Save Rust cache
-        if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps.
+        if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
@@ -346,7 +387,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
 
   jdbc_tests_macos:
     if: inputs.run_jdbc
@@ -371,17 +412,6 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
-      - name: Restore Rust cache
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        # target/ is keyed by runner.os, so this macOS cache never collides with
-        # the Linux "jdbc" caches despite the shared key.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "jdbc"
-
       - name: Restore Gradle cache
         id: gradle-cache-mac
         continue-on-error: true
@@ -390,17 +420,37 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
+
+      - name: Restore generated protobuf Java
+        id: protobuf-gen-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
       - name: JDBC bridge cache
         id: jdbc-bridge-cache
         uses: ./.github/actions/jdbc-bridge-cache
         with:
           path: target/debug/libjdbc_bridge.dylib
+          # Stable suffix: warm main caches must still hit (see workflow env).
           key-suffix: debug-default
+
+      - name: Restore Rust cache
+        id: rust-cache
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
+        # target/ is keyed by runner.os, so this macOS cache never collides with
+        # the Linux "jdbc" caches despite the shared key.
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
 
       - name: Build Rust components
         if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
@@ -413,10 +463,11 @@ jobs:
           export PARAMETER_PATH="$(pwd)/parameters.json"
           export CORE_PATH="$(pwd)/target/debug/libjdbc_bridge.dylib"
           cd jdbc
-          bash ./ci/gradlew_with_resolve_retry.sh test jacocoTestReport
+          # Skip JaCoCo — coverage comes from the primary Linux cell.
+          bash ./ci/gradlew_with_resolve_retry.sh test
         env:
           CLOUD_PROVIDER: aws
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
 
       - name: Upload NEW driver test artifacts
         if: always()
@@ -425,16 +476,19 @@ jobs:
           name: jdbc-tests-artifacts-java21-aws-macos
           path: |
             jdbc/build/test-results/test/**/*.xml
-            jdbc/build/jacoco/test.exec
-            jdbc/build/reports/jacoco/test/**
           if-no-files-found: error
 
+      - name: Save generated protobuf Java
+        if: always() && steps.protobuf-gen-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
       - name: Save Rust cache
-        if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps.
+        if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
@@ -456,7 +510,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
 
   cleanup_jdbc:
     needs: [jdbc_tests, jdbc_tests_windows, jdbc_tests_macos]
@@ -514,7 +568,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-jdbc-reference-
             ${{ runner.os }}-gradle-
@@ -534,7 +588,7 @@ jobs:
           bash ./ci/gradlew_with_resolve_retry.sh referenceTest jacocoReferenceReport
         env:
           CLOUD_PROVIDER: ${{ matrix.cloud }}
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
 
       - name: Upload OLD reference artifacts
         if: always()
@@ -569,7 +623,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
 
   jdbc_parity_tests:
     if: inputs.run_jdbc
@@ -594,15 +648,6 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: Restore Rust cache
-        id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "jdbc"
-
       - name: Restore Gradle cache
         id: gradle-cache-parity
         continue-on-error: true
@@ -611,10 +656,18 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties', 'jdbc/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
+
+      - name: Restore generated protobuf Java
+        id: protobuf-gen-cache-parity
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -631,14 +684,26 @@ jobs:
           path: target/debug/libjdbc_bridge.so
           key-suffix: debug-default
 
-      - name: Build Rust components
+      - name: Restore Rust cache
+        id: rust-cache
+        if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "jdbc"
+
+      - name: Build jdbc_bridge
         if: steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         run: cargo build --locked --package jdbc_bridge
 
       - name: Run JDBC parity tests
         run: |
+          export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           cd jdbc
           bash ./ci/gradlew_with_resolve_retry.sh parityTest
+        env:
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
 
       - name: Upload parity test artifacts
         if: always()
@@ -650,8 +715,16 @@ jobs:
             jdbc/build/reports/tests/parityTest/**
           if-no-files-found: warn
 
+      - name: Save generated protobuf Java
+        if: always() && steps.protobuf-gen-cache-parity.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
+          key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
       - name: Save Rust cache
-        if: always()
+        if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         timeout-minutes: 20
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
