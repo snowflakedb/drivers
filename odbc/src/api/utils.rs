@@ -57,6 +57,14 @@ pub(crate) fn config_setting_bool(setting: &ConfigSetting) -> bool {
     }
 }
 
+pub(crate) fn config_setting_i64(setting: &ConfigSetting) -> Option<i64> {
+    match &setting.value {
+        Some(config_setting::Value::IntValue(i)) => Some(*i),
+        Some(config_setting::Value::StringValue(s)) => s.parse().ok(),
+        _ => None,
+    }
+}
+
 /// Reads a `ConfigSetting` session-parameter value as a `u64`, or `None` when
 /// absent/unparseable. Native `int_value` is the common case; `string_value`
 /// is a fallback for any parameter still delivered/overridden as a string.

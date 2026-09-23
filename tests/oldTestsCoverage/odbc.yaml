@@ -309,7 +309,14 @@ tests:
     jira: "SNOW-2251257"
   EndToEndTests/ApiCatchLatestTest/ApiCatchLatestTest.cpp:
   - test_name: Configurable default varchar/binary size
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/types/default_varchar_binary_size.cpp - should report session-max sizes when DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE are unset"
+      - path: "odbc_tests/tests/e2e/types/default_varchar_binary_size.cpp - should rewrite max-length VARCHAR and BINARY metadata with DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE"
+      - path: "odbc_tests/tests/e2e/types/default_varchar_binary_size.cpp - should apply swapped DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE to SQLColumns sizes"
+      - path: "odbc_tests/tests/e2e/types/default_varchar_binary_size.cpp - should report the same DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE on SQLColumns as SQLDescribeCol"
+      - path: "odbc_tests/tests/e2e/types/default_varchar_binary_size.cpp - should accept DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE and report only unrecognized keys as 01S00"
+    status: mapped
+    notes: "Ports ApiCatchLatestTest 'Configurable default varchar/binary size': unset keeps session max; DEFAULT_VARCHAR_SIZE/DEFAULT_BINARY_SIZE rewrite max-length VARCHAR/BINARY on SQLDescribeCol, SQLColAttribute, and SQLColumns (COLUMN_SIZE, BUFFER_LENGTH, CHAR_OCTET_LENGTH); bounded columns and fetched values stay unchanged."
   - test_name: Log Settings
     ud_tests: []
   - test_name: Query ID for PUT operation
@@ -333,7 +340,14 @@ tests:
   - test_name: Test Current Catalog
     ud_tests: []
   - test_name: Test MapToLongVarchar
-    ud_tests: []
+    ud_tests:
+      - path: "odbc_tests/tests/e2e/types/map_to_long_varchar.cpp - should report SQL_VARCHAR for every string column when MapToLongVarchar is unset"
+      - path: "odbc_tests/tests/e2e/types/map_to_long_varchar.cpp - should remap VARCHAR columns above MapToLongVarchar=8000 to SQL_LONGVARCHAR"
+      - path: "odbc_tests/tests/e2e/types/map_to_long_varchar.cpp - should remap SQLColumns DATA_TYPE and SQL_DATA_TYPE with the same MapToLongVarchar threshold"
+      - path: "odbc_tests/tests/e2e/types/map_to_long_varchar.cpp - should apply DEFAULT_VARCHAR_SIZE before the MapToLongVarchar threshold"
+      - path: "odbc_tests/tests/e2e/types/map_to_long_varchar.cpp - should accept MapToLongVarchar and report only unrecognized keys as 01S00"
+    status: mapped
+    notes: "Ports ApiCatchLatestTest 'Test MapToLongVarchar': default off, threshold 8000 (unbounded and varchar(8001) remap; varchar(8000) stays VARCHAR; fetch values unchanged; SQLGetTypeInfo CHAR+VARCHAR rows), SQLColumns DATA_TYPE/SQL_DATA_TYPE with TYPE_NAME left as VARCHAR, 01S00 only for unrecognized keys, and DEFAULT_VARCHAR_SIZE applied before the MapToLongVarchar threshold."
   - test_name: Test ODBC_TREAT_BIG_NUMBER_AS_STRING
     ud_tests: []
   - test_name: Test ODBC_TREAT_DECIMAL_AS_INT

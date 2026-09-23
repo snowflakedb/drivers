@@ -26,9 +26,9 @@ use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeVarchar {
-    #[allow(dead_code)]
     pub len: u32,
     pub is_semi_structured: bool,
+    pub map_to_long_varchar: Option<u32>,
 }
 
 impl SnowflakeType for SnowflakeVarchar {
@@ -193,7 +193,14 @@ fn is_valid_time_format(s: &str) -> bool {
 
 impl WriteODBCType for SnowflakeVarchar {
     fn sql_type(&self) -> sql::SqlDataType {
-        sql::SqlDataType::VARCHAR
+        if self
+            .map_to_long_varchar
+            .is_some_and(|threshold| self.len > threshold)
+        {
+            sql::SqlDataType::EXT_LONG_VARCHAR
+        } else {
+            sql::SqlDataType::VARCHAR
+        }
     }
 
     fn column_size(&self) -> sql::ULen {

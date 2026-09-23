@@ -244,6 +244,19 @@ pub mod param_names {
     /// unconstrained unless `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` fills
     /// it.
     pub const USE_CURRENT_CATALOG: ParamKey = ParamKey("use_current_catalog");
+    /// ODBC-only. When 0 or greater, CHAR and VARCHAR columns whose
+    /// `COLUMN_SIZE` is greater than this threshold are reported as
+    /// `SQL_LONGVARCHAR`. Default `-1` leaves every string column as
+    /// `SQL_VARCHAR`.
+    pub const MAP_TO_LONG_VARCHAR: ParamKey = ParamKey("map_to_long_varchar");
+    /// ODBC-only. Rewrites max-length TEXT `COLUMN_SIZE` (session max or
+    /// 16 MiB) to this value before `MapToLongVarchar`. Default `-1` uses
+    /// the session VARCHAR max.
+    pub const DEFAULT_VARCHAR_SIZE: ParamKey = ParamKey("default_varchar_size");
+    /// ODBC-only. Rewrites max-length BINARY `COLUMN_SIZE` (half the
+    /// session VARCHAR max or 8 MiB) to this value. Default `-1` uses
+    /// half the session VARCHAR max.
+    pub const DEFAULT_BINARY_SIZE: ParamKey = ParamKey("default_binary_size");
 
     /// When `true`, run connectivity diagnostics during connect.
     /// Default `false`.
@@ -320,8 +333,6 @@ pub mod param_names {
     // ── Deprecated ODBC OCSP keys (revocation is CRL) ─────────────────
     pub const DISABLE_OCSP_CHECK: ParamKey = ParamKey("disable_ocsp_check");
     pub const OCSP_FAIL_OPEN: ParamKey = ParamKey("ocsp_fail_open");
-    pub const DEFAULT_VARCHAR_SIZE: ParamKey = ParamKey("default_varchar_size");
-    pub const DEFAULT_BINARY_SIZE: ParamKey = ParamKey("default_binary_size");
 }
 
 /// Default `retry_max_attempts` for general HTTP calls (mirrors the `ParamDef`).
@@ -2336,6 +2347,63 @@ static PARAM_DEFS: &[ParamDef] = &[
         .mutable_after_connect(false)
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::MAP_TO_LONG_VARCHAR.as_str())
+        .aliases(aliases![Odbc; "MAPTOLONGVARCHAR"])
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(-1))
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "When 0 or greater, CHAR and VARCHAR columns whose COLUMN_SIZE is \
+             greater than this threshold are reported as SQL_LONGVARCHAR. \
+             Unset, negative, and unparsable values keep SQL_VARCHAR. \
+             Metadata-only; fetched values and COLUMN_SIZE are unchanged. \
+             Client-only, never forwarded to GS.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Odbc))
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DEFAULT_VARCHAR_SIZE.as_str())
+        .aliases(aliases![Odbc; "DEFAULTVARCHARSIZE"])
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(-1))
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "When 0 or greater, TEXT columns whose reported length is the session \
+             VARCHAR max or 16 MiB are rewritten to this COLUMN_SIZE before \
+             MapToLongVarchar. Unset, negative, and unparsable values keep the \
+             session max. Metadata-only; fetched values are unchanged. \
+             Client-only, never forwarded to GS.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Odbc))
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DEFAULT_BINARY_SIZE.as_str())
+        .aliases(aliases![Odbc; "DEFAULTBINARYSIZE"])
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(-1))
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "When 0 or greater, BINARY columns whose reported length is half the \
+             session VARCHAR max or 8 MiB are rewritten to this COLUMN_SIZE. \
+             Unset, negative, and unparsable values keep half the session max. \
+             Metadata-only; fetched values are unchanged. \
+             Client-only, never forwarded to GS.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(false)
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Odbc))
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::ENABLE_CONNECTION_DIAG.as_str())
         .value_type(ValueType::Bool)
         // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
@@ -2513,22 +2581,6 @@ static PARAM_DEFS: &[ParamDef] = &[
         "Legacy OCSP fail-open switch. The driver accepts the key and does not apply it; certificate revocation uses CRL",
         Deprecation::Ignored {
             guidance: "Set CRL_MODE=ADVISORY for fail-open revocation checking or CRL_MODE=ENABLED for fail-close.",
-        },
-    ),
-    odbc_deprecated(
-        param_names::DEFAULT_VARCHAR_SIZE.as_str(),
-        aliases![],
-        "Legacy DEFAULT_VARCHAR_SIZE. The driver accepts the key and does not apply it",
-        Deprecation::Ignored {
-            guidance: "VARCHAR column sizes come from result-set metadata; this connection-string key is not applied.",
-        },
-    ),
-    odbc_deprecated(
-        param_names::DEFAULT_BINARY_SIZE.as_str(),
-        aliases![],
-        "Legacy DEFAULT_BINARY_SIZE. The driver accepts the key and does not apply it",
-        Deprecation::Ignored {
-            guidance: "BINARY column sizes come from result-set metadata; this connection-string key is not applied.",
         },
     ),
 ];
@@ -2838,6 +2890,9 @@ mod tests {
             ("PROXYWITHENV", "use_proxy_env", &[Odbc]),
             ("ALLOWEMPTYPROXY", "allow_empty_proxy", &[Odbc]),
             ("USECURRENTCATALOG", "use_current_catalog", &[Odbc]),
+            ("MAPTOLONGVARCHAR", "map_to_long_varchar", &[Odbc]),
+            ("DEFAULTVARCHARSIZE", "default_varchar_size", &[Odbc]),
+            ("DEFAULTBINARYSIZE", "default_binary_size", &[Odbc]),
             ("PRIV_KEY_FILE", "private_key_file", &[Odbc]),
             ("PRIV_KEY_BASE64", "private_key", &[Odbc]),
             ("PRIV_KEY_FILE_PWD", "private_key_password", &[Odbc]),
@@ -3203,47 +3258,43 @@ mod tests {
     }
 
     #[test]
-    fn odbc_deprecated_default_size_keys_resolve_only_for_odbc() {
+    fn default_varchar_size_is_odbc_only_connection_int() {
         let r = registry();
-        let cases: &[(&str, &str, &str)] = &[
-            (
-                "DEFAULT_VARCHAR_SIZE",
-                "default_varchar_size",
-                "VARCHAR column sizes come from result-set metadata",
-            ),
-            (
-                "DEFAULT_BINARY_SIZE",
-                "default_binary_size",
-                "BINARY column sizes come from result-set metadata",
-            ),
-        ];
-        for (key, canonical, guidance_prefix) in cases {
-            let def = r
-                .resolve_for(Wrapper::Odbc, key)
-                .unwrap_or_else(|| panic!("{key:?} should resolve for Odbc"));
-            assert_eq!(def.canonical_name, *canonical);
-            let Some(Deprecation::Ignored { guidance }) = def.deprecated else {
-                panic!("{canonical} should be deprecated with guidance");
-            };
-            assert!(
-                guidance.contains(guidance_prefix),
-                "{canonical} guidance should name the metadata source, got {guidance:?}"
-            );
-            assert!(def.ignored, "{canonical} should be ignored");
-            assert_eq!(def.visible_to, visible_to!(Odbc));
-            assert!(r.resolve(canonical).is_none());
-            for wrapper in [
-                Wrapper::Jdbc,
-                Wrapper::Python,
-                Wrapper::NodeJs,
-                Wrapper::DotNet,
-            ] {
-                assert!(
-                    r.resolve_for(wrapper, key).is_none(),
-                    "{key} must not resolve for {wrapper:?}"
-                );
-            }
-        }
+        assert!(r.resolve("default_varchar_size").is_none());
+        let d = r
+            .resolve_for(Wrapper::Odbc, "DEFAULT_VARCHAR_SIZE")
+            .expect("DEFAULT_VARCHAR_SIZE should resolve for Odbc");
+        assert_eq!(d.canonical_name, "default_varchar_size");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(!d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::Int);
+        assert_eq!(d.default, Some(DefaultValue::Int(-1)));
+        assert!(!d.ignored);
+        assert!(d.deprecated.is_none());
+        assert!(d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
+    }
+
+    #[test]
+    fn default_binary_size_is_odbc_only_connection_int() {
+        let r = registry();
+        assert!(r.resolve("default_binary_size").is_none());
+        let d = r
+            .resolve_for(Wrapper::Odbc, "DEFAULT_BINARY_SIZE")
+            .expect("DEFAULT_BINARY_SIZE should resolve for Odbc");
+        assert_eq!(d.canonical_name, "default_binary_size");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(!d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::Int);
+        assert_eq!(d.default, Some(DefaultValue::Int(-1)));
+        assert!(!d.ignored);
+        assert!(d.deprecated.is_none());
+        assert!(d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
     }
 
     #[test]
@@ -3739,6 +3790,24 @@ mod tests {
         assert!(d.used_at_connect);
         assert!(!d.mutable_after_connect);
         assert_eq!(d.value_type, ValueType::String);
+    }
+
+    #[test]
+    fn map_to_long_varchar_is_odbc_only_connection_int() {
+        let r = registry();
+        assert!(r.resolve("map_to_long_varchar").is_none());
+        let d = r
+            .resolve_for(Wrapper::Odbc, "MapToLongVarchar")
+            .expect("MapToLongVarchar should resolve for Odbc");
+        assert_eq!(d.canonical_name, "map_to_long_varchar");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(!d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::Int);
+        assert_eq!(d.default, Some(DefaultValue::Int(-1)));
+        assert!(d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
     }
 
     #[test]

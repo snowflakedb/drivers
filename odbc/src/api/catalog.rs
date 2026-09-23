@@ -1857,7 +1857,9 @@ fn parse_two_int_args(inner: Option<&str>) -> (Option<i32>, Option<i32>) {
 /// type reporting identical to SQLColumns/SQLDescribeCol (one mapping, no drift).
 fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings) -> Field {
     let (base, inner) = split_type_and_args(type_str);
-    let default_varchar = numeric_settings.max_varchar_size.min(i64::MAX as u64) as i64;
+    let session_varchar = i64::try_from(numeric_settings.max_varchar_size).unwrap_or(i64::MAX);
+    let default_varchar =
+        i64::try_from(numeric_settings.effective_default_varchar_size()).unwrap_or(session_varchar);
     // Timestamp/time scale: explicit arg, else Snowflake's default of 9.
     let fractional_scale = || {
         parse_two_int_args(inner)
@@ -1923,13 +1925,18 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
             true,
         ),
         "BINARY" | "VARBINARY" => {
-            let byte_len = parse_two_int_args(inner).0.map(i64::from);
-            rehydrate_field("BINARY", None, None, None, byte_len, true)
+            let default_binary =
+                i64::try_from(numeric_settings.effective_default_binary_size()).unwrap_or(i64::MAX);
+            let byte_len = parse_two_int_args(inner)
+                .0
+                .map(i64::from)
+                .unwrap_or(default_binary);
+            rehydrate_field("BINARY", None, None, None, Some(byte_len), true)
         }
-        "VARIANT" => rehydrate_field("VARIANT", None, None, Some(default_varchar), None, true),
-        "OBJECT" => rehydrate_field("OBJECT", None, None, Some(default_varchar), None, true),
-        "ARRAY" => rehydrate_field("ARRAY", None, None, Some(default_varchar), None, true),
-        "VECTOR" => rehydrate_field("VECTOR", None, None, Some(default_varchar), None, true),
+        "VARIANT" => rehydrate_field("VARIANT", None, None, Some(session_varchar), None, true),
+        "OBJECT" => rehydrate_field("OBJECT", None, None, Some(session_varchar), None, true),
+        "ARRAY" => rehydrate_field("ARRAY", None, None, Some(session_varchar), None, true),
+        "VECTOR" => rehydrate_field("VECTOR", None, None, Some(session_varchar), None, true),
         // Unsupported / unrecognized SQL type names keep their logical name so
         // TYPE_NAME can report it; `from_field` maps them to SQL_VARCHAR.
         other => rehydrate_field(
@@ -3417,6 +3424,44 @@ fn catalog_char_length_for_sqlcolumns(logical_type: &str, char_length: Option<i6
     }
 }
 
+fn catalog_default_column_sizes(
+    logical_type: &str,
+    char_length: Option<i64>,
+    byte_length: Option<i64>,
+    numeric_settings: &NumericSettings,
+) -> (Option<i64>, Option<i64>) {
+    match logical_type.to_ascii_uppercase().as_str() {
+        "TEXT" => {
+            let fallback = numeric_settings.effective_default_varchar_size();
+            let raw = char_length
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or_else(|| u32::try_from(fallback).unwrap_or(u32::MAX));
+            let clamped = numeric_settings.apply_default_varchar_size(raw);
+            if clamped != raw || char_length.is_none() {
+                let size = i64::from(clamped);
+                (Some(size), Some(size))
+            } else {
+                (char_length, byte_length)
+            }
+        }
+        "BINARY" => {
+            let fallback = numeric_settings.effective_default_binary_size();
+            let raw = byte_length
+                .or(char_length)
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or_else(|| u32::try_from(fallback).unwrap_or(u32::MAX));
+            let clamped = numeric_settings.apply_default_binary_size(raw);
+            if clamped != raw || byte_length.is_none() {
+                let size = i64::from(clamped);
+                (Some(size), Some(size))
+            } else {
+                (char_length, byte_length)
+            }
+        }
+        _ => (char_length, byte_length),
+    }
+}
+
 fn flat_row_from_descriptor(
     cat: String,
     schem: String,
@@ -3424,12 +3469,18 @@ fn flat_row_from_descriptor(
     desc: &ColumnDescriptor,
     numeric_settings: &NumericSettings,
 ) -> FlatColumnRow {
+    let (char_length, byte_length) = catalog_default_column_sizes(
+        &desc.logical_type,
+        catalog_char_length_for_sqlcolumns(&desc.logical_type, desc.char_length),
+        desc.byte_length,
+        numeric_settings,
+    );
     let field = rehydrate_field(
         &desc.logical_type,
         desc.precision,
         desc.scale,
-        catalog_char_length_for_sqlcolumns(&desc.logical_type, desc.char_length),
-        desc.byte_length,
+        char_length,
+        byte_length,
         desc.nullable,
     );
 
@@ -3988,6 +4039,7 @@ const CODE_TIMESTAMP: i16 = 3; // SQL_CODE_TIMESTAMP
 // ODBC ALL_TYPES sentinel — fDataType value meaning "return all types".
 const SQL_ALL_TYPES: sql::SmallInt = 0;
 const ODBC_STANDARD_TIMESTAMP_COLUMN_SIZE: i32 = 29;
+const LONG_VARCHAR: i16 = sql::SqlDataType::EXT_LONG_VARCHAR.0;
 
 /// One row in the `SQLGetTypeInfo` result set.
 ///
@@ -4538,6 +4590,46 @@ static ALL_SF_TYPE_INFO: &[TypeInfoRow] = &[
         num_prec_radix: None,
         user_data_type: 0,
     },
+    TypeInfoRow {
+        type_name: "CHAR",
+        data_type: LONG_VARCHAR,
+        column_size: 134_217_728,
+        literal_prefix: Some("'"),
+        literal_suffix: Some("'"),
+        create_params: Some("LENGTH"),
+        nullable: 1,
+        case_sensitive: 1,
+        searchable: SEARCHABLE,
+        unsigned_attribute: None,
+        fixed_prec_scale: 0,
+        local_type_name: Some("CHAR"),
+        minimum_scale: None,
+        maximum_scale: None,
+        sql_data_type: LONG_VARCHAR,
+        sql_datetime_sub: None,
+        num_prec_radix: None,
+        user_data_type: 0,
+    },
+    TypeInfoRow {
+        type_name: "VARCHAR",
+        data_type: LONG_VARCHAR,
+        column_size: 134_217_728,
+        literal_prefix: Some("'"),
+        literal_suffix: Some("'"),
+        create_params: Some("max length"),
+        nullable: 1,
+        case_sensitive: 1,
+        searchable: SEARCHABLE,
+        unsigned_attribute: None,
+        fixed_prec_scale: 0,
+        local_type_name: Some("VARCHAR"),
+        minimum_scale: None,
+        maximum_scale: None,
+        sql_data_type: LONG_VARCHAR,
+        sql_datetime_sub: None,
+        num_prec_radix: None,
+        user_data_type: 0,
+    },
 ];
 
 /// Build a 20-column `RecordBatch` from the given slice of `TypeInfoRow`
@@ -4606,22 +4698,43 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
     .context(crate::api::error::RecordBatchBuildSnafu)
 }
 
-fn type_info_rows(odbc_version: sql::Integer, data_type: sql::SmallInt) -> Vec<TypeInfoRow> {
+/// Concise datetime codes as ODBC 2.x spells them; ODBC 3.0 replaced these with
+/// `SQL_TYPE_DATE` / `SQL_TYPE_TIME` / `SQL_TYPE_TIMESTAMP` (91 / 92 / 93).
+const ODBC2_DATE: i16 = sql::SqlDataType::DATETIME.0;
+const ODBC2_TIME: i16 = sql::SqlDataType::EXT_TIME_OR_INTERVAL.0;
+const ODBC2_TIMESTAMP: i16 = sql::SqlDataType::EXT_TIMESTAMP.0;
+
+fn odbc2_concise_type(data_type: i16) -> i16 {
+    match sql::SqlDataType(data_type) {
+        sql::SqlDataType::DATE => ODBC2_DATE,
+        sql::SqlDataType::TIME => ODBC2_TIME,
+        sql::SqlDataType::TIMESTAMP => ODBC2_TIMESTAMP,
+        _ => data_type,
+    }
+}
+
+fn type_info_rows(
+    odbc_version: sql::Integer,
+    data_type: sql::SmallInt,
+    map_to_long_varchar: Option<u32>,
+) -> Vec<TypeInfoRow> {
     let is_odbc3 = matches!(odbc_version, SQL_OV_ODBC3 | SQL_OV_ODBC3_80);
+    let is_odbc2 = odbc_version == SQL_OV_ODBC2;
+    let include_long_varchar = map_to_long_varchar.is_some();
+
     ALL_SF_TYPE_INFO
         .iter()
-        .filter(|row| is_odbc3 || row.data_type != -5)
-        .map(|row| {
-            let mut row = *row;
-            if odbc_version == SQL_OV_ODBC2 {
-                row.data_type = match row.data_type {
-                    91 => 9,
-                    92 => 10,
-                    93 => 11,
-                    other => other,
-                };
-            }
-            row
+        .filter(move |row| {
+            (is_odbc3 || row.data_type != sql::SqlDataType::EXT_BIG_INT.0)
+                && (include_long_varchar || row.data_type != LONG_VARCHAR)
+        })
+        .map(move |row| TypeInfoRow {
+            data_type: if is_odbc2 {
+                odbc2_concise_type(row.data_type)
+            } else {
+                row.data_type
+            },
+            ..*row
         })
         .filter(|row| data_type == SQL_ALL_TYPES || row.data_type == data_type)
         .collect()
@@ -4630,11 +4743,13 @@ fn type_info_rows(odbc_version: sql::Integer, data_type: sql::SmallInt) -> Vec<T
 /// Implements `SQLGetTypeInfo`: returns a static result set describing
 /// Snowflake's supported SQL data types.
 ///
-/// When `data_type == SQL_ALL_TYPES` (0), all 24 rows are returned in legacy
-/// insertion order. For any other value, only the row whose `DATA_TYPE` column
-/// matches is returned. An unknown type yields an empty result set (legacy
-/// behavior; the ODBC spec allows `HY004` but compatibility requires success).
-/// `TIMESTAMP` `COLUMN_SIZE` is 29.
+/// When `data_type == SQL_ALL_TYPES` (0), the static rows are returned in
+/// legacy insertion order. The trailing CHAR and VARCHAR `SQL_LONGVARCHAR`
+/// rows are dropped unless `MapToLongVarchar` is set; those two
+/// rows are the only result for `SQL_LONGVARCHAR`. For any other value, only
+/// the row whose `DATA_TYPE` column matches is returned. An unknown type
+/// yields an empty result set (legacy behavior; the ODBC spec allows `HY004`
+/// but compatibility requires success). `TIMESTAMP` `COLUMN_SIZE` is 29.
 pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) -> OdbcResult<()> {
     tracing::debug!("SQLGetTypeInfo called");
 
@@ -4652,9 +4767,10 @@ pub fn get_type_info(statement_handle: sql::Handle, data_type: sql::SmallInt) ->
         ConnectionState::Connected { .. } => {}
         ConnectionState::Disconnected { .. } => return DisconnectedSnafu.fail(),
     }
+    let map_to_long_varchar = conn.numeric_settings.map_to_long_varchar;
     drop(conn);
 
-    let filtered = type_info_rows(odbc_version, data_type);
+    let filtered = type_info_rows(odbc_version, data_type, map_to_long_varchar);
     let filtered_refs: Vec<&TypeInfoRow> = filtered.iter().collect();
 
     let schema = type_info_schema();
@@ -4679,8 +4795,9 @@ mod type_info_tests {
 
     #[test]
     fn all_types_returns_24_rows_and_20_columns() {
-        let all: Vec<&TypeInfoRow> = ALL_SF_TYPE_INFO.iter().collect();
-        let batch = build_type_info_batch(&all).expect("batch build failed");
+        let rows = type_info_rows(SQL_OV_ODBC3, SQL_ALL_TYPES, None);
+        let refs: Vec<&TypeInfoRow> = rows.iter().collect();
+        let batch = build_type_info_batch(&refs).expect("batch build failed");
         assert_eq!(batch.num_rows(), 24);
         assert_eq!(batch.num_columns(), 20);
         assert_eq!(type_info_schema().fields().len(), 20);
@@ -4781,13 +4898,17 @@ mod type_info_tests {
             1, 2, 3, 4, -5, 6, 7, 8, 12, -2, -3, 91, 92, 2000, 2002, 2001, 93, 2003, 2004, 2005,
             2006, -8, -9, -7,
         ];
-        let actual: Vec<i16> = ALL_SF_TYPE_INFO.iter().map(|r| r.data_type).collect();
+        let actual: Vec<i16> = ALL_SF_TYPE_INFO
+            .iter()
+            .filter(|row| row.data_type != LONG_VARCHAR)
+            .map(|r| r.data_type)
+            .collect();
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn odbc2_uses_legacy_type_set_and_datetime_codes() {
-        let rows = type_info_rows(SQL_OV_ODBC2, SQL_ALL_TYPES);
+        let rows = type_info_rows(SQL_OV_ODBC2, SQL_ALL_TYPES, None);
         let data_types: Vec<i16> = rows.iter().map(|row| row.data_type).collect();
         assert_eq!(rows.len(), 23);
         assert!(!data_types.contains(&-5));
@@ -4803,7 +4924,7 @@ mod type_info_tests {
     #[test]
     fn odbc3_versions_use_modern_type_set_and_datetime_codes() {
         for version in [SQL_OV_ODBC3, SQL_OV_ODBC3_80] {
-            let rows = type_info_rows(version, SQL_ALL_TYPES);
+            let rows = type_info_rows(version, SQL_ALL_TYPES, None);
             let data_types: Vec<i16> = rows.iter().map(|row| row.data_type).collect();
             assert_eq!(rows.len(), 24);
             assert!(data_types.contains(&-5));
@@ -4815,6 +4936,44 @@ mod type_info_tests {
             assert!(!data_types.contains(&10));
             assert!(!data_types.contains(&11));
         }
+    }
+
+    #[test]
+    fn map_to_long_varchar_appends_char_and_varchar_longvarchar_rows() {
+        let rows = type_info_rows(SQL_OV_ODBC3, SQL_ALL_TYPES, Some(8000));
+        assert_eq!(rows.len(), 26);
+        let extras: Vec<&TypeInfoRow> = rows
+            .iter()
+            .filter(|row| row.data_type == sql::SqlDataType::EXT_LONG_VARCHAR.0)
+            .collect();
+        assert_eq!(extras.len(), 2);
+        assert_eq!(extras[0].type_name, "CHAR");
+        assert_eq!(extras[1].type_name, "VARCHAR");
+        assert_eq!(
+            extras[0].sql_data_type,
+            sql::SqlDataType::EXT_LONG_VARCHAR.0
+        );
+        assert_eq!(
+            extras[1].sql_data_type,
+            sql::SqlDataType::EXT_LONG_VARCHAR.0
+        );
+        assert_eq!(extras[0].column_size, 134_217_728);
+        assert_eq!(extras[1].column_size, 134_217_728);
+    }
+
+    #[test]
+    fn map_to_long_varchar_filter_returns_only_extras() {
+        let rows = type_info_rows(SQL_OV_ODBC3, LONG_VARCHAR, Some(0));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].type_name, "CHAR");
+        assert_eq!(rows[1].type_name, "VARCHAR");
+        assert!(rows.iter().all(|row| row.data_type == LONG_VARCHAR));
+    }
+
+    #[test]
+    fn map_to_long_varchar_unset_adds_no_extras() {
+        let rows = type_info_rows(SQL_OV_ODBC3, LONG_VARCHAR, None);
+        assert!(rows.is_empty());
     }
 }
 

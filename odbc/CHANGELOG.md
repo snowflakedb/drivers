@@ -4,6 +4,8 @@
 
 New features:
 
+- Added the `MapToLongVarchar` connection parameter so CHAR and VARCHAR columns whose size exceeds the threshold are reported as `SQL_LONGVARCHAR`. Unset and negative values keep `SQL_VARCHAR`. (snowflakedb/drivers#2215)
+- Added the `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection parameters so max-length VARCHAR and BINARY columns report the configured sizes. Unset and negative values keep the session maximum. (snowflakedb/drivers#2216)
 - Added SQLGetInfo support for SQL_OUTER_JOINS (ODBC 1.0), returning Y to match the 3.x driver. (snowflakedb/drivers#2141)
 - Added the `PUT_COMPRESSLV` connection parameter so PUT AUTO_COMPRESS can select gzip compression levels 0–9. Unset and out-of-range values keep gzip level 6. (snowflakedb/drivers#2083)
 - Added the `PUT_TEMPDIR` connection parameter so PUT AUTO_COMPRESS can write gzip tempfiles to a caller-supplied directory. Unset and empty values keep the process temp directory. Nested directories are created. (snowflakedb/drivers#2084)
@@ -15,7 +17,6 @@ Changes:
 - Changed the ODBC Driver Manager `CPTimeout` connection-string keyword to be accepted and ignored instead of treated as an unknown session parameter. (snowflakedb/drivers#2196)
 - Changed leftover ODBC connection-string OCSP keywords `DisableOCSPCheck` and `OCSP_FAIL_OPEN` to be accepted and ignored, posting SQLSTATE `01000` on connect. Certificate revocation uses CRL; set `CRL_MODE` to `DISABLED`, `ENABLED`, or `ADVISORY`. (snowflakedb/drivers#2100)
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
-- Changed `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection-string keywords to be accepted and ignored, posting SQLSTATE `01000` on connect. (snowflakedb/drivers#2102)
 - Changed leftover ODBC connection-string keyword `TRANSLATE` to be accepted and ignored, posting SQLSTATE `01000` on connect. Character-set translation DLLs are not supported. (snowflakedb/drivers#2195)
 
 Bug fixes:

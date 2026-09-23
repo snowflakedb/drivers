@@ -229,6 +229,7 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             snowflake_type: SnowflakeVarchar {
                 len: 0,
                 is_semi_structured: false,
+                map_to_long_varchar: None,
             },
         })),
 

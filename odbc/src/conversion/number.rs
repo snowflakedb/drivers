@@ -1,4 +1,4 @@
-use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
+use arrow::array::{ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
 use snafu::OptionExt;
 
@@ -54,6 +54,18 @@ pub struct NumericSettings {
     /// not-loaded" combination unrepresentable. Read it via
     /// [`NumericSettings::tz_offset_format`].
     pub tz_offset_format_cache: TzOffsetFormatCache,
+    /// `MapToLongVarchar` threshold. `None` leaves CHAR/VARCHAR as
+    /// `SQL_VARCHAR`. `Some(t)` remaps those types to `SQL_LONGVARCHAR`
+    /// when `COLUMN_SIZE` is greater than `t`.
+    pub map_to_long_varchar: Option<u32>,
+    /// `DEFAULT_VARCHAR_SIZE`. Values below 0 use `max_varchar_size`.
+    /// Values of 0 or greater rewrite TEXT whose reported length is the
+    /// session max or 16 MiB.
+    pub default_varchar_size: i64,
+    /// `DEFAULT_BINARY_SIZE`. Values below 0 use `max_varchar_size / 2`.
+    /// Values of 0 or greater rewrite BINARY whose reported length is
+    /// half the session max or 8 MiB.
+    pub default_binary_size: i64,
 }
 
 /// Cache state for the session's `TIMESTAMP_TZ_OUTPUT_FORMAT` offset token.
@@ -75,6 +87,45 @@ pub enum TzOffsetFormatCache {
 }
 
 impl NumericSettings {
+    pub fn effective_default_varchar_size(&self) -> u64 {
+        if self.default_varchar_size < 0 {
+            self.max_varchar_size
+        } else {
+            u64::try_from(self.default_varchar_size).unwrap_or(self.max_varchar_size)
+        }
+    }
+
+    pub fn effective_default_binary_size(&self) -> u64 {
+        if self.default_binary_size < 0 {
+            self.max_varchar_size / 2
+        } else {
+            u64::try_from(self.default_binary_size).unwrap_or(self.max_varchar_size / 2)
+        }
+    }
+
+    pub fn apply_default_varchar_size(&self, len: u32) -> u32 {
+        let reported = u64::from(len);
+        let default = self.effective_default_varchar_size();
+        let at_max = reported == self.max_varchar_size || reported == SF_DEFAULT_VARCHAR_MAX_LEN;
+        if at_max && default < reported {
+            u32::try_from(default).unwrap_or(u32::MAX)
+        } else {
+            len
+        }
+    }
+
+    pub fn apply_default_binary_size(&self, len: u32) -> u32 {
+        let reported = u64::from(len);
+        let default = self.effective_default_binary_size();
+        let max_binary = self.max_varchar_size / 2;
+        let at_max = reported == max_binary || reported == SF_DEFAULT_VARCHAR_MAX_LEN / 2;
+        if at_max && default < reported {
+            u32::try_from(default).unwrap_or(u32::MAX)
+        } else {
+            len
+        }
+    }
+
     /// The offset token the TZ -> CHAR/WCHAR fetch path should use.
     ///
     /// Always `None`: TIMESTAMP_TZ fetched into `SQL_C_CHAR` / `SQL_C_WCHAR`
@@ -104,6 +155,9 @@ impl Default for NumericSettings {
             treat_big_number_as_string: false,
             max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
             tz_offset_format_cache: TzOffsetFormatCache::Unloaded,
+            map_to_long_varchar: None,
+            default_varchar_size: -1,
+            default_binary_size: -1,
         }
     }
 }

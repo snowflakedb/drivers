@@ -39,7 +39,9 @@ use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_name;
 use crate::api::runtime::global;
-use crate::api::utils::{config_setting_bool, get_session_parameter, zero_padded_driver_version};
+use crate::api::utils::{
+    config_setting_bool, config_setting_i64, get_session_parameter, zero_padded_driver_version,
+};
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
@@ -655,6 +657,17 @@ pub fn browse_connect<E: OdbcEncoding>(
     }
 }
 
+/// The `MapToLongVarchar` threshold, or `None` when the option is absent,
+/// unparseable, or negative — each of which leaves CHAR/VARCHAR reported as
+/// `SQL_VARCHAR`. Thresholds beyond `u32::MAX` saturate, since no `COLUMN_SIZE`
+/// can exceed them.
+fn map_to_long_varchar_threshold(options: &HashMap<String, ConfigSetting>) -> Option<u32> {
+    let threshold = options
+        .get(param_names::MAP_TO_LONG_VARCHAR.as_str())
+        .and_then(config_setting_i64)?;
+    (threshold >= 0).then(|| u32::try_from(threshold).unwrap_or(u32::MAX))
+}
+
 /// Core connection logic shared by `driver_connect` and `connect`.
 ///
 /// Takes the already-parsed parameter map, applies it to a new sf_core connection,
@@ -718,6 +731,15 @@ fn connect_with_params(
     let use_current_catalog = options
         .get(param_names::USE_CURRENT_CATALOG.as_str())
         .is_some_and(config_setting_bool);
+    let map_to_long_varchar = map_to_long_varchar_threshold(&options);
+    let default_varchar_size = options
+        .get(param_names::DEFAULT_VARCHAR_SIZE.as_str())
+        .and_then(config_setting_i64)
+        .unwrap_or(-1);
+    let default_binary_size = options
+        .get(param_names::DEFAULT_BINARY_SIZE.as_str())
+        .and_then(config_setting_i64)
+        .unwrap_or(-1);
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
@@ -793,6 +815,9 @@ fn connect_with_params(
         // any stale flag left on a reused handle from a prior connection.
         c.open_transaction = false;
         c.use_current_catalog = use_current_catalog;
+        c.numeric_settings.map_to_long_varchar = map_to_long_varchar;
+        c.numeric_settings.default_varchar_size = default_varchar_size;
+        c.numeric_settings.default_binary_size = default_binary_size;
     }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
@@ -3068,6 +3093,90 @@ mod tests {
     }
 
     #[test]
+    fn normalize_connection_string_options_maps_map_to_long_varchar() {
+        for spelling in [
+            "MapToLongVarchar",
+            "MAPTOLONGVARCHAR",
+            "map_to_long_varchar",
+        ] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "8000".to_owned(),
+            )]));
+            assert_eq!(
+                config_string(&options, "map_to_long_varchar"),
+                Some("8000"),
+                "{spelling} should normalize to the canonical key"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_map_to_long_varchar_int_values() {
+        for (raw, expected) in [
+            ("8000", Some(8000)),
+            ("0", Some(0)),
+            ("-1", None),
+            ("garbage", None),
+            ("4294967296", Some(u32::MAX)),
+        ] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                "MapToLongVarchar".to_owned(),
+                raw.to_owned(),
+            )]));
+            assert_eq!(map_to_long_varchar_threshold(&options), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn map_to_long_varchar_threshold_is_none_when_absent() {
+        let options = normalize_connection_string_options(HashMap::new());
+        assert_eq!(map_to_long_varchar_threshold(&options), None);
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_default_size_keys() {
+        for (spelling, canonical) in [
+            ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
+            ("default_varchar_size", "default_varchar_size"),
+            ("DEFAULTVARCHARSIZE", "default_varchar_size"),
+            ("DEFAULT_BINARY_SIZE", "default_binary_size"),
+            ("default_binary_size", "default_binary_size"),
+            ("DEFAULTBINARYSIZE", "default_binary_size"),
+        ] {
+            let options = normalize_connection_string_options(HashMap::from([(
+                spelling.to_owned(),
+                "2000".to_owned(),
+            )]));
+            assert_eq!(
+                config_string(&options, canonical),
+                Some("2000"),
+                "{spelling} should normalize to {canonical}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_default_size_int_values() {
+        for (key, canonical) in [
+            ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
+            ("DEFAULT_BINARY_SIZE", "default_binary_size"),
+        ] {
+            for (raw, expected) in [("2000", Some(2000)), ("-1", Some(-1)), ("garbage", None)] {
+                let options = normalize_connection_string_options(HashMap::from([(
+                    key.to_owned(),
+                    raw.to_owned(),
+                )]));
+                assert_eq!(
+                    options.get(canonical).and_then(config_setting_i64),
+                    expected,
+                    "{key}={raw}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn parse_use_current_catalog_bool_values() {
         for (raw, expected) in [
             ("true", true),
@@ -3374,29 +3483,10 @@ mod tests {
     }
 
     #[test]
-    fn deprecated_registry_param_warnings_cover_default_size_keys() {
+    fn deprecated_registry_param_warnings_omit_default_size_keys() {
         let params =
             parse_connection_string("DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1").unwrap();
-        let warnings = deprecated_registry_param_warnings(&params);
-        let messages: Vec<String> = warnings
-            .iter()
-            .map(|warning| match warning {
-                Warning::DeprecatedParameter {
-                    parameter,
-                    deprecation,
-                } => deprecation.message_for(parameter),
-                other => panic!("unexpected warning: {other:?}"),
-            })
-            .collect();
-        assert_eq!(
-            messages,
-            vec![
-                "Parameter 'DEFAULT_BINARY_SIZE' is deprecated and has no effect. \
-                 BINARY column sizes come from result-set metadata; this connection-string key is not applied.",
-                "Parameter 'DEFAULT_VARCHAR_SIZE' is deprecated and has no effect. \
-                 VARCHAR column sizes come from result-set metadata; this connection-string key is not applied.",
-            ]
-        );
+        assert!(deprecated_registry_param_warnings(&params).is_empty());
     }
 
     #[test]
@@ -3844,16 +3934,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_connection_string_options_drops_default_size_keys() {
-        let options = normalize_connection_string_options(HashMap::from([
-            ("DEFAULT_VARCHAR_SIZE".to_owned(), "1".to_owned()),
-            ("DEFAULT_BINARY_SIZE".to_owned(), "1".to_owned()),
-        ]));
-
-        assert!(options.is_empty());
-    }
-
-    #[test]
     fn normalize_connection_string_options_drops_translate_key() {
         let options = normalize_connection_string_options(HashMap::from([(
             "TRANSLATE".to_owned(),
@@ -4244,10 +4324,16 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_connection_string_keys_ignores_default_size_keys() {
+    fn unrecognized_connection_string_keys_accepts_default_size_keys() {
         let params =
             parse_connection_string("DSN=my_dsn;DEFAULT_VARCHAR_SIZE=1;DEFAULT_BINARY_SIZE=1")
                 .unwrap();
+        assert!(unrecognized_connection_string_keys(&params).is_empty());
+    }
+
+    #[test]
+    fn unrecognized_connection_string_keys_accepts_map_to_long_varchar() {
+        let params = parse_connection_string("DSN=my_dsn;MapToLongVarchar=8000").unwrap();
         assert!(unrecognized_connection_string_keys(&params).is_empty());
     }
 

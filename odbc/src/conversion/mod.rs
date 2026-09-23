@@ -456,6 +456,20 @@ fn timestamp_scale(field: &Field) -> Result<u32, ConversionError> {
     }
 }
 
+fn text_len_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<u32, ConversionError> {
+    match get_field_metadata(field, "charLength") {
+        Ok(len) => Ok(numeric_settings.apply_default_varchar_size(len)),
+        Err(ConversionError::MissingFieldMetadata { .. }) => Ok(u32::try_from(
+            numeric_settings.effective_default_varchar_size(),
+        )
+        .unwrap_or(u32::MAX)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Parsed Snowflake type from an Arrow field's metadata.
 enum SnowflakeFieldType {
     Varchar(varchar::SnowflakeVarchar),
@@ -486,17 +500,11 @@ impl SnowflakeFieldType {
             .unwrap_or("");
         match logical_type {
             "TEXT" => {
-                let len = match get_field_metadata(field, "charLength") {
-                    Ok(len) => len,
-                    Err(ConversionError::MissingFieldMetadata { .. }) => {
-                        u32::try_from(numeric_settings.max_varchar_size)
-                            .unwrap_or(SF_DEFAULT_VARCHAR_MAX_LEN as u32)
-                    }
-                    Err(e) => return Err(e),
-                };
+                let len = text_len_from_field(field, numeric_settings)?;
                 Ok(Self::Varchar(varchar::SnowflakeVarchar {
                     len,
                     is_semi_structured: false,
+                    map_to_long_varchar: numeric_settings.map_to_long_varchar,
                 }))
             }
             "FIXED" => {
@@ -535,9 +543,11 @@ impl SnowflakeFieldType {
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => {
                 let len = match get_field_metadata(field, "byteLength") {
-                    Ok(len) => len,
-                    // byteLength is optional; default to Snowflake's max (8 MB).
-                    Err(ConversionError::MissingFieldMetadata { .. }) => 8_388_608,
+                    Ok(len) => numeric_settings.apply_default_binary_size(len),
+                    Err(ConversionError::MissingFieldMetadata { .. }) => {
+                        u32::try_from(numeric_settings.effective_default_binary_size())
+                            .unwrap_or(u32::MAX)
+                    }
                     Err(e) => return Err(e),
                 };
                 Ok(Self::Binary(binary::SnowflakeBinary { len }))
@@ -561,8 +571,6 @@ impl SnowflakeFieldType {
             "OBJECT" | "ARRAY" | "VARIANT" => {
                 let len = match get_field_metadata(field, "charLength") {
                     Ok(len) => len,
-                    // charLength is optional; fall back to the server-configured
-                    // max VARCHAR size used elsewhere in ODBC metadata reporting.
                     Err(ConversionError::MissingFieldMetadata { .. }) => {
                         numeric_settings.max_varchar_size.min(u32::MAX as u64) as u32
                     }
@@ -571,6 +579,7 @@ impl SnowflakeFieldType {
                 Ok(Self::Varchar(varchar::SnowflakeVarchar {
                     len,
                     is_semi_structured: true,
+                    map_to_long_varchar: numeric_settings.map_to_long_varchar,
                 }))
             }
             "VECTOR" => {
@@ -614,14 +623,14 @@ impl SnowflakeFieldType {
                 let len = match get_field_metadata(field, "charLength") {
                     Ok(len) => len,
                     Err(ConversionError::MissingFieldMetadata { .. }) => {
-                        u32::try_from(numeric_settings.max_varchar_size)
-                            .unwrap_or(SF_DEFAULT_VARCHAR_MAX_LEN as u32)
+                        u32::try_from(numeric_settings.max_varchar_size).unwrap_or(u32::MAX)
                     }
                     Err(e) => return Err(e),
                 };
                 Ok(Self::Varchar(varchar::SnowflakeVarchar {
                     len,
                     is_semi_structured: false,
+                    map_to_long_varchar: numeric_settings.map_to_long_varchar,
                 }))
             }
         }
@@ -1032,7 +1041,7 @@ pub fn sql_type_from_field(
     if let Some(code) = concise_sql_type_override(field) {
         return Ok(code);
     }
-    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
+    Ok(SnowflakeFieldType::from_field(field, numeric_settings)?.sql_type())
 }
 
 /// Returns the verbose SQL data type (SQL_DESC_TYPE) for a field.
@@ -1129,6 +1138,19 @@ mod concise_sql_type_override_tests {
         );
     }
 
+    #[test]
+    fn map_to_long_varchar_does_not_override_concise_sql_type() {
+        let field = text_field_with_concise(WVARCHAR_CONCISE_SQL_TYPE);
+        let settings = NumericSettings {
+            map_to_long_varchar: Some(0),
+            ..NumericSettings::default()
+        };
+        assert_eq!(
+            sql_type_from_field(&field, &settings).unwrap(),
+            sql::SqlDataType::EXT_W_VARCHAR
+        );
+    }
+
     fn catalog_fixed_field(data_type: DataType, scale: u32, precision: u32, concise: i16) -> Field {
         let metadata: HashMap<String, String> = [
             ("logicalType".to_string(), "FIXED".to_string()),
@@ -1172,6 +1194,229 @@ mod concise_sql_type_override_tests {
             .unwrap();
         assert_eq!(value, 12);
         assert_eq!(str_len, std::mem::size_of::<i32>() as sql::Len);
+    }
+}
+
+#[cfg(test)]
+mod map_to_long_varchar_sql_type_tests {
+    use super::{NumericSettings, sql_type_from_field};
+    use arrow::datatypes::{DataType, Field};
+    use odbc_sys as sql;
+    use std::collections::HashMap;
+
+    fn text_field(char_length: &str) -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), "TEXT".to_string()),
+            ("charLength".to_string(), char_length.to_string()),
+        ]
+        .into();
+        Field::new("col", DataType::Utf8, true).with_metadata(metadata)
+    }
+
+    fn semi_structured_field(logical_type: &str, char_length: &str) -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), logical_type.to_string()),
+            ("charLength".to_string(), char_length.to_string()),
+        ]
+        .into();
+        Field::new("col", DataType::Utf8, true).with_metadata(metadata)
+    }
+
+    #[test]
+    fn unset_threshold_leaves_varchar() {
+        let field = text_field("16777216");
+        assert_eq!(
+            sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+    }
+
+    #[test]
+    fn sql_type_from_field_remaps_unbounded_text() {
+        let field = text_field("16777216");
+        let settings = NumericSettings {
+            map_to_long_varchar: Some(8000),
+            ..NumericSettings::default()
+        };
+        assert_eq!(
+            sql_type_from_field(&field, &settings).unwrap(),
+            sql::SqlDataType::EXT_LONG_VARCHAR
+        );
+        assert_eq!(
+            sql_type_from_field(&text_field("8000"), &settings).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+        assert_eq!(
+            sql_type_from_field(&text_field("8001"), &settings).unwrap(),
+            sql::SqlDataType::EXT_LONG_VARCHAR
+        );
+    }
+
+    #[test]
+    fn sql_type_from_field_remaps_semi_structured() {
+        let settings = NumericSettings {
+            map_to_long_varchar: Some(8000),
+            ..NumericSettings::default()
+        };
+        for logical_type in ["VARIANT", "OBJECT", "ARRAY"] {
+            assert_eq!(
+                sql_type_from_field(&semi_structured_field(logical_type, "16777216"), &settings)
+                    .unwrap(),
+                sql::SqlDataType::EXT_LONG_VARCHAR,
+            );
+            assert_eq!(
+                sql_type_from_field(&semi_structured_field(logical_type, "8000"), &settings)
+                    .unwrap(),
+                sql::SqlDataType::VARCHAR,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod default_column_size_tests {
+    use super::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, column_size_from_field};
+    use arrow::datatypes::{DataType, Field};
+    use odbc_sys as sql;
+    use std::collections::HashMap;
+
+    fn text_field(char_length: Option<&str>) -> Field {
+        let mut metadata: HashMap<String, String> =
+            [("logicalType".to_string(), "TEXT".to_string())].into();
+        if let Some(len) = char_length {
+            metadata.insert("charLength".to_string(), len.to_string());
+        }
+        Field::new("col", DataType::Utf8, true).with_metadata(metadata)
+    }
+
+    fn binary_field(byte_length: Option<&str>) -> Field {
+        let mut metadata: HashMap<String, String> =
+            [("logicalType".to_string(), "BINARY".to_string())].into();
+        if let Some(len) = byte_length {
+            metadata.insert("byteLength".to_string(), len.to_string());
+        }
+        Field::new("col", DataType::Binary, true).with_metadata(metadata)
+    }
+
+    fn settings(default_varchar: i64, default_binary: i64) -> NumericSettings {
+        NumericSettings {
+            default_varchar_size: default_varchar,
+            default_binary_size: default_binary,
+            ..NumericSettings::default()
+        }
+    }
+
+    #[test]
+    fn unset_defaults_keep_session_max() {
+        let ns = NumericSettings::default();
+        assert_eq!(
+            column_size_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            SF_DEFAULT_VARCHAR_MAX_LEN as sql::ULen
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("8388608")), &ns).unwrap(),
+            8_388_608
+        );
+    }
+
+    #[test]
+    fn clamps_max_text_and_binary() {
+        let ns = settings(2000, 1000);
+        assert_eq!(
+            column_size_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            2000
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("8388608")), &ns).unwrap(),
+            1000
+        );
+    }
+
+    #[test]
+    fn leaves_bounded_columns_unchanged() {
+        let ns = settings(2000, 1000);
+        assert_eq!(
+            column_size_from_field(&text_field(Some("8000")), &ns).unwrap(),
+            8000
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("16")), &ns).unwrap(),
+            16
+        );
+    }
+
+    #[test]
+    fn missing_length_uses_configured_default() {
+        let ns = settings(2000, 1000);
+        assert_eq!(
+            column_size_from_field(&text_field(None), &ns).unwrap(),
+            2000
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(None), &ns).unwrap(),
+            1000
+        );
+    }
+
+    #[test]
+    fn hardcoded_16mib_workaround_clamps_when_session_max_differs() {
+        let ns = NumericSettings {
+            max_varchar_size: 134_217_728,
+            default_varchar_size: 2000,
+            default_binary_size: 1000,
+            ..NumericSettings::default()
+        };
+        assert_eq!(
+            column_size_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            2000
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("8388608")), &ns).unwrap(),
+            1000
+        );
+        assert_eq!(
+            column_size_from_field(&text_field(Some("134217728")), &ns).unwrap(),
+            2000
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("67108864")), &ns).unwrap(),
+            1000
+        );
+    }
+
+    #[test]
+    fn larger_than_max_default_is_a_no_op() {
+        let ns = settings(20_000_000, 10_000_000);
+        assert_eq!(
+            column_size_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            SF_DEFAULT_VARCHAR_MAX_LEN as sql::ULen
+        );
+        assert_eq!(
+            column_size_from_field(&binary_field(Some("8388608")), &ns).unwrap(),
+            8_388_608
+        );
+    }
+
+    #[test]
+    fn default_varchar_size_is_applied_before_map_to_long_varchar() {
+        use super::sql_type_from_field;
+        let ns = NumericSettings {
+            map_to_long_varchar: Some(8000),
+            default_varchar_size: 8000,
+            ..NumericSettings::default()
+        };
+        assert_eq!(
+            sql_type_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+        assert_eq!(
+            column_size_from_field(&text_field(Some("16777216")), &ns).unwrap(),
+            8000
+        );
+        assert_eq!(
+            sql_type_from_field(&text_field(Some("8001")), &ns).unwrap(),
+            sql::SqlDataType::EXT_LONG_VARCHAR
+        );
     }
 }
 

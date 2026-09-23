@@ -113,6 +113,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("OCSP_FAIL_OPEN", "ocsp_fail_open"),
     ("DEFAULT_VARCHAR_SIZE", "default_varchar_size"),
     ("DEFAULT_BINARY_SIZE", "default_binary_size"),
+    ("MapToLongVarchar", "map_to_long_varchar"),
     ("TRANSLATE", "translate"),
 ];
 
@@ -131,7 +132,6 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     "CRL_DOWNLOAD_TIMEOUT",
     "ValidateSessionParam",
     "GET_SIZE_THRESHOLD",
-    "MapToLongVarchar",
     "ODBC_SCHEMA_CACHING",
     "OUT_OF_RANGE_TIMESTAMP_EXCEPTION",
     "EnableDescribeDirectExec",
