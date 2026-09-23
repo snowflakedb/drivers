@@ -15,6 +15,7 @@ use super::date;
 use super::decfloat;
 use super::interval;
 use super::number;
+use super::numpy::NumpyProvider;
 use super::real;
 use super::text;
 use super::time;
@@ -29,48 +30,69 @@ pub(crate) enum RowShape {
     Dict { keys: Vec<Py<PyString>> },
 }
 
+fn dict_row_shape(py: Python<'_>, schema: &arrow::datatypes::Schema) -> RowShape {
+    let keys = schema
+        .fields()
+        .iter()
+        .map(|field| PyString::intern(py, field.name()).unbind())
+        .collect();
+    RowShape::Dict { keys }
+}
+
 pub(crate) struct ConversionContext {
     plan: LogicalPlan,
     row_shape: Arc<RowShape>,
     timezone: Arc<TimezoneProvider>,
+    numpy: Arc<NumpyProvider>,
+    use_numpy: bool,
 }
 
 impl ConversionContext {
     #[cfg(test)]
     pub(crate) fn new(schema: &arrow::datatypes::Schema) -> PyResult<Self> {
-        Self::from_schema(schema, RowShape::Tuple, None)
+        Self::from_schema(schema, RowShape::Tuple, None, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_numpy(schema: &arrow::datatypes::Schema) -> PyResult<Self> {
+        Self::from_schema(schema, RowShape::Tuple, None, true)
     }
 
     pub(crate) fn with_session_timezone(
         schema: &arrow::datatypes::Schema,
         session_timezone: Option<String>,
+        use_numpy: bool,
     ) -> PyResult<Self> {
-        Self::from_schema(schema, RowShape::Tuple, session_timezone)
+        Self::from_schema(schema, RowShape::Tuple, session_timezone, use_numpy)
     }
 
     pub(crate) fn with_dict_keys(
         py: Python<'_>,
         schema: &arrow::datatypes::Schema,
         session_timezone: Option<String>,
+        use_numpy: bool,
     ) -> PyResult<Self> {
-        let keys = schema
-            .fields()
-            .iter()
-            .map(|field| PyString::intern(py, field.name()).unbind())
-            .collect();
-        Self::from_schema(schema, RowShape::Dict { keys }, session_timezone)
+        Self::from_schema(
+            schema,
+            dict_row_shape(py, schema),
+            session_timezone,
+            use_numpy,
+        )
     }
 
     fn from_schema(
         schema: &arrow::datatypes::Schema,
         row_shape: RowShape,
         session_timezone: Option<String>,
+        use_numpy: bool,
     ) -> PyResult<Self> {
         let plan = LogicalPlan::from_schema(schema)?;
         Ok(Self {
             plan,
             row_shape: Arc::new(row_shape),
             timezone: Arc::new(TimezoneProvider::new(session_timezone)),
+            numpy: Arc::new(NumpyProvider::new()),
+            use_numpy,
         })
     }
 
@@ -97,13 +119,21 @@ impl ConversionContext {
     ) -> PyResult<Column> {
         match *field_type {
             SnowflakeFieldType::Boolean => boolean::from_column(array, field_type),
-            SnowflakeFieldType::Number { scale, .. } => {
-                number::from_column(array, field_type, scale)
+            SnowflakeFieldType::Number { scale, .. } => number::from_column(
+                array,
+                field_type,
+                scale,
+                Arc::clone(&self.numpy),
+                self.use_numpy,
+            ),
+            SnowflakeFieldType::Real => {
+                real::from_column(array, field_type, Arc::clone(&self.numpy), self.use_numpy)
             }
-            SnowflakeFieldType::Real => real::from_column(array, field_type),
             SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
-            SnowflakeFieldType::Decfloat { .. } => decfloat::from_column(array, field_type),
+            SnowflakeFieldType::Decfloat { .. } => {
+                decfloat::from_column(array, field_type, Arc::clone(&self.numpy), self.use_numpy)
+            }
             SnowflakeFieldType::Date => date::from_column(array, field_type),
             SnowflakeFieldType::Time { scale } => time::from_column(array, field_type, scale),
             SnowflakeFieldType::TimestampNtz { scale } => {

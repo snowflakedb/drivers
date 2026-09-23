@@ -6,6 +6,7 @@ mod decfloat;
 mod decode;
 mod interval;
 mod number;
+mod numpy;
 mod real;
 mod text;
 mod time;
@@ -32,11 +33,13 @@ use sf_types::{
 use self::binary::BinaryMaterializer;
 use self::boolean::BoolMaterializer;
 use self::date::DateMaterializer;
-use self::decfloat::DecfloatMaterializer;
+use self::decfloat::{DecfloatMaterializer, DecfloatNumpyMaterializer};
 use self::decode::TypedColumn;
 use self::interval::{IntervalDayTimeColumn, IntervalYearMonthColumn};
-use self::number::NumberColumn;
-use self::real::RealMaterializer;
+use self::number::{
+    NumberColumn, NumberMaterializer, NumberNumpyFloatMaterializer, NumberNumpyIntMaterializer,
+};
+use self::real::{RealMaterializer, RealNumpyMaterializer};
 use self::text::TextMaterializer;
 use self::time::TimeColumn;
 use self::timestamp_ltz::TimestampLtzColumn;
@@ -48,11 +51,15 @@ pub(crate) use context::{ConversionContext, RowShape};
 
 pub(crate) enum Column {
     Bool(TypedColumn<BooleanArray, SnowflakeBoolean, BoolMaterializer>),
-    Number(NumberColumn),
+    Number(NumberColumn<NumberMaterializer>),
+    NumberNumpyInt(NumberColumn<NumberNumpyIntMaterializer>),
+    NumberNumpyFloat(NumberColumn<NumberNumpyFloatMaterializer>),
     Real(TypedColumn<Float64Array, SnowflakeReal, RealMaterializer>),
+    RealNumpy(TypedColumn<Float64Array, SnowflakeReal, RealNumpyMaterializer>),
     Text(TypedColumn<StringArray, SnowflakeText, TextMaterializer>),
     Binary(TypedColumn<BinaryArray, SnowflakeBinary, BinaryMaterializer>),
     Decfloat(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatMaterializer>),
+    DecfloatNumpy(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatNumpyMaterializer>),
     Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
     Time(TimeColumn),
     TimestampNtz(TimestampNtzColumn),
@@ -68,10 +75,14 @@ impl Column {
         match self {
             Self::Bool(column) => column.to_py(py, row),
             Self::Number(column) => column.to_py(py, row),
+            Self::NumberNumpyInt(column) => column.to_py(py, row),
+            Self::NumberNumpyFloat(column) => column.to_py(py, row),
             Self::Real(column) => column.to_py(py, row),
+            Self::RealNumpy(column) => column.to_py(py, row),
             Self::Text(column) => column.to_py(py, row),
             Self::Binary(column) => column.to_py(py, row),
             Self::Decfloat(column) => column.to_py(py, row),
+            Self::DecfloatNumpy(column) => column.to_py(py, row),
             Self::Date(column) => column.to_py(py, row),
             Self::Time(column) => column.to_py(py, row),
             Self::TimestampNtz(column) => column.to_py(py, row),

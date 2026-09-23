@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 from snowflake.connector._core import sf_core_python
-from snowflake.connector.errors import InternalError, NotSupportedError
+from snowflake.connector.errors import InternalError
 
 from .._common.extras import pyarrow
 from .arrow import ArrowRowIterator
@@ -55,11 +55,6 @@ def create_row_iterator(
     nanoarrow iterator.
     """
     if sf_core_python.native_arrow_enabled():
-        if use_numpy:
-            release_arrow_stream(stream_ptr)
-            raise NotSupportedError(
-                msg="Native Arrow row path does not support use_numpy. Disable SF_NATIVE_ARROW or drop use_numpy."
-            )
         # Class is only exported when built with ``native-arrow``; stub_gen
         # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
         iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
@@ -77,6 +72,7 @@ def create_row_iterator(
                 stream_ptr,
                 session_timezone=context.timezone,
                 use_dict_result=use_dict_result,
+                use_numpy=use_numpy,
             ),
         )
     return CythonArrowStreamIterator(

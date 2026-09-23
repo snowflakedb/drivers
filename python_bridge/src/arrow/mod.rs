@@ -3,6 +3,7 @@ mod converters;
 mod error;
 mod iterator;
 mod plan;
+mod scaled_f64;
 mod stream;
 
 #[cfg(test)]

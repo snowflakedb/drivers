@@ -56,6 +56,20 @@ mod tests {
     }
 
     #[test]
+    fn text_stays_python_str_with_numpy() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let array: ArrayRef = Arc::new(StringArray::from(vec![Some("hello")]));
+        let column = context
+            .converter_from_column(&array, &varchar(false))
+            .unwrap();
+
+        Python::attach(|py| {
+            assert_py_str(&column.to_py(py, 0).unwrap(), "hello");
+        });
+    }
+
+    #[test]
     fn semi_structured_varchar_uses_the_same_utf8_path() {
         Python::initialize();
         let ctx = ConversionContext::new(&Schema::empty()).unwrap();

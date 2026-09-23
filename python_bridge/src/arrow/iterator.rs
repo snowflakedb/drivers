@@ -21,14 +21,15 @@ pub struct ArrowStreamIterator {
 #[pymethods]
 impl ArrowStreamIterator {
     #[new]
-    #[pyo3(signature = (stream_ptr, session_timezone=None, use_dict_result=false))]
+    #[pyo3(signature = (stream_ptr, session_timezone=None, use_dict_result=false, use_numpy=false))]
     pub(crate) fn new(
         py: Python<'_>,
         stream_ptr: i64,
         session_timezone: Option<String>,
         use_dict_result: bool,
+        use_numpy: bool,
     ) -> PyResult<Self> {
-        Self::construct(py, stream_ptr, session_timezone, use_dict_result)
+        Self::construct(py, stream_ptr, session_timezone, use_dict_result, use_numpy)
             .map_err(|err| wrap_row_conversion(py, err))
     }
 
@@ -58,12 +59,22 @@ impl ArrowStreamIterator {
         stream_ptr: i64,
         session_timezone: Option<String>,
         use_dict_result: bool,
+        use_numpy: bool,
     ) -> PyResult<Self> {
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
         let context = if use_dict_result {
-            ConversionContext::with_dict_keys(py, stream.schema().as_ref(), session_timezone)?
+            ConversionContext::with_dict_keys(
+                py,
+                stream.schema().as_ref(),
+                session_timezone,
+                use_numpy,
+            )?
         } else {
-            ConversionContext::with_session_timezone(stream.schema().as_ref(), session_timezone)?
+            ConversionContext::with_session_timezone(
+                stream.schema().as_ref(),
+                session_timezone,
+                use_numpy,
+            )?
         };
         let mut this = Self {
             stream: Mutex::new(stream),
@@ -151,11 +162,11 @@ mod tests {
     use crate::arrow::test_support::stream_ptr_from_batches;
 
     fn new_iterator(stream_ptr: i64) -> ArrowStreamIterator {
-        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, false).unwrap())
+        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, false, false).unwrap())
     }
 
     fn new_dict_iterator(stream_ptr: i64) -> ArrowStreamIterator {
-        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, true).unwrap())
+        Python::attach(|py| ArrowStreamIterator::new(py, stream_ptr, None, true, false).unwrap())
     }
 
     fn boolean_field(name: &str) -> Field {
@@ -295,6 +306,7 @@ mod tests {
                 py,
                 stream_ptr_from_batches(vec![batch], schema),
                 Some("America/New_York".to_string()),
+                false,
                 false,
             )
             .unwrap()

@@ -67,6 +67,20 @@ mod tests {
     }
 
     #[test]
+    fn date_stays_python_date_with_numpy() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let array: ArrayRef = Arc::new(Date32Array::from(vec![Some(0)]));
+        let column = context
+            .converter_from_column(&array, &SnowflakeFieldType::Date)
+            .unwrap();
+
+        Python::attach(|py| {
+            assert_py_date(&column.to_py(py, 0).unwrap(), 1970, 1, 1);
+        });
+    }
+
+    #[test]
     fn rejects_physical_mismatch_for_date() {
         Python::initialize();
         let ctx = ConversionContext::new(&Schema::empty()).unwrap();

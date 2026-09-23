@@ -13,6 +13,34 @@ pub(crate) fn assert_py_bool(value: &Bound<'_, PyAny>, expected: bool) {
     assert_eq!(value.extract::<bool>().unwrap(), expected);
 }
 
+fn numpy_type<'py>(py: Python<'py>, name: &str) -> Bound<'py, PyAny> {
+    py.import("numpy").unwrap().getattr(name).unwrap()
+}
+
+pub(crate) fn assert_np_int64(value: &Bound<'_, PyAny>, expected: i64) {
+    let expected_type = numpy_type(value.py(), "int64");
+    assert!(
+        value.get_type().is(&expected_type),
+        "expected numpy.int64, got {}",
+        value.get_type().name().unwrap()
+    );
+    assert_eq!(value.extract::<i64>().unwrap(), expected);
+}
+
+pub(crate) fn assert_np_float64(value: &Bound<'_, PyAny>, expected: f64) {
+    let expected_type = numpy_type(value.py(), "float64");
+    assert!(
+        value.get_type().is(&expected_type),
+        "expected numpy.float64, got {}",
+        value.get_type().name().unwrap()
+    );
+    if expected.is_nan() {
+        assert!(value.extract::<f64>().unwrap().is_nan());
+    } else {
+        assert_eq!(value.extract::<f64>().unwrap(), expected);
+    }
+}
+
 pub(crate) fn assert_py_float(value: &Bound<'_, PyAny>, expected: f64) {
     assert!(
         value.is_instance_of::<PyFloat>(),

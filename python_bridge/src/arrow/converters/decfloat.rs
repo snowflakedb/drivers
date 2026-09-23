@@ -1,20 +1,36 @@
+use std::sync::Arc;
+
 use arrow::array::{ArrayRef, StructArray};
 use pyo3::prelude::*;
 use sf_types::SnowflakeDecfloat;
 
 use super::Column;
 use super::decode::{PyMaterializer, TypedColumn};
+use super::numpy::NumpyProvider;
 use crate::arrow::converters::util::{downcast_column, py_decimal_from_coeff_exp};
 use crate::arrow::plan::SnowflakeFieldType;
+use crate::arrow::scaled_f64::scaled_f64;
 
-pub(super) fn from_column(array: &ArrayRef, field_type: &SnowflakeFieldType) -> PyResult<Column> {
-    downcast_column::<StructArray>(array, field_type).map(|array| {
-        Column::Decfloat(TypedColumn::new(
+pub(super) fn from_column(
+    array: &ArrayRef,
+    field_type: &SnowflakeFieldType,
+    numpy: Arc<NumpyProvider>,
+    use_numpy: bool,
+) -> PyResult<Column> {
+    let array = downcast_column::<StructArray>(array, field_type)?;
+    if use_numpy {
+        Ok(Column::DecfloatNumpy(TypedColumn::new(
+            array,
+            SnowflakeDecfloat,
+            DecfloatNumpyMaterializer { numpy },
+        )))
+    } else {
+        Ok(Column::Decfloat(TypedColumn::new(
             array,
             SnowflakeDecfloat,
             DecfloatMaterializer,
-        ))
-    })
+        )))
+    }
 }
 
 pub(crate) struct DecfloatMaterializer;
@@ -23,6 +39,18 @@ impl PyMaterializer<SnowflakeDecfloat> for DecfloatMaterializer {
     fn materialize<'py>(&self, py: Python<'py>, value: (i128, i16)) -> PyResult<Bound<'py, PyAny>> {
         let (significand, exponent) = value;
         py_decimal_from_coeff_exp(py, significand, i32::from(exponent))
+    }
+}
+
+pub(crate) struct DecfloatNumpyMaterializer {
+    numpy: Arc<NumpyProvider>,
+}
+
+impl PyMaterializer<SnowflakeDecfloat> for DecfloatNumpyMaterializer {
+    fn materialize<'py>(&self, py: Python<'py>, value: (i128, i16)) -> PyResult<Bound<'py, PyAny>> {
+        let (significand, exponent) = value;
+        self.numpy
+            .float64(py, scaled_f64(significand, i32::from(exponent)))
     }
 }
 
@@ -37,7 +65,9 @@ mod tests {
     use pyo3::prelude::*;
 
     use crate::arrow::converters::ConversionContext;
-    use crate::arrow::converters::test_util::{assert_py_decimal, assert_py_none};
+    use crate::arrow::converters::test_util::{
+        assert_np_float64, assert_py_decimal, assert_py_none,
+    };
     use crate::arrow::plan::SnowflakeFieldType;
 
     fn decfloat() -> SnowflakeFieldType {
@@ -191,6 +221,37 @@ mod tests {
                 text.contains("DECFLOAT struct missing 'significand' field"),
                 "got {text}"
             );
+        });
+    }
+
+    #[test]
+    fn numpy_converts_to_float64_with_nulls() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let pos = sig(1234);
+        let array = decfloat_struct(vec![Some(-3), None], vec![Some(&pos), None]);
+        let column = context.converter_from_column(&array, &decfloat()).unwrap();
+
+        Python::attach(|py| {
+            assert_np_float64(&column.to_py(py, 0).unwrap(), 1.234);
+            assert_py_none(&column.to_py(py, 1).unwrap());
+        });
+    }
+
+    #[test]
+    fn numpy_overflows_extreme_exponents_beyond_float64_range() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let one = sig(1);
+        let array = decfloat_struct(
+            vec![Some(16_384), Some(-16_383)],
+            vec![Some(&one), Some(&one)],
+        );
+        let column = context.converter_from_column(&array, &decfloat()).unwrap();
+
+        Python::attach(|py| {
+            assert_np_float64(&column.to_py(py, 0).unwrap(), f64::INFINITY);
+            assert_np_float64(&column.to_py(py, 1).unwrap(), 0.0);
         });
     }
 }

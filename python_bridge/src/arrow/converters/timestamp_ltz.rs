@@ -117,6 +117,7 @@ mod tests {
         let new_york = ConversionContext::with_session_timezone(
             &Schema::empty(),
             Some("America/New_York".to_string()),
+            false,
         )
         .unwrap();
 
