@@ -40,9 +40,10 @@ so core and wrapper logs share one pipeline that the host application controls.
   Each event crosses the PyO3 boundary with its level, message, file, line, and function, and the Python side rebuilds a native
   `logging` record on the `snowflake.connector._core` logger.
   *This is the reference pattern for wrapper integration.*
-- **JDBC** - a JNI `SFLoggerLayer` forwards events to SLF4J. Core-originated events land on
-  `net.snowflake.client.CoreLogger`; wrapper round-trip events carry their originating logger name and
-  are delivered onto it (see below).
+- **JDBC** - a JNI `SFLoggerLayer` forwards events to the configured logging
+  backend. Core-originated events land on
+  `net.snowflake.client.CoreLogger`; wrapper round-trip events carry their
+  originating logger name and are delivered onto it (see below).
 - **ODBC** - no wrapper sink. The core writes to a file when a log path is configured.
 
 ---
@@ -113,16 +114,23 @@ The flow mirrors Python across JNI instead of the C FFI:
    `jdbc_bridge` via `NativeLibraryLoader`.
 3. `jdbc_bridge` re-emits it on the shared `sf_wrapper` target (the same
    `wrapper_event!` macro the C FFI uses), so every core layer sees it.
-4. The JNI `SFLoggerLayer` hands it back. Wrapper round-trip events carry a
-   `logger_name`, so it delivers through `SFLoggerFactory.getDeliveryLogger` —
-   which returns a *plain* JUL or SLF4J logger (never a `CoreLogger`), so a delivered
-   record cannot re-enter the round-trip and loop. Core-originated events leave
-   `logger_name` empty and land on `net.snowflake.client.CoreLogger`.
+4. The JNI `SFLoggerLayer` synchronously hands it back on the emitting thread.
+   Wrapper events resolve their `logger_name` to a plain delivery logger, which
+   prevents another round-trip. Core events use the cached
+   `net.snowflake.client.CoreLogger` delivery logger. Core and dependency
+   DEBUG/TRACE events stop before normalization when that logger has DEBUG
+   disabled; Java wrapper events were already checked before entering JNI.
 
 **Delivery backend.** `net.snowflake.jdbc.loggerImpl` selects the delivery logger,
 defaulting to JUL (`net.snowflake.client.log.JDK14Logger`) for legacy driver
 compatibility. Set to `net.snowflake.client.log.SLF4JLogger` to route delivery
 through SLF4J instead.
+
+**JNI resource reuse.** `SFLoggerLayer` owns the `JavaVM` handle. Java threads
+are already attached; a detached native worker attaches as a daemon on its first
+event and reuses that thread-local attachment until exit. Each event uses a local
+JNI frame. Core events reuse one global delivery-logger reference, while wrapper
+events continue resolving their originating logger by name.
 
 **Initialization / fallback.** `logEvent` returns `0` when accepted and
 non-zero when the pipeline is not live yet (before `JNI_OnLoad`); on any non-zero
@@ -196,13 +204,22 @@ Level filtering is **per output**, not a single global gate. The core owns the
 **Wrapper sink** (Python `CallbackLayer`, JDBC `SFLoggerLayer`):
 
 - The core invokes the wrapper callback for each tracing event that reaches this layer.
+- Neither app sink has a tracing target or level filter: events from `sf_core`,
+  `sf_wrapper`, and tracing-enabled dependencies reach the Python or JDBC
+  callback.
+- JDBC maps Rust TRACE to Java DEBUG. For non-wrapper DEBUG/TRACE events,
+  `SFLoggerLayer` checks `isDebugEnabled()` before normalizing fields or
+  allocating the Java message; disabled events stop there.
 - The **wrapper** applies its own level and routing rules before anything reaches the host
   application (Python `isEnabledFor`, JDBC JUL/SLF4J config).
 
 These filters are independent: tightening the file-layer level does not reduce what the
 wrapper sink receives, and wrapper log config does not affect core file output.
 
-> [TODO(SNOW-3744966)]: Apply level filtering in core before the wrapper callback - today every event is formatted and crosses FFI before the wrapper drops it.
+> [TODO(SNOW-3744966)]: Mirror the wrapper level in a tracing-layer filter so
+> disabled events can stop before reaching the callback. JDBC currently avoids
+> formatting and message delivery but still enters `SFLoggerLayer` for the
+> authoritative Java level check.
 
 ---
 

@@ -194,7 +194,15 @@ static LOG_DISPATCH: OnceLock<tracing::dispatcher::Dispatch> = OnceLock::new();
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
-    let layer = sflogger_layer::SFLoggerLayer::new(jvm);
+    // The tracing pipeline does not exist until initialization succeeds, so bootstrap failures
+    // use stderr.
+    let layer = match sflogger_layer::SFLoggerLayer::new(jvm) {
+        Ok(layer) => layer,
+        Err(e) => {
+            eprintln!("Failed to initialize JVM logging bridge: {e:?}");
+            return -1;
+        }
+    };
     let sessions = SessionRegistry::default();
     match LogManager::with_app_sink(sf_core::logging::LoggingConfig::default(), layer, sessions) {
         Ok(lm) => {
