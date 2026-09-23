@@ -92,6 +92,14 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default User's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
    */
   arrayBindingThreshold?: number;
+  /**
+   * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
+   * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
+   * listener and waits for the IdP redirect; this function only receives
+   * the URL that would otherwise be opened. The driver does not await a
+   * returned Promise: complete any loopback redirect async so login can keep waiting.
+   */
+  openExternalBrowserCallback?: (url: string) => void | Promise<void>;
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
@@ -162,6 +170,7 @@ export class Connection {
       jsTreatIntegerAsBigInt,
       representNullAsStringNull,
       arrayBindingThreshold,
+      openExternalBrowserCallback,
       ...coreOptions
     } = options;
 
@@ -185,6 +194,7 @@ export class Connection {
         useEnvProxy: GlobalConfig.useEnvProxy,
       }),
       sessionParameters,
+      openExternalBrowserCallback,
     );
   }
 

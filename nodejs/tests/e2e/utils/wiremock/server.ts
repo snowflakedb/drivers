@@ -110,7 +110,14 @@ export class WiremockServer {
     this.#port = await findFreePort();
     const child = spawn(
       'java',
-      ['-jar', WIREMOCK_JAR, '--port', String(this.#port), '--disable-banner'],
+      [
+        '-jar',
+        WIREMOCK_JAR,
+        '--port',
+        String(this.#port),
+        '--disable-banner',
+        '--local-response-templating',
+      ],
       { stdio: 'ignore' },
     );
     this.#process = child;

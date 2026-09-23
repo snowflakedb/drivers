@@ -26,6 +26,7 @@ export interface ResponseDefinition {
   headers?: Record<string, string>;
   jsonBody?: unknown;
   proxyBaseUrl?: string;
+  transformers?: string[];
 }
 
 export interface StubMapping {
@@ -121,5 +122,27 @@ export function telemetrySuccess(): StubMapping {
       urlPathPattern: '/telemetry/send.*',
     },
     response: jsonResponse(200, { success: true }),
+  };
+}
+
+export function authenticatorRequestSuccess(): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPathPattern: '/session/authenticator-request.*',
+    },
+    response: {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      transformers: ['response-template'],
+      jsonBody: {
+        success: true,
+        data: {
+          ssoUrl:
+            "https://idp.snowflake.com/sso?browser_mode_redirect_port={{jsonPath request.body '$.data.BROWSER_MODE_REDIRECT_PORT'}}",
+          proofKey: 'test_proof_key',
+        },
+      },
+    },
   };
 }

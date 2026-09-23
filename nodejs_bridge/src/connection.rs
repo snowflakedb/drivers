@@ -3,11 +3,13 @@ use crate::error::{BridgeError, ConnectionOperation, ToJsError, UnusableConnecti
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
 use sf_core::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
 use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::param_names;
+use sf_core::config::rest_parameters::BrowserOpenFn;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
@@ -120,6 +122,7 @@ impl Connection {
         options: HashMap<String, String>,
         env: &Env,
         session_parameters: HashMap<String, String>,
+        open_external_browser_callback: Option<Function<String, ()>>,
     ) -> Result<Self> {
         let database_handle = DRIVER.database_new();
         DRIVER.database_init(database_handle).map_err(|e| {
@@ -146,6 +149,21 @@ impl Connection {
                 .entry(param_names::EXTRA_ROOT_STORE_PATH.as_str().to_string())
                 .or_insert_with(|| Setting::String(ca_path));
         }
+        let browser_opener = match open_external_browser_callback {
+            Some(callback) => {
+                let browser_open_fn = callback.build_threadsafe_function::<String>().build()?;
+                Some(Arc::new(move |url: &str| {
+                    let status = browser_open_fn
+                        .call(url.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
+                    if status == Status::Ok {
+                        Ok(())
+                    } else {
+                        Err(format!("openExternalBrowserCallback failed: {status}"))
+                    }
+                }) as BrowserOpenFn)
+            }
+            None => None,
+        };
 
         block_on(async {
             DRIVER
@@ -154,6 +172,11 @@ impl Connection {
             if !session_parameters.is_empty() {
                 DRIVER
                     .connection_set_session_parameters(conn_handle, session_parameters)
+                    .await?;
+            }
+            if let Some(opener) = browser_opener {
+                DRIVER
+                    .connection_set_browser_opener(conn_handle, opener)
                     .await?;
             }
             DRIVER
