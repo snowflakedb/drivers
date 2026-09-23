@@ -289,6 +289,16 @@ impl Iterator for SchemaOverrideReader {
     }
 }
 
+pub(crate) fn override_reader_schema(
+    reader: Box<dyn RecordBatchReader + Send>,
+    schema: SchemaRef,
+) -> Box<dyn RecordBatchReader + Send> {
+    Box::new(SchemaOverrideReader {
+        inner: reader,
+        schema,
+    })
+}
+
 pub(crate) fn inject_nullable_schema(
     schema: SchemaRef,
     nullable_flags: Option<&[bool]>,
@@ -337,10 +347,7 @@ pub(crate) fn maybe_inject_nullable(
     if Arc::ptr_eq(&injected, &schema) {
         return reader;
     }
-    Box::new(SchemaOverrideReader {
-        inner: reader,
-        schema: injected,
-    })
+    override_reader_schema(reader, injected)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

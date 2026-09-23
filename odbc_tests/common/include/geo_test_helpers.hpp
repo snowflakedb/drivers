@@ -25,6 +25,17 @@ inline void require_sql_type(const StatementHandleWrapper& stmt, SQLUSMALLINT co
   REQUIRE(data_type == expected);
 }
 
+inline void require_sql_type_name(const StatementHandleWrapper& stmt, SQLUSMALLINT col, const char* expected) {
+  char type_name[16];
+  std::memset(type_name, 0xFF, sizeof(type_name));
+  SQLSMALLINT type_name_length = -1;
+  SQLRETURN ret = SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name),
+                                  &type_name_length, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(type_name_length == static_cast<SQLSMALLINT>(std::strlen(expected)));
+  REQUIRE(std::string(type_name, static_cast<size_t>(type_name_length)) == expected);
+}
+
 inline void require_contains(const std::string& haystack, const char* needle) {
   REQUIRE(haystack.find(needle) != std::string::npos);
 }

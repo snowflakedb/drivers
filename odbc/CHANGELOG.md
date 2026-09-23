@@ -19,6 +19,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed query-result metadata so `SQL_DESC_TYPE_NAME` reports `GEOGRAPHY` or `GEOMETRY` while preserving the text or binary concise type selected by the output format. (snowflakedb/drivers#2222)
 - Fixed GET of a staged path that matches no object so it returns an empty result set, matching ODBC 3.x. (snowflakedb/drivers#2071)
 - Fixed `SQLExecute`/`SQLExecDirect` to return SQLSTATE `07S01` (Invalid use of default parameter) when any bound parameter has `StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5)`; previously the driver returned `HY000` where the ODBC spec requires `07S01`. (snowflakedb/drivers#1833)
 - Fixed `SQLFreeStmt(SQL_RESET_PARAMS)` so it clears the implementation parameter descriptor, setting `SQL_DESC_COUNT` to 0 after both direct and prepared execution; stale parameter metadata previously survived a reset and could make the next execute fail. (snowflakedb/drivers#2143)

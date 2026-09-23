@@ -83,6 +83,10 @@ impl AsyncArrowBatchFetcher {
         self.schema.clone()
     }
 
+    pub(crate) fn override_schema(&mut self, schema: SchemaRef) {
+        self.schema = schema;
+    }
+
     pub(crate) async fn next_batch(&mut self) -> Result<Option<RecordBatch>, ChunkError> {
         if let Some(done) = self.terminal_result() {
             return done;

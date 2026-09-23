@@ -62,8 +62,9 @@ TEST_CASE("should cast geometry to expected_type for format output format", "[ge
     const auto stmt = conn.execute_fetch("SELECT TO_GEOMETRY('POINT(1820.12 890.56)')");
 
     // Then Result should be returned as <expected_type> type
+    require_sql_type(stmt, 1, test_case.is_text ? SQL_VARCHAR : SQL_BINARY);
+    require_sql_type_name(stmt, 1, "GEOMETRY");
     if (test_case.is_text) {
-      require_sql_type(stmt, 1, SQL_VARCHAR);
       REQUIRE_FALSE(fetch_char(stmt, 1).empty());
     } else {
       REQUIRE_FALSE(fetch_binary(stmt, 1).empty());

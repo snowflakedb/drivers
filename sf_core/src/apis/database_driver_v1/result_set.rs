@@ -8,7 +8,7 @@ use super::query::{
     upload_column_metadata,
 };
 use crate::apis::operation_ctx::{OperationCtx, run_opt};
-use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig};
+use crate::chunks::{ChunkDownloadData, ChunkFormatKind, PrefetchConfig, override_reader_schema};
 use crate::handle_manager::Handle;
 use crate::query_types::statement_type::{
     DML_AFFECTED_ROWS_COLUMN_PREFIXES, DML_AFFECTED_ROWS_COLUMNS, QueryType, ResultKind,
@@ -16,7 +16,7 @@ use crate::query_types::statement_type::{
 use crate::rest::snowflake::query_response::{Data, FieldMetadata, RowType, RowsetData, Stats};
 use crate::rest::snowflake::snowflake_get_query_result;
 use arrow::array::{RecordBatch, RecordBatchReader};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Field, Schema, SchemaRef};
 use snafu::{OptionExt, ResultExt};
 use tokio::sync::Mutex;
 
@@ -85,6 +85,10 @@ impl AsyncArrowBatchFetcher {
 
     pub fn schema(&self) -> SchemaRef {
         self.inner.schema()
+    }
+
+    fn override_schema(&mut self, schema: SchemaRef) {
+        self.inner.override_schema(schema);
     }
 
     pub async fn next_batch(&mut self) -> Result<Option<RecordBatch>, ApiError> {
@@ -496,7 +500,51 @@ struct ReaderInputs {
     http_client: reqwest::Client,
     prefetch_config: PrefetchConfig,
     nullable_flags: Option<Vec<bool>>,
+    columns: Vec<ColumnMetadata>,
     xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
+}
+
+fn geo_type_name(column: &ColumnMetadata) -> Option<&'static str> {
+    let type_name = if column.ext_col_type_name.is_empty() {
+        column.r#type.as_str()
+    } else {
+        column.ext_col_type_name.as_str()
+    };
+    if type_name.eq_ignore_ascii_case("GEOGRAPHY") {
+        Some("GEOGRAPHY")
+    } else if type_name.eq_ignore_ascii_case("GEOMETRY") {
+        Some("GEOMETRY")
+    } else {
+        None
+    }
+}
+
+fn inject_geo_type_names(schema: SchemaRef, columns: &[ColumnMetadata]) -> SchemaRef {
+    if columns.len() != schema.fields().len() {
+        return schema;
+    }
+    let needs_injection = schema.fields().iter().zip(columns).any(|(field, column)| {
+        geo_type_name(column).is_some_and(|type_name| {
+            field.metadata().get("extTypeName").map(String::as_str) != Some(type_name)
+        })
+    });
+    if !needs_injection {
+        return schema;
+    }
+    let fields: Vec<Field> = schema
+        .fields()
+        .iter()
+        .zip(columns)
+        .map(|(field, column)| {
+            let Some(type_name) = geo_type_name(column) else {
+                return field.as_ref().clone();
+            };
+            let mut metadata = field.metadata().clone();
+            metadata.insert("extTypeName".to_string(), type_name.to_string());
+            field.as_ref().clone().with_metadata(metadata)
+        })
+        .collect();
+    Arc::new(Schema::new_with_metadata(fields, schema.metadata().clone()))
 }
 
 /// Resolves `result_handle` and snapshots the inputs needed to lazily build a
@@ -519,6 +567,7 @@ async fn snapshot_reader_inputs(
         http_client: rs.reader_ctx.http_client.clone(),
         prefetch_config: rs.reader_ctx.prefetch_config.clone(),
         nullable_flags: Some(nullable_flags).filter(|f| !f.is_empty()),
+        columns: rs.descriptor.columns.clone(),
         xp_backend: rs.reader_ctx.xp_backend.clone(),
     })
 }
@@ -541,7 +590,7 @@ impl DatabaseDriverV1 {
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
         let inputs = snapshot_reader_inputs(self, result_handle).await?;
-        build_reader_from_rowset_data(
+        let reader = build_reader_from_rowset_data(
             inputs.data,
             inputs.http_client,
             &inputs.prefetch_config,
@@ -550,7 +599,13 @@ impl DatabaseDriverV1 {
             inputs.xp_backend,
         )
         .await
-        .context(QueryResponseProcessSnafu)
+        .context(QueryResponseProcessSnafu)?;
+        let original_schema = reader.schema();
+        let schema = inject_geo_type_names(original_schema.clone(), &inputs.columns);
+        if Arc::ptr_eq(&schema, &original_schema) {
+            return Ok(reader);
+        }
+        Ok(override_reader_schema(reader, schema))
     }
 
     /// Builds a fresh [`AsyncArrowBatchFetcher`] for this result set. Dropping
@@ -560,7 +615,7 @@ impl DatabaseDriverV1 {
         result_handle: Handle,
     ) -> Result<AsyncArrowBatchFetcher, ApiError> {
         let inputs = snapshot_reader_inputs(self, result_handle).await?;
-        build_async_stream(
+        let mut fetcher = build_async_stream(
             inputs.data,
             inputs.http_client,
             &inputs.prefetch_config,
@@ -568,7 +623,10 @@ impl DatabaseDriverV1 {
             inputs.nullable_flags.as_deref(),
             inputs.xp_backend,
         )
-        .await
+        .await?;
+        let schema = inject_geo_type_names(fetcher.schema(), &inputs.columns);
+        fetcher.override_schema(schema);
+        Ok(fetcher)
     }
 
     /// Returns chunk metadata (inline data + remote chunk URLs) for this result set.
@@ -750,6 +808,14 @@ mod tests {
         ]
     }"#;
 
+    const GEO_ARROW_DATA: &str = r#"{
+        "queryResultFormat": "arrow",
+        "rowtype": [
+            {"name": "GEOGRAPHY_COL", "type": "TEXT", "extTypeName": "GEOGRAPHY", "nullable": true},
+            {"name": "GEOMETRY_COL", "type": "TEXT", "extTypeName": "GEOMETRY", "nullable": true}
+        ]
+    }"#;
+
     /// Two-row `ID`/`NAME` batch encoded as a base64 Arrow IPC stream.
     fn arrow_ipc_rowset_base64() -> String {
         use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -766,6 +832,32 @@ mod tests {
             .expect("failed to build Arrow record batch fixture");
 
         let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
+                .expect("failed to create Arrow IPC stream writer");
+            writer.write(&batch).expect("failed to write Arrow batch");
+            writer.finish().expect("failed to finish Arrow IPC stream");
+        }
+        BASE64.encode(&buf)
+    }
+
+    fn arrow_ipc_geo_base64() -> String {
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+
+        let text_metadata: std::collections::HashMap<String, String> =
+            [("logicalType".to_string(), "TEXT".to_string())].into();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("GEOGRAPHY_COL", DataType::Utf8, true).with_metadata(text_metadata.clone()),
+            Field::new("GEOMETRY_COL", DataType::Utf8, true).with_metadata(text_metadata),
+        ]));
+        let columns: Vec<Arc<dyn Array>> = vec![
+            Arc::new(StringArray::from(vec!["POINT(-122.35 37.55)"])),
+            Arc::new(StringArray::from(vec!["POINT(1820.12 890.56)"])),
+        ];
+        let batch = RecordBatch::try_new(Arc::clone(&schema), columns)
+            .expect("failed to build Arrow record batch fixture");
+
+        let mut buf = Vec::new();
         {
             let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut buf, schema.as_ref())
                 .expect("failed to create Arrow IPC stream writer");
@@ -864,6 +956,67 @@ mod tests {
 
         assert_id_name_reader(reader);
         drop(runtime);
+    }
+
+    #[test]
+    fn result_set_streams_preserve_geo_type_names() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(GEO_ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
+        };
+        let rowset_data = RowsetData::ArrowSingleChunk {
+            chunk_base64: arrow_ipc_geo_base64(),
+        };
+        let handle = driver.create_result_set(descriptor, rowset_data, reader_ctx);
+
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+        let reader = runtime
+            .block_on(driver.result_set_get_stream(handle))
+            .expect("result_set_get_stream should preserve geography metadata");
+        assert_eq!(
+            reader
+                .schema()
+                .field(0)
+                .metadata()
+                .get("extTypeName")
+                .map(String::as_str),
+            Some("GEOGRAPHY")
+        );
+        assert_eq!(
+            reader
+                .schema()
+                .field(1)
+                .metadata()
+                .get("extTypeName")
+                .map(String::as_str),
+            Some("GEOMETRY")
+        );
+        let fetcher = runtime
+            .block_on(driver.result_set_get_async_stream(handle))
+            .expect("result_set_get_async_stream should preserve geography metadata");
+        assert_eq!(
+            fetcher
+                .schema()
+                .field(0)
+                .metadata()
+                .get("extTypeName")
+                .map(String::as_str),
+            Some("GEOGRAPHY")
+        );
+        assert_eq!(
+            fetcher
+                .schema()
+                .field(1)
+                .metadata()
+                .get("extTypeName")
+                .map(String::as_str),
+            Some("GEOMETRY")
+        );
     }
 
     fn descriptor_with_columns(columns: Vec<ColumnMetadata>) -> ResultSetDescriptor {

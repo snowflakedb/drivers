@@ -73,8 +73,9 @@ TEST_CASE("should cast geography to expected_type for format output format", "[g
     const auto stmt = conn.execute_fetch("SELECT TO_GEOGRAPHY('POINT(-122.35 37.55)')");
 
     // Then Result should be returned as <expected_type> type
+    require_sql_type(stmt, 1, test_case.is_text ? SQL_VARCHAR : SQL_BINARY);
+    require_sql_type_name(stmt, 1, "GEOGRAPHY");
     if (test_case.is_text) {
-      require_sql_type(stmt, 1, SQL_VARCHAR);
       REQUIRE_FALSE(fetch_char(stmt, 1).empty());
     } else {
       REQUIRE_FALSE(fetch_binary(stmt, 1).empty());

@@ -1177,7 +1177,7 @@ mod concise_sql_type_override_tests {
 
 #[cfg(test)]
 mod unknown_logical_type_tests {
-    use super::{NumericSettings, sql_type_from_field};
+    use super::{NumericSettings, sql_type_from_field, type_name_from_field};
     use crate::conversion::error::ConversionError;
     use arrow::datatypes::{DataType, Field};
     use odbc_sys as sql;
@@ -1200,6 +1200,35 @@ mod unknown_logical_type_tests {
             sql_type_from_field(&field, &NumericSettings::default()).unwrap(),
             sql::SqlDataType::VARCHAR
         );
+    }
+
+    #[test]
+    fn geography_external_type_name_preserves_varchar_storage_type() {
+        let field = field_with_logical_type("TEXT", &[("extTypeName", "GEOGRAPHY")]);
+        let settings = NumericSettings::default();
+        assert_eq!(
+            sql_type_from_field(&field, &settings).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+        assert_eq!(
+            type_name_from_field(&field, &settings).unwrap(),
+            "GEOGRAPHY"
+        );
+    }
+
+    #[test]
+    fn geometry_external_type_name_preserves_binary_storage_type() {
+        let md = HashMap::from([
+            ("logicalType".to_string(), "BINARY".to_string()),
+            ("extTypeName".to_string(), "GEOMETRY".to_string()),
+        ]);
+        let field = Field::new("col", DataType::Binary, true).with_metadata(md);
+        let settings = NumericSettings::default();
+        assert_eq!(
+            sql_type_from_field(&field, &settings).unwrap(),
+            sql::SqlDataType::EXT_BINARY
+        );
+        assert_eq!(type_name_from_field(&field, &settings).unwrap(), "GEOMETRY");
     }
 
     #[test]
@@ -1257,6 +1286,14 @@ pub fn type_name_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<&'static str, ConversionError> {
+    if let Some(type_name) = field.metadata().get("extTypeName") {
+        if type_name.eq_ignore_ascii_case("GEOGRAPHY") {
+            return Ok("GEOGRAPHY");
+        }
+        if type_name.eq_ignore_ascii_case("GEOMETRY") {
+            return Ok("GEOMETRY");
+        }
+    }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.type_name())
 }
 
