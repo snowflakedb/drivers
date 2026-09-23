@@ -1,10 +1,10 @@
 # Python get_query_status(query_id) is not an ODBC API. ODBC observes statement
 # execution through SQLExecDirect / SQLFetch return codes, not Snowflake query
 # status by ID.
-@python @odbc_not_needed
+@python @nodejs @odbc_not_needed
 Feature: Query status
 
-  @python_e2e
+  @python_e2e @nodejs_e2e
   Scenario: should return success status for completed query
     Given Snowflake client is logged in
     When Query "SELECT 1" is executed
@@ -13,7 +13,7 @@ Feature: Query status
     And the query should not be indicated as still running
     And the query should not be indicated as an error
 
-  @python_e2e
+  @python_e2e @nodejs_e2e
   Scenario: should return error status for failed query
     Given Snowflake client is logged in
     When An invalid query is executed and the query ID is captured
@@ -29,7 +29,7 @@ Feature: Query status
     Then the query status should indicate still running
     And the query should not be indicated as an error
 
-  @python_e2e
+  @python_e2e @nodejs_e2e
   Scenario: should return no data status for a non-existent query ID
     Given Snowflake client is logged in
     When Query status is retrieved for a non-existent query ID

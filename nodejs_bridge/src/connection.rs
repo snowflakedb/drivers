@@ -1,5 +1,6 @@
 use crate::DRIVER;
 use crate::error::{BridgeError, ConnectionOperation, ToJsError, UnusableConnection, async_to_js};
+use crate::query::{QueryStatus, require_valid_query_id};
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
 use napi::bindgen_prelude::*;
@@ -12,6 +13,7 @@ use sf_core::config::param_names;
 use sf_core::config::rest_parameters::BrowserOpenFn;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
+use sf_core::rest::snowflake::QueryStatusResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -298,6 +300,36 @@ impl Connection {
     }
 
     #[napi]
+    pub fn get_query_status(&self, env: &Env, query_id: String) -> Result<AsyncBlock<QueryStatus>> {
+        let handles = self.handles.clone();
+        async_to_js(env, async move {
+            let result = get_query_status_result(handles.connection, &query_id).await?;
+            Ok::<_, BridgeError>(QueryStatus::parse(&result.status_name))
+        })
+    }
+
+    #[napi]
+    pub fn get_query_status_throw_if_error(
+        &self,
+        env: &Env,
+        query_id: String,
+    ) -> Result<AsyncBlock<QueryStatus>> {
+        let handles = self.handles.clone();
+        async_to_js(env, async move {
+            let result = get_query_status_result(handles.connection, &query_id).await?;
+            let status = QueryStatus::parse(&result.status_name);
+            if status.is_an_error() {
+                return Err(BridgeError::QueryStatusFailed {
+                    query_id,
+                    error_code: result.error_code,
+                    error_message: result.error_message,
+                });
+            }
+            Ok(status)
+        })
+    }
+
+    #[napi]
     pub fn get_query_result(&self, query_id: String) -> Statement {
         let handles = self.handles.clone();
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
@@ -306,6 +338,7 @@ impl Connection {
             self.handles.clone(),
             Some(operation_ctx.clone()),
             async move {
+                require_valid_query_id(&query_id)?;
                 refuse_if_unusable(handles.connection).await?;
                 DRIVER
                     .connection_get_query_result(Some(&operation_ctx), handles.connection, query_id)
@@ -368,6 +401,19 @@ async fn refuse_if_unusable(handle: Handle) -> std::result::Result<(), BridgeErr
         )),
         None => Ok(()),
     }
+}
+
+async fn get_query_status_result(
+    connection: Handle,
+    query_id: &str,
+) -> std::result::Result<QueryStatusResult, BridgeError> {
+    require_valid_query_id(query_id)?;
+    refuse_if_unusable(connection).await?;
+    let operation_ctx = OperationCtx::with_own_token();
+    DRIVER
+        .connection_get_query_status(Some(&operation_ctx), connection, query_id)
+        .await
+        .map_err(BridgeError::from)
 }
 
 #[cfg(test)]

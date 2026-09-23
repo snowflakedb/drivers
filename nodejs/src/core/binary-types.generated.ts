@@ -40,6 +40,8 @@ export declare class Connection {
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
   execute(query: string, bindings?: QueryBindings | undefined | null, parameters?: Record<string, string> | undefined | null): Statement
+  getQueryStatus(queryId: string): Promise<QueryStatus>
+  getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
 }

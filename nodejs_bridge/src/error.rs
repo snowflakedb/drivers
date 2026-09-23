@@ -11,6 +11,12 @@ pub trait ToJsError {
 pub(crate) enum BridgeError {
     Core(Arc<ApiError>),
     UnusableConnection(ConnectionOperation, UnusableConnection),
+    InvalidQueryId(String),
+    QueryStatusFailed {
+        query_id: String,
+        error_code: Option<i32>,
+        error_message: Option<String>,
+    },
     Message(String),
 }
 
@@ -88,6 +94,35 @@ impl ClientError {
         }
     }
 
+    fn of_query_status_error(
+        query_id: &str,
+        error_code: Option<i32>,
+        error_message: &Option<String>,
+    ) -> Self {
+        Self {
+            name: Some("OperationFailedError"),
+            message: error_message
+                .clone()
+                .unwrap_or_else(|| format!("Query {query_id} failed")),
+            code: error_code.map(ErrorCode::Server),
+            sql_state: None,
+            cause: None,
+            is_fatal: false,
+        }
+    }
+
+    fn of_invalid_query_id(query_id: &str) -> Self {
+        Self {
+            name: Some("InvalidParameterError"),
+            message: format!("Invalid queryId: {query_id}"),
+            // TODO: move error codes enum to bridge
+            code: Some(ErrorCode::Driver(460001)),
+            sql_state: None,
+            cause: None,
+            is_fatal: false,
+        }
+    }
+
     fn build(&self, env: Env) -> napi::Result<napi::Error> {
         let mut error = new_js_error(&env, self.message.clone())?;
         if let Some(name) = self.name {
@@ -125,6 +160,10 @@ fn new_js_error<'env>(env: &'env Env, message: String) -> napi::Result<Object<'e
     Ok(error)
 }
 
+fn construct_js_error_fail(err: napi::Error) -> napi::Error {
+    napi::Error::from_reason(format!("failed to construct JS error: {err}"))
+}
+
 fn error_name(kind: ErrorKind) -> Option<&'static str> {
     match kind {
         ErrorKind::QueryFailed => Some("OperationFailedError"),
@@ -134,9 +173,9 @@ fn error_name(kind: ErrorKind) -> Option<&'static str> {
 
 impl ToJsError for ApiError {
     fn to_js_error(&self, env: Env) -> napi::Error {
-        ClientError::of(self).build(env).unwrap_or_else(|err| {
-            napi::Error::from_reason(format!("failed to construct JS error for {self}: {err}"))
-        })
+        ClientError::of(self)
+            .build(env)
+            .unwrap_or_else(construct_js_error_fail)
     }
 }
 
@@ -147,10 +186,18 @@ impl ToJsError for BridgeError {
             BridgeError::UnusableConnection(operation, connection) => {
                 ClientError::of_unusable_connection(*operation, *connection)
                     .build(env)
-                    .unwrap_or_else(|err| {
-                        napi::Error::from_reason(format!("failed to construct JS error: {err}"))
-                    })
+                    .unwrap_or_else(construct_js_error_fail)
             }
+            BridgeError::InvalidQueryId(query_id) => ClientError::of_invalid_query_id(query_id)
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::QueryStatusFailed {
+                query_id,
+                error_code,
+                error_message,
+            } => ClientError::of_query_status_error(query_id, *error_code, error_message)
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
             BridgeError::Message(message) => napi::Error::from_reason(message.clone()),
         }
     }
@@ -263,5 +310,40 @@ mod tests {
         assert_eq!(error.message, "Already disconnected.");
         assert_eq!(error.sql_state, None);
         assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn an_invalid_query_id_is_an_invalid_parameter_error() {
+        let error = ClientError::of_invalid_query_id("invalidQueryId");
+
+        assert_eq!(error.name, Some("InvalidParameterError"));
+        assert_eq!(code_of(&error), Some("460001".to_string()));
+        assert_eq!(error.message, "Invalid queryId: invalidQueryId");
+        assert_eq!(error.sql_state, None);
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn a_failed_query_status_is_an_operation_failed_error() {
+        let error = ClientError::of_query_status_error(
+            "01c715df-0e1a-450a-000c-a913e79f70cb",
+            Some(2003),
+            &Some("SQL compilation error".to_string()),
+        );
+
+        assert_eq!(error.name, Some("OperationFailedError"));
+        assert_eq!(code_of(&error), Some("002003".to_string()));
+        assert_eq!(error.message, "SQL compilation error");
+        assert_eq!(error.sql_state, None);
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn a_failed_query_status_without_monitoring_fields_uses_the_query_id() {
+        let error = ClientError::of_query_status_error("abc", None, &None);
+
+        assert_eq!(error.name, Some("OperationFailedError"));
+        assert_eq!(code_of(&error), None);
+        assert_eq!(error.message, "Query abc failed");
     }
 }

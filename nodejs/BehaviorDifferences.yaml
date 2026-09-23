@@ -861,3 +861,90 @@ behavior_differences:
       isAnError(status: QueryStatus) is typed to take the status the runtime already required.
     status_rationale: |
       The old published types were wrong; runtime behavior is unchanged.
+
+  43:
+    name: 'An unknown query ID maps to NO_DATA'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      An unknown query ID (`queries[]` empty) returns `'NO_QUERY_DATA'`.
+    new_driver_behavior: |
+      An unknown query ID returns `'NO_DATA'`.
+    status_rationale: |
+      `'NO_QUERY_DATA'` is a custom status used only by the Node.js driver. Python and
+      JDBC, map a missing monitoring row to `NO_DATA`. Moreover NodeJs also defines
+      NO_DATA status which can never be returned by snowflake server, so it makes no
+      sense to keep both.
+
+  44:
+    name: 'Unrecognized query status name maps to NO_DATA'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      An unrecognized `status` string from `/monitoring/queries/{id}` is returned as-is.
+    new_driver_behavior: |
+      An unrecognized status name returns `'NO_DATA'`.
+    status_rationale: |
+      `getQueryStatus()` returns a `QueryStatus` string union and cannot surface unknown names.
+      Matches Python and JDBC, which map unrecognized names to `NO_DATA`.
+
+  45:
+    name: 'getQueryStatus is typed to return QueryStatus union instead of string'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types getQueryStatus(queryId) as returning Promise<string>. Callers passing the result
+      to isStillRunning(status: QueryStatus) or isAnError(status: QueryStatus) in TypeScript had to explicitly
+      cast the returned string to QueryStatus.
+    new_driver_behavior: |
+      getQueryStatus(queryId) is typed to return Promise<QueryStatus>, directly matching the parameter type
+      expected by isStillRunning(status) and isAnError(status) without requiring a type cast. The only BCR
+      is when snowflake server returns status which is not a valid QueryStatus. In this case, the driver
+      will return NO_DATA.
+    status_rationale: |
+      Aligns getQueryStatus's return type with the status predicates. Runtime return values are unchanged
+      (string literals like 'SUCCESS', 'RUNNING', etc.).
+
+  46:
+    name: 'RequestFailedError is not implemented'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      HTTP failures against Snowflake reject with RequestFailedError, code 401002,
+      and message `Request to Snowflake failed.`
+    new_driver_behavior: |
+      The same failures reject with a generic Error. RequestFailedError is not
+      implemented.
+    status_rationale: We aim to reduce the number of custom error types in the driver.
+
+  47:
+    name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      getQueryStatusThrowIfError for a query that failed server-side rejects with
+      OperationFailedError, code -1, and the monitoring errorMessage.
+    new_driver_behavior: |
+      The same call rejects with OperationFailedError, code `'002003'` (the
+      query's errorCode from monitoring, zero-padded like execute()), and the
+      same errorMessage.
+    status_rationale: |
+      The old driver does not surface the monitoring errorCode on this path.
+      `'002003'` matches the SQL compilation vendor code from execute. -1 is a
+      generic error code that the old driver uses when it cannot determine the
+      error code from the Snowflake server.

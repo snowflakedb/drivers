@@ -88,11 +88,12 @@ impl Statement {
     // - reusable error handling
     // - maybe an util to get field value so we don't repeat the match
     #[napi]
-    pub fn get_query_id(&self, env: &Env) -> Result<Option<String>> {
+    pub fn get_query_id(&self, _env: &Env) -> Result<Option<String>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(data)) => Ok(Some(data.result_set_descriptor.query_id.clone())),
-            Some(Err(error)) => Err(error.to_js_error(*env)),
+            Some(Err(BridgeError::Core(api_error))) => Ok(api_error.query_id()),
+            Some(Err(_)) => Ok(None),
         }
     }
 

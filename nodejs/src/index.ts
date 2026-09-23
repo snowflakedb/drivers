@@ -265,8 +265,12 @@ export class Connection {
     });
   }
 
-  getQueryStatus(): string {
-    throw new Error('Not implemented');
+  async getQueryStatus(queryId: string): Promise<QueryStatus> {
+    return this.#core.getQueryStatus(queryId);
+  }
+
+  async getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus> {
+    return this.#core.getQueryStatusThrowIfError(queryId);
   }
 
   isStillRunning(status: QueryStatus): boolean {

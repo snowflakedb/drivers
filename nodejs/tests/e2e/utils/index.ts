@@ -99,6 +99,16 @@ export function connectionIsAnErrorWithBD(connection: Connection, status: QueryS
   return (connection.isAnError as (queryStatus: QueryStatus) => boolean)(status);
 }
 
+export async function connectionGetQueryStatusWithBD(
+  connection: Connection,
+  queryId: string,
+): Promise<QueryStatus> {
+  if (isRunningNewDriverWithBD('BD#45')) {
+    return (connection as NewSnowflakeConnection).getQueryStatus(queryId);
+  }
+  return (await connection.getQueryStatus(queryId)) as QueryStatus;
+}
+
 export async function destroyConnectionAsync(connection: Connection): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     connection.destroy((err) => (err ? reject(err) : resolve()));

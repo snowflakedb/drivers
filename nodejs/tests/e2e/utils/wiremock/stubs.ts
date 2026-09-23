@@ -146,3 +146,32 @@ export function authenticatorRequestSuccess(): StubMapping {
     },
   };
 }
+
+export function monitoringQueryStatus(queryId: string, status: string): StubMapping {
+  return {
+    request: {
+      method: 'GET',
+      urlPathPattern: `/monitoring/queries/+${queryId}.*`,
+    },
+    response: jsonResponse(200, {
+      success: true,
+      data: {
+        queries: [{ status, id: queryId }],
+      },
+    }),
+  };
+}
+
+export function monitoringQueryFailure(
+  queryId: string,
+  httpStatus: number,
+  body: unknown,
+): StubMapping {
+  return {
+    request: {
+      method: 'GET',
+      urlPathPattern: `/monitoring/queries/+${queryId}.*`,
+    },
+    response: jsonResponse(httpStatus, body),
+  };
+}
