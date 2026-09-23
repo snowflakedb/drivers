@@ -3366,9 +3366,13 @@ behavior_differences:
 
   157:
     name: "SQL_RESET_PARAMS sets IPD SQL_DESC_COUNT to 0"
-    status: allowed
+    status: fixed
     type: bugfix
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      SQLFreeStmt(SQL_RESET_PARAMS) leaves IPD records in place, so SQL_DESC_COUNT
+      still reports the previous highest bound parameter number. That matches the
+      old driver.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -3377,14 +3381,13 @@ behavior_differences:
       bound parameter number after SQLExecDirect, SQLPrepare/SQLExecute, or a
       reset with no execute.
     new_driver_behavior: |
-      SQLFreeStmt(SQL_RESET_PARAMS) sets IPD SQL_DESC_COUNT to 0 on every
-      statement, including SQLExecDirect and SQLPrepare/SQLExecute.
+      SQLFreeStmt(SQL_RESET_PARAMS) leaves IPD records in place. SQL_DESC_COUNT
+      still reports the previous highest bound parameter number after
+      SQLExecDirect, SQLPrepare/SQLExecute, or a reset with no execute.
     description: |
-      SQLSetDescField documents that SQL_RESET_PARAMS sets SQL_DESC_COUNT to 0
-      in both the APD and the IPD. The old driver never clears the IPD; the new
-      driver does. Execution after reset still follows rebound APD records and,
-      for prepared statements, the prepared parameter count.
-
+      The new driver matches the old driver: SQL_RESET_PARAMS does not set IPD
+      SQL_DESC_COUNT to 0. Execution after reset still follows rebound APD
+      records and, for prepared statements, the prepared parameter count.
 
   158:
     name: "SQL_GUID parameter binding reports 07006 instead of HY000"

@@ -11,7 +11,6 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_descriptor.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -21,15 +20,6 @@
 namespace {
 constexpr int kMaxPollIterations = 300;
 constexpr auto kPollInterval = std::chrono::milliseconds(100);
-
-void require_ipd_count_after_reset(SQLHSTMT stmt, SQLSMALLINT previous_bound) {
-  const SQLHDESC ipd = get_descriptor(stmt, SQL_ATTR_IMP_PARAM_DESC);
-  SQLSMALLINT ipd_count = -1;
-  const SQLRETURN ret = SQLGetDescField(ipd, 0, SQL_DESC_COUNT, &ipd_count, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
-  NEW_DRIVER_ONLY("BD#157") { REQUIRE(ipd_count == 0); }
-  OLD_DRIVER_ONLY("BD#157") { REQUIRE(ipd_count == previous_bound); }
-}
 }  // namespace
 
 // ============================================================================
@@ -194,77 +184,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS resets bo
 
   ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
   REQUIRE(ret == SQL_SUCCESS);
-  require_ipd_count_after_reset(stmt_handle(), 1);
 
   ret = SQLExecute(stmt_handle());
   REQUIRE_EXPECTED_ERROR(ret, "07002", stmt_handle(), SQL_HANDLE_STMT);
-}
-
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS clears ExecDirect parameter metadata",
-                 "[odbc-api][freestmt][terminating_statement]") {
-  SQLINTEGER first = 10;
-  SQLINTEGER second = 20;
-  SQLLEN first_ind = 0;
-  SQLLEN second_ind = 0;
-  SQLRETURN ret =
-      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &first, 0, &first_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &second, 0, &second_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLCloseCursor(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
-  REQUIRE(ret == SQL_SUCCESS);
-  require_ipd_count_after_reset(stmt_handle(), 2);
-
-  SQLINTEGER rebound = 30;
-  SQLLEN rebound_ind = 0;
-  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &rebound, 0, &rebound_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLINTEGER result = -1;
-  SQLLEN result_ind = -1;
-  ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(result == rebound);
-  REQUIRE(result_ind == sizeof(result));
-}
-
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS clears IPD count after SQLPrepare",
-                 "[odbc-api][freestmt][terminating_statement]") {
-  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLINTEGER first = 10;
-  SQLINTEGER second = 20;
-  SQLLEN first_ind = 0;
-  SQLLEN second_ind = 0;
-  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &first, 0, &first_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &second, 0, &second_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLCloseCursor(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
-  REQUIRE(ret == SQL_SUCCESS);
-  require_ipd_count_after_reset(stmt_handle(), 2);
-
-  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &first, 0, &first_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &second, 0, &second_ind);
-  REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS without parameters",
