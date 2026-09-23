@@ -91,6 +91,20 @@ pub(crate) fn assert_py_none(value: &Bound<'_, PyAny>) {
     assert!(value.is_none(), "expected None, got {value}");
 }
 
+pub(crate) fn assert_np_datetime64_d(value: &Bound<'_, PyAny>, days_since_epoch: i64) {
+    let datetime64 = numpy_type(value.py(), "datetime64");
+    assert!(
+        value.get_type().is(&datetime64),
+        "expected numpy.datetime64, got {}",
+        value.get_type().name().unwrap()
+    );
+    let expected = datetime64.call1((days_since_epoch, "D")).unwrap();
+    assert!(
+        value.eq(&expected).unwrap(),
+        "expected datetime64[D] of {days_since_epoch} days, got {value}"
+    );
+}
+
 pub(crate) fn assert_py_date(value: &Bound<'_, PyAny>, year: i32, month: u8, day: u8) {
     assert!(
         value.is_instance_of::<PyDate>(),

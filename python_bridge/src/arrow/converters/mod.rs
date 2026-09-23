@@ -32,7 +32,7 @@ use sf_types::{
 
 use self::binary::BinaryMaterializer;
 use self::boolean::BoolMaterializer;
-use self::date::DateMaterializer;
+use self::date::{DateMaterializer, DateNumpyMaterializer};
 use self::decfloat::{DecfloatMaterializer, DecfloatNumpyMaterializer};
 use self::decode::TypedColumn;
 use self::interval::{IntervalDayTimeColumn, IntervalYearMonthColumn};
@@ -61,6 +61,7 @@ pub(crate) enum Column {
     Decfloat(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatMaterializer>),
     DecfloatNumpy(TypedColumn<StructArray, SnowflakeDecfloat, DecfloatNumpyMaterializer>),
     Date(TypedColumn<Date32Array, SnowflakeDate, DateMaterializer>),
+    DateNumpy(TypedColumn<Date32Array, SnowflakeDate, DateNumpyMaterializer>),
     Time(TimeColumn),
     TimestampNtz(TimestampNtzColumn),
     TimestampLtz(TimestampLtzColumn),
@@ -84,6 +85,7 @@ impl Column {
             Self::Decfloat(column) => column.to_py(py, row),
             Self::DecfloatNumpy(column) => column.to_py(py, row),
             Self::Date(column) => column.to_py(py, row),
+            Self::DateNumpy(column) => column.to_py(py, row),
             Self::Time(column) => column.to_py(py, row),
             Self::TimestampNtz(column) => column.to_py(py, row),
             Self::TimestampLtz(column) => column.to_py(py, row),

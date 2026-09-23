@@ -1,7 +1,7 @@
 //! NumPy publishes C entry points as the `_ARRAY_API` capsule on `multiarray`.
 //! This module imports that module only to take the capsule, then converts cells
-//! with `PyArray_Scalar`. Converters never call `numpy.int64` / `numpy.float64` in
-//! Python. rust-numpy is not used (not official PyO3).
+//! with `PyArray_Scalar`. Converters never call `numpy.int64` / `numpy.float64` /
+//! `numpy.datetime64` in Python. rust-numpy is not used (not official PyO3).
 
 use std::ffi::c_void;
 use std::ptr;
@@ -26,6 +26,7 @@ struct NumpyApi {
     pyarray_scalar: PyArrayScalar,
     int64_dtype: Py<PyAny>,
     float64_dtype: Py<PyAny>,
+    datetime64_d_dtype: Py<PyAny>,
 }
 
 pub(super) struct NumpyProvider {
@@ -45,6 +46,14 @@ impl NumpyProvider {
 
     pub(super) fn float64<'py>(&self, py: Python<'py>, value: f64) -> PyResult<Bound<'py, PyAny>> {
         self.scalar(py, value, |api| &api.float64_dtype)
+    }
+
+    pub(super) fn datetime64_d<'py>(
+        &self,
+        py: Python<'py>,
+        days: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, days, |api| &api.datetime64_d_dtype)
     }
 
     fn scalar<'py, T: Copy>(
@@ -97,11 +106,14 @@ fn load_api(py: Python<'_>) -> PyResult<NumpyApi> {
     // A numpy.dtype is a PyArray_Descr. Fields are not read (layout changed in 2.0).
     let int64_dtype = dtype.call1(("int64",))?.unbind();
     let float64_dtype = dtype.call1(("float64",))?.unbind();
+    // datetime64[D] is an 8-byte npy_datetime counting days from the Unix epoch.
+    let datetime64_d_dtype = dtype.call1(("datetime64[D]",))?.unbind();
     Ok(NumpyApi {
         _capsule: capsule_obj.unbind(),
         pyarray_scalar,
         int64_dtype,
         float64_dtype,
+        datetime64_d_dtype,
     })
 }
 
@@ -116,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn int64_and_float64_are_numpy_scalars() {
+    fn int64_float64_and_datetime64_d_are_numpy_scalars() {
         Python::initialize();
         let provider = NumpyProvider::new();
         Python::attach(|py| {
@@ -135,6 +147,16 @@ mod tests {
                 float64.get_type().name().unwrap()
             );
             assert_eq!(float64.extract::<f64>().unwrap(), 1.5);
+
+            let date = provider.datetime64_d(py, 0).unwrap();
+            let datetime64 = numpy_type(py, "datetime64");
+            assert!(
+                date.get_type().is(&datetime64),
+                "expected numpy.datetime64, got {}",
+                date.get_type().name().unwrap()
+            );
+            let expected = datetime64.call1((0, "D")).unwrap();
+            assert!(date.eq(&expected).unwrap());
         });
     }
 

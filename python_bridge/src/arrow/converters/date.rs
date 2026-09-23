@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arrow::array::{ArrayRef, Date32Array};
 use chrono::{Datelike, NaiveDate};
 use pyo3::exceptions::PyValueError;
@@ -6,12 +8,30 @@ use sf_types::SnowflakeDate;
 
 use super::Column;
 use super::decode::{PyMaterializer, TypedColumn};
+use super::numpy::NumpyProvider;
 use crate::arrow::converters::util::downcast_column;
 use crate::arrow::plan::SnowflakeFieldType;
 
-pub(super) fn from_column(array: &ArrayRef, field_type: &SnowflakeFieldType) -> PyResult<Column> {
-    downcast_column::<Date32Array>(array, field_type)
-        .map(|array| Column::Date(TypedColumn::new(array, SnowflakeDate, DateMaterializer)))
+pub(super) fn from_column(
+    array: &ArrayRef,
+    field_type: &SnowflakeFieldType,
+    numpy: Arc<NumpyProvider>,
+    use_numpy: bool,
+) -> PyResult<Column> {
+    let array = downcast_column::<Date32Array>(array, field_type)?;
+    if use_numpy {
+        Ok(Column::DateNumpy(TypedColumn::new(
+            array,
+            SnowflakeDate,
+            DateNumpyMaterializer { numpy },
+        )))
+    } else {
+        Ok(Column::Date(TypedColumn::new(
+            array,
+            SnowflakeDate,
+            DateMaterializer,
+        )))
+    }
 }
 
 pub(crate) struct DateMaterializer;
@@ -28,6 +48,19 @@ impl PyMaterializer<SnowflakeDate> for DateMaterializer {
     }
 }
 
+pub(crate) struct DateNumpyMaterializer {
+    numpy: Arc<NumpyProvider>,
+}
+
+impl PyMaterializer<SnowflakeDate> for DateNumpyMaterializer {
+    fn materialize<'py>(&self, py: Python<'py>, value: NaiveDate) -> PyResult<Bound<'py, PyAny>> {
+        let epoch =
+            NaiveDate::from_ymd_opt(1970, 1, 1).expect("1970-01-01 is a valid Gregorian date");
+        self.numpy
+            .datetime64_d(py, value.signed_duration_since(epoch).num_days())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -38,7 +71,9 @@ mod tests {
     use pyo3::prelude::*;
 
     use crate::arrow::converters::ConversionContext;
-    use crate::arrow::converters::test_util::{assert_py_date, assert_py_none};
+    use crate::arrow::converters::test_util::{
+        assert_np_datetime64_d, assert_py_date, assert_py_none,
+    };
     use crate::arrow::plan::SnowflakeFieldType;
 
     #[test]
@@ -67,16 +102,26 @@ mod tests {
     }
 
     #[test]
-    fn date_stays_python_date_with_numpy() {
+    fn date_converts_to_numpy_datetime64_d_with_nulls() {
         Python::initialize();
         let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
-        let array: ArrayRef = Arc::new(Date32Array::from(vec![Some(0)]));
+        let array: ArrayRef = Arc::new(Date32Array::from(vec![
+            Some(0),
+            None,
+            Some(-1),
+            Some(-719162),
+            Some(2932896),
+        ]));
         let column = context
             .converter_from_column(&array, &SnowflakeFieldType::Date)
             .unwrap();
 
         Python::attach(|py| {
-            assert_py_date(&column.to_py(py, 0).unwrap(), 1970, 1, 1);
+            assert_np_datetime64_d(&column.to_py(py, 0).unwrap(), 0);
+            assert_py_none(&column.to_py(py, 1).unwrap());
+            assert_np_datetime64_d(&column.to_py(py, 2).unwrap(), -1);
+            assert_np_datetime64_d(&column.to_py(py, 3).unwrap(), -719162);
+            assert_np_datetime64_d(&column.to_py(py, 4).unwrap(), 2932896);
         });
     }
 

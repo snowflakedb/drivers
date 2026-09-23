@@ -134,7 +134,9 @@ impl ConversionContext {
             SnowflakeFieldType::Decfloat { .. } => {
                 decfloat::from_column(array, field_type, Arc::clone(&self.numpy), self.use_numpy)
             }
-            SnowflakeFieldType::Date => date::from_column(array, field_type),
+            SnowflakeFieldType::Date => {
+                date::from_column(array, field_type, Arc::clone(&self.numpy), self.use_numpy)
+            }
             SnowflakeFieldType::Time { scale } => time::from_column(array, field_type, scale),
             SnowflakeFieldType::TimestampNtz { scale } => {
                 timestamp_ntz::from_column(array, field_type, scale)
