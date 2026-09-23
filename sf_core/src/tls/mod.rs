@@ -35,9 +35,14 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 ///
 /// Installation is best-effort by design: `install_default` returns `Err` when
 /// an embedding application has already installed its own provider, and
-/// stomping on that would be worse than honouring it. In `fips-tls` builds the
-/// resulting provider is checked and a mismatch is logged loudly rather than
-/// panicking, because this runs beneath an FFI boundary where unwinding is
+/// stomping on that would be worse than honouring it.
+///
+/// The `fips-tls` check below asks about the *linked module*, not whichever
+/// provider won that race: it catches a build that claims `fips-tls` without
+/// having linked a FIPS-capable aws-lc. Whether the process-global slot is
+/// also FIPS is a separate question, and one with somewhere to fail into, so
+/// [`require_fips_provider`] covers it. Here a mismatch is only logged --
+/// loudly -- because this runs beneath an FFI boundary where unwinding is
 /// undefined behaviour.
 pub(crate) fn ensure_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none()
@@ -52,8 +57,8 @@ pub(crate) fn ensure_crypto_provider() {
     #[cfg(feature = "fips-tls")]
     if !tls_provider_is_fips() {
         tracing::error!(
-            "driver was built with the `fips-tls` feature but the active rustls crypto \
-             provider is not in FIPS mode; TLS is NOT FIPS compliant"
+            "driver was built with the `fips-tls` feature but the linked module's \
+             TLS provider is not FIPS-approved; TLS is NOT FIPS compliant"
         );
     }
 }
@@ -199,7 +204,7 @@ mod fips_tests {
             .expect("ensure_crypto_provider must leave a process-default provider installed");
         assert!(
             provider.fips(),
-            "installed rustls provider that tls::client will resolve is not FIPS"
+            "installed rustls provider that tls::client will resolve is not FIPS-approved"
         );
         assert!(
             provider.cipher_suites.iter().all(|cs| cs.fips()),
@@ -220,6 +225,6 @@ mod fips_tests {
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
-        assert!(config.fips(), "ClientConfig is not in FIPS mode");
+        assert!(config.fips(), "ClientConfig is not FIPS-approved");
     }
 }
