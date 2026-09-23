@@ -1,7 +1,7 @@
 title: JDBC Driver Test Coverage
 description: Mapping of old JDBC driver tests to new Universal Driver test suite.
 summary:
-  total_tests: 1640
+  total_tests: 1665
   total_test_files: 268
 tests:
   authentication.ExternalBrowserLatestIT.java:
@@ -86,13 +86,20 @@ tests:
     ud_tests: []
   config.ConnectionAutoUrlParserTest.java:
   - test_name: testMissingValueForConnection
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldTreatEmptyConnectionNameAsUnspecified
   - test_name: testNoParameters
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldParseBareAutoConnectionUrl
   - test_name: testUTFCharParameterKey
-    ud_tests: []
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldExtractConnectionNameAlongsideUtf8QueryParameters
+    gaps:
+    - The new test covers UTF-8 decoding on an auto URL, but the old test uses a normal JDBC URL and verifies connectionName survives alongside the encoded key.
   - test_name: testValidConnection
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldExtractConnectionNameFromAutoConnectionUrl
   config.SFClientConfigParserTest.java:
   - test_name: testCommonPropsConstructorAndAccessors
     ud_tests: []
@@ -124,27 +131,150 @@ tests:
     ud_tests: []
   config.SFConnectionConfigParserPermissionTest.java:
   - test_name: testFilePermissionScenarios
-    ud_tests: []
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldRejectAWorldWritableConnectionsTomlUnderSnowflakeHome
+    - sf_core/src/config/toml_loader.rs#check_file_permissions_matches_old_driver_permission_matrix
+    gaps:
+    - The world-writable fixture proves combined group/other-write rejection parity; isolated group-write and other-write cases remain uncovered.
+    - Executable-bit handling differs under BD#71.
   - test_name: testSkipWarningForReadPermissionsEnvVar
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs#test_skip_warning_env_var
   config.SFConnectionConfigParserTest.java:
   - test_name: shouldThrowExceptionIfNoneOfHostAndAccountIsSet
     ud_tests: []
   - test_name: shouldThrowExceptionIfTokenIsNotSetForOauth
     ud_tests: []
   - test_name: testLoadSFConnectionConfigInValidPath
+    status: partial
     ud_tests: []
+    gaps:
+    - No new test covers the old assertion that a nonexistent SNOWFLAKE_HOME path returns no connection parameters.
+    - A nonexistent SNOWFLAKE_HOME is used literally by the old driver but triggers platform-directory fallback in the new driver under BD#71.
   - test_name: testLoadSFConnectionConfigWithHostConfigured
     ud_tests: []
   - test_name: testLoadSFConnectionConfigWithTokenFromFile
+    status: partial
     ud_tests: []
+    gaps:
+    - Token-file precedence, the old default /snowflake/session/token path, and case-sensitive OAuth handling differ under BD#71 and have no JDBC file-backed replacement.
   - test_name: testLoadSFConnectionConfigWrongConfigurationName
-    ud_tests: []
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldReportAMissingProfileNamedByTheEnvironmentForABareAutoConnectionUrl
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldReportAMissingProfileFromDirectDriverConnectWhenTheEnvironmentNamesAnAbsentProfile
+    gaps:
+    - The replacement asserts the new driver's SQLState and vendor code; the missing-profile wording matches the reference JDBC driver.
   - test_name: testNoThrowErrorWhenWrongPermissionsForTokenFileButSkippingFlagIsEnabled
+    status: partial
     ud_tests: []
+    gaps:
+    - The old SKIP_TOKEN_FILE_PERMISSIONS_VERIFICATION control and the new unsafe_skip_config_file_permissions_check option differ under BD#71.
   - test_name: testThrowErrorWhenWrongPermissionsForConnectionConfigurationFile
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldRejectAWorldWritableConnectionsTomlUnderSnowflakeHome
   - test_name: testThrowErrorWhenWrongPermissionsForTokenFile
+    status: partial
+    ud_tests: []
+    gaps:
+    - Token-file read-permission policy differs under BD#71 and has no JDBC file-backed replacement.
+  - test_name: testNoThrowErrorWhenWrongPermissionsForConnectionConfigButSkippingFlagIsEnabled
+    status: partial
+    ud_tests:
+    - sf_core/src/config/resolver.rs#skip_flag_allows_loading_connection_from_world_writable_file
+    gaps:
+    - The replacement uses the unsafe_skip_config_file_permissions_check connection option instead of the old driver's environment control under BD#71.
+  - test_name: testDefaultPortIs443WhenNeitherPortNorProtocolIsSet
+    status: partial
+    ud_tests: []
+    gaps:
+    - No new-driver test asserts implicit HTTPS port 443 from a TOML protocol/port omission.
+  - test_name: testDefaultPortIs443WhenProtocolIsHttps
+    status: partial
+    ud_tests: []
+    gaps:
+    - No new-driver test asserts implicit HTTPS port 443 when TOML protocol is https and port is omitted.
+  - test_name: testDefaultPortIs80WhenProtocolIsHttp
+    status: partial
+    ud_tests: []
+    gaps:
+    - No new-driver test asserts implicit HTTP port 80 when TOML protocol is http and port is omitted.
+  - test_name: testExplicitPortIsPreservedRegardlessOfProtocol
+    status: partial
+    ud_tests:
+    - sf_core/src/config/connection_config.rs#build_server_url_from_host_port_protocol
+    gaps:
+    - Explicit-port preservation is covered by server URL construction, not by a file-backed profile test.
+  - test_name: testUrlParametersAreMergedIntoTomlConfiguration
+    ud_tests: []
+  - test_name: testUrlParameterOverridesTomlValueForSameKey
+    ud_tests: []
+  - test_name: testUrlParameterOverridesTomlUser
+    ud_tests: []
+  - test_name: testUrlParametersWithNoExtraParamsKeepsTomlValues
+    ud_tests: []
+  - test_name: testHttpProtocolFromTomlIsEmbeddedInUrl
+    status: partial
+    ud_tests: []
+    gaps:
+    - No file-backed JDBC test asserts that a TOML protocol=http value is embedded in the effective server URL.
+  - test_name: testHttpsProtocolFromTomlProducesStandardUrl
+    ud_tests: []
+  - test_name: testDefaultPortIs443WhenProtocolIsEmptyString
+    status: partial
+    ud_tests: []
+    gaps:
+    - No new-driver test asserts implicit HTTPS port 443 when TOML protocol is an empty string.
+  - test_name: testUrlDbAliasDoesNotConflictWithTomlDatabase
+    ud_tests: []
+  - test_name: testUrlDbAliasOverridesTomlDatabaseWithOtherConflicts
+    ud_tests: []
+  - test_name: testNonSFSessionPropertyFromTomlIsPreservedAfterMerge
+    ud_tests: []
+  - test_name: testPropertiesAndUrlNoConflict
+    ud_tests: []
+  - test_name: testPropertiesUrlAndTomlNoConflict
+    status: partial
+    ud_tests:
+    - sf_core/src/config/resolver.rs#integration_full_round_trip
+    gaps:
+    - Java URL parsing and Properties precedence are covered separately in ConnectionOptionsResolverTest; no single JDBC boundary test drives all three sources.
+  - test_name: testPropertiesOverridesUrlAndTomlOnConflict
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/parameters/ConnectionOptionsResolverTest.java#resolveAutoUrlUsesPropertiesOverQueryParameters
+    - sf_core/src/config/resolver.rs#integration_full_round_trip
+    gaps:
+    - Java URL parsing and Properties precedence are covered separately in ConnectionOptionsResolverTest; no single JDBC boundary test drives all three sources.
+  - test_name: testPropertiesDbOverridesUrlDbAndTomlDatabase
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/parameters/ConnectionOptionsResolverTest.java#resolveAutoUrlUsesPropertiesOverQueryParameters
+    - sf_core/src/config/resolver.rs#integration_full_round_trip
+    gaps:
+    - JDBC alias canonicalization and core TOML precedence are covered separately rather than by one three-source boundary test.
+  - test_name: testUrlSameSourceAliasDuplicateThrows
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldRejectAliasEquivalentOrCaseVariantDuplicates
+  - test_name: testUrlSameSourceAliasDuplicateThrowsEvenWithTomlPresent
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldRejectAliasEquivalentOrCaseVariantDuplicates
+    gaps:
+    - No file-backed JDBC test repeats the duplicate URL rejection while a TOML profile is present.
+  - test_name: testUrlCaseVariantDuplicateThrows
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/AutoConnectionUrlParserTest.java#shouldRejectAliasEquivalentOrCaseVariantDuplicates
+  - test_name: testCrossSourceCaseInsensitiveOverride
+    ud_tests: []
+  - test_name: testNonStringPrivateKeyPreservedInThreeWayMerge
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/parameters/ConnectionOptionsResolverTest.java#shouldPreservePrivateKeyIdentityAcrossAutoUrlOptionMerging
+    gaps:
+    - The identity test does not combine the PrivateKey object with TOML values in a file-backed three-source merge.
+  - test_name: testDeferredLogMessagesAndSortedProvenance
     ud_tests: []
   config.SFPermissionsTest.java:
   - test_name: testLogDirectoryPermissions
@@ -1183,7 +1313,17 @@ tests:
     ud_tests: []
   jdbc.AutoConnectionConfigurationLatestIT.java:
   - test_name: testConnectionScenarios
-    ud_tests: []
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldResolveADefinedProfileAndRejectAnUndefinedOneFromConnectionsTomlUnderSnowflakeHome
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldLoadTheDefaultProfileForABareAutoConnectionUrl
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldLoadTheProfileNamedByTheEnvironmentForABareAutoConnectionUrl
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldLoadTheProfileNamedByConfigTomlForABareAutoConnectionUrl
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldReportTheDefaultProfileMissingWhenNoConfigFilesExist
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldLoadTheProfileDefinedInConfigTomlWhenConnectionsTomlIsAbsent
+    gaps:
+    - New tests prove file-backed profile selection through offline validation failures but do not complete a credential-backed successful connection.
+    - Undefined-profile error identity differs under BD#71, so the replacement assertion is new-driver-only.
   jdbc.BatchExecutionIT.java:
   - test_name: testClearingBatchAfterStatementExecution
     ud_tests: []
@@ -1333,7 +1473,6 @@ tests:
   - test_name: testParseWithIllegalUriCharacters
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectRejectsMalformedSnowflakeUrl
-    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   jdbc.ConnectionAlreadyClosedIT.java:
   - test_name: testClosedConnection
     ud_tests: []
@@ -1760,11 +1899,21 @@ tests:
     ud_tests: []
   jdbc.FileConnectionConfigurationLatestIT.java:
   - test_name: testSimpleConnectionUsingFileConfigurationToken
+    status: partial
     ud_tests: []
+    gaps:
+    - Inline-token precedence over token_file_path differs under BD#71 and has no credential-backed JDBC replacement.
   - test_name: testSimpleConnectionUsingFileConfigurationTokenFromFile
+    status: partial
     ud_tests: []
+    gaps:
+    - Token-file precedence, default path, authenticator casing, and permissions differ under BD#71 and have no credential-backed JDBC replacement.
   - test_name: testThrowExceptionIfConfigurationDoesNotExist
-    ud_tests: []
+    status: partial
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/jdbc/e2e/session/AutoConnectionConfigFileTests.java#shouldReportTheDefaultProfileMissingWhenNoConfigFilesExist
+    gaps:
+    - Missing-profile error identity differs under BD#71.
   jdbc.FileUploaderExpandFileNamesTest.java:
   - test_name: testFileListingDoesNotFailOnMissingFilesOfAnotherPattern
     ud_tests: []
@@ -2714,7 +2863,6 @@ tests:
   - test_name: testAcceptUrls
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsValidURL
-    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   - test_name: testConnectWithMissingAccountIdentifier
     ud_tests: []
   - test_name: testGetParentLogger
@@ -2723,7 +2871,7 @@ tests:
     ud_tests: []
   - test_name: testInvalidNullConnect
     ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
+    - jdbc/src/test/java/net/snowflake/client/internal/api/driver/SnowflakeDriverTest.java#testAcceptsNullUrlThrowsSQLException
   - test_name: testJDBCCompliant
     ud_tests: []
   - test_name: testMain
@@ -2731,7 +2879,6 @@ tests:
   - test_name: testParseConnectStringException
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectRejectsMalformedSnowflakeUrl
-    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   - test_name: testReturnsNullForOtherJdbcConnectString
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectReturnsNullForNonSnowflakePrefix
