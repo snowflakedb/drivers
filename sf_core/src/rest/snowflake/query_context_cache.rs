@@ -1,6 +1,6 @@
 //! Per-connection query context cache for HTAP workloads.
 //!
-//! Maintains a bounded set of [`CacheEntry`] values keyed by entry `id`.
+//! Maintains a bounded set of unique-priority [`CacheEntry`] values keyed by entry `id`.
 //! An `eviction_order` vec keeps entry ids sorted by `(priority, -timestamp)`
 //! ascending, so `pop()` directly yields the eviction target: highest priority
 //! number, lowest (oldest) timestamp.
@@ -84,7 +84,7 @@ impl QueryContextCacheAdapter {
     }
 }
 
-/// Query context cache with support for duplicate priorities.
+/// Query context cache with one entry per priority.
 ///
 /// Two structures:
 /// - `entries` (id → CacheEntry): primary store, O(log n) lookup by id.
@@ -136,10 +136,25 @@ impl QueryContextCache {
         }
 
         for e in entries {
+            if self
+                .entries
+                .get(&e.id)
+                .is_some_and(|existing| e.timestamp < existing.timestamp)
+            {
+                continue;
+            }
+
+            let displaced_ids: Vec<_> = self
+                .entries
+                .values()
+                .filter(|entry| entry.id != e.id && entry.priority == e.priority)
+                .map(|entry| entry.id)
+                .collect();
+            for id in displaced_ids {
+                self.remove_entry(id);
+            }
+
             if let Some(existing) = self.entries.get_mut(&e.id) {
-                if e.timestamp < existing.timestamp {
-                    continue;
-                }
                 if existing.priority != e.priority {
                     tracing::debug!(
                         id = e.id,
@@ -211,7 +226,6 @@ impl QueryContextCache {
         self.eviction_order.clear();
     }
 
-    #[cfg(test)]
     fn remove_entry(&mut self, id: i64) {
         self.entries.remove(&id);
         self.eviction_order.retain(|&x| x != id);
@@ -475,25 +489,22 @@ mod tests {
     }
 
     #[test]
-    fn test_same_priority_insert_evicts_oldest_by_capacity() {
+    fn test_same_priority_insert_displaces_occupant() {
         let mut cache = QueryContextCache::new();
-        // All same priority — all coexist in priority_map with different timestamps
-        let same_priority: Vec<_> = (0..5i64).map(|i| make_entry(i, 99, i)).collect();
-        let seed = resp_ctx(same_priority);
+        let seed = resp_ctx(vec![
+            make_entry(1, 10, 100),
+            make_entry(2, 20, 200),
+            make_entry(3, 30, 300),
+        ]);
         cache.update(Some(&seed), true);
-        assert_eq!(cache.entries.len(), 5);
 
-        // id=4 triggers merge (same id, same priority, same timestamp → no-op).
-        // id=5 is a new id at priority=99 → inserted, capacity evicts oldest (id=0, ts=0).
-        let update = resp_ctx(vec![make_entry(4, 99, 4), make_entry(5, 99, 5)]);
+        let update = resp_ctx(vec![make_entry(4, 20, 400)]);
         cache.update(Some(&update), true);
 
-        assert_eq!(cache.entries.len(), 5);
-        assert!(
-            !cache.entries.contains_key(&0),
-            "id=0 should be evicted (oldest timestamp at highest priority number)"
-        );
-        assert!(cache.entries.contains_key(&5), "id=5 should be inserted");
+        assert_eq!(cache.entries.len(), 3);
+        assert!(!cache.entries.contains_key(&2));
+        assert!(cache.entries.contains_key(&4));
+        assert_eviction_order_synced(&cache, "priority_displacement");
     }
 
     #[test]
@@ -795,9 +806,8 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_priorities_coexist() {
+    fn test_duplicate_priorities_keep_last_entry() {
         let mut cache = QueryContextCache::new();
-        // Insert entries with the same priority — all coexist in the cache
         let entries = vec![
             make_entry(1, 5, 100),
             make_entry(2, 5, 200),
@@ -806,59 +816,29 @@ mod tests {
         let context = resp_ctx(entries);
         cache.update(Some(&context), true);
 
-        assert_eq!(
-            cache.entries.len(),
-            3,
-            "all entries with same priority should coexist"
-        );
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.entries.contains_key(&3));
         assert_eviction_order_synced(&cache, "duplicate_priorities");
     }
 
     #[test]
-    fn test_duplicate_priorities_eviction_order() {
+    fn test_new_id_at_occupied_priority_displaces_occupant() {
         let mut cache = QueryContextCache::new();
-        cache.max_size = 3;
-        // 4 entries at same priority — evicts lowest timestamp at highest priority
-        let entries = vec![
-            make_entry(1, 5, 100),
-            make_entry(2, 5, 200),
-            make_entry(3, 5, 300),
-            make_entry(4, 5, 400),
-        ];
-        let context = resp_ctx(entries);
-        cache.update(Some(&context), true);
-
-        assert_eq!(cache.entries.len(), 3);
-        assert!(
-            !cache.entries.contains_key(&1),
-            "id=1 should be evicted (lowest timestamp at same priority)"
-        );
-    }
-
-    #[test]
-    fn test_new_id_at_occupied_priority_evicts_oldest_by_capacity() {
-        let mut cache = QueryContextCache::new();
-        // Seed with 5 entries (at capacity), two at priority=10
         let seed = resp_ctx(vec![
             make_entry(1, 10, 100),
-            make_entry(2, 10, 200),
-            make_entry(30, 1, 300),
-            make_entry(40, 2, 300),
-            make_entry(50, 3, 300),
+            make_entry(2, 20, 200),
+            make_entry(3, 30, 300),
         ]);
         cache.update(Some(&seed), true);
 
-        // id=30 is a no-op (same data). id=4 is new at priority=10 → inserted,
-        // cache exceeds capacity → evicts id=1 (oldest timestamp at highest priority number=10).
-        let update = resp_ctx(vec![make_entry(30, 1, 300), make_entry(4, 10, 400)]);
+        let update = resp_ctx(vec![make_entry(4, 10, 400)]);
         cache.update(Some(&update), true);
 
-        assert!(
-            !cache.entries.contains_key(&1),
-            "id=1 (oldest timestamp at priority=10) should be evicted by capacity"
-        );
+        assert_eq!(cache.entries.len(), 3);
+        assert!(!cache.entries.contains_key(&1));
         assert!(cache.entries.contains_key(&2), "id=2 should remain");
         assert!(cache.entries.contains_key(&4), "id=4 should be inserted");
+        assert_eviction_order_synced(&cache, "occupied_priority");
     }
 
     #[test]
@@ -874,131 +854,6 @@ mod tests {
         let entry = cache.entries.get(&1).expect("id=1 missing");
         assert_eq!(entry.priority, 5, "priority should be updated");
         assert_eviction_order_synced(&cache, "same_ts_priority_change");
-    }
-
-    // -----------------------------------------------------------------------
-    // Key collision tests: entries sharing both priority and timestamp
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_collision_same_priority_and_timestamp_coexist() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![make_entry(1, 5, 100), make_entry(2, 5, 100)]);
-        cache.update(Some(&seed), true);
-
-        assert_eq!(cache.entries.len(), 2);
-        assert!(cache.entries.contains_key(&1));
-        assert!(cache.entries.contains_key(&2));
-        assert!(cache.eviction_order.contains(&1));
-        assert!(cache.eviction_order.contains(&2));
-        assert_eq!(cache.eviction_order.len(), 2);
-    }
-
-    #[test]
-    fn test_collision_three_entries_same_key() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![
-            make_entry(1, 5, 100),
-            make_entry(2, 5, 100),
-            make_entry(3, 5, 100),
-        ]);
-        cache.update(Some(&seed), true);
-
-        assert_eq!(cache.entries.len(), 3);
-        assert!(cache.eviction_order.contains(&1));
-        assert!(cache.eviction_order.contains(&2));
-        assert!(cache.eviction_order.contains(&3));
-        assert_eq!(cache.eviction_order.len(), 3, "single key for all three");
-    }
-
-    #[test]
-    fn test_collision_eviction_removes_one_not_both() {
-        let mut cache = QueryContextCache::new();
-        cache.max_size = 2;
-        let seed = resp_ctx(vec![
-            make_entry(1, 5, 100),
-            make_entry(2, 5, 100),
-            make_entry(3, 1, 200),
-        ]);
-        cache.update(Some(&seed), true);
-
-        assert_eq!(cache.entries.len(), 2);
-        assert!(
-            cache.entries.contains_key(&3),
-            "lower priority entry should survive"
-        );
-        let id1_alive = cache.entries.contains_key(&1);
-        let id2_alive = cache.entries.contains_key(&2);
-        assert!(
-            id1_alive ^ id2_alive,
-            "exactly one of the colliding entries should survive, not both or neither"
-        );
-        assert_eq!(cache.eviction_order.len(), cache.entries.len());
-    }
-
-    #[test]
-    fn test_collision_remove_entry_preserves_sibling() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![make_entry(1, 5, 100), make_entry(2, 5, 100)]);
-        cache.update(Some(&seed), true);
-
-        cache.remove_entry(1);
-
-        assert_eq!(cache.entries.len(), 1);
-        assert!(!cache.entries.contains_key(&1));
-        assert!(cache.entries.contains_key(&2));
-        assert!(!cache.eviction_order.contains(&1));
-        assert!(cache.eviction_order.contains(&2));
-        assert_eq!(cache.eviction_order.len(), 1);
-    }
-
-    #[test]
-    fn test_collision_remove_both_cleans_key() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![make_entry(1, 5, 100), make_entry(2, 5, 100)]);
-        cache.update(Some(&seed), true);
-
-        cache.remove_entry(1);
-        cache.remove_entry(2);
-
-        assert!(cache.entries.is_empty());
-        assert!(cache.eviction_order.is_empty());
-    }
-
-    #[test]
-    fn test_update_creates_collision() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![make_entry(1, 5, 100), make_entry(2, 5, 200)]);
-        cache.update(Some(&seed), true);
-
-        assert!(cache.eviction_order.contains(&1));
-
-        let update = resp_ctx(vec![make_entry(1, 5, 200)]);
-        cache.update(Some(&update), true);
-
-        assert_eq!(cache.entries.len(), 2);
-        assert!(cache.eviction_order.contains(&1));
-        assert!(cache.eviction_order.contains(&2));
-    }
-
-    #[test]
-    fn test_update_resolves_collision() {
-        let mut cache = QueryContextCache::new();
-        let seed = resp_ctx(vec![make_entry(1, 5, 100), make_entry(2, 5, 100)]);
-        cache.update(Some(&seed), true);
-        assert_eq!(cache.eviction_order.len(), 2, "two keys before split");
-
-        let update = resp_ctx(vec![make_entry(1, 5, 200)]);
-        cache.update(Some(&update), true);
-
-        assert_eq!(cache.entries.len(), 2);
-        assert_eq!(cache.eviction_order[0], 1);
-        assert_eq!(cache.eviction_order[1], 2);
-        assert_eq!(
-            cache.eviction_order.len(),
-            2,
-            "two distinct keys after split"
-        );
     }
 
     // -----------------------------------------------------------------------
@@ -1115,11 +970,7 @@ mod tests {
         cache.update(Some(&update), true);
         assert_cache_matches(
             &cache,
-            &[
-                e(40000, 2, 60000, "C1"),
-                e(50000, 2, 50001, "C2"),
-                e(60000, 3, 50002, "C3"),
-            ],
+            &[e(40000, 2, 60000, "C1"), e(60000, 3, 50002, "C3")],
             "known_id_newer_ts_higher_pri_same_ctx",
         );
     }
@@ -1131,11 +982,7 @@ mod tests {
         cache.update(Some(&update), true);
         assert_cache_matches(
             &cache,
-            &[
-                e(40000, 2, 60000, "C4"),
-                e(50000, 2, 50001, "C2"),
-                e(60000, 3, 50002, "C3"),
-            ],
+            &[e(40000, 2, 60000, "C4"), e(60000, 3, 50002, "C3")],
             "known_id_newer_ts_higher_pri_diff_ctx",
         );
     }
@@ -1207,11 +1054,7 @@ mod tests {
         cache.update(Some(&update), true);
         assert_cache_matches(
             &cache,
-            &[
-                e(40000, 2, 50000, "C1"),
-                e(50000, 2, 50001, "C2"),
-                e(60000, 3, 50002, "C3"),
-            ],
+            &[e(40000, 2, 50000, "C1"), e(60000, 3, 50002, "C3")],
             "known_id_equal_ts_higher_pri_same_ctx",
         );
     }
@@ -1223,11 +1066,7 @@ mod tests {
         cache.update(Some(&update), true);
         assert_cache_matches(
             &cache,
-            &[
-                e(40000, 2, 50000, "C4"),
-                e(50000, 2, 50001, "C2"),
-                e(60000, 3, 50002, "C3"),
-            ],
+            &[e(40000, 2, 50000, "C4"), e(60000, 3, 50002, "C3")],
             "known_id_equal_ts_higher_pri_diff_ctx",
         );
     }
@@ -1313,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_unknown_id_at_occupied_pri_evicts_highest_pri_same_ctx() {
+    fn merge_unknown_id_at_occupied_pri_displaces_incumbent_same_ctx() {
         let mut cache = seed_cache();
         let update = resp_ctx(vec![make_entry_with_ctx(1, 1, 60000, "C1")]);
         cache.update(Some(&update), true);
@@ -1322,14 +1161,14 @@ mod tests {
             &[
                 e(1, 1, 60000, "C1"),
                 e(50000, 2, 50001, "C2"),
-                e(40000, 1, 50000, "C1"), // BD: old drivers would displace the incumbent at this priority instead of evicting by capacity
+                e(60000, 3, 50002, "C3"),
             ],
             "unknown_id_occupied_pri_same_ctx",
         );
     }
 
     #[test]
-    fn merge_unknown_id_at_occupied_pri_evicts_highest_pri_diff_ctx() {
+    fn merge_unknown_id_at_occupied_pri_displaces_incumbent_diff_ctx() {
         let mut cache = seed_cache();
         let update = resp_ctx(vec![make_entry_with_ctx(1, 1, 60000, "C4")]);
         cache.update(Some(&update), true);
@@ -1338,14 +1177,14 @@ mod tests {
             &[
                 e(1, 1, 60000, "C4"),
                 e(50000, 2, 50001, "C2"),
-                e(40000, 1, 50000, "C1"), // BD: old drivers would displace the incumbent at this priority instead of evicting by capacity
+                e(60000, 3, 50002, "C3"),
             ],
             "unknown_id_occupied_pri_diff_ctx",
         );
     }
 
     #[test]
-    fn merge_unknown_id_at_different_occupied_pri_evicts_highest_pri() {
+    fn merge_unknown_id_at_different_occupied_pri_displaces_incumbent() {
         let mut cache = seed_cache();
         let update = resp_ctx(vec![make_entry_with_ctx(1, 2, 60000, "C2")]);
         cache.update(Some(&update), true);
@@ -1354,14 +1193,14 @@ mod tests {
             &[
                 e(40000, 1, 50000, "C1"),
                 e(1, 2, 60000, "C2"),
-                e(40000, 1, 50000, "C1"), // BD: old drivers would displace the incumbent at this priority instead of evicting by capacity
+                e(60000, 3, 50002, "C3"),
             ],
             "unknown_id_different_occupied_pri",
         );
     }
 
     #[test]
-    fn merge_unknown_id_at_different_occupied_pri_evicts_highest_pri_diff_ctx() {
+    fn merge_unknown_id_at_different_occupied_pri_displaces_incumbent_diff_ctx() {
         let mut cache = seed_cache();
         let update = resp_ctx(vec![make_entry_with_ctx(1, 2, 60000, "C4")]);
         cache.update(Some(&update), true);
@@ -1370,7 +1209,7 @@ mod tests {
             &[
                 e(40000, 1, 50000, "C1"),
                 e(1, 2, 60000, "C4"),
-                e(40000, 1, 50000, "C1"), // BD: old drivers would displace the incumbent at this priority instead of evicting by capacity
+                e(60000, 3, 50002, "C3"),
             ],
             "unknown_id_different_occupied_pri_diff_ctx",
         );
@@ -1393,7 +1232,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_two_unknown_ids_at_same_pri_evicts_highest_pri() {
+    fn merge_two_unknown_ids_at_same_pri_keeps_last() {
         let mut cache = seed_cache();
         let update = resp_ctx(vec![
             make_entry_with_ctx(1, 2, 60000, "C4"),
@@ -1405,9 +1244,9 @@ mod tests {
             &[
                 e(40000, 1, 50000, "C1"),
                 e(2, 2, 60000, "C5"),
-                e(1, 2, 60000, "C4"), // BD: old drivers would displace the incumbent at this priority instead of evicting by capacity
+                e(60000, 3, 50002, "C3"),
             ],
-            "two_unknown_ids_same_pri_evicts_highest",
+            "two_unknown_ids_same_pri_keeps_last",
         );
     }
 }

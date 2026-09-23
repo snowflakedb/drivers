@@ -3955,7 +3955,7 @@ tests:
   unit/test_query_context_cache.py:
   - test_name: test_add_same_priority
     ud_tests:
-    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_allow_duplicate_priorities_to_coexist_in_cache
+    - python/tests/integ/query/test_query_context_dto.py::TestQueryContextDtoCache::test_should_keep_the_last_entry_when_priorities_are_duplicated
   - test_name: test_deserialize_type_error
     ud_tests: []
     notes: Legacy test feeds malformed-type payloads and asserts TypeError. No UD test sends malformed queryContextDTO; Rust serde rejects bad types at deserialization but this is not explicitly tested at the Python layer.

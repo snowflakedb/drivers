@@ -46,22 +46,16 @@ Feature: Query context DTO cache
     Then the second request carries the context from the error response
 
   @core_int @python_int
-  Scenario: should allow duplicate priorities to coexist in cache
+  Scenario: should keep the last entry when priorities are duplicated
     Given a wiremock server with 3 entries sharing the same priority
     When the client executes two queries
-    Then the second request contains all 3 entries with the same priority
+    Then the second request contains only the last entry with that priority
 
   @core_int @python_int
-  Scenario: should evict highest priority number among duplicate priorities
-    Given a wiremock server with 4 entries at priority 5 and QUERY_CONTEXT_CACHE_SIZE 3
-    When the client executes two queries
-    Then the second request has 3 entries and the entry with the lowest timestamp is evicted
-
-  @core_int @python_int
-  Scenario: should insert new id at occupied priority and evict by capacity
+  Scenario: should insert new id at occupied priority and displace the occupant
     Given a wiremock server with seed entries and a merge response adding a new id at an existing priority
     When the client executes three queries
-    Then the third request contains the new entry and evicts the lowest-importance entry
+    Then the third request contains the new entry and displaces the occupant
 
   @core_int @python_int
   Scenario: should re-index entry when priority changes with same timestamp

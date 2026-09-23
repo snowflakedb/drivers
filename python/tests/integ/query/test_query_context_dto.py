@@ -184,8 +184,8 @@ class TestQueryContextDtoCache:
         assert len(entries) >= 1, "Cache should have entries from error response"
         assert entries[0]["id"] == 1
 
-    # Scenario: should allow duplicate priorities to coexist in cache
-    def test_should_allow_duplicate_priorities_to_coexist_in_cache(self, int_test_connection_factory, wiremock):
+    # Scenario: should keep the last entry when priorities are duplicated
+    def test_should_keep_the_last_entry_when_priorities_are_duplicated(self, int_test_connection_factory, wiremock):
         # Given a wiremock server with 3 entries sharing the same priority
         wiremock.add_mapping("auth/login_success_any.json")
         wiremock.add_mapping("query_context/qcc_duplicate_priorities_response.json")
@@ -196,45 +196,18 @@ class TestQueryContextDtoCache:
                 cur.execute("SELECT 1")
                 cur.execute("SELECT 2")
 
-        # Then the second request contains all 3 entries with the same priority
+        # Then the second request contains only the last entry with that priority
         requests = wiremock.get_requests("/queries/v1/query-request.*")
         assert len(requests) >= 2
 
         second_req = json.loads(requests[1]["body"])
         entries = second_req.get("queryContextDTO", {}).get("entries", [])
-        assert len(entries) == 3, f"All 3 entries with same priority should coexist, got {len(entries)}"
-        ids = {e["id"] for e in entries}
-        assert ids == {1, 2, 3}, f"Expected ids {{1, 2, 3}}, got {ids}"
-        for entry in entries:
-            assert entry["priority"] == 5, f"All entries should have priority=5, got {entry['priority']}"
+        assert len(entries) == 1
+        assert entries[0]["id"] == 3
+        assert entries[0]["priority"] == 5
 
-    # Scenario: should evict highest priority number among duplicate priorities
-    def test_should_evict_highest_priority_number_among_duplicate_priorities(
-        self, int_test_connection_factory, wiremock
-    ):
-        # Given a wiremock server with 4 entries at priority 5 and QUERY_CONTEXT_CACHE_SIZE 3
-        wiremock.add_mapping("auth/login_success_any.json")
-        wiremock.add_mapping("query_context/qcc_duplicate_priorities_eviction_response.json")
-
-        # When the client executes two queries
-        with int_test_connection_factory(server_url=wiremock.http_url()) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.execute("SELECT 2")
-
-        # Then the second request has 3 entries and the entry with the lowest timestamp is evicted
-        requests = wiremock.get_requests("/queries/v1/query-request.*")
-        assert len(requests) >= 2
-
-        second_req = json.loads(requests[1]["body"])
-        entries = second_req.get("queryContextDTO", {}).get("entries", [])
-        assert len(entries) == 3, f"Expected 3 entries after eviction, got {len(entries)}"
-        ids = {e["id"] for e in entries}
-        assert 1 not in ids, "id=1 (lowest timestamp at same priority) should be evicted"
-        assert ids == {2, 3, 4}, f"Expected ids {{2, 3, 4}}, got {ids}"
-
-    # Scenario: should insert new id at occupied priority and evict by capacity
-    def test_should_insert_new_id_at_occupied_priority_and_evict_by_capacity(
+    # Scenario: should insert new id at occupied priority and displace the occupant
+    def test_should_insert_new_id_at_occupied_priority_and_displace_the_occupant(
         self, int_test_connection_factory, wiremock
     ):
         # Given a wiremock server with seed entries and a merge response adding a new id at an existing priority
@@ -248,7 +221,7 @@ class TestQueryContextDtoCache:
                 cur.execute("SELECT 2")
                 cur.execute("SELECT 3")
 
-        # Then the third request contains the new entry and evicts the lowest-importance entry
+        # Then the third request contains the new entry and displaces the occupant
         requests = wiremock.get_requests("/queries/v1/query-request.*")
         assert len(requests) >= 3
 
@@ -257,8 +230,8 @@ class TestQueryContextDtoCache:
         ids = {e["id"] for e in entries}
         assert 5 in ids, "id=5 (new entry) should be present"
         assert 2 in ids, "id=2 should remain"
-        assert 1 in ids, "id=1 should remain"
-        assert 3 not in ids, "id=3 (highest priority number=20) should be evicted by capacity"
+        assert 1 not in ids, "id=1 should be displaced"
+        assert 3 in ids, "id=3 should remain"
 
     # Scenario: should re-index entry when priority changes with same timestamp
     def test_should_re_index_entry_when_priority_changes_with_same_timestamp(

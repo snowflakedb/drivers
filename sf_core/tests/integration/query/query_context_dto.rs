@@ -313,11 +313,11 @@ fn should_update_cache_on_failed_query_response() {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario: should allow duplicate priorities to coexist in cache
+// Scenario: should keep the last entry when priorities are duplicated
 // ---------------------------------------------------------------------------
 
 #[test]
-fn should_allow_duplicate_priorities_to_coexist_in_cache() {
+fn should_keep_the_last_entry_when_priorities_are_duplicated() {
     // Given a wiremock server with 3 entries sharing the same priority
     let fixture = QueryContextFixture::new();
     fixture.mount_login();
@@ -345,80 +345,23 @@ fn should_allow_duplicate_priorities_to_coexist_in_cache() {
     let _ = fixture.client.execute_query_no_unwrap("SELECT 1");
     let _ = fixture.client.execute_query_no_unwrap("SELECT 2");
 
-    // Then the second request contains all 3 entries with the same priority
+    // Then the second request contains only the last entry with that priority
     let requests = fixture.query_requests();
     assert!(requests.len() >= 2);
     let entries = requests[1]["queryContextDTO"]["entries"]
         .as_array()
         .expect("Should have queryContextDTO.entries");
-    assert_eq!(
-        entries.len(),
-        3,
-        "All 3 entries with same priority should coexist"
-    );
-    let ids: Vec<i64> = entries.iter().map(|e| e["id"].as_i64().unwrap()).collect();
-    assert!(ids.contains(&1) && ids.contains(&2) && ids.contains(&3));
-    // All should have priority 5
-    for entry in entries {
-        assert_eq!(entry["priority"].as_i64().unwrap(), 5);
-    }
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"].as_i64(), Some(3));
+    assert_eq!(entries[0]["priority"].as_i64(), Some(5));
 }
 
 // ---------------------------------------------------------------------------
-// Scenario: should evict highest priority number among duplicate priorities
+// Scenario: should insert new id at occupied priority and displace the occupant
 // ---------------------------------------------------------------------------
 
 #[test]
-fn should_evict_highest_priority_number_among_duplicate_priorities() {
-    // Given a wiremock server with 4 entries at priority 5 and QUERY_CONTEXT_CACHE_SIZE 3
-    let fixture = QueryContextFixture::new();
-    fixture.mount_login();
-    fixture.mount_query_response(json!({
-        "success": true,
-        "data": {
-            "queryId": "qid-dup-evict",
-            "queryResultFormat": "json",
-            "rowtype": [{"name": "status", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
-            "rowset": [["OK"]],
-            "total": 1, "returned": 1,
-            "parameters": [{"name": "QUERY_CONTEXT_CACHE_SIZE", "value": 3}],
-            "queryContext": {
-                "entries": [
-                    {"id": 1, "timestamp": 100, "priority": 5, "context": "a"},
-                    {"id": 2, "timestamp": 200, "priority": 5, "context": "b"},
-                    {"id": 3, "timestamp": 300, "priority": 5, "context": "c"},
-                    {"id": 4, "timestamp": 400, "priority": 5, "context": "d"}
-                ]
-            }
-        }
-    }));
-
-    // When the client executes two queries
-    fixture.client.connect().unwrap();
-    let _ = fixture.client.execute_query_no_unwrap("SELECT 1");
-    let _ = fixture.client.execute_query_no_unwrap("SELECT 2");
-
-    // Then the second request has 3 entries and the entry with the lowest timestamp is evicted
-    let requests = fixture.query_requests();
-    assert!(requests.len() >= 2);
-    let entries = requests[1]["queryContextDTO"]["entries"]
-        .as_array()
-        .unwrap();
-    assert_eq!(entries.len(), 3, "Should have 3 entries after eviction");
-    let ids: Vec<i64> = entries.iter().map(|e| e["id"].as_i64().unwrap()).collect();
-    assert!(
-        !ids.contains(&1),
-        "id=1 (lowest timestamp at same priority) should be evicted"
-    );
-    assert!(ids.contains(&2) && ids.contains(&3) && ids.contains(&4));
-}
-
-// ---------------------------------------------------------------------------
-// Scenario: should insert new id at occupied priority and evict by capacity
-// ---------------------------------------------------------------------------
-
-#[test]
-fn should_insert_new_id_at_occupied_priority_and_evict_by_capacity() {
+fn should_insert_new_id_at_occupied_priority_and_displace_the_occupant() {
     // Given a wiremock server with seed entries and a merge response adding a
     // new id at an existing priority
     let fixture = QueryContextFixture::new();
@@ -426,7 +369,7 @@ fn should_insert_new_id_at_occupied_priority_and_evict_by_capacity() {
     fixture.mock.mount(
         Mock::given(method("POST"))
             .and(path_regex(r"/queries/v1/query-request.*"))
-            .respond_with(SeedThenDuplicatePriorityMergeResponder::new()),
+            .respond_with(SeedThenOccupiedPriorityMergeResponder::new()),
     );
 
     // When the client executes three queries
@@ -435,8 +378,7 @@ fn should_insert_new_id_at_occupied_priority_and_evict_by_capacity() {
     let _ = fixture.client.execute_query_no_unwrap("SELECT 2");
     let _ = fixture.client.execute_query_no_unwrap("SELECT 3");
 
-    // Then the third request contains the new entry and evicts the
-    // lowest-importance entry
+    // Then the third request contains the new entry and displaces the occupant
     let requests = fixture.query_requests();
     assert!(requests.len() >= 3);
     let entries = requests[2]["queryContextDTO"]["entries"]
@@ -445,11 +387,8 @@ fn should_insert_new_id_at_occupied_priority_and_evict_by_capacity() {
     let ids: Vec<i64> = entries.iter().map(|e| e["id"].as_i64().unwrap()).collect();
     assert!(ids.contains(&5), "id=5 (new entry) should be present");
     assert!(ids.contains(&2), "id=2 should remain");
-    assert!(ids.contains(&1), "id=1 should remain (not displaced)");
-    assert!(
-        !ids.contains(&3),
-        "id=3 (highest priority number=20) should be evicted by capacity"
-    );
+    assert!(!ids.contains(&1), "id=1 should be displaced");
+    assert!(ids.contains(&3), "id=3 should remain");
 }
 
 // ---------------------------------------------------------------------------
@@ -841,14 +780,11 @@ impl Respond for SeedThenDisjointReplaceResponder {
     }
 }
 
-/// Seed with two entries at priority=10 + one at priority=20, then merge
-/// response adds new id=5 at priority=10 (with QUERY_CONTEXT_CACHE_SIZE=3).
-/// Verifies capacity eviction removes highest-priority-number entry (id=3).
-struct SeedThenDuplicatePriorityMergeResponder {
+struct SeedThenOccupiedPriorityMergeResponder {
     calls: AtomicUsize,
 }
 
-impl SeedThenDuplicatePriorityMergeResponder {
+impl SeedThenOccupiedPriorityMergeResponder {
     fn new() -> Self {
         Self {
             calls: AtomicUsize::new(0),
@@ -856,7 +792,7 @@ impl SeedThenDuplicatePriorityMergeResponder {
     }
 }
 
-impl Respond for SeedThenDuplicatePriorityMergeResponder {
+impl Respond for SeedThenOccupiedPriorityMergeResponder {
     fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         match n {
@@ -872,7 +808,7 @@ impl Respond for SeedThenDuplicatePriorityMergeResponder {
                     "queryContext": {
                         "entries": [
                             {"id": 1, "timestamp": 100, "priority": 10, "context": "first"},
-                            {"id": 2, "timestamp": 200, "priority": 10, "context": "second"},
+                            {"id": 2, "timestamp": 200, "priority": 15, "context": "second"},
                             {"id": 3, "timestamp": 300, "priority": 20, "context": "other"}
                         ]
                     }
@@ -889,7 +825,6 @@ impl Respond for SeedThenDuplicatePriorityMergeResponder {
                     "parameters": [],
                     "queryContext": {
                         "entries": [
-                            {"id": 2, "timestamp": 200, "priority": 10, "context": "second"},
                             {"id": 5, "timestamp": 500, "priority": 10, "context": "newcomer"}
                         ]
                     }
