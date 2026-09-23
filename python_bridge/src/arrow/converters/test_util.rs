@@ -105,6 +105,20 @@ pub(crate) fn assert_np_datetime64_d(value: &Bound<'_, PyAny>, days_since_epoch:
     );
 }
 
+pub(crate) fn assert_np_datetime64_ns(value: &Bound<'_, PyAny>, nanos_since_epoch: i64) {
+    let datetime64 = numpy_type(value.py(), "datetime64");
+    assert!(
+        value.get_type().is(&datetime64),
+        "expected numpy.datetime64, got {}",
+        value.get_type().name().unwrap()
+    );
+    let expected = datetime64.call1((nanos_since_epoch, "ns")).unwrap();
+    assert!(
+        value.eq(&expected).unwrap(),
+        "expected datetime64[ns] of {nanos_since_epoch} nanoseconds, got {value}"
+    );
+}
+
 pub(crate) fn assert_py_date(value: &Bound<'_, PyAny>, year: i32, month: u8, day: u8) {
     assert!(
         value.is_instance_of::<PyDate>(),

@@ -180,6 +180,34 @@ pub fn split_scaled_epoch(raw: i64, scale: u32) -> Result<(i64, u32), ReadArrowE
     })
 }
 
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
+
+/// Scale a raw epoch (`10^-scale` seconds) to nanoseconds since 1970-01-01.
+/// Errors when `scale > 9` or the product does not fit in `i64`.
+pub fn scaled_epoch_to_nanos(raw: i64, scale: u32) -> Result<i64, ReadArrowError> {
+    if scale > 9 {
+        return InvalidArrowValueSnafu {
+            reason: format!("timestamp scale {scale} exceeds maximum of 9"),
+        }
+        .fail();
+    }
+    nanos_i64(i128::from(raw) * 10i128.pow(9 - scale))
+}
+
+fn nanos_i64(total: i128) -> Result<i64, ReadArrowError> {
+    let Ok(nanos) = i64::try_from(total) else {
+        return InvalidArrowValueSnafu {
+            reason: format!("timestamp nanoseconds {total} exceed int64 range"),
+        }
+        .fail();
+    };
+    Ok(nanos)
+}
+
+fn epoch_fraction_to_nanos(epoch_seconds: i64, fraction_nanos: i32) -> Result<i64, ReadArrowError> {
+    nanos_i64(i128::from(epoch_seconds) * NANOS_PER_SECOND + i128::from(fraction_nanos))
+}
+
 #[cfg(test)]
 mod split_scaled_epoch_tests {
     use super::split_scaled_epoch;
@@ -233,6 +261,30 @@ pub fn read_struct_timestamp(
     array: &StructArray,
     row_idx: usize,
 ) -> Result<NaiveDateTime, ReadArrowError> {
+    let (epoch_seconds, fraction_nanos) = struct_epoch_fraction(array, row_idx)?;
+
+    DateTime::from_timestamp(epoch_seconds, fraction_nanos as u32)
+        .map(|dt| dt.naive_utc())
+        .with_context(|| InvalidArrowValueSnafu {
+            reason: format!(
+                "epoch_seconds={epoch_seconds}, fraction_nanos={fraction_nanos} is out of range"
+            ),
+        })
+}
+
+/// Same 2-child layout as [`read_struct_timestamp`], as nanoseconds since 1970-01-01.
+pub fn read_struct_timestamp_nanos(
+    array: &StructArray,
+    row_idx: usize,
+) -> Result<i64, ReadArrowError> {
+    let (epoch_seconds, fraction_nanos) = struct_epoch_fraction(array, row_idx)?;
+    epoch_fraction_to_nanos(epoch_seconds, fraction_nanos)
+}
+
+fn struct_epoch_fraction(
+    array: &StructArray,
+    row_idx: usize,
+) -> Result<(i64, i32), ReadArrowError> {
     if array.is_null(row_idx) {
         return Err(ReadArrowError::NullValue {
             location: snafu::location!(),
@@ -276,13 +328,7 @@ pub fn read_struct_timestamp(
         .fail();
     }
 
-    DateTime::from_timestamp(epoch_seconds, fraction_nanos as u32)
-        .map(|dt| dt.naive_utc())
-        .with_context(|| InvalidArrowValueSnafu {
-            reason: format!(
-                "epoch_seconds={epoch_seconds}, fraction_nanos={fraction_nanos} is out of range"
-            ),
-        })
+    Ok((epoch_seconds, fraction_nanos))
 }
 
 /// Flat Int64 epoch in units of `10^-scale` seconds.
@@ -307,6 +353,20 @@ pub fn read_scaled_timestamp(
                 "scaled epoch raw={raw}, scale={scale} produced out-of-range timestamp"
             ),
         })
+}
+
+/// Flat Int64 epoch in units of `10^-scale` seconds, as nanoseconds since 1970-01-01.
+pub fn read_scaled_timestamp_nanos(
+    array: &PrimitiveArray<Int64Type>,
+    row_idx: usize,
+    scale: u32,
+) -> Result<i64, ReadArrowError> {
+    if array.is_null(row_idx) {
+        return Err(ReadArrowError::NullValue {
+            location: snafu::location!(),
+        });
+    }
+    scaled_epoch_to_nanos(array.value(row_idx), scale)
 }
 
 /// TIMESTAMP_TZ struct: 2 columns `{scaled_epoch, timezone}` or 3 columns
@@ -705,6 +765,56 @@ mod tests {
             .unwrap();
         assert_eq!(value.and_utc().timestamp(), -1);
         assert_eq!(value.and_utc().timestamp_subsec_nanos(), 500_000_000);
+    }
+
+    #[test]
+    fn should_read_ntz_flat_int64_nanos_at_scale_0() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_453_357_964)]);
+        assert_eq!(
+            read_scaled_timestamp_nanos(&array, 0, 0).unwrap(),
+            1_453_357_964_000_000_000
+        );
+    }
+
+    #[test]
+    fn should_read_ntz_flat_int64_nanos_at_scale_9() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(1_000_000_000_123_456_789)]);
+        assert_eq!(
+            read_scaled_timestamp_nanos(&array, 0, 9).unwrap(),
+            1_000_000_000_123_456_789
+        );
+    }
+
+    #[test]
+    fn should_read_ntz_2col_struct_nanos() {
+        let array = make_ntz_struct_array(1_000_000_000, 123_456_789);
+        assert_eq!(
+            read_struct_timestamp_nanos(&array, 0).unwrap(),
+            1_000_000_000_123_456_789
+        );
+    }
+
+    #[test]
+    fn should_scale_negative_epoch_to_exact_nanos() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(-500)]);
+        assert_eq!(
+            read_scaled_timestamp_nanos(&array, 0, 3).unwrap(),
+            -500_000_000
+        );
+    }
+
+    #[test]
+    fn should_reject_scaled_nanos_that_overflow_i64() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(i64::MAX)]);
+        let err = read_scaled_timestamp_nanos(&array, 0, 0).unwrap_err();
+        assert!(matches!(err, ReadArrowError::InvalidArrowValue { .. }));
+    }
+
+    #[test]
+    fn should_report_null_flat_int64_nanos_as_null_value_error() {
+        let array = PrimitiveArray::<Int64Type>::from(vec![None::<i64>]);
+        let err = read_scaled_timestamp_nanos(&array, 0, 0).unwrap_err();
+        assert!(matches!(err, ReadArrowError::NullValue { .. }));
     }
 
     #[test]

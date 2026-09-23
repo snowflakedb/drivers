@@ -27,6 +27,7 @@ struct NumpyApi {
     int64_dtype: Py<PyAny>,
     float64_dtype: Py<PyAny>,
     datetime64_d_dtype: Py<PyAny>,
+    datetime64_ns_dtype: Py<PyAny>,
 }
 
 pub(super) struct NumpyProvider {
@@ -54,6 +55,14 @@ impl NumpyProvider {
         days: i64,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.scalar(py, days, |api| &api.datetime64_d_dtype)
+    }
+
+    pub(super) fn datetime64_ns<'py>(
+        &self,
+        py: Python<'py>,
+        nanos: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, nanos, |api| &api.datetime64_ns_dtype)
     }
 
     fn scalar<'py, T: Copy>(
@@ -108,12 +117,15 @@ fn load_api(py: Python<'_>) -> PyResult<NumpyApi> {
     let float64_dtype = dtype.call1(("float64",))?.unbind();
     // datetime64[D] is an 8-byte npy_datetime counting days from the Unix epoch.
     let datetime64_d_dtype = dtype.call1(("datetime64[D]",))?.unbind();
+    // datetime64[ns] is an 8-byte npy_datetime counting nanoseconds from the Unix epoch.
+    let datetime64_ns_dtype = dtype.call1(("datetime64[ns]",))?.unbind();
     Ok(NumpyApi {
         _capsule: capsule_obj.unbind(),
         pyarray_scalar,
         int64_dtype,
         float64_dtype,
         datetime64_d_dtype,
+        datetime64_ns_dtype,
     })
 }
 
@@ -128,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn int64_float64_and_datetime64_d_are_numpy_scalars() {
+    fn int64_float64_and_datetime64_are_numpy_scalars() {
         Python::initialize();
         let provider = NumpyProvider::new();
         Python::attach(|py| {
@@ -157,6 +169,15 @@ mod tests {
             );
             let expected = datetime64.call1((0, "D")).unwrap();
             assert!(date.eq(&expected).unwrap());
+
+            let ntz = provider.datetime64_ns(py, 0).unwrap();
+            assert!(
+                ntz.get_type().is(&datetime64),
+                "expected numpy.datetime64, got {}",
+                ntz.get_type().name().unwrap()
+            );
+            let expected_ns = datetime64.call1((0, "ns")).unwrap();
+            assert!(ntz.eq(&expected_ns).unwrap());
         });
     }
 

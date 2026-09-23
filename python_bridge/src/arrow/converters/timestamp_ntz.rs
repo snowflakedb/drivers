@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arrow::array::ArrayRef;
 use chrono::{Datelike, NaiveDateTime};
 use pyo3::exceptions::PyValueError;
@@ -5,6 +7,7 @@ use pyo3::prelude::*;
 use sf_types::ReadArrowError;
 
 use super::Column;
+use super::numpy::NumpyProvider;
 use crate::arrow::converters::util::{TimestampColumn, py_none};
 use crate::arrow::plan::SnowflakeFieldType;
 
@@ -37,15 +40,39 @@ impl TimestampNtzMaterializer {
     }
 }
 
+pub(crate) struct TimestampNtzNumpyColumn {
+    values: TimestampColumn,
+    scale: u32,
+    numpy: Arc<NumpyProvider>,
+}
+
+impl TimestampNtzNumpyColumn {
+    pub(crate) fn to_py<'py>(&self, py: Python<'py>, row: usize) -> PyResult<Bound<'py, PyAny>> {
+        match self.values.nanos(row, self.scale) {
+            Ok(nanos) => self.numpy.datetime64_ns(py, nanos),
+            Err(ReadArrowError::NullValue { .. }) => Ok(py_none(py)),
+            Err(err) => Err(PyValueError::new_err(err.to_string())),
+        }
+    }
+}
+
 pub(super) fn from_column(
     array: &ArrayRef,
     field_type: &SnowflakeFieldType,
     scale: u32,
+    numpy: Arc<NumpyProvider>,
+    use_numpy: bool,
 ) -> PyResult<Column> {
-    Ok(Column::TimestampNtz(TimestampNtzColumn {
-        values: TimestampColumn::from_array(array, field_type)?,
-        scale,
-    }))
+    let values = TimestampColumn::from_array(array, field_type)?;
+    if use_numpy {
+        Ok(Column::TimestampNtzNumpy(TimestampNtzNumpyColumn {
+            values,
+            scale,
+            numpy,
+        }))
+    } else {
+        Ok(Column::TimestampNtz(TimestampNtzColumn { values, scale }))
+    }
 }
 
 #[cfg(test)]
@@ -59,7 +86,9 @@ mod tests {
     use pyo3::prelude::*;
 
     use crate::arrow::converters::ConversionContext;
-    use crate::arrow::converters::test_util::{assert_py_datetime, assert_py_none};
+    use crate::arrow::converters::test_util::{
+        assert_np_datetime64_ns, assert_py_datetime, assert_py_none,
+    };
     use crate::arrow::plan::SnowflakeFieldType;
 
     fn ntz(scale: u32) -> SnowflakeFieldType {
@@ -118,6 +147,36 @@ mod tests {
     }
 
     #[test]
+    fn int64_converts_to_numpy_datetime64_ns_with_nulls() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+
+        let scale0: ArrayRef = Arc::new(Int64Array::from(vec![Some(1_453_357_964), None, Some(0)]));
+        let scale0_column = context.converter_from_column(&scale0, &ntz(0)).unwrap();
+
+        let scale9: ArrayRef = Arc::new(Int64Array::from(vec![Some(1_000_000_000_123_456_789)]));
+        let scale9_column = context.converter_from_column(&scale9, &ntz(9)).unwrap();
+
+        let scale3: ArrayRef = Arc::new(Int64Array::from(vec![Some(1000)]));
+        let scale3_column = context.converter_from_column(&scale3, &ntz(3)).unwrap();
+
+        Python::attach(|py| {
+            assert_np_datetime64_ns(
+                &scale0_column.to_py(py, 0).unwrap(),
+                1_453_357_964_000_000_000,
+            );
+            assert_py_none(&scale0_column.to_py(py, 1).unwrap());
+            assert_np_datetime64_ns(&scale0_column.to_py(py, 2).unwrap(), 0);
+
+            assert_np_datetime64_ns(
+                &scale9_column.to_py(py, 0).unwrap(),
+                1_000_000_000_123_456_789,
+            );
+            assert_np_datetime64_ns(&scale3_column.to_py(py, 0).unwrap(), 1_000_000_000);
+        });
+    }
+
+    #[test]
     fn struct_converts_to_python_datetime_with_nulls() {
         Python::initialize();
         let ctx = ConversionContext::new(&Schema::empty()).unwrap();
@@ -135,6 +194,23 @@ mod tests {
                 (2001, 9, 9),
                 (1, 46, 40, 123_456),
             );
+        });
+    }
+
+    #[test]
+    fn struct_converts_to_numpy_datetime64_ns_with_nulls() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let array = ntz_struct(
+            vec![Some(1_453_357_964), None, Some(1_000_000_000)],
+            vec![Some(0), None, Some(123_456_789)],
+        );
+        let column = context.converter_from_column(&array, &ntz(9)).unwrap();
+
+        Python::attach(|py| {
+            assert_np_datetime64_ns(&column.to_py(py, 0).unwrap(), 1_453_357_964_000_000_000);
+            assert_py_none(&column.to_py(py, 1).unwrap());
+            assert_np_datetime64_ns(&column.to_py(py, 2).unwrap(), 1_000_000_000_123_456_789);
         });
     }
 
@@ -231,6 +307,27 @@ mod tests {
             let text = err.value(py).str().unwrap().to_string_lossy().into_owned();
             assert!(
                 text.contains("Invalid Arrow value") && text.contains("timestamp"),
+                "got {text}"
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_raw_values_outside_datetime64_ns_range() {
+        Python::initialize();
+        let context = ConversionContext::with_numpy(&Schema::empty()).unwrap();
+        let array: ArrayRef = Arc::new(Int64Array::from(vec![Some(i64::MAX)]));
+        let column = context.converter_from_column(&array, &ntz(0)).unwrap();
+
+        Python::attach(|py| {
+            let err = column.to_py(py, 0).unwrap_err();
+            assert!(
+                err.is_instance_of::<PyValueError>(py),
+                "expected PyValueError, got {err}"
+            );
+            let text = err.value(py).str().unwrap().to_string_lossy().into_owned();
+            assert!(
+                text.contains("Invalid Arrow value") && text.contains("int64 range"),
                 "got {text}"
             );
         });

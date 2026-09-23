@@ -51,7 +51,8 @@ pub use text::SnowflakeText;
 pub use time::SnowflakeTime;
 pub use timestamp::{
     SnowflakeTimestampLtz, SnowflakeTimestampNtz, SnowflakeTimestampTz, TZ_OFFSET_BIAS_MINUTES,
-    TZ_OFFSET_MAX_RAW, TzInstant, read_scaled_timestamp, read_struct_timestamp, split_scaled_epoch,
+    TZ_OFFSET_MAX_RAW, TzInstant, read_scaled_timestamp, read_scaled_timestamp_nanos,
+    read_struct_timestamp, read_struct_timestamp_nanos, scaled_epoch_to_nanos, split_scaled_epoch,
 };
 pub use traits::{ReadArrowType, SnowflakeType};
 pub use vector::{SnowflakeVector, VectorCell};

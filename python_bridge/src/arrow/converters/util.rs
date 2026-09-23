@@ -8,7 +8,8 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyNone, PyTuple};
 use sf_types::{
-    ReadArrowError, ReadArrowType, SnowflakeFixed, read_scaled_timestamp, read_struct_timestamp,
+    ReadArrowError, ReadArrowType, SnowflakeFixed, read_scaled_timestamp,
+    read_scaled_timestamp_nanos, read_struct_timestamp, read_struct_timestamp_nanos,
 };
 
 use crate::arrow::plan::SnowflakeFieldType;
@@ -80,6 +81,13 @@ impl TimestampColumn {
         match self {
             Self::Int64(array) => read_scaled_timestamp(array, row, scale),
             Self::Struct(array) => read_struct_timestamp(array, row),
+        }
+    }
+
+    pub(super) fn nanos(&self, row: usize, scale: u32) -> Result<i64, ReadArrowError> {
+        match self {
+            Self::Int64(array) => read_scaled_timestamp_nanos(array, row, scale),
+            Self::Struct(array) => read_struct_timestamp_nanos(array, row),
         }
     }
 }

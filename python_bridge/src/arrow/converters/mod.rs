@@ -43,7 +43,7 @@ use self::real::{RealMaterializer, RealNumpyMaterializer};
 use self::text::TextMaterializer;
 use self::time::TimeColumn;
 use self::timestamp_ltz::TimestampLtzColumn;
-use self::timestamp_ntz::TimestampNtzColumn;
+use self::timestamp_ntz::{TimestampNtzColumn, TimestampNtzNumpyColumn};
 use self::timestamp_tz::TimestampTzMaterializer;
 use self::vector::VectorMaterializer;
 
@@ -64,6 +64,7 @@ pub(crate) enum Column {
     DateNumpy(TypedColumn<Date32Array, SnowflakeDate, DateNumpyMaterializer>),
     Time(TimeColumn),
     TimestampNtz(TimestampNtzColumn),
+    TimestampNtzNumpy(TimestampNtzNumpyColumn),
     TimestampLtz(TimestampLtzColumn),
     TimestampTz(TypedColumn<StructArray, SnowflakeTimestampTz, TimestampTzMaterializer>),
     IntervalYearMonth(IntervalYearMonthColumn),
@@ -88,6 +89,7 @@ impl Column {
             Self::DateNumpy(column) => column.to_py(py, row),
             Self::Time(column) => column.to_py(py, row),
             Self::TimestampNtz(column) => column.to_py(py, row),
+            Self::TimestampNtzNumpy(column) => column.to_py(py, row),
             Self::TimestampLtz(column) => column.to_py(py, row),
             Self::TimestampTz(column) => column.to_py(py, row),
             Self::IntervalYearMonth(column) => column.to_py(py, row),
