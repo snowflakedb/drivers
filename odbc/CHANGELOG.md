@@ -25,6 +25,7 @@ Bug fixes:
 - Fixed GET of a staged path that matches no object so it returns an empty result set, matching ODBC 3.x. (snowflakedb/drivers#2071)
 - Fixed `SQLExecute`/`SQLExecDirect` to return SQLSTATE `07S01` (Invalid use of default parameter) when any bound parameter has `StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5)`; previously the driver returned `HY000` where the ODBC spec requires `07S01`. (snowflakedb/drivers#1833)
 - Fixed `SQLFreeStmt(SQL_RESET_PARAMS)` so it clears the implementation parameter descriptor, setting `SQL_DESC_COUNT` to 0 after both direct and prepared execution; stale parameter metadata previously survived a reset and could make the next execute fail. (snowflakedb/drivers#2143)
+- Fixed `SQL_TINYINT` parameter binds so a value outside the `-128` to `255` range is rejected at execute with SQLSTATE `22003` (Numeric value out of range) instead of being sent to the server unchecked. (snowflakedb/drivers#2150)
 
 ## v4.0.0-rc4
 

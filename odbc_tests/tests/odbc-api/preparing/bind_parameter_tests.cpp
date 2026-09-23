@@ -289,6 +289,58 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQL_GUID parameter ty
   }
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: Out-of-range SQL_C_SLONG to SQL_TINYINT fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQLINTEGER value = 1000;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_TINYINT, 0, 0, &value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "22003", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: Negative underflow SQL_C_SLONG to SQL_TINYINT fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQLINTEGER value = -129;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_TINYINT, 0, 0, &value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "22003", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: Out-of-range SQL_C_DOUBLE to SQL_TINYINT fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQLDOUBLE value = 1000.0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_TINYINT, 0, 0, &value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "22003", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: Out-of-range SQL_C_CHAR to SQL_TINYINT fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  char value[] = "1000";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_TINYINT, strlen(value), 0, value,
+                                   0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "22003", stmt_handle(), SQL_HANDLE_STMT);
+}
+
 // ============================================================================
 // SQLBindParameter - Reset Parameters
 // ============================================================================

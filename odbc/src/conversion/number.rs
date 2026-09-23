@@ -755,6 +755,14 @@ impl ReadODBC for SnowflakeNumber {
                 .fail();
             }
         };
+        if binding.sql_data_type == sql::SqlDataType::EXT_TINY_INT
+            && !(i8::MIN as i128..=u8::MAX as i128).contains(&value)
+        {
+            return BindingNumericOutOfRangeSnafu {
+                reason: format!("value {value} out of SQL_TINYINT range"),
+            }
+            .fail();
+        }
         Ok(value)
     }
 }

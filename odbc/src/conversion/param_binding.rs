@@ -1262,6 +1262,70 @@ mod tests {
     }
 
     #[test]
+    fn convert_slong_out_of_tinyint_range_rejected() {
+        let val: i32 = 1000;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_TINY_INT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_slong_tinyint_negative_underflow_rejected() {
+        let val: i32 = -129;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_TINY_INT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_double_out_of_tinyint_range_rejected() {
+        let val: f64 = 1000.0;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_TINY_INT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_out_of_tinyint_range_rejected() {
+        let val = b"1000\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_TINY_INT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
     fn convert_float_f64() -> TestResult {
         let val: f64 = 1.234;
         let binding = make_binding(
