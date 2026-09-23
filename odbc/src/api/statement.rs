@@ -1,4 +1,5 @@
 use crate::api::CDataType;
+use crate::api::OdbcError;
 use crate::api::TimestampSubtype;
 use crate::api::diagnostic::WithDiagnosticInfo;
 use crate::api::encoding::OdbcEncoding;
@@ -9,7 +10,7 @@ use crate::api::error::{
     InternalSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorNameSnafu,
     InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
     InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcError,
+    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
     StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
@@ -1572,54 +1573,74 @@ fn stage_binding_threshold_value(raw: Option<&ConfigSetting>) -> u32 {
 /// Only a CSV (stage) attempt can hit `ErrorKind::StageBinding` — that upload
 /// only happens for [`BindingMode::Csv`], so a JSON attempt is excluded even
 /// though `is_stage_binding_disabled` would report `true` for it.
+///
+/// `sf_core` records a `stage_binding_disabled` telemetry event the first
+/// time `CREATE STAGE` fails for a connection's session-scoped bind stage, so
+/// this driver measures how often stage binding is disabled in practice
+/// without reporting each individual retry. Uploading bindings to the user's
+/// own stage (`@~`) instead of the session-scoped `SYSTEM$BIND` stage would
+/// sidestep both known disablement causes (missing `CREATE STAGE` privilege,
+/// no default database/schema) and could remove the need for this fallback.
+/// Unlike `SYSTEM$BIND`, which is `TEMPORARY` and auto-drops with the
+/// session, `@~` persists per user, so that redesign would need to
+/// explicitly remove each uploaded file after use.
 pub(crate) fn should_retry_with_inline_json(binding_mode: BindingMode, error: &OdbcError) -> bool {
     binding_mode == BindingMode::Csv && error.is_stage_binding_disabled()
 }
 
 #[cfg(test)]
 mod should_retry_with_inline_json_tests {
-    use super::{BindingMode, should_retry_with_inline_json};
-    use crate::api::error::{CoreProtobufError, OdbcError};
+    use super::{BindingMode, OdbcError, should_retry_with_inline_json};
+    use crate::api::error::CoreProtobufError;
     use sf_core::protobuf::generated::database_driver_v1::ErrorKind as ProtoErrorKind;
+    use snafu::Location;
 
     fn application_error(kind: ProtoErrorKind) -> OdbcError {
         OdbcError::CoreError {
             source: Box::new(CoreProtobufError::Application {
-                message: "boom".to_string(),
+                message: "boom".to_owned(),
                 kind: kind as i32,
                 error_trace: vec![],
                 sql_state: None,
                 vendor_code: None,
                 query_id: None,
                 parameter: None,
-                location: snafu::Location::new("test", 0, 0),
+                location: Location::new("test", 0, 0),
             }),
-            location: snafu::Location::new("test", 0, 0),
+            location: Location::new("test", 0, 0),
         }
     }
 
+    fn stage_binding_disabled_error() -> OdbcError {
+        application_error(ProtoErrorKind::StageBinding)
+    }
+
+    fn other_error() -> OdbcError {
+        application_error(ProtoErrorKind::Timeout)
+    }
+
     #[test]
-    fn csv_binding_with_stage_binding_error_retries() {
-        let error = application_error(ProtoErrorKind::StageBinding);
-        assert!(should_retry_with_inline_json(BindingMode::Csv, &error));
+    fn csv_binding_with_disabled_stage_retries() {
+        assert!(should_retry_with_inline_json(
+            BindingMode::Csv,
+            &stage_binding_disabled_error()
+        ));
     }
 
     #[test]
     fn csv_binding_with_other_error_does_not_retry() {
-        let error = application_error(ProtoErrorKind::Timeout);
-        assert!(!should_retry_with_inline_json(BindingMode::Csv, &error));
+        assert!(!should_retry_with_inline_json(
+            BindingMode::Csv,
+            &other_error()
+        ));
     }
 
     #[test]
-    fn json_binding_with_stage_binding_error_does_not_retry() {
-        let error = application_error(ProtoErrorKind::StageBinding);
-        assert!(!should_retry_with_inline_json(BindingMode::Json, &error));
-    }
-
-    #[test]
-    fn json_binding_with_other_error_does_not_retry() {
-        let error = application_error(ProtoErrorKind::Timeout);
-        assert!(!should_retry_with_inline_json(BindingMode::Json, &error));
+    fn json_binding_does_not_retry() {
+        assert!(!should_retry_with_inline_json(
+            BindingMode::Json,
+            &stage_binding_disabled_error()
+        ));
     }
 }
 

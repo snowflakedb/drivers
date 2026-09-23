@@ -132,3 +132,23 @@ pub fn record_exception(exception_type: &str, error_source: &str) {
         ],
     );
 }
+
+/// Record a stage_binding_disabled event on the **current** tracing span.
+///
+/// [`crate::stage_binding::StageBindingFlags`] is sticky per connection, so this
+/// fires once per connection — the first `CREATE STAGE` failure for the
+/// session-scoped bind stage — not once per statement that subsequently falls
+/// back to inline JSON bindings.
+pub fn record_stage_binding_disabled() {
+    tracing::Span::current().add_event("stage_binding_disabled", Vec::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_stage_binding_disabled_does_not_panic_without_a_span() {
+        record_stage_binding_disabled();
+    }
+}

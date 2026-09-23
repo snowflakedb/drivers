@@ -158,8 +158,6 @@ mod tests {
 
     #[test]
     fn record_helpers_do_not_panic_without_globals() {
-        // With ODBC globals not initialised in this unit-test process,
-        // both helpers must early-return cleanly.
         record_api_usage(sql::HandleType::Stmt, std::ptr::null_mut(), "SQLExecDirect");
         record_wrapper_error(
             sql::HandleType::Dbc,

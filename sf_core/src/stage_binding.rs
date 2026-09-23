@@ -185,6 +185,7 @@ async fn ensure_stage(
             flags
                 .stage_state
                 .store(StageState::Disabled, Ordering::Relaxed);
+            crate::telemetry::record_stage_binding_disabled();
             Err(e).context(CreateStageSnafu)
         }
     }
