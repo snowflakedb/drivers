@@ -49,8 +49,8 @@ pub enum TlsError {
     },
 
     #[snafu(display(
-        "driver was built with the `fips-tls` feature but the linked crypto module \
-         is not in FIPS mode; refusing to create a TLS client"
+        "driver was built with the `fips-tls` feature but the linked module's TLS provider \
+         is not FIPS-approved; refusing to create a TLS client"
     ))]
     FipsModeUnavailable {
         #[snafu(implicit)]
