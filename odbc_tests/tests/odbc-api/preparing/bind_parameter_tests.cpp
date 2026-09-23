@@ -341,6 +341,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   REQUIRE_EXPECTED_ERROR(ret, "22003", stmt_handle(), SQL_HANDLE_STMT);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: Null value pointer without SQL_NULL_DATA fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, nullptr, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
 // ============================================================================
 // SQLBindParameter - Reset Parameters
 // ============================================================================

@@ -699,6 +699,7 @@ fn binding_error_to_sql_state(source: &BindingError) -> SqlState {
             SqlState::InvalidCharacterValueForCast
         }
         BindingError::DefaultParameter { .. } => SqlState::InvalidUseOfDefaultParameter,
+        BindingError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
         _ => SqlState::GeneralError,
     }
 }
@@ -1283,7 +1284,8 @@ mod tests {
     use crate::conversion::error::{
         BindingNumericOutOfRangeSnafu, DatetimeFieldOverflowSnafu, DefaultParameterSnafu,
         InvalidBooleanValueSnafu, InvalidCharacterValueForCastSnafu, InvalidNumericLiteralSnafu,
-        NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu, UnsupportedParameterTypeSnafu,
+        NullPointerSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        UnsupportedParameterTypeSnafu,
     };
 
     fn loc() -> Location {
@@ -1745,6 +1747,16 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn json_binding_null_pointer_maps_to_hy009() {
+        let json_err = NullPointerSnafu.build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: Box::new(json_err),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::InvalidUseOfNullPointer);
     }
 
     #[test]
