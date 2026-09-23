@@ -8,6 +8,7 @@ import {
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
+import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
 describe('TIME data type', () => {
@@ -21,12 +22,10 @@ describe('TIME data type', () => {
     await destroyConnectionAsync(connection);
   });
 
-  // TODO:
-  // Known bug in both old and new driver - TIME_OUTPUT_FORMAT doesn't work when set as statement-level paramter
   async function setTimeOutputFormat(outputFormat: string) {
-    await executeAsync(connection, `ALTER SESSION SET TIME_OUTPUT_FORMAT = '${outputFormat}'`);
+    await setSessionParameter(connection, 'TIME_OUTPUT_FORMAT', outputFormat);
     onTestFinished(async () => {
-      await executeAsync(connection, 'ALTER SESSION UNSET TIME_OUTPUT_FORMAT');
+      await unsetSessionParameter(connection, 'TIME_OUTPUT_FORMAT');
     });
   }
 
@@ -344,6 +343,22 @@ describe('TIME data type', () => {
         fetchAsString: ['String'],
       });
       expect(Object.values(rows[0])).toEqual([null]);
+    });
+  });
+
+  describe('TIME_OUTPUT_FORMAT', () => {
+    // statement-level is a known bug in both drivers documented in BCR_LOG.md
+    it('should ignore TIME_OUTPUT_FORMAT when set at statement-level', async () => {
+      const { rows } = await executeAsync(connection, `SELECT '12:34:56.789789789'::TIME`, {
+        parameters: { TIME_OUTPUT_FORMAT: 'HH24:MI:SS.FF9' },
+      });
+      expect(Object.values(rows[0])).toEqual(['12:34:56']);
+    });
+
+    it('should honor TIME_OUTPUT_FORMAT when set on the session', async () => {
+      await setTimeOutputFormat('HH12:MI:SS AM');
+      const { rows } = await executeAsync(connection, `SELECT '14:45:30'::TIME as VAL`);
+      expect(rows[0].VAL).toBe('02:45:30 PM');
     });
   });
 });
