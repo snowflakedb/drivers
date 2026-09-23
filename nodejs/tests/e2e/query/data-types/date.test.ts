@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Connection } from '../../../types/sdk-types.js';
+import type { Connection, SnowflakeDate } from '../../../types/sdk-types.js';
 import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
   destroyConnectionAsync,
   executeAsync,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
+import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
 function dateAtUtcMidnight(dateLiteral: string): Date {
@@ -330,20 +331,69 @@ describe('DATE data type', () => {
       });
       expect(Object.values(rows[0])).toEqual([null]);
     });
-
-    // Known bug in both drivers documented in BCR_LOG.md
-    it('should ignore DATE_OUTPUT_FORMAT', async () => {
-      const { rows } = await executeAsync(
-        connection,
-        // '2024-01-15'::DATE::STRING is selected here as an additional check that statement
-        // parameter landed on the server
-        `SELECT '2024-01-15'::DATE, '2024-01-15'::DATE::STRING`,
-        {
-          parameters: { DATE_OUTPUT_FORMAT: 'DD-MON-YYYY' },
-          fetchAsString: ['Date'],
-        },
-      );
-      expect(Object.values(rows[0])).toEqual(['2024-01-15', '15-Jan-2024']);
-    });
   });
+
+  describe('DATE_OUTPUT_FORMAT', () => {
+    // statement-level is a known bug in both drivers documented in BCR_LOG.md
+    it('should ignore DATE_OUTPUT_FORMAT when set at statement-level for fetchAsString', async () => {
+      const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE`, {
+        parameters: { DATE_OUTPUT_FORMAT: 'DD-MON-YYYY' },
+        fetchAsString: ['Date'],
+      });
+      expect(Object.values(rows[0])).toEqual(['2024-01-15']);
+    });
+
+    it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
+      'should ignore DATE_OUTPUT_FORMAT when set at statement-level for toJSON and getFormat',
+      async () => {
+        const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE AS VAL`, {
+          parameters: { DATE_OUTPUT_FORMAT: 'DD-MON-YYYY' },
+        });
+        const date = rows[0].VAL as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15');
+        expect(date.getFormat()).toBe('YYYY-MM-DD');
+      },
+    );
+
+    describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
+      'when DATE_OUTPUT_FORMAT is set on the session',
+      () => {
+        beforeAll(async () => {
+          await setSessionParameter(connection, 'DATE_OUTPUT_FORMAT', 'DD-MON-YYYY');
+        });
+
+        afterAll(async () => {
+          await unsetSessionParameter(connection, 'DATE_OUTPUT_FORMAT');
+        });
+
+        it('should honor DATE_OUTPUT_FORMAT for fetchAsString', async () => {
+          const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE as VAL`, {
+            fetchAsString: ['Date'],
+          });
+          expect(rows[0].VAL).toBe('15-Jan-2024');
+        });
+
+        it('should honor DATE_OUTPUT_FORMAT for toJSON and getFormat', async () => {
+          const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE as VAL`);
+          const date = rows[0].VAL as SnowflakeDate;
+          expect(date.toJSON()).toBe('15-Jan-2024');
+          expect(date.getFormat()).toBe('DD-MON-YYYY');
+        });
+      },
+    );
+  });
+
+  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
+    'should expose SnowflakeDate custom methods',
+    async () => {
+      const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE AS VAL`);
+      const date = rows[0].VAL as SnowflakeDate;
+      expect(date).toBeInstanceOf(Date);
+      expect(date.getEpochSeconds()).toBe(Date.UTC(2024, 0, 15) / 1000);
+      expect(date.getNanoSeconds()).toBe(0);
+      expect(date.getScale()).toBe(0);
+      expect(date.getTimezone()).toBe('UTC');
+      expect(date.toJSON()).toBe('2024-01-15');
+    },
+  );
 });

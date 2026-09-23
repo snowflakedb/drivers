@@ -17,7 +17,8 @@ export async function setSessionParameter(
   name: string,
   value: boolean | number | string,
 ): Promise<void> {
-  await executeAsync(connection, `ALTER SESSION SET ${name} = ${value}`);
+  const sqlValue = typeof value === 'string' ? `'${value}'` : value;
+  await executeAsync(connection, `ALTER SESSION SET ${name} = ${sqlValue}`);
 }
 
 export async function unsetSessionParameter(connection: Connection, name: string): Promise<void> {
