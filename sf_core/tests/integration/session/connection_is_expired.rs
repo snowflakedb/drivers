@@ -137,7 +137,8 @@ async fn should_not_set_is_expired_on_query_500() {
 
 /// GS 390111 (session_gone) returned during token refresh must NOT set the expired
 /// flag — the master token is still valid; the session simply no longer exists on the
-/// server side. Full re-auth is required, but the reason is different from 390114.
+/// server side. Full re-auth is required, but the reason is different from 390114, and
+/// it is `connection_is_usable` rather than this flag that reports it.
 #[tokio::test]
 async fn should_not_set_is_expired_when_token_request_returns_session_gone() {
     let server = MockServer::start().await;

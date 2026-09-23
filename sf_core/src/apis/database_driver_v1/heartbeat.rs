@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::RwLock as AsyncRwLock;
@@ -88,6 +88,7 @@ pub fn spawn_heartbeat_task(
     client_info: ClientInfo,
     heartbeat_interval: Duration,
     is_master_token_expired: Arc<AtomicBool>,
+    session_terminated: Arc<AtomicBool>,
 ) -> HeartbeatHandle {
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
@@ -101,6 +102,7 @@ pub fn spawn_heartbeat_task(
             heartbeat_interval,
             task_token,
             is_master_token_expired,
+            session_terminated,
         )
         .with_current_subscriber(),
     );
@@ -111,6 +113,7 @@ pub fn spawn_heartbeat_task(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn heartbeat_loop(
     tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     http_client: reqwest::Client,
@@ -119,6 +122,7 @@ async fn heartbeat_loop(
     interval: Duration,
     cancel_token: CancellationToken,
     is_master_token_expired: Arc<AtomicBool>,
+    session_terminated: Arc<AtomicBool>,
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 
@@ -145,6 +149,7 @@ async fn heartbeat_loop(
             server_url.to_string(),
             client_info.clone(),
             is_master_token_expired.clone(),
+            session_terminated.clone(),
             None,
         );
         let mut last_error: Option<RestError> = None;
@@ -161,6 +166,10 @@ async fn heartbeat_loop(
                         return;
                     }
                     Err(e) => {
+                        if session_terminated.load(Ordering::SeqCst) {
+                            tracing::error!("Session no longer exists, heartbeat task exiting");
+                            return;
+                        }
                         tracing::warn!(error = %e, "Heartbeat failed, will retry next interval");
                         break;
                     }
@@ -273,6 +282,7 @@ mod tests {
             test_client_info(),
             Duration::from_secs(3600),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         handle.cancel_and_wait().await;
@@ -292,6 +302,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(10),
             task_token,
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         ));
 
@@ -321,6 +332,7 @@ mod tests {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         );
 
@@ -353,6 +365,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(50),
             task_token,
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         ));
 
@@ -401,6 +414,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(20),
             is_master_token_expired.clone(),
+            Arc::new(AtomicBool::new(false)),
         );
 
         // Poll for the flag rather than sleeping a fixed duration.

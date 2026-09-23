@@ -7,7 +7,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity;
-use sf_core::apis::database_driver_v1::{ApiError, BindingType, DataPtr};
+use sf_core::apis::database_driver_v1::{ApiError, BindingType, ConnectionUsability, DataPtr};
 use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::param_names;
 use sf_core::config::rest_parameters::BrowserOpenFn;
@@ -53,18 +53,11 @@ pub struct QueryBindings {
     pub data: String,
 }
 
-// TODO: ask core to bundle these three reads into one call.
 async fn unusable_connection(handle: Handle) -> Option<UnusableConnection> {
-    if DRIVER.connection_is_closed(handle).await.unwrap_or(true) {
-        return Some(UnusableConnection::Terminated);
-    }
-    if DRIVER.connection_is_expired(handle).await.unwrap_or(true) {
-        return Some(UnusableConnection::Terminated);
-    }
-    match DRIVER.connection_is_initialized(handle).await {
-        Ok(true) => None,
-        Ok(false) => Some(UnusableConnection::NeverEstablished),
-        Err(_) => Some(UnusableConnection::Terminated),
+    match DRIVER.connection_is_usable(handle).await {
+        Ok(ConnectionUsability::Usable) => None,
+        Ok(ConnectionUsability::NeverEstablished) => Some(UnusableConnection::NeverEstablished),
+        Ok(ConnectionUsability::Terminated) | Err(_) => Some(UnusableConnection::Terminated),
     }
 }
 

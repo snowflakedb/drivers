@@ -38,6 +38,7 @@ async fn heartbeat_sends_periodic_requests() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When enough time passes for multiple heartbeat intervals
@@ -94,6 +95,7 @@ async fn heartbeat_refreshes_on_401_then_retries() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When the heartbeat task runs and encounters the 401
@@ -147,6 +149,7 @@ async fn heartbeat_stops_on_cancellation() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
     );
     // Win32 CI can miss the first tick in 100ms (interval 50ms + HTTP). Wait
     // until the mock has seen at least one request, with a hard deadline.
@@ -198,6 +201,7 @@ async fn heartbeat_exits_when_tokens_cleared() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -208,6 +212,70 @@ async fn heartbeat_exits_when_tokens_cleared() {
     tokio::time::timeout(Duration::from_secs(2), handle.cancel_and_wait())
         .await
         .expect("heartbeat task should exit after tokens cleared");
+}
+
+#[tokio::test]
+async fn heartbeat_exits_when_the_session_is_gone() {
+    let server = MockServer::start().await;
+    let heartbeat_count = Arc::new(AtomicUsize::new(0));
+    let heartbeat_count_clone = heartbeat_count.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(move |_: &wiremock::Request| {
+            heartbeat_count_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(401)
+        })
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390111",
+            "message": "Session no longer exists."
+        })))
+        .named("refresh_refused")
+        .mount(&server)
+        .await;
+
+    let session_terminated = Arc::new(AtomicBool::new(false));
+    let mut handle = spawn_heartbeat_task(
+        Arc::new(AsyncRwLock::new(Some(test_tokens("tok1")))),
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(50),
+        Arc::new(AtomicBool::new(false)),
+        session_terminated.clone(),
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while !session_terminated.load(Ordering::SeqCst) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        session_terminated.load(Ordering::SeqCst),
+        "the refused renewal must mark the session"
+    );
+
+    let count_when_gone = heartbeat_count.load(Ordering::SeqCst);
+    assert_eq!(
+        count_when_gone, 1,
+        "the task must not keep beating a session the server has taken away"
+    );
+    // Same window as `heartbeat_stops_on_cancellation`: absence of further ticks is
+    // the behavior under test once the session is already marked gone.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        heartbeat_count.load(Ordering::SeqCst),
+        count_when_gone,
+        "the task must not keep beating a session the server has taken away"
+    );
+
+    handle.cancel_and_wait().await;
 }
 
 #[tokio::test]
@@ -271,6 +339,7 @@ async fn heartbeat_fires_repeatedly_at_configured_interval() {
         test_client_info(),
         Duration::from_millis(100),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
     );
 
     // When 550ms elapse (enough for ~4-5 heartbeats at 100ms)
@@ -311,6 +380,7 @@ async fn heartbeat_drop_cancels_task() {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         );
         tokio::time::sleep(Duration::from_millis(100)).await;

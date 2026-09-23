@@ -690,6 +690,7 @@ impl DatabaseDriverV1 {
                                 .context(ConnectionNotInitializedSnafu)?,
                             interval,
                             conn.is_master_token_expired.clone(),
+                            conn.session_terminated.clone(),
                         );
                         conn.heartbeat_handle = Some(handle);
                     }
@@ -1133,6 +1134,13 @@ pub struct Connection {
     /// intended as a read-only signal for external pool / application code.
     pub is_master_token_expired: Arc<AtomicBool>,
 
+    /// Set when the server answers that this session cannot be recovered.
+    /// Other RENEW refusals leave the flag unset: the session can still be open.
+    /// Unlike [`Self::is_master_token_expired`], the token pair itself may still
+    /// be valid: a renewal presents the master token against a session that no
+    /// longer exists.
+    pub(crate) session_terminated: Arc<AtomicBool>,
+
     /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
     pub logout_config: LogoutConfig,
     /// Resolved operation-level timeout configuration (populated at connect time).
@@ -1205,6 +1213,7 @@ impl Connection {
             close_state: Arc::new(AtomicCloseState::new(CloseState::Open)),
             close_done: Arc::new(Notify::new()),
             is_master_token_expired: Arc::new(AtomicBool::new(false)),
+            session_terminated: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
             timeout_config: crate::config::retry::TimeoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
@@ -1642,7 +1651,21 @@ pub struct RefreshContext {
     /// Shared expired flag; set to `true` when master token expiry is detected
     /// during a refresh attempt so the owning `Connection` exposes it publicly.
     is_master_token_expired: Arc<AtomicBool>,
+    /// The owning connection's [`Connection::session_terminated`] flag.
+    session_terminated: Arc<AtomicBool>,
     xp_backend: Option<Arc<dyn SnowflakeBackend>>,
+}
+
+/// Whether `err` is an ordinary failed query or heartbeat whose GS code means
+/// the session cannot be recovered. Those answers have no `RestError` variant
+/// of their own.
+fn reports_session_gone(err: &RestError) -> bool {
+    let code = match err {
+        RestError::QueryFailed { code, .. } => *code,
+        RestError::Heartbeat { code, .. } => Some(*code),
+        _ => return false,
+    };
+    code.is_some_and(snowflake::is_unrecoverable_session)
 }
 
 impl RefreshContext {
@@ -1674,6 +1697,7 @@ impl RefreshContext {
         server_url: String,
         client_info: ClientInfo,
         is_master_token_expired: Arc<AtomicBool>,
+        session_terminated: Arc<AtomicBool>,
         xp_backend: Option<Arc<dyn SnowflakeBackend>>,
     ) -> Self {
         Self {
@@ -1683,6 +1707,7 @@ impl RefreshContext {
             client_info,
             state: RefreshState::Initial,
             is_master_token_expired,
+            session_terminated,
             xp_backend,
         }
     }
@@ -1709,6 +1734,7 @@ impl RefreshContext {
                 .context(ConnectionNotInitializedSnafu)?,
             state: RefreshState::Initial,
             is_master_token_expired: conn.is_master_token_expired.clone(),
+            session_terminated: conn.session_terminated.clone(),
             xp_backend: conn.xp_backend_arc().context(QuerySnafu)?,
         })
     }
@@ -1734,6 +1760,34 @@ impl RefreshContext {
         self.xp_backend.is_some()
     }
 
+    /// Records a server answer that takes the session away, and reports whether it did.
+    fn record_session_gone(&self, err: &RestError) -> bool {
+        if !reports_session_gone(err) {
+            return false;
+        }
+        tracing::error!("Server reported the session no longer exists");
+        self.session_terminated.store(true, Ordering::SeqCst);
+        true
+    }
+
+    fn record_failed_renewal(&self, err: &RestError) {
+        match err {
+            RestError::MasterTokenTerminal { .. } => {
+                tracing::error!(
+                    "Server reported master token can never be renewed during refresh, full re-authentication required"
+                );
+                self.is_master_token_expired.store(true, Ordering::SeqCst);
+            }
+            RestError::SessionRefreshFailed { code, .. }
+                if snowflake::is_unrecoverable_session(*code) =>
+            {
+                tracing::error!(code, "Server refused the session renewal");
+                self.session_terminated.store(true, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    }
+
     /// Get a valid session token, optionally refreshing if the previous call failed.
     ///
     /// - `last_error = None`: reads the current session token (first call).
@@ -1746,6 +1800,9 @@ impl RefreshContext {
         &mut self,
         last_error: Option<RestError>,
     ) -> Result<SensitiveString, ApiError> {
+        if let Some(err) = last_error.as_ref() {
+            self.record_session_gone(err);
+        }
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {
@@ -1810,16 +1867,7 @@ impl RefreshContext {
                     let new_tokens = match self.renew_session_tokens(&tokens).await {
                         Ok(new_tokens) => new_tokens,
                         Err(refresh_err) => {
-                            // GS 390113/390114/390115 from the refresh endpoint mean
-                            // the master token can never be renewed: mark the
-                            // connection expired before propagating, mirroring the
-                            // query-response path.
-                            if matches!(&refresh_err, RestError::MasterTokenTerminal { .. }) {
-                                tracing::error!(
-                                    "Server reported master token can never be renewed during refresh, full re-authentication required"
-                                );
-                                self.is_master_token_expired.store(true, Ordering::SeqCst);
-                            }
+                            self.record_failed_renewal(&refresh_err);
                             return Err(refresh_err).context(SessionRefreshSnafu);
                         }
                     };
@@ -1909,6 +1957,9 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             self.is_master_token_expired.store(true, Ordering::SeqCst);
             return false;
         }
+        if self.record_session_gone(source.as_ref()) {
+            return false;
+        }
         matches!(source.as_ref(), RestError::SessionExpired { .. })
     }
 
@@ -1967,17 +2018,7 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             let new_tokens = match self.renew_session_tokens(&tokens).await {
                 Ok(new_tokens) => new_tokens,
                 Err(refresh_err) => {
-                    // The refresh endpoint can itself return GS 390113/390114/
-                    // 390115 (master token can never be renewed).
-                    // refresh_session surfaces that as RestError::MasterTokenTerminal;
-                    // mark the connection expired before propagating, mirroring
-                    // should_refresh() on the query path.
-                    if matches!(&refresh_err, RestError::MasterTokenTerminal { .. }) {
-                        tracing::error!(
-                            "Server reported master token can never be renewed during refresh, full re-authentication required"
-                        );
-                        self.is_master_token_expired.store(true, Ordering::SeqCst);
-                    }
+                    self.record_failed_renewal(&refresh_err);
                     return Err(refresh_err).context(SessionRefreshSnafu);
                 }
             };
@@ -2676,7 +2717,10 @@ impl DatabaseDriverV1 {
                     Err(e @ RestError::SessionExpired { .. }) => {
                         last_error = Some(e);
                     }
-                    Err(_) => return Ok(false),
+                    Err(e) => {
+                        refresh_ctx.record_session_gone(&e);
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -2833,9 +2877,10 @@ impl DatabaseDriverV1 {
     /// under three, so a close landing between those reads cannot make a terminated
     /// session look like one that was never established.
     ///
-    /// An expired master token counts as terminated: that session can never be renewed.
-    /// The answer is the client's own view of the connection and contacts no server, so a
-    /// session the server has already discarded still reads as usable.
+    /// An expired master token counts as terminated, and so does a session the server
+    /// has reported gone (390111) or closed (390117). The answer is the client's own
+    /// view and contacts no server, so a session discarded without us hearing of it
+    /// still reads as usable.
     pub async fn connection_is_usable(
         &self,
         conn_handle: Handle,
@@ -2850,6 +2895,7 @@ impl DatabaseDriverV1 {
         let conn = conn_ptr.lock().await;
         if conn.close_state.load(Ordering::SeqCst) == CloseState::Closed
             || conn.is_master_token_expired.load(Ordering::SeqCst)
+            || conn.session_terminated.load(Ordering::SeqCst)
         {
             return Ok(ConnectionUsability::Terminated);
         }
@@ -4708,6 +4754,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn heartbeat_records_a_session_the_server_reports_gone() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": false,
+                "message": "Session no longer exists.",
+                "code": snowflake::SESSION_GONE.to_string(),
+            })))
+            .mount(&server)
+            .await;
+
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
+
+        assert!(!ds.connection_heartbeat(handle).await.unwrap());
+        assert_eq!(
+            ds.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::Terminated,
+            "a heartbeat the server answers with 390111 must end the session"
+        );
+        assert!(
+            !ds.connection_is_expired(handle).await.unwrap(),
+            "390111 is not a dead master token"
+        );
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_report_a_session_reported_gone_on_a_query_as_terminated() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_heartbeat_tests(&ds, "http://127.0.0.1:1").await;
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+
+        let mut ctx = RefreshContext::from_arc(&conn_ptr).await.unwrap();
+        ctx.refresh_token(None).await.unwrap();
+        ctx.refresh_token(Some(query_failed_with(snowflake::SESSION_GONE)))
+            .await
+            .expect_err("a gone session leaves nothing to refresh");
+
+        assert_eq!(
+            ds.connection_is_usable(handle).await.unwrap(),
+            ConnectionUsability::Terminated,
+            "the flag the refresh context writes must reach the connection"
+        );
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
     async fn heartbeat_returns_false_on_network_error() {
         // Bind to an ephemeral port, capture the address, then close the listener
         // so the port is guaranteed to refuse connections.
@@ -4787,6 +4887,7 @@ mod tests {
             "http://127.0.0.1:1".into(),
             crate::config::rest_parameters::test_fixtures::test_client_info(),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
             Some(backend),
         );
         let renewed = ctx
@@ -4796,6 +4897,244 @@ mod tests {
         assert_eq!(renewed.session_token.reveal(), "keep-session");
         assert_eq!(renewed.master_token.reveal(), "keep-master");
         assert_eq!(renewed.session_id, Some(7));
+    }
+
+    fn session_gone_context(
+        session_terminated: &Arc<AtomicBool>,
+        server_url: &str,
+    ) -> RefreshContext {
+        RefreshContext::from_parts(
+            Arc::new(AsyncRwLock::new(Some(SessionTokens {
+                session_token: "session".into(),
+                master_token: "master".into(),
+                session_id: Some(1),
+                session_expires_at: None,
+                master_expires_at: None,
+                master_validity: None,
+            }))),
+            reqwest::Client::new(),
+            server_url.to_string(),
+            crate::config::rest_parameters::test_fixtures::test_client_info(),
+            Arc::new(AtomicBool::new(false)),
+            session_terminated.clone(),
+            None,
+        )
+    }
+
+    fn query_failed_with(code: i32) -> RestError {
+        RestError::QueryFailed {
+            message: "Session no longer exists.".to_string(),
+            code: Some(code),
+            sql_state: None,
+            ids: snowflake::QueryIds::default(),
+            location: snafu::Location::default(),
+            query_context: None,
+        }
+    }
+
+    fn refresh_failed_with(code: i32) -> RestError {
+        RestError::SessionRefreshFailed {
+            message: "Session refresh refused.".to_string(),
+            code,
+            location: snafu::Location::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn should_record_a_session_the_server_reports_gone() {
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+        ctx.refresh_token(None).await.unwrap();
+
+        let err = ctx
+            .refresh_token(Some(query_failed_with(snowflake::SESSION_GONE)))
+            .await
+            .expect_err("a gone session leaves nothing to refresh");
+
+        assert!(
+            matches!(&err, ApiError::Query { source, .. } if reports_session_gone(source)),
+            "the server's own error must propagate, got {err:?}"
+        );
+        assert!(session_terminated.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn should_record_a_session_reported_gone_after_a_refresh() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session/token-request"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "sessionToken": "renewed-session",
+                        "masterToken": "renewed-master",
+                        "sessionId": 2
+                    }
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, &server.uri());
+        ctx.refresh_token(None).await.unwrap();
+        ctx.refresh_token(Some(RestError::SessionExpired {
+            location: snafu::Location::default(),
+        }))
+        .await
+        .expect("the renewal succeeds");
+
+        ctx.refresh_token(Some(query_failed_with(snowflake::SESSION_GONE)))
+            .await
+            .expect_err("a gone session leaves nothing to refresh");
+
+        assert!(
+            session_terminated.load(Ordering::SeqCst),
+            "a session reported gone after the refresh must still be recorded"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_record_a_session_reported_gone_on_the_retrying_path() {
+        use crate::refresh::Refresher;
+
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+
+        let refresh = Refresher::<SensitiveString, ApiError>::should_refresh(
+            &ctx,
+            &ApiError::Query {
+                source: Box::new(query_failed_with(snowflake::SESSION_GONE)),
+                location: snafu::Location::default(),
+            },
+        );
+
+        assert!(!refresh, "a gone session must not be refreshed");
+        assert!(session_terminated.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn should_record_a_renewal_the_server_refuses() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session/token-request"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "390111",
+                    "message": "Session no longer exists."
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, &server.uri());
+        ctx.refresh_token(None).await.unwrap();
+
+        ctx.refresh_token(Some(RestError::SessionExpired {
+            location: snafu::Location::default(),
+        }))
+        .await
+        .expect_err("a refused renewal must not yield a token");
+
+        assert!(
+            session_terminated.load(Ordering::SeqCst),
+            "a renewal the server answers and refuses must mark the session terminated"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_record_a_refused_renewal_on_the_retrying_path() {
+        use crate::refresh::Refresher;
+
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session/token-request"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "390111",
+                    "message": "Session no longer exists."
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, &server.uri());
+        Refresher::<SensitiveString, ApiError>::current(&mut ctx)
+            .await
+            .unwrap();
+
+        Refresher::<SensitiveString, ApiError>::refresh(&mut ctx)
+            .await
+            .expect_err("a refused renewal must not report a rotation");
+
+        assert!(
+            session_terminated.load(Ordering::SeqCst),
+            "the retrying path must record the refusal the same way"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_leave_the_session_alone_when_a_renewal_cannot_reach_the_server() {
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+        ctx.refresh_token(None).await.unwrap();
+
+        ctx.refresh_token(Some(RestError::SessionExpired {
+            location: snafu::Location::default(),
+        }))
+        .await
+        .expect_err("an unreachable server must not yield a token");
+
+        assert!(
+            !session_terminated.load(Ordering::SeqCst),
+            "a transport failure says nothing about the session"
+        );
+    }
+
+    #[test]
+    fn should_mark_terminated_only_when_renew_cannot_recover_the_session() {
+        for code in [snowflake::SESSION_GONE, snowflake::SESSION_CLOSED] {
+            let session_terminated = Arc::new(AtomicBool::new(false));
+            let ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+            ctx.record_failed_renewal(&refresh_failed_with(code));
+            assert!(
+                session_terminated.load(Ordering::SeqCst),
+                "GS {code} on RENEW must mark the session terminated"
+            );
+        }
+
+        for code in [390104, 390110, 390142, 390204, 390261, 390400] {
+            let session_terminated = Arc::new(AtomicBool::new(false));
+            let ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+            ctx.record_failed_renewal(&refresh_failed_with(code));
+            assert!(
+                !session_terminated.load(Ordering::SeqCst),
+                "GS {code} on RENEW must not mark the session terminated"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn should_record_a_closed_session_the_same_way_as_a_gone_one() {
+        let session_terminated = Arc::new(AtomicBool::new(false));
+        let mut ctx = session_gone_context(&session_terminated, "http://127.0.0.1:1");
+        ctx.refresh_token(None).await.unwrap();
+
+        let err = ctx
+            .refresh_token(Some(query_failed_with(snowflake::SESSION_CLOSED)))
+            .await
+            .expect_err("a closed session leaves nothing to refresh");
+
+        assert!(
+            matches!(&err, ApiError::Query { source, .. } if reports_session_gone(source)),
+            "the server's own error must propagate, got {err:?}"
+        );
+        assert!(session_terminated.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

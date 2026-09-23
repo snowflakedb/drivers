@@ -10,6 +10,7 @@ import {
 
 const SESSION_TOKEN_EXPIRED = '390112';
 const MASTER_TOKEN_EXPIRED = '390114';
+const SESSION_GONE = '390111';
 
 describe('Session Expiry', () => {
   let wiremock: WiremockServer;
@@ -30,6 +31,20 @@ describe('Session Expiry', () => {
     await wiremock.stub(loginSuccess());
     await wiremock.stub(queryRequestFail(SESSION_TOKEN_EXPIRED, 'Session token expired.'));
     await wiremock.stub(tokenRequestFail(MASTER_TOKEN_EXPIRED, 'Authentication token expired.'));
+
+    const connection = await createLiveConnection(wiremock.connectionOptions, false);
+    expect(connection.isUp()).toBe(true);
+
+    await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
+      error: expect.any(Error),
+    });
+    expect(connection.isUp()).toBe(false);
+  });
+
+  it('should report a connection as down once the server refuses to renew the session', async () => {
+    await wiremock.stub(loginSuccess());
+    await wiremock.stub(queryRequestFail(SESSION_TOKEN_EXPIRED, 'Session token expired.'));
+    await wiremock.stub(tokenRequestFail(SESSION_GONE, 'Session no longer exists.'));
 
     const connection = await createLiveConnection(wiremock.connectionOptions, false);
     expect(connection.isUp()).toBe(true);

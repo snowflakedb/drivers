@@ -430,6 +430,7 @@ mod tests {
             "http://127.0.0.1:1".into(),
             crate::config::rest_parameters::test_fixtures::test_client_info(),
             std::sync::Arc::new(AtomicBool::new(false)),
+            std::sync::Arc::new(AtomicBool::new(false)),
             Some(backend),
         );
         let data = LogoutData {

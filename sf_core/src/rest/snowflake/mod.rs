@@ -97,6 +97,9 @@ pub const QUERY_CANCELED: i32 = 604;
 /// GS error code returned when a session no longer exists on the server.
 /// Logout callers treat this as success — the goal (an invalidated session) is achieved.
 pub const SESSION_GONE: i32 = 390111;
+/// GS error code returned when the session exists but is closed (logout).
+/// A later RENEW or query cannot revive it.
+pub const SESSION_CLOSED: i32 = 390117;
 /// GS error code returned when the session token has expired.
 /// The caller must use the master token to obtain a fresh session token and retry.
 pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
@@ -120,6 +123,9 @@ const MASTER_TOKEN_TERMINAL_CODES: [i32; 3] = [
     MASTER_TOKEN_EXPIRED,
     MASTER_TOKEN_INVALID,
 ];
+pub(crate) fn is_unrecoverable_session(code: i32) -> bool {
+    matches!(code, SESSION_GONE | SESSION_CLOSED)
+}
 /// GS error code returned when the OAuth access token presented at login is
 /// invalid. Treated cross-driver as a signal to evict the cached access
 /// token and replay the OAuth flow.

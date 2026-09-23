@@ -43,6 +43,7 @@ New features:
 
 Changes:
 
+- Changed `connection_is_usable` to report a connection as terminated once the server has said this session cannot be recovered (GS 390111 gone or 390117 closed, on a query, heartbeat, or token-request RENEW). Other RENEW refusals, and a renewal that fails to reach the server, leave the connection alone. The background heartbeat task stops rather than beating such a session. The error each operation returns is unchanged. (snowflakedb/drivers#2149)
 - Improved first-connection latency on non-FIPS builds by dropping AWS-LC's CPU jitter entropy source from cold start. (snowflakedb/drivers#2108)
 - Changed `client_store_temporary_credential` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
 - Added a `validate_session_token` wrapper preset, on for every wrapper but Node.js. When off, a login with pre-acquired session and master tokens adopts the pair as handed over instead of proving it with a token-request RENEW first, so the pair is not rotated and adopting it costs no round-trip. Such a connection has no server-reported session id and therefore emits no per-operation telemetry; authentication, queries and logout are unaffected. This restores the legacy `snowflake-connector-nodejs` `deserializeConnection` contract. (snowflakedb/drivers#2042)
