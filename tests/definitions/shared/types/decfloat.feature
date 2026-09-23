@@ -151,3 +151,11 @@ Feature: DECFLOAT type support
     When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
     And Query "SELECT * FROM <table>" is executed
     Then SELECT should return the same exact values
+
+  @jdbc_e2e
+  Scenario: should insert decfloat values via stage binding
+    Given Snowflake client is logged in
+    And Table with DECFLOAT column exists
+    And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
+    When legacy DECFLOAT edge values are inserted using multirow binding
+    Then SELECT should return the same exact values

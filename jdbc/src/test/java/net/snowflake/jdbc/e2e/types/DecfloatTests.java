@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -545,6 +546,45 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase
                   new BigDecimal("1E-16383"),
                   new BigDecimal("1E+16384")));
         });
+  }
+
+  @Test
+  public void shouldInsertDecfloatValuesViaStageBinding() throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 1");
+      // And Table with DECFLOAT column exists
+      String tableName = createTempTable(connection, "ud_decfloat_", "col DECFLOAT");
+      List<BigDecimal> expected =
+          Arrays.asList(
+              new BigDecimal("-1234.423e3"),
+              new BigDecimal("-0.098745"),
+              new BigDecimal("-9.8765432099999998623226732747455716901E-250"));
+
+      // When legacy DECFLOAT edge values are inserted using multirow binding
+      try (PreparedStatement preparedStatement =
+          connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+        for (BigDecimal value : expected) {
+          preparedStatement.setObject(1, value, SnowflakeType.EXTRA_TYPES_DECFLOAT);
+          preparedStatement.addBatch();
+        }
+        int[] counts = preparedStatement.executeBatch();
+        assertEquals(expected.size(), counts.length, "Expected one update count per DECFLOAT row");
+      }
+
+      // Then SELECT should return the same exact values
+      try (PreparedStatement preparedStatement =
+              connection.prepareStatement("SELECT col FROM " + tableName + " ORDER BY col DESC");
+          ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertSingleColumnRows(
+            resultSet,
+            Arrays.asList(
+                new BigDecimal("-9.8765432099999998623226732747455716901E-250"),
+                new BigDecimal("-0.098745"),
+                new BigDecimal("-1234.423e3")));
+      }
+    }
   }
 
   private static List<BigDecimal> assertDecfloatTypes(ResultSet resultSet, int columnCount)
