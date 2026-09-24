@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <array>
 #include <cstring>
 #include <string>
 
@@ -351,6 +352,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Invalid SQL_C_WCHAR fails during SQLExecDirect",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  std::array<SQLWCHAR, 2> value = {static_cast<SQLWCHAR>(0xD800), 0};
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_VARCHAR, 1, 0, value.data(),
+                                   sizeof(value), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#162") { REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT); }
+  OLD_DRIVER_ONLY("BD#162") { REQUIRE(ret == SQL_SUCCESS); }
 }
 
 // ============================================================================
