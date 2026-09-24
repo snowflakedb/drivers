@@ -655,6 +655,10 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
     ) -> Result<AsyncExecuteResult, ApiError> {
         let report = AbortReport::default();
+        let session_id = match self.statements.get_obj(stmt_handle) {
+            Some(stmt_ptr) => stmt_ptr.lock().await.conn.lock().await.session_id,
+            None => None,
+        };
         // `async move`, so `bindings` is owned by this future rather than borrowed
         // from the frame: `BindingType` wraps a raw pointer and is `Send` but not
         // `Sync`, and the generated server trait requires a `Send` future — which a
@@ -784,7 +788,12 @@ impl DatabaseDriverV1 {
                 request_id,
             })
         });
-        run_reporting_abort(operation_ctx, "statement_execute_async", &report, submit).await
+        run_reporting_abort(operation_ctx, "statement_execute_async", &report, submit)
+            .instrument(crate::snowflake_op_span!(
+                "statement_execute_async",
+                session_id
+            ))
+            .await
     }
 
     /// Cancelling abandons the fetch and, on the PUT/GET branch, aborts the
@@ -2085,5 +2094,71 @@ mod tests {
             err.to_string().contains("Query not found"),
             "unexpected: {err}"
         );
+    }
+
+    #[derive(Default)]
+    struct SessionIdCaptureLayer {
+        captured: std::sync::Arc<std::sync::Mutex<Vec<(String, i64)>>>,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SessionIdCaptureLayer {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            _id: &tracing::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Visitor(Option<i64>);
+            impl tracing::field::Visit for Visitor {
+                fn record_debug(
+                    &mut self,
+                    _field: &tracing::field::Field,
+                    _value: &dyn std::fmt::Debug,
+                ) {
+                }
+                fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+                    if field.name() == crate::telemetry::SESSION_ID_FIELD {
+                        self.0 = Some(value);
+                    }
+                }
+            }
+            let mut visitor = Visitor(None);
+            attrs.record(&mut visitor);
+            if let Some(session_id) = visitor.0 {
+                self.captured
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((attrs.metadata().name().to_string(), session_id));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn statement_execute_async_span_carries_session_id() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let layer = SessionIdCaptureLayer::default();
+        let captured = layer.captured.clone();
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        ds.connections.get_obj(ch).unwrap().lock().await.session_id = Some(4242);
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statements.get_obj(sh).unwrap().lock().await.query = Some("SELECT 1".to_string());
+
+        let _ = ds.statement_execute_async(None, sh, None).await;
+
+        assert_eq!(
+            captured
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_slice(),
+            &[("statement_execute_async".to_string(), 4242)]
+        );
+
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
     }
 }
