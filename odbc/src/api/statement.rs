@@ -156,12 +156,8 @@ fn exec_direct_impl(
             return DaeRequiredSnafu.fail();
         }
 
-        let (param_count, param_array_size) = inner.with_effective_apd(|apd| {
-            (
-                effective_param_count(apd, &inner.ipd, false, None),
-                apd.array_size,
-            )
-        });
+        let (param_count, param_array_size) = inner
+            .with_effective_apd(|apd| (effective_param_count(apd, false, None), apd.array_size));
         let effective_cells = param_array_size as u64 * u64::from(param_count);
         let binding_mode = select_binding_mode(
             &conn_handle,
@@ -1066,7 +1062,7 @@ pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRe
         };
         let (param_count, param_array_size) = inner.with_effective_apd(|apd| {
             (
-                effective_param_count(apd, &inner.ipd, is_prepared, inner.prepared_param_count),
+                effective_param_count(apd, is_prepared, inner.prepared_param_count),
                 apd.array_size,
             )
         });
@@ -1458,7 +1454,7 @@ fn apply_parameter_bindings(
             reason: "prepared statement is missing prepared_param_count".to_string(),
         })?
     } else {
-        apd.desc_count().max(ipd.desc_count())
+        apd.desc_count()
     };
 
     if effective_count == 0 {
@@ -1646,14 +1642,13 @@ mod should_retry_with_inline_json_tests {
 
 fn effective_param_count(
     apd: &crate::api::ApdDescriptor,
-    ipd: &crate::api::IpdDescriptor,
     prepared: bool,
     prepared_param_count: Option<u16>,
 ) -> u16 {
     if prepared {
         prepared_param_count.unwrap_or(0)
     } else {
-        apd.desc_count().max(ipd.desc_count())
+        apd.desc_count()
     }
 }
 
@@ -3606,12 +3601,7 @@ fn execute_dae(
         }
     }
 
-    let param_count = effective_param_count(
-        &temp_apd,
-        &inner.ipd,
-        is_prepared,
-        inner.prepared_param_count,
-    );
+    let param_count = effective_param_count(&temp_apd, is_prepared, inner.prepared_param_count);
     let effective_cells = temp_apd.array_size as u64 * u64::from(param_count);
     let binding_mode = match select_binding_mode(
         &conn_handle,

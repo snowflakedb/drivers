@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
+#include "get_descriptor.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -337,6 +338,62 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects non-contiguous p
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?, ?, ?"), SQL_NTS);
   NEW_DRIVER_ONLY("BD#159") { REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT); }
   OLD_DRIVER_ONLY("BD#159") { REQUIRE_EXPECTED_ERROR(ret, "42601", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Uses the APD count when it is smaller than the IPD count",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQLINTEGER first = 1;
+  SQLINTEGER second = 2;
+  SQLLEN first_ind = 0;
+  SQLLEN second_ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &first, 0, &first_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &second, 0, &second_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  ret = SQLSetDescField(apd, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(1), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = -1;
+  SQLLEN result_ind = -1;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 1);
+  REQUIRE(result_ind == sizeof(result));
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Ignores an IPD record past the last bound parameter",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQLINTEGER value = 1;
+  SQLLEN value_ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &value, 0, &value_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+  ret = SQLSetDescField(ipd, 2, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = -1;
+  SQLLEN result_ind = -1;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 1);
+  REQUIRE(result_ind == sizeof(result));
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_NEED_DATA with data-at-execution parameter",

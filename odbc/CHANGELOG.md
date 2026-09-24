@@ -26,6 +26,7 @@ Bug fixes:
 - Fixed `SQLExecute`/`SQLExecDirect` to return SQLSTATE `07S01` (Invalid use of default parameter) when any bound parameter has `StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5)`; previously the driver returned `HY000` where the ODBC spec requires `07S01`. (snowflakedb/drivers#1833)
 - Fixed `SQL_TINYINT` parameter binds so a value outside the `-128` to `255` range is rejected at execute with SQLSTATE `22003` (Numeric value out of range) instead of being sent to the server unchecked. (snowflakedb/drivers#2150)
 - Fixed a parameter bound with a null data pointer and no `SQL_NULL_DATA` indicator so execute reports SQLSTATE `HY009` (Invalid use of null pointer) instead of the general error `HY000`. (snowflakedb/drivers#2151)
+- Fixed `SQLExecDirect` so lowering the application parameter descriptor `SQL_DESC_COUNT` after extra parameters were bound no longer fails a statement that uses fewer placeholders. (snowflakedb/drivers#2180)
 
 ## v4.0.0-rc4
 
