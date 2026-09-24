@@ -35,7 +35,11 @@ use self::boolean::BoolMaterializer;
 use self::date::{DateMaterializer, DateNumpyMaterializer};
 use self::decfloat::{DecfloatMaterializer, DecfloatNumpyMaterializer};
 use self::decode::TypedColumn;
-use self::interval::{IntervalDayTimeColumn, IntervalYearMonthColumn};
+use self::interval::{
+    IntervalDayTimeColumn, IntervalDayTimeNumpyMsMaterializer, IntervalDayTimeNumpyNsMaterializer,
+    IntervalNumpyColumn, IntervalYearMonthColumn, IntervalYearMonthNumpyMMaterializer,
+    IntervalYearMonthNumpyYMaterializer,
+};
 use self::number::{
     NumberColumn, NumberMaterializer, NumberNumpyFloatMaterializer, NumberNumpyIntMaterializer,
 };
@@ -68,7 +72,11 @@ pub(crate) enum Column {
     TimestampLtz(TimestampLtzColumn),
     TimestampTz(TypedColumn<StructArray, SnowflakeTimestampTz, TimestampTzMaterializer>),
     IntervalYearMonth(IntervalYearMonthColumn),
+    IntervalYearMonthNumpyY(IntervalNumpyColumn<IntervalYearMonthNumpyYMaterializer>),
+    IntervalYearMonthNumpyM(IntervalNumpyColumn<IntervalYearMonthNumpyMMaterializer>),
     IntervalDayTime(IntervalDayTimeColumn),
+    IntervalDayTimeNumpyNs(IntervalNumpyColumn<IntervalDayTimeNumpyNsMaterializer>),
+    IntervalDayTimeNumpyMs(IntervalNumpyColumn<IntervalDayTimeNumpyMsMaterializer>),
     Vector(TypedColumn<FixedSizeListArray, SnowflakeVector, VectorMaterializer>),
 }
 
@@ -93,7 +101,11 @@ impl Column {
             Self::TimestampLtz(column) => column.to_py(py, row),
             Self::TimestampTz(column) => column.to_py(py, row),
             Self::IntervalYearMonth(column) => column.to_py(py, row),
+            Self::IntervalYearMonthNumpyY(column) => column.to_py(py, row),
+            Self::IntervalYearMonthNumpyM(column) => column.to_py(py, row),
             Self::IntervalDayTime(column) => column.to_py(py, row),
+            Self::IntervalDayTimeNumpyNs(column) => column.to_py(py, row),
+            Self::IntervalDayTimeNumpyMs(column) => column.to_py(py, row),
             Self::Vector(column) => column.to_py(py, row),
         }
     }

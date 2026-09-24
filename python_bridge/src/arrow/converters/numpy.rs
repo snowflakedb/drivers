@@ -1,7 +1,8 @@
 //! NumPy publishes C entry points as the `_ARRAY_API` capsule on `multiarray`.
 //! This module imports that module only to take the capsule, then converts cells
 //! with `PyArray_Scalar`. Converters never call `numpy.int64` / `numpy.float64` /
-//! `numpy.datetime64` in Python. rust-numpy is not used (not official PyO3).
+//! `numpy.datetime64` / `numpy.timedelta64` in Python. rust-numpy is not used
+//! (not official PyO3).
 
 use std::ffi::c_void;
 use std::ptr;
@@ -28,6 +29,10 @@ struct NumpyApi {
     float64_dtype: Py<PyAny>,
     datetime64_d_dtype: Py<PyAny>,
     datetime64_ns_dtype: Py<PyAny>,
+    timedelta64_y_dtype: Py<PyAny>,
+    timedelta64_m_dtype: Py<PyAny>,
+    timedelta64_ns_dtype: Py<PyAny>,
+    timedelta64_ms_dtype: Py<PyAny>,
 }
 
 pub(super) struct NumpyProvider {
@@ -63,6 +68,38 @@ impl NumpyProvider {
         nanos: i64,
     ) -> PyResult<Bound<'py, PyAny>> {
         self.scalar(py, nanos, |api| &api.datetime64_ns_dtype)
+    }
+
+    pub(super) fn timedelta64_y<'py>(
+        &self,
+        py: Python<'py>,
+        years: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, years, |api| &api.timedelta64_y_dtype)
+    }
+
+    pub(super) fn timedelta64_m<'py>(
+        &self,
+        py: Python<'py>,
+        months: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, months, |api| &api.timedelta64_m_dtype)
+    }
+
+    pub(super) fn timedelta64_ns<'py>(
+        &self,
+        py: Python<'py>,
+        nanos: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, nanos, |api| &api.timedelta64_ns_dtype)
+    }
+
+    pub(super) fn timedelta64_ms<'py>(
+        &self,
+        py: Python<'py>,
+        millis: i64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.scalar(py, millis, |api| &api.timedelta64_ms_dtype)
     }
 
     fn scalar<'py, T: Copy>(
@@ -119,6 +156,11 @@ fn load_api(py: Python<'_>) -> PyResult<NumpyApi> {
     let datetime64_d_dtype = dtype.call1(("datetime64[D]",))?.unbind();
     // datetime64[ns] is an 8-byte npy_datetime counting nanoseconds from the Unix epoch.
     let datetime64_ns_dtype = dtype.call1(("datetime64[ns]",))?.unbind();
+    // timedelta64 units are 8-byte npy_timedelta counts in that unit.
+    let timedelta64_y_dtype = dtype.call1(("timedelta64[Y]",))?.unbind();
+    let timedelta64_m_dtype = dtype.call1(("timedelta64[M]",))?.unbind();
+    let timedelta64_ns_dtype = dtype.call1(("timedelta64[ns]",))?.unbind();
+    let timedelta64_ms_dtype = dtype.call1(("timedelta64[ms]",))?.unbind();
     Ok(NumpyApi {
         _capsule: capsule_obj.unbind(),
         pyarray_scalar,
@@ -126,6 +168,10 @@ fn load_api(py: Python<'_>) -> PyResult<NumpyApi> {
         float64_dtype,
         datetime64_d_dtype,
         datetime64_ns_dtype,
+        timedelta64_y_dtype,
+        timedelta64_m_dtype,
+        timedelta64_ns_dtype,
+        timedelta64_ms_dtype,
     })
 }
 
@@ -178,6 +224,36 @@ mod tests {
             );
             let expected_ns = datetime64.call1((0, "ns")).unwrap();
             assert!(ntz.eq(&expected_ns).unwrap());
+        });
+    }
+
+    #[test]
+    fn timedelta64_units_are_numpy_scalars() {
+        Python::initialize();
+        let provider = NumpyProvider::new();
+        Python::attach(|py| {
+            let timedelta64 = numpy_type(py, "timedelta64");
+            for (got, count, unit) in [
+                (provider.timedelta64_y(py, 1).unwrap(), 1i64, "Y"),
+                (provider.timedelta64_m(py, 14).unwrap(), 14, "M"),
+                (
+                    provider.timedelta64_ns(py, 1_234_567_890).unwrap(),
+                    1_234_567_890,
+                    "ns",
+                ),
+                (provider.timedelta64_ms(py, 1234).unwrap(), 1234, "ms"),
+            ] {
+                assert!(
+                    got.get_type().is(&timedelta64),
+                    "expected numpy.timedelta64, got {}",
+                    got.get_type().name().unwrap()
+                );
+                let expected = timedelta64.call1((count, unit)).unwrap();
+                assert!(
+                    got.eq(&expected).unwrap(),
+                    "expected timedelta64[{unit}] {expected}, got {got}"
+                );
+            }
         });
     }
 

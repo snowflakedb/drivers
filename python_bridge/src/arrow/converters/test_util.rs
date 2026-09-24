@@ -119,6 +119,20 @@ pub(crate) fn assert_np_datetime64_ns(value: &Bound<'_, PyAny>, nanos_since_epoc
     );
 }
 
+pub(crate) fn assert_np_timedelta64(value: &Bound<'_, PyAny>, count: i64, unit: &str) {
+    let timedelta64 = numpy_type(value.py(), "timedelta64");
+    assert!(
+        value.get_type().is(&timedelta64),
+        "expected numpy.timedelta64, got {}",
+        value.get_type().name().unwrap()
+    );
+    let expected = timedelta64.call1((count, unit)).unwrap();
+    assert!(
+        value.eq(&expected).unwrap(),
+        "expected timedelta64[{unit}] of {count}, got {value}"
+    );
+}
+
 pub(crate) fn assert_py_date(value: &Bound<'_, PyAny>, year: i32, month: u8, day: u8) {
     assert!(
         value.is_instance_of::<PyDate>(),

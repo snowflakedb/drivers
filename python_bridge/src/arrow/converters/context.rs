@@ -151,12 +151,19 @@ impl ConversionContext {
             SnowflakeFieldType::TimestampTz { scale } => {
                 timestamp_tz::from_column(array, field_type, scale)
             }
-            SnowflakeFieldType::IntervalYearMonth { scale } => {
-                interval::year_month_from_column(array, field_type, scale)
-            }
-            SnowflakeFieldType::IntervalDayTime => {
-                interval::day_time_from_column(array, field_type)
-            }
+            SnowflakeFieldType::IntervalYearMonth { scale } => interval::year_month_from_column(
+                array,
+                field_type,
+                scale,
+                Arc::clone(&self.numpy),
+                self.use_numpy,
+            ),
+            SnowflakeFieldType::IntervalDayTime => interval::day_time_from_column(
+                array,
+                field_type,
+                Arc::clone(&self.numpy),
+                self.use_numpy,
+            ),
             SnowflakeFieldType::Vector { .. } => vector::from_column(array, field_type),
         }
     }
