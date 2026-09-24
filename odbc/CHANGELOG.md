@@ -12,6 +12,7 @@ New features:
 
 Changes:
 
+- Changed `SQLRowCount` after a SELECT capped by `ROWS_PER_RESULTSET` so it reports the number of rows in the result payload, matching ODBC 3.x. (snowflakedb/drivers#2221)
 - Changed leftover ODBC connection-string logging keywords such as `LogLevel` and `LogPath` to be accepted and ignored, posting SQLSTATE `01000` on connect. Each warning names the `sf.odbc.ini` key that configures the same behavior (for example `LogFileCount` points at `LogMaxCount`). (snowflakedb/drivers#2052)
 - Changed leftover ODBC test-only connection-string knobs (`INJECT_CURL_TIMEOUT`, `INJECT_INCIDENT1`, `CURL_NO_IDLE_CHECK`, `DisableStageBindFallback`, `StageBindMaxFileSize`, `StageBindThreshold`) to be accepted and ignored, posting SQLSTATE `01000` on connect. These knobs have no replacement; remove them from the DSN. (snowflakedb/drivers#2095)
 - Changed the ODBC Driver Manager `CPTimeout` connection-string keyword to be accepted and ignored instead of treated as an unknown session parameter. (snowflakedb/drivers#2196)

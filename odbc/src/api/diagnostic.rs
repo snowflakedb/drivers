@@ -183,10 +183,9 @@ impl DiagnosticInfo {
         let qt = QueryType::from_raw(statement_type_id);
         let (fn_name, fn_code) = query_type_to_dynamic_function(qt);
         self.header.row_count = rows_affected.map(|v| v as sql::Len);
-        // SQL_DIAG_CURSOR_ROW_COUNT: total rows in the result set. Snowflake returns
-        // this up front as `data.total` (surfaced on the descriptor as `row_count`);
-        // it is None for statements without a result set (DML/DDL), where the field
-        // is undefined and the getter reports 0.
+        // SQL_DIAG_CURSOR_ROW_COUNT: rows in this cursor (`descriptor.row_count`).
+        // It is None for statements without a result set (DML/DDL); the getter
+        // then reports 0.
         self.header.cursor_row_count = cursor_row_count.map(|v| v as sql::Len);
         self.header.dynamic_function = Some(fn_name.to_owned());
         self.header.dynamic_function_code = Some(fn_code);

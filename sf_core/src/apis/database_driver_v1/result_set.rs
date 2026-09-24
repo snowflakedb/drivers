@@ -220,8 +220,7 @@ fn effective_statement_type_id(data: &Data) -> Option<i64> {
 /// [`ResultKind`] (the shared `query_types::statement_type` classifier).
 ///
 /// - `UpdateCount` (DML): sum the affected-row columns from the rowset.
-/// - `Cursor` (SELECT / SHOW / file transfers / ...): the result-set size in
-///   `data.total`.
+/// - `Cursor` (SELECT / SHOW / file transfers / ...): [`cursor_reported_rows`].
 /// - `NoResult` (DDL / TCL / unknown): `None`. Snowflake returns `total: 1` as a
 ///   generic success marker for these; surfacing it as `rows_affected = 1` is
 ///   misleading, so we report "not applicable" instead.
@@ -239,8 +238,21 @@ pub(super) fn calculate_rows_affected(
     }
     match query_type.result_kind() {
         ResultKind::UpdateCount => Some(sum_dml_affected_rows(data)),
-        ResultKind::Cursor => data.total,
+        ResultKind::Cursor => cursor_reported_rows(data, flavor),
         ResultKind::NoResult => None,
+    }
+}
+
+/// Rows the wrapper should report for a cursor result.
+///
+/// `data.total` is rows produced. `ROWS_PER_RESULTSET` can cap the payload so
+/// `data.returned` is smaller. ODBC `SQLRowCount` is the size of the result
+/// set `SQLFetch` will yield, so ODBC prefers `returned`. Python and JDBC keep
+/// `total` as their reported row count.
+fn cursor_reported_rows(data: &Data, flavor: &PutGetResultsetFlavor) -> Option<i64> {
+    match flavor {
+        PutGetResultsetFlavor::Odbc => data.returned.or(data.total),
+        _ => data.total,
     }
 }
 
@@ -320,7 +332,7 @@ pub(super) fn response_to_descriptor(
         query_id,
         columns,
         rows_affected,
-        row_count: data.total,
+        row_count: cursor_reported_rows(data, &wrapper_presets.put_get_resultset_flavor),
         statement_type_id,
         sql_state: data.sql_state.clone(),
         stats: data.stats.clone(),
@@ -1184,6 +1196,27 @@ mod tests {
         let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
         let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
         assert_eq!(descriptor.row_count, Some(42));
+    }
+
+    #[test]
+    fn response_to_descriptor_odbc_cursor_uses_returned_not_total() {
+        let json = r#"{
+            "statementTypeId": 4096,
+            "queryResultFormat": "json",
+            "total": 15,
+            "returned": 10,
+            "rowset": [["0"],["1"],["2"],["3"],["4"],["5"],["6"],["7"],["8"],["9"]],
+            "rowtype": [
+                {"name": "N", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0}
+            ]
+        }"#;
+        let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
+        let odbc = response_to_descriptor(&data, &WrapperPresets::odbc());
+        assert_eq!(odbc.rows_affected, Some(10));
+        assert_eq!(odbc.row_count, Some(10));
+        let python = response_to_descriptor(&data, &WrapperPresets::python());
+        assert_eq!(python.rows_affected, Some(15));
+        assert_eq!(python.row_count, Some(15));
     }
 
     #[test]
