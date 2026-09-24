@@ -143,7 +143,7 @@ mod tests {
     /// BOOLEAN columns ignore the format; `fetch_next_batch` still requires
     /// `KnownSessionParameters` to build the resident batch's column readers.
     fn session_params() -> Arc<KnownSessionParameters> {
-        Arc::new(KnownSessionParameters::test_defaults())
+        Arc::new(KnownSessionParameters::defaults())
     }
 
     fn boolean_batch(schema: &Arc<Schema>, values: Vec<bool>) -> RecordBatch {

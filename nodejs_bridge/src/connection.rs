@@ -231,9 +231,13 @@ impl Connection {
 
     #[napi]
     pub fn get_session_parameters(&self, env: &Env) -> Result<KnownSessionParameters> {
-        block_on(KnownSessionParameters::from_connection(
-            self.handles.connection,
-        ))
+        let handle = self.handles.connection;
+        block_on(async move {
+            if unusable_connection(handle).await.is_some() {
+                return Ok(KnownSessionParameters::defaults());
+            }
+            KnownSessionParameters::from_connection(handle).await
+        })
         .map_err(|e| e.to_js_error(*env))
     }
 

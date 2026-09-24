@@ -14,7 +14,6 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
-  CoreQueryBindings,
   coreIsAnError,
   coreIsStillRunning,
   type CoreConnectionInstance,
@@ -234,20 +233,10 @@ export class Connection {
   }
 
   execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
-    let bindings: CoreQueryBindings | null = null;
-
-    // getSessionParameters() throws a different error when the connection is not up.
-    // Swallowing it leaves bindings null so callers see core.execute()'s
-    // connection-state error via #runStatement. One of two fixes would remove the swallow:
-    // - Gate on isUp() and pass null bindings when false. isUp() is not implemented yet.
-    // - Move bind selection into the bridge, which already gates on connection state
-    //   (preferred: the session-parameter read leaves this layer).
-    try {
-      const { clientStageArrayBindingThreshold } = this.#core.getSessionParameters();
-      bindings = selectBindPayload(options.binds, clientStageArrayBindingThreshold);
-    } catch {
-      // Ignore the error
-    }
+    const bindings = selectBindPayload(
+      options.binds,
+      this.#core.getSessionParameters().clientStageArrayBindingThreshold,
+    );
 
     let parameters = options.parameters
       ? Object.fromEntries(

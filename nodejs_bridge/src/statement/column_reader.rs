@@ -473,7 +473,7 @@ mod tests {
     fn session_params(time_format: &str) -> Arc<KnownSessionParameters> {
         Arc::new(KnownSessionParameters {
             time_output_format: time_format.to_string(),
-            ..KnownSessionParameters::test_defaults()
+            ..KnownSessionParameters::defaults()
         })
     }
 
