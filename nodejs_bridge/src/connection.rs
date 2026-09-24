@@ -144,21 +144,9 @@ impl Connection {
                 .entry(param_names::EXTRA_ROOT_STORE_PATH.as_str().to_string())
                 .or_insert_with(|| Setting::String(ca_path));
         }
-        let browser_opener = match open_external_browser_callback {
-            Some(callback) => {
-                let browser_open_fn = callback.build_threadsafe_function::<String>().build()?;
-                Some(Arc::new(move |url: &str| {
-                    let status = browser_open_fn
-                        .call(url.to_string(), ThreadsafeFunctionCallMode::NonBlocking);
-                    if status == Status::Ok {
-                        Ok(())
-                    } else {
-                        Err(format!("openExternalBrowserCallback failed: {status}"))
-                    }
-                }) as BrowserOpenFn)
-            }
-            None => None,
-        };
+        let browser_opener = open_external_browser_callback
+            .map(browser_opener_from_js)
+            .transpose()?;
 
         block_on(async {
             DRIVER
@@ -380,6 +368,28 @@ impl Connection {
             close.map_err(BridgeError::from)
         })
     }
+}
+
+/// Adapts `openExternalBrowserCallback` to the synchronous opener core invokes.
+fn browser_opener_from_js(callback: Function<String, ()>) -> Result<BrowserOpenFn> {
+    let open_in_js = callback.build_threadsafe_function::<String>().build()?;
+    Ok(Arc::new(move |url: &str| {
+        let (outcome_tx, outcome_rx) = std::sync::mpsc::sync_channel(1);
+        let queued = open_in_js.call_with_return_value(
+            url.to_string(),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |returned, _| {
+                let _ = outcome_tx.send(returned.map_err(|thrown| thrown.reason));
+                Ok(())
+            },
+        );
+        if queued != Status::Ok {
+            return Err(format!("openExternalBrowserCallback failed: {queued}"));
+        }
+        outcome_rx
+            .recv()
+            .unwrap_or_else(|_| Err("openExternalBrowserCallback did not return".into()))
+    }))
 }
 
 async fn is_usable(handle: Handle) -> bool {

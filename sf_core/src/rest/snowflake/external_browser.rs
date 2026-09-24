@@ -68,7 +68,16 @@ impl BrowserOpener for DefaultBrowserOpener {
         }
         // Route through the WSL-safe launcher (SNOW-3649282); off WSL this
         // defers to the `webbrowser` crate.
-        super::browser::open_url(url)
+        if let Err(e) = super::browser::open_url(url) {
+            eprintln!(
+                "Could not open browser. Open the following URL in your browser manually:\n{url}"
+            );
+            tracing::warn!(
+                error = %e,
+                "Could not open browser — waiting for callback anyway"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -91,6 +100,12 @@ pub enum ExternalBrowserError {
     },
     #[snafu(display("Failed to open browser for SSO login: {reason}"))]
     BrowserOpen {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("{reason}"))]
+    BrowserCallback {
         reason: String,
         #[snafu(implicit)]
         location: Location,
@@ -175,7 +190,7 @@ pub(crate) async fn external_browser_authenticate(
     login_parameters: &LoginParameters,
     username: &str,
     authentication_timeout_secs: u64,
-    browser_opener: &dyn BrowserOpener,
+    browser_opener: Arc<dyn BrowserOpener>,
     retry_policy: &RetryPolicy,
 ) -> Result<ExternalBrowserAuthResult, ExternalBrowserError> {
     let budget = Duration::from_secs(authentication_timeout_secs);
@@ -200,40 +215,41 @@ pub(crate) async fn external_browser_authenticate(
         return BrowserOpenSnafu { reason }.fail();
     }
 
-    // Unconditionally print the SSO URL to stderr so the user can manually
-    // open it when the browser fails to launch or is accidentally closed.
-    // This matches the old Python connector's `print()` behaviour and ensures
-    // the URL is always visible regardless of logging configuration.
-    match browser_opener.open(&idp_data.sso_url) {
-        Ok(()) => {
-            eprintln!(
-                "Initiating login request with your identity provider. A browser window \
-                 should have opened for you to complete the login. If you can't see it, \
-                 check existing browser windows, or your OS settings. Alternatively, \
-                 open the following URL in your browser:\n{}",
-                idp_data.sso_url
-            );
-            tracing::info!("Opened browser for SSO login");
-        }
-        Err(e) => {
-            eprintln!(
-                "Could not open browser. Open the following URL in your browser manually:\n{}",
-                idp_data.sso_url
-            );
-            tracing::warn!(
-                error = %e,
-                "Could not open browser — waiting for callback anyway"
-            );
-        }
-    }
-
     let remaining = budget.saturating_sub(start.elapsed());
-    let callback = tokio::time::timeout(remaining, accept_token_from_callback(&listener))
-        .await
-        .map_err(|_| ExternalBrowserError::AuthenticationTimeout {
-            budget,
-            location: Location::new(file!(), line!(), column!()),
-        })??;
+    let sso_url = idp_data.sso_url.clone();
+    let open_fut = async move {
+        tokio::task::spawn_blocking(move || browser_opener.open(&sso_url))
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()))
+    };
+    tokio::pin!(open_fut);
+    let accept_fut = tokio::time::timeout(remaining, accept_token_from_callback(&listener));
+    tokio::pin!(accept_fut);
+    let timeout_err = || ExternalBrowserError::AuthenticationTimeout {
+        budget,
+        location: Location::new(file!(), line!(), column!()),
+    };
+    let callback = tokio::select! {
+        biased;
+        accept = &mut accept_fut => {
+            accept.map_err(|_| timeout_err())??
+        }
+        result = &mut open_fut => {
+            match result {
+                Err(reason) => return BrowserCallbackSnafu { reason }.fail(),
+                Ok(()) => {
+                    eprintln!(
+                        "Initiating login request with your identity provider. A browser window \
+                         should have opened for you to complete the login. If you can't see it, \
+                         check existing browser windows, or your OS settings. Alternatively, \
+                         open the following URL in your browser:\n{}",
+                        idp_data.sso_url
+                    );
+                    accept_fut.await.map_err(|_| timeout_err())??
+                }
+            }
+        }
+    };
 
     tracing::info!(
         elapsed_ms = start.elapsed().as_millis(),
@@ -1041,15 +1057,13 @@ mod tests {
                 .1
                 .parse()
                 .expect("port");
-            std::thread::spawn(move || {
-                let mut stream =
-                    std::net::TcpStream::connect(("127.0.0.1", port)).expect("loopback connect");
-                stream
-                    .write_all(b"GET /?token=sso-token HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                    .expect("write token");
-                let mut buf = Vec::new();
-                let _ = stream.read_to_end(&mut buf);
-            });
+            let mut stream =
+                std::net::TcpStream::connect(("127.0.0.1", port)).expect("loopback connect");
+            stream
+                .write_all(b"GET /?token=sso-token HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .expect("write token");
+            let mut buf = Vec::new();
+            let _ = stream.read_to_end(&mut buf);
             Ok(())
         }));
 
@@ -1079,7 +1093,7 @@ mod tests {
             &login_parameters,
             "alice",
             30,
-            &opener,
+            Arc::new(opener),
             &crate::config::retry::RetryPolicy::default(),
         )
         .await
@@ -1091,6 +1105,89 @@ mod tests {
         assert!(
             seen_url.starts_with("https://idp.snowflake.com/sso?"),
             "opener must receive the IdP URL, got {seen_url}"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_opener_error_fails_without_waiting_for_callback() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        struct SsoRespond;
+        impl wiremock::Respond for SsoRespond {
+            fn respond(&self, request: &Request) -> ResponseTemplate {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&request.body).expect("json body");
+                let port = body["data"]["BROWSER_MODE_REDIRECT_PORT"]
+                    .as_str()
+                    .expect("BROWSER_MODE_REDIRECT_PORT");
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "ssoUrl": format!(
+                            "https://idp.snowflake.com/sso?browser_mode_redirect_port={port}"
+                        ),
+                        "proofKey": "proof"
+                    }
+                }))
+            }
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/authenticator-request"))
+            .respond_with(SsoRespond)
+            .mount(&server)
+            .await;
+
+        let opener = FnBrowserOpener(Arc::new(
+            |_url: &str| Err("you don't have a browser".into()),
+        ));
+
+        let login_parameters = crate::config::rest_parameters::LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: crate::config::rest_parameters::LoginMethod::ExternalBrowser {
+                username: "alice".to_string(),
+                authentication_timeout_secs: 30,
+                client_store_temporary_credential: false,
+            },
+            server_url: server.uri(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            secondary_roles: None,
+            client_info: crate::config::rest_parameters::test_fixtures::test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
+            disable_parallel_user_prompt: true,
+            validate_session_token: true,
+            browser_opener: None,
+        };
+
+        let started = Instant::now();
+        let err = external_browser_authenticate(
+            &reqwest::Client::new(),
+            &login_parameters,
+            "alice",
+            30,
+            Arc::new(opener),
+            &crate::config::retry::RetryPolicy::default(),
+        )
+        .await
+        .expect_err("custom opener Err must fail the flow");
+
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "opener Err must fail without waiting out the authentication timeout"
+        );
+        assert!(
+            matches!(
+                err,
+                ExternalBrowserError::BrowserCallback { ref reason, .. }
+                    if reason == "you don't have a browser"
+            ),
+            "expected BrowserCallback with the opener message, got: {err}"
         );
     }
 }

@@ -5,7 +5,6 @@ import {
   connectAsyncWithErrorBD,
   destroyConnectionAsync,
   IS_RUNNING_FOR_OLD_DRIVER,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
   snowflake,
 } from '../utils/index.js';
 import {
@@ -92,35 +91,27 @@ describe('openExternalBrowserCallback', () => {
     },
   );
 
-  // TODO(SNOW-4159760): the new driver invokes the callback through a non-blocking threadsafe
-  // function, so an exception it throws is never observed: login waits out the authentication
-  // timeout instead of rejecting with it. Old driver only until the two agree.
-  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    'should fail connect when openExternalBrowserCallback throws',
-    async () => {
-      await wiremock.stub(authenticatorRequestSuccess());
+  it('should fail connect when openExternalBrowserCallback throws', async () => {
+    await wiremock.stub(authenticatorRequestSuccess());
 
-      const connection = snowflake.createConnection({
-        account: 'testaccount',
-        username: 'alice',
-        authenticator: 'EXTERNALBROWSER',
-        ...wiremock.connectionOptions,
-        // The old driver posts authenticator-request to https://<host>, ignoring WireMock's
-        // protocol and port, unless console login builds the URL locally.
-        disableConsoleLogin: false,
-        openExternalBrowserCallback: () => {
-          throw new Error("you don't have a browser");
-        },
-      }) as Connection;
-      onTestFinished(async () => {
-        if (connection.isUp()) {
-          await destroyConnectionAsync(connection);
-        }
-      });
+    const connection = snowflake.createConnection({
+      account: 'testaccount',
+      username: 'alice',
+      authenticator: 'EXTERNALBROWSER',
+      ...wiremock.connectionOptions,
+      ...(IS_RUNNING_FOR_OLD_DRIVER ? { disableConsoleLogin: false } : {}),
+      openExternalBrowserCallback: () => {
+        throw new Error("you don't have a browser");
+      },
+    }) as Connection;
+    onTestFinished(async () => {
+      if (connection.isUp()) {
+        await destroyConnectionAsync(connection);
+      }
+    });
 
-      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
-        message: "you don't have a browser",
-      } satisfies Partial<SnowflakeError>);
-    },
-  );
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      message: expect.stringContaining("you don't have a browser"),
+    } satisfies Partial<SnowflakeError>);
+  });
 });

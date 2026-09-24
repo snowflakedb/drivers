@@ -813,7 +813,7 @@ impl OAuthAuthorizationCodeConfig {
         #[cfg(any(test, feature = "test-utils"))]
         let browser_launcher: Option<Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>> =
             Some(Arc::new(|| -> BrowserLaunchFn {
-                Box::new(|_authorize_url, _redirect_uri| Box::pin(async {}))
+                Box::new(|_authorize_url, _redirect_uri| Box::pin(async { Ok(()) }))
             }));
 
         Ok(Self {

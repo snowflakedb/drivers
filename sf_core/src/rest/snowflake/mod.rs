@@ -849,17 +849,17 @@ pub async fn auth_request_data(
                 data.token = Some(cached_token);
                 data.token_from_cache_used = true;
             } else {
-                let opener: Box<dyn external_browser::BrowserOpener> =
+                let opener: std::sync::Arc<dyn external_browser::BrowserOpener> =
                     match &login_parameters.browser_opener {
-                        Some(f) => Box::new(FnBrowserOpener(std::sync::Arc::clone(f))),
-                        None => Box::new(DefaultBrowserOpener),
+                        Some(f) => std::sync::Arc::new(FnBrowserOpener(std::sync::Arc::clone(f))),
+                        None => std::sync::Arc::new(DefaultBrowserOpener),
                     };
                 let result = external_browser_authenticate(
                     client,
                     login_parameters,
                     username,
                     *authentication_timeout_secs,
-                    opener.as_ref(),
+                    opener,
                     retry_policy,
                 )
                 .await
@@ -2783,13 +2783,13 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("External browser SSO failed"))]
+    #[snafu(display("External browser SSO failed: {source}"))]
     ExternalBrowser {
         source: external_browser::ExternalBrowserError,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("OAuth flow failed"))]
+    #[snafu(display("OAuth flow failed: {source}"))]
     OAuthFlow {
         source: oauth::OAuthError,
         #[snafu(implicit)]

@@ -96,8 +96,13 @@ export type ConnectionOptions = Record<string, unknown> & {
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
    * listener and waits for the IdP redirect; this function only receives
-   * the URL that would otherwise be opened. The driver does not await a
-   * returned Promise: complete any loopback redirect async so login can keep waiting.
+   * the URL that would otherwise be opened. The callback must return or
+   * throw; a function that never returns holds a driver thread until
+   * process exit, and login timeout does not unblock it. Login waits for
+   * that synchronous return or throw. A returned Promise is not awaited
+   * (an `async` callback that throws becomes a rejected Promise and is not
+   * observed). Complete any loopback redirect async so login can keep
+   * waiting.
    */
   openExternalBrowserCallback?: (url: string) => void | Promise<void>;
 };

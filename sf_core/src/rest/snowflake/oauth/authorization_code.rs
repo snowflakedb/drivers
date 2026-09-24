@@ -36,9 +36,9 @@ use url::Url;
 
 use super::dpop::{self, DPoPKey};
 use super::error::{
-    AuthenticationTimeoutSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu,
-    OAuthError, RedirectUriParseSnafu, RefreshTokenExchangeSnafu, StateMismatchSnafu,
-    TokenResponseDecodeSnafu,
+    AuthenticationTimeoutSnafu, BrowserCallbackSnafu, EndpointUrlParseSnafu, IdpSnafu,
+    MissingAccessTokenSnafu, OAuthError, RedirectUriParseSnafu, RefreshTokenExchangeSnafu,
+    StateMismatchSnafu, TokenResponseDecodeSnafu,
 };
 use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
@@ -129,7 +129,7 @@ pub(crate) struct AcquiredOAuthToken {
 /// tests inject deterministic launchers as configuration data rather
 /// than through global mutable state.
 pub(crate) type BrowserLaunchFn =
-    Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+    Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send>;
 
 fn default_browser_launch() -> BrowserLaunchFn {
     Box::new(|authorize_url, _redirect_uri| {
@@ -143,9 +143,13 @@ fn default_browser_launch() -> BrowserLaunchFn {
             // (SNOW-3649282). The paste fallback is printed only when a
             // *validated* URL fails to launch.
             let url = authorize_url.to_string();
-            launch_authorize_url(&url, crate::rest::snowflake::browser::open_url, || {
-                println!("Open this URL in your browser to continue: {url}")
-            });
+            let pasted = std::cell::Cell::new(false);
+            let result =
+                launch_authorize_url(&url, crate::rest::snowflake::browser::open_url, || {
+                    pasted.set(true);
+                    println!("Open this URL in your browser to continue: {url}")
+                });
+            if pasted.get() { Ok(()) } else { result }
         })
     })
 }
@@ -155,24 +159,28 @@ fn default_browser_launch() -> BrowserLaunchFn {
 /// testable without spawning a browser or capturing stdout.
 ///
 /// Contract (SNOW-3649282):
-/// * URL fails validation ⇒ refuse; `open` is **not** called and the paste
+/// * URL fails validation ⇒ `Err`; `open` is **not** called and the paste
 ///   `fallback` is **not** shown (printing it would invite the user to
 ///   hand-open the very URL we rejected).
-/// * URL is valid ⇒ hand it to `open`; only if that *launch* fails do we
-///   show the manual-paste `fallback`.
+/// * URL is valid ⇒ hand it to `open`; on launch `Err` the caller-supplied
+///   `fallback` runs and the `Err` is returned. The system-browser path
+///   prints a paste URL there and swallows the `Err`; a custom opener
+///   passes a no-op so login fails with no paste.
 fn launch_authorize_url(
     url: &str,
     open: impl FnOnce(&str) -> Result<(), String>,
     fallback: impl FnOnce(),
-) {
+) -> Result<(), String> {
     if let Err(e) = crate::rest::snowflake::browser::validate_browser_url(url) {
         tracing::error!(error = %e, "Refusing to open browser: authorization URL failed validation");
-        return;
+        return Err(e);
     }
     if let Err(e) = open(url) {
-        tracing::warn!(error = %e, "Failed to launch system browser; printing paste fallback");
+        tracing::warn!(error = %e, "Failed to launch browser");
         fallback();
+        return Err(e);
     }
+    Ok(())
 }
 
 pub(crate) fn launcher_from_url_opener(
@@ -183,11 +191,11 @@ pub(crate) fn launcher_from_url_opener(
         Box::new(move |authorize_url, _redirect_uri| {
             Box::pin(async move {
                 let url = authorize_url.to_string();
-                launch_authorize_url(
-                    &url,
-                    |u| opener(u),
-                    || println!("Open this URL in your browser to continue: {url}"),
-                );
+                tokio::task::spawn_blocking(move || {
+                    launch_authorize_url(&url, |u| opener(u), || {})
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
             })
         })
     })
@@ -602,11 +610,13 @@ async fn run_interactive_flow(
             elapsed_secs: deadline.elapsed_secs(),
         })?;
 
-    let (redirect_result, _) = tokio::join!(
-        listener.wait_for_redirect(loopback_budget),
-        launch_browser(authorize_url, redirect_uri),
-    );
-    let redirect: RedirectResult = redirect_result?;
+    let launch_fut = launch_browser(authorize_url, redirect_uri);
+    tokio::pin!(launch_fut);
+    let redirect: RedirectResult = tokio::select! {
+        biased;
+        redirect = listener.wait_for_redirect(loopback_budget) => redirect?,
+        Err(reason) = &mut launch_fut => return BrowserCallbackSnafu { reason }.fail(),
+    };
 
     // CSRF check via timing-safe equality on `oauth2::CsrfToken`.
     let received = CsrfToken::new(redirect.state.clone());
@@ -992,7 +1002,7 @@ mod tests {
         use std::cell::Cell;
         let opened = Cell::new(false);
         let fell_back = Cell::new(false);
-        launch_authorize_url(
+        let result = launch_authorize_url(
             "https://idp.example.com/authorize?state=poc|calc",
             |_| {
                 opened.set(true);
@@ -1000,6 +1010,7 @@ mod tests {
             },
             || fell_back.set(true),
         );
+        assert!(result.is_err(), "rejected URL must fail the launch");
         assert!(
             !opened.get(),
             "a rejected URL must never reach the launcher"
@@ -1023,7 +1034,8 @@ mod tests {
                 Ok(())
             },
             || fell_back.set(true),
-        );
+        )
+        .expect("valid URL launch must succeed");
         assert!(opened.get(), "a valid URL must be handed to the launcher");
         assert!(
             !fell_back.get(),
@@ -1035,15 +1047,16 @@ mod tests {
     fn launch_valid_url_shows_fallback_when_launch_fails() {
         use std::cell::Cell;
         let fell_back = Cell::new(false);
-        launch_authorize_url(
+        let result = launch_authorize_url(
             "https://idp.example.com/authorize?client_id=abc",
             |_| Err("no browser available".to_string()),
             || fell_back.set(true),
         );
         assert!(
             fell_back.get(),
-            "the paste fallback must show when a validated URL fails to launch"
+            "the supplied fallback runs when a validated URL fails to launch"
         );
+        assert_eq!(result, Err("no browser available".to_string()));
     }
 
     struct StubTokenCache {
@@ -1323,7 +1336,7 @@ mod tests {
         )
         .await;
 
-        let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async {}));
+        let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async { Ok(()) }));
         let mut config_short =
             cfg_with_token_url(Url::parse(&format!("{}/oauth/token", server.uri())).unwrap());
         config_short.flow_options.authentication_timeout_secs = 1;
@@ -1397,6 +1410,7 @@ mod tests {
                 // its response. Dropping immediately after write_all can
                 // race with axum's handler invocation.
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
             })
         });
 
@@ -1471,6 +1485,7 @@ mod tests {
                 );
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
             })
         });
 
@@ -1600,6 +1615,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn url_opener_error_fails_without_waiting_for_redirect() {
+        let mut config =
+            cfg_with_token_url(Url::parse("https://idp.snowflake.com/oauth/token").unwrap());
+        config.authorization_url =
+            Some(Url::parse("https://idp.snowflake.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+        config.flow_options.authentication_timeout_secs = 30;
+
+        let opener: crate::rest::snowflake::BrowserOpenFn =
+            Arc::new(|_url: &str| Err("you don't have a browser".into()));
+        let launch = super::launcher_from_url_opener(opener)();
+        let client = reqwest::Client::new();
+        let started = Instant::now();
+        let err = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+        .expect_err("custom opener Err must fail the flow");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "opener Err must fail without waiting out the authentication timeout"
+        );
+        assert!(
+            matches!(
+                err,
+                OAuthError::BrowserCallback { ref reason, .. }
+                    if reason == "you don't have a browser"
+            ),
+            "expected BrowserCallback with the opener message, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn idp_error_in_authorize_redirect_surfaces_idp_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1625,6 +1681,7 @@ mod tests {
                 let req = "GET /?error=access_denied&error_description=denied HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
             })
         });
         let client = reqwest::Client::new();
@@ -1670,6 +1727,7 @@ mod tests {
                 let req = "GET /?code=THE-CODE&state=ATTACKER-SUPPLIED HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
             })
         });
         let client = reqwest::Client::new();
@@ -1754,6 +1812,7 @@ mod tests {
                 // race with axum's handler invocation (mirrors the same
                 // guard in `full_interactive_flow_drives_loopback_directly`).
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
             })
         })
     }

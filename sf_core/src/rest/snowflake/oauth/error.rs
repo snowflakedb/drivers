@@ -55,6 +55,12 @@ pub enum OAuthError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("{reason}"))]
+    BrowserCallback {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
     /// End-to-end `authentication_timeout` budget expired during the
     /// OAuth flow — covers the loopback wait, the IdP token exchange
