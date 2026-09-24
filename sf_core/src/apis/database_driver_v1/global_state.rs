@@ -77,6 +77,7 @@ pub struct WrapperPresets {
     /// proxy in sync for parameters the response omits. When false, the cache
     /// only ever reflects parameters a response carries.
     pub optimistic_alter_session_param_cache: bool,
+    pub honor_scoped_temp_bind_stage: bool,
     /// Default when the `serialize_session_operations` connection parameter is unset.
     /// When true, one in-flight session operation per connection.
     pub serialize_session_operations: bool,
@@ -111,6 +112,7 @@ impl Default for WrapperPresets {
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: true,
             optimistic_alter_session_param_cache: false,
+            honor_scoped_temp_bind_stage: false,
             serialize_session_operations: false,
             validate_session_token: true,
         }
@@ -122,6 +124,7 @@ impl WrapperPresets {
     pub fn python() -> Self {
         Self {
             optimistic_alter_session_param_cache: true,
+            honor_scoped_temp_bind_stage: true,
             ..Self::default()
         }
     }
@@ -138,6 +141,7 @@ impl WrapperPresets {
             honor_put_get_disable: false,
             clear_query_context_on_null_entries: false,
             optimistic_alter_session_param_cache: false,
+            honor_scoped_temp_bind_stage: false,
             serialize_session_operations: true,
             validate_session_token: true,
         }
@@ -550,6 +554,15 @@ mod tests {
         assert!(!WrapperPresets::python().honor_put_get_disable);
         assert!(!WrapperPresets::odbc().honor_put_get_disable);
         assert!(!WrapperPresets::default().honor_put_get_disable);
+    }
+
+    #[test]
+    fn only_python_honors_scoped_temp_bind_stage() {
+        assert!(WrapperPresets::python().honor_scoped_temp_bind_stage);
+        assert!(!WrapperPresets::jdbc().honor_scoped_temp_bind_stage);
+        assert!(!WrapperPresets::odbc().honor_scoped_temp_bind_stage);
+        assert!(!WrapperPresets::nodejs().honor_scoped_temp_bind_stage);
+        assert!(!WrapperPresets::default().honor_scoped_temp_bind_stage);
     }
 
     #[test]

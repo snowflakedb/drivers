@@ -366,7 +366,13 @@ impl DatabaseDriverV1 {
         retry_policy: &RetryPolicy,
         csv_bytes: &[u8],
     ) -> Result<String, ApiError> {
-        let (use_s3_regional_url_session_param, flags, put_get_policy, xp_backend) = {
+        let (
+            use_s3_regional_url_session_param,
+            session_parameters,
+            flags,
+            put_get_policy,
+            xp_backend,
+        ) = {
             let conn = conn_arc.lock().await;
             let regional = conn.use_s3_regional_url_session_param().await;
             let flags = crate::stage_binding::StageBindingFlags {
@@ -375,6 +381,7 @@ impl DatabaseDriverV1 {
             let put_get_policy = RetryPolicy::put_get(&conn.effective_settings());
             (
                 regional,
+                conn.session_parameters.clone(),
                 flags,
                 put_get_policy,
                 conn.xp_backend_arc().context(QuerySnafu)?,
@@ -384,17 +391,20 @@ impl DatabaseDriverV1 {
         let mut upload_refresh = RefreshContext::from_arc(conn_arc).await?;
         let session_token = upload_refresh.refresh_token(None).await?;
 
-        let stage_ctx = crate::stage_binding::StageBindingContext {
-            client: http_client,
+        let stage_ctx = crate::stage_binding::StageBindingContext::new(
+            http_client,
             query_parameters,
-            session_token: &session_token,
+            &session_token,
             retry_policy,
-            put_get_policy: &put_get_policy,
+            &put_get_policy,
             use_s3_regional_url_session_param,
-            crl_worker: self.crl_worker.clone(),
-            cleanup: operation_ctx.map(OperationCtx::cleanup_scope),
+            &session_parameters,
+            &self.wrapper_presets,
+            self.crl_worker.clone(),
+            operation_ctx.map(OperationCtx::cleanup_scope),
             xp_backend,
-        };
+        )
+        .await;
         let request_id = uuid::Uuid::new_v4();
         crate::stage_binding::upload_csv_bindings(&stage_ctx, &flags, request_id, csv_bytes)
             .await

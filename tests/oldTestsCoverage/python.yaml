@@ -3036,7 +3036,8 @@ tests:
   - test_name: test_bind_upload_agent_row_size_exceed_buffer_size
     ud_tests: []
   - test_name: test_bind_upload_agent_scoped_temp_object
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/stage_binding.rs::tests::scoped_stage_sql_matches_python_connector
   - test_name: test_bind_upload_agent_uploading_multiple_files
     ud_tests: []
   unit/test_cache.py:
