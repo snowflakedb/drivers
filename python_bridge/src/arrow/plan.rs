@@ -66,9 +66,7 @@ pub(crate) enum SnowflakeFieldType {
         len: u32,
     },
     Real,
-    Decfloat {
-        precision: u32,
-    },
+    Decfloat,
     Vector {
         element_type: VectorElementType,
         column_size: u32,
@@ -100,7 +98,7 @@ impl SnowflakeFieldType {
             Self::Boolean => "BOOLEAN",
             Self::Binary { .. } => "BINARY",
             Self::Real => "REAL",
-            Self::Decfloat { .. } => "DECFLOAT",
+            Self::Decfloat => "DECFLOAT",
             Self::Vector { .. } => "VECTOR",
             Self::IntervalYearMonth { .. } => "INTERVAL_YEAR_MONTH",
             Self::IntervalDayTime => "INTERVAL_DAY_TIME",
@@ -164,9 +162,7 @@ impl SnowflakeFieldType {
                 Ok(Self::Binary { len })
             }
             "REAL" => Ok(Self::Real),
-            "DECFLOAT" => Ok(Self::Decfloat {
-                precision: get_field_metadata(field, "precision")?,
-            }),
+            "DECFLOAT" => Ok(Self::Decfloat),
             // The server sends these as Utf8 JSON today, including structured
             // ARRAY(T), OBJECT(...), and MAP(K, V). They share the TEXT path.
             "OBJECT" | "ARRAY" | "VARIANT" | "MAP" => {
@@ -277,7 +273,7 @@ fn timestamp_scale(field: &Field) -> Result<u32, PlanError> {
 mod tests {
     use std::collections::HashMap;
 
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{DataType, Field, Fields, Schema};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
@@ -404,6 +400,20 @@ mod tests {
             plan.field_types,
             vec![SnowflakeFieldType::Time { scale: 9 }]
         );
+    }
+
+    #[test]
+    fn from_schema_plans_decfloat_without_precision_metadata() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "df",
+            DataType::Struct(Fields::from(vec![
+                Field::new("exponent", DataType::Int16, true),
+                Field::new("significand", DataType::Binary, true),
+            ])),
+            logical_meta("DECFLOAT", &[]),
+        )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(plan.field_types, vec![SnowflakeFieldType::Decfloat]);
     }
 
     #[test]

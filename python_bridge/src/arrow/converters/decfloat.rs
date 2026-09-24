@@ -71,7 +71,7 @@ mod tests {
     use crate::arrow::plan::SnowflakeFieldType;
 
     fn decfloat() -> SnowflakeFieldType {
-        SnowflakeFieldType::Decfloat { precision: 38 }
+        SnowflakeFieldType::Decfloat
     }
 
     fn sig(value: i128) -> Vec<u8> {

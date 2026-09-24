@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use arrow::array::ArrayRef;
-use chrono::Duration;
 use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDelta;
 use sf_types::{ReadArrowError, SnowflakeFixed};
 
 use super::Column;
@@ -128,11 +128,15 @@ fn year_month_to_string(months: i128, scale: u32) -> String {
 }
 
 fn timedelta_from_nanos(py: Python<'_>, nanos: i128) -> PyResult<Bound<'_, PyAny>> {
-    let micros = i64::try_from(nanos.div_euclid(1000))
+    const MICROS_PER_DAY: i128 = 86_400 * 1_000_000;
+    let micros = nanos.div_euclid(1000);
+    let days = i32::try_from(micros.div_euclid(MICROS_PER_DAY))
         .map_err(|_| PyOverflowError::new_err("timedelta duration out of range"))?;
-    Duration::microseconds(micros)
-        .into_pyobject(py)
-        .map(Bound::into_any)
+    let within_day = micros.rem_euclid(MICROS_PER_DAY);
+    // `rem_euclid` is non-negative and below MICROS_PER_DAY, so both fit i32.
+    let seconds = (within_day / 1_000_000) as i32;
+    let microseconds = (within_day % 1_000_000) as i32;
+    PyDelta::new(py, days, seconds, microseconds, false).map(Bound::into_any)
 }
 
 fn i64_timedelta_count(value: i128) -> PyResult<i64> {
@@ -409,6 +413,23 @@ mod tests {
                 value.eq(&expected).unwrap(),
                 "got {value}, expected {expected}"
             );
+        });
+    }
+
+    #[test]
+    fn day_time_microseconds_beyond_i64_convert() {
+        Python::initialize();
+        let ctx = ConversionContext::new(&Schema::empty()).unwrap();
+        // 200 million days is inside datetime.timedelta's range, but counting
+        // it in microseconds overflows i64.
+        let nanos = 200_000_000i128 * 86_400 * 1_000_000_000;
+        let array: ArrayRef = Arc::new(Decimal128Array::from(vec![Some(nanos)]));
+        let column = ctx
+            .converter_from_column(&array, &SnowflakeFieldType::IntervalDayTime)
+            .unwrap();
+
+        Python::attach(|py| {
+            assert_py_timedelta(&column.to_py(py, 0).unwrap(), 200_000_000, 0, 0);
         });
     }
 

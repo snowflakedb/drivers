@@ -131,7 +131,7 @@ impl ConversionContext {
             }
             SnowflakeFieldType::Varchar { .. } => text::from_column(array, field_type),
             SnowflakeFieldType::Binary { .. } => binary::from_column(array, field_type),
-            SnowflakeFieldType::Decfloat { .. } => {
+            SnowflakeFieldType::Decfloat => {
                 decfloat::from_column(array, field_type, Arc::clone(&self.numpy), self.use_numpy)
             }
             SnowflakeFieldType::Date => {
