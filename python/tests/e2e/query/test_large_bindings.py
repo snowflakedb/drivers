@@ -197,13 +197,13 @@ class TestLargeBindings:
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed()
 
-        # And A temporary table with columns (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR) exists
+        # And A temporary table with the driver-specific stage-binding type matrix exists
         table = f"{tmp_schema}.lb_types"
         cursor.execute(
             f"CREATE OR REPLACE TEMPORARY TABLE {table} (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR)"
         )
 
-        # When 13200 rows are inserted using multirow binding
+        # When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
         before = list_bind_stage_file_count(cursor.connection)
         bulk_insert_types(cursor, table, 13200)
 
@@ -212,7 +212,7 @@ class TestLargeBindings:
         after = list_bind_stage_file_count(cursor.connection)
         assert_bind_stage_file_count_increased(cursor.connection, before, after)
 
-        # And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
+        # And All type-matrix columns are selected from the table in row order
         cursor.execute(f"SELECT id, n, f, flag, txt FROM {table} WHERE id IN (0, 1, 7, 100, 13199) ORDER BY id")
         rows = cursor.fetchall()
 

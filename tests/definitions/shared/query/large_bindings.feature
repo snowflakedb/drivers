@@ -14,11 +14,13 @@ Feature: Large (stage-based) parameter binding
 
   @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should round-trip all bindable types via stage binding
+    # JDBC matrix: FIXED/NUMBER (integer and BigDecimal), REAL/FLOAT, BOOLEAN, TEXT/VARCHAR,
+    # BINARY, DATE, TIME, TIMESTAMP_LTZ, and TIMESTAMP_NTZ.
     Given Snowflake client is logged in
-    And A temporary table with columns (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR) exists
-    When 13200 rows are inserted using multirow binding
+    And A temporary table with the driver-specific stage-binding type matrix exists
+    When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
     Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
-    And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
+    And All type-matrix columns are selected from the table in row order
     Then Result should contain the same values as the bound parameters
 
   @odbc_e2e @python_e2e @jdbc_e2e

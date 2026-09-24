@@ -6,12 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
+import java.util.Calendar;
+import java.util.TimeZone;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -85,54 +93,98 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
   @Test
   public void shouldRoundTripAllBindableTypesViaStageBinding() throws Exception {
     // Given Snowflake client is logged in
-    Connection connection = getDefaultConnection();
+    try (Connection connection = openConnection()) {
+      execute(connection, "ALTER SESSION SET TIMEZONE = 'UTC'");
 
-    // And A temporary table with columns (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR)
-    // exists
-    String tableName =
-        createTempTable(
-            connection,
-            "ud_large_bindings_",
-            "id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR");
+      // And A temporary table with the driver-specific stage-binding type matrix exists
+      String tableName =
+          createTempTable(
+              connection,
+              "ud_large_bindings_",
+              "id NUMBER, n NUMBER(38, 9), f FLOAT, flag BOOLEAN, txt VARCHAR, b BINARY,"
+                  + " d DATE, t TIME, ts_ltz TIMESTAMP_LTZ, ts_ntz TIMESTAMP_NTZ");
+      int expectedId = 42;
+      BigDecimal expectedNumber = new BigDecimal("12345678901234567890123456789.123456789");
+      double expectedFloat = -12345.625d;
+      boolean expectedBoolean = true;
+      String expectedText = "stage-bind-日本語";
+      byte[] expectedBinary = {0, (byte) 0xff, 0x10};
+      Date expectedDate = Date.valueOf("2024-01-15");
+      Time expectedTime = Time.valueOf("13:14:15");
+      Timestamp expectedLtz = Timestamp.from(Instant.parse("2024-01-15T10:30:00.123456789Z"));
+      Timestamp expectedNtz = Timestamp.from(Instant.parse("2023-06-20T14:22:33.987654321Z"));
+      Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
 
-    // When 13200 rows are inserted using multirow binding
-    int rowCount = 13200; // 13200 x 5 columns = 66000 cells, above the default 65280 threshold
-    long beforeInsert = countSystemBindFiles(connection);
-    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?, ?, ?, ?)";
-    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
-      for (int id = 0; id < rowCount; id++) {
-        preparedStatement.setInt(1, id);
-        preparedStatement.setInt(2, id * 7);
-        preparedStatement.setDouble(3, id + 0.5d);
-        preparedStatement.setBoolean(4, id % 2 == 0);
-        preparedStatement.setString(5, "txt-" + id);
-        preparedStatement.addBatch();
+      // When 13200 rows of driver-specific stage-binding values are inserted using multirow
+      // binding
+      int rowCount = 13200;
+      long beforeInsert = countSystemBindFiles(connection);
+      String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+      try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+        for (int row = 0; row < rowCount; row++) {
+          preparedStatement.setInt(1, expectedId + row);
+          preparedStatement.setBigDecimal(2, expectedNumber);
+          preparedStatement.setDouble(3, expectedFloat);
+          preparedStatement.setBoolean(4, expectedBoolean);
+          preparedStatement.setString(5, expectedText);
+          preparedStatement.setBytes(6, expectedBinary);
+          preparedStatement.setDate(7, expectedDate);
+          preparedStatement.setTime(8, expectedTime);
+          preparedStatement.setObject(9, expectedLtz, SnowflakeType.EXTRA_TYPES_TIMESTAMP_LTZ);
+          preparedStatement.setObject(10, expectedNtz, SnowflakeType.EXTRA_TYPES_TIMESTAMP_NTZ);
+          preparedStatement.addBatch();
+        }
+        int[] counts = preparedStatement.executeBatch();
+        assertEquals(rowCount, counts.length, "Expected one update count per representative row");
       }
-      int[] counts = preparedStatement.executeBatch();
-      assertEquals(rowCount, counts.length, "Expected one update count per batched row");
-    }
 
-    // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as
-    // the bound parameters
-    assertTrue(
-        countSystemBindFiles(connection) > beforeInsert,
-        "All-types bulk insert should upload a bind file to SYSTEM$BIND");
+      // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values
+      // as the bound parameters
+      assertTrue(
+          countSystemBindFiles(connection) > beforeInsert,
+          "All-types bulk insert should upload a bind file to SYSTEM$BIND");
 
-    // And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet =
-            statement.executeQuery(
-                "SELECT id, n, f, flag, txt FROM " + tableName + " ORDER BY id")) {
-      // Then Result should contain the same values as the bound parameters
-      for (int id = 0; id < rowCount; id++) {
-        assertTrue(resultSet.next(), "Expected row for id " + id);
-        assertEquals(id, resultSet.getInt(1), "Unexpected id");
-        assertEquals(id * 7, resultSet.getInt(2), "Unexpected NUMBER value for id " + id);
-        assertEquals(id + 0.5d, resultSet.getDouble(3), 0.0001d, "Unexpected FLOAT value");
-        assertEquals(id % 2 == 0, resultSet.getBoolean(4), "Unexpected BOOLEAN value");
-        assertEquals("txt-" + id, resultSet.getString(5), "Unexpected VARCHAR value");
+      // And All type-matrix columns are selected from the table in row order
+      try (Statement statement = connection.createStatement();
+          ResultSet resultSet =
+              statement.executeQuery(
+                  "SELECT id, n, f, flag, txt, b, d, t, ts_ltz, ts_ntz FROM "
+                      + tableName
+                      + " ORDER BY id")) {
+        // Then Result should contain the same values as the bound parameters
+        for (int row = 0; row < rowCount; row++) {
+          assertTrue(resultSet.next(), "Expected representative row " + row);
+          assertEquals(expectedId + row, resultSet.getInt(1), "Unexpected FIXED/NUMBER value");
+          assertFalse(resultSet.wasNull(), "FIXED/NUMBER should not be NULL");
+          assertEquals(expectedNumber, resultSet.getBigDecimal(2), "Unexpected BigDecimal value");
+          assertFalse(resultSet.wasNull(), "BigDecimal should not be NULL");
+          assertEquals(expectedFloat, resultSet.getDouble(3), 0.0d, "Unexpected REAL/FLOAT value");
+          assertFalse(resultSet.wasNull(), "REAL/FLOAT should not be NULL");
+          assertEquals(expectedBoolean, resultSet.getBoolean(4), "Unexpected BOOLEAN value");
+          assertFalse(resultSet.wasNull(), "BOOLEAN should not be NULL");
+          assertEquals(expectedText, resultSet.getString(5), "Unexpected TEXT/VARCHAR value");
+          assertFalse(resultSet.wasNull(), "TEXT/VARCHAR should not be NULL");
+          assertArrayEquals(expectedBinary, resultSet.getBytes(6), "Unexpected BINARY value");
+          assertFalse(resultSet.wasNull(), "BINARY should not be NULL");
+          assertEquals(
+              expectedDate.toLocalDate(),
+              resultSet.getDate(7).toLocalDate(),
+              "Unexpected DATE value");
+          assertFalse(resultSet.wasNull(), "DATE should not be NULL");
+          assertEquals(
+              expectedTime.toLocalTime(),
+              resultSet.getTime(8).toLocalTime(),
+              "Unexpected TIME value");
+          assertFalse(resultSet.wasNull(), "TIME should not be NULL");
+          assertEquals(
+              expectedLtz, resultSet.getTimestamp(9, utc), "Unexpected TIMESTAMP_LTZ value");
+          assertFalse(resultSet.wasNull(), "TIMESTAMP_LTZ should not be NULL");
+          assertEquals(
+              expectedNtz, resultSet.getTimestamp(10, utc), "Unexpected TIMESTAMP_NTZ value");
+          assertFalse(resultSet.wasNull(), "TIMESTAMP_NTZ should not be NULL");
+        }
+        assertFalse(resultSet.next(), "Expected exactly " + rowCount + " representative rows");
       }
-      assertFalse(resultSet.next(), "Expected exactly " + rowCount + " rows");
     }
   }
 

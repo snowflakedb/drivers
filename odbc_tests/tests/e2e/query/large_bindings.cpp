@@ -338,10 +338,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip all bindable types via st
                  "[query][large_bindings]") {
   // Given Snowflake client is logged in
 
-  // And A temporary table with columns (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR) exists
+  // And A temporary table with the driver-specific stage-binding type matrix exists
   ScopedTable table(conn, "lb_types", "id BIGINT, n BIGINT, f DOUBLE, flag BOOLEAN, txt VARCHAR");
 
-  // When 13200 rows are inserted using multirow binding
+  // When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
   auto before = list_system_bind_file_count(conn);
   std::string qid = bulk_insert_types(conn, table.name(), 13200);
 
@@ -350,7 +350,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip all bindable types via st
   INFO("INSERT query_id: " << qid);
   CHECK(after > before);
 
-  // And Query "SELECT id, n, f, flag, txt FROM {table} ORDER BY id" is executed
+  // And All type-matrix columns are selected from the table in row order
   auto verify = conn.execute_fetch("SELECT id, n, f, flag, txt FROM " + table.name() +
                                    " WHERE id IN (0, 1, 7, 100, 13199) ORDER BY id");
 
