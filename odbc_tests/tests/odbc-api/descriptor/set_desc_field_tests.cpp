@@ -304,6 +304,33 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Set PARAMETER_TYPE on 
   REQUIRE(ptype == SQL_PARAM_INPUT);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Partially populated IPD is accepted on SQLExecDirect",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+  SQLINTEGER value = 42;
+  SQLLEN octet_length = sizeof(value);
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLSetDescRec(apd, 1, SQL_C_SLONG, 0, sizeof(value), 0, 0, &value, &octet_length, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_LENGTH, reinterpret_cast<SQLPOINTER>(sizeof(value)), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#161") {
+    REQUIRE(ret == SQL_SUCCESS);
+    SQLINTEGER result = -1;
+    SQLLEN result_indicator = -1;
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_indicator);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(result == value);
+    REQUIRE(result_indicator == sizeof(result));
+  }
+  OLD_DRIVER_ONLY("BD#161") { REQUIRE_EXPECTED_ERROR(ret, "HY021", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
 // ============================================================================
 // SQLSetDescField - Deferred Fields on Application Descriptors
 // ============================================================================

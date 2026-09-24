@@ -3454,3 +3454,20 @@ behavior_differences:
       The new driver rejects the mismatched APD and IPD while encoding JSON
       bindings. The old driver submits the statement and reports the server SQL
       compilation error.
+
+  161:
+    name: "Partially populated IPD is accepted instead of reporting HY021"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Setting an APD record and only SQL_DESC_LENGTH on the corresponding IPD
+      record makes SQLExecDirect return SQL_ERROR with SQLSTATE HY021.
+    new_driver_behavior: |
+      The same descriptor setup executes successfully and returns the bound
+      integer value.
+    description: |
+      The drivers resolve an incompletely populated implementation parameter
+      descriptor differently during direct execution.
