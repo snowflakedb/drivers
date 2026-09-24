@@ -62,11 +62,7 @@ fn try_coerce_to_value_type(setting: &Setting, expected: ValueType) -> Option<Se
     match expected {
         ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
         ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
-        ValueType::Bool => match s.to_lowercase().as_str() {
-            "true" | "1" | "on" => Some(Setting::Bool(true)),
-            "false" | "0" | "off" => Some(Setting::Bool(false)),
-            _ => None,
-        },
+        ValueType::Bool => crate::utils::parse_setting_bool_token(s).map(Setting::Bool),
         ValueType::String | ValueType::Bytes => None,
     }
 }

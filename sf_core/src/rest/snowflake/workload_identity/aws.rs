@@ -134,9 +134,7 @@ fn enable_outbound_token(config: &WorkloadIdentityConfig) -> bool {
     if config.aws_use_outbound_token {
         return true;
     }
-    std::env::var("SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN")
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false)
+    crate::utils::env_flag("SNOWFLAKE_ENABLE_AWS_WIF_OUTBOUND_TOKEN")
 }
 
 // ---------------------------------------------------------------------------

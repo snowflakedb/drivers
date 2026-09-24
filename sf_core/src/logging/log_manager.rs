@@ -376,8 +376,7 @@ impl LogManager {
 
     fn resolve_troubleshooting() -> bool {
         std::env::var(env_vars::SNOWFLAKE_TROUBLESHOOTING_ENABLED)
-            .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes" | "on"))
-            .unwrap_or(false)
+            .is_ok_and(|v| crate::utils::parse_bool_token(&v) == Some(true))
     }
 
     fn resolve_troubleshooting_log_path() -> std::path::PathBuf {

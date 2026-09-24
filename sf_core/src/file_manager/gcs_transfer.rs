@@ -1450,9 +1450,7 @@ fn presigned_url_signs_required_upload_headers(url: &str, headers: GcsUploadHead
 }
 
 fn gcs_force_virtual_style_domains_from_env() -> bool {
-    std::env::var(crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS)
-        .map(|value| crate::env_vars::env_flag_is_truthy(&value))
-        .unwrap_or(false)
+    crate::utils::env_flag(crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS)
 }
 
 /// Builds the GCS URL based on endpoint/virtual/regional flags.
@@ -2535,13 +2533,31 @@ mod tests {
     }
 
     #[test]
-    fn gcs_env_flag_accepts_documented_truthy_values() {
-        for value in ["true", "TRUE", " True ", "1", "yes", "Yes"] {
-            assert!(crate::env_vars::env_flag_is_truthy(value), "{value}");
+    fn gcs_env_flag_uses_shared_env_flag() {
+        for value in ["true", "TRUE", "True", "1"] {
+            temp_env::with_var(
+                crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS,
+                Some(value),
+                || {
+                    assert!(gcs_force_virtual_style_domains_from_env(), "{value}");
+                },
+            );
         }
-        for value in ["", "false", "0", "no", "on", "trueish"] {
-            assert!(!crate::env_vars::env_flag_is_truthy(value), "{value}");
+        for value in ["yes", "on", "false", "0", " True ", ""] {
+            temp_env::with_var(
+                crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS,
+                Some(value),
+                || {
+                    assert!(!gcs_force_virtual_style_domains_from_env(), "{value}");
+                },
+            );
         }
+        temp_env::with_var_unset(
+            crate::env_vars::SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS,
+            || {
+                assert!(!gcs_force_virtual_style_domains_from_env());
+            },
+        );
     }
 
     #[test]

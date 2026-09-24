@@ -73,11 +73,7 @@ impl Setting {
     pub(crate) fn coerce_bool(&self) -> Option<bool> {
         match self {
             Setting::Bool(b) => Some(*b),
-            Setting::String(s) => match s.to_lowercase().as_str() {
-                "true" | "1" | "on" => Some(true),
-                "false" | "0" | "off" => Some(false),
-                _ => None,
-            },
+            Setting::String(s) => crate::utils::parse_setting_bool_token(s),
             Setting::Int(i) => Some(*i != 0),
             _ => None,
         }

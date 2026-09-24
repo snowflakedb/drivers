@@ -50,13 +50,9 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
     // when SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION is truthy.
     // SNOWFLAKE_DISABLE_PLATFORM_DETECTION remains as an explicit kill-switch
     // and wins over the enable flag.
-    let disabled = std::env::var(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION)
-        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
-        .unwrap_or(false);
+    let disabled = crate::utils::env_flag(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION);
     let temporary_opt_in_enabled =
-        std::env::var(env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION)
-            .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
-            .unwrap_or(false);
+        crate::utils::env_flag(env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION);
     if disabled || !temporary_opt_in_enabled {
         return vec!["disabled".to_string()];
     }

@@ -142,14 +142,12 @@ fn parse_u32(s: &str) -> Result<u32, ConfigError> {
 }
 
 fn parse_bool(s: &str) -> Result<bool, ConfigError> {
-    match s.to_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => IniParseSnafu {
+    crate::utils::parse_bool_token(s).ok_or_else(|| {
+        IniParseSnafu {
             message: format!("Invalid boolean: {s}"),
         }
-        .fail(),
-    }
+        .build()
+    })
 }
 
 #[cfg(test)]
