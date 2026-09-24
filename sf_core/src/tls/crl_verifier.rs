@@ -440,7 +440,7 @@ mod tests {
             enable_memory_caching: true,
             ..Default::default()
         };
-        let cache = CrlCache::global(cfg);
+        let cache = CrlCache::global(cfg).expect("global CRL cache");
         cache.clear_caches_for_tests();
         let future = Utc::now() + chrono::Duration::days(5);
         let inter_serial =
@@ -499,7 +499,9 @@ mod tests {
     #[test]
     fn cross_signed_chain_anchors_correctly() {
         th::test_setup();
-        CrlCache::global(Default::default()).clear_caches_for_tests();
+        CrlCache::global(Default::default())
+            .expect("global CRL cache")
+            .clear_caches_for_tests();
         // Cross-sign scenario: InterA has two variants (via RootA trusted, via RootB untrusted)
         // Verifier should anchor the chain through RootA and succeed
         let root_a_key = th::gen_key();
@@ -616,7 +618,7 @@ mod tests {
             enable_memory_caching: true,
             ..Default::default()
         };
-        let cache = CrlCache::global(cfg);
+        let cache = CrlCache::global(cfg).expect("global CRL cache");
         let future = Utc::now() + chrono::Duration::days(5);
         let inter_b_serial = crate::crl::certificate_parser::get_certificate_serial_number(
             &inter_b.to_der().unwrap(),

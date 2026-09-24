@@ -333,6 +333,10 @@ impl CrlMetrics {
     }
 }
 
+fn crl_http_client_builder() -> reqwest::ClientBuilder {
+    crate::tls::client::apply_http_pool_settings(reqwest::Client::builder())
+}
+
 impl CrlCache {
     // Compute remaining duration until half-life. None if expired or invalid.
     fn compute_half_life_duration(
@@ -819,7 +823,7 @@ impl CrlCache {
         } else {
             None
         };
-        let http_client = reqwest::Client::builder()
+        let http_client = crl_http_client_builder()
             .timeout(std::time::Duration::from_secs(
                 config.http_timeout.num_seconds() as u64,
             ))
@@ -846,38 +850,22 @@ impl CrlCache {
         })
     }
 
-    pub fn global(config: CrlConfig) -> &'static Arc<CrlCache> {
+    pub fn global(config: CrlConfig) -> Result<&'static Arc<CrlCache>, CrlError> {
         static INSTANCE: OnceCell<Arc<CrlCache>> = OnceCell::new();
-        INSTANCE.get_or_init(|| {
+        INSTANCE.get_or_try_init(|| {
             let cache = match CrlCache::new(config) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!(target: "sf_core::crl", "Failed to initialize CRL cache: {e}. Falling back to default config");
-                    match CrlCache::new(CrlConfig::default()) {
-                        Ok(c2) => c2,
-                        Err(e2) => {
-                            tracing::error!(target: "sf_core::crl", "Failed to initialize fallback CRL cache: {e2}. Using minimal no-op cache.");
-                            CrlCache {
-                                config: CrlConfig::default(),
-                                memory_cache: None,
-                                outcome_cache: None,
-                                url_locks: Arc::new(Mutex::new(HashMap::new())),
-                                backoff: Arc::new(Mutex::new(HashMap::new())),
-                                // `CrlCache::new` installs the crypto provider
-                                // as its first statement, so both attempts
-                                // above ran it before they could fail.
-                                http_client: reqwest::Client::new(),
-                                scheduler_tx: OnceCell::new(),
-                                metrics: CrlMetrics::init(&global::meter("sf_core.crl")),
-                            }
-                        }
-                    }
+                    CrlCache::new(CrlConfig::default()).map_err(|e2| {
+                        tracing::error!(target: "sf_core::crl", "Failed to initialize fallback CRL cache: {e2}");
+                        e2
+                    })?
                 }
             };
             let arc = Arc::new(cache);
-            // Start background refresh worker once
             CrlCache::spawn_background_refresher(arc.clone());
-            arc
+            Ok(arc)
         })
     }
 

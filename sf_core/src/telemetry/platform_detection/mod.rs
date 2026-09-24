@@ -61,7 +61,18 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
     // the first HTTP client in the process. reqwest picks its crypto backend at
     // build time, so pin the provider first.
     crate::tls::ensure_crypto_provider();
-    let http = reqwest::Client::new();
+    let http =
+        match crate::tls::client::apply_http_pool_settings(reqwest::Client::builder()).build() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    error_type = std::any::type_name_of_val(&e),
+                    "failed to build platform detection HTTP client; skipping detection"
+                );
+                tracing::debug!("failed to build platform detection HTTP client: {e}");
+                return vec!["disabled".to_string()];
+            }
+        };
 
     let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![
         ("is_aws_lambda", async { aws::is_aws_lambda() }.boxed()),

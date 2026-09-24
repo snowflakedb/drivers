@@ -504,16 +504,18 @@ fn ensure_pem_not_empty<T>(certs: &[T]) -> Result<(), TlsError> {
     }
 }
 
-fn configure_http_client(
+pub(crate) fn apply_http_pool_settings(builder: ClientBuilder) -> ClientBuilder {
+    builder
+        .pool_idle_timeout(Some(Duration::from_secs(30)))
+        .pool_max_idle_per_host(32)
+        .tcp_keepalive(Some(Duration::from_secs(60)))
+}
+
+pub(crate) fn configure_http_client(
     builder: ClientBuilder,
     proxy: Option<&ProxyConfig>,
 ) -> Result<ClientBuilder, TlsError> {
-    let builder = builder
-        .pool_idle_timeout(Some(Duration::from_secs(30)))
-        .pool_max_idle_per_host(32)
-        .tcp_keepalive(Some(Duration::from_secs(60)));
-
-    apply_proxy_to_builder(builder, proxy)
+    apply_proxy_to_builder(apply_http_pool_settings(builder), proxy)
 }
 
 /// Apply the driver's [`ProxyConfig`] to a reqwest [`ClientBuilder`].

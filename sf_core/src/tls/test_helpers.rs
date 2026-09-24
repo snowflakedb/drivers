@@ -130,7 +130,8 @@ pub mod x509 {
 
     /// Clear all in-memory CRL caches used in tests.
     pub fn clear_all_crl_caches() {
-        let cache = crate::crl::cache::CrlCache::global(Default::default());
+        let cache =
+            crate::crl::cache::CrlCache::global(Default::default()).expect("global CRL cache");
         cache.clear_caches_for_tests();
     }
 
@@ -140,7 +141,8 @@ pub mod x509 {
         let cache = crate::crl::cache::CrlCache::global(crate::crl::config::CrlConfig {
             enable_memory_caching: true,
             ..Default::default()
-        });
+        })
+        .expect("global CRL cache");
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(
@@ -160,7 +162,8 @@ pub mod x509 {
         let cache = crate::crl::cache::CrlCache::global(crate::crl::config::CrlConfig {
             enable_memory_caching: true,
             ..Default::default()
-        });
+        })
+        .expect("global CRL cache");
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(

@@ -13,7 +13,7 @@ pub struct CrlValidator {
 
 impl CrlValidator {
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
-        let cache = CrlCache::global(config.clone()).clone();
+        let cache = CrlCache::global(config.clone())?.clone();
         Ok(Self {
             config,
             cache,
@@ -25,7 +25,7 @@ impl CrlValidator {
         config: CrlConfig,
         root_store: Option<Arc<rustls::RootCertStore>>,
     ) -> Result<Self, CrlError> {
-        let cache = CrlCache::global(config.clone()).clone();
+        let cache = CrlCache::global(config.clone())?.clone();
         Ok(Self {
             config,
             cache,
