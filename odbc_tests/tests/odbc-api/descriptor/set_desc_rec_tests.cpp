@@ -92,6 +92,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: Set APD record for param
   REQUIRE(result == 55);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: Explicit APD without an IPD record fails on SQLExecDirect",
+                 "[odbc-api][setdescrec][descriptor][error]") {
+  HandleWrapper explicit_apd(dbc_handle(), SQL_HANDLE_DESC);
+  SQLINTEGER value = 42;
+  SQLLEN octet_length = sizeof(value);
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLSetDescRec(explicit_apd.getHandle(), 1, SQL_C_SLONG, 0, sizeof(value), 0, 0, &value, &octet_length,
+                                &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_APP_PARAM_DESC, explicit_apd.getHandle(), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#160") { REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT); }
+  OLD_DRIVER_ONLY("BD#160") { REQUIRE_EXPECTED_ERROR(ret, "42601", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescRec: Set explicit descriptor record",
                  "[odbc-api][setdescrec][descriptor]") {
   HandleWrapper explicit_desc_guard(dbc_handle(), SQL_HANDLE_DESC);

@@ -3425,3 +3425,21 @@ behavior_differences:
       Both drivers reject the malformed bind set. The new driver detects it
       before submitting the statement, while the old driver reports the
       server's SQL compilation error.
+
+  160:
+    name: "Explicit APD without IPD reports HY000 instead of 42601"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Assigning an explicit application parameter descriptor with a record but
+      leaving the implementation parameter descriptor empty makes SQLExecDirect
+      return SQL_ERROR with SQLSTATE 42601.
+    new_driver_behavior: |
+      The same call returns SQL_ERROR with SQLSTATE HY000.
+    description: |
+      The new driver rejects the mismatched APD and IPD while encoding JSON
+      bindings. The old driver submits the statement and reports the server SQL
+      compilation error.
