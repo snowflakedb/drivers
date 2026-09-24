@@ -3393,7 +3393,12 @@ behavior_differences:
     name: "SQL_GUID parameter binding reports 07006 instead of HY000"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Neither driver can bind SQL_GUID. The new driver reports SQLSTATE 07006
+      (restricted data type attribute violation), which is the ODBC SQLSTATE
+      for that conversion, instead of the old driver's general-error HY000.
+      Callers that match HY000 on this unsupported type need to accept 07006.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -3409,9 +3414,15 @@ behavior_differences:
 
   159:
     name: "Non-contiguous ExecDirect parameter bindings fail with HY000 instead of 42601"
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      Both drivers reject a non-contiguous ExecDirect bind set. The new driver
+      reports SQLSTATE HY000 locally before the statement is submitted, instead
+      of the server's 42601 compilation error. The client-side check is accepted
+      because it names the bind-hole and avoids a round-trip; callers that match
+      42601 on this misconfiguration need to accept HY000.
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
