@@ -26,8 +26,11 @@ sonic-json = ["sonic-rs"]
 #   - `openssl` is still in `[dependencies]` (dev-only in practice, but
 #     `vendored-openssl` below still statically links an unvalidated copy where
 #     a customer cannot replace it). Removing it is the next step; see F2.
-#   - AWS-LC-FIPS 4.x is "in process" at CMVP rather than certificated; the
-#     issued certs cover the 3.x line.
+#   - The linked module is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
+#     cert #4816), held there by the `aws-lc-rs` upper bound below. That covers
+#     the module version only -- a certificate also names the operating
+#     environments it was tested on, so shipping a `fips-tls` build on a
+#     platform outside that list still is not a validated configuration.
 # So an artifact built from this feature is still not a FIPS artifact, and
 # `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
@@ -137,7 +140,38 @@ rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
-aws-lc-rs = "1.13.2"
+# Upper bound is load-bearing, not hygiene: it is what keeps `fips-tls` on the
+# *certificated* AWS-LC-FIPS module. The `aws-lc-rs` version chooses the
+# `aws-lc-fips-sys` version, which vendors the module itself --
+# `aws-lc-rs` <1.18 -> `aws-lc-fips-sys` 0.13.x -> the 3.x line (NIST cert
+# #4816; the lock currently sits on 0.13.12, which vendors AWS-LC-FIPS 3.2.0),
+# while `aws-lc-rs` >=1.18 -> `aws-lc-fips-sys` 0.14.x -> AWS-LC-FIPS 4.1.0,
+# which is still in process at CMVP rather than certificated.
+#
+# Without the bound a routine `cargo update` silently moves the linked module
+# off a certificated version, and nothing in the build or the test suite would
+# fail -- `try_fips_mode()` answers `true` on both, because both are genuine
+# FIPS builds. Only the certificate status differs, and `aws-lc-rs` exposes no
+# version accessor to assert on (`awslc_version_string` is bound in
+# `aws-lc-fips-sys`, reachable only by depending on that `links` crate
+# directly). So this bound is the enforcement point: cargo cannot cross it, and
+# crossing it takes a reviewed manifest edit. There is deliberately no runtime
+# guard -- do not go looking for one.
+#
+# That prevents drift without detecting it, which is a gap worth closing where
+# it is cheap: the resolved version *is* visible in the lockfile, so the
+# dependency-policy work (cargo-deny, Phase 5) can assert `aws-lc-fips-sys`
+# stays on 0.13.x without any of the `links`-crate coupling a runtime check
+# would need. The SBOM work in that same phase has to record the module
+# identity anyway.
+#
+# Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
+# the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
+#
+# Raise this only together with the compliance claim. The upstream crate's
+# guidance is the same: pin `aws-lc-rs` to stay on a given module version.
+# `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
+aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
 der-parser = "9.0"
 x509-cert = "0.2"
