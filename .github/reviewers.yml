@@ -95,6 +95,7 @@ reviewers:
   tomasz-urbaszek_snow:
   marcin-erbel_snow:
   piotr-fus_snow:
+  mikolaj-tradecki_snow:
 
 rules:
   all:
@@ -134,6 +135,12 @@ rules:
     - filip-pawlowski_snow
     - patryk-czajka_snow
     - tomasz-urbaszek_snow
+    - mikolaj-tradecki_snow
+  sf_core:
+    - jakub-szczerbinski_snow
+    - michal-lorenc-cepiga_snow
+    - piotr-fus_snow
+    - mikolaj-tradecki_snow
   # Auto-applied by .github/labeler.yml for core TLS, CRL, HTTP,
   # result chunks, and file-manager (stage PUT/GET) changes.
   transport:
