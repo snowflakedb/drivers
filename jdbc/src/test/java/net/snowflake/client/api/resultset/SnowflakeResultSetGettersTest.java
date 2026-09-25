@@ -18,10 +18,32 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalTime;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakeResultSetGettersTest extends SnowflakeIntegrationTestBase {
+
+  @Test
+  public void shouldRejectGettersWhenResultSetClosed() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT 42")) {
+      assertTrue(rs.next());
+      rs.close();
+
+      // SnowflakeResultSetImpl.next() returns false when closed rather than throwing.
+      assertFalse(rs.next());
+
+      SnowflakeSQLException onGetInt =
+          assertThrows(SnowflakeSQLException.class, () -> rs.getInt(1));
+      assertEquals(ErrorCode.RESULTSET_ALREADY_CLOSED.getSqlState(), onGetInt.getSQLState());
+      // Literal 200037 rather than ErrorCode.RESULTSET_ALREADY_CLOSED.getMessageCode(): the old
+      // driver's accessor returns Integer, so a call compiled against the UD int signature fails
+      // under referenceTest with NoSuchMethodError.
+      assertEquals(200037, onGetInt.getErrorCode());
+    }
+  }
 
   @Test
   public void testGetInt() throws Exception {

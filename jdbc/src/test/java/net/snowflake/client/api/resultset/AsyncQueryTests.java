@@ -3,13 +3,18 @@ package net.snowflake.client.api.resultset;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import net.snowflake.client.api.connection.SnowflakeConnection;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
@@ -144,6 +149,55 @@ class AsyncQueryTests extends SnowflakeIntegrationTestBase {
       assertEquals(0, resultSet.getRow(), "Row should be 0 before next()");
 
       resultSet.close();
+    }
+  }
+
+  @Test
+  void shouldExerciseAsyncResultSetGettersAfterMaterialization() throws Exception {
+    Connection connection = getDefaultConnection();
+
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet =
+          statement
+              .unwrap(SnowflakeStatement.class)
+              .executeAsyncQuery(
+                  "SELECT 42 AS n, 'hello' AS s, NULL::INTEGER AS null_col, 7::NUMBER(10,0) AS obj_col");
+
+      assertTrue(resultSet.next(), "Expected one row");
+      assertEquals(42, resultSet.getInt(1));
+      assertEquals("hello", resultSet.getString(2));
+      assertEquals(0, resultSet.getInt(3));
+      assertTrue(resultSet.wasNull());
+      assertNull(resultSet.getObject(3));
+      assertTrue(resultSet.wasNull());
+
+      Object objectValue = resultSet.getObject(4);
+      assertEquals(7L, objectValue);
+
+      ResultSetMetaData metaData = resultSet.getMetaData();
+      assertEquals(4, metaData.getColumnCount());
+
+      assertFalse(resultSet.next(), "Expected exactly one row");
+      resultSet.close();
+
+      SnowflakeSQLException onNext = assertThrows(SnowflakeSQLException.class, resultSet::next);
+      assertEquals(ErrorCode.RESULTSET_ALREADY_CLOSED.getSqlState(), onNext.getSQLState());
+      // Literal 200037 rather than ErrorCode.RESULTSET_ALREADY_CLOSED.getMessageCode(): the old
+      // driver's accessor returns Integer, so a call compiled against the UD int signature fails
+      // under referenceTest with NoSuchMethodError.
+      assertEquals(200037, onNext.getErrorCode());
+
+      SnowflakeSQLException onGetInt =
+          assertThrows(SnowflakeSQLException.class, () -> resultSet.getInt(1));
+      assertEquals(ErrorCode.RESULTSET_ALREADY_CLOSED.getSqlState(), onGetInt.getSQLState());
+      assertEquals(200037, onGetInt.getErrorCode());
+    }
+
+    try (Statement statement = connection.createStatement()) {
+      ResultSet empty =
+          statement.unwrap(SnowflakeStatement.class).executeAsyncQuery("SELECT 1 WHERE false");
+      assertFalse(empty.next(), "Expected no rows");
+      empty.close();
     }
   }
 }
