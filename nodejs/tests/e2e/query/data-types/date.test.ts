@@ -2,16 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection, SnowflakeDate } from '../../../types/sdk-types.js';
 import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
+  dateAtUtcMidnight,
   destroyConnectionAsync,
   executeAsync,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
 import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
-
-function dateAtUtcMidnight(dateLiteral: string): Date {
-  return new Date(`${dateLiteral}T00:00:00.000Z`);
-}
 
 describe('DATE data type', () => {
   let connection: Connection;
@@ -393,6 +390,7 @@ describe('DATE data type', () => {
       expect(date.getNanoSeconds()).toBe(0);
       expect(date.getScale()).toBe(0);
       expect(date.getTimezone()).toBe('UTC');
+      expect(date.getFormat()).toBe('YYYY-MM-DD');
       expect(date.toJSON()).toBe('2024-01-15');
     },
   );

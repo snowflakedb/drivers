@@ -1,3 +1,4 @@
+import { onTestFinished } from 'vitest';
 import type { Connection } from '../../types/sdk-types.js';
 import { executeAsync } from './index.js';
 
@@ -23,4 +24,15 @@ export async function setSessionParameter(
 
 export async function unsetSessionParameter(connection: Connection, name: string): Promise<void> {
   await executeAsync(connection, `ALTER SESSION UNSET ${name}`);
+}
+
+export async function setSessionParameterForTest(
+  connection: Connection,
+  name: string,
+  value: boolean | number | string,
+): Promise<void> {
+  await setSessionParameter(connection, name, value);
+  onTestFinished(async () => {
+    await unsetSessionParameter(connection, name);
+  });
 }

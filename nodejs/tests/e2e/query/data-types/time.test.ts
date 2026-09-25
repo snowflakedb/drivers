@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from '../../../types/sdk-types.js';
 import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
@@ -8,7 +8,7 @@ import {
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
+import { setSessionParameterForTest } from '../../utils/query.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
 describe('TIME data type', () => {
@@ -23,10 +23,7 @@ describe('TIME data type', () => {
   });
 
   async function setTimeOutputFormat(outputFormat: string) {
-    await setSessionParameter(connection, 'TIME_OUTPUT_FORMAT', outputFormat);
-    onTestFinished(async () => {
-      await unsetSessionParameter(connection, 'TIME_OUTPUT_FORMAT');
-    });
+    await setSessionParameterForTest(connection, 'TIME_OUTPUT_FORMAT', outputFormat);
   }
 
   describe('tests/definitions/shared/types/time.feature', () => {

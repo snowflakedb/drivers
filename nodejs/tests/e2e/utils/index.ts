@@ -216,6 +216,10 @@ export function randomizeName(prefix: string): string {
   return `${prefix}${randomUUID().replaceAll('-', '')}`;
 }
 
+export function dateAtUtc(isoLocal: string): Date {
+  return new Date(`${isoLocal}Z`);
+}
+
 export function dateAtUtcMidnight(dateLiteral: string): Date {
-  return new Date(`${dateLiteral}T00:00:00.000Z`);
+  return dateAtUtc(`${dateLiteral}T00:00:00.000`);
 }
