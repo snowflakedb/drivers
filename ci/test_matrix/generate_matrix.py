@@ -444,7 +444,8 @@ def _build_core_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | Non
     platform = CORE_PLATFORM[(os_, arch)]
     row: dict[str, Any] = {
         "name": name,
-        "os": runner,  # GitHub Actions runner label
+        # GHA runner label. CORE_PLATFORM may pin one per lane; see its docstring.
+        "os": platform.get("runner", runner),
         "cloud_provider": cloud,
         "trigger_level": trigger,
         "cargo_flags": platform["cargo_flags"],

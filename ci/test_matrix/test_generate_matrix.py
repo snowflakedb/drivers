@@ -1177,11 +1177,34 @@ class CoreMatrixTests(unittest.TestCase):
                 )
 
     def test_coverage_only_on_unix(self) -> None:
-        cov_runners = {r["os"] for r in self.gha if r.get("coverage")}
-        self.assertEqual(cov_runners, {"ubuntu-latest", "macos-latest"})
+        # Keyed on lane name rather than runner label: CORE_PLATFORM pins a
+        # runner per lane (ubuntu-x64 is held at 24.04 so the FIPS build gets
+        # GCC 13), and the invariant under test is which lanes collect
+        # coverage, not which image they happen to run on.
+        cov_lanes = {r["name"] for r in self.gha if r.get("coverage")}
+        self.assertEqual(cov_lanes, {"ubuntu-x64", "macos-arm"})
         for r in self.gha:
-            if r["os"] in ("windows-11-arm", "windows-latest"):
+            if r["name"] in ("windows-arm-nonfips", "windows-x86"):
                 self.assertFalse(r["coverage"], r["name"])
+
+    def test_fips_linux_lanes_pin_their_runner(self) -> None:
+        # `--all-features` enables `fips-tls`, so the lane compiles
+        # aws-lc-fips-sys 0.13.x, which does not build under GCC >= 14 -- the
+        # reason sf_core/Cargo.toml holds `aws-lc-rs` below 1.18. A Linux lane
+        # that builds it therefore has to name a pinned image: `ubuntu-latest`
+        # is a moving alias, and the 26.04 image (GCC 15) already exists, so a
+        # runner roll would break the FIPS build deep inside an assembler step.
+        # macOS lanes are exempt -- they build with clang.
+        for r in self.gha:
+            if "--all-features" not in r.get("cargo_flags", ""):
+                continue
+            if not r["os"].startswith("ubuntu"):
+                continue
+            self.assertNotIn(
+                "latest", r["os"],
+                f"lane {r['name']} compiles aws-lc-fips-sys on a moving runner "
+                f"label ({r['os']}); pin it via CORE_PLATFORM's `runner` key",
+            )
 
     def test_targets_for_windows_only(self) -> None:
         targets = {r["name"]: r.get("cargo_target") for r in self.gha}
