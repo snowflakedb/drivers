@@ -303,10 +303,23 @@ jobs:
       fail-fast: false
       matrix:
         cloud_provider: [aws, gcp, azure]
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: the `cargo test --all-features` runs
+    # below pull in `fips-tls`, so this lane compiles `aws-lc-fips-sys`. The
+    # 0.13.x line it is held on (see the `aws-lc-rs` upper bound in
+    # sf_core/Cargo.toml) does not build with GCC >= 14 -- it fails inside
+    # aws-lc's delocate step on `bcm-delocated.S`. Ubuntu 24.04's default gcc
+    # is 13; 26.04's is 15, and that image already exists, so `ubuntu-latest`
+    # would break this lane the day GitHub rolls the alias. See the matching
+    # note on `build-without-protobuf` in test-rust-core.yml.
+    runs-on: ubuntu-24.04
     name: core_put_get (linux x64, ${{ matrix.cloud_provider }})
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
+      # Name the compiler instead of trusting the image default -- 24.04 also
+      # carries gcc-12 and gcc-14. A missing `gcc-13` then fails immediately
+      # and legibly, rather than deep inside an assembler step.
+      AWS_LC_FIPS_SYS_CC: gcc-13
+      AWS_LC_FIPS_SYS_CXX: g++-13
     steps:
       - uses: actions/checkout@v7
 

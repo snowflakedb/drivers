@@ -69,7 +69,11 @@ jobs:
           # Linux/macOS lanes feed `test` job's strategy.matrix.include. Inject
           # rust-version='stable' so the existing matrix dimension survives the
           # switch from the static `os: [...] × rust-version: [...]` shape.
-          echo "test_matrix=$(printf '%s' "$FULL" | jq -c '[.[] | select(.os == "ubuntu-latest" or .os == "macos-latest") | . + {"rust-version": "stable"}]')" >> "$GITHUB_OUTPUT"
+          # Selected by lane name, not runner label, matching the Windows gates
+          # below: CORE_PLATFORM pins a runner per lane (ubuntu-x64 is held at
+          # 24.04 for the FIPS build), and keying on the label would silently
+          # drop a lane from this matrix the next time a pin changes.
+          echo "test_matrix=$(printf '%s' "$FULL" | jq -c '[.[] | select(.name == "ubuntu-x64" or .name == "macos-arm") | . + {"rust-version": "stable"}]')" >> "$GITHUB_OUTPUT"
           # Per-lane boolean gates for the dedicated Windows jobs (no matrix; we
           # just skip the whole job if pict didn't include the lane on this trigger).
           echo "windows_arm_active=$(printf '%s' "$FULL" | jq -r '[.[] | select(.name == "windows-arm-nonfips")] | length > 0')" >> "$GITHUB_OUTPUT"
@@ -112,7 +116,25 @@ jobs:
 
   build-without-protobuf:
     if: inputs.run_rust_core
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: this lane compiles `aws-lc-fips-sys`
+    # (as do the `ubuntu-x64` cell of the `test` job below and `core_put_get`
+    # in full_put_get_tests.yml, both via `--all-features` -- those two take
+    # their pin from CORE_PLATFORM and that job's own `runs-on` respectively),
+    # and the 0.13.x line it is held on (see the `aws-lc-rs`
+    # upper bound in sf_core/Cargo.toml) does not build with GCC >= 14 -- it
+    # fails inside aws-lc's delocate step on `bcm-delocated.S`. Ubuntu 24.04's
+    # default gcc is 13; 26.04's is 15, and that image already exists, so
+    # `ubuntu-latest` would break this lane the day GitHub rolls the alias.
+    # Cargo cannot resolve its way out either: the bound is what keeps the
+    # linked module on the certificated line, and 0.14.x is what dropped the
+    # GCC-13 requirement. Raise both together or neither.
+    runs-on: ubuntu-24.04
+    env:
+      # Name the compiler instead of trusting the image default -- 24.04 also
+      # carries gcc-12 and gcc-14. A missing `gcc-13` then fails immediately
+      # and legibly, rather than deep inside an assembler step.
+      AWS_LC_FIPS_SYS_CC: gcc-13
+      AWS_LC_FIPS_SYS_CXX: g++-13
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -295,7 +317,7 @@ jobs:
       # e2e. Installed before both so the nightly `large_` step finds it on PATH;
       # `mitmdump --version` fails the step loudly if pipx installed off-PATH.
       - name: Install mitmproxy (live-proxy e2e)
-        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        if: matrix.name == 'ubuntu-x64' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
         run: |
           pipx install 'mitmproxy>=11,<13'
           mitmdump --version
@@ -327,7 +349,7 @@ jobs:
       # Filters on the `mitmdump_proxy` substring in the test *names* (not the
       # `proxy_live_mitm` file path), so a file rename can't make this match nothing.
       - name: Run live-proxy e2e tests (aws + azure + gcp)
-        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        if: matrix.name == 'ubuntu-x64' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
         timeout-minutes: 15
         env:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
@@ -676,9 +698,13 @@ jobs:
           mode: restore
           shared-key: "x86-core-test"
 
-      # vcpkg-installed OpenSSL replaces the `vendored-openssl` cargo feature.
-      # `vendored-openssl` shells out to Perl + nmake to build OpenSSL from
-      # source on every cache-miss compile (~3-5 min). Mirrors the ARM64 lane.
+      # Windows runners ship no discoverable OpenSSL, and `cargo test` still
+      # needs one: `openssl` is a dev-dependency for the X.509/CRL test
+      # fixtures. Release builds need none at all -- `cargo build` does not
+      # compile dev-dependencies -- which is what allowed the `vendored-openssl`
+      # feature to be removed (F2). vcpkg rather than a source build: the latter
+      # cost ~3-5 min of Perl + nmake on every cache-miss compile. Mirrors the
+      # ARM64 lane.
       - name: Setup OpenSSL (Windows x86)
         uses: ./.github/actions/setup-windows-openssl
         with:

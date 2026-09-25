@@ -469,17 +469,21 @@ class BuildHook(BuildHookInterface):
                     f"No sf_core_python shared library (.dll/.so/.dylib) found in {release_dir}"
                 )
 
-            # sf_core_python.pyd is built with OPENSSL_STATIC=1 (arm64-windows-static-md triplet),
-            # which embeds OpenSSL at link time — sf_core_python.pyd has no runtime OpenSSL DLL dep.
-            # Dynamic OpenSSL (arm64-windows triplet) would require these DLLs to be
-            # co-located with sf_core_python.pyd, because Python 3.8+ uses restricted DLL
-            # search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) that does NOT include PATH.
-            # The bundling code below is a safety net for non-static builds.
-            if sys.platform == "win32":
-                openssl_bin = os.environ.get("OPENSSL_DIR", "")
-                if openssl_bin:
-                    openssl_bin_dir = Path(openssl_bin) / "bin"
-                    if openssl_bin_dir.is_dir():
-                        for dll in openssl_bin_dir.glob("*.dll"):
-                            shutil.copy2(dll, target_dir)
-                            print(f"Bundled OpenSSL DLL: {dll.name}")
+            # No OpenSSL DLLs are bundled next to sf_core_python. The driver
+            # stopped linking OpenSSL entirely; `openssl` survives only as an
+            # `sf_core` dev-dependency for test fixtures, which a release
+            # cdylib does not build. `cargo tree -p python_bridge -e normal`
+            # lists no openssl crate.
+            #
+            # This used to copy every DLL from `$OPENSSL_DIR/bin` as a safety
+            # net for a dynamically linked build. The Windows ARM64 wheel jobs
+            # still run `setup-windows-openssl` -- it is what lets the
+            # `cryptography` dependency build from source on that runner -- so
+            # OPENSSL_DIR is still set here, and keeping the copy would ship
+            # OpenSSL DLLs that nothing in the wheel loads.
+            #
+            # If something in the wheel ever links OpenSSL dynamically again,
+            # bundling has to come back: Python 3.8+ uses restricted DLL search
+            # (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS), which excludes PATH, so a
+            # co-located copy is the only thing that resolves. Gate it on that
+            # linkage rather than on OPENSSL_DIR being set.
