@@ -125,9 +125,64 @@ mod tests {
         decompressed
     }
 
+    /// Windows CI can return `PermissionDenied` when creating a tempfile in the
+    /// shared `%TEMP%` directory (AV / delayed-delete of a sibling test's file).
+    /// Retry only that create; do not change gzip defaults (SNOW-4183277).
+    fn is_gzip_tempfile_access_denied(err: &CompressionError) -> bool {
+        matches!(
+            err,
+            CompressionError::IoFailed {
+                operation: "creating gzip tempfile",
+                source,
+                ..
+            } if source.kind() == std::io::ErrorKind::PermissionDenied
+        )
+    }
+
+    fn retry_gzip_tempfile<T>(
+        mut op: impl FnMut() -> Result<T, CompressionError>,
+        what: &str,
+    ) -> T {
+        for attempt in 1_u32..=5 {
+            match op() {
+                Ok(value) => return value,
+                Err(err) if is_gzip_tempfile_access_denied(&err) && attempt < 5 => {
+                    std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+                }
+                Err(err) => panic!("{what}: {err}"),
+            }
+        }
+        unreachable!("retry_gzip_tempfile")
+    }
+
     fn compress_bytes(payload: &[u8], level: u32) -> (PathBuf, tempfile::TempPath) {
-        compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()), level, None)
-            .expect("compress bytes")
+        retry_gzip_tempfile(
+            || compress_to_tempfile(&ByteSource::Bytes(payload.to_vec().into()), level, None),
+            "compress bytes",
+        )
+    }
+
+    fn new_named_tempfile() -> NamedTempFile {
+        for attempt in 1_u32..=5 {
+            match NamedTempFile::new() {
+                Ok(tf) => return tf,
+                Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied && attempt < 5 => {
+                    std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+                }
+                Err(err) => panic!("input tempfile: {err}"),
+            }
+        }
+        unreachable!("new_named_tempfile")
+    }
+
+    fn assert_unlinked_after_guard_drop(path: &Path) {
+        for _ in 0..40 {
+            if !path.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(!path.exists(), "tempfile must be unlinked once guard drops");
     }
 
     fn roundtrip(payload: &[u8]) {
@@ -169,13 +224,14 @@ mod tests {
     #[test]
     fn roundtrip_path_source() {
         let payload: Vec<u8> = (0..100 * 1024).map(|i| (i % 251) as u8).collect();
-        let mut tf = NamedTempFile::new().expect("input tempfile");
+        let mut tf = new_named_tempfile();
         tf.write_all(&payload).expect("write input");
         tf.flush().expect("flush input");
 
-        let (path, _guard) =
-            compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf()), 9, None)
-                .expect("compress");
+        let (path, _guard) = retry_gzip_tempfile(
+            || compress_to_tempfile(&ByteSource::Path(tf.path().to_path_buf()), 9, None),
+            "compress",
+        );
         let compressed = read_compressed(&path);
         let decompressed = gunzip(&compressed);
         assert_eq!(decompressed, payload);
@@ -203,7 +259,7 @@ mod tests {
         let (path, guard) = compress_bytes(b"unlink test", 9);
         assert!(path.exists(), "tempfile must exist while guard is held");
         drop(guard);
-        assert!(!path.exists(), "tempfile must be unlinked once guard drops");
+        assert_unlinked_after_guard_drop(&path);
     }
 
     #[test]
@@ -283,7 +339,7 @@ mod tests {
         .expect("compress");
         assert!(path.exists(), "tempfile must exist while guard is held");
         drop(guard);
-        assert!(!path.exists(), "tempfile must be unlinked once guard drops");
+        assert_unlinked_after_guard_drop(&path);
     }
 
     #[test]
