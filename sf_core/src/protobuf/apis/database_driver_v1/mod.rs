@@ -1273,10 +1273,15 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // `DatabaseDriverImpl`, which only exists via `new`/`new_with` ->
         // `DatabaseDriverV1::with_providers`, and that installs the provider as
         // its first statement (global_state.rs) -- same invariant as the CRL
-        // cache fallback. `create_attestation` additionally re-pins the
-        // provider and applies the fail-closed FIPS gate at its entry, so this
-        // plain client cannot carry attestation traffic on a non-FIPS provider
-        // in a `fips-tls` build.
+        // cache fallback.
+        //
+        // This client is deliberately plain, so its handshake runs on whatever
+        // provider won the process-global slot rather than on a config built
+        // from the linked module. In a `fips-tls` build that is safe only
+        // because `create_attestation` re-checks *both* at its entry and fails
+        // closed if either is non-FIPS -- see `tls::require_fips_provider`. It
+        // is the gate, not this client's construction, that keeps attestation
+        // traffic off a non-approved provider.
         let client = reqwest::Client::new();
         // This client has no request timeout, so for the AWS/Azure/GCP providers
         // — which each await a cloud metadata or IdP endpoint — `operation_ctx` is the only

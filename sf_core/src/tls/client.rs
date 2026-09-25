@@ -3,8 +3,8 @@ use crate::crl::worker::SharedCrlWorker;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{
-    ClientBuildSnafu, PemParseSnafu, ProxyBuildSnafu, RedactedUrl, RootStoreAddSnafu, TlsError,
-    VerifierBuildSnafu,
+    ClientBuildSnafu, PemParseSnafu, ProxyBuildSnafu, RedactedUrl, RootStoreAddSnafu,
+    RustlsConfigSnafu, TlsError, VerifierBuildSnafu,
 };
 use reqwest::{Client, ClientBuilder, NoProxy, Proxy};
 use rustls::ClientConfig;
@@ -65,9 +65,11 @@ pub(crate) fn build_tls_client_and_rustls_config(
     // "No provider set".
     super::ensure_crypto_provider();
     // Fail closed rather than serve traffic on a non-approved module: in
-    // `fips-tls` builds this refuses to build a client when the provider that
-    // won the process-global slot is not FIPS. Compiles away without the
-    // feature.
+    // `fips-tls` builds this refuses to build a client unless both the linked
+    // module and the process-global provider are FIPS. The global matters
+    // because only the CRL branch below hands rustls our config -- the
+    // insecure and CRL-disabled branches let reqwest resolve the global for
+    // the handshake. Compiles away without the feature.
     super::require_fips_provider()?;
 
     if !tls_config.verify_certificates {
@@ -83,7 +85,12 @@ pub(crate) fn build_tls_client_and_rustls_config(
             builder = builder.connect_timeout(ct);
         }
         let client = builder.build().context(ClientBuildSnafu)?;
-        return Ok((client, need_diag_config.then(build_insecure_rustls_config)));
+        return Ok((
+            client,
+            need_diag_config
+                .then(build_insecure_rustls_config)
+                .transpose()?,
+        ));
     }
 
     let protocol_versions = tls_config.versions.enabled_rustls_versions();
@@ -289,11 +296,20 @@ fn build_crl_rustls_config(
     )
     .context(VerifierBuildSnafu)?;
 
+    // Explicit provider rather than `ClientConfig::builder()`: the latter reads
+    // the process-global default, so the module verifying this connection's
+    // chain would be whichever one won a startup race. Under `fips-tls` that
+    // race is the compliance claim.
+    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
     let version_builder = if protocol_versions.is_empty() {
         tracing::debug!("empty TLS protocol-version window; falling back to rustls defaults");
-        ClientConfig::builder()
+        ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .context(RustlsConfigSnafu)?
     } else {
-        ClientConfig::builder_with_protocol_versions(protocol_versions)
+        ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(protocol_versions)
+            .context(RustlsConfigSnafu)?
     };
     Ok(version_builder
         .dangerous()
@@ -311,10 +327,15 @@ fn build_plain_rustls_client_config(
         RootCertificates::Custom(pem) => create_root_store_from_pem(pem)?,
         RootCertificates::Extra(pem) => create_extended_root_store(pem)?,
     };
+    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
     let builder = if protocol_versions.is_empty() {
-        rustls::ClientConfig::builder()
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .context(RustlsConfigSnafu)?
     } else {
-        rustls::ClientConfig::builder_with_protocol_versions(protocol_versions)
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(protocol_versions)
+            .context(RustlsConfigSnafu)?
     };
     Ok(builder
         .with_root_certificates(root_store)
@@ -328,14 +349,17 @@ fn build_plain_rustls_client_config(
 /// verifies the server certificate.  Using a cert-verified config here would cause
 /// false-negative TLS failures in environments with custom or self-signed CAs, which is
 /// exactly the case where users reach for `verify_certificates=false`.
-pub(crate) fn build_insecure_rustls_config() -> Arc<rustls::ClientConfig> {
+pub(crate) fn build_insecure_rustls_config() -> Result<Arc<rustls::ClientConfig>, TlsError> {
     super::ensure_crypto_provider();
-    Arc::new(
-        rustls::ClientConfig::builder()
+    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
+    Ok(Arc::new(
+        rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .context(RustlsConfigSnafu)?
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifyCertVerifier::new()))
             .with_no_client_auth(),
-    )
+    ))
 }
 
 /// A [`ServerCertVerifier`] that accepts any certificate chain without validation.
@@ -357,8 +381,8 @@ struct NoVerifyCertVerifier {
 impl NoVerifyCertVerifier {
     fn new() -> Self {
         Self {
-            supported_algs: rustls::crypto::aws_lc_rs::default_provider()
-                .signature_verification_algorithms,
+            supported_algs: crate::tls::crypto_module::CryptoModule::get()
+                .signature_verification_algorithms(),
         }
     }
 }
@@ -621,6 +645,61 @@ mod tests {
             password: password.map(|s| SensitiveString::from(s.to_string())),
             ..Default::default()
         }
+    }
+
+    /// Every rustls config the driver builds must carry the linked crypto module's
+    /// provider *object*, not merely an equivalent one.
+    ///
+    /// This is the Phase 3 property that the previous `ClientConfig::builder()`
+    /// call sites could not offer: that entry point reads the process-global
+    /// default, so the module verifying a connection was decided by whichever
+    /// provider won a startup race. `Arc::ptr_eq` is deliberate -- comparing
+    /// contents would pass even if each config had built its own provider,
+    /// which is exactly the ambiguity being removed.
+    #[test]
+    fn plain_config_uses_the_module_provider() {
+        let config = build_plain_rustls_client_config(&RootCertificates::Default, &[])
+            .expect("plain rustls config");
+        assert!(
+            Arc::ptr_eq(
+                config.crypto_provider(),
+                &crate::tls::crypto_module::CryptoModule::get().provider()
+            ),
+            "plain config should use the linked crypto module's provider"
+        );
+    }
+
+    /// The `verify_certificates=false` path is the one most likely to be built
+    /// first in a process, so it is the one most exposed to the global-provider
+    /// race that this phase removes.
+    #[test]
+    fn insecure_config_uses_the_module_provider() {
+        let config = build_insecure_rustls_config().expect("insecure rustls config");
+        assert!(
+            Arc::ptr_eq(
+                config.crypto_provider(),
+                &crate::tls::crypto_module::CryptoModule::get().provider()
+            ),
+            "insecure config should use the linked crypto module's provider"
+        );
+    }
+
+    /// A narrowed protocol-version window must not change which module is in
+    /// play -- only which versions it offers.
+    #[test]
+    fn version_window_does_not_change_the_provider() {
+        let config = build_plain_rustls_client_config(
+            &RootCertificates::Default,
+            &[&rustls::version::TLS13],
+        )
+        .expect("versioned rustls config");
+        assert!(
+            Arc::ptr_eq(
+                config.crypto_provider(),
+                &crate::tls::crypto_module::CryptoModule::get().provider()
+            ),
+            "version-restricted config should still use the crypto module's provider"
+        );
     }
 
     #[test]
