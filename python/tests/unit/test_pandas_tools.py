@@ -395,6 +395,35 @@ class TestBuildCopyIntoSql:
             "_force_qmark_paramstyle": True,
         }
 
+    def test_projects_exactly_the_dataframe_columns(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["a", "b"]))
+        sql = op._build_copy_into_sql("MY_STAGE", "MY_TABLE", None)["operation"]
+        assert sql == (
+            'COPY INTO IDENTIFIER(?) ("a", "b") '
+            'FROM (SELECT $1:"a" AS "a", $1:"b" AS "b" '
+            "FROM '@MY_STAGE') "
+            "FILE_FORMAT = (TYPE=PARQUET COMPRESSION=auto) "
+            "PURGE=TRUE ON_ERROR=?"
+        )
+
+    @pytest.mark.parametrize(
+        "columns",
+        [
+            ["00 name", "bAl_ance"],
+            ['c""ol', '"col"'],
+            ["c''ol", "'col'"],
+            ["チリヌル", "熊猫"],
+            ["number", "Number"],
+            ['{"snow": {"fla": "ke"}}', "col\\with\\backslash"],
+        ],
+    )
+    def test_special_column_names_are_quoted_in_select_list(self, columns):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=columns))
+        sql = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)["operation"]
+        for col in columns:
+            quoted = quote_identifier(col)
+            assert f"$1:{quoted} AS {quoted}" in sql
+
 
 # ---------------------------------------------------------------------------
 # SQL generation — parameterised DDL helpers
@@ -449,6 +478,12 @@ class TestBuildCreateTableSql:
         op: WritePandasOperation = _make_op(df=_mock_df(columns=["A"]), table_type="temp")
         result = op._build_create_table_sql("MY_TABLE", None)
         assert "TEMP TABLE" in result["operation"]
+
+    def test_preserves_case_distinct_column_names(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["number", "Number"]))
+        sql = op._build_create_table_sql("MY_TABLE", None)["operation"]
+        assert '"number" VARIANT' in sql
+        assert '"Number" VARIANT' in sql
 
 
 class TestBuildInferColumnTypesSql:

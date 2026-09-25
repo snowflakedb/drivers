@@ -1236,52 +1236,113 @@ tests:
   integ/pandas_it/test_pandas_tools.py:
   - test_name: test__iceberg_config_statement_helper
     ud_tests: []
+    notes: >-
+      Not covered. UD rejects invalid iceberg_config keys, but the iceberg option
+      SQL clause this helper builds is never asserted as a string.
   - test_name: test_all_pandas_types
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_round_trip_multiple_data_types_through_write_pandas
+    notes: >-
+      UD round-trips integer, float, string, boolean, date, binary, TIMESTAMP_TZ, and
+      TIMESTAMP_NTZ values. The legacy TIME-column round trip is not covered.
   - test_name: test_auto_create_table_similar_column_names
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_keep_case_distinct_column_names_when_auto_creating
+      - python/tests/unit/test_pandas_tools.py::TestBuildCreateTableSql::test_preserves_case_distinct_column_names
   - test_name: test_autoincrement_insertion
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_leave_autoincrement_columns_to_the_table
   - test_name: test_default_value_insertion
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_leave_default_columns_to_the_table
+    notes: >-
+      UD verifies that UUID and timestamp defaults are populated. The legacy assertion that
+      the returned timestamp is a Python datetime is not carried over.
   - test_name: test_empty_dataframe_write_pandas
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_write_an_empty_dataframe
   - test_name: test_file_format_location_building
     ud_tests: []
   - test_name: test_fix_snow_746341
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_write_a_column_name_that_already_contains_quotes
   - test_name: test_invalid_table_type_write_pandas
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasValidation::test_should_raise_value_error_for_invalid_table_type
+      - python/tests/unit/test_pandas_tools.py::TestConfigValidation::test_should_raise_for_invalid_table_type
+    notes: >-
+      UD verifies that an invalid table type raises ValueError. The legacy
+      "Unsupported table type" error-message contract is not asserted.
   - test_name: test_no_create_internal_object_privilege_in_target_schema
     ud_tests: []
   - test_name: test_pandas_with_single_quote
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_write_to_a_table_whose_name_contains_a_single_quote
   - test_name: test_special_name_quoting
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_quote_special_column_names
+      - python/tests/unit/test_pandas_tools.py::TestBuildCopyIntoSql::test_special_column_names_are_quoted_in_select_list
   - test_name: test_stage_location_building
     ud_tests: []
   - test_name: test_table_location_building
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_pandas_tools.py::TestQualifyName
+    notes: >-
+      UD covers database, schema, and table qualification in isolation. It does not verify
+      that write_pandas passes the fully qualified location through to COPY INTO.
   - test_name: test_use_scoped_object
     ud_tests: []
   - test_name: test_write_non_range_index_pandas
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasValidation::test_should_emit_user_warning_for_non_standard_dataframe_index
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_not_materialize_the_dataframe_index_as_a_table_column
+    notes: >-
+      UD warns for a non-standard string index and, for named, unnamed, and float indexes,
+      asserts that the Parquet index field does not become a table column. The legacy
+      chunk-count and table-kind assertions are not carried over.
   - test_name: test_write_pandas
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_write_a_dataframe_to_a_pre_created_table_and_read_it_back
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_auto_create_a_table_from_dataframe_schema
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_write_dataframe_in_multiple_chunks
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_round_trip_with_default_quoted_identifiers
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_append_when_auto_create_targets_an_existing_table
+    notes: >-
+      UD covers pre-created and auto-created tables, quoted and unquoted identifiers, and
+      multi-chunk loading. The legacy compression, chunk-size, quoting, auto-create, and
+      create_temp_table parameter matrix is not reproduced.
   - test_name: test_write_pandas_bulk_chunks_upload
     ud_tests: []
   - test_name: test_write_pandas_create_temp_table_deprecation_warning
     ud_tests: []
   - test_name: test_write_pandas_table_type
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_create_the_requested_table_type
   - test_name: test_write_pandas_use_logical_type
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_round_trip_multiple_data_types_through_write_pandas
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_infer_timestamp_types_when_logical_types_are_enabled
+    notes: >-
+      UD covers use_logical_type=True for timestamp round trips and auto-created type
+      inference. The legacy None and False cases and their UserWarning are not covered.
   - test_name: test_write_pandas_with_on_error
     ud_tests: []
   - test_name: test_write_pandas_with_overwrite
-    ud_tests: []
+    ud_tests:
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandas::test_should_overwrite_existing_data_with_new_data
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_replace_schema_when_overwriting_with_auto_create
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_reject_extra_columns_when_the_existing_schema_cannot_change
+      - python/tests/e2e/pandas/test_write_pandas.py::TestWritePandasIdentifierAndSchemaCoverage::test_should_leave_the_table_empty_when_overwrite_truncates_then_copy_fails
+    notes: >-
+      UD covers overwrite row replacement, schema replacement on overwrite+auto_create,
+      extra-column rejection, and the truncate-then-fail path. The legacy unquoted
+      percent-sign column rejection is not covered.
   - test_name: test_write_pandas_with_use_vectorized_scanner
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_pandas_tools.py::TestBuildCopyIntoSql::test_with_vectorized_scanner
+    notes: >-
+      UD pins USE_VECTORIZED_SCANNER=TRUE on the COPY SQL. The False case and
+      its absence from COPY SQL are not covered.
   integ/pandas_it/test_unit_arrow_chunk_iterator.py:
   - test_name: test_iterate_over_binary_chunk
     ud_tests: []
