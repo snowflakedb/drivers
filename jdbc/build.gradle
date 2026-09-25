@@ -818,7 +818,11 @@ jacocoTestReport {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, exclude: [
                 '**/protobuf_gen/**',
-                '**/DriverVersion.class'
+                '**/DriverVersion.class',
+                // Annotation-processor wrappers forward every JDBC method; counting them
+                // as uncovered lines understates handwritten coverage (~78%) when unit
+                // tests construct impls directly. Public-API ITs still exercise them.
+                '**/Decorated*.class'
             ])
         }))
     }
