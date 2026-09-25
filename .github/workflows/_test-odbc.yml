@@ -210,19 +210,19 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
           New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
-          $triplet = "${{ matrix.vcpkg_triplet }}"
-          if ("${{ matrix.msvc_arch }}" -eq "arm64") {
-            cmd /c "`"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && vcpkg install zlib:$triplet"
-            if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
-          } else {
-            Invoke-Checked "vcpkg install" { vcpkg install zlib:$triplet }
-          }
-
       - name: Setup MSVC environment
         uses: ./.github/actions/setup-msvc
         with:
           arch: ${{ matrix.msvc_arch }}
           restore-cmake-dir: 'true'
+
+      - name: Install zlib via vcpkg
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $triplet = "${{ matrix.vcpkg_triplet }}"
+          vcpkg install zlib:$triplet
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
 
       - name: Build cmake-build tree
         shell: pwsh
