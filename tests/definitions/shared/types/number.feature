@@ -1,4 +1,4 @@
-@python @odbc @jdbc @nodejs @core_not_needed
+@python @odbc @jdbc @nodejs @dotnet @core_not_needed
 Feature: NUMBER type support
 
   # TODO:
@@ -8,7 +8,7 @@ Feature: NUMBER type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should cast number values to appropriate type for number and synonyms
     # Python: scale=0 → int, scale>0 → Decimal
     Given Snowflake client is logged in
@@ -19,7 +19,7 @@ Feature: NUMBER type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should select number literals for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 0::<type>(10,0), -456::<type>(10,0), 1.50::<type>(10,2), -123.45::<type>(10,2), 123.456::<type>(15,3), -789.012::<type>(15,3)" is executed
@@ -31,7 +31,7 @@ Feature: NUMBER type support
     When Query "SELECT 12345678901234567890123456789012345678::<type>(38,0), 123456789012345678901234567890123456.78::<type>(38,2), 1234567890123456789012345678.1234567890::<type>(38,10), 0.0000000000000000000000000000000000001::<type>(38,37)" is executed
     Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78, 1234567890123456789012345678.1234567890, 0.0000000000000000000000000000000000001]
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle scale and precision boundaries from literals for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2), 99999999::<type>(8,0), -99999999::<type>(8,0)" is executed
@@ -43,13 +43,13 @@ Feature: NUMBER type support
     When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0), -99999999999999999999999999999999999999::<type>(38,0)" is executed
     Then Result should contain max and min 38-digit integers
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle NULL values from literals for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
     Then Result should contain [NULL, 42, NULL, 42.50]
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v" is executed
@@ -59,7 +59,7 @@ Feature: NUMBER type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should select numbers from table with multiple scales for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
@@ -78,7 +78,7 @@ Feature: NUMBER type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78, 1234567890123456789012345678.1234567890, 1.2345678901234567890123456789012345678]
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle scale and precision boundaries from table for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(5,2), <type>(8,0)) exists
@@ -110,7 +110,7 @@ Feature: NUMBER type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain 4 rows with 2 NULL rows and 2 non-NULL rows with expected values
 
-  @python_e2e @odbc_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should download large result set from table for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column

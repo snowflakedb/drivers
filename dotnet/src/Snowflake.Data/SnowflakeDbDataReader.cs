@@ -139,7 +139,12 @@ public sealed class SnowflakeDbDataReader : DbDataReader
     {
         EnsurePositioned();
         var column = _currentBatch!.Column(ordinal);
-        return ExtractDecimal(column, _rowIndexInBatch);
+        var scale = "0";
+        _currentBatch.Schema.FieldsLookup.ElementAt(ordinal).FirstOrDefault()?.Metadata.TryGetValue("scale", out scale);
+        var result = ExtractDecimal(column, _rowIndexInBatch);
+        var scaleNum = Math.Pow(10, int.Parse(scale ?? "0"));
+        result /= (decimal)scaleNum;
+        return result;
     }
 
     // TODO: Implement remaining typed accessors.
@@ -268,12 +273,14 @@ public sealed class SnowflakeDbDataReader : DbDataReader
         base.Dispose(disposing);
     }
 
+    // TODO this is just a PoC and will be changed significantly
     private void EnsurePositioned()
     {
         if (_currentBatch is null || _rowIndexInBatch < 0)
             throw new InvalidOperationException("No current row. Call Read() first.");
     }
 
+    // TODO this is just a PoC and will be changed significantly
     private static long ExtractInt64(IArrowArray column, int index)
     {
         return column switch
@@ -287,6 +294,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader
         };
     }
 
+    // TODO this is just a PoC and will be changed significantly
     private static decimal ExtractDecimal(IArrowArray column, int index)
     {
         return column switch
@@ -300,6 +308,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader
         };
     }
 
+    // TODO this is just a PoC and will be changed significantly
     private static object ExtractValue(IArrowArray column, int index)
     {
         return column switch
