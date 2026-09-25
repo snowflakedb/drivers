@@ -124,6 +124,39 @@ Feature: TIMESTAMP_TZ type support
     And Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
     Then SELECT should return the same values in any order
 
+  # =========================================================================== #
+  #                             TIMEZONE Parameter                              #
+  # =========================================================================== #
+
+  Scenario: should apply the session TIMEZONE to a timestamp_tz literal without an explicit offset
+    Given Snowflake client is logged in
+    And Session TIMEZONE is set to Europe/Warsaw
+    When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_TZ" is executed
+    Then Result should contain timestamps 2024-01-15 10:30:00 +01:00
+    And Values should have timezone info
+
+  Scenario: should keep the explicit offset of a timestamp_tz literal regardless of the session TIMEZONE
+    Given Snowflake client is logged in
+    And Session TIMEZONE is set to Europe/Warsaw
+    When Query "SELECT '2024-01-15 10:30:00 +05:00'::TIMESTAMP_TZ" is executed
+    Then Result should contain timestamps 2024-01-15 10:30:00 +05:00
+    And Values should have timezone info
+
+  Scenario: should let a statement-level TIMEZONE override the session for a timestamp_tz literal without an explicit offset
+    Given Snowflake client is logged in
+    And Session TIMEZONE is set to Europe/Warsaw
+    When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_TZ" is executed with statement TIMEZONE America/New_York
+    Then Result should contain timestamps 2024-01-15 10:30:00 -05:00
+    And Values should have timezone info
+
+  # =========================================================================== #
+  #                                 Other                                       #
+  # =========================================================================== #
+
+  # Sub-microsecond precision is driver-specific:
+  # - Python: nanosecond digits 7-9 are dropped, truncating to microseconds.
+  # - Node: a JavaScript Date cannot store nanosecond precision; the custom
+  #   getNanoSeconds() method attached to the returned Date reads it instead.
   @python_e2e
   Scenario: should truncate nanosecond precision to microseconds for timestamp tz
     Given Snowflake client is logged in

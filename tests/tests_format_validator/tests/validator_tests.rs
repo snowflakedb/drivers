@@ -151,12 +151,10 @@ fn should_report_missing_functions_when_method_names_dont_match_scenarios() -> R
 
         // Should have warnings about missing test methods
         assert!(!validation.warnings.is_empty());
-        assert!(
-            validation
-                .warnings
-                .iter()
-                .any(|w| w.contains("No test method found for scenario"))
-        );
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|w| w.contains("No test method found for scenario")));
     }
 
     Ok(())
@@ -838,11 +836,9 @@ fn should_detect_cross_file_breaking_change_in_helper_methods() -> Result<()> {
             impl_info.test_method,
             "should authenticate using private key with helper"
         );
-        assert!(
-            impl_info
-                .test_file
-                .contains("cross_file_breaking_change.cpp")
-        );
+        assert!(impl_info
+            .test_file
+            .contains("cross_file_breaking_change.cpp"));
 
         // Breaking Change should be found in the helper file
         if let Some(new_file) = &impl_info.new_behaviour_file {
@@ -2505,18 +2501,14 @@ fn should_fail_without_when_and_then() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].scenario_structure_errors.len(), 2);
-    assert!(
-        results[0]
-            .scenario_structure_errors
-            .iter()
-            .any(|e| e.contains("When"))
-    );
-    assert!(
-        results[0]
-            .scenario_structure_errors
-            .iter()
-            .any(|e| e.contains("Then"))
-    );
+    assert!(results[0]
+        .scenario_structure_errors
+        .iter()
+        .any(|e| e.contains("When")));
+    assert!(results[0]
+        .scenario_structure_errors
+        .iter()
+        .any(|e| e.contains("Then")));
 
     Ok(())
 }
@@ -2592,8 +2584,13 @@ async fn should_login_successfully() {
 
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].violations.len(), 1);
-    assert_eq!(violations[0].violations[0].method_name, "should_login_successfully");
-    assert!(violations[0].violations[0].missing_keywords.contains(&"When".to_string()));
+    assert_eq!(
+        violations[0].violations[0].method_name,
+        "should_login_successfully"
+    );
+    assert!(violations[0].violations[0]
+        .missing_keywords
+        .contains(&"When".to_string()));
 
     Ok(())
 }
@@ -2621,8 +2618,13 @@ fn should_return_token() {
     let violations = validator.validate_gherkin_step_structure()?;
 
     assert_eq!(violations.len(), 1);
-    assert_eq!(violations[0].violations[0].method_name, "should_return_token");
-    assert!(violations[0].violations[0].missing_keywords.contains(&"Then".to_string()));
+    assert_eq!(
+        violations[0].violations[0].method_name,
+        "should_return_token"
+    );
+    assert!(violations[0].violations[0]
+        .missing_keywords
+        .contains(&"Then".to_string()));
 
     Ok(())
 }
@@ -2652,7 +2654,11 @@ async fn should_login_and_return_session() {
     let validator = workspace.get_validator()?;
     let violations = validator.validate_gherkin_step_structure()?;
 
-    assert!(violations.is_empty(), "Expected no violations, got: {:?}", violations);
+    assert!(
+        violations.is_empty(),
+        "Expected no violations, got: {:?}",
+        violations
+    );
 
     Ok(())
 }
@@ -2698,8 +2704,14 @@ fn should_login_successfully() {
     let validator = workspace.get_validator()?;
     let violations = validator.validate_gherkin_step_structure()?;
 
-    assert_eq!(violations.len(), 1, "Integration test matching shared feature should be checked");
-    assert!(violations[0].violations[0].missing_keywords.contains(&"When".to_string()));
+    assert_eq!(
+        violations.len(),
+        1,
+        "Integration test matching shared feature should be checked"
+    );
+    assert!(violations[0].violations[0]
+        .missing_keywords
+        .contains(&"When".to_string()));
 
     Ok(())
 }
@@ -2757,9 +2769,7 @@ Feature: Session Parameters
 "#,
     )?;
 
-    let integ_path = workspace
-        .workspace_root
-        .join("python/tests/integ/session");
+    let integ_path = workspace.workspace_root.join("python/tests/integ/session");
     fs::create_dir_all(&integ_path)?;
     fs::write(
         integ_path.join("test_session_parameters.py"),
@@ -2804,7 +2814,9 @@ Feature: Login
     )?;
 
     // Put an integration test whose name matches the feature but has no scenario tag
-    let integ_path = workspace.workspace_root.join("sf_core/tests/integration/auth");
+    let integ_path = workspace
+        .workspace_root
+        .join("sf_core/tests/integration/auth");
     fs::create_dir_all(&integ_path)?;
     fs::write(
         integ_path.join("login.rs"),
@@ -2867,9 +2879,9 @@ fn test_private_key_auth() {
     let orphan_results = validator.find_orphaned_tests()?;
 
     // No shared feature for this file — should be completely ignored
-    let has_rust_orphans = orphan_results
-        .iter()
-        .any(|o| o.language == tests_format_validator::Language::Rust && !o.orphaned_files.is_empty());
+    let has_rust_orphans = orphan_results.iter().any(|o| {
+        o.language == tests_format_validator::Language::Rust && !o.orphaned_files.is_empty()
+    });
     assert!(
         !has_rust_orphans,
         "Integration test with no matching shared feature should not be reported as orphaned"
@@ -2919,10 +2931,7 @@ it('should authenticate with external browser', async () => {
         violations[0].violations[0].method_name,
         "should authenticate with external browser"
     );
-    assert_eq!(
-        violations[0].violations[0].missing_keywords,
-        vec!["Then"]
-    );
+    assert_eq!(violations[0].violations[0].missing_keywords, vec!["Then"]);
     Ok(())
 }
 

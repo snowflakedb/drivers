@@ -44,7 +44,7 @@ Feature: Python datetime handling
 
 ## Alignment Targets
 
-In addition to the tag-based validation above, the validator supports **alignment targets** — direct pairings between a features directory and a test directory that bypass the tag system. This is useful for secondary test suites (e.g., framework-specific tests) that cover the same Gherkin scenarios as the primary suite but live in a different directory.
+In addition to the tag-based validation above, the validator supports **alignment targets** — direct pairings between a features directory and a secondary test directory (e.g., pandas/numpy type suites). A scenario is checked only when it is tagged for the target's language; untagged scenarios are not required.
 
 Targets are defined in `alignment_targets.toml`:
 
@@ -63,8 +63,8 @@ tests    = "python/tests/e2e/numpy/types"
 ```
 
 Each target pairs every `.feature` file in the `features` directory with the corresponding test file in the `tests` directory (matched by stem: `boolean.feature` ↔ `test_boolean.py`). The validator then checks:
-- Every scenario in the feature has a matching test method
-- Every test method maps back to a scenario (no orphans)
+- Every scenario tagged for the target language has a matching test method
+- Every test method maps back to a tagged scenario (no orphans)
 - Step comments inside each test method match the Gherkin steps
 
 ## Writing Tests That Pass Validation
@@ -146,7 +146,7 @@ cargo run -- --help
 - ✅ Feature declares language but scenarios have no level tags → validation error
 - ✅ Feature has `@{language}_not_needed` but scenario has `@{language}_e2e` → validation error
 - ✅ Every test method in e2e and integration dirs has at least one non-empty `When` and `Then` step comment
-- ✅ Alignment targets: feature ↔ test file pairing, method matching, step matching
+- ✅ Alignment targets: feature ↔ test file pairing, method matching, and step matching for scenarios tagged for the target language
 - ⚠️ Reports orphaned test files and missing test methods
 
 ## Output

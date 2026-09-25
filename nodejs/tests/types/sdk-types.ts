@@ -22,7 +22,12 @@ export type SnowflakeDate = Date & {
   getEpochSeconds(): number;
   getNanoSeconds(): number;
   getScale(): number;
-  getTimezone(): string;
+  /**
+   * Timezone of the value:
+   * - `string` for TIMESTAMP_NTZ / TIMESTAMP_LTZ (e.g. `'UTC'`, `'America/New_York'`).
+   * - `number` for TIMESTAMP_TZ: the offset from UTC in minutes (e.g. `+05:00` -> `300`).
+   */
+  getTimezone(): string | number;
   getFormat(): string;
 };
 

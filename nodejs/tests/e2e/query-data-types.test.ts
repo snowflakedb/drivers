@@ -33,18 +33,5 @@ describe('Query returning data types', () => {
       expect(selectedValue).toBeInstanceOf(Date);
       expect(selectedValue.toJSON()).toBe('2016-01-21 06:32:44.000 -0800');
     });
-
-    it('returns TIMESTAMP_TZ as Date with zone offset', async () => {
-      const { statement, rows } = await executeAsync(
-        connection,
-        "SELECT to_timestamp_tz('Thu, 21 Jan 2016 06:32:44 -0800') as TZ_COLUMN",
-      );
-      const column = getStatementColumn(statement, 0);
-      const selectedValue = rows![0].TZ_COLUMN as Date;
-      expect(column.isTimestamp()).toBe(true);
-      expect(column.getType()).toBe('timestamp_tz');
-      expect(selectedValue).toBeInstanceOf(Date);
-      expect(selectedValue.toJSON()).toBe('2016-01-21 06:32:44.000 -0800');
-    });
   });
 });

@@ -142,7 +142,14 @@ Feature: TIMESTAMP_NTZ type support
     Then All values should be returned as appropriate type
     And Values should have timezone info
 
-  # Python truncation behaviour (digits 7–9 dropped)
+  # =========================================================================== #
+  #                                 Other                                       #
+  # =========================================================================== #
+
+  # Sub-microsecond precision is driver-specific:
+  # - Python: nanosecond digits 7-9 are dropped, truncating to microseconds.
+  # - Node: a JavaScript Date cannot store nanosecond precision; the custom
+  #   getNanoSeconds() method attached to the returned Date reads it instead.
   @python_e2e
   Scenario: should truncate nanosecond precision to microseconds for timestamp ntz
     Given Snowflake client is logged in

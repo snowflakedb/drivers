@@ -1,10 +1,10 @@
 # Alignment targets.
 #
 # Each [[target]] block pairs a Gherkin features directory with a
-# language-specific test directory.  The validator ensures that every
-# scenario in each paired feature has a matching test method with the
-# expected Gherkin step comments — without requiring scenario-level
-# tags in the .feature files.
+# language-specific test directory. The validator checks only scenarios
+# tagged for the target's language (for python: @python, @python_e2e,
+# @python_int, pep249). Untagged scenarios and scenarios tagged only
+# for other languages are skipped.
 #
 # Paths are relative to the workspace root.
 

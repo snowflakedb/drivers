@@ -1,6 +1,6 @@
+mod alignment_targets;
 mod behavior_differences_processor;
 mod behavior_differences_utils;
-mod alignment_targets;
 mod driver_handlers;
 mod feature_parser;
 mod step_finder;
@@ -66,7 +66,9 @@ fn main() -> anyhow::Result<()> {
         let feature_has_failures = !result.scenario_structure_errors.is_empty()
             || result.validations.iter().any(|v| {
                 !v.test_file_found
-                    || v.warnings.iter().any(|warning| is_blocking_warning(warning))
+                    || v.warnings
+                        .iter()
+                        .any(|warning| is_blocking_warning(warning))
                     || !v.missing_steps.is_empty()
                     || !v.empty_steps.is_empty()
             });
@@ -322,7 +324,9 @@ fn main() -> anyhow::Result<()> {
     let has_gherkin_violations = !gherkin_violations.is_empty();
     if has_gherkin_violations {
         println!("\n❌ VALIDATION ERROR - Missing When/Then Gherkin comments:");
-        println!("   Every test method must contain at least one non-empty When and Then step comment.");
+        println!(
+            "   Every test method must contain at least one non-empty When and Then step comment."
+        );
         for file_validation in &gherkin_violations {
             println!("  {}", file_validation.file_path.display());
             for violation in &file_validation.violations {
@@ -371,7 +375,10 @@ fn main() -> anyhow::Result<()> {
             println!("\n📦 Target '{}':", result.target_name);
 
             for orphan in &result.orphan_test_files {
-                println!("  ❌ Test file has no matching feature: {}", orphan.display());
+                println!(
+                    "  ❌ Test file has no matching feature: {}",
+                    orphan.display()
+                );
             }
 
             for pr in &result.pair_results {

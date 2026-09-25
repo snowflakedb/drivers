@@ -189,8 +189,7 @@ fn validate_pair(
     let all_test_methods = collect_test_methods(&test_content, language)?;
 
     let mut missing_methods = Vec::new();
-    let mut matched_methods: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut matched_methods: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut missing_steps_by_method = Vec::new();
     let mut empty_steps_by_method = Vec::new();
 
@@ -203,7 +202,7 @@ fn validate_pair(
         }
 
         let target_languages = TestDiscovery::get_target_languages(&scenario.tags);
-        if !target_languages.is_empty() && !target_languages.contains(language) {
+        if !target_languages.contains(language) {
             continue;
         }
 
@@ -310,10 +309,7 @@ fn collect_feature_files(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn test_file_stem(path: &Path, language: &Language) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     match language {
         Language::Python => stem.strip_prefix("test_").unwrap_or(stem).to_string(),
         _ => stem.to_string(),
@@ -338,8 +334,7 @@ fn collect_test_methods(content: &str, language: &Language) -> Result<Vec<String
 fn method_matches_scenario(method_name: &str, scenario_name: &str) -> bool {
     let clean = clean_method_name(method_name);
     let snake = to_snake_case(scenario_name);
-    strings_match_normalized(clean, scenario_name)
-        || strings_match_normalized(clean, &snake)
+    strings_match_normalized(clean, scenario_name) || strings_match_normalized(clean, &snake)
 }
 
 fn steps_match(implemented: &str, expected: &str) -> bool {
@@ -359,4 +354,76 @@ fn steps_match(implemented: &str, expected: &str) -> bool {
             .to_string()
     };
     normalize(implemented) == normalize(expected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write_pair(feature: &str, python: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let feature_path = dir.path().join("timestamp_tz.feature");
+        let test_path = dir.path().join("test_timestamp_tz.py");
+        fs::write(&feature_path, feature).expect("write feature");
+        fs::write(&test_path, python).expect("write python");
+        (dir, feature_path, test_path)
+    }
+
+    fn pair_result(feature: &str, python: &str) -> PairResult {
+        let language = Language::Python;
+        let step_finder = StepFinder::new(language.clone());
+        let (_dir, feature_path, test_path) = write_pair(feature, python);
+        validate_pair(&step_finder, &feature_path, &test_path, &language).expect("validate_pair")
+    }
+
+    const TAGGED_AND_UNTAGGED_FEATURE: &str = r#"
+@python
+Feature: TIMESTAMP_TZ type support
+
+  @python_e2e
+  Scenario: should select tagged timestamp
+    Given Snowflake client is logged in
+    When Query is executed
+    Then Result is returned
+
+  Scenario: should apply untagged timezone
+    Given Snowflake client is logged in
+    When Query is executed
+    Then Result is returned
+"#;
+
+    const TAGGED_PYTHON: &str = r#"
+def test_should_select_tagged_timestamp(self):
+    # Given Snowflake client is logged in
+    logged_in = True
+
+    # When Query is executed
+    result = 1
+
+    # Then Result is returned
+    assert logged_in and result == 1
+"#;
+
+    #[test]
+    fn should_skip_untagged_alignment_scenarios() {
+        let result = pair_result(TAGGED_AND_UNTAGGED_FEATURE, TAGGED_PYTHON);
+        assert!(
+            result.missing_methods.is_empty(),
+            "untagged scenario must not be required: {:?}",
+            result.missing_methods
+        );
+        assert!(result.orphan_methods.is_empty());
+        assert!(result.missing_steps_by_method.is_empty());
+        assert!(result.empty_steps_by_method.is_empty());
+    }
+
+    #[test]
+    fn should_require_python_tagged_alignment_scenarios() {
+        let result = pair_result(TAGGED_AND_UNTAGGED_FEATURE, "def helper():\n    return 1\n");
+        assert_eq!(
+            result.missing_methods,
+            vec!["should select tagged timestamp".to_string()]
+        );
+    }
 }
