@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 
@@ -368,9 +369,21 @@ impl DatabaseDriverV1 {
         self.fs.clone()
     }
 
-    pub async fn platforms(&self) -> &Vec<String> {
+    /// Detection runs once per driver, on the first connect, and every later
+    /// connect reads the cached result. A `timeout` that differs from the first
+    /// connect's is therefore ignored, `Duration::ZERO` included. That is
+    /// deliberate: varying the platform-detection timeout between connections
+    /// in one process is not a supported use case, and one `OnceCell` is
+    /// simpler than a cache keyed by duration.
+    pub async fn platforms(&self, timeout: Duration) -> &Vec<String> {
         self.platforms
-            .get_or_init(|| async { detect_platforms(&DetectionConfig::default()).await })
+            .get_or_init(|| async move {
+                detect_platforms(&DetectionConfig {
+                    timeout,
+                    ..DetectionConfig::default()
+                })
+                .await
+            })
             .await
     }
 
@@ -417,6 +430,39 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
     use crate::xp_backend::TestBackend;
+
+    #[tokio::test]
+    async fn platforms_zero_timeout_on_later_call_reuses_first_connect_cache() {
+        use crate::env_vars;
+        use crate::telemetry::platform_detection::platform_detection_env_vars;
+
+        let driver = DatabaseDriverV1::new();
+        temp_env::async_with_vars(
+            platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+            async {
+                assert_eq!(
+                    driver.platforms(Duration::ZERO).await.as_slice(),
+                    ["is_aws_lambda"]
+                );
+            },
+        )
+        .await;
+
+        temp_env::async_with_vars(
+            platform_detection_env_vars(&[(
+                env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
+                "true",
+            )]),
+            async {
+                assert_eq!(
+                    driver.platforms(Duration::ZERO).await.as_slice(),
+                    ["is_aws_lambda"],
+                    "a later zero-timeout call must reuse the first connect's cache, not re-run detectors"
+                );
+            },
+        )
+        .await;
+    }
 
     #[test]
     fn token_cache_lazy_init_succeeds() {

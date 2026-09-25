@@ -24,6 +24,7 @@ pub struct DetectionConfig {
     pub(crate) azure_metadata_base_url: String,
     pub(crate) gce_metadata_root_url: String,
     pub(crate) gce_metadata_base_url: String,
+    pub(crate) timeout: Duration,
 }
 
 impl Default for DetectionConfig {
@@ -34,12 +35,23 @@ impl Default for DetectionConfig {
             azure_metadata_base_url: "http://169.254.169.254".to_string(),
             gce_metadata_root_url: "http://metadata.google.internal".to_string(),
             gce_metadata_base_url: "http://metadata.google.internal/computeMetadata/v1".to_string(),
+            timeout: DETECTION_TIMEOUT,
         }
     }
 }
 
-/// Run all detectors concurrently with a per-detector [`DETECTION_TIMEOUT`].
+pub(crate) fn timeout_from_seconds(seconds: Option<f64>) -> Duration {
+    match seconds {
+        None => DETECTION_TIMEOUT,
+        Some(0.0) => Duration::ZERO,
+        Some(secs) => Duration::try_from_secs_f64(secs).unwrap_or(DETECTION_TIMEOUT),
+    }
+}
+
+/// Run all detectors concurrently with a per-detector `DetectionConfig::timeout`.
 ///
+/// A zero timeout runs only the environment-variable detectors; the ones that
+/// query cloud-metadata or STS endpoints are left out.
 /// Returns the names of only those detectors that succeeded. Order matches
 /// the detector list below so the serialized array is stable across runs.
 pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
@@ -57,13 +69,15 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
-    // Platform probes can run before any connection is opened, so this may be
-    // the first HTTP client in the process. reqwest picks its crypto backend at
-    // build time, so pin the provider first.
-    crate::tls::ensure_crypto_provider();
-    let http =
+    // Endpoint detectors need an HTTP client; env-only detection does not.
+    // Pin rustls first because this may be the first client in the process.
+    // `http` is declared before `detectors` so it outlives the borrowed futures.
+    let http = if config.timeout.is_zero() {
+        None
+    } else {
+        crate::tls::ensure_crypto_provider();
         match crate::tls::client::apply_http_pool_settings(reqwest::Client::builder()).build() {
-            Ok(c) => c,
+            Ok(c) => Some(c),
             Err(e) => {
                 tracing::warn!(
                     error_type = std::any::type_name_of_val(&e),
@@ -72,9 +86,10 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
                 tracing::debug!("failed to build platform detection HTTP client: {e}");
                 return vec!["disabled".to_string()];
             }
-        };
+        }
+    };
 
-    let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![
+    let mut detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![
         ("is_aws_lambda", async { aws::is_aws_lambda() }.boxed()),
         (
             "is_azure_function",
@@ -89,28 +104,33 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
             async { gcp::is_gce_cloud_run_job() }.boxed(),
         ),
         ("is_github_action", async { is_github_action() }.boxed()),
-        (
-            "has_aws_identity",
-            aws::has_aws_identity(config.caller_identity_provider.as_ref()).boxed(),
-        ),
-        (
-            "is_ec2_instance",
-            aws::is_ec2_instance(&http, config).boxed(),
-        ),
-        ("is_azure_vm", azure::is_azure_vm(&http, config).boxed()),
-        (
-            "has_azure_managed_identity",
-            azure::has_azure_managed_identity(&http, config).boxed(),
-        ),
-        ("is_gce_vm", gcp::is_gce_vm(&http, config).boxed()),
-        (
-            "has_gcp_identity",
-            gcp::has_gcp_identity(&http, config).boxed(),
-        ),
     ];
 
+    if let Some(http) = &http {
+        detectors.extend([
+            (
+                "has_aws_identity",
+                aws::has_aws_identity(config.caller_identity_provider.as_ref()).boxed(),
+            ),
+            (
+                "is_ec2_instance",
+                aws::is_ec2_instance(http, config).boxed(),
+            ),
+            ("is_azure_vm", azure::is_azure_vm(http, config).boxed()),
+            (
+                "has_azure_managed_identity",
+                azure::has_azure_managed_identity(http, config).boxed(),
+            ),
+            ("is_gce_vm", gcp::is_gce_vm(http, config).boxed()),
+            (
+                "has_gcp_identity",
+                gcp::has_gcp_identity(http, config).boxed(),
+            ),
+        ]);
+    }
+
     let results = futures::future::join_all(detectors.into_iter().map(|(name, fut)| async move {
-        let detected = tokio::time::timeout(DETECTION_TIMEOUT, fut)
+        let detected = tokio::time::timeout(config.timeout, fut)
             .await
             .unwrap_or(false);
         (name, detected)

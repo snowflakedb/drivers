@@ -356,6 +356,12 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
 
     @property
     @api_telemetry
+    def platform_detection_timeout_seconds(self) -> float | None:
+        """Seconds to wait for each cloud-metadata platform check, or ``None`` for the default."""
+        return self.config.platform_detection_timeout_seconds
+
+    @property
+    @api_telemetry
     def client_session_keep_alive(self) -> bool | None:
         """Whether to keep the session active with periodic heartbeat requests."""
         return self.config.client_session_keep_alive

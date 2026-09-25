@@ -19,6 +19,7 @@ fn test_detection_config() -> DetectionConfig {
         azure_metadata_base_url: unreachable_url.clone(),
         gce_metadata_root_url: unreachable_url.clone(),
         gce_metadata_base_url: unreachable_url,
+        timeout: DETECTION_TIMEOUT,
     }
 }
 
@@ -525,6 +526,81 @@ async fn detects_has_gcp_identity_via_metadata_service() {
             platforms,
             vec!["has_gcp_identity".to_string()],
             "expected has_gcp_identity, got {platforms:?}"
+        );
+    })
+    .await;
+}
+
+#[test]
+fn timeout_from_seconds_maps_absent_and_invalid_values() {
+    assert_eq!(timeout_from_seconds(None), DETECTION_TIMEOUT);
+    assert_eq!(timeout_from_seconds(Some(0.0)), Duration::ZERO);
+    assert_eq!(timeout_from_seconds(Some(-0.1)), DETECTION_TIMEOUT);
+    assert_eq!(timeout_from_seconds(Some(f64::NAN)), DETECTION_TIMEOUT);
+    assert_eq!(timeout_from_seconds(Some(f64::INFINITY)), DETECTION_TIMEOUT);
+    assert_eq!(timeout_from_seconds(Some(0.2)), DETECTION_TIMEOUT);
+    assert_eq!(timeout_from_seconds(Some(2.5)), Duration::from_millis(2500));
+}
+
+#[tokio::test]
+async fn zero_timeout_skips_endpoint_detectors_on_cloud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"instanceId":"i-12345"}"#))
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("imds-token"))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut cfg = test_detection_config();
+    cfg.timeout = Duration::ZERO;
+    cfg.aws_metadata_base_url = server.uri();
+    cfg.azure_metadata_base_url = server.uri();
+    cfg.gce_metadata_root_url = server.uri();
+    cfg.gce_metadata_base_url = server.uri();
+    cfg.caller_identity_provider = Arc::new(FakeCallerIdentityProvider::new(Some(
+        "arn:aws:iam::123456789012:user/alice".into(),
+    )));
+
+    temp_env::async_with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        async {
+            let platforms = detect_platforms(&cfg).await;
+            assert_eq!(
+                platforms,
+                vec!["is_aws_lambda".to_string()],
+                "zero timeout must keep env-only detectors and skip HTTP/STS, got {platforms:?}"
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn zero_timeout_skips_endpoint_detectors_out_of_cloud() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut cfg = test_detection_config();
+    cfg.timeout = Duration::ZERO;
+    cfg.aws_metadata_base_url = server.uri();
+    cfg.azure_metadata_base_url = server.uri();
+    cfg.gce_metadata_root_url = server.uri();
+    cfg.gce_metadata_base_url = server.uri();
+
+    temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+        let platforms = detect_platforms(&cfg).await;
+        assert!(
+            platforms.is_empty(),
+            "zero timeout out of cloud must not report endpoint labels, got {platforms:?}"
         );
     })
     .await;

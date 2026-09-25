@@ -412,6 +412,19 @@ class TestTimeoutPropertiesUnit:
 
         assert conn.login_timeout == 120
 
+    def test_platform_detection_timeout_seconds_read_from_config(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", platform_detection_timeout_seconds=2.5)
+
+        assert conn.platform_detection_timeout_seconds == 2.5
+
+        default_conn = Connection(user="u", account="a")
+        assert default_conn.platform_detection_timeout_seconds is None
+
+        zero_conn = Connection(user="u", account="a", platform_detection_timeout_seconds=0)
+        assert zero_conn.platform_detection_timeout_seconds == 0
+
     def test_network_timeout_fans_out_to_query_and_request_timeout(self, mock_db_api):
         from snowflake.connector.connection import Connection
 

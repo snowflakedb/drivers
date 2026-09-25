@@ -244,6 +244,11 @@ class ConnectionConfig(ConnectionConfigMixin):
     password: str | None = None
     """Login password. Required when authenticator=SNOWFLAKE_PASSWORD"""
 
+    platform_detection_timeout_seconds: float | None = None
+    """Python-only. Seconds to wait for each cloud-metadata platform check (absent = 0.2). 0 skips HTTP/STS endpoint
+    checks; env-only detectors still run.
+    """
+
     port: int | None = None
     """Server port number"""
 

@@ -215,6 +215,8 @@ pub mod param_names {
     // ── Timeout configuration ──────────────────────────────────────────
     pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
     pub const LOGIN_TIMEOUT: ParamKey = ParamKey("login_timeout");
+    pub const PLATFORM_DETECTION_TIMEOUT_SECONDS: ParamKey =
+        ParamKey("platform_detection_timeout_seconds");
     pub const QUERY_TIMEOUT: ParamKey = ParamKey("query_timeout");
     pub const REQUEST_TIMEOUT: ParamKey = ParamKey("request_timeout");
     pub const RETRY_TIMEOUT: ParamKey = ParamKey("retry_timeout");
@@ -1923,6 +1925,21 @@ static PARAM_DEFS: &[ParamDef] = &[
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)
         .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::PLATFORM_DETECTION_TIMEOUT_SECONDS.as_str())
+        .value_type(ValueType::Double)
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "Python-only. Seconds to wait for each cloud-metadata platform check \
+             (absent = 0.2). 0 skips HTTP/STS endpoint checks; env-only detectors \
+             still run.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Python))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str())
@@ -3825,6 +3842,24 @@ mod tests {
         assert!(d.is_visible_to(Wrapper::Odbc));
         assert!(!d.is_visible_to(Wrapper::Python));
         assert!(!d.is_visible_to(Wrapper::Jdbc));
+    }
+
+    #[test]
+    fn platform_detection_timeout_seconds_is_python_only_connection_double() {
+        let r = registry();
+        assert!(r.resolve("platform_detection_timeout_seconds").is_none());
+        let d = r
+            .resolve_for(Wrapper::Python, "platform_detection_timeout_seconds")
+            .expect("platform_detection_timeout_seconds should resolve for Python");
+        assert_eq!(d.canonical_name, "platform_detection_timeout_seconds");
+        assert_eq!(d.scopes, &[ParamScope::Connection]);
+        assert!(d.used_at_connect);
+        assert!(!d.mutable_after_connect);
+        assert_eq!(d.value_type, ValueType::Double);
+        assert!(d.is_visible_to(Wrapper::Python));
+        assert!(!d.is_visible_to(Wrapper::Odbc));
+        assert!(!d.is_visible_to(Wrapper::Jdbc));
+        assert!(!d.is_visible_to(Wrapper::NodeJs));
     }
 
     #[test]

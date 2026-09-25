@@ -39,6 +39,7 @@ use crate::rest::snowflake::{
 };
 use crate::sensitive::SensitiveString;
 use crate::stage_binding::{AtomicStageState, StageState};
+use crate::telemetry::platform_detection::timeout_from_seconds;
 use crate::tls::config::ProxyConfig;
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
 use std::time::Duration;
@@ -308,7 +309,12 @@ impl DatabaseDriverV1 {
                     let port = resolved.get_int(param_names::PORT);
                     let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
-                    client_info.platforms = self.platforms().await.clone();
+                    client_info.platforms = self
+                        .platforms(timeout_from_seconds(
+                            resolved.get_double(param_names::PLATFORM_DETECTION_TIMEOUT_SECONDS),
+                        ))
+                        .await
+                        .clone();
                     client_info.os_details = self.os_details().cloned();
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();

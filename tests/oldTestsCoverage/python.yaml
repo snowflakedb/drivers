@@ -492,9 +492,17 @@ tests:
   - test_name: test_okta_url
     ud_tests: []
   - test_name: test_platform_detection_timeout
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
+      - python/tests/unit/test_connection.py::TestTimeoutPropertiesUnit::test_platform_detection_timeout_seconds_read_from_config
+      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
+    notes: "UD accepts the parameter, forwards it to core, and exposes it as Connection.platform_detection_timeout_seconds."
   - test_name: test_platform_detection_zero_timeout
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_on_cloud
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_out_of_cloud
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
+    notes: "UD asserts the skip in core with mock servers whose stubs expect zero requests, rather than patching the six Python detector functions."
   - test_name: test_privatelink
     ud_tests: []
   - test_name: test_privatelink_ocsp_url_concurrent
@@ -1673,9 +1681,17 @@ tests:
   - test_name: test_okta_url
     ud_tests: []
   - test_name: test_platform_detection_timeout
-    ud_tests: []
+    ud_tests:
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
+      - python/tests/unit/test_connection.py::TestTimeoutPropertiesUnit::test_platform_detection_timeout_seconds_read_from_config
+      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
+    notes: "UD accepts the parameter, forwards it to core, and exposes it as Connection.platform_detection_timeout_seconds."
   - test_name: test_platform_detection_zero_timeout
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_on_cloud
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_out_of_cloud
+      - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
+    notes: "UD asserts the skip in core with mock servers whose stubs expect zero requests, rather than patching the six Python detector functions."
   - test_name: test_privatelink
     ud_tests: []
   - test_name: test_privatelink_ocsp_url_creation
@@ -3699,67 +3715,118 @@ tests:
     ud_tests: []
   unit/test_detect_platforms.py:
   - test_name: test_aws_ec2_empty_instance_document
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::rejects_is_ec2_instance_when_document_lacks_instance_id
+      - sf_core/src/telemetry/platform_detection/tests.rs::rejects_is_ec2_instance_when_document_returns_non_2xx
+    notes: "UD rejects an identity document missing instanceId and a non-2xx document response; the old test used an empty body."
   - test_name: test_aws_identity_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/aws.rs::tests::accepts_iam_user_and_assumed_role
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_has_aws_identity_when_provider_returns_wif_arn
+    notes: "UD splits ARN acceptance from the end-to-end label; the old test parametrizes IAM-user and assumed-role ARNs."
   - test_name: test_aws_lambda_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_aws_lambda_from_env
   - test_name: test_aws_lambda_empty_task_root
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_no_platform_detected
+      - sf_core/src/telemetry/platform_detection/tests.rs::empty_env_value_does_not_trigger_detector
+    notes: "The old test runs with LAMBDA_TASK_ROOT unset. UD covers unset plus the empty-string case through the shared env_non_empty helper."
   - test_name: test_azure_function_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_azure_function_from_env
   - test_name: test_azure_function_missing_identity_endpoint
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_azure_function_from_env
+    notes: "The old test is Azure Function env without IDENTITY_HEADER, so it still reports is_azure_function and not has_azure_managed_identity. detects_is_azure_function_from_env is that case: function env only, no identity header."
   - test_name: test_azure_function_with_managed_identity
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_azure_function_from_env
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_has_azure_managed_identity_via_functions_env
   - test_name: test_azure_managed_identity_no_token_endpoint
     ud_tests: []
+    notes: "Not mapped. The old assertion checks that 'azure_managed_identity' is absent, but the label is 'has_azure_managed_identity', so it holds regardless of behavior. UD covers the positive path in detects_has_azure_managed_identity_via_metadata."
   - test_name: test_azure_vm_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_azure_vm_with_metadata_header
   - test_name: test_detect_platforms_executes_in_parallel
     ud_tests: []
+    notes: "Not mapped. UD drives the detectors through futures::future::join_all, so concurrency is structural rather than asserted; there is no UD equivalent of the 2x-sleep wall-clock bound."
   - test_name: test_ec2_instance_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_ec2_instance_via_imdsv2
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_ec2_instance_via_imdsv1_when_token_request_fails
   - test_name: test_gce_cloud_run_job_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_gce_cloud_run_job_from_env
   - test_name: test_gce_cloud_run_job_missing_cloud_run_job
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_no_platform_detected
+    notes: "UD's is_gce_cloud_run_job reads only environment variables, so its absence is covered by the no-signal case."
   - test_name: test_gce_cloud_run_service_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_gce_cloud_run_service_from_env
   - test_name: test_gce_cloud_run_service_missing_k_service
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_no_platform_detected
+    notes: "UD's is_gce_cloud_run_service reads only environment variables, so its absence is covered by the no-signal case."
   - test_name: test_gce_vm_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_gce_vm_via_metadata_flavor_header
   - test_name: test_gcp_identity_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_has_gcp_identity_via_metadata_service
   - test_name: test_github_actions_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_is_github_action_from_env
   - test_name: test_github_actions_missing_environment_variable
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::empty_env_value_does_not_trigger_detector
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_no_platform_detected
   - test_name: test_invalid_arn_handling
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/aws.rs::tests::rejects_malformed_arns
+    notes: "UD asserts the acceptance rule (only iam user/ and sts assumed-role/ with a non-empty suffix) over 11 malformed shapes rather than enumerating the 14 resource types the old test parametrizes; the same rule rejects all of them."
   - test_name: test_missing_arn_handling
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::rejects_when_sts_returns_no_arn
   - test_name: test_multiple_platforms_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::detects_multiple_env_platforms_simultaneously
+    notes: "Partial. UD asserts is_aws_lambda, is_gce_cloud_run_job and is_github_action together; the old test also expects has_aws_identity from its AWS fixture, which UD covers separately in detects_has_aws_identity_when_provider_returns_wif_arn."
   - test_name: test_no_platforms_detected
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_no_platform_detected
   - test_name: test_platform_detection_completes_within_timeout
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::drops_detectors_when_timeout_reached
+    notes: "UD asserts the per-detector timeout deterministically with a paused tokio clock instead of bounding wall-clock elapsed time."
   - test_name: test_platform_detection_default_timeout_is_200ms
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
+    notes: "UD asserts that an absent parameter resolves to the 200ms DETECTION_TIMEOUT constant."
   - test_name: test_platform_detection_disable_env_var_values
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::disabled_flag_accepts_truthy_values
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_disabled_when_env_flag_true
+      - sf_core/src/telemetry/platform_detection/tests.rs::returns_empty_when_disable_flag_is_false
+    notes: "Partial. The old test expects '1' NOT to disable detection; UD treats '1' as disabling alongside case-insensitive 'true', so that one parametrized case is a behavior difference rather than covered."
   - test_name: test_platform_detection_disabled_overrides_all_other_detection
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::disabled_flag_wins_over_other_env_signals
   - test_name: test_platform_detection_suppresses_all_library_logs
     ud_tests: []
+    notes: "Not applicable. The suppression targets the Python urllib3 and botocore loggers; UD runs detection in Rust through reqwest."
   - test_name: test_timeout_handling
     ud_tests: []
+    notes: "Not covered. The old test asserts the is_azure_vm_timeout, is_gce_vm_timeout, has_gcp_identity_timeout and has_azure_managed_identity_timeout labels; UD drops a timed-out detector instead of emitting a label, so those labels do not exist. The drop itself is covered by drops_detectors_when_timeout_reached."
   - test_name: test_zero_platform_detection_timeout_disables_endpoints_detection_on_cloud
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_on_cloud
+    notes: "UD points every metadata URL at a mock server whose stubs expect zero requests, then asserts the environment label survives."
   - test_name: test_zero_platform_detection_timeout_disables_endpoints_detection_out_of_cloud
-    ud_tests: []
+    ud_tests:
+      - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_out_of_cloud
   unit/test_easy_logging.py:
   - test_name: test_config_file_inabsolute_path
     ud_tests: []

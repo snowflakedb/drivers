@@ -74,6 +74,12 @@ class TestFromKwargs:
         assert config.token_file_path == "/tmp/pat.token"
         assert "token_file_path" not in config._extra
 
+    def test_platform_detection_timeout_seconds_is_a_known_field(self):
+        config = ConnectionConfig.from_kwargs(platform_detection_timeout_seconds=0)
+        assert config.platform_detection_timeout_seconds == 0
+        assert "platform_detection_timeout_seconds" not in config._extra
+        assert config.to_options()["platform_detection_timeout_seconds"] == 0
+
     def test_unknown_keys_go_to_extra(self):
         config = ConnectionConfig.from_kwargs(user="u", custom_param="value")
         assert config.user == "u"
