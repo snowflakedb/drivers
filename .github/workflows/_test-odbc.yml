@@ -260,8 +260,10 @@ jobs:
           }
 
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
-          # Per-target runtime + Catch2 discovery dirs isolate z-applocal and
-          # POST_BUILD *_tests.cmake writes, so ARM64 can use full $NPROC like x64.
+          # Per-target runtime dirs isolate z-applocal destinations. Catch2
+          # discovery is PRE_TEST (not POST_BUILD). ARM64 Ninja uses a 1-slot
+          # link pool so vs_link_exe/mt.exe/z-applocal do not run concurrently.
+          # cmake --build stays --parallel $NPROC (compiles still parallel).
           $parallelism = $NPROC
           Push-Location odbc_tests
           try {

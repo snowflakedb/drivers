@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 4.0)
 project(odbc_tests)
 
+# Windows ARM64: each Ninja link edge is
+#   cmake -E vs_link_exe (lld-link + mt.exe) && vcpkg z-applocal && CatchAddTests
+# #2094 isolated RUNTIME_OUTPUT_DIRECTORY; #2168 isolated Catch2 *_tests.cmake.
+# Parallel=2 still flakes after both: mt.exe / z-applocal / CatchAddTests POSTs
+# share the same edge, and two edges run at once ("being used by another process").
+# Serialize links only. Compiles stay at cmake --build --parallel $NPROC.
+# Must be set before any targets. Ninja job pools only.
+if(WIN32 AND CMAKE_GENERATOR STREQUAL "Ninja")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|ARM64EC")
+    set_property(GLOBAL PROPERTY JOB_POOLS odbc_win_arm64_link=1)
+    set(CMAKE_JOB_POOL_LINK odbc_win_arm64_link)
+  endif()
+endif()
+
+# Catch2 POST_BUILD runs each test exe during that link edge. PRE_TEST delays
+# discovery until ctest (run_tests_windows.ps1 / odbc_tests job). Linux/mac
+# keep the default POST_BUILD.
+if(WIN32)
+  set(CMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+endif()
+
 enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -53,12 +74,10 @@ function(add_odbc_test name)
     target_link_libraries(${name} PRIVATE ${CMAKE_DL_LIBS})
   endif()
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/../odbc/include)
-  # Windows: Catch2 POST_BUILD writes ${CMAKE_CURRENT_BINARY_DIR}/${target}-<hash>_tests.cmake
-  # as a BYPRODUCT of the link edge, and vcpkg z-applocal copies DLLs next to the
-  # exe. #2094 isolated RUNTIME_OUTPUT_DIRECTORY but left discovery cmake files in
-  # the shared tests/e2e dir (~200 binaries), so ARM64 Ninja still hit
-  # "being used by another process". Catch2 has no CTEST_FILE_DIR; point
-  # CMAKE_CURRENT_BINARY_DIR at the per-target dir for discover only.
+  # Windows: vcpkg z-applocal copies DLLs next to the exe. Isolate each test's
+  # output dir so those copies (and import libs / PDBs) do not share tests/e2e/.
+  # Discovery is PRE_TEST (see CMAKE_CATCH_DISCOVER_TESTS_DISCOVERY_MODE above);
+  # WORKING_DIRECTORY must still be the per-target dir so ctest finds the DLLs.
   if(WIN32)
     set(_odbc_test_outdir "${CMAKE_CURRENT_BINARY_DIR}/${name}")
     set_target_properties(${name} PROPERTIES
@@ -67,17 +86,19 @@ function(add_odbc_test name)
       RUNTIME_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
       RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
       RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}"
+      ARCHIVE_OUTPUT_DIRECTORY "${_odbc_test_outdir}"
+      ARCHIVE_OUTPUT_DIRECTORY_DEBUG "${_odbc_test_outdir}"
+      ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
+      ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
+      ARCHIVE_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}"
       PDB_OUTPUT_DIRECTORY "${_odbc_test_outdir}"
       PDB_OUTPUT_DIRECTORY_DEBUG "${_odbc_test_outdir}"
       PDB_OUTPUT_DIRECTORY_RELEASE "${_odbc_test_outdir}"
       PDB_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_odbc_test_outdir}"
       PDB_OUTPUT_DIRECTORY_MINSIZEREL "${_odbc_test_outdir}")
     file(MAKE_DIRECTORY "${_odbc_test_outdir}")
-    set(_odbc_test_saved_bindir "${CMAKE_CURRENT_BINARY_DIR}")
-    set(CMAKE_CURRENT_BINARY_DIR "${_odbc_test_outdir}")
     catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS
       WORKING_DIRECTORY "${_odbc_test_outdir}")
-    set(CMAKE_CURRENT_BINARY_DIR "${_odbc_test_saved_bindir}")
   else()
     catch_discover_tests(${name} TEST_PREFIX "${name}: " ADD_TAGS_AS_LABELS)
   endif()
