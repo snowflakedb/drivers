@@ -33,6 +33,17 @@ Feature: TIMESTAMP_NTZ type support
       | epoch        | '1970-01-01 00:00:00'::TIMESTAMP_NTZ                                              | 1970-01-01 00:00:00                         |
       | microseconds | '2024-01-15 10:30:00.123456'::TIMESTAMP_NTZ                                       | 2024-01-15 10:30:00.123456                  |
 
+  Scenario Outline: should handle timestamp_ntz precision <scale>
+    Given Snowflake client is logged in
+    When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(<scale>)" is executed
+    Then Result should contain timestamps [<expected>]
+    And Values should not have timezone info
+
+    Examples:
+      | scale | expected                |
+      | 0     | 2024-01-15 10:30:00     |
+      | 3     | 2024-01-15 10:30:00.123 |
+
   @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select sub-second timestamp_ntz values before epoch
     Given Snowflake client is logged in
@@ -116,6 +127,14 @@ Feature: TIMESTAMP_NTZ type support
     When Timestamp values are bulk-inserted using multirow binding
     And Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
     Then SELECT should return the inserted values in ascending order
+
+  Scenario: should handle timestamp_ntz precision when inserting using parameter binding
+    Given Snowflake client is logged in
+    And Table with TIMESTAMP_NTZ columns of precision 0 and 3 exists
+    When A nanosecond timestamp is inserted into every column using binding
+    And Query "SELECT * FROM <table>" is executed
+    Then Each column should contain the timestamp truncated to its precision
+    And Values should not have timezone info
 
   # =========================================================================== #
   #                            Type mapping aliases                             #

@@ -11,13 +11,15 @@ import {
 import { setSessionParameterForTest } from '../../utils/query.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
-type ExpectedNtzValue = Date | null | { date: Date | null; nanoSeconds?: number };
+type ExpectedNtzValue = Date | null | { date: Date | null; nanoSeconds?: number; scale?: number };
 
 function expectNtzDates(values: unknown[], expected: ExpectedNtzValue[]): void {
   expect(values).toHaveLength(expected.length);
   expected.forEach((entry, index) => {
-    const { date, nanoSeconds } =
-      entry === null || entry instanceof Date ? { date: entry, nanoSeconds: undefined } : entry;
+    const { date, nanoSeconds, scale } =
+      entry === null || entry instanceof Date
+        ? { date: entry, nanoSeconds: undefined, scale: undefined }
+        : entry;
     const value = values[index];
     if (date === null) {
       expect(value).toBeNull();
@@ -29,6 +31,9 @@ function expectNtzDates(values: unknown[], expected: ExpectedNtzValue[]): void {
     expect(actual.getTimezone()).toBe('UTC');
     if (nanoSeconds !== undefined) {
       expect(actual.getNanoSeconds()).toBe(nanoSeconds);
+    }
+    if (scale !== undefined) {
+      expect(actual.getScale()).toBe(scale);
     }
   });
 }
@@ -91,8 +96,35 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
 
       // Then Result should contain timestamps <expected_values>
       void 0;
+
       // And Values should not have timezone info
       expectNtzDates(Object.values(rows[0]), expected);
+    });
+
+    it.each<{ scale: number; expected: ExpectedNtzValue }>([
+      {
+        scale: 0,
+        expected: { date: dateAtUtc('2024-01-15T10:30:00'), nanoSeconds: 0, scale: 0 },
+      },
+      {
+        scale: 3,
+        expected: { date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123000000, scale: 3 },
+      },
+    ])('should handle timestamp_ntz precision $scale', async ({ scale, expected }) => {
+      // Given Snowflake client is logged in
+      void connection;
+
+      // When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(<scale>)" is executed
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(${scale})`,
+      );
+
+      // Then Result should contain timestamps [<expected>]
+      void 0;
+
+      // And Values should not have timezone info
+      expectNtzDates(Object.values(rows[0]), [expected]);
     });
 
     it('should select sub-second timestamp_ntz values before epoch', async () => {
@@ -232,6 +264,34 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
           rows.map((row) => row.COL),
           [dateAtUtc('2024-01-15T10:30:00'), dateAtUtc('2024-06-20T14:45:30'), null],
         );
+      });
+
+      it('should handle timestamp_ntz precision when inserting using parameter binding', async () => {
+        // Given Snowflake client is logged in
+        void connection;
+
+        // And Table with TIMESTAMP_NTZ columns of precision 0 and 3 exists
+        const tableName = await createTemporaryTable(
+          connection,
+          'COL0 TIMESTAMP_NTZ(0), COL3 TIMESTAMP_NTZ(3)',
+        );
+
+        // When A nanosecond timestamp is inserted into every column using binding
+        await executeAsync(connection, `INSERT INTO ${tableName} VALUES (?, ?)`, {
+          binds: ['2024-01-15 10:30:00.123456789', '2024-01-15 10:30:00.123456789'],
+        });
+
+        // And Query "SELECT * FROM <table>" is executed
+        const { rows } = await executeAsync(connection, `SELECT * FROM ${tableName}`);
+
+        // Then Each column should contain the timestamp truncated to its precision
+        void 0;
+
+        // And Values should not have timezone info
+        expectNtzDates(Object.values(rows[0]), [
+          { date: dateAtUtc('2024-01-15T10:30:00'), nanoSeconds: 0, scale: 0 },
+          { date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123000000, scale: 3 },
+        ]);
       });
     });
 
