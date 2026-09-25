@@ -105,6 +105,8 @@ impl BatchConverter {
             return Ok(());
         }
 
+        list.grow_by(py, take)?;
+
         let start_row = self.row_index;
         for col in 0..self.columns.len() {
             for row_offset in 0..take {
@@ -166,13 +168,12 @@ impl<'py> BatchPyList<'py> {
     ) -> PyResult<()> {
         debug_assert!(col < self.columns);
         let row = self.column_fills[col];
-        if row == self.rows {
-            self.append_empty_row(py)?;
-        }
+        debug_assert!(row < self.rows);
 
-        // SAFETY: `row` identifies an existing row exclusively owned by this
-        // builder. Tuple slots for this column are still NULL because each
-        // column advances once per successful call.
+        // SAFETY: `grow_by` allocated this index before cells were written.
+        // The row is exclusively owned by this builder. Tuple slots for this
+        // column are still NULL because each column advances once per successful
+        // call.
         unsafe {
             let row_obj = ffi::PyList_GET_ITEM(self.list.as_ptr(), row as ffi::Py_ssize_t);
             place_cell(py, &self.row_shape, row_obj, col, value.into_ptr())?;
@@ -186,21 +187,27 @@ impl<'py> BatchPyList<'py> {
         self.list.clone().unbind()
     }
 
-    fn append_empty_row(&mut self, py: Python<'py>) -> PyResult<()> {
-        debug_assert!(self.columns <= ffi::Py_ssize_t::MAX as usize);
-        let row_obj = alloc_empty_row(py, &self.row_shape, self.columns as ffi::Py_ssize_t)?;
-        // SAFETY: `row_obj` is a new owned tuple (NULL slots) or dict. The list is
-        // exclusively owned by this builder. PyList_Append adds a reference; the
-        // local reference is released after the append. On append failure, tuple
-        // slots are padded before releasing the row.
-        unsafe {
-            if ffi::PyList_Append(self.list.as_ptr(), row_obj) < 0 {
-                discard_row(&self.row_shape, row_obj, 0, self.columns);
+    fn grow_by(&mut self, py: Python<'py>, take: usize) -> PyResult<()> {
+        if take == 0 {
+            return Ok(());
+        }
+
+        let batch = alloc_empty_rows(py, take, &self.row_shape, self.columns as ffi::Py_ssize_t)?;
+        if self.rows == 0 {
+            // SAFETY: `batch` is a new owned `PyList` from `PyList_New`.
+            self.list = unsafe { Bound::from_owned_ptr(py, batch) }.cast_into()?;
+        } else {
+            let start = self.rows as ffi::Py_ssize_t;
+            // SAFETY: `self.list` is exclusively owned. SetSlice at `[start:start]`
+            // inserts `batch`'s items. `batch` is a new owned list; SetSlice
+            // increfs the rows, then this DECREF releases the temporary list.
+            let rc = unsafe { ffi::PyList_SetSlice(self.list.as_ptr(), start, start, batch) };
+            unsafe { ffi::Py_DECREF(batch) };
+            if rc < 0 {
                 return Err(PyErr::fetch(py));
             }
-            ffi::Py_DECREF(row_obj);
         }
-        self.rows += 1;
+        self.rows += take;
         Ok(())
     }
 
@@ -208,8 +215,8 @@ impl<'py> BatchPyList<'py> {
         if !matches!(&*self.row_shape, RowShape::Tuple) {
             return;
         }
-        // SAFETY: every new list item was created by `append_empty_row` as a
-        // tuple exclusively owned by this builder. Unfilled slots are NULL.
+        // SAFETY: every new list item was created by `grow_by` as a tuple
+        // exclusively owned by this builder. Unfilled slots are NULL.
         unsafe {
             let none = ffi::Py_None();
             for (col, filled) in self.column_fills.iter_mut().enumerate() {
@@ -228,6 +235,39 @@ impl Drop for BatchPyList<'_> {
     fn drop(&mut self) {
         self.fill_null_slots();
     }
+}
+
+fn alloc_empty_rows(
+    py: Python<'_>,
+    take: usize,
+    shape: &RowShape,
+    num_cols_ssize: ffi::Py_ssize_t,
+) -> PyResult<*mut ffi::PyObject> {
+    let Ok(take_ssize) = ffi::Py_ssize_t::try_from(take) else {
+        return Err(pyo3::exceptions::PyOverflowError::new_err(
+            "batch is too large to materialize as a Python list",
+        ));
+    };
+    // SAFETY: `PyList_New` returns a new owned list of `take` NULL slots, or NULL.
+    let batch = unsafe { ffi::PyList_New(take_ssize) };
+    if batch.is_null() {
+        return Err(PyErr::fetch(py));
+    }
+    for i in 0..take {
+        match alloc_empty_row(py, shape, num_cols_ssize) {
+            Ok(row_obj) => {
+                // SAFETY: slot `i` is still NULL. SET_ITEM steals `row_obj`.
+                unsafe { ffi::PyList_SET_ITEM(batch, i as ffi::Py_ssize_t, row_obj) };
+            }
+            Err(err) => {
+                // SAFETY: filled slots are owned rows; remaining slots are NULL.
+                // list dealloc uses XDECREF, so a partial list is safe to release.
+                unsafe { ffi::Py_DECREF(batch) };
+                return Err(err);
+            }
+        }
+    }
+    Ok(batch)
 }
 
 fn alloc_empty_row(

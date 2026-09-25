@@ -194,6 +194,58 @@ mod tests {
     }
 
     #[test]
+    fn fetch_all_concatenates_arrow_batches() {
+        Python::initialize();
+        let schema = boolean_schema();
+        let first = boolean_batch(vec![Some(true), Some(false)], &schema);
+        let second = boolean_batch(vec![None, Some(true)], &schema);
+        let mut iterator = new_iterator(stream_ptr_from_batches(vec![first, second], schema));
+
+        Python::attach(|py| {
+            let rows = iterator.fetch_all(py).unwrap();
+            let rows = rows.bind(py);
+            assert_eq!(rows.len(), 4);
+            assert_eq!(
+                rows.get_item(0).unwrap().extract::<(bool,)>().unwrap(),
+                (true,)
+            );
+            assert_eq!(
+                rows.get_item(1).unwrap().extract::<(bool,)>().unwrap(),
+                (false,)
+            );
+            assert!(rows.get_item(2).unwrap().get_item(0).unwrap().is_none());
+            assert_eq!(
+                rows.get_item(3).unwrap().extract::<(bool,)>().unwrap(),
+                (true,)
+            );
+        });
+    }
+
+    #[test]
+    fn fetch_many_spans_arrow_batches() {
+        Python::initialize();
+        let schema = boolean_schema();
+        let first = boolean_batch(vec![Some(true)], &schema);
+        let second = boolean_batch(vec![Some(false), None], &schema);
+        let mut iterator = new_iterator(stream_ptr_from_batches(vec![first, second], schema));
+
+        Python::attach(|py| {
+            let rows = iterator.fetch_many(py, 3).unwrap();
+            let rows = rows.bind(py);
+            assert_eq!(rows.len(), 3);
+            assert_eq!(
+                rows.get_item(0).unwrap().extract::<(bool,)>().unwrap(),
+                (true,)
+            );
+            assert_eq!(
+                rows.get_item(1).unwrap().extract::<(bool,)>().unwrap(),
+                (false,)
+            );
+            assert!(rows.get_item(2).unwrap().get_item(0).unwrap().is_none());
+        });
+    }
+
+    #[test]
     fn fetch_many_returns_up_to_size() {
         Python::initialize();
         let schema = boolean_schema();
