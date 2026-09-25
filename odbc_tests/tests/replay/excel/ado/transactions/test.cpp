@@ -10,6 +10,9 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
+// SNOW-4169173: retry 57014 on this replay's 30s query timeout (CI warehouse).
+#define SQLExecDirect sql_exec_direct_retry_57014
+
 TEST_CASE("Replay: excel vba_ado transactions", "[excel][vba_ado][transactions]") {
   auto config = DataSourceConfig::Snowflake().install();
 

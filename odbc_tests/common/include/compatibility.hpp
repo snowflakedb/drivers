@@ -298,16 +298,25 @@ class PinDriverManagerEncoding {
 // (x86/x64) occasionally returns HYT00 on a later SQLDriverConnect in the
 // same replay while earlier connects succeeded. Retry the connect; do not
 // change product login-timeout defaults (SNOW-4160000).
-inline bool odbc_dbc_sqlstate_is(SQLHDBC dbc, const char* expected) {
+//
+// Excel ADO replays record SQL_ATTR_QUERY_TIMEOUT=30. Required Driver CI
+// occasionally returns 57014 (warehouse/statement timeout) on SQLExecDirect
+// (GENERATOR 12500 in row_array_fetch; INSERT/DDL in transactions). Retry
+// the exec; do not change product warehouse timeout defaults (SNOW-4169173).
+inline bool odbc_handle_sqlstate_is(SQLSMALLINT handle_type, SQLHANDLE handle, const char* expected) {
   SQLCHAR state[8] = {};
   SQLCHAR message[256] = {};
   SQLINTEGER native = 0;
   SQLSMALLINT message_len = 0;
-  const SQLRETURN diag = SQLGetDiagRec(SQL_HANDLE_DBC, dbc, 1, state, &native, message, sizeof(message), &message_len);
+  const SQLRETURN diag = SQLGetDiagRec(handle_type, handle, 1, state, &native, message, sizeof(message), &message_len);
   if (diag != SQL_SUCCESS && diag != SQL_SUCCESS_WITH_INFO) {
     return false;
   }
   return std::strncmp(reinterpret_cast<const char*>(state), expected, 5) == 0;
+}
+
+inline bool odbc_dbc_sqlstate_is(SQLHDBC dbc, const char* expected) {
+  return odbc_handle_sqlstate_is(SQL_HANDLE_DBC, dbc, expected);
 }
 
 inline SQLRETURN sql_driver_connect_retry_hyt00(SQLHDBC connection_handle, SQLHWND window_handle,
@@ -324,6 +333,23 @@ inline SQLRETURN sql_driver_connect_retry_hyt00(SQLHDBC connection_handle, SQLHW
     }
     if (attempt + 1 == kMaxAttempts || connection_handle == SQL_NULL_HDBC ||
         !odbc_dbc_sqlstate_is(connection_handle, "HYT00")) {
+      return ret;
+    }
+  }
+  return ret;
+}
+
+inline SQLRETURN sql_exec_direct_retry_57014(SQLHSTMT statement_handle, SQLCHAR* statement_text,
+                                             SQLINTEGER text_length) {
+  constexpr int kMaxAttempts = 3;
+  SQLRETURN ret = SQL_ERROR;
+  for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    ret = SQLExecDirect(statement_handle, statement_text, text_length);
+    if (SQL_SUCCEEDED(ret)) {
+      return ret;
+    }
+    if (attempt + 1 == kMaxAttempts || statement_handle == SQL_NULL_HSTMT ||
+        !odbc_handle_sqlstate_is(SQL_HANDLE_STMT, statement_handle, "57014")) {
       return ret;
     }
   }
