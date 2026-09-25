@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed @odbc
+@python @jdbc @core_not_needed @odbc @dotnet
 Feature: GEOMETRY type support
   # Snowflake GEOMETRY type represents geospatial data in a planar coordinate system.
   # Values are returned as strings by default (GeoJSON format).
@@ -12,7 +12,7 @@ Feature: GEOMETRY type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario Outline: should select <shape> geometry literal
     Given Snowflake client is logged in
     When Query "SELECT <query_value>" is executed
@@ -65,7 +65,7 @@ Feature: GEOMETRY type support
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should download geometry data in multiple chunks
     # skip_for_json_result_set
     Given Snowflake client is logged in
