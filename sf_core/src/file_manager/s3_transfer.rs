@@ -4287,13 +4287,9 @@ mod tests {
     /// inline abort never runs.
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_aborts_when_the_operation_is_cancelled() {
-        use std::sync::Arc;
-        use tokio::sync::Notify;
-
-        let mock = MockServer::start().await;
+        let mock = Arc::new(MockServer::start().await);
         let aborts = Arc::new(AtomicUsize::new(0));
-        // Lets the cancel land while a part is genuinely in flight.
-        let part_started = Arc::new(Notify::new());
+        let mock_for_trigger = Arc::clone(&mock);
 
         Mock::given(method("POST"))
             .and(query_param("uploads", ""))
@@ -4301,11 +4297,9 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let started = part_started.clone();
         Mock::given(method("PUT"))
             .and(query_param("uploadId", "test-upload-id"))
             .respond_with(move |_: &Request| {
-                started.notify_one();
                 ResponseTemplate::new(200)
                     .insert_header("etag", "\"part-etag\"")
                     .set_delay(Duration::from_secs(30))
@@ -4325,9 +4319,23 @@ mod tests {
 
         let stage = mp_stage(mock.uri());
         let policy = base_policy();
-        let trigger = {
-            let part_started = part_started.clone();
-            async move { part_started.notified().await }
+        let trigger = async move {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let started = mock_for_trigger
+                        .received_requests()
+                        .await
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|request| request.method.as_str() == "PUT");
+                    if started {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("UploadPart PUT should start before cancellation");
         };
 
         let outcome = crate::apis::operation_ctx::cancelled_by(trigger, |scope| {

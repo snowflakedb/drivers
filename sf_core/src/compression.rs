@@ -1,8 +1,9 @@
 use crate::file_manager::types::ByteSource;
 use flate2::{Compression, GzBuilder};
 use snafu::{Location, ResultExt, Snafu};
-use std::io::{BufWriter, Cursor, Read, Write};
+use std::io::{BufWriter, Cursor, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tempfile::{NamedTempFile, TempPath};
 
 // 64 KiB read buffer for streaming the source into the gzip encoder.
@@ -45,19 +46,16 @@ pub fn compress_to_tempfile(
         ByteSource::Bytes(b) => Box::new(Cursor::new(b.as_ref())),
     };
 
-    let temp_file = match temp_dir {
-        Some(dir) => {
-            std::fs::create_dir_all(dir).context(IoFailedSnafu {
-                operation: "creating PUT compression temp directory",
-            })?;
-            NamedTempFile::new_in(dir).context(IoFailedSnafu {
-                operation: "creating gzip tempfile",
-            })?
-        }
-        None => NamedTempFile::new().context(IoFailedSnafu {
-            operation: "creating gzip tempfile",
-        })?,
-    };
+    if let Some(dir) = temp_dir {
+        std::fs::create_dir_all(dir).context(IoFailedSnafu {
+            operation: "creating PUT compression temp directory",
+        })?;
+    }
+    // Windows CI (AV / Defender) can return PermissionDenied on a brand-new
+    // tempfile path. Retry a few times rather than failing the PUT.
+    let temp_file = create_gzip_named_tempfile(temp_dir).context(IoFailedSnafu {
+        operation: "creating gzip tempfile",
+    })?;
 
     let mut buf = vec![0u8; GZIP_CHUNK_SIZE_IN_BYTES];
     {
@@ -90,6 +88,27 @@ pub fn compress_to_tempfile(
 
     let temp_path = temp_file.into_temp_path();
     Ok((temp_path.to_path_buf(), temp_path))
+}
+
+fn create_gzip_named_tempfile(temp_dir: Option<&Path>) -> std::io::Result<NamedTempFile> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let result = match temp_dir {
+            Some(dir) => NamedTempFile::new_in(dir),
+            None => NamedTempFile::new(),
+        };
+        match result {
+            Ok(file) => return Ok(file),
+            Err(err) if err.kind() == ErrorKind::PermissionDenied => {
+                if attempts >= 5 {
+                    return Err(err);
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]

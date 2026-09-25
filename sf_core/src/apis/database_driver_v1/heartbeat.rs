@@ -336,7 +336,21 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         );
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let n = server
+                    .received_requests()
+                    .await
+                    .map(|reqs| reqs.len())
+                    .unwrap_or(0);
+                if n >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("heartbeat task should POST /session/heartbeat at least twice");
         handle.cancel_and_wait().await;
     }
 

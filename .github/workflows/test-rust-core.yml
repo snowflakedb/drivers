@@ -342,18 +342,18 @@ jobs:
       # "not found *.profraw files". The shell guard checks first and emits a clean
       # skip message instead.
       #
-      # Scoping the report to `--package sf_core ${{ matrix.cargo_flags }}` mirrors the
-      # build/run invocation. Without it, llvm-cov walks the entire workspace's source files,
-      # including crates we never instrumented (jdbc_bridge, odbc, sf_core_macros,
-      # proto_generator) — they appear at 0% coverage and deflate the aggregate number
-      # parsed by the Jenkins coverage pipeline.
+      # Scope the report to `--package sf_core` so llvm-cov does not walk
+      # uninstrumented workspace crates (jdbc_bridge, odbc, …) at 0%.
+      # Do NOT pass ${{ matrix.cargo_flags }} (`--all-features`, `--features`,
+      # `--no-default-features`): `llvm-cov report` rejects those options.
+      # Coverage data was already collected by the build/run step with those flags.
       - name: Generate lcov coverage report
         if: always()
         continue-on-error: true
         run: |
           if find target/llvm-cov-target -name '*.profraw' 2>/dev/null | grep -q .; then
-            cargo llvm-cov report --locked --package sf_core ${{ matrix.cargo_flags }} --lcov --output-path lcov.info
-            echo "lcov report written to lcov.info (scoped to sf_core ${{ matrix.cargo_flags }})"
+            cargo llvm-cov report --locked --package sf_core --lcov --output-path lcov.info
+            echo "lcov report written to lcov.info (scoped to sf_core)"
           else
             echo "No *.profraw files in target/llvm-cov-target — skipping report"
             echo "(this is expected if the build failed before any test executed)"
