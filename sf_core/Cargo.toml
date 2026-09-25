@@ -17,13 +17,22 @@ sonic-json = ["sonic-rs"]
 # run against the FIPS module by declaration, not by accident of the resolver
 # happening to unify rustls's transitive activation into the same crate.
 #
-# Named `fips-tls` rather than `fips` because it covers TLS only. JWT signing,
-# stage file encryption, DPoP and key parsing still run on OpenSSL, which has no
-# FIPS-validated provider -- and under `vendored-openssl` that unvalidated copy
-# is statically linked where a customer cannot replace it. An artifact built
-# from this feature is therefore not a FIPS artifact, and the narrower name is
-# what keeps the two apart: `fips` is left unclaimed for the complete thing,
-# once the non-TLS crypto is ported off OpenSSL.
+# Still named `fips-tls` rather than `fips`, but no longer for the original
+# reason. JWT signing, stage file encryption, DPoP and private-key parsing have
+# all been ported off OpenSSL to AWS-LC, so the feature's reach is no longer
+# TLS-only in practice.
+#
+# The name stays because the *claim* is not yet complete:
+#   - `openssl` is still in `[dependencies]` (dev-only in practice, but
+#     `vendored-openssl` below still statically links an unvalidated copy where
+#     a customer cannot replace it). Removing it is the next step; see F2.
+#   - The linked module is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
+#     cert #4816), held there by the `aws-lc-rs` upper bound below. That covers
+#     the module version only -- a certificate also names the operating
+#     environments it was tested on, so shipping a `fips-tls` build on a
+#     platform outside that list still is not a validated configuration.
+# So an artifact built from this feature is still not a FIPS artifact, and
+# `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
@@ -83,7 +92,6 @@ arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
 openssl = "0.10.73"
-jwt = { version = "0.16.0", features = ["openssl"] }
 # `default-features = false` drops oauth2's `rustls-tls`, which is only a
 # forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
 # cargo feature unification would re-arm reqwest's silent ring fallback for the
@@ -132,12 +140,82 @@ rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
-aws-lc-rs = "1.13.2"
+# Upper bound is load-bearing, not hygiene: it is what keeps `fips-tls` on the
+# *certificated* AWS-LC-FIPS module. The `aws-lc-rs` version chooses the
+# `aws-lc-fips-sys` version, which vendors the module itself --
+# `aws-lc-rs` <1.18 -> `aws-lc-fips-sys` 0.13.x -> the 3.x line (NIST cert
+# #4816; the lock currently sits on 0.13.12, which vendors AWS-LC-FIPS 3.2.0),
+# while `aws-lc-rs` >=1.18 -> `aws-lc-fips-sys` 0.14.x -> AWS-LC-FIPS 4.1.0,
+# which is still in process at CMVP rather than certificated.
+#
+# Without the bound a routine `cargo update` silently moves the linked module
+# off a certificated version, and nothing in the build or the test suite would
+# fail -- `try_fips_mode()` answers `true` on both, because both are genuine
+# FIPS builds. Only the certificate status differs, and `aws-lc-rs` exposes no
+# version accessor to assert on (`awslc_version_string` is bound in
+# `aws-lc-fips-sys`, reachable only by depending on that `links` crate
+# directly). So this bound is the enforcement point: cargo cannot cross it, and
+# crossing it takes a reviewed manifest edit. There is deliberately no runtime
+# guard -- do not go looking for one.
+#
+# That prevents drift without detecting it, which is a gap worth closing where
+# it is cheap: the resolved version *is* visible in the lockfile, so the
+# dependency-policy work (cargo-deny, Phase 5) can assert `aws-lc-fips-sys`
+# stays on 0.13.x without any of the `links`-crate coupling a runtime check
+# would need. The SBOM work in that same phase has to record the module
+# identity anyway.
+#
+# Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
+# the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
+#
+# Raise this only together with the compliance claim. The upstream crate's
+# guidance is the same: pin `aws-lc-rs` to stay on a given module version.
+# `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
+aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
 der-parser = "9.0"
 x509-cert = "0.2"
 spki = "0.7"
 time = "0.3"
+
+# Encrypted private-key (PKCS#8 / PBES2) support.
+#
+# `pkcs8`/`pkcs5` are used for PARSING ONLY -- they read the envelope and the
+# PBES2 parameters (KDF, salt, iterations, PRF, cipher, IV). This crate never
+# calls their decryption API. The key derivation and AES decryption run against
+# AWS-LC, which is what keeps approved crypto inside the validated module.
+#
+# Pinned to the `der 0.7` line already in the graph via `spki 0.7` /
+# `x509-cert 0.2`, to avoid a second `der` major.
+#
+# Inventory caveat (F11): `EncryptedPrivateKeyInfo` lives behind pkcs8's
+# `encryption` feature, and the `DesEde3Cbc` variant needs `3des`; both cascade
+# to `pkcs5/pbes2`, pulling RustCrypto `aes`, `pbkdf2`, `scrypt` and `sha2`
+# into the graph. None of them is ever called -- our AES and PBKDF2 go through
+# AWS-LC -- but they do show up in an SBOM, so the dependency inventory needs a
+# note saying so. Eliminating them would mean hand-decoding the
+# EncryptedPrivateKeyInfo and PBES2 AlgorithmIdentifiers with `der` directly;
+# that is a contained follow-up which would not change this module's interface,
+# and it was weighed against the correctness risk of hand-rolled ASN.1 in a
+# private-key path.
+pkcs8 = { version = "0.10", features = ["3des"] }
+# Legacy 3DES unwrap only, deliberately outside the validated module: AWS-LC
+# has no 3DES cipher (`aws_lc_rs::cipher` is AES-only; its only 3DES is
+# `cmac::TDES_FOR_LEGACY_USE_ONLY`, a MAC), and 3DES is not an approved
+# algorithm in any module, so running it inside AWS-LC would not make it
+# approved. See `crypto::private_key` for why it must be supported.
+des = "0.8"
+cbc = "0.1"
+# Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
+# OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
+# format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
+# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# a FIPS build never derives a key with MD5; see `crypto::private_key`.
+#
+# Not a new SBOM entry: `md-5` is already in the graph unconditionally via
+# `aws-smithy-checksums`, which is finding F9 in the compliance plan rather
+# than anything this adds.
+md-5 = "0.10"
 once_cell = "1.19"
 const-oid = "0.9"
 dirs = "5.0"

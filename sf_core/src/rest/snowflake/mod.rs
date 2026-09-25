@@ -1079,19 +1079,23 @@ async fn send_login_request(
     // closure. Snowflake's GS does not issue `use_dpop_nonce` for login,
     // so we don't replicate the OAuth-token-endpoint nonce retry here
     // (matches JDBC `SessionUtil.java:746-750`).
-    let dpop_signer: Option<DPoPSigner> =
-        if let Some(jwk_json) = login_request.data.dpop_jwk_json.as_deref() {
-            let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
-            let url = Url::parse(&login_url).context(UrlJoinSnafu {
-                path: "/session/v1/login-request",
-            })?;
-            Some(DPoPSigner {
-                key: std::sync::Arc::new(key),
-                url: std::sync::Arc::new(url),
-            })
-        } else {
-            None
-        };
+    let dpop_signer: Option<DPoPSigner> = if let Some(jwk_json) = login_request
+        .data
+        .dpop_jwk_json
+        .as_ref()
+        .map(SensitiveString::reveal)
+    {
+        let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
+        let url = Url::parse(&login_url).context(UrlJoinSnafu {
+            path: "/session/v1/login-request",
+        })?;
+        Some(DPoPSigner {
+            key: std::sync::Arc::new(key),
+            url: std::sync::Arc::new(url),
+        })
+    } else {
+        None
+    };
 
     let build_request = || {
         let mut builder = client

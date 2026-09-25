@@ -25,11 +25,24 @@ Per-row keys:
                                 the `rustup target add` step.
   msvc_arch    (str, optional)  Passed to vcvarsall.bat <arch>. Acts as the
                                 gating field for Windows-specific steps.
+  runner       (str, optional)  Overrides the shared GHA_RUNNER label for this
+                                lane only, for cases where the core job needs a
+                                pinned image the other drivers' matrices have no
+                                reason to adopt.
 """
 
 CORE_PLATFORM: dict[tuple[str, str], dict] = {
     ("ubuntu",  "x64"): {
         "cargo_flags": "--all-features",
+        # `--all-features` enables `fips-tls`, so this lane compiles
+        # `aws-lc-fips-sys` 0.13.x, which does not build under GCC >= 14 (the
+        # reason for the `aws-lc-rs` upper bound in sf_core/Cargo.toml).
+        # `ubuntu-latest` is a moving label: 24.04 / gcc 13 today, but the
+        # 26.04 image (gcc 15) already exists, so a runner roll would break
+        # the FIPS build here with a failure deep inside an assembler step.
+        # Pin it. The other two FIPS-compiling lanes are pinned the same way,
+        # in test-rust-core.yml and full_put_get_tests.yml.
+        "runner": "ubuntu-24.04",
         "coverage": True,
         "cache_key": "core-test",
     },
