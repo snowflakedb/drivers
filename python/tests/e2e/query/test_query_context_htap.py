@@ -9,11 +9,82 @@ cache.
 
 from __future__ import annotations
 
+import datetime
 import time
 
 import pytest
 
+from snowflake.connector.errors import ProgrammingError
 from tests.e2e.put_get.put_get_helper import is_aws_test_account
+
+
+HYBRID_TABLE_DB_LIMIT_ERRNO = 391727
+HYBRID_TEST_DB_PREFIX = "HYBRID_DB_TEST_"
+
+
+def _is_hybrid_table_db_limit(exc: BaseException) -> bool:
+    return isinstance(exc, ProgrammingError) and exc.errno == HYBRID_TABLE_DB_LIMIT_ERRNO
+
+
+def _drop_database_quiet(cur, name: str) -> None:
+    try:
+        cur.execute("DROP DATABASE IF EXISTS IDENTIFIER(?)", params=(name,), _force_qmark_paramstyle=True)
+    except ProgrammingError:
+        pass
+
+
+def _drop_stale_hybrid_test_databases(cur, *, max_age_seconds: int = 15 * 60) -> None:
+    """Drop leftover hybrid_db_test_* databases from crashed CI jobs.
+
+    Concurrent runs already use a unique millisecond timestamp in the name.
+    Only drop databases older than max_age_seconds so in-flight tests survive.
+    """
+    cur.execute(f"SHOW DATABASES LIKE '{HYBRID_TEST_DB_PREFIX}%'")
+    rows = cur.fetchall()
+    now = datetime.datetime.now(datetime.UTC)
+    for row in rows:
+        created_on, name = row[0], row[1]
+        if isinstance(created_on, datetime.datetime):
+            created = created_on if created_on.tzinfo else created_on.replace(tzinfo=datetime.UTC)
+            if (now - created.astimezone(datetime.UTC)).total_seconds() < max_age_seconds:
+                continue
+        _drop_database_quiet(cur, name)
+
+
+def _execute_with_hybrid_quota_retry(cur, sql: str, *, params: tuple | None = None) -> None:
+    """Run sql; on 391727 drop stale hybrid_db_test_* DBs, retry once, else skip.
+
+    391727 is a quota on databases *with hybrid tables*, not on CREATE DATABASE.
+    Empty DBs do not count, so CREATE HYBRID TABLE is the statement that fails.
+    """
+    extra: dict[str, object] = {}
+    if params is not None:
+        extra["params"] = params
+        extra["_force_qmark_paramstyle"] = True
+    try:
+        cur.execute(sql, **extra)
+        return
+    except ProgrammingError as exc:
+        if not _is_hybrid_table_db_limit(exc):
+            raise
+    _drop_stale_hybrid_test_databases(cur)
+    try:
+        cur.execute(sql, **extra)
+    except ProgrammingError as retry_exc:
+        if _is_hybrid_table_db_limit(retry_exc):
+            pytest.skip(
+                "account hybrid-table database quota (391727) is exhausted after "
+                "cleaning stale hybrid_db_test_* databases"
+            )
+        raise
+
+
+def _create_hybrid_test_database(cur, name: str) -> None:
+    _execute_with_hybrid_quota_retry(
+        cur,
+        "CREATE DATABASE IF NOT EXISTS IDENTIFIER(?)",
+        params=(name,),
+    )
 
 
 @pytest.fixture
@@ -136,9 +207,15 @@ class TestQueryContextHtap:
                 original_db = cur.fetchone()[0]
 
                 try:
+                    # 391727 counts databases that already contain a hybrid table,
+                    # not CREATE DATABASE. Drain leftovers before we consume a slot.
+                    _drop_stale_hybrid_test_databases(cur)
                     # When the client creates hybrid tables in two databases and inserts rows
-                    cur.execute(f"CREATE DATABASE IF NOT EXISTS {db1}")
-                    cur.execute("CREATE HYBRID TABLE test_hybrid_table (id INT PRIMARY KEY, text VARCHAR)")
+                    _create_hybrid_test_database(cur, db1)
+                    _execute_with_hybrid_quota_retry(
+                        cur,
+                        "CREATE HYBRID TABLE test_hybrid_table (id INT PRIMARY KEY, text VARCHAR)",
+                    )
                     cur.execute("INSERT INTO test_hybrid_table VALUES (1, 'a')")
 
                     rows = cur.execute("SELECT * FROM test_hybrid_table").fetchall()
@@ -148,14 +225,21 @@ class TestQueryContextHtap:
                     rows = cur.execute("SELECT * FROM test_hybrid_table ORDER BY id").fetchall()
                     assert rows == [(1, "a"), (2, "b")]
 
-                    cur.execute(f"CREATE DATABASE IF NOT EXISTS {db2}")
-                    cur.execute("CREATE HYBRID TABLE test_hybrid_table_2 (id INT PRIMARY KEY, text VARCHAR)")
+                    _create_hybrid_test_database(cur, db2)
+                    _execute_with_hybrid_quota_retry(
+                        cur,
+                        "CREATE HYBRID TABLE test_hybrid_table_2 (id INT PRIMARY KEY, text VARCHAR)",
+                    )
                     cur.execute("INSERT INTO test_hybrid_table_2 VALUES (3, 'c')")
 
                     rows = cur.execute("SELECT * FROM test_hybrid_table_2").fetchall()
                     assert rows == [(3, "c")]
 
-                    cur.execute(f"USE DATABASE {db1}")
+                    cur.execute(
+                        "USE DATABASE IDENTIFIER(?)",
+                        params=(db1,),
+                        _force_qmark_paramstyle=True,
+                    )
                     cur.execute("INSERT INTO test_hybrid_table VALUES (4, 'd')")
 
                     # Then selecting from each database returns the correct rows after switching back
@@ -165,6 +249,15 @@ class TestQueryContextHtap:
                     assert rows[1] == (2, "b")
                     assert rows[2] == (4, "d")
                 finally:
-                    cur.execute(f"USE DATABASE {original_db}")
-                    cur.execute(f"DROP DATABASE IF EXISTS {db1}")
-                    cur.execute(f"DROP DATABASE IF EXISTS {db2}")
+                    # Drop first: USE DATABASE must not skip cleanup if original_db is gone.
+                    _drop_database_quiet(cur, db1)
+                    _drop_database_quiet(cur, db2)
+                    if original_db:
+                        try:
+                            cur.execute(
+                                "USE DATABASE IDENTIFIER(?)",
+                                params=(original_db,),
+                                _force_qmark_paramstyle=True,
+                            )
+                        except ProgrammingError:
+                            pass
