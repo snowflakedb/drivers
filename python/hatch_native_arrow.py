@@ -124,7 +124,7 @@ def _cargo_overlay(target_dir: str) -> None:
             "--target-dir",
             target_dir,
             "--features",
-            "vendored-openssl,native-arrow",
+            "native-arrow",
         ],
         env=env,
     )
