@@ -9,10 +9,11 @@
 //! share it across every part/range (S3 `create_s3_client`, Azure
 //! `create_azure_client`, GCS `create_gcs_client`), so one cloud-agnostic test
 //! (`TEST_CLOUD_PROVIDER`) covers S3 on `aws`, Azure block-blob on `azure`, and
-//! GCS resumable on `gcp` with no per-cloud branching.
+//! GCS single PUT + ranged GET on `gcp` with no per-cloud branching.
 //!
 //! The >200 MiB file (mirrors `put_get_multipart_roundtrip.rs`) forces multipart
-//! on upload and parallel ranged GETs on download. Scoped to the nightly `large_`
+//! upload on S3/Azure, a single PUT on GCS, and parallel ranged GETs on
+//! download. Scoped to the nightly `large_`
 //! lane like `put_get_multipart_roundtrip.rs`, NOT the every-run `mitmdump_proxy`
 //! lane: a 210 MiB transfer through mitmdump is far costlier than the 41-byte
 //! test. Test names carry `large_` and omit `mitmdump_proxy` so the CI filters
@@ -100,9 +101,10 @@ fn should_route_large_multipart_put_get_through_live_mitm_proxy() {
     );
 
     // And independently: mitmdump must have recorded at least one storage
-    // request per upload part and per download range — proving every chunk, not
-    // just some traffic, transited the proxy. The expected count comes from the
-    // real per-cloud part-size formula, not a mirrored constant.
+    // request per upload part (S3/Azure) or the single object PUT (GCS), and
+    // per download range — proving every chunk, not just some traffic, transited
+    // the proxy. The expected count comes from the real per-cloud part-size
+    // formula, not a mirrored constant.
     let cloud = client.current_cloud();
     let suffix = cloud_storage_host_suffix(cloud);
     let cfg = match cloud {
@@ -115,13 +117,17 @@ fn should_route_large_multipart_put_get_through_live_mitm_proxy() {
     // the server's 200 MiB threshold is ever raised above `MULTIPART_FILE_LEN`,
     // the transfer could legitimately go single-shot and the `>=` assertions
     // below could fail for reasons unrelated to a real regression.
-    let expected_parts = cfg
+    let expected_ranges = cfg
         .expected_part_count(MULTIPART_FILE_LEN)
         .expect("part size within cloud limits");
     assert!(
-        expected_parts >= 2,
-        "a 210 MiB file must split into >= 2 parts"
+        expected_ranges >= 2,
+        "a 210 MiB file must split into >= 2 download ranges"
     );
+    let expected_uploads = match cloud {
+        CloudProvider::Gcp => 1,
+        _ => expected_ranges,
+    };
 
     let recorded = proxy.recorded_requests();
     let to_storage = |method: &str| {
@@ -132,12 +138,12 @@ fn should_route_large_multipart_put_get_through_live_mitm_proxy() {
     };
     let (uploads, downloads) = (to_storage("PUT"), to_storage("GET"));
     assert!(
-        uploads >= expected_parts,
-        "multipart upload: mitmdump saw {uploads} PUT(s) to a {suffix} host, expected >= {expected_parts}"
+        uploads >= expected_uploads,
+        "upload: mitmdump saw {uploads} PUT(s) to a {suffix} host, expected >= {expected_uploads}"
     );
     assert!(
-        downloads >= expected_parts,
-        "ranged download: mitmdump saw {downloads} GET(s) from a {suffix} host, expected >= {expected_parts}"
+        downloads >= expected_ranges,
+        "ranged download: mitmdump saw {downloads} GET(s) from a {suffix} host, expected >= {expected_ranges}"
     );
 }
 

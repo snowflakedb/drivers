@@ -44,6 +44,7 @@ New features:
 
 Changes:
 
+- Improved GCS PUT throughput by streaming each file in one request instead of sending sequential chunks. (snowflakedb/drivers#2267)
 - Changed `connection_is_usable` to report a connection as terminated once the server has said this session cannot be recovered (GS 390111 gone or 390117 closed, on a query, heartbeat, or token-request RENEW). Other RENEW refusals, and a renewal that fails to reach the server, leave the connection alone. The background heartbeat task stops rather than beating such a session. The error each operation returns is unchanged. (snowflakedb/drivers#2149)
 - Improved first-connection latency on non-FIPS builds by dropping AWS-LC's CPU jitter entropy source from cold start. (snowflakedb/drivers#2108)
 - Changed `client_store_temporary_credential` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
@@ -69,7 +70,7 @@ Bug fixes:
 - Fixed a `FILE` column failing to describe or fetch with `Unsupported column type 'FILE'`: the row-type resolution shared by every wrapper had no `FILE` arm, so a query returning one raised before any row was read. The column is read as the raw, undecoded JSON string the server sends, matching legacy `snowflake-connector-python`, and is labelled `VARIANT` in the generated Arrow schema so each wrapper's existing semi-structured decoder handles it. (snowflakedb/drivers#1697)
 - Fixed JSON timestamp cells with a negative fractional epoch so the seconds and fraction floor the same way as Arrow (`div_euclid`), instead of truncating toward zero. (snowflakedb/drivers#1580)
 - Fixed an empty `account` value skipping required-parameter validation and hanging until login timed out; it is now rejected immediately as a missing account. (snowflakedb/drivers#1514)
-- Fixed cancelling a PUT abandoning the in-progress cloud upload instead of aborting it: an S3 multipart upload was left with its uploaded parts in place, which AWS bills until a lifecycle rule reaps them, and a GCS resumable session was left half-staged until Google expired it a week later. Both are now aborted when the transfer is cancelled, not only when it errors. (snowflakedb/drivers#TBD)
+- Fixed cancelling a PUT abandoning an S3 multipart upload with uploaded parts in place, which AWS bills until a lifecycle rule reaps them; it is now aborted when the transfer is cancelled, not only when it errors. (snowflakedb/drivers#TBD)
 - Fixed cancelling a GET continuing to download the whole file in the background after the caller was told the operation was cancelled, and leaving a partial `.part` file beside the destination; the transfer is now stopped and the partial file removed. (snowflakedb/drivers#TBD)
 - Fixed a client-side `QUERY_TIMEOUT` giving up locally without telling the server, leaving the query running and consuming credits; the timeout now also aborts the query. It still reports `QueryTimeout` rather than a cancellation, so the two remain distinguishable. (snowflakedb/drivers#TBD)
 - Fixed a structured `MAP` column raising `Unsupported column type 'MAP'` from the row-type resolution shared by every wrapper, blocking `describe()` for all of them and `fetch()` for Python; ODBC's separate decode path still needs a MAP arm as a follow-up. (snowflakedb/drivers#TBD)
@@ -81,7 +82,7 @@ Bug fixes:
 - Fixed `ConnectionAbortQuery` silently collapsing genuine errors (invalid connection handle, transport failures) into a declined-abort outcome; these now surface as proper errors instead. The response also now reports a typed `AbortQueryOutcome` (`ABORTED` / `NOT_RUNNING`) instead of a bare `success` bool. (snowflakedb/drivers#TBD)
 - Fixed string `private_key` to accept plaintext PEM (as already documented), not only base64-encoded material. (snowflakedb/drivers#953)
 - Fixed Workload Identity Federation attestation failures reporting an internally inconsistent error type, which could have caused non-Python bindings to surface the wrong exception category. (snowflakedb/drivers#TBD)
-- Fixed large GCS uploads restarting from the beginning when an access token expired mid-transfer. The driver now refreshes the token and retries only the failed chunk. (snowflakedb/drivers#1923)
+- Fixed large GCS uploads restarting from the beginning when an access token expired mid-transfer. The driver now refreshes the token and retries the whole object PUT. (snowflakedb/drivers#1923)
 
 Internal improvements:
 

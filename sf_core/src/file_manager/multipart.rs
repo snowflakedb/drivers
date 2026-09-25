@@ -1,15 +1,15 @@
 //! Foundation for cloud multipart upload + ranged download (S3, Azure, GCS).
 //!
-//! All three clouds get chunked transfer through one shared policy.
+//! One shared policy sizes parts and download ranges. S3 and Azure chunk
+//! uploads; GCS uploads as a single PUT and uses the policy only for ranged GET.
 //!
 //! Only the cloud-agnostic policy lives here — per-cloud limits
 //! ([`MultipartConfig`]), the part-size formula ([`compute_part_size`]), and
 //! the server-resolved knobs ([`MultipartThreshold`] / [`MultipartParams`]).
 //! The streaming part-reader ([`spawn_part_reader`]) and ranged-GET planner
 //! ([`plan_ranges`]) also live here, consumed by the per-cloud transfer
-//! modules. S3 and Azure upload parts concurrently; GCS uses an XML-API
-//! resumable session (sequential chunks), so it drives the part-reader at
-//! concurrency 1.
+//! modules. S3 and Azure upload parts concurrently via the part-reader; GCS
+//! uploads as a single PUT and uses this config only to size ranged GETs.
 
 use bytes::Bytes;
 use snafu::{Location, Snafu};
@@ -62,7 +62,7 @@ pub struct MultipartConfig {
     /// Upper bound the cloud enforces on the whole object.
     pub(super) max_object: u64,
     /// Upper bound the cloud enforces on the number of parts per upload, or
-    /// `None` when the cloud imposes none (GCS resumable). When set,
+    /// `None` when the cloud imposes none (GCS ranged GET). When set,
     /// [`compute_part_size`] grows the part size to keep the count within it.
     pub(super) max_parts: Option<u64>,
 }
@@ -102,15 +102,13 @@ impl MultipartConfig {
         max_object: 100 * MIB * 50_000,
         max_parts: Some(50_000),
     };
-    /// GCS XML-API resumable limits: 8 MiB default chunk, 5 TiB object ceiling.
-    /// GCS resumable imposes **no chunk-count limit** (the binding cap is the
-    /// 5 TiB object size), so `max_parts` is `None` and [`compute_part_size`]
-    /// never grows the chunk — it stays at the 8 MiB default for every file.
-    /// That default is 32 × 256 KiB, satisfying GCS's requirement that every
-    /// non-final chunk be a 256-KiB multiple; `gcs_part_is_256kib_aligned` pins
-    /// this.
+    /// GCS ranged-GET limits: 8 MiB default range, 5 TiB object ceiling.
+    /// GCS imposes **no range-count limit** (the binding cap is the 5 TiB
+    /// object size), so `max_parts` is `None` and [`compute_part_size`] never
+    /// grows the range — it stays at the 8 MiB default for every file. That
+    /// default is 32 × `min_part` (256 KiB); `gcs_range_size_stays_at_default`
+    /// pins this.
     /// Object size: <https://cloud.google.com/storage/quotas>
-    /// 256-KiB rule: <https://cloud.google.com/storage/docs/performing-resumable-uploads>
     pub const GCS: Self = Self {
         cloud: "GCS",
         default_part: 8 * MIB,
@@ -140,8 +138,8 @@ impl MultipartConfig {
 /// For S3 and Azure this mirrors Python's `_chunk_size_calculator`: the part
 /// grows once a file would otherwise exceed the cloud's part-count limit (for
 /// Azure, past the 8 MiB default block, keeping blobs larger than ~391 GiB
-/// within the 50 000-block limit). GCS has no part-count limit
-/// (`max_parts == None`), so the chunk never grows and stays at `default_part`.
+/// within the 50 000-block limit). GCS has no range-count limit
+/// (`max_parts == None`), so the range never grows and stays at `default_part`.
 ///
 /// `file_size` is the *on-cloud* byte count — ciphertext length for CSE,
 /// source length for SSE — because that is what gets split into parts.
@@ -553,20 +551,10 @@ mod tests {
     }
 
     #[test]
-    fn gcs_part_is_256kib_aligned() {
-        // GCS resumable requires every non-final chunk to be a 256-KiB multiple.
-        // The config is tuned so `compute_part_size` never grows the chunk past
-        // the 8-MiB default for any file ≤ 5 TiB, so the resolved size is always
-        // a 256-KiB multiple. Check across small / threshold / max-object sizes.
-        const GRANULARITY: u64 = 256 * KIB;
+    fn gcs_range_size_stays_at_default() {
         for size in [KIB, 64 * MIB, 8 * GIB, MultipartConfig::GCS.max_object] {
-            let chunk = compute_part_size(size, &MultipartConfig::GCS).unwrap();
-            assert_eq!(
-                chunk % GRANULARITY,
-                0,
-                "GCS chunk {chunk} for file_size {size} must be a 256-KiB multiple"
-            );
-            assert_eq!(chunk, 8 * MIB, "GCS chunk should stay at the 8-MiB default");
+            let range = compute_part_size(size, &MultipartConfig::GCS).unwrap();
+            assert_eq!(range, 8 * MIB, "GCS range should stay at the 8-MiB default");
         }
     }
 

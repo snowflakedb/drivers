@@ -7,7 +7,6 @@ use super::types::{
     StageInfoRefresher, TransferCtx, UploadStatus, build_encryption_metadata_json,
     percent_encode_path,
 };
-use crate::apis::operation_ctx::{CleanupScope, with_abort_on_unwind};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::log_foreign_error;
@@ -18,7 +17,7 @@ use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 // GCS metadata header names
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
@@ -108,9 +107,7 @@ impl<'a> GcsUploadHeaders<'a> {
 ///   `refresher.refresh()` (coalesced, 10-min window) and retries with the
 ///   rotated creds. A second consecutive 401 with the same bearer surfaces
 ///   the existing `GcsUploadError::TokenExpired` — matching libsfclient's
-///   `m_lastRefreshTokenSec` gate (`FileTransferAgent.cpp:412`). A 401 on a
-///   resumable chunk PUT refreshes and retries that chunk against the same
-///   session; an initiate 401 still uses this outer loop.
+///   `m_lastRefreshTokenSec` gate (`FileTransferAgent.cpp:412`).
 /// - On HTTP 400 in presigned mode: an outer loop calls
 ///   `refresher.refresh_url()` (no coalesce) and retries with the rotated
 ///   `presignedUrl` from the cache. A second consecutive 400 surfaces the
@@ -203,48 +200,17 @@ pub async fn upload_to_gcs_or_skip(
                     return Ok(status);
                 }
 
-                // Large files on the access-token path take the XML-API
-                // resumable chunked upload (bounded in-flight memory + per-chunk
-                // retry); the presigned-URL path and small files keep the single
-                // PUT. `token.is_some()` already implies the access-token path —
-                // `resolve_url_and_token` returns `None` for both presigned modes.
-                let body_len = multipart::upload_body_len(&prepared)
-                    .await
-                    .map_err(|e| GcsRequestError::SourceIo { source: e })
-                    .map_err(map_gcs_request_error_for_attempt)?;
-                let upload = if let Some(tok) = token
-                    && scheduler.multipart().should_chunk(body_len)
-                {
-                    gcs_resumable_upload(
-                        GcsResumableUploadCtx {
-                            client: &client,
-                            object_url: &url,
-                            token: tok,
-                            policy: &wire_policy,
-                            conditional_create,
-                            cleanup: tx.cleanup,
-                            scheduler,
-                            refresher,
-                            stage_info: &stage_info,
-                        },
-                        prepared,
-                        body_len,
-                    )
-                    .await
-                    .map_err(|e| e.map_other(GcsUploadError::from))
-                } else {
-                    upload_to_gcs(
-                        &client,
-                        &url,
-                        token,
-                        prepared,
-                        &wire_policy,
-                        conditional_create,
-                        scheduler,
-                    )
-                    .await
-                    .map_err(map_gcs_request_error_for_attempt)
-                };
+                let upload = upload_to_gcs(
+                    &client,
+                    &url,
+                    token,
+                    prepared,
+                    &wire_policy,
+                    conditional_create,
+                    scheduler,
+                )
+                .await
+                .map_err(map_gcs_request_error_for_attempt);
 
                 match upload {
                     Ok(()) => Ok(UploadStatus::Uploaded),
@@ -771,6 +737,12 @@ async fn upload_to_gcs(
         },
     };
 
+    multipart::compute_part_size(content_length as u64, &MultipartConfig::GCS).map_err(|e| {
+        GcsRequestError::FileTooLarge {
+            detail: e.to_string(),
+        }
+    })?;
+
     // Own everything the per-attempt async closure touches so the closure is
     // self-contained (`'static`): an `AsyncFn` whose returned future borrowed
     // these from this frame couldn't satisfy the `'static` bound the FFI/trait
@@ -828,391 +800,6 @@ async fn upload_to_gcs(
     Ok(())
 }
 
-/// Shared request and lifecycle state for one resumable upload.
-///
-/// Keeping authentication, conditional-create policy, retry policy, and
-/// cancellation cleanup together ensures every resumed-session entry point
-/// applies the same publication and cleanup behavior.
-#[derive(Clone, Copy)]
-struct GcsResumableUploadCtx<'a> {
-    client: &'a reqwest::Client,
-    object_url: &'a str,
-    token: &'a str,
-    policy: &'a RetryPolicy,
-    conditional_create: bool,
-    cleanup: Option<&'a CleanupScope>,
-    scheduler: &'a TransferScheduler,
-    refresher: Option<&'a dyn StageInfoRefresher>,
-    stage_info: &'a StageInfo,
-}
-
-/// Uploads `prepared` to GCS via the XML-API **resumable** protocol: a single
-/// initiation `POST` (carrying the digest + CSE metadata) mints a session URL,
-/// then the (optionally encrypting) source is cut into `chunk_size` chunks and
-/// `PUT` to that session URL **sequentially** with `Content-Range` headers. The
-/// final chunk's `200/201` ends the session; intermediate chunks return `308`
-/// ("Resume Incomplete"). A best-effort `DELETE` releases the half-staged session
-/// whenever the upload does not complete — on `Err` and on cancellation alike, via
-/// `with_abort_on_unwind`.
-///
-/// That `DELETE` is hygiene against an *undocumented* cost, not a known one: unlike
-/// an S3 multipart upload, whose parts AWS documents as billable until aborted,
-/// Google documents neither that staged resumable chunks are billed nor that they
-/// are free — only that the session expires after a week and that an incomplete
-/// upload never becomes a bucket object. (GCS *does* bill parts of an incomplete
-/// XML-API multipart upload, but that is a different mechanism from the resumable
-/// protocol used here.)
-/// <https://cloud.google.com/storage/docs/resumable-uploads>
-///
-/// A 401 on one chunk PUT rotates the bearer and retries just that chunk
-/// against the same session. An initiate 401 still returns `GcsAttemptError::TokenExpired`
-/// so the outer per-file loop can start a new session; any error surfacing from
-/// the chunk loop is force-wrapped as `GcsAttemptError::Other` — including a
-/// leftover 401 the refresher declined to rotate again — so it cannot be read
-/// as that same restart signal once the session already exists.
-///
-/// Used only on the access-token path for files at/above the multipart
-/// threshold; the presigned-URL path and smaller files take the single
-/// `Put`-object path in [`upload_to_gcs`]. Mirrors the Node.js connector's
-/// `uploadFileResumable` (snowflake-connector-nodejs#1427) and the
-/// Python/JDBC resumable upload model.
-#[allow(clippy::too_many_arguments)]
-async fn gcs_resumable_upload(
-    upload_ctx: GcsResumableUploadCtx<'_>,
-    prepared: PreparedUpload,
-    body_len: u64,
-) -> Result<(), GcsAttemptError<GcsRequestError>> {
-    let GcsResumableUploadCtx {
-        client,
-        object_url,
-        token,
-        policy,
-        conditional_create,
-        cleanup,
-        scheduler,
-        refresher,
-        ..
-    } = upload_ctx;
-    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::GCS)
-        .map_err(|e| GcsRequestError::FileTooLarge {
-            detail: e.to_string(),
-        })
-        .map_err(GcsAttemptError::Other)?;
-
-    // Digest + CSE metadata ride on the initiation POST (the GCS analogue of
-    // Azure's metadata-on-commit), not on the per-chunk PUTs. CSE params (cloud
-    // metadata + encryptor) are both present or both absent.
-    let source = prepared.source.byte_source();
-    let digest = prepared.digest;
-    let (encryption_metadata, encryptor) = match prepared.cse {
-        Some(c) => (Some(c.metadata), Some(c.encryptor)),
-        None => (None, None),
-    };
-    let encryption_data_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| serde_json::to_string(&build_encryption_metadata_json(enc_meta)))
-        .transpose()
-        .context(SerializationSnafu)
-        .map_err(GcsAttemptError::Other)?;
-    let mat_desc_str = encryption_metadata
-        .as_ref()
-        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
-        .transpose()
-        .context(SerializationSnafu)
-        .map_err(GcsAttemptError::Other)?;
-
-    let cse_headers = encryption_data_str
-        .as_deref()
-        .zip(mat_desc_str.as_deref())
-        .map(
-            |(encryption_data, material_description)| GcsCseUploadMetadata {
-                encryption_data,
-                material_description,
-            },
-        );
-    let headers = GcsUploadHeaders {
-        conditional_create,
-        digest: &digest,
-        cse: cse_headers,
-    };
-    let session_url = gcs_resumable_initiate(client, object_url, token, body_len, headers, policy)
-        .await
-        .map_err(map_gcs_request_error_for_attempt)?;
-
-    // Built after `gcs_resumable_initiate`: until it returns there is no session to
-    // delete. Reads the refresher's cache at abort time rather than closing over
-    // the initiate-time bearer: after a chunk rotation, that original token is
-    // the one GCS just 401'd, so a DELETE sent with it would likely 401 too and
-    // leave the session live for up to a week. Falls back to the initiate token
-    // when there is no refresher or no rotation has happened yet.
-    let abort = {
-        let client = client.clone();
-        let url = session_url.clone();
-        let fallback = token.to_string();
-        let cache = refresher.map(|r| r.cache().clone());
-        move || {
-            let client = client.clone();
-            let url = url.clone();
-            let token = cache
-                .as_ref()
-                .and_then(|c| {
-                    gcs_token_from_creds(&c.snapshot().creds)
-                        .ok()
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| fallback.clone());
-            async move { gcs_resumable_delete(&client, &url, &token).await }
-        }
-    };
-
-    // Stream chunks into the session sequentially (a resumable session commits
-    // chunks in order). Each chunk body is a materialized `Bytes`, so a
-    // transient PUT failure is retried in place. On any terminal failure,
-    // best-effort DELETE the session so it doesn't linger as a half-staged blob.
-    // Boxed to keep this large future off the frame — see clippy.toml.
-    with_abort_on_unwind(cleanup, abort, Box::pin(async {
-        let mut rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize, 1);
-        let mut offset: u64 = 0;
-        let mut committed = false;
-        while let Some(part) = rx.recv().await {
-            let part = part
-                .map_err(|source| GcsAttemptError::Other(GcsRequestError::SourceIo { source }))?;
-            let len = part.body.len() as u64;
-            // One slot per session chunk. A resumable session commits chunks in
-            // order, so this file only ever holds one slot at a time — the rest
-            // of the budget stays available to the batch's other files.
-            let done = {
-                let _slot = scheduler.acquire_request().await;
-                gcs_put_chunk_with_refresh(
-                    upload_ctx,
-                    &session_url,
-                    part.body,
-                    ChunkRange {
-                        offset,
-                        len,
-                        total: body_len,
-                    },
-                )
-                .await
-                .map_err(GcsAttemptError::Other)?
-            };
-            offset += len;
-            if done {
-                committed = true;
-                break;
-            }
-        }
-        if !committed {
-            return Err(GcsAttemptError::Other(GcsRequestError::Resumable {
-                detail: format!(
-                    "resumable upload ended without a terminal 2xx commit after {offset} of {body_len} bytes"
-                ),
-            }));
-        }
-        if offset != body_len {
-            return Err(GcsAttemptError::Other(GcsRequestError::Resumable {
-                detail: format!("resumable upload ended after {offset} of {body_len} bytes"),
-            }));
-        }
-        tracing::debug!("GCS resumable upload committed ({body_len} bytes)");
-        Ok(())
-    }))
-    .await
-}
-
-/// Initiates a GCS XML-API resumable session against the bucket-path object URL
-/// (`POST` + `x-goog-resumable: start`) and returns the session URL minted in
-/// the `Location` response header. 401 maps to `TokenExpired` so the outer
-/// refresh loop can rotate creds and retry.
-///
-async fn gcs_resumable_initiate(
-    client: &reqwest::Client,
-    object_url: &str,
-    token: &str,
-    body_len: u64,
-    headers: GcsUploadHeaders<'_>,
-    policy: &RetryPolicy,
-) -> Result<String, GcsRequestError> {
-    let resp = gcs_request_with_retry(
-        || {
-            headers.apply_to(
-                client
-                    .post(object_url)
-                    .bearer_auth(token)
-                    .header(reqwest::header::CONTENT_LENGTH, 0)
-                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                    .header("x-goog-resumable", "start")
-                    .header("x-upload-content-length", body_len)
-                    .header("content-encoding", ""),
-            )
-        },
-        Method::POST,
-        policy,
-    )
-    .await?;
-
-    resp.headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)
-        .ok_or_else(|| GcsRequestError::Resumable {
-            detail: "initiation response carried no Location (session URL) header".to_string(),
-        })
-}
-
-/// One resumable-upload chunk's byte span: absolute `offset`, chunk `len`, and
-/// the object's `total` size. The `Content-Range` wire grammar is rendered
-/// from this inside [`gcs_put_one_chunk`], mirroring how `gcs_get_range`
-/// renders the `Range` header from a [`multipart::DownloadRange`].
-#[derive(Debug, Clone, Copy)]
-struct ChunkRange {
-    offset: u64,
-    len: u64,
-    total: u64,
-}
-
-/// PUTs one resumable chunk (its byte span given by `range`) to `session_url`,
-/// rendering the `Content-Range: bytes start-end/total` header locally.
-/// Returns `Ok(true)` when the object is complete (final-chunk `200/201`),
-/// `Ok(false)` on `308` ("Resume Incomplete"). Retries transient
-/// transport/HTTP failures in place (the chunk body is re-sendable); 401
-/// surfaces as `TokenExpired`.
-async fn gcs_put_one_chunk(
-    client: &reqwest::Client,
-    session_url: &str,
-    token: &str,
-    body: Bytes,
-    range: ChunkRange,
-    policy: &RetryPolicy,
-) -> Result<bool, GcsRequestError> {
-    let content_range = format!(
-        "bytes {}-{}/{}",
-        range.offset,
-        range.offset + range.len - 1,
-        range.total
-    );
-    let backoff = &policy.backoff;
-    let len = body.len();
-    let mut attempt: u32 = 0;
-    let mut delay_ms = backoff.base.as_millis() as f64;
-    let start = std::time::Instant::now();
-    // Only the host + path may be logged (ud-log-every-http-call-at-info); the
-    // resumable session URL's query carries the upload_id, so strip it.
-    let log_path = session_url.split(['?', '#']).next().unwrap_or("");
-    loop {
-        attempt += 1;
-        if let Some(budget) = policy.max_elapsed {
-            let elapsed = start.elapsed();
-            if elapsed >= budget {
-                return Err(GcsRequestError::RetryExhausted {
-                    detail: format!(
-                        "resumable chunk PUT deadline exceeded after {elapsed:?} (budget {budget:?})"
-                    ),
-                });
-            }
-        }
-        tracing::info!(method = %Method::PUT, path = %log_path, attempt, "outbound HTTP call");
-        let send = client
-            .put(session_url)
-            .bearer_auth(token)
-            .header(reqwest::header::CONTENT_LENGTH, len)
-            .header(reqwest::header::CONTENT_RANGE, &content_range)
-            .body(reqwest::Body::from(body.clone()))
-            .send()
-            .await;
-        match send {
-            Ok(resp) => {
-                let status = resp.status();
-                let code = status.as_u16();
-                tracing::info!(status = code, "HTTP response");
-                if status == StatusCode::UNAUTHORIZED {
-                    return Err(GcsRequestError::TokenExpired);
-                }
-                // 308 "Resume Incomplete" is the normal between-chunks signal;
-                // 200/201 ends the session on the final chunk.
-                if code == 308 {
-                    return Ok(false);
-                }
-                if status.is_success() {
-                    return Ok(true);
-                }
-                if cloud_http::is_retryable_status(code, &policy.extra_retryable_statuses)
-                    && attempt < policy.max_attempts
-                {
-                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
-                    delay_ms = cloud_http::next_delay_ms(delay_ms, backoff);
-                    continue;
-                }
-                let body = cloud_http::read_error_body(resp).await;
-                return Err(GcsRequestError::GcsHttp {
-                    status_code: code,
-                    body,
-                });
-            }
-            Err(e) => {
-                if attempt < policy.max_attempts {
-                    tokio::time::sleep(Duration::from_millis(delay_ms as u64)).await;
-                    delay_ms = cloud_http::next_delay_ms(delay_ms, backoff);
-                    continue;
-                }
-                return Err(GcsRequestError::Http { source: e });
-            }
-        }
-    }
-}
-
-/// PUTs one resumable chunk under the token-refresh layer: a 401 rotates the
-/// bearer and retries just this chunk. No refresher → a 401 is terminal. Any
-/// error escaping here — including a leftover 401 the refresher declined to
-/// rotate again — is mid-session; the caller wraps it as `GcsAttemptError::Other`
-/// so the outer file loop does not recreate the session.
-async fn gcs_put_chunk_with_refresh(
-    upload_ctx: GcsResumableUploadCtx<'_>,
-    session_url: &str,
-    body: Bytes,
-    range: ChunkRange,
-) -> Result<bool, GcsRequestError> {
-    run_gcs_with_token_refresh(
-        upload_ctx.refresher,
-        upload_ctx.stage_info,
-        |e| StageInfoRefreshSnafu.into_error(e),
-        move |snapshot| {
-            let body = body.clone();
-            async move {
-                let token = gcs_token_from_creds(&snapshot.creds)
-                    .map_err(map_gcs_request_error_for_attempt)?;
-                gcs_put_one_chunk(
-                    upload_ctx.client,
-                    session_url,
-                    token,
-                    body,
-                    range,
-                    upload_ctx.policy,
-                )
-                .await
-                .map_err(map_gcs_request_error_for_attempt)
-            }
-        },
-    )
-    .await
-}
-
-/// Best-effort `DELETE` of a resumable session URL to release a half-staged
-/// upload after a terminal error. Failures are logged and swallowed — the
-/// original upload error is what matters, and GCS GCs abandoned sessions itself.
-async fn gcs_resumable_delete(client: &reqwest::Client, session_url: &str, token: &str) {
-    // Only the host + path may be logged (ud-log-every-http-call-at-info); the
-    // resumable session URL's query carries the upload_id, so strip it.
-    let log_path = session_url.split(['?', '#']).next().unwrap_or("");
-    tracing::info!(method = %Method::DELETE, path = %log_path, "outbound HTTP call");
-    match client.delete(session_url).bearer_auth(token).send().await {
-        Ok(resp) => tracing::info!(status = resp.status().as_u16(), "HTTP response"),
-        Err(e) => {
-            tracing::debug!("GCS resumable session cleanup DELETE failed (best-effort): {e}");
-        }
-    }
-}
-
 // --- Retry logic (delegates to http::retry) ---
 
 /// Returns a retry policy tuned for GCS file-transfer operations.
@@ -1264,12 +851,7 @@ async fn gcs_request_with_retry<F>(
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
-    // `allow_post_retry` is a no-op for every method except POST/PATCH (see
-    // `allow_retry` in `http::retry`), so it's safe to set unconditionally
-    // here rather than have every caller remember it — the resumable-session
-    // initiation POST (the only POST/PATCH caller today) needs its transient
-    // failures retried like every other GCS request.
-    let http_ctx = HttpContext::new(method, "gcs-transfer").allow_post_retry();
+    let http_ctx = HttpContext::new(method, "gcs-transfer");
 
     let response =
         http_execute_with_retry(build_request, &http_ctx, policy, |r| async move { Ok(r) })
@@ -1917,18 +1499,6 @@ enum GcsAttemptError<E> {
     Other(E),
 }
 
-impl<E> GcsAttemptError<E> {
-    fn map_other<F, E2>(self, f: F) -> GcsAttemptError<E2>
-    where
-        F: FnOnce(E) -> E2,
-    {
-        match self {
-            GcsAttemptError::TokenExpired => GcsAttemptError::TokenExpired,
-            GcsAttemptError::Other(e) => GcsAttemptError::Other(f(e)),
-        }
-    }
-}
-
 /// Maps the internal `GcsRequestError` into a per-attempt error so the token
 /// refresh loop can catch 401 separately from everything else. Anything that
 /// isn't 401 — including the new reactive 400 (presigned-URL expired) — goes
@@ -2078,23 +1648,16 @@ enum GcsRequestError {
     ConditionalCreateUnsupported,
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
+    #[snafu(display("Object too large to upload to GCS: {detail}"))]
+    FileTooLarge { detail: String },
     #[snafu(display("GCS client setup failed: {detail}"))]
     ClientSetup { detail: String },
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization { source: serde_json::Error },
-    #[snafu(display("Object too large to upload to GCS: {detail}"))]
-    FileTooLarge { detail: String },
-    #[snafu(display("GCS resumable upload protocol error: {detail}"))]
-    Resumable { detail: String },
     #[snafu(display("Failed to stage GCS ranged download to a temp file: {detail}"))]
     TempFile { detail: String },
     #[snafu(display("GCS endpoint did not honor Range header: {detail}"))]
     RangeNotHonored { detail: String },
-    #[snafu(display("stage info refresh failed"))]
-    StageInfoRefresh {
-        #[snafu(source(from(StageInfoRefreshError, Box::new)))]
-        source: Box<StageInfoRefreshError>,
-    },
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -2120,17 +1683,14 @@ impl From<GcsRequestError> for GcsUploadError {
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_upload_error::RetryExhaustedSnafu { detail }.build()
             }
+            GcsRequestError::FileTooLarge { detail } => {
+                gcs_upload_error::FileTooLargeSnafu { detail }.build()
+            }
             GcsRequestError::ClientSetup { detail } => {
                 gcs_upload_error::ClientSetupFailedSnafu { detail }.build()
             }
             GcsRequestError::Serialization { source } => {
                 gcs_upload_error::SerializationSnafu.into_error(source)
-            }
-            GcsRequestError::FileTooLarge { detail } => {
-                gcs_upload_error::FileTooLargeSnafu { detail }.build()
-            }
-            GcsRequestError::Resumable { detail } => {
-                gcs_upload_error::ResumableSnafu { detail }.build()
             }
             // TempFile is download-only; map to a generic upload error so the
             // conversion stays total (it cannot actually occur on upload).
@@ -2141,9 +1701,6 @@ impl From<GcsRequestError> for GcsUploadError {
             // the conversion stays total (it cannot actually occur on upload).
             GcsRequestError::RangeNotHonored { detail } => {
                 gcs_upload_error::RetryExhaustedSnafu { detail }.build()
-            }
-            GcsRequestError::StageInfoRefresh { source } => {
-                gcs_upload_error::StageInfoRefreshSnafu.into_error(*source)
             }
         }
     }
@@ -2184,6 +1741,9 @@ impl From<GcsRequestError> for GcsDownloadError {
             GcsRequestError::RetryExhausted { detail } => {
                 gcs_download_error::RetryExhaustedSnafu { detail }.build()
             }
+            GcsRequestError::FileTooLarge { detail } => {
+                gcs_download_error::FileTooLargeSnafu { detail }.build()
+            }
             GcsRequestError::ClientSetup { detail } => {
                 gcs_download_error::ClientSetupFailedSnafu { detail }.build()
             }
@@ -2192,25 +1752,11 @@ impl From<GcsRequestError> for GcsDownloadError {
             GcsRequestError::Serialization { source } => {
                 gcs_download_error::DeserializationSnafu.into_error(source)
             }
-            // FileTooLarge can occur on a ranged download (object > 5 TiB);
-            // Resumable is upload-only (logic-bug fallback on the download path).
-            GcsRequestError::FileTooLarge { detail } => {
-                gcs_download_error::FileTooLargeSnafu { detail }.build()
-            }
-            GcsRequestError::Resumable { detail } => {
-                gcs_download_error::RetryExhaustedSnafu { detail }.build()
-            }
             GcsRequestError::TempFile { detail } => {
                 gcs_download_error::TempFileSnafu { detail }.build()
             }
             GcsRequestError::RangeNotHonored { detail } => {
                 gcs_download_error::RangeNotHonoredSnafu { detail }.build()
-            }
-            // The per-chunk resumable-upload retry loop is the only current
-            // producer of this variant, so it cannot actually occur on the
-            // download path; still needs a total mapping.
-            GcsRequestError::StageInfoRefresh { source } => {
-                gcs_download_error::StageInfoRefreshSnafu.into_error(*source)
             }
         }
     }
@@ -2277,12 +1823,6 @@ pub enum GcsUploadError {
     },
     #[snafu(display("Object too large to upload to GCS: {detail}"))]
     FileTooLarge {
-        detail: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("GCS resumable upload protocol error: {detail}"))]
-    Resumable {
         detail: String,
         #[snafu(implicit)]
         location: Location,
@@ -2414,6 +1954,7 @@ mod tests {
     use crate::file_manager::types::{StageInfoCache, StageInfoSnapshot};
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
+    use std::time::Duration;
 
     fn base_policy() -> RetryPolicy {
         use crate::config::param_store::ParamStore;
@@ -3188,13 +2729,6 @@ mod tests {
             .unwrap_or("")
     }
 
-    fn content_range(req: &Request) -> &str {
-        req.headers
-            .get("content-range")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-    }
-
     fn policy_with_retryable_412(using_presigned_url: bool) -> RetryPolicy {
         let mut policy = test_policy(using_presigned_url, DEFAULT_PUT_GET_MAX_ATTEMPTS);
         policy.extra_retryable_statuses.insert(412);
@@ -3419,54 +2953,36 @@ mod tests {
             .await;
     }
 
-    /// `MultipartParams` with a 1-byte threshold so any non-empty body takes the
-    /// resumable/ranged multipart path, at the resolved concurrency.
+    /// `MultipartParams` whose 1-byte threshold puts any non-empty body above
+    /// the multipart threshold, at the resolved concurrency.
     fn always_multipart() -> MultipartParams {
         MultipartParams::from_server(Some(1), Some(4))
     }
 
-    /// Above the threshold on the access-token path, the upload takes the XML
-    /// resumable path: one initiation `POST` (carrying the digest) mints a
-    /// session URL, then the body is `PUT` to that session in `Content-Range`
-    /// chunks — `308` between chunks, `200` on the last. A 9 MiB body at the
-    /// 8 MiB GCS chunk size is two chunks.
+    /// Every access-token upload is one streaming `PUT` of the whole object,
+    /// including a body far above the multipart threshold: no session
+    /// initiation `POST`, no `Content-Range`, and the digest metadata rides on
+    /// that single request.
     #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_upload_initiates_then_puts_chunks() {
-        let server = MockServer::start().await;
+    async fn gcs_upload_above_multipart_threshold_is_a_single_put() {
+        const BODY_LEN: usize = 9 << 20;
 
-        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
-        // so no HEAD is issued and none is mocked.
-        // Initiation POST → 201 with the session URL in `Location`.
-        let session_path = "/resumable-session/abc";
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/my-bucket/prefix/file.csv"))
+            .respond_with(ResponseTemplate::new(200))
             .expect(1)
             .mount(&server)
             .await;
-        // Chunk PUTs against the session URL: first 308, then 200.
-        let counter = Arc::new(AtomicU64::new(0));
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(move |_req: &Request| {
-                if counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
-                    ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607")
-                } else {
-                    ResponseTemplate::new(200)
-                }
-            })
-            .mount(&server)
-            .await;
 
+        let digest = "0".repeat(64);
         let stage = make_stage_for_mock(&server.uri());
         let prepared = PreparedUpload {
             source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
                 7u8;
-                9 << 20
+                BODY_LEN
             ])),
-            digest: "0".repeat(64),
+            digest: digest.clone(),
             cse: None,
         };
 
@@ -3484,655 +3000,92 @@ mod tests {
             TransferCtx::default(),
         )
         .await
-        .expect("resumable upload should succeed against the mock");
+        .expect("a 9 MiB access-token upload should succeed as a single PUT");
         assert_eq!(status, UploadStatus::Uploaded);
 
         let received = server.received_requests().await.unwrap();
-        let init = received
-            .iter()
-            .find(|r| r.method.as_str() == "POST")
-            .expect("an initiation POST must be sent");
         assert!(
-            init.headers.get("x-goog-resumable").is_some(),
-            "initiation POST must carry x-goog-resumable: start"
-        );
-        assert!(
-            init.headers.get(GCS_META_SFC_DIGEST).is_some(),
-            "digest metadata must ride on the initiation POST"
-        );
-        assert!(
-            !init.headers.contains_key("x-goog-if-generation-match"),
-            "overwrite=true must leave resumable initiation unconditional"
-        );
-        let chunk_puts: Vec<_> = received
-            .iter()
-            .filter(|r| r.method.as_str() == "PUT")
-            .collect();
-        assert_eq!(chunk_puts.len(), 2, "9 MiB / 8 MiB chunk = 2 chunk PUTs");
-        for put in &chunk_puts {
-            assert!(
-                put.headers.get(reqwest::header::CONTENT_RANGE).is_some(),
-                "every chunk PUT must carry a Content-Range header"
-            );
-        }
-    }
-
-    /// A 401 on one resumable chunk PUT rotates the bearer and retries just
-    /// that chunk against the same session.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_401_on_one_chunk_resends_only_that_chunk() {
-        use crate::file_manager::internal::FakeStageInfoRefresher;
-        use std::sync::atomic::Ordering;
-
-        let server = MockServer::start().await;
-        let session_path = "/resumable-session/one-chunk-401";
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        // 9 MiB / 8 MiB = 2 chunks. Chunk 1's first PUT 401s; the retry and
-        // chunk 2 succeed.
-        let counter = Arc::new(AtomicU64::new(0));
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(
-                move |_req: &Request| match counter.fetch_add(1, Ordering::Relaxed) {
-                    0 => ResponseTemplate::new(401),
-                    1 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
-                    _ => ResponseTemplate::new(200),
-                },
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(0)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
-        fake.arm_rotation(CloudCredentials::Gcs {
-            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
-        });
-
-        let prepared = PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                7u8;
-                9 << 20
-            ])),
-            digest: "0".repeat(64),
-            cse: None,
-        };
-
-        let status = upload_to_gcs_or_skip(
-            prepared,
-            &stage,
-            "one-chunk.dat",
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
-            TransferCtx::with_refresher(&fake),
-        )
-        .await
-        .expect("a single chunk 401 must resume just that chunk");
-        assert_eq!(status, UploadStatus::Uploaded);
-
-        assert_eq!(
-            fake.refresh_call_count(),
-            1,
-            "exactly one refresh for the single chunk 401"
-        );
-        let received = server.received_requests().await.unwrap();
-        let posts = received
-            .iter()
-            .filter(|r| r.method.as_str() == "POST")
-            .count();
-        assert_eq!(
-            posts, 1,
-            "per-chunk resume must not recreate the resumable session"
+            received.iter().all(|r| r.method.as_str() != "POST"),
+            "a single-PUT upload must not initiate a resumable session"
         );
         let puts: Vec<_> = received
             .iter()
             .filter(|r| r.method.as_str() == "PUT")
             .collect();
-        assert_eq!(
-            puts.len(),
-            3,
-            "chunk 1 (401 + retry) + chunk 2 = 3 PUTs; a whole-session \
-             restart would redo both chunks"
-        );
+        assert_eq!(puts.len(), 1, "the whole body must go out in one PUT");
+
+        let put = puts[0];
+        assert_eq!(put.url.path(), "/my-bucket/prefix/file.csv");
         assert!(
-            authorization(puts[0]).ends_with("fake-token"),
-            "the 401'd chunk PUT carries the original bearer"
+            !put.headers.contains_key(reqwest::header::CONTENT_RANGE),
+            "a whole-object PUT must not carry a Content-Range"
         );
-        assert!(
-            puts[1..]
-                .iter()
-                .all(|r| authorization(r).ends_with("refreshed-token")),
-            "the retried chunk and every later chunk PUT carry the rotated bearer"
+        let expected_len = BODY_LEN.to_string();
+        assert_eq!(
+            put.headers
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok()),
+            Some(expected_len.as_str())
         );
         assert_eq!(
-            content_range(puts[0]),
-            content_range(puts[1]),
-            "the 401 retry must repeat chunk 1's Content-Range, not advance past it"
+            put.headers
+                .get(GCS_META_SFC_DIGEST)
+                .and_then(|v| v.to_str().ok()),
+            Some(digest.as_str())
         );
-        assert_ne!(
-            content_range(puts[1]),
-            content_range(puts[2]),
-            "chunk 2 must be the next span, not a re-send of chunk 1"
-        );
+        assert_eq!(authorization(put), "Bearer fake-token");
     }
 
-    /// A leftover chunk 401 (refresher declines to rotate again) is terminal
-    /// for the existing session — it must not recreate it.
     #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_second_chunk_401_after_refresh_does_not_recreate_session() {
-        use crate::file_manager::internal::FakeStageInfoRefresher;
-        use std::sync::atomic::Ordering;
-
+    async fn gcs_upload_rejects_object_over_max_size() {
         let server = MockServer::start().await;
-        let session_path = "/resumable-session/second-chunk-401";
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let counter = Arc::new(AtomicU64::new(0));
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(
-                move |_req: &Request| match counter.fetch_add(1, Ordering::Relaxed) {
-                    0 => ResponseTemplate::new(401),
-                    1 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
-                    _ => ResponseTemplate::new(401),
-                },
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
-        fake.arm_rotation(CloudCredentials::Gcs {
-            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
-        });
-
-        let error = upload_to_gcs_or_skip(
-            PreparedUpload {
-                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                    7u8;
-                    9 << 20
-                ])),
-                digest: "0".repeat(64),
-                cse: None,
-            },
-            &stage,
-            "second-chunk.dat",
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
-            TransferCtx::with_refresher(&fake),
-        )
-        .await
-        .expect_err("a second chunk 401 with no new rotation is terminal");
-        assert!(
-            matches!(error, GcsUploadError::TokenExpired { .. }),
-            "exhausted chunk 401 still surfaces as TokenExpired, got {error:?}"
-        );
-
-        assert_eq!(
-            fake.refresh_call_count(),
-            2,
-            "chunk 1 rotates; chunk 2 asks again and is declined"
-        );
-        let received = server.received_requests().await.unwrap();
-        let posts = received
-            .iter()
-            .filter(|r| r.method.as_str() == "POST")
-            .count();
-        assert_eq!(
-            posts, 1,
-            "exhausted chunk 401 must not recreate the resumable session"
-        );
-        let deletes: Vec<_> = received
-            .iter()
-            .filter(|r| r.method.as_str() == "DELETE")
-            .collect();
-        assert_eq!(deletes.len(), 1, "terminal chunk 401 aborts the session");
-        assert!(
-            authorization(deletes[0]).ends_with("refreshed-token"),
-            "abort after a rotation must use the rotated bearer, not the initiate token"
-        );
-    }
-
-    /// An initiate 401 still belongs to the outer per-file loop.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_401_on_initiate_restarts_session() {
-        use crate::file_manager::internal::FakeStageInfoRefresher;
-        use std::sync::atomic::Ordering;
-
-        let server = MockServer::start().await;
-        let session_path = "/resumable-session/initiate-401";
-        let posts = Arc::new(AtomicU64::new(0));
-        let location = format!("{}{session_path}", server.uri());
-        Mock::given(method("POST"))
-            .respond_with(
-                move |_req: &Request| match posts.fetch_add(1, Ordering::Relaxed) {
-                    0 => ResponseTemplate::new(401),
-                    _ => ResponseTemplate::new(201).insert_header("location", location.as_str()),
-                },
-            )
-            .expect(2)
-            .mount(&server)
-            .await;
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with({
-                let puts = Arc::new(AtomicU64::new(0));
-                move |_req: &Request| match puts.fetch_add(1, Ordering::Relaxed) {
-                    0 => ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607"),
-                    _ => ResponseTemplate::new(200),
-                }
-            })
-            .expect(2)
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(0)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
-        fake.arm_rotation(CloudCredentials::Gcs {
-            gcs_access_token: Some(SensitiveString::from("refreshed-token")),
-        });
-
-        let status = upload_to_gcs_or_skip(
-            PreparedUpload {
-                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                    7u8;
-                    9 << 20
-                ])),
-                digest: "0".repeat(64),
-                cse: None,
-            },
-            &stage,
-            "initiate-401.dat",
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
-            TransferCtx::with_refresher(&fake),
-        )
-        .await
-        .expect("an initiate 401 must refresh and start a new session");
-        assert_eq!(status, UploadStatus::Uploaded);
-        assert_eq!(fake.refresh_call_count(), 1);
-    }
-
-    /// The precondition header rides on the initiation POST, so Cloud Storage
-    /// *may* reject there and this pins that mapping. It is not the shape to
-    /// expect in production — see
-    /// [`gcs_resumable_final_chunk_maps_toctou_412_to_skipped`].
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_initiation_maps_toctou_412_to_skipped() {
-        let server = MockServer::start().await;
-        Mock::given(method("HEAD"))
-            .and(path("/my-bucket/prefix/file.csv"))
-            .respond_with(ResponseTemplate::new(404))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/my-bucket/prefix/file.csv"))
-            .and(header("x-goog-if-generation-match", "0"))
-            .respond_with(ResponseTemplate::new(412).set_body_string("precondition failed"))
-            .expect(1)
-            .mount(&server)
-            .await;
         Mock::given(method("PUT"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&server)
             .await;
 
-        let stage = make_stage_for_mock(&server.uri());
-        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
-        let status = upload_to_gcs_or_skip(
-            PreparedUpload {
-                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
-                digest: "local-digest".to_string(),
-                cse: None,
-            },
-            &stage,
-            "file.csv",
-            /* overwrite */ false,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &policy,
-            TransferCtx::default(),
+        let material = crate::file_manager::types::EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                [0u8; 32],
+            )),
+            query_id: "qid".to_string(),
+            smk_id: "1".to_string(),
+        };
+        let data = Bytes::from_static(b"tiny");
+        let (encryptor, metadata) = super::super::encryption::build_encryptor(
+            &material,
+            (MultipartConfig::GCS.max_object + 1) as i64,
         )
-        .await
-        .expect("a failed conditional resumable initiation is a normal skip");
+        .unwrap();
 
-        assert_eq!(status, UploadStatus::Skipped);
-    }
-
-    /// Cloud Storage defers a resumable upload's precondition to the request
-    /// that actually creates the object, so a lost race surfaces as 412 on the
-    /// *final* chunk PUT — after the whole body is on the wire — rather than on
-    /// the initiation POST that carried the header. This is the production
-    /// shape: it must still read as `Skipped` and still clean up the session.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_final_chunk_maps_toctou_412_to_skipped() {
-        let server = MockServer::start().await;
-        let session_path = "/resumable-session/final-412";
-        Mock::given(method("HEAD"))
-            .and(path("/my-bucket/prefix/file.csv"))
-            .respond_with(ResponseTemplate::new(404))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(header("x-goog-if-generation-match", "0"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .expect(1)
-            .mount(&server)
-            .await;
-        // 9 MiB over the 8 MiB GCS chunk size: the first PUT resumes, the second
-        // is the committing request where the precondition is evaluated.
-        let chunks = Arc::new(AtomicU64::new(0));
-        let chunks_for_response = chunks.clone();
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(move |_req: &Request| {
-                if chunks_for_response.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                    ResponseTemplate::new(308).insert_header("Range", "bytes=0-8388607")
-                } else {
-                    ResponseTemplate::new(412).set_body_string("precondition failed")
-                }
-            })
-            .expect(2)
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
-        let status = upload_to_gcs_or_skip(
-            PreparedUpload {
-                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                    7u8;
-                    9 << 20
-                ])),
-                digest: "local-digest".to_string(),
-                cse: None,
-            },
-            &stage,
-            "file.csv",
-            /* overwrite */ false,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &policy,
-            TransferCtx::default(),
-        )
-        .await
-        .expect("a 412 on the committing chunk is a normal skip outcome");
-
-        assert_eq!(status, UploadStatus::Skipped);
-        assert_eq!(
-            chunks.load(std::sync::atomic::Ordering::SeqCst),
-            2,
-            "the conflict is only observable after the entire body is uploaded"
-        );
-    }
-
-    /// A resumable overwrite remains unconditional. An unexpected 412 on its
-    /// committing chunk is terminal and must not be converted to `Skipped`.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_overwrite_final_chunk_412_is_error() {
-        let server = MockServer::start().await;
-        let session_path = "/resumable-session/overwrite-final-412";
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(404))
-            .expect(/* expected_request_count */ 0)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .expect(/* expected_request_count */ 1)
-            .mount(&server)
-            .await;
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(412).set_body_string("precondition failed"))
-            .expect(/* expected_request_count */ 1)
-            .mount(&server)
-            .await;
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(/* expected_request_count */ 1)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let policy = policy_with_retryable_412(/* using_presigned_url */ false);
         let error = upload_to_gcs_or_skip(
             PreparedUpload {
-                source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(b"x")),
-                digest: "local-digest".to_string(),
-                cse: None,
+                source: crate::file_manager::types::PreparedSource::Bytes(data),
+                digest: "0".repeat(64),
+                cse: Some(crate::file_manager::types::CseParams {
+                    metadata,
+                    encryptor,
+                }),
             },
-            &stage,
-            "file.csv",
-            /* overwrite */ true,
-            /* skip_upload_on_content_match */ false,
-            always_multipart(),
-            &policy,
-            TransferCtx::default(),
-        )
-        .await
-        .expect_err("an unconditional resumable 412 must surface as an error");
-
-        assert!(matches!(
-            error,
-            GcsUploadError::GcsHttp {
-                status_code: 412,
-                ..
-            }
-        ));
-        let requests = server
-            .received_requests()
-            .await
-            .expect("wiremock should retain received requests");
-        let initiation = requests
-            .iter()
-            .find(|request| request.method.as_str() == "POST")
-            .expect("the resumable upload should issue an initiation POST");
-        assert!(
-            !initiation.headers.contains_key(GCS_IF_GENERATION_MATCH),
-            "overwrite resumable initiation must remain unconditional"
-        );
-    }
-
-    /// A failed chunk PUT triggers a best-effort `DELETE` of the session URL.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_upload_deletes_session_on_chunk_failure() {
-        let server = MockServer::start().await;
-        // overwrite=true + skip_upload_on_content_match=false ⇒ head_needed=false,
-        // so no HEAD is issued and none is mocked.
-        let session_path = "/resumable-session/xyz";
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .mount(&server)
-            .await;
-        // Chunk PUT fails hard.
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(500))
-            .mount(&server)
-            .await;
-        // The cleanup DELETE against the session URL.
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let prepared = PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                1u8;
-                1 << 20
-            ])),
-            digest: "0".repeat(64),
-            cse: None,
-        };
-
-        // max_attempts=1 so the 500 fails fast (no long retry/backoff).
-        let result = upload_to_gcs_or_skip(
-            prepared,
-            &stage,
-            "file.csv",
+            &make_stage_for_mock(&server.uri()),
+            "huge.bin",
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
             always_multipart(),
             &test_policy(
-                /* using_presigned_url */ false, /* max_attempts */ 1,
+                /* using_presigned_url */ false,
+                DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
         )
-        .await;
+        .await
+        .expect_err("an object past the GCS 5 TiB ceiling must not start a PUT");
         assert!(
-            result.is_err(),
-            "a 500 on the chunk PUT must fail the upload"
+            matches!(error, GcsUploadError::FileTooLarge { .. }),
+            "oversize GCS PUT must surface FileTooLarge, got: {error:?}"
         );
-        // The `.expect(1)` on the DELETE mock verifies cleanup fired on drop.
-    }
-
-    /// Cancellation must delete the session too — see `gcs_resumable_upload`. The
-    /// failure test above cannot cover it: a cancelled future is dropped, so the
-    /// inline DELETE never runs.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn gcs_resumable_upload_deletes_session_when_the_operation_is_cancelled() {
-        use tokio::sync::Notify;
-
-        let server = MockServer::start().await;
-        let session_path = "/resumable-session/cancelled";
-        // Lets the cancel land while a chunk is genuinely in flight.
-        let chunk_started = Arc::new(Notify::new());
-
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(201).insert_header(
-                "location",
-                format!("{}{session_path}", server.uri()).as_str(),
-            ))
-            .mount(&server)
-            .await;
-
-        let started = chunk_started.clone();
-        Mock::given(method("PUT"))
-            .and(path(session_path))
-            .respond_with(move |_req: &Request| {
-                started.notify_one();
-                ResponseTemplate::new(308).set_delay(Duration::from_secs(30))
-            })
-            .mount(&server)
-            .await;
-
-        Mock::given(method("DELETE"))
-            .and(path(session_path))
-            .respond_with(ResponseTemplate::new(204))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let stage = make_stage_for_mock(&server.uri());
-        let policy = test_policy(
-            /* using_presigned_url */ false, /* max_attempts */ 1,
-        );
-        let trigger = {
-            let chunk_started = chunk_started.clone();
-            async move { chunk_started.notified().await }
-        };
-
-        let outcome = crate::apis::operation_ctx::cancelled_by(trigger, |scope| {
-            // Boxed to keep this large future off the frame — see clippy.toml.
-            Box::pin(async move {
-                let prepared = PreparedUpload {
-                    source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                    1u8;
-                    9 << 20
-                ])),
-                    digest: "0".repeat(64),
-                    cse: None,
-                };
-                upload_to_gcs_or_skip(
-                    prepared,
-                    &stage,
-                    "file.csv",
-                    /* overwrite */ true,
-                    /* skip_upload_on_content_match */ false,
-                    always_multipart(),
-                    &policy,
-                    TransferCtx::new(/* refresher */ None, /* cleanup */ Some(&scope)),
-                )
-                .await
-            })
-        })
-        .await;
-
-        assert!(
-            outcome.is_none(),
-            "the stalled upload must be cancelled, not completed"
-        );
-        // The `.expect(1)` on the DELETE mock verifies the session was released.
     }
 
     /// Above the threshold on the access-token path, the download HEADs for size

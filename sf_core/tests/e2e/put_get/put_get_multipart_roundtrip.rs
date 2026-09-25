@@ -1,8 +1,9 @@
-//! Real-account multipart round-trip: a file larger than the server's 200 MiB
-//! PUT/GET threshold, so the upload uses cloud multipart and the download uses
-//! parallel ranged GETs — the genuinely end-to-end counterpart to the fast,
-//! deterministic wiremock coverage in `integration/http/s3_multipart.rs`,
-//! `integration/http/azure_multipart.rs`, and `integration/http/gcs_multipart.rs`.
+//! Real-account large-file round-trip: a file larger than the server's 200 MiB
+//! PUT/GET threshold, so S3/Azure upload via cloud multipart, GCS uploads as a
+//! single PUT, and all three download via parallel ranged GETs — the genuinely
+//! end-to-end counterpart to the fast, deterministic wiremock coverage in
+//! `integration/http/s3_multipart.rs`, `integration/http/azure_multipart.rs`,
+//! and `integration/http/gcs_multipart.rs`.
 //!
 //! `PARALLEL` is set on both statements, so this also covers part-level
 //! concurrency within one file: the file-level counterpart is
@@ -14,8 +15,8 @@
 //! connects to whichever account each CI `cloud_provider` matrix lane decoded
 //! (see `scripts/decode_secrets.sh` — a distinct dedicated account per cloud),
 //! so this single test exercises S3 multipart on the `aws` lane, Azure
-//! block-blob multipart on the `azure` lane, and GCS resumable multipart on
-//! the `gcp` lane without any per-cloud test code.
+//! block-blob multipart on the `azure` lane, and GCS single-PUT upload +
+//! ranged GET on the `gcp` lane without any per-cloud test code.
 //!
 //! Gated `#[ignore]`: it generates and round-trips ~210 MiB over the network, so
 //! it stays out of the every-PR lane. Two CI lanes do run it: the nightly
@@ -51,7 +52,7 @@ fn should_upload_and_download_large_file_via_multipart_roundtrip() {
     write_payload(&src_path, MULTIPART_FILE_LEN);
     let src_digest = file_digest(&src_path);
 
-    // When File exceeding the 200 MiB threshold is uploaded via multipart PUT
+    // When File exceeding the 200 MiB threshold is uploaded
     // AUTO_COMPRESS=FALSE keeps the on-cloud size above the threshold; the file
     // is incompressible-enough and we compare the raw bytes either way.
     // OVERWRITE=TRUE makes the test idempotent across reruns on the same stage.

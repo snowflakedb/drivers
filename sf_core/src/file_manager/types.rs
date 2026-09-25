@@ -826,8 +826,8 @@ pub struct TransferCtx<'a> {
     /// `async_first` — so nothing is registered.
     pub cleanup: Option<&'a CleanupScope>,
     /// The budget every cloud request of the transfer draws on, shared across the
-    /// batch's files. The multipart control requests (create/complete/abort,
-    /// resumable initiate) and the cancellation abort path are the exceptions.
+    /// batch's files. The multipart control requests (create/complete/abort)
+    /// and the cancellation abort path are the exceptions.
     ///
     /// `None` means the caller has no batch to share with — an internal
     /// single-file caller or a test — and the callee builds a batch-of-one
