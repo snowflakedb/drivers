@@ -2,7 +2,9 @@ use super::types::{ByteSource, EncryptedFileMetadata, EncryptionMaterial, Materi
 use crate::sensitive::Sensitive;
 use snafu::{Location, ResultExt, Snafu, ensure};
 
+use aws_lc_rs::digest::{Context as Sha256Context, SHA256};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
+use md5::{Digest as _, Md5};
 use openssl::{
     error::ErrorStack as OpenSslErrorStack,
     hash::{Hasher, MessageDigest},
@@ -55,7 +57,7 @@ fn cbc_ciphertext_len(source_len: i64) -> i64 {
 /// the IV, and the exact ciphertext length (so the cloud `Content-Length` can be
 /// set before the body streams). AES-CBC with a fixed key+IV is deterministic,
 /// so a fresh [`EncryptingReader`] per retry reproduces byte-identical
-/// ciphertext — the digest (computed over the *plaintext* source) stays valid.
+/// ciphertext — the plaintext `sfc-digest` stays valid across retries.
 ///
 /// The per-file key is held in [`Sensitive`] so it is zeroized on drop and
 /// redacted from `Debug` (an `Encryptor` rides on the `Debug`-derived
@@ -107,8 +109,7 @@ impl Encryptor {
 
 /// Builds the per-file [`Encryptor`] and the `EncryptedFileMetadata` the cloud
 /// needs (encrypted file key, IV, material description). Pure: no file I/O —
-/// the ciphertext length is analytic (from `source_len`) and the `sfc-digest`
-/// is computed separately over the source by [`compute_sha256_digest`].
+/// the ciphertext length is analytic (from `source_len`).
 pub fn build_encryptor(
     encryption_material: &EncryptionMaterial,
     source_len: i64,
@@ -373,42 +374,85 @@ fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
     Ok(buffer)
 }
 
-/// SHA-256 of `source` as Base64 — the `sfc-digest` over the pre-encryption
-/// bytes (matching JDBC/ODBC). `Path` streams 64 KiB chunks; `Bytes` hashes in
-/// place. Used by **both** the CSE and SSE upload paths so the source is never
-/// materialized as a `Vec<u8>` just to compute a digest.
-pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionError> {
-    let mut hasher = Hasher::new(MessageDigest::sha256()).context(OpenSSLSnafu {
-        operation: "initializing SHA-256 hasher",
+fn compute_upload_sha256(
+    source: &ByteSource,
+    encryptor: Option<&Encryptor>,
+    on_body_chunk: impl FnMut(&[u8]),
+) -> Result<String, EncryptionError> {
+    let reader = source.open().context(IoSnafu {
+        operation: "opening source for digest computation",
     })?;
-    match source {
-        ByteSource::Path(p) => {
-            let mut f = std::fs::File::open(p).context(IoSnafu {
-                operation: "opening source for SHA-256 digest",
-            })?;
-            let mut buf = vec![0u8; CRYPT_CHUNK_SIZE];
-            loop {
-                let n = f.read(&mut buf).context(IoSnafu {
-                    operation: "reading source for SHA-256 digest",
-                })?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]).context(OpenSSLSnafu {
-                    operation: "hashing data chunk",
-                })?;
-            }
-        }
-        ByteSource::Bytes(b) => {
-            hasher.update(b).context(OpenSSLSnafu {
-                operation: "hashing in-memory bytes",
-            })?;
+    compute_upload_sha256_from_reader(reader, encryptor, on_body_chunk)
+}
+
+fn compute_upload_sha256_from_reader<R: Read>(
+    source: R,
+    encryptor: Option<&Encryptor>,
+    mut on_body_chunk: impl FnMut(&[u8]),
+) -> Result<String, EncryptionError> {
+    struct Sha256Reader<'a, R> {
+        source: R,
+        hasher: &'a mut Sha256Context,
+    }
+
+    impl<R: Read> Read for Sha256Reader<'_, R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.source.read(buf)?;
+            self.hasher.update(&buf[..n]);
+            Ok(n)
         }
     }
-    let digest = hasher.finish().context(OpenSSLSnafu {
-        operation: "finalizing SHA-256 digest",
-    })?;
-    Ok(BASE64_ENGINE.encode(digest))
+
+    enum DigestBody<'a, R: Read> {
+        Plain(Sha256Reader<'a, R>),
+        Encrypted(EncryptingReader<Sha256Reader<'a, R>>),
+    }
+
+    impl<R: Read> Read for DigestBody<'_, R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self {
+                Self::Plain(reader) => reader.read(buf),
+                Self::Encrypted(reader) => reader.read(buf),
+            }
+        }
+    }
+
+    let mut sha256_hasher = Sha256Context::new(&SHA256);
+    {
+        let sha256_reader = Sha256Reader {
+            source,
+            hasher: &mut sha256_hasher,
+        };
+        let mut body = match encryptor {
+            Some(encryptor) => DigestBody::Encrypted(encryptor.encrypting_reader(sha256_reader)?),
+            None => DigestBody::Plain(sha256_reader),
+        };
+        let mut buf = vec![0u8; CRYPT_CHUNK_SIZE];
+        loop {
+            let n = body.read(&mut buf).context(IoSnafu {
+                operation: "reading source for digest computation",
+            })?;
+            if n == 0 {
+                break;
+            }
+            on_body_chunk(&buf[..n]);
+        }
+    }
+
+    Ok(BASE64_ENGINE.encode(sha256_hasher.finish().as_ref()))
+}
+
+pub(super) fn compute_azure_blob_digests(
+    source: &ByteSource,
+    encryptor: Option<&Encryptor>,
+) -> Result<(String, String), EncryptionError> {
+    let mut md5_hasher = Md5::new();
+    let sha256 = compute_upload_sha256(source, encryptor, |chunk| md5_hasher.update(chunk))?;
+    Ok((sha256, BASE64_ENGINE.encode(md5_hasher.finalize())))
+}
+
+pub fn compute_sha256_digest(source: &ByteSource) -> Result<String, EncryptionError> {
+    compute_upload_sha256(source, None, |_| {})
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -475,6 +519,83 @@ mod tests {
 
     fn digest_of(bytes: &[u8]) -> String {
         compute_sha256_digest(&ByteSource::Bytes(bytes::Bytes::copy_from_slice(bytes))).unwrap()
+    }
+
+    #[test]
+    fn upload_digests_match_sha256_and_md5_vectors() {
+        let (sha256, md5) = compute_azure_blob_digests(
+            &ByteSource::Bytes(bytes::Bytes::from_static(b"hello world")),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(sha256, "uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek=");
+        assert_eq!(md5, "XrY7u+Ae7tCTyyK7j1rNww==");
+    }
+
+    #[test]
+    fn upload_md5_matches_ciphertext_when_encrypted() {
+        let plaintext = b"the quick brown fox jumps over the lazy dog";
+        let material = test_material();
+        let (encryptor, _metadata) = build_encryptor(&material, plaintext.len() as i64).unwrap();
+        let ciphertext = encrypt_to_vec(&encryptor, plaintext);
+
+        let (sha256, md5) = compute_azure_blob_digests(
+            &ByteSource::Bytes(bytes::Bytes::from_static(plaintext)),
+            Some(&encryptor),
+        )
+        .unwrap();
+
+        assert_eq!(sha256, digest_of(plaintext));
+        assert_eq!(md5, BASE64_ENGINE.encode(Md5::digest(&ciphertext)));
+        assert_ne!(md5, BASE64_ENGINE.encode(Md5::digest(plaintext)));
+    }
+
+    #[test]
+    fn upload_digests_consume_non_seekable_source_once() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct CountingReader {
+            data: &'static [u8],
+            offset: usize,
+            bytes_read: Arc<AtomicUsize>,
+        }
+
+        impl Read for CountingReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let remaining = &self.data[self.offset..];
+                let n = remaining.len().min(buf.len());
+                buf[..n].copy_from_slice(&remaining[..n]);
+                self.offset += n;
+                self.bytes_read.fetch_add(n, Ordering::Relaxed);
+                Ok(n)
+            }
+        }
+
+        let bytes_read = Arc::new(AtomicUsize::new(0));
+        let reader = CountingReader {
+            data: b"one-way upload source",
+            offset: 0,
+            bytes_read: bytes_read.clone(),
+        };
+        let mut md5_hasher = Md5::new();
+        let sha256 =
+            compute_upload_sha256_from_reader(reader, None, |chunk| md5_hasher.update(chunk))
+                .unwrap();
+        let md5 = BASE64_ENGINE.encode(md5_hasher.finalize());
+
+        assert_eq!(sha256, digest_of(b"one-way upload source"));
+        assert_eq!(
+            md5,
+            BASE64_ENGINE.encode(Md5::digest(b"one-way upload source"))
+        );
+        assert_eq!(
+            bytes_read.load(Ordering::Relaxed),
+            b"one-way upload source".len()
+        );
     }
 
     #[test]

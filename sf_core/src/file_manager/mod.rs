@@ -194,14 +194,17 @@ use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
 use crate::tls::error::TlsError;
-use azure_transfer::{azure_get_streaming, download_from_azure_streaming, upload_to_azure_or_skip};
+use azure_transfer::{
+    AzurePreparedUpload, azure_get_streaming, download_from_azure_streaming,
+    upload_to_azure_or_skip,
+};
 use cloud_http::{
     CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
     spawn_s3_byte_stream_producer,
 };
 use encryption::{
-    EncryptionError, build_encryptor, compute_sha256_digest, decrypt_ciphertext_to_writer,
-    wrapped_key_matches_material,
+    EncryptionError, build_encryptor, compute_azure_blob_digests, compute_sha256_digest,
+    decrypt_ciphertext_to_writer, wrapped_key_matches_material,
 };
 use flate2::write::GzDecoder;
 use futures::StreamExt as _;
@@ -666,8 +669,8 @@ pub(crate) async fn upload_prepared_source(
         Err(row) => return Ok(row),
     };
 
-    let status = match data.stage_info.location_type {
-        LocationType::S3 => upload_to_s3_or_skip(
+    let status = match prepared {
+        CloudPreparedUpload::S3(prepared) => upload_to_s3_or_skip(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -679,7 +682,7 @@ pub(crate) async fn upload_prepared_source(
         )
         .await
         .context(S3UploadSnafu)?,
-        LocationType::Gcs => upload_to_gcs_or_skip(
+        CloudPreparedUpload::Gcs(prepared) => upload_to_gcs_or_skip(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -693,7 +696,7 @@ pub(crate) async fn upload_prepared_source(
         )
         .await
         .context(GcsUploadSnafu)?,
-        LocationType::Azure => upload_to_azure_or_skip(
+        CloudPreparedUpload::Azure(prepared) => upload_to_azure_or_skip(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -778,12 +781,29 @@ fn upload_result_source(
     }
 }
 
+#[derive(Debug)]
+enum CloudPreparedUpload {
+    S3(PreparedUpload),
+    Gcs(PreparedUpload),
+    Azure(AzurePreparedUpload),
+}
+
+#[cfg(test)]
+impl CloudPreparedUpload {
+    fn upload(&self) -> &PreparedUpload {
+        match self {
+            Self::S3(prepared) | Self::Gcs(prepared) => prepared,
+            Self::Azure(azure) => azure.upload(),
+        }
+    }
+}
+
 /// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
 /// For SSE stages (no encryption material), the data is uploaded without client-side encryption.
 fn preprocess_file_before_upload(
     source: ByteSource,
     data: &SingleUploadData,
-) -> Result<(PreparedUpload, UploadMetadata), FileManagerError> {
+) -> Result<(CloudPreparedUpload, UploadMetadata), FileManagerError> {
     let (prefix, source_size) = read_prefix_and_size(&source)?;
 
     let source_compression = get_source_compression(
@@ -824,17 +844,13 @@ fn preprocess_file_before_upload(
         };
 
     // The upload source after optional auto-compression: the gzip tempfile, the
-    // original file, or in-memory bytes. Encryption (CSE) is applied lazily
-    // while building the cloud body, so the source is what we measure and hash
-    // here; ciphertext is never materialized.
+    // original file, or in-memory bytes. CSE still encrypts lazily on the cloud
+    // body; Azure's blob Content-MD5 is hashed from that same ciphertext stream
+    // during preprocess so it matches the committed bytes.
     let source_len = match &upload_source {
         ByteSource::Bytes(b) => b.len() as i64,
         ByteSource::Path(p) => std::fs::metadata(p).context(IoSnafu)?.len() as i64,
     };
-
-    // `sfc-digest` is the SHA-256 of the pre-encryption source for both CSE and
-    // SSE (matching JDBC/ODBC), so it can be computed once, up front.
-    let digest = compute_sha256_digest(&upload_source).context(DigestComputationSnafu)?;
 
     let cse = match &data.encryption_material {
         Some(material) => {
@@ -869,11 +885,38 @@ fn preprocess_file_before_upload(
         },
         None => PreparedSource::from(upload_source),
     };
+    let digest_source = source.byte_source();
 
-    let prepared = PreparedUpload {
-        source,
-        digest,
-        cse,
+    let prepared = match data.stage_info.location_type {
+        LocationType::Azure => {
+            let (sha256, md5) =
+                compute_azure_blob_digests(&digest_source, cse.as_ref().map(|c| &c.encryptor))
+                    .context(DigestComputationSnafu)?;
+            CloudPreparedUpload::Azure(AzurePreparedUpload::new(
+                PreparedUpload {
+                    source,
+                    digest: sha256,
+                    cse,
+                },
+                md5,
+            ))
+        }
+        LocationType::S3 => {
+            let digest = compute_sha256_digest(&digest_source).context(DigestComputationSnafu)?;
+            CloudPreparedUpload::S3(PreparedUpload {
+                source,
+                digest,
+                cse,
+            })
+        }
+        LocationType::Gcs => {
+            let digest = compute_sha256_digest(&digest_source).context(DigestComputationSnafu)?;
+            CloudPreparedUpload::Gcs(PreparedUpload {
+                source,
+                digest,
+                cse,
+            })
+        }
     };
 
     Ok((
@@ -4241,7 +4284,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.source.byte_source().into_bytes().unwrap(),
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
@@ -4260,7 +4303,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.source.byte_source().into_bytes().unwrap(),
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical"
         );
@@ -4288,7 +4331,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
         assert_eq!(metadata.source_compression, CompressionType::Parquet);
         assert_eq!(
-            prepared.source.byte_source().into_bytes().unwrap(),
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical (no gzip wrap)",
         );
@@ -4310,7 +4353,7 @@ mod tests {
         assert_eq!(metadata.target_compression, CompressionType::Orc);
         assert_eq!(metadata.source_compression, CompressionType::Orc);
         assert_eq!(
-            prepared.source.byte_source().into_bytes().unwrap(),
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
             payload,
             "payload must pass through bit-identical"
         );
@@ -4331,7 +4374,10 @@ mod tests {
 
         assert_eq!(metadata.target, "data.parquet");
         assert_eq!(metadata.target_compression, CompressionType::Parquet);
-        assert_eq!(prepared.source.byte_source().into_bytes().unwrap(), payload);
+        assert_eq!(
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
+            payload
+        );
     }
 
     #[test]
@@ -4345,7 +4391,10 @@ mod tests {
 
         assert_eq!(metadata.target, "data.orc");
         assert_eq!(metadata.target_compression, CompressionType::Orc);
-        assert_eq!(prepared.source.byte_source().into_bytes().unwrap(), payload);
+        assert_eq!(
+            prepared.upload().source.byte_source().into_bytes().unwrap(),
+            payload
+        );
     }
 
     // Auto-compress of a plain (not-already-compressed) payload must stream the
@@ -4366,7 +4415,10 @@ mod tests {
         assert_eq!(metadata.target, "data.csv.gz", ".gz suffix expected");
         assert_eq!(metadata.target_compression, CompressionType::Gzip);
         assert!(
-            matches!(prepared.source, PreparedSource::GzipTempfile { .. }),
+            matches!(
+                prepared.upload().source,
+                PreparedSource::GzipTempfile { .. }
+            ),
             "auto-compress must make the gzip tempfile (which carries its own \
              unlink guard) the upload source",
         );
@@ -4460,14 +4512,15 @@ mod tests {
         assert_eq!(meta_a.target, meta_b.target);
         assert_eq!(meta_a.target_compression, meta_b.target_compression);
 
-        let bytes_a = a.source.byte_source().into_bytes().unwrap();
-        let bytes_b = b.source.byte_source().into_bytes().unwrap();
+        let bytes_a = a.upload().source.byte_source().into_bytes().unwrap();
+        let bytes_b = b.upload().source.byte_source().into_bytes().unwrap();
         assert_eq!(
             bytes_a, bytes_b,
             "gzip output must be byte-identical across calls with the same input"
         );
         assert_eq!(
-            a.digest, b.digest,
+            a.upload().digest,
+            b.upload().digest,
             "post-compression digest must be stable; otherwise content-match skip never fires"
         );
         assert_ne!(
@@ -4507,7 +4560,7 @@ mod tests {
         let (prepared, _) =
             preprocess_file_before_upload(ByteSource::Bytes(payload.clone().into()), &data)
                 .unwrap();
-        let bytes = prepared.source.byte_source().into_bytes().unwrap();
+        let bytes = prepared.upload().source.byte_source().into_bytes().unwrap();
         assert_eq!(gzip_header_filename(&bytes), None);
     }
 

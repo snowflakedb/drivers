@@ -26,6 +26,42 @@ use tokio_stream::wrappers::ReceiverStream;
 const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
 const AZURE_META_ENCRYPTIONDATA: &str = "x-ms-meta-encryptiondata";
 const AZURE_META_MATDESC: &str = "x-ms-meta-matdesc";
+const AZURE_BLOB_CONTENT_MD5: &str = "x-ms-blob-content-md5";
+const CONTENT_MD5: &str = "content-md5";
+
+#[derive(Debug, Clone)]
+pub(super) struct AzurePreparedUpload {
+    prepared: PreparedUpload,
+    blob_content_md5: String,
+}
+
+impl AzurePreparedUpload {
+    pub(super) fn new(prepared: PreparedUpload, blob_content_md5: String) -> Self {
+        Self {
+            prepared,
+            blob_content_md5,
+        }
+    }
+}
+
+#[cfg(test)]
+impl AzurePreparedUpload {
+    pub(super) fn upload(&self) -> &PreparedUpload {
+        &self.prepared
+    }
+}
+
+#[cfg(test)]
+impl From<PreparedUpload> for AzurePreparedUpload {
+    fn from(prepared: PreparedUpload) -> Self {
+        let (_, md5) = super::encryption::compute_azure_blob_digests(
+            &prepared.source.byte_source(),
+            prepared.cse.as_ref().map(|c| &c.encryptor),
+        )
+        .expect("test fixture blob MD5");
+        Self::new(prepared, md5)
+    }
+}
 
 /// HTTP status code that Azure returns on SAS token expiry or authorization
 /// failure. Any 403 triggers a SAS refresh; the body is parsed only for
@@ -292,11 +328,15 @@ async fn azure_put_attempt(
     client: &reqwest::Client,
     url: &str,
     sas_token: &str,
-    prepared: PreparedUpload,
+    upload: AzurePreparedUpload,
     base: &RetryPolicy,
     overwrite: bool,
     scheduler: &TransferScheduler,
 ) -> Result<(), AzureAttemptError<AzureUploadError>> {
+    let AzurePreparedUpload {
+        prepared,
+        blob_content_md5,
+    } = upload;
     let source = prepared.source.byte_source();
     let digest = prepared.digest;
     let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
@@ -349,12 +389,13 @@ async fn azure_put_attempt(
                 .await
                 .context(azure_upload_error::SourceIoSnafu)?;
 
-            // TODO(SNOW-3701467): add an in-transit integrity checksum to match the S3 PUT path.
             let mut req = apply_create_precondition(
                 client
                     .put(&full_url)
                     .header("x-ms-blob-type", "BlockBlob")
                     .header(AZURE_META_SFC_DIGEST, &digest)
+                    .header(CONTENT_MD5, &blob_content_md5)
+                    .header(AZURE_BLOB_CONTENT_MD5, &blob_content_md5)
                     .header(reqwest::header::CONTENT_LENGTH, content_length)
                     .body(body),
                 overwrite,
@@ -547,7 +588,7 @@ fn sas_expired_or_other(
 // may bundle {multipart, policy, tx} into an opts struct.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn upload_to_azure_or_skip(
-    prepared: PreparedUpload,
+    prepared: AzurePreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
@@ -566,7 +607,7 @@ pub(super) async fn upload_to_azure_or_skip(
     let client = create_azure_client(stage_info, tx.http_client)?;
     // On-cloud byte count (ciphertext length under CSE) decides single-PUT vs
     // multipart; computed once, outside the per-attempt closure.
-    let body_len = multipart::upload_body_len(&prepared)
+    let body_len = multipart::upload_body_len(&prepared.prepared)
         .await
         .context(azure_upload_error::SourceIoSnafu)?;
 
@@ -629,7 +670,7 @@ pub(super) async fn upload_to_azure_or_skip(
                 overwrite,
                 skip_upload_on_content_match,
                 &remote_head,
-                &prepared.digest,
+                &prepared.prepared.digest,
                 &key,
             ) {
                 return Ok(status);
@@ -805,10 +846,14 @@ struct AzureMultipartCtx<'a> {
 /// <https://learn.microsoft.com/en-us/rest/api/storageservices/put-block>
 async fn azure_multipart_upload(
     multipart_ctx: AzureMultipartCtx<'_>,
-    prepared: PreparedUpload,
+    upload: AzurePreparedUpload,
     body_len: u64,
     scheduler: &TransferScheduler,
 ) -> Result<(), AzureUploadError> {
+    let AzurePreparedUpload {
+        prepared,
+        blob_content_md5,
+    } = upload;
     let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
         .context(azure_upload_error::FileTooLargeSnafu)?;
     let concurrency = scheduler.multipart().concurrency;
@@ -865,6 +910,7 @@ async fn azure_multipart_upload(
         multipart_ctx,
         &block_numbers,
         &digest,
+        &blob_content_md5,
         encryption_data_str.as_deref(),
         mat_desc_str.as_deref(),
     )
@@ -984,6 +1030,7 @@ async fn azure_put_block_list_with_refresh(
     multipart_ctx: AzureMultipartCtx<'_>,
     block_numbers: &[i32],
     digest: &str,
+    blob_content_md5: &str,
     encryption_data_str: Option<&str>,
     mat_desc_str: Option<&str>,
 ) -> Result<(), AzureUploadError> {
@@ -1003,6 +1050,7 @@ async fn azure_put_block_list_with_refresh(
             let url = multipart_ctx.url.to_string();
             let block_numbers = block_numbers.to_vec();
             let digest = digest.to_string();
+            let blob_content_md5 = blob_content_md5.to_string();
             let encryption_data_str = encryption_data_str.map(str::to_string);
             let mat_desc_str = mat_desc_str.map(str::to_string);
             async move {
@@ -1014,6 +1062,7 @@ async fn azure_put_block_list_with_refresh(
                     AzureBlockListCommit {
                         block_numbers: &block_numbers,
                         digest: &digest,
+                        blob_content_md5: &blob_content_md5,
                         encryption_data: encryption_data_str.as_deref(),
                         material_description: mat_desc_str.as_deref(),
                         overwrite: multipart_ctx.overwrite,
@@ -1036,6 +1085,7 @@ async fn azure_put_block_list_with_refresh(
 struct AzureBlockListCommit<'a> {
     block_numbers: &'a [i32],
     digest: &'a str,
+    blob_content_md5: &'a str,
     encryption_data: Option<&'a str>,
     material_description: Option<&'a str>,
     overwrite: bool,
@@ -1072,6 +1122,7 @@ async fn azure_put_block_list(
     let client = client.clone();
     let url_owned = full_url.to_string();
     let digest = commit.digest.to_string();
+    let blob_content_md5 = commit.blob_content_md5.to_string();
     let encryption_data_str = commit.encryption_data.map(str::to_string);
     let mat_desc_str = commit.material_description.map(str::to_string);
     let overwrite = commit.overwrite;
@@ -1082,6 +1133,7 @@ async fn azure_put_block_list(
                     .put(&url_owned)
                     .query(&[("comp", "blocklist")])
                     .header(AZURE_META_SFC_DIGEST, &digest)
+                    .header(AZURE_BLOB_CONTENT_MD5, &blob_content_md5)
                     .body(body.clone()),
                 overwrite,
             );
@@ -1919,6 +1971,11 @@ mod tests {
     // Aliased so call sites read `test_policy(..)`.
     use crate::file_manager::internal::FakeStageInfoRefresher;
     use crate::file_manager::internal::azure_test_retry_policy as test_policy;
+    use md5::{Digest as _, Md5};
+
+    fn blob_md5(body: &[u8]) -> String {
+        BASE64_ENGINE.encode(Md5::digest(body))
+    }
 
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
@@ -2403,7 +2460,7 @@ mod tests {
         });
 
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2449,7 +2506,7 @@ mod tests {
         fake.arm_failure("GS re-issue rejected in test");
 
         let result = upload_to_azure_or_skip(
-            prepared_upload_with_digest("d"),
+            prepared_upload_with_digest("d").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2499,7 +2556,7 @@ mod tests {
         });
 
         let result = upload_to_azure_or_skip(
-            prepared_upload_with_digest("d"),
+            prepared_upload_with_digest("d").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2690,7 +2747,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2724,7 +2781,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2759,7 +2816,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -2795,7 +2852,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2855,7 +2912,8 @@ mod tests {
                 source: source.into(),
                 digest: real_digest,
                 cse: None,
-            },
+            }
+            .into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2890,7 +2948,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2922,7 +2980,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -2956,7 +3014,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3009,7 +3067,8 @@ mod tests {
                 source: source.into(),
                 digest: real_digest,
                 cse: None,
-            },
+            }
+            .into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3067,7 +3126,8 @@ mod tests {
                 source: source.into(),
                 digest: real_digest,
                 cse: None,
-            },
+            }
+            .into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3106,10 +3166,9 @@ mod tests {
             ..Default::default()
         });
 
+        let body = b"hello world";
         let prepared = PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(
-                b"hello world",
-            )),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from_static(body)),
             digest: "0".repeat(64),
             cse: None,
         };
@@ -3117,7 +3176,7 @@ mod tests {
         // overwrite=true skips the existence-check HEAD probe so the
         // first request the mock sees is the PUT we want to inspect.
         upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "file.dat",
             true,
@@ -3148,6 +3207,22 @@ mod tests {
         assert!(
             put.headers.get(AZURE_META_SFC_DIGEST).is_some(),
             "{AZURE_META_SFC_DIGEST} must be present on Azure PUT"
+        );
+        assert_eq!(
+            put.headers
+                .get(CONTENT_MD5)
+                .expect("Content-MD5 must be present on Azure PUT")
+                .to_str()
+                .expect("Content-MD5 must be an ASCII header"),
+            blob_md5(body)
+        );
+        assert_eq!(
+            put.headers
+                .get(AZURE_BLOB_CONTENT_MD5)
+                .expect("x-ms-blob-content-md5 must be present on Azure PUT")
+                .to_str()
+                .expect("blob MD5 must be an ASCII header"),
+            blob_md5(body)
         );
 
         // Absence checks: neither Content-Encoding nor its blob-metadata
@@ -3202,7 +3277,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3236,7 +3311,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3280,7 +3355,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let status = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ true,
@@ -3313,7 +3388,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3351,7 +3426,7 @@ mod tests {
 
         let stage = mock_stage(&mock.uri());
         let result = upload_to_azure_or_skip(
-            prepared_upload_with_digest("local-digest"),
+            prepared_upload_with_digest("local-digest").into(),
             &stage,
             "f.dat",
             /* overwrite */ false,
@@ -3421,17 +3496,15 @@ mod tests {
             ..Default::default()
         });
 
+        let body = vec![3u8; BODY_LEN];
         let prepared = PreparedUpload {
-            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
-                3u8;
-                BODY_LEN
-            ])),
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(body.clone())),
             digest: "0".repeat(64),
             cse: None,
         };
 
         upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "file.dat",
             true,
@@ -3455,6 +3528,15 @@ mod tests {
         assert!(
             commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
             "digest metadata must ride on the block-list commit"
+        );
+        assert_eq!(
+            commit
+                .headers
+                .get(AZURE_BLOB_CONTENT_MD5)
+                .expect("blob MD5 must ride on the block-list commit")
+                .to_str()
+                .expect("blob MD5 must be an ASCII header"),
+            blob_md5(&body)
         );
         assert!(
             !commit.headers.contains_key(reqwest::header::IF_NONE_MATCH),
@@ -3494,7 +3576,8 @@ mod tests {
                 source: ByteSource::Bytes(Bytes::from_static(b"x")).into(),
                 digest: "local-digest".to_string(),
                 cse: None,
-            },
+            }
+            .into(),
             &stage,
             "file.dat",
             /* overwrite */ false,
@@ -3554,7 +3637,7 @@ mod tests {
                     cse: None,
                 };
                 upload_to_azure_or_skip(
-                    prepared,
+                    prepared.into(),
                     &stage,
                     "file.dat",
                     true,
@@ -3656,7 +3739,7 @@ mod tests {
         };
 
         upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "big.dat",
             /* overwrite */ true,
@@ -3741,7 +3824,7 @@ mod tests {
         };
 
         upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "commit.dat",
             /* overwrite */ true,
@@ -3792,7 +3875,7 @@ mod tests {
         };
 
         let result = upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "noref.dat",
             /* overwrite */ true,
@@ -3875,7 +3958,7 @@ mod tests {
         };
 
         let result = upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "commit-window.dat",
             /* overwrite */ true,
@@ -3946,7 +4029,7 @@ mod tests {
         };
 
         let result = upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "block-refresh-fail.dat",
             /* overwrite */ true,
@@ -4003,7 +4086,7 @@ mod tests {
         };
 
         let result = upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "block-persist-403.dat",
             /* overwrite */ true,
@@ -4088,7 +4171,7 @@ mod tests {
         };
 
         upload_to_azure_or_skip(
-            prepared,
+            prepared.into(),
             &stage,
             "one.dat",
             /* overwrite */ true,

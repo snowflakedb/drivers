@@ -3925,6 +3925,7 @@ dependencies = [
  "keyring",
  "libc",
  "lru 0.12.5",
+ "md-5",
  "memchr",
  "num-traits",
  "oauth2",

@@ -22,12 +22,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use base64::Engine as _;
+use md5::{Digest as _, Md5};
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::internal::{MultipartConfig, compute_sha256_digest};
 use sf_core::file_manager::types::{
-    ByteSource, CloudCredentials, LocationType, SingleDownloadData, SingleUploadData, StageInfo,
+    ByteSource, CloudCredentials, EncryptionMaterial, LocationType, SingleDownloadData,
+    SingleUploadData, StageInfo,
 };
 use sf_core::file_manager::{
     MultipartParams, SourceCompressionParam, TransferCtx, download_single_file, upload_single_file,
@@ -41,6 +43,7 @@ use crate::http::multipart_test_support::{make_payload, parse_range};
 /// Azure Blob Storage user-metadata header carrying Snowflake's SHA-256
 /// digest. Mirrors the private constant of the same name in `azure_transfer.rs`.
 const AZURE_META_SFC_DIGEST: &str = "x-ms-meta-sfcdigest";
+const AZURE_BLOB_CONTENT_MD5: &str = "x-ms-blob-content-md5";
 
 /// Comfortably larger than Azure's default block size, so the transfer splits
 /// into several blocks / ranges. The exact count is derived from the real
@@ -265,6 +268,17 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         commit.headers.get(AZURE_META_SFC_DIGEST).is_some(),
         "digest metadata must ride on the Put Block List commit"
     );
+    let expected_md5 =
+        base64::engine::general_purpose::STANDARD.encode(Md5::digest(payload.as_slice()));
+    assert_eq!(
+        commit
+            .headers
+            .get(AZURE_BLOB_CONTENT_MD5)
+            .expect("Put Block List must carry the blob MD5")
+            .to_str()
+            .expect("blob MD5 must be an ASCII header"),
+        expected_md5
+    );
 
     // ---- Download (ranged) ----
     let output_dir = tempfile::tempdir().unwrap();
@@ -306,4 +320,99 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
     let downloaded = std::fs::read(output_dir.path().join("bigfile.bin")).expect("read output");
     assert_eq!(downloaded.len(), payload.len(), "downloaded length matches");
     assert!(downloaded == payload, "downloaded bytes match the original");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_set_azure_blob_md5_from_cse_ciphertext() {
+    let payload = make_payload(10 * 1024 * 1024);
+    let state = Arc::new(AzureMockState::default());
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(AzureMock {
+            state: Arc::clone(&state),
+        })
+        .mount(&server)
+        .await;
+
+    let upload = SingleUploadData {
+        source: ByteSource::Bytes(payload.clone().into()),
+        filename: "encrypted.bin".to_string(),
+        stage_info: azure_stage(&server.uri()),
+        encryption_material: Some(EncryptionMaterial {
+            query_stage_master_key: SensitiveString::from(
+                base64::engine::general_purpose::STANDARD.encode([7u8; 32]),
+            ),
+            query_id: "query-id".to_string(),
+            smk_id: "123".to_string(),
+        }),
+        auto_compress: false,
+        source_compression: SourceCompressionParam::None,
+        overwrite: true,
+        flavor: PutGetResultsetFlavor::Python,
+        legacy_odbc_compression_autodetect: false,
+        skip_upload_on_content_match: false,
+        multipart: MultipartParams::from_server(Some(1), Some(2)),
+        put_compress_level: 9,
+        put_tempdir: None,
+    };
+
+    upload_single_file(
+        upload,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("encrypted multipart upload should succeed");
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("wiremock request log should be enabled");
+    let mut blocks: Vec<_> = received
+        .iter()
+        .filter(|request| {
+            request.method.as_str() == "PUT"
+                && request
+                    .url
+                    .query()
+                    .is_some_and(|query| query.contains("comp=block&"))
+        })
+        .collect();
+    blocks.sort_by_key(|request| {
+        request
+            .url
+            .query_pairs()
+            .find(|(key, _)| key == "blockid")
+            .map(|(_, value)| value.into_owned())
+            .expect("Put Block request must carry a block id")
+    });
+    let ciphertext: Vec<u8> = blocks
+        .into_iter()
+        .flat_map(|request| request.body.iter().copied())
+        .collect();
+    let commit = received
+        .iter()
+        .find(|request| {
+            request.method.as_str() == "PUT"
+                && request
+                    .url
+                    .query()
+                    .is_some_and(|query| query.contains("comp=blocklist"))
+        })
+        .expect("Put Block List commit must be sent");
+    let committed_md5 = commit
+        .headers
+        .get(AZURE_BLOB_CONTENT_MD5)
+        .expect("Put Block List must carry the blob MD5")
+        .to_str()
+        .expect("blob MD5 must be an ASCII header");
+
+    assert_eq!(
+        committed_md5,
+        base64::engine::general_purpose::STANDARD.encode(Md5::digest(&ciphertext))
+    );
+    assert_ne!(
+        committed_md5,
+        base64::engine::general_purpose::STANDARD.encode(Md5::digest(&payload))
+    );
 }

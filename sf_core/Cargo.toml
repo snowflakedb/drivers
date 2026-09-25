@@ -83,6 +83,10 @@ arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
 openssl = "0.10.73"
+# Azure's Content-MD5 is a non-security integrity value. The pure-Rust
+# implementation remains available when OpenSSL runs in FIPS mode, where MD5
+# digest operations are intentionally disabled.
+md-5 = ">=0.10, <0.12"
 jwt = { version = "0.16.0", features = ["openssl"] }
 # `default-features = false` drops oauth2's `rustls-tls`, which is only a
 # forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
