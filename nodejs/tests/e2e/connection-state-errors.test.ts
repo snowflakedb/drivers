@@ -3,6 +3,17 @@ import { createConnection, createLiveConnection } from './utils/fixtures.js';
 import { connectAsyncWithErrorBD, destroyConnectionAsync, executeAsync } from './utils/index.js';
 
 describe('Connection State Errors', () => {
+  it('should refuse to connect an established connection again', async () => {
+    const connection = await createLiveConnection();
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'ClientError',
+      code: 405502,
+      sqlState: '08002',
+      message: 'Already connected.',
+    });
+  });
+
   it('rejects a statement issued before the connection is established', async () => {
     const connection = createConnection();
     await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({

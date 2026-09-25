@@ -17,6 +17,7 @@ pub(crate) enum BridgeError {
         error_code: Option<i32>,
         error_message: Option<String>,
     },
+    AlreadyConnected,
     Message(String),
 }
 
@@ -123,6 +124,17 @@ impl ClientError {
         }
     }
 
+    fn of_already_connected() -> Self {
+        Self {
+            name: Some("ClientError"),
+            message: "Already connected.".to_string(),
+            code: Some(ErrorCode::Driver(405502)),
+            sql_state: Some("08002".to_string()),
+            cause: None,
+            is_fatal: false,
+        }
+    }
+
     fn build(&self, env: Env) -> napi::Result<napi::Error> {
         let mut error = new_js_error(&env, self.message.clone())?;
         if let Some(name) = self.name {
@@ -196,6 +208,9 @@ impl ToJsError for BridgeError {
                 error_code,
                 error_message,
             } => ClientError::of_query_status_error(query_id, *error_code, error_message)
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::AlreadyConnected => ClientError::of_already_connected()
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
             BridgeError::Message(message) => napi::Error::from_reason(message.clone()),
@@ -345,5 +360,16 @@ mod tests {
         assert_eq!(error.name, Some("OperationFailedError"));
         assert_eq!(code_of(&error), None);
         assert_eq!(error.message, "Query abc failed");
+    }
+
+    #[test]
+    fn connecting_an_already_connected_connection_is_not_fatal() {
+        let error = ClientError::of_already_connected();
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("405502".to_string()));
+        assert_eq!(error.message, "Already connected.");
+        assert_eq!(error.sql_state.as_deref(), Some("08002"));
+        assert!(!error.is_fatal);
     }
 }

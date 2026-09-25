@@ -10,8 +10,8 @@ mod time_format;
 pub use column::Column;
 
 use crate::DRIVER;
-use crate::connection::Handles;
 use crate::error::{BridgeError, ToJsError, async_to_js};
+use crate::session::Ready;
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -31,22 +31,17 @@ pub struct Statement {
 
 #[napi]
 impl Statement {
-    /// `conn_handles` is held for the lifetime of the statement's work, not just
-    /// borrowed for its handle: the JS `Connection` can become unreachable while
-    /// a statement is still running, and releasing the connection handle out
-    /// from under the query would break both the execution and the result fetch
-    /// below.
     pub(crate) fn from_pending(
-        conn_handles: Arc<Handles>,
         operation_ctx: Option<Arc<OperationCtx>>,
-        result_future: impl Future<Output = std::result::Result<ExecuteQueryResult, BridgeError>>
-        + Send
+        result_future: impl Future<
+            Output = std::result::Result<(Ready, ExecuteQueryResult), BridgeError>,
+        > + Send
         + 'static,
     ) -> Self {
         Self {
             result: StatementResult::from_future(async move {
-                let conn_handle = conn_handles.connection;
-                result_data_from(result_future.await?, conn_handle).await
+                let (ready, result) = result_future.await?;
+                result_data_from(result, ready.connection()).await
             }),
             operation_ctx,
         }
