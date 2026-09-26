@@ -67,9 +67,24 @@ pub struct CrlCache {
     url_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     backoff: Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>>,
     http_client: reqwest::Client,
-    // Scheduler control channel to wake DelayQueue loop on updates
-    scheduler_tx: OnceCell<tokio::sync::mpsc::Sender<SchedulerMsg>>,
+    // Scheduler control channel to wake DelayQueue loop on updates. Set by
+    // each running refresher and cleared when it stops.
+    scheduler_tx: Mutex<Option<tokio::sync::mpsc::Sender<SchedulerMsg>>>,
     metrics: CrlMetrics,
+}
+
+/// The process-wide cache. Stays alive for the life of the process; only its
+/// background refresher is started and stopped (see [`REFRESHER`]).
+static INSTANCE: OnceCell<Arc<CrlCache>> = OnceCell::new();
+
+/// The running `"crl-refresh"` thread, if any. [`CrlCache::global`] starts it
+/// and [`CrlCache::shutdown_background_refresher`] stops it, so a host that
+/// unloads this library can make sure the thread is gone first.
+static REFRESHER: Mutex<Option<BackgroundRefresher>> = Mutex::new(None);
+
+struct BackgroundRefresher {
+    cancel: tokio_util::sync::CancellationToken,
+    thread: std::thread::JoinHandle<()>,
 }
 
 #[derive(Debug)]
@@ -397,7 +412,7 @@ impl CrlCache {
     }
     // Spawn a singleton scheduler using DelayQueue keyed to CRL half-life deadlines,
     // plus jittered orphan-temp sweeps when disk caching is enabled.
-    fn spawn_background_refresher(this: Arc<Self>) {
+    fn spawn_background_refresher(this: Arc<Self>) -> Option<BackgroundRefresher> {
         use tokio_util::time::DelayQueue;
 
         let disk_cache_dir = if this.config.enable_disk_caching {
@@ -406,13 +421,15 @@ impl CrlCache {
             None
         };
         if this.memory_cache.is_none() && disk_cache_dir.is_none() {
-            return;
+            return None;
         }
         let memory_enabled = this.memory_cache.is_some();
 
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let thread_cancel = cancel.clone();
         let thread_name = "crl-refresh".to_string();
         let dispatch = tracing::dispatcher::get_default(|d| d.clone());
-        let _ = std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
                 let _log_guard = tracing::dispatcher::set_default(&dispatch);
@@ -420,7 +437,8 @@ impl CrlCache {
                     .enable_all()
                     .build()
                     .expect("Failed to create CRL refresh runtime");
-                rt.block_on(async move {
+                let cache = this.clone();
+                let refresh = async move {
                     if let Some(dir) = disk_cache_dir {
                         tokio::spawn(async move {
                             const SWEEP_BUDGET: usize = 256;
@@ -459,8 +477,8 @@ impl CrlCache {
 
                     // control channel to receive schedule updates
                     let (tx, mut rx) = tokio::sync::mpsc::channel::<SchedulerMsg>(128);
-                    // publish tx to instance so put()/fetch can notify (OnceCell ensures set once)
-                    let _ = this.scheduler_tx.set(tx);
+                    // publish tx to instance so put()/fetch can notify
+                    *this.scheduler_tx.lock_recover() = Some(tx);
 
                     let mut dq: DelayQueue<String> = DelayQueue::new();
                     let mut keys: HashMap<String, tokio_util::time::delay_queue::Key> =
@@ -533,8 +551,42 @@ impl CrlCache {
                             }
                         }
                     }
+                };
+                // Cancelling drops `refresh` wherever it is parked; dropping
+                // `rt` then aborts the tasks it spawned and joins its blocking
+                // threads, so nothing is left running once this thread exits.
+                rt.block_on(async {
+                    tokio::select! {
+                        () = thread_cancel.cancelled() => {}
+                        () = refresh => {}
+                    }
                 });
-            });
+                *cache.scheduler_tx.lock_recover() = None;
+            })
+            .ok()?;
+        Some(BackgroundRefresher { cancel, thread })
+    }
+
+    /// Stops the `"crl-refresh"` thread and waits for it to exit. The cache
+    /// itself survives, and the next [`CrlCache::global`] call starts a new
+    /// refresher.
+    ///
+    /// Call this before the library can be unloaded. On Windows the ODBC
+    /// Driver Manager unloads the driver DLL right after the last environment
+    /// is freed; a refresher still parked on a timer at that point faults as
+    /// soon as it wakes, because its code is no longer mapped.
+    pub fn shutdown_background_refresher() {
+        // Hold the slot through the join so a concurrent `global()` can't
+        // start a new refresher whose scheduler channel the exiting thread
+        // would then clear.
+        let mut slot = REFRESHER.lock_recover();
+        let Some(refresher) = slot.take() else {
+            return;
+        };
+        refresher.cancel.cancel();
+        if refresher.thread.thread().id() != std::thread::current().id() {
+            let _ = refresher.thread.join();
+        }
     }
 
     // Decide if a CRL with the given IDP scope applies to the target certificate and URL
@@ -845,14 +897,13 @@ impl CrlCache {
             url_locks: Arc::new(Mutex::new(HashMap::new())),
             backoff: Arc::new(Mutex::new(HashMap::new())),
             http_client,
-            scheduler_tx: OnceCell::new(),
+            scheduler_tx: Mutex::new(None),
             metrics: CrlMetrics::init(&meter),
         })
     }
 
     pub fn global(config: CrlConfig) -> Result<&'static Arc<CrlCache>, CrlError> {
-        static INSTANCE: OnceCell<Arc<CrlCache>> = OnceCell::new();
-        INSTANCE.get_or_try_init(|| {
+        let instance = INSTANCE.get_or_try_init(|| {
             let cache = match CrlCache::new(config) {
                 Ok(c) => c,
                 Err(e) => {
@@ -863,10 +914,13 @@ impl CrlCache {
                     })?
                 }
             };
-            let arc = Arc::new(cache);
-            CrlCache::spawn_background_refresher(arc.clone());
-            Ok(arc)
-        })
+            Ok::<_, CrlError>(Arc::new(cache))
+        })?;
+        let mut refresher = REFRESHER.lock_recover();
+        if refresher.is_none() {
+            *refresher = CrlCache::spawn_background_refresher(instance.clone());
+        }
+        Ok(instance)
     }
 
     pub fn url_digest(url: &str) -> String {
@@ -932,7 +986,7 @@ impl CrlCache {
             cache.insert(url_key.clone(), cached_crl);
         }
         // Notify scheduler to (re)schedule this URL
-        if let Some(tx) = self.scheduler_tx.get()
+        if let Some(tx) = self.scheduler_tx.lock_recover().as_ref()
             && let Some(memory) = &self.memory_cache
             && let Ok(cache) = memory.lock()
             && let Some(entry) = cache.get(&url_key)
@@ -1638,11 +1692,37 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_refresher_thread_exits_and_clears_scheduler() {
+        let cache = Arc::new(CrlCache::new(test_config()).expect("cache"));
+        let refresher =
+            CrlCache::spawn_background_refresher(cache.clone()).expect("refresher thread");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while cache.scheduler_tx.lock_recover().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "refresher never published its scheduler channel"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        refresher.cancel.cancel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(refresher.thread.join().is_ok());
+        });
+        let joined = done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("cancelled refresher thread should exit promptly");
+        assert!(joined, "refresher thread panicked");
+        assert!(cache.scheduler_tx.lock_recover().is_none());
+    }
+
+    #[test]
     fn scheduler_is_notified_on_put() {
         let cache = CrlCache::new(test_config()).expect("cache");
         let (tx, mut rx) = tokio::sync::mpsc::channel::<SchedulerMsg>(1);
         // Set scheduler sender for test
-        let _ = cache.scheduler_tx.set(tx);
+        *cache.scheduler_tx.lock_recover() = Some(tx);
 
         let url = "http://example/crl".to_string();
         let entry = CachedCrl {

@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread::JoinHandle;
 
 pub struct CrlWorkerRequest {
     pub chain: Vec<Vec<u8>>,
@@ -11,8 +12,13 @@ pub struct CrlWorkerRequest {
     pub reply: mpsc::Sender<Result<(), CrlError>>,
 }
 
+/// Owns the `"crl-worker"` thread. Dropping it closes the request channel and
+/// joins the thread, so no code from this library is still running once the
+/// last handle is gone. The ODBC driver relies on this: the Windows Driver
+/// Manager unloads the driver DLL right after the last environment is freed.
 pub struct CrlWorker {
-    tx: Sender<CrlWorkerRequest>,
+    tx: Option<Sender<CrlWorkerRequest>>,
+    thread: Option<JoinHandle<()>>,
 }
 
 /// Shareable lazy CRL worker handle. The background thread starts on first use
@@ -32,7 +38,7 @@ impl CrlWorker {
         let (tx, rx): (Sender<CrlWorkerRequest>, Receiver<CrlWorkerRequest>) = mpsc::channel();
 
         let dispatch = tracing::dispatcher::get_default(|d| d.clone());
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("crl-worker".into())
             .spawn(move || {
                 let _log_guard = tracing::dispatcher::set_default(&dispatch);
@@ -56,7 +62,10 @@ impl CrlWorker {
             })
             .expect("Failed to spawn CRL worker thread");
 
-        CrlWorker { tx }
+        CrlWorker {
+            tx: Some(tx),
+            thread: Some(thread),
+        }
     }
 
     /// Returns a lazy [`SharedCrlWorker`] for standalone TLS clients (dev binaries,
@@ -83,7 +92,44 @@ impl CrlWorker {
             validator,
             reply: reply_tx,
         };
-        self.tx.send(msg).expect("CRL worker channel closed");
+        self.tx
+            .as_ref()
+            .expect("CRL worker sender is only taken on drop")
+            .send(msg)
+            .expect("CRL worker channel closed");
         reply_rx.recv().expect("CRL worker reply channel closed")
+    }
+}
+
+impl Drop for CrlWorker {
+    fn drop(&mut self) {
+        // Closing the channel ends the worker's `recv` loop; its runtime then
+        // shuts down and joins its own blocking threads.
+        drop(self.tx.take());
+        if let Some(thread) = self.thread.take()
+            && thread.thread().id() != std::thread::current().id()
+        {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_joins_worker_thread() {
+        let worker = CrlWorker::spawn();
+        let thread = worker.thread.as_ref().expect("thread").thread().clone();
+        assert_eq!(thread.name(), Some("crl-worker"));
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            drop(worker);
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("dropping the worker should return once its thread has exited");
     }
 }
