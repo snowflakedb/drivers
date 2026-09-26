@@ -17,7 +17,7 @@ use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding, SQL_PARAM_IGNOR
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
-use super::boolean::read_boolean_param;
+use super::boolean::{SnowflakeBoolean, read_boolean_param};
 use super::date::SnowflakeDate;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
@@ -52,6 +52,8 @@ use super::warning::Warnings;
 /// converters format-agnostic means every type has a single source of truth
 /// for its wire representation.
 pub(crate) trait ParamConverter {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool;
+
     fn convert(
         &self,
         binding: &ParameterBinding,
@@ -65,6 +67,10 @@ struct WireParamConverter<T: ReadODBC + WriteWire> {
 }
 
 impl<T: ReadODBC + WriteWire> ParamConverter for WireParamConverter<T> {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        self.snowflake_type.accepts_c_type(c_type)
+    }
+
     fn convert(
         &self,
         binding: &ParameterBinding,
@@ -78,6 +84,10 @@ impl<T: ReadODBC + WriteWire> ParamConverter for WireParamConverter<T> {
 struct BooleanParamConverter;
 
 impl ParamConverter for BooleanParamConverter {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        SnowflakeBoolean.accepts_c_type(c_type)
+    }
+
     fn convert(
         &self,
         binding: &ParameterBinding,
@@ -101,30 +111,86 @@ impl SnowflakeType for SnowflakeDecimal {
     type Representation<'a> = String;
 }
 
+enum DecimalCSource {
+    Char,
+    WChar,
+    SLong,
+    SShort,
+    SBigInt,
+    ULong,
+    UShort,
+    UBigInt,
+    STinyInt,
+    UTinyInt,
+    Double,
+    Float,
+    Bit,
+    Numeric,
+    Binary,
+    SingleFieldInterval,
+}
+
+fn decimal_c_source(c_type: CDataType) -> Option<DecimalCSource> {
+    match c_type {
+        CDataType::Char => Some(DecimalCSource::Char),
+        CDataType::WChar => Some(DecimalCSource::WChar),
+        CDataType::Long | CDataType::SLong => Some(DecimalCSource::SLong),
+        CDataType::Short | CDataType::SShort => Some(DecimalCSource::SShort),
+        CDataType::SBigInt => Some(DecimalCSource::SBigInt),
+        CDataType::ULong => Some(DecimalCSource::ULong),
+        CDataType::UShort => Some(DecimalCSource::UShort),
+        CDataType::UBigInt => Some(DecimalCSource::UBigInt),
+        CDataType::TinyInt | CDataType::STinyInt => Some(DecimalCSource::STinyInt),
+        CDataType::UTinyInt => Some(DecimalCSource::UTinyInt),
+        CDataType::Double => Some(DecimalCSource::Double),
+        CDataType::Float => Some(DecimalCSource::Float),
+        CDataType::Bit => Some(DecimalCSource::Bit),
+        CDataType::Numeric => Some(DecimalCSource::Numeric),
+        CDataType::Binary => Some(DecimalCSource::Binary),
+        CDataType::IntervalYear
+        | CDataType::IntervalMonth
+        | CDataType::IntervalDay
+        | CDataType::IntervalHour
+        | CDataType::IntervalMinute
+        | CDataType::IntervalSecond => Some(DecimalCSource::SingleFieldInterval),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeDecimal {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        decimal_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let s = match binding.value_type {
-            CDataType::Char => read_char_str(binding)?,
-            CDataType::WChar => read_wchar_str(binding)?,
-            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding).to_string(),
-            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding).to_string(),
-            CDataType::SBigInt => read_unaligned::<i64>(binding).to_string(),
-            CDataType::ULong => read_unaligned::<u32>(binding).to_string(),
-            CDataType::UShort => read_unaligned::<u16>(binding).to_string(),
-            CDataType::UBigInt => read_unaligned::<u64>(binding).to_string(),
-            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding).to_string(),
-            CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
-            CDataType::Double => read_unaligned::<f64>(binding).to_string(),
-            CDataType::Float => read_unaligned::<f32>(binding).to_string(),
-            CDataType::Bit => read_unaligned::<u8>(binding).to_string(),
-            CDataType::Numeric => {
+        let s = match decimal_c_source(binding.value_type) {
+            None => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+            Some(DecimalCSource::Char) => read_char_str(binding)?,
+            Some(DecimalCSource::WChar) => read_wchar_str(binding)?,
+            Some(DecimalCSource::SLong) => read_unaligned::<i32>(binding).to_string(),
+            Some(DecimalCSource::SShort) => read_unaligned::<i16>(binding).to_string(),
+            Some(DecimalCSource::SBigInt) => read_unaligned::<i64>(binding).to_string(),
+            Some(DecimalCSource::ULong) => read_unaligned::<u32>(binding).to_string(),
+            Some(DecimalCSource::UShort) => read_unaligned::<u16>(binding).to_string(),
+            Some(DecimalCSource::UBigInt) => read_unaligned::<u64>(binding).to_string(),
+            Some(DecimalCSource::STinyInt) => read_unaligned::<i8>(binding).to_string(),
+            Some(DecimalCSource::UTinyInt) => read_unaligned::<u8>(binding).to_string(),
+            Some(DecimalCSource::Double) => read_unaligned::<f64>(binding).to_string(),
+            Some(DecimalCSource::Float) => read_unaligned::<f32>(binding).to_string(),
+            Some(DecimalCSource::Bit) => read_unaligned::<u8>(binding).to_string(),
+            Some(DecimalCSource::Numeric) => {
                 let (value, scale) = read_numeric_struct(binding)?;
                 format_numeric_value(value, scale)
             }
-            CDataType::Binary => {
+            Some(DecimalCSource::Binary) => {
                 let len = buffer_data_len(binding);
                 if len == std::mem::size_of::<sql::Numeric>() {
                     let (value, scale) = read_numeric_struct(binding)?;
@@ -150,17 +216,8 @@ impl ReadODBC for SnowflakeDecimal {
             // MINUTE_TO_SECOND) carry more than one field and have no
             // single-integer mapping; they fall through to the unsupported
             // arm below.
-            CDataType::IntervalYear
-            | CDataType::IntervalMonth
-            | CDataType::IntervalDay
-            | CDataType::IntervalHour
-            | CDataType::IntervalMinute
-            | CDataType::IntervalSecond => read_single_field_interval_i128(binding).to_string(),
-            _ => {
-                return UnsupportedParameterTypeSnafu {
-                    sql_type: sql::SqlDataType::DECIMAL,
-                }
-                .fail();
+            Some(DecimalCSource::SingleFieldInterval) => {
+                read_single_field_interval_i128(binding).to_string()
             }
         };
         Ok(s)
@@ -200,7 +257,9 @@ impl WriteWire for SnowflakeDecimal {
 /// `Some(Ntz)`) routes to TIMESTAMP_NTZ for backward compatibility with
 /// Tableau/Excel/Power BI; `Some(Ltz)` and `Some(Tz)` route to the matching
 /// Snowflake logical type.
-fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>, BindingError> {
+pub(crate) fn make_converter(
+    binding: &ParameterBinding,
+) -> Result<Box<dyn ParamConverter>, BindingError> {
     let sql_type = &binding.sql_data_type;
     match *sql_type {
         sql::SqlDataType::INTEGER
@@ -342,6 +401,31 @@ fn make_converter(binding: &ParameterBinding) -> Result<Box<dyn ParamConverter>,
             }
             .fail()
         }
+    }
+}
+
+pub(crate) fn validate_c_to_sql_at_bind(
+    value_type: CDataType,
+    sql_type: sql::SqlDataType,
+    sf_subtype: Option<TimestampSubtype>,
+) -> Result<(), BindingError> {
+    let binding = ParameterBinding {
+        sql_data_type: sql_type,
+        value_type,
+        parameter_value_ptr: std::ptr::null_mut(),
+        buffer_length: 0,
+        str_len_or_ind_ptr: std::ptr::null_mut(),
+        sf_subtype,
+    };
+    let converter = match make_converter(&binding) {
+        Ok(converter) => converter,
+        Err(BindingError::UnsupportedParameterType { .. }) => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if value_type == CDataType::Default || converter.accepts_c_type(value_type) {
+        Ok(())
+    } else {
+        UnsupportedCDataTypeSnafu { c_type: value_type }.fail()
     }
 }
 
@@ -1010,6 +1094,35 @@ mod tests {
     use crate::api::{ApdRecord, IpdRecord};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn bind_ok(c_type: CDataType, sql_type: sql::SqlDataType) -> bool {
+        validate_c_to_sql_at_bind(c_type, sql_type, None).is_ok()
+    }
+
+    #[test]
+    fn validate_c_to_sql_at_bind_rejects_illegal_pairs() {
+        assert!(!bind_ok(CDataType::TypeDate, sql::SqlDataType::INTEGER));
+        assert!(!bind_ok(CDataType::Float, sql::SqlDataType(101)));
+        assert!(!bind_ok(CDataType::Guid, sql::SqlDataType::EXT_BINARY));
+        assert!(!bind_ok(
+            CDataType::IntervalYearToMonth,
+            sql::SqlDataType::INTEGER,
+        ));
+        assert!(!bind_ok(CDataType::TypeDate, sql::SqlDataType::EXT_BINARY));
+        assert!(matches!(
+            validate_c_to_sql_at_bind(CDataType::TypeDate, sql::SqlDataType::INTEGER, None),
+            Err(BindingError::UnsupportedCDataType { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_c_to_sql_at_bind_accepts_legal_pairs_and_exceptions() {
+        assert!(bind_ok(CDataType::SLong, sql::SqlDataType::INTEGER));
+        assert!(bind_ok(CDataType::Char, sql::SqlDataType::EXT_BINARY));
+        assert!(bind_ok(CDataType::TypeDate, sql::SqlDataType::DATE));
+        assert!(bind_ok(CDataType::Default, sql::SqlDataType::INTEGER));
+        assert!(bind_ok(CDataType::Char, sql::SqlDataType(-11)));
+    }
 
     fn make_binding(
         value_type: CDataType,

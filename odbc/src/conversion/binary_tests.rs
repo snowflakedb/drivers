@@ -792,6 +792,33 @@ mod tests {
     }
 
     #[test]
+    fn binary_sql_accepts_c_type_matches_appendix_d() {
+        use crate::conversion::binary::{binary_sql_accepts_c_type, is_binary_sql_parameter_type};
+
+        for c_type in [
+            CDataType::Default,
+            CDataType::Binary,
+            CDataType::Char,
+            CDataType::WChar,
+        ] {
+            assert!(
+                binary_sql_accepts_c_type(c_type),
+                "{c_type:?} must be accepted for a binary SQL target",
+            );
+        }
+        assert!(!binary_sql_accepts_c_type(CDataType::TypeDate));
+        assert!(!binary_sql_accepts_c_type(CDataType::Guid));
+        assert!(is_binary_sql_parameter_type(sql::SqlDataType::EXT_BINARY));
+        assert!(is_binary_sql_parameter_type(
+            sql::SqlDataType::EXT_VAR_BINARY
+        ));
+        assert!(is_binary_sql_parameter_type(
+            sql::SqlDataType::EXT_LONG_VAR_BINARY
+        ));
+        assert!(!is_binary_sql_parameter_type(sql::SqlDataType::INTEGER));
+    }
+
+    #[test]
     fn read_odbc_rejects_every_disallowed_c_type_with_07006() {
         // ODBC Appendix D: only SQL_C_BINARY / SQL_C_CHAR / SQL_C_WCHAR /
         // SQL_C_DEFAULT may be bound to a binary SQL target. Every other

@@ -229,47 +229,90 @@ fn parse_str_to_bool(s: &str) -> Result<(bool, Warnings), BindingError> {
     .fail()
 }
 
+enum BooleanCSource {
+    Bit,
+    UTinyInt,
+    STinyInt,
+    SLong,
+    ULong,
+    SShort,
+    UShort,
+    SBigInt,
+    UBigInt,
+    Float,
+    Double,
+    Char,
+    WChar,
+    Numeric,
+    Binary,
+}
+
+fn boolean_c_source(c_type: CDataType) -> Option<BooleanCSource> {
+    match c_type {
+        CDataType::Default | CDataType::Bit => Some(BooleanCSource::Bit),
+        CDataType::UTinyInt => Some(BooleanCSource::UTinyInt),
+        CDataType::TinyInt | CDataType::STinyInt => Some(BooleanCSource::STinyInt),
+        CDataType::Long | CDataType::SLong => Some(BooleanCSource::SLong),
+        CDataType::ULong => Some(BooleanCSource::ULong),
+        CDataType::Short | CDataType::SShort => Some(BooleanCSource::SShort),
+        CDataType::UShort => Some(BooleanCSource::UShort),
+        CDataType::SBigInt => Some(BooleanCSource::SBigInt),
+        CDataType::UBigInt => Some(BooleanCSource::UBigInt),
+        CDataType::Float => Some(BooleanCSource::Float),
+        CDataType::Double => Some(BooleanCSource::Double),
+        CDataType::Char => Some(BooleanCSource::Char),
+        CDataType::WChar => Some(BooleanCSource::WChar),
+        CDataType::Numeric => Some(BooleanCSource::Numeric),
+        CDataType::Binary => Some(BooleanCSource::Binary),
+        _ => None,
+    }
+}
+
 pub(crate) fn read_boolean_param(
     binding: &ParameterBinding,
 ) -> Result<(bool, Warnings), BindingError> {
-    match binding.value_type {
-        CDataType::Default | CDataType::Bit => Ok((read_unaligned::<u8>(binding) != 0, vec![])),
-        CDataType::UTinyInt => {
+    match boolean_c_source(binding.value_type) {
+        None => UnsupportedCDataTypeSnafu {
+            c_type: binding.value_type,
+        }
+        .fail(),
+        Some(BooleanCSource::Bit) => Ok((read_unaligned::<u8>(binding) != 0, vec![])),
+        Some(BooleanCSource::UTinyInt) => {
             bit_from_i128(i128::from(read_unaligned::<u8>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::TinyInt | CDataType::STinyInt => {
+        Some(BooleanCSource::STinyInt) => {
             bit_from_i128(i128::from(read_unaligned::<i8>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::Long | CDataType::SLong => {
+        Some(BooleanCSource::SLong) => {
             bit_from_i128(i128::from(read_unaligned::<i32>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::ULong => {
+        Some(BooleanCSource::ULong) => {
             bit_from_i128(i128::from(read_unaligned::<u32>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::Short | CDataType::SShort => {
+        Some(BooleanCSource::SShort) => {
             bit_from_i128(i128::from(read_unaligned::<i16>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::UShort => {
+        Some(BooleanCSource::UShort) => {
             bit_from_i128(i128::from(read_unaligned::<u16>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::SBigInt => {
+        Some(BooleanCSource::SBigInt) => {
             bit_from_i128(i128::from(read_unaligned::<i64>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::UBigInt => {
+        Some(BooleanCSource::UBigInt) => {
             bit_from_i128(i128::from(read_unaligned::<u64>(binding))).map(|b| (b, vec![]))
         }
-        CDataType::Float => bit_from_f64(f64::from(read_unaligned::<f32>(binding))),
-        CDataType::Double => bit_from_f64(read_unaligned::<f64>(binding)),
-        CDataType::Char => {
+        Some(BooleanCSource::Float) => bit_from_f64(f64::from(read_unaligned::<f32>(binding))),
+        Some(BooleanCSource::Double) => bit_from_f64(read_unaligned::<f64>(binding)),
+        Some(BooleanCSource::Char) => {
             let s = read_char_str(binding)?;
             parse_str_to_bool(&s)
         }
-        CDataType::WChar => {
+        Some(BooleanCSource::WChar) => {
             let s = read_wchar_str(binding)?;
             parse_str_to_bool(&s)
         }
-        CDataType::Numeric => bit_from_numeric(binding).map(|b| (b, vec![])),
-        CDataType::Binary => {
+        Some(BooleanCSource::Numeric) => bit_from_numeric(binding).map(|b| (b, vec![])),
+        Some(BooleanCSource::Binary) => {
             let len = buffer_data_len(binding);
             if len != 1 {
                 return NumericMagnitudeOverflowSnafu {
@@ -281,11 +324,14 @@ pub(crate) fn read_boolean_param(
             let byte = unsafe { *(binding.parameter_value_ptr as *const u8) };
             Ok((byte != 0, vec![]))
         }
-        other => UnsupportedCDataTypeSnafu { c_type: other }.fail(),
     }
 }
 
 impl ReadODBC for SnowflakeBoolean {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        boolean_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,

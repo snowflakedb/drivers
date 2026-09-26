@@ -503,24 +503,73 @@ impl WriteODBCType for SnowflakeReal {
     }
 }
 
+enum RealCSource {
+    Float,
+    Double,
+    SLong,
+    SShort,
+    SBigInt,
+    ULong,
+    UShort,
+    UBigInt,
+    STinyInt,
+    UTinyInt,
+    Bit,
+    Numeric,
+    Char,
+    WChar,
+    Binary,
+}
+
+fn real_c_source(c_type: CDataType) -> Option<RealCSource> {
+    match c_type {
+        CDataType::Float => Some(RealCSource::Float),
+        CDataType::Default | CDataType::Double => Some(RealCSource::Double),
+        CDataType::Long | CDataType::SLong => Some(RealCSource::SLong),
+        CDataType::Short | CDataType::SShort => Some(RealCSource::SShort),
+        CDataType::SBigInt => Some(RealCSource::SBigInt),
+        CDataType::ULong => Some(RealCSource::ULong),
+        CDataType::UShort => Some(RealCSource::UShort),
+        CDataType::UBigInt => Some(RealCSource::UBigInt),
+        CDataType::TinyInt | CDataType::STinyInt => Some(RealCSource::STinyInt),
+        CDataType::UTinyInt => Some(RealCSource::UTinyInt),
+        CDataType::Bit => Some(RealCSource::Bit),
+        CDataType::Numeric => Some(RealCSource::Numeric),
+        CDataType::Char => Some(RealCSource::Char),
+        CDataType::WChar => Some(RealCSource::WChar),
+        CDataType::Binary => Some(RealCSource::Binary),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeReal {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        real_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let value = match binding.value_type {
-            CDataType::Float => read_unaligned::<f32>(binding) as f64,
-            CDataType::Default | CDataType::Double => read_unaligned::<f64>(binding),
-            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as f64,
-            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as f64,
-            CDataType::SBigInt => read_unaligned::<i64>(binding) as f64,
-            CDataType::ULong => read_unaligned::<u32>(binding) as f64,
-            CDataType::UShort => read_unaligned::<u16>(binding) as f64,
-            CDataType::UBigInt => read_unaligned::<u64>(binding) as f64,
-            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as f64,
-            CDataType::UTinyInt => read_unaligned::<u8>(binding) as f64,
-            CDataType::Bit => read_unaligned::<u8>(binding) as f64,
-            CDataType::Numeric => {
+        let value = match real_c_source(binding.value_type) {
+            None => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+            Some(RealCSource::Float) => read_unaligned::<f32>(binding) as f64,
+            Some(RealCSource::Double) => read_unaligned::<f64>(binding),
+            Some(RealCSource::SLong) => read_unaligned::<i32>(binding) as f64,
+            Some(RealCSource::SShort) => read_unaligned::<i16>(binding) as f64,
+            Some(RealCSource::SBigInt) => read_unaligned::<i64>(binding) as f64,
+            Some(RealCSource::ULong) => read_unaligned::<u32>(binding) as f64,
+            Some(RealCSource::UShort) => read_unaligned::<u16>(binding) as f64,
+            Some(RealCSource::UBigInt) => read_unaligned::<u64>(binding) as f64,
+            Some(RealCSource::STinyInt) => read_unaligned::<i8>(binding) as f64,
+            Some(RealCSource::UTinyInt) => read_unaligned::<u8>(binding) as f64,
+            Some(RealCSource::Bit) => read_unaligned::<u8>(binding) as f64,
+            Some(RealCSource::Numeric) => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 let s = format_numeric_value(mantissa, scale);
                 s.parse::<f64>().map_err(|_| {
@@ -530,7 +579,7 @@ impl ReadODBC for SnowflakeReal {
                     .build()
                 })?
             }
-            CDataType::Char => {
+            Some(RealCSource::Char) => {
                 let s = read_char_str(binding)?;
                 let trimmed = s.trim();
                 let v = trimmed.parse::<f64>().map_err(|_| {
@@ -542,7 +591,7 @@ impl ReadODBC for SnowflakeReal {
                 reject_overflowed_real_literal(trimmed, v)?;
                 v
             }
-            CDataType::WChar => {
+            Some(RealCSource::WChar) => {
                 let s = read_wchar_str(binding)?;
                 let trimmed = s.trim();
                 let v = trimmed.parse::<f64>().map_err(|_| {
@@ -554,7 +603,7 @@ impl ReadODBC for SnowflakeReal {
                 reject_overflowed_real_literal(trimmed, v)?;
                 v
             }
-            CDataType::Binary => {
+            Some(RealCSource::Binary) => {
                 let len = buffer_data_len(binding);
                 let expected = match binding.sql_data_type {
                     sql::SqlDataType::REAL => 4usize,
@@ -589,12 +638,6 @@ impl ReadODBC for SnowflakeReal {
                 } else {
                     read_unaligned::<f64>(binding)
                 }
-            }
-            _ => {
-                return UnsupportedCDataTypeSnafu {
-                    c_type: binding.value_type,
-                }
-                .fail();
             }
         };
         Ok(value)

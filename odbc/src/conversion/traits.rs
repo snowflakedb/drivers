@@ -714,6 +714,8 @@ impl std::fmt::Display for SnowflakeLogicalType {
 
 /// Reads a typed value from a raw ODBC `ParameterBinding` buffer.
 pub(crate) trait ReadODBC: SnowflakeType {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool;
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,

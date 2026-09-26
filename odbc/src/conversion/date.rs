@@ -190,13 +190,38 @@ impl WriteODBCType for SnowflakeDate {
     }
 }
 
+enum DateCSource {
+    Date,
+    Char,
+    Binary,
+    Timestamp,
+}
+
+fn date_c_source(c_type: CDataType) -> Option<DateCSource> {
+    match c_type {
+        CDataType::Date | CDataType::TypeDate => Some(DateCSource::Date),
+        CDataType::Char | CDataType::WChar => Some(DateCSource::Char),
+        CDataType::Binary => Some(DateCSource::Binary),
+        CDataType::TimeStamp | CDataType::TypeTimestamp => Some(DateCSource::Timestamp),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeDate {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        date_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        match binding.value_type {
-            CDataType::Date | CDataType::TypeDate => {
+        match date_c_source(binding.value_type) {
+            None => UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail(),
+            Some(DateCSource::Date) => {
                 let date = read_unaligned::<sql::Date>(binding);
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .with_context(|| InvalidDatetimeValueSnafu {
@@ -207,12 +232,12 @@ impl ReadODBC for SnowflakeDate {
                         ),
                     })
             }
-            CDataType::Char | CDataType::WChar => {
+            Some(DateCSource::Char) => {
                 parse_temporal_char_input(binding, DATE_CHAR_EXPECTED_FORMAT, |s| {
                     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| ())
                 })
             }
-            CDataType::Binary => {
+            Some(DateCSource::Binary) => {
                 let date = read_binary_struct::<sql::Date>(binding, "SQL_DATE_STRUCT")?;
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .with_context(|| BindingNumericOutOfRangeSnafu {
@@ -235,7 +260,7 @@ impl ReadODBC for SnowflakeDate {
             // like {hour=25, minute=0, second=0, fraction=0} would surface
             // as "datetime field overflow" when in fact the struct itself is
             // malformed.
-            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+            Some(DateCSource::Timestamp) => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                     .with_context(|| InvalidDatetimeValueSnafu {
@@ -270,10 +295,6 @@ impl ReadODBC for SnowflakeDate {
                 }
                 Ok(date)
             }
-            _ => UnsupportedCDataTypeSnafu {
-                c_type: binding.value_type,
-            }
-            .fail(),
         }
     }
 }

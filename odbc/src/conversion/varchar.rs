@@ -420,23 +420,94 @@ impl WriteODBCType for SnowflakeVarchar {
     }
 }
 
+enum VarcharCSource {
+    Char,
+    WChar,
+    SLong,
+    SShort,
+    SBigInt,
+    ULong,
+    UShort,
+    UBigInt,
+    STinyInt,
+    UTinyInt,
+    Double,
+    Float,
+    Bit,
+    Timestamp,
+    Date,
+    Time,
+    Numeric,
+    Binary,
+    Interval,
+    Guid,
+}
+
+fn varchar_c_source(c_type: CDataType) -> Option<VarcharCSource> {
+    match c_type {
+        CDataType::Default | CDataType::Char => Some(VarcharCSource::Char),
+        CDataType::WChar => Some(VarcharCSource::WChar),
+        CDataType::Long | CDataType::SLong => Some(VarcharCSource::SLong),
+        CDataType::Short | CDataType::SShort => Some(VarcharCSource::SShort),
+        CDataType::SBigInt => Some(VarcharCSource::SBigInt),
+        CDataType::ULong => Some(VarcharCSource::ULong),
+        CDataType::UShort => Some(VarcharCSource::UShort),
+        CDataType::UBigInt => Some(VarcharCSource::UBigInt),
+        CDataType::TinyInt | CDataType::STinyInt => Some(VarcharCSource::STinyInt),
+        CDataType::UTinyInt => Some(VarcharCSource::UTinyInt),
+        CDataType::Double => Some(VarcharCSource::Double),
+        CDataType::Float => Some(VarcharCSource::Float),
+        CDataType::Bit => Some(VarcharCSource::Bit),
+        CDataType::TypeTimestamp | CDataType::TimeStamp => Some(VarcharCSource::Timestamp),
+        CDataType::TypeDate | CDataType::Date => Some(VarcharCSource::Date),
+        CDataType::TypeTime | CDataType::Time => Some(VarcharCSource::Time),
+        CDataType::Numeric => Some(VarcharCSource::Numeric),
+        CDataType::Binary => Some(VarcharCSource::Binary),
+        CDataType::IntervalYear
+        | CDataType::IntervalMonth
+        | CDataType::IntervalDay
+        | CDataType::IntervalHour
+        | CDataType::IntervalMinute
+        | CDataType::IntervalSecond
+        | CDataType::IntervalYearToMonth
+        | CDataType::IntervalDayToHour
+        | CDataType::IntervalDayToMinute
+        | CDataType::IntervalDayToSecond
+        | CDataType::IntervalHourToMinute
+        | CDataType::IntervalHourToSecond
+        | CDataType::IntervalMinuteToSecond => Some(VarcharCSource::Interval),
+        CDataType::Guid => Some(VarcharCSource::Guid),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeVarchar {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        varchar_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let s = match binding.value_type {
-            CDataType::Default | CDataType::Char => read_char_str(binding)?,
-            CDataType::WChar => read_wchar_str(binding)?,
-            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding).to_string(),
-            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding).to_string(),
-            CDataType::SBigInt => read_unaligned::<i64>(binding).to_string(),
-            CDataType::ULong => read_unaligned::<u32>(binding).to_string(),
-            CDataType::UShort => read_unaligned::<u16>(binding).to_string(),
-            CDataType::UBigInt => read_unaligned::<u64>(binding).to_string(),
-            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding).to_string(),
-            CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
-            CDataType::Double => {
+        let s = match varchar_c_source(binding.value_type) {
+            None => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+            Some(VarcharCSource::Char) => read_char_str(binding)?,
+            Some(VarcharCSource::WChar) => read_wchar_str(binding)?,
+            Some(VarcharCSource::SLong) => read_unaligned::<i32>(binding).to_string(),
+            Some(VarcharCSource::SShort) => read_unaligned::<i16>(binding).to_string(),
+            Some(VarcharCSource::SBigInt) => read_unaligned::<i64>(binding).to_string(),
+            Some(VarcharCSource::ULong) => read_unaligned::<u32>(binding).to_string(),
+            Some(VarcharCSource::UShort) => read_unaligned::<u16>(binding).to_string(),
+            Some(VarcharCSource::UBigInt) => read_unaligned::<u64>(binding).to_string(),
+            Some(VarcharCSource::STinyInt) => read_unaligned::<i8>(binding).to_string(),
+            Some(VarcharCSource::UTinyInt) => read_unaligned::<u8>(binding).to_string(),
+            Some(VarcharCSource::Double) => {
                 let v = read_unaligned::<f64>(binding);
                 if v == 0.0 {
                     0.0_f64.to_string()
@@ -444,7 +515,7 @@ impl ReadODBC for SnowflakeVarchar {
                     v.to_string()
                 }
             }
-            CDataType::Float => {
+            Some(VarcharCSource::Float) => {
                 let v = read_unaligned::<f32>(binding);
                 if v == 0.0 {
                     0.0_f32.to_string()
@@ -452,14 +523,14 @@ impl ReadODBC for SnowflakeVarchar {
                     v.to_string()
                 }
             }
-            CDataType::Bit => {
+            Some(VarcharCSource::Bit) => {
                 if read_unaligned::<u8>(binding) != 0 {
                     "1".to_string()
                 } else {
                     "0".to_string()
                 }
             }
-            CDataType::TypeTimestamp | CDataType::TimeStamp => {
+            Some(VarcharCSource::Timestamp) => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 if ts.fraction == 0 {
                     format!(
@@ -473,39 +544,27 @@ impl ReadODBC for SnowflakeVarchar {
                     )
                 }
             }
-            CDataType::TypeDate | CDataType::Date => {
+            Some(VarcharCSource::Date) => {
                 let d = read_unaligned::<sql::Date>(binding);
                 format!("{:04}-{:02}-{:02}", d.year, d.month, d.day)
             }
-            CDataType::TypeTime | CDataType::Time => {
+            Some(VarcharCSource::Time) => {
                 let t = read_unaligned::<sql::Time>(binding);
                 format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second)
             }
-            CDataType::Numeric => {
+            Some(VarcharCSource::Numeric) => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 format_numeric_value(mantissa, scale)
             }
-            CDataType::Binary => {
+            Some(VarcharCSource::Binary) => {
                 let len = buffer_data_len(binding);
                 let bytes = unsafe {
                     std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
                 };
                 hex_encode_lowercase(bytes)
             }
-            CDataType::IntervalYear
-            | CDataType::IntervalMonth
-            | CDataType::IntervalDay
-            | CDataType::IntervalHour
-            | CDataType::IntervalMinute
-            | CDataType::IntervalSecond
-            | CDataType::IntervalYearToMonth
-            | CDataType::IntervalDayToHour
-            | CDataType::IntervalDayToMinute
-            | CDataType::IntervalDayToSecond
-            | CDataType::IntervalHourToMinute
-            | CDataType::IntervalHourToSecond
-            | CDataType::IntervalMinuteToSecond => format_interval(binding),
-            CDataType::Guid => {
+            Some(VarcharCSource::Interval) => format_interval(binding),
+            Some(VarcharCSource::Guid) => {
                 let g = read_unaligned::<sql::Guid>(binding);
                 format!(
                     "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
@@ -521,12 +580,6 @@ impl ReadODBC for SnowflakeVarchar {
                     g.d4[6],
                     g.d4[7],
                 )
-            }
-            _ => {
-                return UnsupportedCDataTypeSnafu {
-                    c_type: binding.value_type,
-                }
-                .fail();
             }
         };
         Ok(Cow::Owned(s))

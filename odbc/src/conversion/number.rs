@@ -599,21 +599,77 @@ impl WriteODBCType for SnowflakeNumber {
     }
 }
 
+enum NumberCSource {
+    SLong,
+    SShort,
+    SBigInt,
+    ULong,
+    UShort,
+    UBigInt,
+    STinyInt,
+    UTinyInt,
+    Float,
+    Double,
+    Bit,
+    Numeric,
+    Char,
+    WChar,
+    Binary,
+    SingleFieldInterval,
+}
+
+fn number_c_source(c_type: CDataType) -> Option<NumberCSource> {
+    match c_type {
+        CDataType::Long | CDataType::SLong => Some(NumberCSource::SLong),
+        CDataType::Short | CDataType::SShort => Some(NumberCSource::SShort),
+        CDataType::SBigInt => Some(NumberCSource::SBigInt),
+        CDataType::ULong => Some(NumberCSource::ULong),
+        CDataType::UShort => Some(NumberCSource::UShort),
+        CDataType::UBigInt => Some(NumberCSource::UBigInt),
+        CDataType::TinyInt | CDataType::STinyInt => Some(NumberCSource::STinyInt),
+        CDataType::UTinyInt => Some(NumberCSource::UTinyInt),
+        CDataType::Float => Some(NumberCSource::Float),
+        CDataType::Double => Some(NumberCSource::Double),
+        CDataType::Bit => Some(NumberCSource::Bit),
+        CDataType::Numeric => Some(NumberCSource::Numeric),
+        CDataType::Char => Some(NumberCSource::Char),
+        CDataType::WChar => Some(NumberCSource::WChar),
+        CDataType::Binary => Some(NumberCSource::Binary),
+        CDataType::IntervalYear
+        | CDataType::IntervalMonth
+        | CDataType::IntervalDay
+        | CDataType::IntervalHour
+        | CDataType::IntervalMinute
+        | CDataType::IntervalSecond => Some(NumberCSource::SingleFieldInterval),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeNumber {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        number_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let value = match binding.value_type {
-            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as i128,
-            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as i128,
-            CDataType::SBigInt => read_unaligned::<i64>(binding) as i128,
-            CDataType::ULong => read_unaligned::<u32>(binding) as i128,
-            CDataType::UShort => read_unaligned::<u16>(binding) as i128,
-            CDataType::UBigInt => read_unaligned::<u64>(binding) as i128,
-            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as i128,
-            CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
-            CDataType::Float => {
+        let value = match number_c_source(binding.value_type) {
+            None => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+            Some(NumberCSource::SLong) => read_unaligned::<i32>(binding) as i128,
+            Some(NumberCSource::SShort) => read_unaligned::<i16>(binding) as i128,
+            Some(NumberCSource::SBigInt) => read_unaligned::<i64>(binding) as i128,
+            Some(NumberCSource::ULong) => read_unaligned::<u32>(binding) as i128,
+            Some(NumberCSource::UShort) => read_unaligned::<u16>(binding) as i128,
+            Some(NumberCSource::UBigInt) => read_unaligned::<u64>(binding) as i128,
+            Some(NumberCSource::STinyInt) => read_unaligned::<i8>(binding) as i128,
+            Some(NumberCSource::UTinyInt) => read_unaligned::<u8>(binding) as i128,
+            Some(NumberCSource::Float) => {
                 let v = read_unaligned::<f32>(binding) as f64;
                 if !v.is_finite() {
                     return NumericMagnitudeOverflowSnafu {
@@ -630,7 +686,7 @@ impl ReadODBC for SnowflakeNumber {
                 }
                 truncated as i128
             }
-            CDataType::Double => {
+            Some(NumberCSource::Double) => {
                 let v = read_unaligned::<f64>(binding);
                 if !v.is_finite() {
                     return NumericMagnitudeOverflowSnafu {
@@ -647,8 +703,8 @@ impl ReadODBC for SnowflakeNumber {
                 }
                 truncated as i128
             }
-            CDataType::Bit => read_unaligned::<u8>(binding) as i128,
-            CDataType::Numeric => {
+            Some(NumberCSource::Bit) => read_unaligned::<u8>(binding) as i128,
+            Some(NumberCSource::Numeric) => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
                 if scale > 0 {
                     let divisor = 10i128.checked_pow(scale as u32).with_context(|| {
@@ -679,7 +735,7 @@ impl ReadODBC for SnowflakeNumber {
                     mantissa
                 }
             }
-            CDataType::Char => {
+            Some(NumberCSource::Char) => {
                 let s = read_char_str(binding)?;
                 s.trim().parse::<i128>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
@@ -688,7 +744,7 @@ impl ReadODBC for SnowflakeNumber {
                     .build()
                 })?
             }
-            CDataType::WChar => {
+            Some(NumberCSource::WChar) => {
                 let s = read_wchar_str(binding)?;
                 s.trim().parse::<i128>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
@@ -697,7 +753,7 @@ impl ReadODBC for SnowflakeNumber {
                     .build()
                 })?
             }
-            CDataType::Binary => {
+            Some(NumberCSource::Binary) => {
                 let len = buffer_data_len(binding);
                 let expected = match binding.sql_data_type {
                     sql::SqlDataType::EXT_BIG_INT => 8usize,
@@ -742,18 +798,7 @@ impl ReadODBC for SnowflakeNumber {
             // MINUTE_TO_SECOND) carry more than one field and have no
             // single-integer mapping; they fall through to the unsupported
             // arm below and surface SQLSTATE 07006, matching the spec.
-            CDataType::IntervalYear
-            | CDataType::IntervalMonth
-            | CDataType::IntervalDay
-            | CDataType::IntervalHour
-            | CDataType::IntervalMinute
-            | CDataType::IntervalSecond => read_single_field_interval_i128(binding),
-            _ => {
-                return UnsupportedCDataTypeSnafu {
-                    c_type: binding.value_type,
-                }
-                .fail();
-            }
+            Some(NumberCSource::SingleFieldInterval) => read_single_field_interval_i128(binding),
         };
         if binding.sql_data_type == sql::SqlDataType::EXT_TINY_INT
             && !(i8::MIN as i128..=u8::MAX as i128).contains(&value)

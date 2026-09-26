@@ -470,6 +470,14 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Error converting C type to SQL type: {source:?}"))]
+    CToSqlConversion {
+        #[snafu(source(from(BindingError, Box::new)))]
+        source: Box<BindingError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Error binding parameters: {parameters}"))]
     ParameterBinding {
         parameters: String,
@@ -773,6 +781,7 @@ impl OdbcError {
             OdbcError::ConversionError { .. } => ErrorSource::DataConversion,
             OdbcError::JsonBinding { .. } => ErrorSource::DataConversion,
             OdbcError::CsvBinding { .. } => ErrorSource::DataConversion,
+            OdbcError::CToSqlConversion { .. } => ErrorSource::DataConversion,
             OdbcError::ParameterBinding { .. } => ErrorSource::DataConversion,
             OdbcError::FetchData { .. } => ErrorSource::DataConversion,
             OdbcError::TextConversionFromUtf8 { .. } => ErrorSource::DataConversion,
@@ -1009,9 +1018,9 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::InvalidWideChar { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::JsonBinding { source, .. } | OdbcError::CsvBinding { source, .. } => {
-                binding_error_to_sql_state(source)
-            }
+            OdbcError::JsonBinding { source, .. }
+            | OdbcError::CsvBinding { source, .. }
+            | OdbcError::CToSqlConversion { source, .. } => binding_error_to_sql_state(source),
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
@@ -1773,6 +1782,20 @@ mod tests {
             odbc_err.to_sql_state(),
             SqlState::RestrictedDataTypeAttributeViolation
         );
+
+        let bind_err = UnsupportedCDataTypeSnafu {
+            c_type: crate::api::CDataType::Char,
+        }
+        .build();
+        let odbc_err = OdbcError::CToSqlConversion {
+            source: Box::new(bind_err),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
+        assert_eq!(odbc_err.error_source(), ErrorSource::DataConversion);
     }
 
     #[test]

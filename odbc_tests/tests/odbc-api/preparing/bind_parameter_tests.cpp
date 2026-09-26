@@ -367,6 +367,45 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Invalid SQL_C_WCHAR f
   OLD_DRIVER_ONLY("BD#162") { REQUIRE(ret == SQL_SUCCESS); }
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: unsupported C-to-SQL conversions are rejected at bind",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  SQL_DATE_STRUCT date_value = {2026, 9, 21};
+  SQLGUID guid_value = {0x01234567, 0x89AB, 0xCDEF, {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}};
+  SQLDOUBLE double_value = 1.5;
+  SQLLEN date_indicator = sizeof(date_value);
+  SQLLEN guid_indicator = sizeof(guid_value);
+  SQLLEN double_indicator = 0;
+
+  struct Case {
+    const char* name;
+    SQLSMALLINT c_type;
+    SQLSMALLINT sql_type;
+    SQLPOINTER value;
+    SQLLEN buffer_length;
+    SQLLEN* indicator;
+    bool old_driver_accepts;
+  };
+  const Case cases[] = {
+      {"SQL_C_TYPE_DATE to SQL_BINARY", SQL_C_TYPE_DATE, SQL_BINARY, &date_value, sizeof(date_value), &date_indicator,
+       false},
+      {"SQL_C_GUID to SQL_BINARY", SQL_C_GUID, SQL_BINARY, &guid_value, sizeof(guid_value), &guid_indicator, false},
+      {"SQL_C_DOUBLE to SQL_INTERVAL_YEAR", SQL_C_DOUBLE, SQL_INTERVAL_YEAR, &double_value, 0, &double_indicator, true},
+      {"SQL_C_TYPE_DATE to SQL_INTEGER", SQL_C_TYPE_DATE, SQL_INTEGER, &date_value, sizeof(date_value), &date_indicator,
+       false},
+  };
+  for (const auto& c : cases) {
+    INFO(c.name);
+    SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, c.c_type, c.sql_type, c.buffer_length, 0,
+                                     c.value, c.buffer_length, c.indicator);
+    if (c.old_driver_accepts) {
+      NEW_DRIVER_ONLY("BD#72") { REQUIRE_EXPECTED_ERROR(ret, "07006", stmt_handle(), SQL_HANDLE_STMT); }
+      OLD_DRIVER_ONLY("BD#72") { REQUIRE(ret == SQL_SUCCESS); }
+    } else {
+      REQUIRE_EXPECTED_ERROR(ret, "07006", stmt_handle(), SQL_HANDLE_STMT);
+    }
+  }
+}
+
 // ============================================================================
 // SQLBindParameter - Reset Parameters
 // ============================================================================

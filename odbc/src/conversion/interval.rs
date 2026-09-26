@@ -137,22 +137,102 @@ impl SnowflakeType for SnowflakeIntervalDayTime {
 // ReadODBC — strict source-type validation per ODBC Appendix D.
 // =============================================================================
 
+enum YearMonthCSource {
+    Char,
+    WChar,
+    Interval,
+    STinyInt,
+    UTinyInt,
+    SShort,
+    UShort,
+    SLong,
+    ULong,
+    SBigInt,
+    UBigInt,
+    Numeric,
+}
+
+fn year_month_c_source(c_type: CDataType, compound: bool) -> Option<YearMonthCSource> {
+    match c_type {
+        CDataType::Default | CDataType::Char => Some(YearMonthCSource::Char),
+        CDataType::WChar => Some(YearMonthCSource::WChar),
+        CDataType::IntervalYear | CDataType::IntervalMonth | CDataType::IntervalYearToMonth => {
+            Some(YearMonthCSource::Interval)
+        }
+        CDataType::TinyInt | CDataType::STinyInt if !compound => Some(YearMonthCSource::STinyInt),
+        CDataType::UTinyInt if !compound => Some(YearMonthCSource::UTinyInt),
+        CDataType::Short | CDataType::SShort if !compound => Some(YearMonthCSource::SShort),
+        CDataType::UShort if !compound => Some(YearMonthCSource::UShort),
+        CDataType::Long | CDataType::SLong if !compound => Some(YearMonthCSource::SLong),
+        CDataType::ULong if !compound => Some(YearMonthCSource::ULong),
+        CDataType::SBigInt if !compound => Some(YearMonthCSource::SBigInt),
+        CDataType::UBigInt if !compound => Some(YearMonthCSource::UBigInt),
+        CDataType::Numeric if !compound => Some(YearMonthCSource::Numeric),
+        _ => None,
+    }
+}
+
+enum DayTimeCSource {
+    Char,
+    WChar,
+    Interval,
+    STinyInt,
+    UTinyInt,
+    SShort,
+    UShort,
+    SLong,
+    ULong,
+    SBigInt,
+    UBigInt,
+    Numeric,
+}
+
+fn day_time_c_source(c_type: CDataType, compound: bool) -> Option<DayTimeCSource> {
+    match c_type {
+        CDataType::Default | CDataType::Char => Some(DayTimeCSource::Char),
+        CDataType::WChar => Some(DayTimeCSource::WChar),
+        CDataType::IntervalDay
+        | CDataType::IntervalHour
+        | CDataType::IntervalMinute
+        | CDataType::IntervalSecond
+        | CDataType::IntervalDayToHour
+        | CDataType::IntervalDayToMinute
+        | CDataType::IntervalDayToSecond
+        | CDataType::IntervalHourToMinute
+        | CDataType::IntervalHourToSecond
+        | CDataType::IntervalMinuteToSecond => Some(DayTimeCSource::Interval),
+        CDataType::TinyInt | CDataType::STinyInt if !compound => Some(DayTimeCSource::STinyInt),
+        CDataType::UTinyInt if !compound => Some(DayTimeCSource::UTinyInt),
+        CDataType::Short | CDataType::SShort if !compound => Some(DayTimeCSource::SShort),
+        CDataType::UShort if !compound => Some(DayTimeCSource::UShort),
+        CDataType::Long | CDataType::SLong if !compound => Some(DayTimeCSource::SLong),
+        CDataType::ULong if !compound => Some(DayTimeCSource::ULong),
+        CDataType::SBigInt if !compound => Some(DayTimeCSource::SBigInt),
+        CDataType::UBigInt if !compound => Some(DayTimeCSource::UBigInt),
+        CDataType::Numeric if !compound => Some(DayTimeCSource::Numeric),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeIntervalYearMonth {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        year_month_c_source(c_type, self.subtype.is_compound()).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let s = match binding.value_type {
+        let s = match year_month_c_source(binding.value_type, self.subtype.is_compound()) {
+            None => return unsupported(binding.value_type),
             // Character sources are always legal — server-side parses the literal.
-            CDataType::Default | CDataType::Char => read_char_str(binding)?,
-            CDataType::WChar => read_wchar_str(binding)?,
+            Some(YearMonthCSource::Char) => read_char_str(binding)?,
+            Some(YearMonthCSource::WChar) => read_wchar_str(binding)?,
 
             // Same-family C interval sources are always legal (single OR
             // compound target). Cross-family interval sources fall through
             // to the unsupported arm below.
-            CDataType::IntervalYear | CDataType::IntervalMonth | CDataType::IntervalYearToMonth => {
-                format_interval(binding)
-            }
+            Some(YearMonthCSource::Interval) => format_interval(binding),
 
             // Exact-numeric sources only legal for single-field targets.
             // SQL_C_BIT is intentionally excluded: ODBC Appendix D's dedicated
@@ -160,163 +240,125 @@ impl ReadODBC for SnowflakeIntervalYearMonth {
             // it falls through to the 07006 path below (unlike the exact numeric
             // types, which "C to SQL: Numeric" permits for single-field
             // intervals).
-            CDataType::TinyInt | CDataType::STinyInt => {
-                self.render_signed(read_unaligned::<i8>(binding) as i128, binding)?
+            Some(YearMonthCSource::STinyInt) => {
+                self.render_signed(read_unaligned::<i8>(binding) as i128)
             }
-            CDataType::UTinyInt => {
-                self.render_signed(read_unaligned::<u8>(binding) as i128, binding)?
+            Some(YearMonthCSource::UTinyInt) => {
+                self.render_signed(read_unaligned::<u8>(binding) as i128)
             }
-            CDataType::Short | CDataType::SShort => {
-                self.render_signed(read_unaligned::<i16>(binding) as i128, binding)?
+            Some(YearMonthCSource::SShort) => {
+                self.render_signed(read_unaligned::<i16>(binding) as i128)
             }
-            CDataType::UShort => {
-                self.render_signed(read_unaligned::<u16>(binding) as i128, binding)?
+            Some(YearMonthCSource::UShort) => {
+                self.render_signed(read_unaligned::<u16>(binding) as i128)
             }
-            CDataType::Long | CDataType::SLong => {
-                self.render_signed(read_unaligned::<i32>(binding) as i128, binding)?
+            Some(YearMonthCSource::SLong) => {
+                self.render_signed(read_unaligned::<i32>(binding) as i128)
             }
-            CDataType::ULong => {
-                self.render_signed(read_unaligned::<u32>(binding) as i128, binding)?
+            Some(YearMonthCSource::ULong) => {
+                self.render_signed(read_unaligned::<u32>(binding) as i128)
             }
-            CDataType::SBigInt => {
-                self.render_signed(read_unaligned::<i64>(binding) as i128, binding)?
+            Some(YearMonthCSource::SBigInt) => {
+                self.render_signed(read_unaligned::<i64>(binding) as i128)
             }
-            CDataType::UBigInt => {
-                self.render_signed(read_unaligned::<u64>(binding) as i128, binding)?
+            Some(YearMonthCSource::UBigInt) => {
+                self.render_signed(read_unaligned::<u64>(binding) as i128)
             }
-            CDataType::Numeric => {
+            Some(YearMonthCSource::Numeric) => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
-                self.render_numeric(mantissa, scale, binding)?
+                self.render_numeric(mantissa, scale)
             }
-
-            _ => return unsupported(binding.value_type),
         };
         Ok(Cow::Owned(s))
     }
 }
 
 impl ReadODBC for SnowflakeIntervalDayTime {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        day_time_c_source(c_type, self.subtype.is_compound()).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let s = match binding.value_type {
-            CDataType::Default | CDataType::Char => read_char_str(binding)?,
-            CDataType::WChar => read_wchar_str(binding)?,
+        let s = match day_time_c_source(binding.value_type, self.subtype.is_compound()) {
+            None => return unsupported(binding.value_type),
+            Some(DayTimeCSource::Char) => read_char_str(binding)?,
+            Some(DayTimeCSource::WChar) => read_wchar_str(binding)?,
 
             // All ten day-time C interval sources are legal for any
             // day-time SQL target (single or compound).
-            CDataType::IntervalDay
-            | CDataType::IntervalHour
-            | CDataType::IntervalMinute
-            | CDataType::IntervalSecond
-            | CDataType::IntervalDayToHour
-            | CDataType::IntervalDayToMinute
-            | CDataType::IntervalDayToSecond
-            | CDataType::IntervalHourToMinute
-            | CDataType::IntervalHourToSecond
-            | CDataType::IntervalMinuteToSecond => format_interval(binding),
+            Some(DayTimeCSource::Interval) => format_interval(binding),
 
-            CDataType::TinyInt | CDataType::STinyInt => {
-                self.render_signed(read_unaligned::<i8>(binding) as i128, binding)?
+            Some(DayTimeCSource::STinyInt) => {
+                self.render_signed(read_unaligned::<i8>(binding) as i128)
             }
-            CDataType::UTinyInt => {
-                self.render_signed(read_unaligned::<u8>(binding) as i128, binding)?
+            Some(DayTimeCSource::UTinyInt) => {
+                self.render_signed(read_unaligned::<u8>(binding) as i128)
             }
-            CDataType::Short | CDataType::SShort => {
-                self.render_signed(read_unaligned::<i16>(binding) as i128, binding)?
+            Some(DayTimeCSource::SShort) => {
+                self.render_signed(read_unaligned::<i16>(binding) as i128)
             }
-            CDataType::UShort => {
-                self.render_signed(read_unaligned::<u16>(binding) as i128, binding)?
+            Some(DayTimeCSource::UShort) => {
+                self.render_signed(read_unaligned::<u16>(binding) as i128)
             }
-            CDataType::Long | CDataType::SLong => {
-                self.render_signed(read_unaligned::<i32>(binding) as i128, binding)?
+            Some(DayTimeCSource::SLong) => {
+                self.render_signed(read_unaligned::<i32>(binding) as i128)
             }
-            CDataType::ULong => {
-                self.render_signed(read_unaligned::<u32>(binding) as i128, binding)?
+            Some(DayTimeCSource::ULong) => {
+                self.render_signed(read_unaligned::<u32>(binding) as i128)
             }
-            CDataType::SBigInt => {
-                self.render_signed(read_unaligned::<i64>(binding) as i128, binding)?
+            Some(DayTimeCSource::SBigInt) => {
+                self.render_signed(read_unaligned::<i64>(binding) as i128)
             }
-            CDataType::UBigInt => {
-                self.render_signed(read_unaligned::<u64>(binding) as i128, binding)?
+            Some(DayTimeCSource::UBigInt) => {
+                self.render_signed(read_unaligned::<u64>(binding) as i128)
             }
-            CDataType::Numeric => {
+            Some(DayTimeCSource::Numeric) => {
                 let (mantissa, scale) = read_numeric_struct(binding)?;
-                self.render_numeric(mantissa, scale, binding)?
+                self.render_numeric(mantissa, scale)
             }
-
-            _ => return unsupported(binding.value_type),
         };
         Ok(Cow::Owned(s))
     }
 }
 
 impl SnowflakeIntervalYearMonth {
-    fn render_signed(
-        &self,
-        value: i128,
-        binding: &ParameterBinding,
-    ) -> Result<String, BindingError> {
-        if self.subtype.is_compound() {
-            return unsupported::<String>(binding.value_type);
-        }
-        Ok(value.to_string())
+    fn render_signed(&self, value: i128) -> String {
+        value.to_string()
     }
 
-    fn render_numeric(
-        &self,
-        mantissa: i128,
-        scale: i8,
-        binding: &ParameterBinding,
-    ) -> Result<String, BindingError> {
-        if self.subtype.is_compound() {
-            return unsupported::<String>(binding.value_type);
-        }
+    fn render_numeric(&self, mantissa: i128, scale: i8) -> String {
         // YEAR / MONTH are integer-valued; truncate any fractional digits
         // toward zero. The ODBC spec records this as truncation warning
         // 22015 ("interval field overflow") on the server side; we just
         // emit the integer literal here.
-        Ok(format_integer_part(mantissa, scale))
+        format_integer_part(mantissa, scale)
     }
 }
 
 impl SnowflakeIntervalDayTime {
-    fn render_signed(
-        &self,
-        value: i128,
-        binding: &ParameterBinding,
-    ) -> Result<String, BindingError> {
-        if self.subtype.is_compound() {
-            return unsupported::<String>(binding.value_type);
-        }
+    fn render_signed(&self, value: i128) -> String {
         if self.subtype.is_second() {
             // Integer C source bound to SECOND has no fractional part; emit
             // the canonical "<int>.000000" so the literal width matches the
             // spec-default seconds precision.
-            Ok(format!("{value}.000000"))
+            format!("{value}.000000")
         } else {
-            Ok(value.to_string())
+            value.to_string()
         }
     }
 
-    fn render_numeric(
-        &self,
-        mantissa: i128,
-        scale: i8,
-        binding: &ParameterBinding,
-    ) -> Result<String, BindingError> {
-        if self.subtype.is_compound() {
-            return unsupported::<String>(binding.value_type);
-        }
+    fn render_numeric(&self, mantissa: i128, scale: i8) -> String {
         if self.subtype.is_second() {
             // Preserve up to 6 fractional digits; anything beyond that is
             // truncated (the server reports 22015 for lost precision).
-            Ok(format_seconds_value(mantissa, scale))
+            format_seconds_value(mantissa, scale)
         } else {
             // Non-SECOND single-field targets are integer-valued; truncate
             // any fractional component.
-            Ok(format_integer_part(mantissa, scale))
+            format_integer_part(mantissa, scale)
         }
     }
 }

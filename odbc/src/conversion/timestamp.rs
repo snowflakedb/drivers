@@ -546,9 +546,36 @@ fn write_timestamp_to_odbc(
     }
 }
 
+enum TimestampCSource {
+    Timestamp,
+    Char,
+    Date,
+    Time,
+    Binary,
+}
+
+fn timestamp_c_source(c_type: CDataType) -> Option<TimestampCSource> {
+    match c_type {
+        CDataType::TimeStamp | CDataType::TypeTimestamp => Some(TimestampCSource::Timestamp),
+        CDataType::Char | CDataType::WChar => Some(TimestampCSource::Char),
+        CDataType::Date | CDataType::TypeDate => Some(TimestampCSource::Date),
+        CDataType::Time | CDataType::TypeTime => Some(TimestampCSource::Time),
+        CDataType::Binary => Some(TimestampCSource::Binary),
+        _ => None,
+    }
+}
+
+fn timestamp_accepts_c_type(c_type: CDataType) -> bool {
+    timestamp_c_source(c_type).is_some()
+}
+
 fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, BindingError> {
-    match binding.value_type {
-        CDataType::TimeStamp | CDataType::TypeTimestamp => {
+    match timestamp_c_source(binding.value_type) {
+        None => UnsupportedCDataTypeSnafu {
+            c_type: binding.value_type,
+        }
+        .fail(),
+        Some(TimestampCSource::Timestamp) => {
             let ts = read_unaligned::<sql::Timestamp>(binding);
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                 .with_context(|| InvalidDatetimeValueSnafu {
@@ -573,7 +600,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
             })?;
             Ok(NaiveDateTime::new(date, time))
         }
-        CDataType::Char | CDataType::WChar => {
+        Some(TimestampCSource::Char) => {
             parse_temporal_char_input(binding, TS_CHAR_EXPECTED_FORMAT, |s| {
                 NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
                     .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))
@@ -583,7 +610,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
         // Bind SQL_C_TYPE_DATE into a TIMESTAMP column by combining the date
         // with midnight (matches the legacy 3.16.0 driver, which auto-promotes
         // a DATE source to a TIMESTAMP at 00:00:00.000000000).
-        CDataType::Date | CDataType::TypeDate => {
+        Some(TimestampCSource::Date) => {
             let d = read_unaligned::<sql::Date>(binding);
             let date = NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32)
                 .with_context(|| InvalidDatetimeValueSnafu {
@@ -601,7 +628,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
         // fields of the timestamp structure are set to the current date and
         // the fractional seconds field is set to zero." This mirrors the
         // SnowflakeTime → SQL_C_TYPE_TIMESTAMP path in `time.rs`.
-        CDataType::Time | CDataType::TypeTime => {
+        Some(TimestampCSource::Time) => {
             let t = read_unaligned::<sql::Time>(binding);
             let time = NaiveTime::from_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
                 .with_context(|| InvalidDatetimeValueSnafu {
@@ -613,7 +640,7 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
                 })?;
             Ok(NaiveDateTime::new(chrono::Local::now().date_naive(), time))
         }
-        CDataType::Binary => {
+        Some(TimestampCSource::Binary) => {
             let ts = read_binary_struct::<sql::Timestamp>(binding, "SQL_TIMESTAMP_STRUCT")?;
             let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                 .with_context(|| BindingNumericOutOfRangeSnafu {
@@ -636,10 +663,6 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Bind
             })?;
             Ok(NaiveDateTime::new(date, time))
         }
-        _ => UnsupportedCDataTypeSnafu {
-            c_type: binding.value_type,
-        }
-        .fail(),
     }
 }
 
@@ -867,6 +890,10 @@ macro_rules! impl_snowflake_timestamp {
         }
 
         impl ReadODBC for $name {
+            fn accepts_c_type(&self, c_type: CDataType) -> bool {
+                timestamp_accepts_c_type(c_type)
+            }
+
             fn read_odbc<'a>(
                 &self,
                 binding: &'a ParameterBinding,
@@ -1220,6 +1247,10 @@ fn write_timestamp_tz_to_char(
 }
 
 impl ReadODBC for SnowflakeTimestampTz {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        timestamp_accepts_c_type(c_type)
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,

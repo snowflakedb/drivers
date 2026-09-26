@@ -194,13 +194,38 @@ impl WriteODBCType for SnowflakeTime {
     }
 }
 
+enum TimeCSource {
+    Time,
+    Char,
+    Binary,
+    Timestamp,
+}
+
+fn time_c_source(c_type: CDataType) -> Option<TimeCSource> {
+    match c_type {
+        CDataType::Time | CDataType::TypeTime => Some(TimeCSource::Time),
+        CDataType::Char | CDataType::WChar => Some(TimeCSource::Char),
+        CDataType::Binary => Some(TimeCSource::Binary),
+        CDataType::TimeStamp | CDataType::TypeTimestamp => Some(TimeCSource::Timestamp),
+        _ => None,
+    }
+}
+
 impl ReadODBC for SnowflakeTime {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        time_c_source(c_type).is_some()
+    }
+
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        match binding.value_type {
-            CDataType::Time | CDataType::TypeTime => {
+        match time_c_source(binding.value_type) {
+            None => UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail(),
+            Some(TimeCSource::Time) => {
                 let time = read_unaligned::<sql::Time>(binding);
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
                     .with_context(|| InvalidDatetimeValueSnafu {
@@ -211,14 +236,14 @@ impl ReadODBC for SnowflakeTime {
                         ),
                     })
             }
-            CDataType::Char | CDataType::WChar => {
+            Some(TimeCSource::Char) => {
                 parse_temporal_char_input(binding, TIME_CHAR_EXPECTED_FORMAT, |s| {
                     NaiveTime::parse_from_str(s, "%H:%M:%S")
                         .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S%.f"))
                         .map_err(|_| ())
                 })
             }
-            CDataType::Binary => {
+            Some(TimeCSource::Binary) => {
                 let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
                     .with_context(|| BindingNumericOutOfRangeSnafu {
@@ -242,7 +267,7 @@ impl ReadODBC for SnowflakeTime {
             // a syntactically valid Y/M/D — otherwise an input like
             // {year=2024, month=13, day=1, hour=14, ...} would silently
             // succeed despite the struct being malformed.
-            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+            Some(TimeCSource::Timestamp) => {
                 let ts = read_unaligned::<sql::Timestamp>(binding);
                 NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
                     .with_context(|| InvalidDatetimeValueSnafu {
@@ -277,10 +302,6 @@ impl ReadODBC for SnowflakeTime {
                 }
                 Ok(time)
             }
-            _ => UnsupportedCDataTypeSnafu {
-                c_type: binding.value_type,
-            }
-            .fail(),
         }
     }
 }

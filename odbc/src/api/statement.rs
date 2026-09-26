@@ -5,14 +5,15 @@ use crate::api::diagnostic::WithDiagnosticInfo;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBatchConcatSnafu, ArrowBatchReadSnafu,
-    AsyncInProgressSnafu, AttributeCannotBeSetNowSnafu, ConcatNullValueSnafu, CsvBindingSnafu,
-    CursorAlreadyOpenSnafu, DaeRequiredSnafu, DisconnectedSnafu, DuplicateCursorNameSnafu,
-    InternalSnafu, InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorNameSnafu,
-    InvalidCursorStateSnafu, InvalidDuringDaeSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
-    StillExecutingSnafu, UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
+    AsyncInProgressSnafu, AttributeCannotBeSetNowSnafu, CToSqlConversionSnafu,
+    ConcatNullValueSnafu, CsvBindingSnafu, CursorAlreadyOpenSnafu, DaeRequiredSnafu,
+    DisconnectedSnafu, DuplicateCursorNameSnafu, InternalSnafu, InvalidAttributeValueSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorNameSnafu, InvalidCursorStateSnafu,
+    InvalidDuringDaeSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu, InvalidUseOfImplicitDescriptorSnafu, JsonBindingSnafu,
+    NoMoreDataSnafu, NonCharBinarySentInPiecesSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, StillExecutingSnafu,
+    UnsupportedAttributeSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::handle_registry::{HandleId, HandleKind};
 use crate::api::query_type::{QueryType, ResultKind};
@@ -29,7 +30,9 @@ use crate::api::{
     stmt_from_handle,
 };
 use crate::conversion::Binding;
-use crate::conversion::param_binding::{odbc_bindings_to_csv_into, odbc_bindings_to_json_into};
+use crate::conversion::param_binding::{
+    odbc_bindings_to_csv_into, odbc_bindings_to_json_into, validate_c_to_sql_at_bind,
+};
 use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatch;
 use arrow::array::RecordBatchReader;
@@ -1748,8 +1751,8 @@ pub fn bind_parameter(
         .fail();
     }
 
-    // TODO: validate that (value_type, sql_type) is a supported conversion,
-    // returning UnsupportedFeatureSnafu (HYC00) if not.
+    validate_c_to_sql_at_bind(value_type, parameter_type, sf_subtype)
+        .context(CToSqlConversionSnafu)?;
 
     // Re-lock inner (was dropped after DAE check above so we could do validation
     // without holding the lock, but in practice this is fine to hold throughout).

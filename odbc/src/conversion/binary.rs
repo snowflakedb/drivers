@@ -251,7 +251,27 @@ impl CharKernel for BinaryCharKernel {
     }
 }
 
+pub(crate) fn is_binary_sql_parameter_type(sql_type: sql::SqlDataType) -> bool {
+    matches!(
+        sql_type,
+        sql::SqlDataType::EXT_BINARY
+            | sql::SqlDataType::EXT_VAR_BINARY
+            | sql::SqlDataType::EXT_LONG_VAR_BINARY
+    )
+}
+
+pub(crate) fn binary_sql_accepts_c_type(c_type: CDataType) -> bool {
+    matches!(
+        c_type,
+        CDataType::Default | CDataType::Binary | CDataType::Char | CDataType::WChar
+    )
+}
+
 impl ReadODBC for SnowflakeBinary {
+    fn accepts_c_type(&self, c_type: CDataType) -> bool {
+        binary_sql_accepts_c_type(c_type)
+    }
+
     /// Read a `SQLBindParameter` value bound against a `SQL_BINARY` /
     /// `SQL_VARBINARY` / `SQL_LONGVARBINARY` target.
     ///
@@ -273,6 +293,12 @@ impl ReadODBC for SnowflakeBinary {
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
+        if !self.accepts_c_type(binding.value_type) {
+            return UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail();
+        }
         match binding.value_type {
             CDataType::Default | CDataType::Binary => {
                 let len = buffer_data_len(binding);
