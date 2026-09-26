@@ -508,15 +508,16 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-fips-sys"
-version = "0.13.12"
+version = "0.13.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed8cd42adddefbdb8507fb7443fa9b666631078616b78f70ed22117b5c27d90"
+checksum = "00ccb9bd2963c4dbcded8052b5666f329a7ccc75d04dea723eece6077ad5e6dc"
 dependencies = [
  "bindgen",
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
  "regex",
 ]
 
@@ -943,7 +944,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2545,15 +2546,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2828,7 +2820,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.53.4",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
