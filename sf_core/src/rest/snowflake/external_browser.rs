@@ -2,8 +2,8 @@ use crate::config::rest_parameters::LoginParameters;
 use crate::config::retry::RetryPolicy;
 use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
-use crate::rest::snowflake::GS_CODE_UNAVAILABLE;
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
+use crate::rest::snowflake::parse_gs_code_or_unavailable;
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode, header};
 use serde::Deserialize;
@@ -273,11 +273,6 @@ struct AuthenticatorRequestResponse {
     data: Option<AuthenticatorRequestData>,
 }
 
-fn parse_gs_code(code: Option<&str>) -> i32 {
-    code.and_then(|code| code.parse::<i32>().ok())
-        .unwrap_or(GS_CODE_UNAVAILABLE)
-}
-
 #[derive(Debug, Deserialize)]
 struct AuthenticatorRequestData {
     #[serde(rename = "ssoUrl")]
@@ -340,7 +335,7 @@ async fn request_authenticator(
 
     let resp: AuthenticatorRequestResponse = serde_json::from_str(&text).context(JsonParseSnafu)?;
     if !resp.success {
-        let code = parse_gs_code(resp.code.as_deref());
+        let code = parse_gs_code_or_unavailable(resp.code.as_deref());
         let message = resp.message.unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(
             code,
@@ -683,13 +678,6 @@ mod tests {
             rendered.contains("SSO URL generation failed in External browser's SAML Request flow"),
             "{rendered}"
         );
-    }
-
-    #[test]
-    fn a_missing_or_non_numeric_code_falls_back_to_the_unavailable_sentinel() {
-        assert_eq!(parse_gs_code(Some("390511")), 390511);
-        assert_eq!(parse_gs_code(Some("not-a-number")), GS_CODE_UNAVAILABLE);
-        assert_eq!(parse_gs_code(None), GS_CODE_UNAVAILABLE);
     }
 
     // ─── GET token extraction ────────────────────────────────────────────

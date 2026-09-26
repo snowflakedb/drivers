@@ -6,7 +6,7 @@ use crate::rest::snowflake::{
     MissingResultUrlSnafu, OperationTimeoutSnafu, QUERY_REQUEST_PATH, QueryIds, QueryInput,
     RestError, UrlJoinSnafu, apply_json_content_type, apply_query_headers, get_retry_params,
     into_query_result, query_failed_from_response, query_log_fields, query_request, query_response,
-    read_response_json,
+    read_response_json, try_parse_gs_code,
 };
 use reqwest::Method;
 use snafu::{OptionExt, ResultExt};
@@ -543,7 +543,7 @@ fn snowflake_failure(
     is_first_poll: bool,
     ids: &QueryIds,
 ) -> RestError {
-    let code = resp.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+    let code = try_parse_gs_code(resp.code.as_deref());
 
     // Error 612 "Result not found" occurs when polling for PUT/GET results.
     // File transfer commands don't support async mode.

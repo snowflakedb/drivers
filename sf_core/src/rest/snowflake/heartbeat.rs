@@ -5,7 +5,8 @@ use url::Url;
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::rest::snowflake::{
-    HeartbeatSnafu, RestError, UrlJoinSnafu, apply_query_headers, read_response_json,
+    HeartbeatSnafu, RestError, UrlJoinSnafu, apply_query_headers, parse_gs_code_or_unavailable,
+    read_response_json,
 };
 
 const HEARTBEAT_PATH: &str = "/session/heartbeat";
@@ -62,11 +63,7 @@ pub async fn send_heartbeat_with_timeout(
         let message = parsed
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
-        let code = parsed
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
+        let code = parse_gs_code_or_unavailable(parsed.code.as_deref());
         return HeartbeatSnafu { message, code }.fail();
     }
 

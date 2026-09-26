@@ -9,7 +9,8 @@ use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::{
     HttpRetrySnafu, LogoutSnafu, QueryIds, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
-    SessionExpiredSnafu, SnowflakeResponseError, UrlJoinSnafu, user_agent,
+    SessionExpiredSnafu, SnowflakeResponseError, UrlJoinSnafu, parse_gs_code_or_unavailable,
+    user_agent,
 };
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, header};
@@ -157,11 +158,7 @@ fn handle_logout_response(response: LogoutResponse) -> Result<(), RestError> {
     let message = response
         .message
         .unwrap_or_else(|| "Unknown error".to_string());
-    let code = response
-        .code
-        .as_deref()
-        .and_then(|c| c.parse::<i32>().ok())
-        .unwrap_or(-1);
+    let code = parse_gs_code_or_unavailable(response.code.as_deref());
 
     // SESSION_GONE (390111) means session already terminated — this is success
     if code == SESSION_GONE {

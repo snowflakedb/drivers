@@ -170,10 +170,18 @@ pub const SQLSTATE_AUTHORIZATION_FAILURE: &str = "28000";
 pub const SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED: &str = "08001";
 /// ODBC/ANSI SQLSTATE for a driver-enforced query or cancel timeout (`HYT00`).
 pub const SQLSTATE_TIMEOUT_EXPIRED: &str = "HYT00";
-/// Sentinel for a login-failure `code` the server omitted or sent as a
-/// non-numeric value — not a real GS error code. Produced at the `code`
-/// extraction site feeding [`LoginSnafu`] below.
+/// Sentinel for a GS `code` the server omitted or sent as a non-numeric
+/// value — not a real GS error code. Produced by [`parse_gs_code_or_unavailable`]
+/// when [`try_parse_gs_code`] returns [`None`].
 pub const GS_CODE_UNAVAILABLE: i32 = -1;
+
+pub(crate) fn try_parse_gs_code(code: Option<&str>) -> Option<i32> {
+    code.and_then(|code| code.parse::<i32>().ok())
+}
+
+pub(crate) fn parse_gs_code_or_unavailable(code: Option<&str>) -> i32 {
+    try_parse_gs_code(code).unwrap_or(GS_CODE_UNAVAILABLE)
+}
 
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
@@ -1358,11 +1366,7 @@ pub async fn snowflake_login_with_client(
 
     // Revoke cached token and retry if cached token caused failure
     if !auth_response.success {
-        let code = auth_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
+        let code = parse_gs_code_or_unavailable(auth_response.code.as_deref());
 
         // Cached token (ID token or MFA) rejected with an EXT_AUTHN error:
         // evict it and retry via the normal interactive flow.
@@ -1474,11 +1478,7 @@ pub async fn snowflake_login_with_client(
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
-        let code = auth_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(GS_CODE_UNAVAILABLE);
+        let code = parse_gs_code_or_unavailable(auth_response.code.as_deref());
         if EXT_AUTHN_ERROR_CODES.contains(&code) {
             let evictable = match &login_parameters.login_method {
                 LoginMethod::UserPasswordMfa { username, .. } => {
@@ -1699,11 +1699,7 @@ pub async fn refresh_session(
         let message = refresh_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
-        let code = refresh_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
+        let code = parse_gs_code_or_unavailable(refresh_response.code.as_deref());
         tracing::error!(code, message = %message, "Session refresh failed");
         // GS 390113/390114/390115 on the refresh endpoint all mean the master
         // token can never be renewed (not found, expired, or invalid).
@@ -1823,11 +1819,7 @@ pub async fn token_request(
         let message = token_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
-        let code = token_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
+        let code = parse_gs_code_or_unavailable(token_response.code.as_deref());
         return TokenRequestFailedSnafu {
             operation: request_type.to_string(),
             message,
@@ -2024,7 +2016,7 @@ pub(super) fn query_failed_from_response(
     let message = response
         .message
         .unwrap_or_else(|| "Unknown error".to_owned());
-    let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+    let code = try_parse_gs_code(response.code.as_deref());
     let query_context = response.data.query_context.clone();
     QueryFailedSnafu {
         message,
@@ -2340,7 +2332,7 @@ fn query_status_from_monitoring_body(
 ) -> Result<QueryStatusResult, RestError> {
     if !body.success {
         let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
-        let code = body.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        let code = try_parse_gs_code(body.code.as_deref());
         return QueryFailedSnafu {
             message,
             code,
@@ -2363,10 +2355,7 @@ fn query_status_from_monitoring_body(
         });
     };
 
-    let error_code = query_entry
-        .error_code
-        .as_deref()
-        .and_then(|c| c.parse::<i32>().ok())
+    let error_code = try_parse_gs_code(query_entry.error_code.as_deref())
         .and_then(|c| if c == 0 { None } else { Some(c) });
 
     let error_message = if error_code.is_some() {
@@ -2689,9 +2678,7 @@ where
     // 2xx with `success:false, code:"390112"` means the session token expired.
     // Surface it as SessionExpired so the RefreshContext can refresh and retry,
     // matching the HTTP 401 branch above.
-    if !parsed.success
-        && parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok()) == Some(SESSION_TOKEN_EXPIRED)
-    {
+    if !parsed.success && try_parse_gs_code(parsed.code.as_deref()) == Some(SESSION_TOKEN_EXPIRED) {
         return SessionExpiredSnafu.fail();
     }
 
@@ -2700,7 +2687,7 @@ where
     // `is_master_token_expired = true` and propagate `MasterTokenTerminal` to
     // the caller, carrying the real code.
     if !parsed.success
-        && let Some(code) = parsed.code.as_deref().and_then(|c| c.parse::<i32>().ok())
+        && let Some(code) = try_parse_gs_code(parsed.code.as_deref())
         && MASTER_TOKEN_TERMINAL_CODES.contains(&code)
     {
         return MasterTokenTerminalSnafu { code }.fail();
@@ -3041,6 +3028,23 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn try_parse_gs_code_accepts_a_decimal_integer_and_rejects_missing_or_non_numeric_values() {
+        assert_eq!(try_parse_gs_code(Some("390511")), Some(390511));
+        assert_eq!(try_parse_gs_code(Some("not-a-number")), None);
+        assert_eq!(try_parse_gs_code(None), None);
+    }
+
+    #[test]
+    fn parse_gs_code_or_unavailable_uses_the_sentinel_when_parse_fails() {
+        assert_eq!(parse_gs_code_or_unavailable(Some("390511")), 390511);
+        assert_eq!(
+            parse_gs_code_or_unavailable(Some("not-a-number")),
+            GS_CODE_UNAVAILABLE
+        );
+        assert_eq!(parse_gs_code_or_unavailable(None), GS_CODE_UNAVAILABLE);
+    }
 
     #[test]
     fn aws_wif_tls_config_keeps_peer_verification_enabled() {
