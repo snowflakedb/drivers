@@ -52,10 +52,12 @@ def _drop_stale_hybrid_test_databases(cur, *, max_age_seconds: int = 15 * 60) ->
 
 
 def _execute_with_hybrid_quota_retry(cur, sql: str, *, params: tuple | None = None) -> None:
-    """Run sql; on 391727 drop stale hybrid_db_test_* DBs, retry once, else skip.
+    """Run sql; on 391727 drop stale hybrid_db_test_* DBs, retry once, else fail.
 
     391727 is a quota on databases *with hybrid tables*, not on CREATE DATABASE.
     Empty DBs do not count, so CREATE HYBRID TABLE is the statement that fails.
+    Exhausted quota after cleanup is test_infra: the required hybrid-table e2e
+    could not run. Do not skip — a skip would hide both infra and product bugs.
     """
     extra: dict[str, object] = {}
     if params is not None:
@@ -72,9 +74,10 @@ def _execute_with_hybrid_quota_retry(cur, sql: str, *, params: tuple | None = No
         cur.execute(sql, **extra)
     except ProgrammingError as retry_exc:
         if _is_hybrid_table_db_limit(retry_exc):
-            pytest.skip(
-                "account hybrid-table database quota (391727) is exhausted after "
-                "cleaning stale hybrid_db_test_* databases"
+            pytest.fail(
+                "test_infra: required hybrid-table e2e could not run — account "
+                "hybrid-table database quota (391727) exhausted after cleaning "
+                "stale hybrid_db_test_* databases"
             )
         raise
 
