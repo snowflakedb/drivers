@@ -3,6 +3,7 @@ use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError};
 use crate::logging::url_for_log;
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
+use crate::rest::snowflake::url_origin_matches;
 use html_escape::decode_html_entities;
 use reqwest::header;
 use reqwest::{Method, StatusCode};
@@ -153,12 +154,6 @@ fn enrich_okta_error_body(body: &str) -> String {
         return format!("Okta errorCode={code}, errorSummary={summary}; rawBody={body}");
     }
     body.to_string()
-}
-
-fn url_origin_matches(a: &Url, b: &Url) -> bool {
-    let a_port = a.port_or_known_default();
-    let b_port = b.port_or_known_default();
-    a.scheme() == b.scheme() && a.host_str() == b.host_str() && a_port == b_port
 }
 
 fn extract_form_action(html: &str) -> Option<String> {

@@ -54,6 +54,14 @@ impl ExternalBrowserTestFixture {
 /// Extract the `BROWSER_MODE_REDIRECT_PORT` from the authenticator-request
 /// body recorded by wiremock, then send a fake token to that port.
 fn simulate_browser_callback(mock: &MockServerWithTls, token: &str) {
+    let response_str = send_token_callback(mock, token, "");
+    assert!(
+        response_str.contains("200 OK"),
+        "Expected 200 OK response, got: {response_str}"
+    );
+}
+
+fn send_token_callback(mock: &MockServerWithTls, token: &str, extra_headers: &str) -> String {
     let requests = mock.received_requests();
     let authn_req = requests
         .iter()
@@ -71,7 +79,7 @@ fn simulate_browser_callback(mock: &MockServerWithTls, token: &str) {
 
     let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))
         .expect("Failed to connect to callback listener");
-    let request = format!("GET /?token={token} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    let request = format!("GET /?token={token} HTTP/1.1\r\nHost: localhost\r\n{extra_headers}\r\n");
     stream
         .write_all(request.as_bytes())
         .expect("Failed to write to callback listener");
@@ -80,11 +88,7 @@ fn simulate_browser_callback(mock: &MockServerWithTls, token: &str) {
     stream
         .read_to_end(&mut response)
         .expect("Failed to read response from callback listener");
-    let response_str = String::from_utf8_lossy(&response);
-    assert!(
-        response_str.contains("200 OK"),
-        "Expected 200 OK response, got: {response_str}"
-    );
+    String::from_utf8_lossy(&response).into_owned()
 }
 
 // =============================================================================
@@ -437,4 +441,70 @@ fn should_login_when_sso_url_has_multi_param_query_string() {
         result,
         "external browser login with multi-param ssoUrl to succeed",
     );
+}
+
+// =============================================================================
+// SNOW-3663593: callback Origin matching
+// =============================================================================
+
+#[test]
+fn should_ignore_a_foreign_origin_callback_then_accept_the_legitimate_one() {
+    // Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
+    let fixture = ExternalBrowserTestFixture::new();
+    let proof_key = "test_proof_key_origin";
+    fixture.mock.mount(external_browser::authenticator_request(
+        "https://idp.snowflake.com/sso",
+        proof_key,
+    ));
+
+    // And Login endpoint returns success
+    fixture.mock.mount(external_browser::login_success());
+
+    // When Trying to Connect after a foreign-origin token and then a legitimate callback
+    let mock_ref = &fixture.mock;
+    let result = std::thread::scope(|s| {
+        s.spawn(|| {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let requests = mock_ref.received_requests();
+                if requests
+                    .iter()
+                    .any(|r| r.url.path().contains("authenticator-request"))
+                {
+                    let foreign = send_token_callback(
+                        mock_ref,
+                        "foreign_origin_token",
+                        "Origin: https://evil.snowflake.com\r\n",
+                    );
+                    assert!(
+                        !foreign.contains("Access-Control-Allow-Origin"),
+                        "foreign-origin callback must not receive CORS headers, got: {foreign}"
+                    );
+                    simulate_browser_callback(mock_ref, "legitimate_origin_token");
+                    return;
+                }
+            }
+            panic!("Timed out waiting for authenticator-request");
+        });
+
+        fixture.connect()
+    });
+
+    // Then Login is successful
+    ExternalBrowserTestFixture::assert_success(
+        result,
+        "external browser login after a foreign-origin callback to succeed",
+    );
+
+    // And Login request contains EXTERNALBROWSER authenticator, token, proof key, and login name
+    let requests = fixture.mock.received_requests();
+    let login_req = requests
+        .iter()
+        .find(|r| r.url.path().contains("login-request"))
+        .expect("No login-request was captured");
+    let body: serde_json::Value = serde_json::from_slice(&login_req.body).unwrap();
+    assert_eq!(body["data"]["AUTHENTICATOR"], "EXTERNALBROWSER");
+    assert_eq!(body["data"]["TOKEN"], "legitimate_origin_token");
+    assert_eq!(body["data"]["PROOF_KEY"], proof_key);
+    assert_eq!(body["data"]["LOGIN_NAME"], "test_user");
 }

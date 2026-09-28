@@ -57,6 +57,7 @@ Bug fixes:
 
 - Fixed statement prepare failing with server error `000007` (statement not preparable) for statements the server only accepts for direct execution, such as `ALTER SESSION` and `COMMIT`; prepare now returns empty metadata and the statement runs on execute. (snowflakedb/drivers#2320)
 - Fixed Python `ALTER SESSION SET` cache updates panicking or skipping the assignment when non-ASCII text appeared before the keyword. (snowflakedb/drivers#2209)
+- Fixed the external-browser callback listener to accept CORS Origin headers only from the connected Snowflake account host. (SNOW-3663593) (snowflakedb/drivers#2120)
 - Fixed `SNOWFLAKE_CONNECTIONS` being read as a raw string instead of TOML, which made Snowpark `Session.builder.create()` fail with `TypeError: string indices must be integers`. (snowflakedb/drivers#2060)
 - Fixed intermittent key-pair connect failures on Windows when OpenSSL JWT signing ran after the rustls/aws-lc TLS client was initialized on the connect path. (snowflakedb/drivers#2073)
 - Fixed GET downloads from an S3-backed stage returning undecrypted, unreadable data for files written by a server-side unload (e.g. `COPY INTO` with `SINGLE=TRUE`) onto a client-side-encrypted stage, without treating git-stage objects as client-side-encrypted. (snowflakedb/drivers#1942)

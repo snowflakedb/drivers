@@ -65,6 +65,12 @@ use tracing;
 use url::Url;
 use uuid::Uuid;
 
+fn url_origin_matches(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const ABORT_REQUEST_PATH: &str = "/queries/v1/abort-request";

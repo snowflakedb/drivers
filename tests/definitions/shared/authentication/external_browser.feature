@@ -90,3 +90,15 @@ Feature: External Browser Authentication
     And Login endpoint returns success
     When Trying to Connect with simulated browser callback delivering a token
     Then Login is successful
+
+  # =============================================================================
+  # Integration Tests - Callback Origin matching (SNOW-3663593)
+  # =============================================================================
+
+  @core_int
+  Scenario: should ignore a foreign origin callback then accept the legitimate one
+    Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
+    And Login endpoint returns success
+    When Trying to Connect after a foreign-origin token and then a legitimate callback
+    Then Login is successful
+    And Login request contains EXTERNALBROWSER authenticator, token, proof key, and login name

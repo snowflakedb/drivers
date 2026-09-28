@@ -3,7 +3,7 @@ use crate::config::retry::RetryPolicy;
 use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
-use crate::rest::snowflake::parse_gs_code_or_unavailable;
+use crate::rest::snowflake::{parse_gs_code_or_unavailable, url_origin_matches};
 use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode, header};
 use serde::Deserialize;
@@ -223,7 +223,10 @@ pub(crate) async fn external_browser_authenticate(
             .unwrap_or_else(|e| Err(e.to_string()))
     };
     tokio::pin!(open_fut);
-    let accept_fut = tokio::time::timeout(remaining, accept_token_from_callback(&listener));
+    let accept_fut = tokio::time::timeout(
+        remaining,
+        accept_token_from_callback(&listener, &login_parameters.server_url),
+    );
     tokio::pin!(accept_fut);
     let timeout_err = || ExternalBrowserError::AuthenticationTimeout {
         budget,
@@ -362,12 +365,19 @@ struct TokenFromCallback {
 /// Accept HTTP requests on the listener until a token-bearing request arrives.
 ///
 /// Handles:
-/// - **OPTIONS** (CORS preflight): responds with permissive CORS headers and loops.
-/// - **GET** `/?token=...`: extracts token from query string.
+/// - **OPTIONS** (CORS preflight): answered only for a POST preflight whose
+///   `Origin` matches `allowed_origin` (the Snowflake server URL).
+/// - **GET** `/?token=...`: extracts token from query string. A request with no
+///   `Origin` or the opaque `null` origin is accepted as a top-level IdP redirect.
 /// - **POST** with JSON body `{"token":"...","consent":true}` or form-encoded `token=...`.
+///   POST requires an `Origin` that matches `allowed_origin`.
+/// - CORS headers on the success response reflect that request's Origin, or none.
+/// - A token-bearing request whose `Origin` does not match `allowed_origin` is
+///   ignored and the loop continues.
 /// - Non-token requests (e.g. `/favicon.ico`): silently closed, loops.
 async fn accept_token_from_callback(
     listener: &TcpListener,
+    allowed_origin: &str,
 ) -> Result<TokenFromCallback, ExternalBrowserError> {
     loop {
         let (mut stream, _addr) = listener.accept().await.context(CallbackIoSnafu)?;
@@ -375,12 +385,33 @@ async fn accept_token_from_callback(
 
         let first_line = request.lines().next().unwrap_or("");
         let method = first_line.split_whitespace().next().unwrap_or("");
+        let request_origin = extract_header(&request, "Origin");
+        let origin = decide_callback_origin(method, request_origin.as_deref(), allowed_origin);
 
         if method.eq_ignore_ascii_case("OPTIONS") {
-            let origin = extract_header(&request, "Origin").unwrap_or_default();
-            let resp = cors_preflight_response(&origin);
-            send_response(&mut stream, &resp).await;
-            tracing::debug!("Handled OPTIONS preflight, waiting for token request");
+            match (is_cors_post_preflight(&request), &origin) {
+                (
+                    true,
+                    CallbackOrigin::Accept {
+                        cors_origin: Some(origin),
+                    },
+                ) => {
+                    let resp = cors_preflight_response(origin);
+                    send_response(&mut stream, &resp).await;
+                    tracing::debug!("Handled OPTIONS preflight, waiting for token request");
+                }
+                (true, _) => {
+                    let _ = stream.shutdown().await;
+                    tracing::debug!(
+                        origin = request_origin.as_deref().unwrap_or("<missing>"),
+                        "Ignoring OPTIONS preflight whose Origin does not match the Snowflake server"
+                    );
+                }
+                (false, _) => {
+                    let _ = stream.shutdown().await;
+                    tracing::debug!("Ignoring OPTIONS that is not a POST CORS preflight");
+                }
+            }
             continue;
         }
 
@@ -399,8 +430,16 @@ async fn accept_token_from_callback(
             continue;
         };
 
-        let origin = extract_header(&request, "Origin");
-        let resp = success_response(origin.as_deref(), callback.consent_cache_id_token);
+        let CallbackOrigin::Accept { cors_origin } = origin else {
+            let _ = stream.shutdown().await;
+            tracing::warn!(
+                origin = request_origin.as_deref().unwrap_or("<missing>"),
+                "Ignoring callback with Origin that does not match the Snowflake server"
+            );
+            continue;
+        };
+
+        let resp = success_response(cors_origin.as_deref(), callback.consent_cache_id_token);
         send_response(&mut stream, &resp).await;
 
         return Ok(callback);
@@ -637,16 +676,39 @@ fn extract_nonempty_query_param(query: &str, name: &str) -> Option<String> {
 
 // ─── Raw HTTP parsing helpers ────────────────────────────────────────────────
 
-/// Extract the body from a raw HTTP request (everything after `\r\n\r\n`).
+fn split_http_request(request: &str) -> (&str, Option<&str>) {
+    let separator = ["\r\n\r\n", "\n\n", "\r\n\n", "\n\r\n"]
+        .into_iter()
+        .filter_map(|separator| {
+            request
+                .find(separator)
+                .map(|index| (index, separator.len()))
+        })
+        .min_by_key(|(index, _)| *index);
+    if let Some((index, separator_length)) = separator {
+        return (
+            &request[..index],
+            Some(&request[index + separator_length..]),
+        );
+    }
+    (request, None)
+}
+
+/// Extract the body from a raw HTTP request.
 fn extract_http_body(request: &str) -> Option<&str> {
-    let (_, body) = request.split_once("\r\n\r\n")?;
+    let (_, body) = split_http_request(request);
+    let body = body?;
     let body = body.trim();
     if body.is_empty() { None } else { Some(body) }
 }
 
 /// Extract a header value by name (case-insensitive) from a raw HTTP request.
+///
+/// Only the header section is scanned, so a `text/plain` body cannot supply a
+/// header value.
 fn extract_header(request: &str, name: &str) -> Option<String> {
-    for line in request.lines() {
+    let (headers, _) = split_http_request(request);
+    for line in headers.lines() {
         if let Some((key, value)) = line.split_once(':')
             && key.trim().eq_ignore_ascii_case(name)
         {
@@ -656,12 +718,68 @@ fn extract_header(request: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Compare a request `Origin` to the Snowflake server URL.
+///
+/// Implicit default ports (443 for https, 80 for http) are normalized so a
+/// server URL that carries `:443` still matches a browser Origin that omits it.
+fn origin_matches_server(requested_origin: &str, server_url: &str) -> bool {
+    let Ok(origin) = url::Url::parse(requested_origin) else {
+        return false;
+    };
+    let Ok(server) = url::Url::parse(server_url) else {
+        return false;
+    };
+    url_origin_matches(&origin, &server)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CallbackOrigin {
+    Accept { cors_origin: Option<String> },
+    Reject,
+}
+
+fn decide_callback_origin(
+    method: &str,
+    origin: Option<&str>,
+    allowed_origin: &str,
+) -> CallbackOrigin {
+    let is_top_level_get = method.eq_ignore_ascii_case("GET")
+        && origin.is_none_or(|value| value.eq_ignore_ascii_case("null"));
+    if is_top_level_get {
+        return CallbackOrigin::Accept { cors_origin: None };
+    }
+    match origin {
+        Some(origin) if origin_matches_server(origin, allowed_origin) => CallbackOrigin::Accept {
+            cors_origin: Some(origin.to_string()),
+        },
+        _ => CallbackOrigin::Reject,
+    }
+}
+
+fn requested_preflight_headers_allowed(request: &str) -> bool {
+    extract_header(request, "Access-Control-Request-Headers").is_none_or(|headers| {
+        headers
+            .split(',')
+            .map(str::trim)
+            .filter(|header| !header.is_empty())
+            .all(|header| header.eq_ignore_ascii_case("content-type"))
+    })
+}
+
+fn is_cors_post_preflight(request: &str) -> bool {
+    extract_header(request, "Access-Control-Request-Method")
+        .is_some_and(|method| method.eq_ignore_ascii_case("POST"))
+        && requested_preflight_headers_allowed(request)
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    const SNOWFLAKE_SERVER_URL: &str = "https://acct.snowflakecomputing.com";
 
     #[test]
     fn authenticator_request_rejection_renders_the_snowflake_code_and_message() {
@@ -775,10 +893,10 @@ mod tests {
 
     #[test]
     fn extract_header_case_insensitive() {
-        let request = "GET / HTTP/1.1\r\norigin: https://example.com\r\n\r\n";
+        let request = "GET / HTTP/1.1\r\norigin: https://acct.snowflakecomputing.com\r\n\r\n";
         assert_eq!(
             extract_header(request, "Origin"),
-            Some("https://example.com".to_string())
+            Some("https://acct.snowflakecomputing.com".to_string())
         );
     }
 
@@ -788,6 +906,187 @@ mod tests {
         assert!(extract_header(request, "Origin").is_none());
     }
 
+    #[test]
+    fn extract_header_ignores_body_smuggled_origin() {
+        let request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\r\ntoken=EVIL&x=y\r\nOrigin: https://evil.snowflake.com";
+        assert!(
+            extract_header(request, "Origin").is_none(),
+            "Origin written in the body must not be treated as a header"
+        );
+    }
+
+    #[test]
+    fn extract_header_ignores_body_smuggled_origin_with_lf_line_endings() {
+        let request = "POST / HTTP/1.1\nHost: localhost\nContent-Type: text/plain\n\ntoken=EVIL&x=y\r\n\r\nOrigin: https://evil.snowflake.com";
+        assert!(
+            extract_header(request, "Origin").is_none(),
+            "Origin written in the body must not be treated as a header"
+        );
+    }
+
+    #[test]
+    fn extract_header_prefers_real_header_over_body_origin() {
+        let request = "POST / HTTP/1.1\r\nOrigin: https://acct.snowflakecomputing.com\r\n\r\ntoken=EVIL\r\nOrigin: https://evil.snowflake.com";
+        assert_eq!(
+            extract_header(request, "Origin"),
+            Some("https://acct.snowflakecomputing.com".to_string())
+        );
+    }
+
+    // ─── Origin matching ─────────────────────────────────────────────────
+
+    #[test]
+    fn origin_matches_exact() {
+        assert!(origin_matches_server(
+            "https://acct.snowflakecomputing.com",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn origin_matches_default_https_port_elided() {
+        assert!(origin_matches_server(
+            "https://acct.snowflakecomputing.com",
+            "https://acct.snowflakecomputing.com:443"
+        ));
+        assert!(origin_matches_server(
+            "https://acct.snowflakecomputing.com:443",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn origin_matches_default_http_port_elided() {
+        assert!(origin_matches_server(
+            "http://acct.snowflake.com",
+            "http://acct.snowflake.com:80"
+        ));
+    }
+
+    #[test]
+    fn origin_rejects_wrong_scheme() {
+        assert!(!origin_matches_server(
+            "http://acct.snowflakecomputing.com",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn origin_rejects_wrong_host() {
+        assert!(!origin_matches_server(
+            "https://other.snowflakecomputing.com",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn origin_rejects_wrong_port() {
+        assert!(!origin_matches_server(
+            "https://acct.snowflakecomputing.com:8443",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn origin_rejects_suffix_lookalike() {
+        assert!(!origin_matches_server(
+            "https://acct.snowflakecomputing.com.evil.net",
+            SNOWFLAKE_SERVER_URL
+        ));
+    }
+
+    #[test]
+    fn decide_callback_origin_get_missing_and_null_are_exceptions() {
+        assert_eq!(
+            decide_callback_origin("GET", None, SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Accept { cors_origin: None }
+        );
+        assert_eq!(
+            decide_callback_origin("GET", Some("null"), SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Accept { cors_origin: None }
+        );
+        assert_eq!(
+            decide_callback_origin("GET", Some("NULL"), SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Accept { cors_origin: None }
+        );
+        assert_eq!(
+            decide_callback_origin(
+                "GET",
+                Some("https://acct.snowflakecomputing.com"),
+                SNOWFLAKE_SERVER_URL
+            ),
+            CallbackOrigin::Accept {
+                cors_origin: Some("https://acct.snowflakecomputing.com".into())
+            }
+        );
+    }
+
+    #[test]
+    fn decide_callback_origin_post_requires_matching_origin() {
+        assert_eq!(
+            decide_callback_origin("POST", None, SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Reject
+        );
+        assert_eq!(
+            decide_callback_origin("POST", Some("null"), SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Reject
+        );
+        assert_eq!(
+            decide_callback_origin("POST", Some("NULL"), SNOWFLAKE_SERVER_URL),
+            CallbackOrigin::Reject
+        );
+        assert_eq!(
+            decide_callback_origin(
+                "POST",
+                Some("https://evil.snowflake.com"),
+                SNOWFLAKE_SERVER_URL
+            ),
+            CallbackOrigin::Reject
+        );
+        assert_eq!(
+            decide_callback_origin(
+                "POST",
+                Some("https://acct.snowflakecomputing.com"),
+                SNOWFLAKE_SERVER_URL
+            ),
+            CallbackOrigin::Accept {
+                cors_origin: Some("https://acct.snowflakecomputing.com".into())
+            }
+        );
+    }
+
+    #[test]
+    fn cors_post_preflight_accepts_content_type_or_omitted_headers() {
+        let complete = "OPTIONS / HTTP/1.1\r\n\
+            Origin: https://acct.snowflakecomputing.com\r\n\
+            Access-Control-Request-Method: POST\r\n\
+            Access-Control-Request-Headers: Content-Type\r\n\r\n";
+        assert!(is_cors_post_preflight(complete));
+
+        let lowercase_method = complete.replace(
+            "Access-Control-Request-Method: POST",
+            "Access-Control-Request-Method: post",
+        );
+        assert!(is_cors_post_preflight(&lowercase_method));
+
+        let missing_headers = "OPTIONS / HTTP/1.1\r\n\
+            Origin: https://acct.snowflakecomputing.com\r\n\
+            Access-Control-Request-Method: POST\r\n\r\n";
+        assert!(is_cors_post_preflight(missing_headers));
+
+        let extra_headers = "OPTIONS / HTTP/1.1\r\n\
+            Origin: https://acct.snowflakecomputing.com\r\n\
+            Access-Control-Request-Method: POST\r\n\
+            Access-Control-Request-Headers: Content-Type, X-Custom\r\n\r\n";
+        assert!(!is_cors_post_preflight(extra_headers));
+
+        let get_preflight = "OPTIONS / HTTP/1.1\r\n\
+            Origin: https://acct.snowflakecomputing.com\r\n\
+            Access-Control-Request-Method: GET\r\n\
+            Access-Control-Request-Headers: Content-Type\r\n\r\n";
+        assert!(!is_cors_post_preflight(get_preflight));
+    }
+
     // ─── Listener integration tests ──────────────────────────────────────
 
     #[tokio::test]
@@ -795,7 +1094,9 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let server = tokio::spawn(async move { accept_token_from_callback(&listener).await });
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .await
@@ -815,18 +1116,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn listener_accepts_get_token_with_null_origin() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(
+                b"GET /?token=test_token_value HTTP/1.1\r\nHost: localhost\r\nOrigin: null\r\n\r\n",
+            )
+            .await
+            .unwrap();
+
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "test_token_value");
+        let response = String::from_utf8_lossy(&response);
+        assert!(response.contains("Your identity was confirmed"));
+        assert!(!response.contains("Access-Control-Allow-Origin"));
+    }
+
+    #[tokio::test]
     async fn listener_accepts_post_json_token() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let server = tokio::spawn(async move { accept_token_from_callback(&listener).await });
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
         let body = r#"{"token":"post_json_token","consent":false}"#;
         let request = format!(
-            "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         );
         client.write_all(request.as_bytes()).await.unwrap();
@@ -844,7 +1176,9 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let server = tokio::spawn(async move { accept_token_from_callback(&listener).await });
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
 
         let mut favicon = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .await
@@ -875,14 +1209,16 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let server = tokio::spawn(async move { accept_token_from_callback(&listener).await });
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
 
         let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
         options_client
             .write_all(
-                b"OPTIONS / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://idp.example.com\r\nAccess-Control-Request-Method: POST\r\n\r\n",
+                b"OPTIONS / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: Content-Type\r\n\r\n",
             )
             .await
             .unwrap();
@@ -891,8 +1227,11 @@ mod tests {
             .read_to_end(&mut options_response)
             .await
             .unwrap();
+        let options_str = String::from_utf8_lossy(&options_response);
+        assert!(options_str.contains("Access-Control-Allow-Methods"));
         assert!(
-            String::from_utf8_lossy(&options_response).contains("Access-Control-Allow-Methods")
+            options_str
+                .contains("Access-Control-Allow-Origin: https://acct.snowflakecomputing.com")
         );
 
         let mut post_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -900,7 +1239,7 @@ mod tests {
             .unwrap();
         let body = r#"{"token":"after_options","consent":true}"#;
         let request = format!(
-            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://idp.example.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         );
         post_client.write_all(request.as_bytes()).await.unwrap();
@@ -917,12 +1256,271 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn listener_refuses_foreign_origin_preflight() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        options_client
+            .write_all(
+                b"OPTIONS / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.snowflake.com\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: Content-Type\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut options_response = Vec::new();
+        options_client
+            .read_to_end(&mut options_response)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&options_response).contains("Access-Control-Allow-Origin"),
+            "foreign-origin preflight must not receive CORS headers, got: {}",
+            String::from_utf8_lossy(&options_response)
+        );
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=after_refused_preflight HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "after_refused_preflight");
+        assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
+    }
+
+    #[tokio::test]
+    async fn listener_refuses_foreign_origin_token_then_accepts_legitimate() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut foreign = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        foreign
+            .write_all(
+                b"GET /?token=attacker_token HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.snowflake.com\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut foreign_response = Vec::new();
+        foreign.read_to_end(&mut foreign_response).await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&foreign_response).contains("Access-Control-Allow-Origin"),
+            "foreign-origin token must not receive CORS headers, got: {}",
+            String::from_utf8_lossy(&foreign_response)
+        );
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=legitimate_token HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "legitimate_token");
+        assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
+    }
+
+    #[tokio::test]
+    async fn listener_refuses_foreign_origin_post_json_then_accepts_legitimate() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut foreign = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        let body = r#"{"token":"attacker_post_token","consent":true}"#;
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.snowflake.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        foreign.write_all(request.as_bytes()).await.unwrap();
+        let mut foreign_response = Vec::new();
+        foreign.read_to_end(&mut foreign_response).await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&foreign_response).contains("Access-Control-Allow-Origin"),
+            "foreign-origin POST token must not receive CORS headers, got: {}",
+            String::from_utf8_lossy(&foreign_response)
+        );
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=legitimate_token HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "legitimate_token");
+        assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
+    }
+
+    #[tokio::test]
+    async fn listener_refuses_originless_post_then_accepts_get() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut post = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        let body = r#"{"token":"originless_post_token","consent":true}"#;
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        post.write_all(request.as_bytes()).await.unwrap();
+        let mut post_response = Vec::new();
+        post.read_to_end(&mut post_response).await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&post_response).contains("Access-Control-Allow-Origin"),
+            "originless POST must not receive CORS headers, got: {}",
+            String::from_utf8_lossy(&post_response)
+        );
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=after_originless_post HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "after_originless_post");
+        assert!(String::from_utf8_lossy(&response).contains("Your identity was confirmed"));
+    }
+
+    #[tokio::test]
+    async fn listener_does_not_reuse_preflight_origin_on_originless_get() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        options_client
+            .write_all(
+                b"OPTIONS / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: Content-Type\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut options_response = Vec::new();
+        options_client
+            .read_to_end(&mut options_response)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&options_response)
+                .contains("Access-Control-Allow-Origin: https://acct.snowflakecomputing.com")
+        );
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=after_preflight HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8_lossy(&response);
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "after_preflight");
+        assert!(response.contains("Your identity was confirmed"));
+        assert!(
+            !response.contains("Access-Control-Allow-Origin"),
+            "originless GET must not inherit the preflight Origin, got: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn listener_ignores_body_smuggled_origin() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        let body = "token=smuggled_token&x=y\r\nOrigin: https://evil.snowflake.com";
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("body-smuggled Origin must not block the accept loop")
+            .unwrap()
+            .unwrap();
+        assert_eq!(cb.token.reveal(), "smuggled_token");
+        let response_str = String::from_utf8_lossy(&response);
+        assert!(
+            response_str.contains("200 OK"),
+            "matching header Origin must be accepted, got: {response_str}"
+        );
+        assert!(
+            response_str
+                .contains("Access-Control-Allow-Origin: https://acct.snowflakecomputing.com"),
+            "header Origin must be reflected, got: {response_str}"
+        );
+        assert!(
+            !response_str.contains("https://evil.snowflake.com"),
+            "body-smuggled Origin must not be reflected, got: {response_str}"
+        );
+    }
+
+    #[tokio::test]
     async fn listener_timeout_when_no_callback() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
         let result = tokio::time::timeout(
             Duration::from_millis(50),
-            accept_token_from_callback(&listener),
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL),
         )
         .await;
 
