@@ -119,10 +119,19 @@ class TestConvertValueToSqlOption:
         assert _convert_value_to_sql_option("my_volume") == "'my_volume'"
 
     def test_already_quoted_string(self):
-        assert _convert_value_to_sql_option("'my_volume'") == "'my_volume'"
+        assert _convert_value_to_sql_option("'my_volume'") == "'''my_volume'''"
+
+    def test_string_with_quotes_and_equals_is_one_literal(self):
+        assert _convert_value_to_sql_option("'x' CATALOG='other'") == "'''x'' CATALOG=''other'''"
 
     def test_string_with_single_quote(self):
         assert _convert_value_to_sql_option("it's") == "'it''s'"
+
+    def test_trailing_backslash_is_doubled(self):
+        assert _convert_value_to_sql_option("vol\\") == "'vol\\\\'"
+
+    def test_backslash_is_doubled_before_quotes(self):
+        assert _convert_value_to_sql_option("vol\\'") == "'vol\\\\'''"
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +364,12 @@ class TestBuildCopyIntoSql:
         sql = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)["operation"]
         assert '$1:"a""b"' in sql
         assert '$1:"a"b"' not in sql
+
+    def test_parquet_field_stays_quoted_when_quote_identifiers_is_false(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=['A"B']), quote_identifiers=False)
+        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
+        assert '$1:"A""B" AS A"B' in result["operation"]
+        assert '$1:"A"B"' not in result["operation"]
 
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)
