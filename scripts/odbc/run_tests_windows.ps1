@@ -13,6 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $ScriptDir "Invoke-CmakeBuildWithRetry.ps1")
 Push-Location (Join-Path $ScriptDir "..\..\odbc_tests")
 
 try {
@@ -88,11 +89,7 @@ try {
             ccache --show-config | Select-String "depend_mode|sloppiness|compiler_check|hash_dir"
         }
 
-        if ($useNinja) {
-            cmake --build cmake-build --parallel ($NPROC)
-        } else {
-            cmake --build cmake-build --config Debug --parallel ($NPROC)
-        }
+        Invoke-CmakeBuildWithRetry -UseNinja $useNinja -Parallelism $NPROC
 
         if (Get-Command ccache -ErrorAction SilentlyContinue) {
             Write-Host "=== ccache stats AFTER build ==="

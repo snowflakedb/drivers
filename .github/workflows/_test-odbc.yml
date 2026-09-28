@@ -232,38 +232,14 @@ jobs:
             & $command
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
-          function Invoke-CmakeBuildWithRetry {
-            param(
-              [bool]$UseNinja,
-              [int]$Parallelism,
-              [int]$MaxAttempts = 3
-            )
-            $buildLog = Join-Path $env:RUNNER_TEMP "odbc-cpp-build.log"
-            for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-              Write-Host "build_odbc_tests_cpp: cmake --build attempt $attempt/$MaxAttempts (parallel=$Parallelism)"
-              if ($UseNinja) {
-                cmake --build cmake-build --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
-              } else {
-                cmake --build cmake-build --config Debug --parallel $Parallelism 2>&1 | Tee-Object -FilePath $buildLog
-              }
-              if ($LASTEXITCODE -eq 0) { return }
-
-              $logText = Get-Content $buildLog -Raw
-              $retryable = $logText -match 'being used by another process' `
-                -or $logText -match 'ninja: build stopped'
-              if (-not $retryable -or $attempt -eq $MaxAttempts) {
-                throw "cmake --build failed with exit code $LASTEXITCODE (attempt $attempt/$MaxAttempts). See $buildLog"
-              }
-              Write-Host "Retryable Windows build failure detected; waiting before retry..."
-              Start-Sleep -Seconds (15 * $attempt)
-            }
-          }
+          . "$env:GITHUB_WORKSPACE/scripts/odbc/Invoke-CmakeBuildWithRetry.ps1"
 
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
           # Per-target runtime dirs isolate z-applocal destinations. Catch2
           # discovery is PRE_TEST (not POST_BUILD). ARM64 Ninja uses a 1-slot
           # link pool so vs_link_exe/mt.exe/z-applocal do not run concurrently.
-          # cmake --build stays --parallel $NPROC (compiles still parallel).
+          # First cmake --build uses --parallel $NPROC. C1002 retries at -j1;
+          # file-in-use retries keep $NPROC.
           $parallelism = $NPROC
           Push-Location odbc_tests
           try {
