@@ -3390,6 +3390,39 @@ mod tests {
     }
 
     #[test]
+    fn convert_char_garbage_as_integer_returns_22018() {
+        let val = b"abc\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::INTEGER,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_wchar_garbage_as_integer_returns_22018() {
+        let val: [u16; 4] = [b'a' as u16, b'b' as u16, b'c' as u16, 0];
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::INTEGER,
+            val.as_ptr() as sql::Pointer,
+            (val.len() * mem::size_of::<u16>()) as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(BindingError::InvalidNumericLiteral { .. })
+        ));
+    }
+
+    #[test]
     fn convert_char_as_real() -> TestResult {
         let val = b"3.14\0";
         let binding = make_binding(

@@ -7,8 +7,8 @@ use crate::api::ParameterBinding;
 use crate::api::encoding::wchar_byte_size;
 use crate::conversion::batch::{CHAR_SCRATCH_LEN, CharKernel};
 use crate::conversion::error::{
-    BindingError, BindingNumericOutOfRangeSnafu, ConversionError, NumericMagnitudeOverflowSnafu,
-    UnsupportedCDataTypeSnafu,
+    BindingError, BindingNumericOutOfRangeSnafu, ConversionError, InvalidNumericLiteralSnafu,
+    NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -751,18 +751,20 @@ impl ReadODBC for SnowflakeNumber {
             }
             Some(NumberCSource::Char) => {
                 let s = read_char_str(binding)?;
-                s.trim().parse::<i128>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                let trimmed = s.trim();
+                trimmed.parse::<i128>().map_err(|_| {
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?
             }
             Some(NumberCSource::WChar) => {
                 let s = read_wchar_str(binding)?;
-                s.trim().parse::<i128>().map_err(|_| {
-                    UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                let trimmed = s.trim();
+                trimmed.parse::<i128>().map_err(|_| {
+                    InvalidNumericLiteralSnafu {
+                        reason: format!("literal {trimmed:?} is not a valid ODBC numeric literal"),
                     }
                     .build()
                 })?

@@ -477,6 +477,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Encodes SQL_PARAM_INPUT 
   REQUIRE(result == 77);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_CHAR garbage bound to SQL_INTEGER returns 22018",
+                 "[odbc-api][execdirect][submitting_request][error]") {
+  char param_val[] = "abc";
+  SQLLEN ind = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_INTEGER, 0, 0, param_val,
+                                   sizeof(param_val), &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_EXPECTED_ERROR(ret, "22018", stmt_handle(), SQL_HANDLE_STMT);
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects non-contiguous parameter bindings",
                  "[odbc-api][execdirect][submitting_request][error]") {
   SQLINTEGER first = 1;
