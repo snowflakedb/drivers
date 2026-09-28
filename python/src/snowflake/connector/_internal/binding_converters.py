@@ -455,16 +455,35 @@ class CsvBindingConverter(BindingConverterBase):
         out.append(text.replace('"', '""'))
         out.append('"')
 
+    @staticmethod
+    def _stage_csv_clock_value(value: Any) -> Any:
+        """Clock-string payload for stage CSV TIME / TIMESTAMP_TZ cells.
+
+        Inline JSON TIME is nanoseconds since midnight. Stage CSV is loaded
+        with ``COPY`` into a TIME column, which does not accept that integer.
+        The reference connector's ``to_csv_bindings`` therefore routes TIME
+        and TIMESTAMP_TZ through ``to_snowflake`` (``HH:MM:SS[.ffffff]``,
+        timestamps as wall-clock text). A naive datetime bound as
+        TIMESTAMP_TZ is treated as UTC, matching that converter.
+        """
+        if isinstance(value, datetime) and value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return ClientSideBindingConverter.to_snowflake(value)
+
     @classmethod
     def _format_csv_cell(cls, value: Any) -> str:
         if value is None:
             return ""
-        # Bare date (not datetime): the bulk/stage path guards against a
-        # server-side overflow for far-future dates by switching to nanoseconds.
-        # This matches the reference connector, whose ``to_csv_bindings`` routes
-        # bare dates through ``_date_to_snowflake_bindings_in_bulk_insertion``.
-        if isinstance(value, date) and not isinstance(value, datetime):
-            converted: Any = cls._convert_date_for_bulk_insertion(value)
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+            snowflake_type, raw = value
+            if snowflake_type.upper() in ("TIME", "TIMESTAMP_TZ"):
+                converted: Any = cls._stage_csv_clock_value(raw)
+            else:
+                _, converted = cls._get_type_and_binding(value)
+        elif isinstance(value, (time, timedelta)):
+            converted = cls._stage_csv_clock_value(value)
+        elif isinstance(value, date) and not isinstance(value, datetime):
+            converted = cls._convert_date_for_bulk_insertion(value)
         else:
             _, converted = cls._get_type_and_binding(value)
         if converted is None:

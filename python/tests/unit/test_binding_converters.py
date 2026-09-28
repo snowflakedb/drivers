@@ -1571,8 +1571,8 @@ class TestCsvBindingConverter:
             [
                 JsonBindingConverter._convert_datetime_to_epoch_nanoseconds(dt),
                 JsonBindingConverter._convert_date_to_epoch_milliseconds(d),
-                JsonBindingConverter._convert_time_to_nanoseconds(t),
-                JsonBindingConverter._convert_timedelta_to_nanoseconds(td),
+                "01:02:03.000456",
+                "02:03:04.000500",
             ]
         ]
 
@@ -1624,3 +1624,11 @@ class TestCsvBindingConverter:
         csv_naive = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", naive)],))
         csv_aware = CsvBindingConverter.serialize_parameters_to_csv(([("TIMESTAMP_TZ", aware)],))
         assert csv_naive == csv_aware
+        assert self._rows(csv_aware) == [["2024-03-15 10:00:00+00:00"]]
+
+    def test_csv_time_and_time_tuple_are_clock_strings(self):
+        t = time(13, 14, 15)
+        csv_bare = CsvBindingConverter.serialize_parameters_to_csv(([t],))
+        csv_typed = CsvBindingConverter.serialize_parameters_to_csv(([("TIME", t)],))
+        assert self._rows(csv_bare) == [["13:14:15"]]
+        assert csv_bare == csv_typed

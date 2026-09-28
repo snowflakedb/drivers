@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
 
 import pytest
 
@@ -13,6 +14,15 @@ from ...conftest import with_paramstyles
 
 CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD"
 DEFAULT_STAGE_ARRAY_BINDING_THRESHOLD = 65280
+
+EXPECTED_NUMBER = Decimal("12345678901234567890123456789.123456789")
+EXPECTED_FLOAT = -12345.625
+EXPECTED_TEXT = "stage-bind-日本語"
+EXPECTED_BINARY = b"\x00\xff\x10"
+EXPECTED_DATE = date(2024, 1, 15)
+EXPECTED_TIME = time(13, 14, 15)
+EXPECTED_LTZ = datetime(2024, 1, 15, 10, 30, 0, 123456, tzinfo=UTC)
+EXPECTED_NTZ = datetime(2023, 6, 20, 14, 22, 33, 987654)
 
 
 # Universal driver uploads via sf_core to @SYSTEM$BIND; the reference connector
@@ -108,11 +118,22 @@ def bulk_insert_id_name(cursor, table: str, count: int, id_offset: int, name_pre
 
 
 def bulk_insert_types(cursor, table: str, count: int) -> None:
-    rows = []
-    for i in range(count):
-        n = None if i % 7 == 0 else i * 10
-        rows.append((i, n, i * 0.5, i % 2 == 0, f"txt-{i}"))
-    placeholders = _insert_placeholders(cursor, 5)
+    rows = [
+        (
+            42 + i,
+            EXPECTED_NUMBER,
+            EXPECTED_FLOAT,
+            True,
+            EXPECTED_TEXT,
+            EXPECTED_BINARY,
+            EXPECTED_DATE,
+            EXPECTED_TIME,
+            ("TIMESTAMP_LTZ", EXPECTED_LTZ),
+            ("TIMESTAMP_NTZ", EXPECTED_NTZ),
+        )
+        for i in range(count)
+    ]
+    placeholders = _insert_placeholders(cursor, 10)
     cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
 
 
@@ -152,6 +173,12 @@ class TestLargeBindings:
     def _restore_stage_binding_threshold(self, cursor):
         yield
         set_stage_binding_threshold(cursor.connection, DEFAULT_STAGE_ARRAY_BINDING_THRESHOLD)
+
+    @pytest.fixture
+    def _utc_session_timezone(self, cursor):
+        cursor.execute("ALTER SESSION SET TIMEZONE = 'UTC'")
+        yield
+        cursor.execute("ALTER SESSION UNSET TIMEZONE")
 
     def test_should_stage_bind_at_the_default_threshold_and_reuse_system_bind_across_consecutive_bulk_inserts(
         self, cursor, tmp_schema
@@ -193,6 +220,7 @@ class TestLargeBindings:
             (65999, "second-32999"),
         ]
 
+    @pytest.mark.usefixtures("_utc_session_timezone")
     def test_should_round_trip_all_bindable_types_via_stage_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed()
@@ -200,12 +228,15 @@ class TestLargeBindings:
         # And A temporary table with the driver-specific stage-binding type matrix exists
         table = f"{tmp_schema}.lb_types"
         cursor.execute(
-            f"CREATE OR REPLACE TEMPORARY TABLE {table} (id NUMBER, n NUMBER, f FLOAT, flag BOOLEAN, txt VARCHAR)"
+            f"CREATE OR REPLACE TEMPORARY TABLE {table} ("
+            "id NUMBER, n NUMBER(38, 9), f FLOAT, flag BOOLEAN, txt VARCHAR, b BINARY, "
+            "d DATE, t TIME, ts_ltz TIMESTAMP_LTZ, ts_ntz TIMESTAMP_NTZ)"
         )
 
         # When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
+        row_count = 13200
         before = list_bind_stage_file_count(cursor.connection)
-        bulk_insert_types(cursor, table, 13200)
+        bulk_insert_types(cursor, table, row_count)
 
         # Then the bind file on SYSTEM$BIND from the last bulk insert should contain
         # the same values as the bound parameters
@@ -213,15 +244,25 @@ class TestLargeBindings:
         assert_bind_stage_file_count_increased(cursor.connection, before, after)
 
         # And All type-matrix columns are selected from the table in row order
-        cursor.execute(f"SELECT id, n, f, flag, txt FROM {table} WHERE id IN (0, 1, 7, 100, 13199) ORDER BY id")
+        cursor.execute(f"SELECT id, n, f, flag, txt, b, d, t, ts_ltz, ts_ntz FROM {table} ORDER BY id")
         rows = cursor.fetchall()
 
         # Then Result should contain the same values as the bound parameters
-        assert rows[0] == (0, None, 0.0, True, "txt-0")
-        assert rows[1] == (1, 10, 0.5, False, "txt-1")
-        assert rows[2] == (7, None, 3.5, False, "txt-7")
-        assert rows[3] == (100, 1000, 50.0, True, "txt-100")
-        assert rows[4] == (13199, 131990, 6599.5, False, "txt-13199")
+        assert len(rows) == row_count
+        for i, row in enumerate(rows):
+            assert int(row[0]) == 42 + i
+            assert Decimal(row[1]) == EXPECTED_NUMBER
+            assert float(row[2]) == EXPECTED_FLOAT
+            assert row[3] is True
+            assert row[4] == EXPECTED_TEXT
+            assert bytes(row[5]) == EXPECTED_BINARY
+            assert row[6] == EXPECTED_DATE
+            assert row[7] == EXPECTED_TIME
+            assert row[8].astimezone(UTC) == EXPECTED_LTZ
+            got_ntz = row[9]
+            if got_ntz.tzinfo is not None:
+                got_ntz = got_ntz.replace(tzinfo=None)
+            assert got_ntz == EXPECTED_NTZ
 
     def test_should_preserve_csv_escaping_hazards_via_stage_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
