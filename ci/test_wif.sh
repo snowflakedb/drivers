@@ -11,7 +11,7 @@
 #
 # Prerequisites (run before this script):
 #   * ci/build_wif_artifacts.sh has populated ci/wif/artifacts/
-#   * PARAMETERS_SECRET is exported (GPG passphrase for the encrypted params)
+#   * ./scripts/decode_secrets.sh wif has decoded ci/wif/parameters/
 
 set -o pipefail
 
@@ -130,13 +130,15 @@ get_branch() {
 }
 
 setup_parameters() {
-  source "$THIS_DIR/setup_gpg_home.sh"
-  gpg --quiet --batch --yes --decrypt --passphrase="$PARAMETERS_SECRET" --output "$RSA_KEY_PATH_AWS_AZURE" "${RSA_KEY_PATH_AWS_AZURE}.gpg"
-  gpg --quiet --batch --yes --decrypt --passphrase="$PARAMETERS_SECRET" --output "$RSA_KEY_PATH_GCP" "${RSA_KEY_PATH_GCP}.gpg"
-  chmod 600 "$RSA_KEY_PATH_AWS_AZURE"
-  chmod 600 "$RSA_KEY_PATH_GCP"
-  gpg --quiet --batch --yes --decrypt --passphrase="$PARAMETERS_SECRET" --output "$PARAMETERS_FILE_PATH" "${PARAMETERS_FILE_PATH}.gpg"
-  eval $(jq -r '.wif | to_entries | map("export \(.key)=\(.value|tostring)")|.[]' $PARAMETERS_FILE_PATH)
+  local f
+  for f in "$RSA_KEY_PATH_AWS_AZURE" "$RSA_KEY_PATH_GCP" "$PARAMETERS_FILE_PATH"; do
+    if [[ ! -s "$f" ]]; then
+      echo "ERROR: $f not found or empty" >&2
+      echo "Run: ./scripts/decode_secrets.sh wif" >&2
+      exit 1
+    fi
+  done
+  eval $(jq -r '.wif | to_entries | map("export \(.key)=\(.value|tostring)")|.[]' "$PARAMETERS_FILE_PATH")
 }
 
 if [[ ! -x "$ARTIFACT_DIR/sf_core_e2e" ]]; then

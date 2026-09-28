@@ -59,7 +59,9 @@ def detectChanges() {
     'ci/wif/',
     'ci/Jenkinsfile.wif-tests',
     'ci/test_wif.sh',
+    'ci/setup_gpg_home.sh',
     'ci/build_wif_artifacts.sh',
+    'scripts/decode_secrets.sh',
     'tests/definitions/shared/authentication/workload_identity.feature',
     'Cargo.toml',
     'Cargo.lock',
@@ -149,11 +151,9 @@ pipeline {
             withCredentials([
               string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
             ]) {
-              sh '''\
-              |#!/bin/bash -e
-              |$WORKSPACE/ci/test_wif.sh
-              '''.stripMargin()
+              sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
             }
+            sh label: 'Test WIF', script: '$WORKSPACE/ci/test_wif.sh'
           }
         }
       }

@@ -6,8 +6,14 @@ CLOUD="${1:-aws}"
 # WITHOUT clobbering a parameters.json already decoded for the rest of the suite.
 OUTPUT_FILE="${2:-parameters.json}"
 
-if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" && "${CLOUD}" != "preprod" ]]; then
+if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" && "${CLOUD}" != "preprod" && "${CLOUD}" != "wif" ]]; then
     echo "Usage: $0 [aws|gcp|azure|preprod] [output-file]" >&2
+    echo "       $0 wif" >&2
+    exit 1
+fi
+if [[ "${CLOUD}" == "wif" && $# -ge 2 ]]; then
+    echo "Usage: $0 wif" >&2
+    echo "WIF writes ci/wif/parameters/{parameters_wif.json,rsa_wif_aws_azure,rsa_wif_gcp}; it does not take an output file." >&2
     exit 1
 fi
 
@@ -20,7 +26,7 @@ set -euo pipefail
 # CI against their OWN account by setting a repository secret
 # PARAMETERS_JSON_<CLOUD> (e.g. PARAMETERS_JSON_AWS) whose value is the full
 # contents of a parameters.json for that cloud. Provide one per cloud you want
-# to exercise (PARAMETERS_JSON_AWS / _GCP / _AZURE) — see CONTRIBUTING.md.
+# to exercise (PARAMETERS_JSON_AWS / _GCP / _AZURE / _PREPROD) — see CONTRIBUTING.md.
 #
 # Precedence: plaintext PARAMETERS_JSON_<CLOUD>  >  PARAMETERS_SECRET (GPG)  >
 # 1Password. The maintainers' own CI sets PARAMETERS_SECRET and never sets
@@ -30,20 +36,51 @@ set -euo pipefail
 # When this branch is taken we deliberately skip the GPG decrypt AND the bulk
 # directory decode (decode_dir) below — both require the passphrase a fork does
 # not have. Tests read the account via PARAMETER_PATH=<...>/parameters.json.
-CLOUD_UPPER="$(printf '%s' "${CLOUD}" | tr '[:lower:]' '[:upper:]')"
-PLAINTEXT_VAR="PARAMETERS_JSON_${CLOUD_UPPER}"
-if [[ -n "${!PLAINTEXT_VAR:-}" ]]; then
-    echo "Using plaintext ${PLAINTEXT_VAR} (fork path) — skipping GPG bundle"
-    printf '%s' "${!PLAINTEXT_VAR}" > "${OUTPUT_FILE}"
-    echo "  ✓ ${OUTPUT_FILE} (from ${PLAINTEXT_VAR})"
-    echo "Successfully wrote parameters from plaintext secret"
-    exit 0
+if [[ "${CLOUD}" == "aws" || "${CLOUD}" == "gcp" || "${CLOUD}" == "azure" || "${CLOUD}" == "preprod" ]]; then
+    CLOUD_UPPER="$(printf '%s' "${CLOUD}" | tr '[:lower:]' '[:upper:]')"
+    PLAINTEXT_VAR="PARAMETERS_JSON_${CLOUD_UPPER}"
+    if [[ -n "${!PLAINTEXT_VAR:-}" ]]; then
+        echo "Using plaintext ${PLAINTEXT_VAR} (fork path) — skipping GPG bundle"
+        printf '%s' "${!PLAINTEXT_VAR}" > "${OUTPUT_FILE}"
+        echo "  ✓ ${OUTPUT_FILE} (from ${PLAINTEXT_VAR})"
+        echo "Successfully wrote parameters from plaintext secret"
+        exit 0
+    fi
 fi
 
 # Read param secret from 1password if not set
 if [ -z "${PARAMETERS_SECRET:-}" ]; then
     echo "PARAMETERS_SECRET not set, reading from 1password"
     PARAMETERS_SECRET=$(op read "op://<vault>/PARAMETERS_SECRET/password")
+fi
+
+if [[ "${CLOUD}" == "wif" ]]; then
+    echo "Decoding WIF secrets with GPG..."
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    THIS_DIR="${REPO_ROOT}/ci"
+    # shellcheck source=../ci/setup_gpg_home.sh
+    source "${THIS_DIR}/setup_gpg_home.sh"
+    WIF_PARAMETERS_DIR="${REPO_ROOT}/ci/wif/parameters"
+    WIF_RSA_KEY_PATH_AWS_AZURE="${WIF_PARAMETERS_DIR}/rsa_wif_aws_azure"
+    WIF_RSA_KEY_PATH_GCP="${WIF_PARAMETERS_DIR}/rsa_wif_gcp"
+    WIF_PARAMETERS_FILE_PATH="${WIF_PARAMETERS_DIR}/parameters_wif.json"
+    mkdir -p "${WIF_PARAMETERS_DIR}"
+    tmp_aws="${GNUPGHOME}/rsa_wif_aws_azure"
+    tmp_gcp="${GNUPGHOME}/rsa_wif_gcp"
+    tmp_json="${GNUPGHOME}/parameters_wif.json"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --output "$tmp_aws" --decrypt "${WIF_RSA_KEY_PATH_AWS_AZURE}.gpg"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --output "$tmp_gcp" --decrypt "${WIF_RSA_KEY_PATH_GCP}.gpg"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --output "$tmp_json" --decrypt "${WIF_PARAMETERS_FILE_PATH}.gpg"
+    chmod 600 "$tmp_aws" "$tmp_gcp" "$tmp_json"
+    mv -f "$tmp_aws" "$WIF_RSA_KEY_PATH_AWS_AZURE"
+    mv -f "$tmp_gcp" "$WIF_RSA_KEY_PATH_GCP"
+    mv -f "$tmp_json" "$WIF_PARAMETERS_FILE_PATH"
+    echo "  ✓ ${WIF_PARAMETERS_FILE_PATH}"
+    echo "  ✓ ${WIF_RSA_KEY_PATH_AWS_AZURE}"
+    echo "  ✓ ${WIF_RSA_KEY_PATH_GCP}"
+    echo "Successfully decoded WIF secret files"
+    exit 0
 fi
 
 echo "Decoding secrets with GPG..."

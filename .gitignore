@@ -75,7 +75,7 @@ ci/test_matrix/generated/
 .direnv/
 
 # WIF e2e artifacts -- prebuilt binaries staged by ci/build_wif_artifacts.sh,
-# and decrypted secrets produced at runtime by ci/test_wif.sh
+# and decrypted secrets produced by scripts/decode_secrets.sh wif
 ci/wif/artifacts/
 ci/wif/parameters/rsa_wif_aws_azure
 ci/wif/parameters/rsa_wif_gcp
