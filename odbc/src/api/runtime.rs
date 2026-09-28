@@ -205,7 +205,12 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
             while Arc::strong_count(&arc) > 1 {
                 std::thread::yield_now();
             }
+            // Dropping the globals drops the driver, whose CRL worker joins its
+            // thread. The CRL refresher belongs to a process-wide cache, so stop
+            // it explicitly; the Driver Manager may unload the DLL as soon as
+            // we return.
             drop(arc);
+            sf_core::crl::CrlCache::shutdown_background_refresher();
         }
     }
     Ok(())
