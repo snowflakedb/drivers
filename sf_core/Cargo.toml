@@ -34,6 +34,18 @@ gcs_e2e = []
 perf_timing = []
 test-utils = []
 cli = ["clap"]
+ci-all-non-fips = [
+    "sonic-json",
+    "protobuf",
+    "vendored-openssl",
+    "auth_mfa_e2e",
+    "auth_oauth_e2e",
+    "auth_spcs_e2e",
+    "gcs_e2e",
+    "perf_timing",
+    "test-utils",
+    "cli",
+]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"

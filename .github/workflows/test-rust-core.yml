@@ -81,6 +81,20 @@ jobs:
           echo "windows_arm_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-arm-nonfips"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
           echo "windows_x86_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-x86"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
 
+  load-fips-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: read
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          python ci/test_matrix/generate_matrix.py \
+            --driver core_fips --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active \
+            >> "$GITHUB_OUTPUT"
+
   # Format job intentionally has no Rust target cache: `cargo fmt --check` does not
   # compile the crate, it only parses source files. A cache would add restore overhead
   # for no benefit. Keep this job lightweight; it finishes in under 30 seconds.
@@ -110,59 +124,202 @@ jobs:
       - name: Run sf_params_spec tests
         run: cargo test --locked --package sf_params_spec
 
-  build-without-protobuf:
-    if: inputs.run_rust_core
-    runs-on: ubuntu-latest
+  fips_smoke:
+    needs: load-fips-matrix
+    if: inputs.run_rust_core && needs.load-fips-matrix.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.load-fips-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: fips smoke (${{ matrix.name }})
+    timeout-minutes: 75
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # Reclaim ~25 GB on ubuntu-latest before cache extract / compile.
-      # See .github/actions/free-disk-space-linux/action.yml for rationale.
-      # External free-disk-space actions are blocked by the org allowlist;
-      # this is an inline replacement.
       - name: Free runner disk space
+        if: runner.os == 'Linux'
         uses: ./.github/actions/free-disk-space-linux
+
+      - name: Install Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Install CMake 3
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
+          python3 -m venv "$CMAKE_VENV"
+          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
+          "$CMAKE_VENV/bin/pip" install 'cmake>=3,<4'
+          cmake_bin="$CMAKE_VENV/bin/cmake"
+          "$cmake_bin" --version | grep '^cmake version 3\.'
+          echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
+          echo "CMAKE=$cmake_bin" >> "$GITHUB_ENV"
+
+      - name: Install GCC 13
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes gcc-13 g++-13
+          echo "CC=gcc-13" >> "$GITHUB_ENV"
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+          gcc-13 --version
+          g++-13 --version
+
+      - name: Select Apple Clang
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang --version | grep 'Apple clang'
+          clang++ --version | grep 'Apple clang'
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+
+      - name: Configure Windows FIPS tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install "cmake>=3,<4"
+          $cmakeDir = python -c "import cmake; print(cmake.CMAKE_BIN_DIR)"
+          $cmakeExe = Join-Path $cmakeDir "cmake.exe"
+          if (-not (Test-Path $cmakeExe)) {
+            throw "CMake executable not found at $cmakeExe"
+          }
+          "CMAKE=$cmakeExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:CMAKE = $cmakeExe
+
+          $paths = $env:PATH -split ';' | Where-Object {
+            $_ -and $_ -notmatch '\\Strawberry\\c\\bin\\?$'
+          }
+          if (Test-Path "C:\Strawberry\perl\bin") {
+            $paths = @("C:\Strawberry\perl\bin") + $paths
+          }
+          if (-not (Get-Command nasm.exe -ErrorAction SilentlyContinue)) {
+            choco install nasm --yes --no-progress
+            $nasmDir = "C:\Program Files\NASM"
+            if (Test-Path (Join-Path $nasmDir "nasm.exe")) {
+              $paths = @($nasmDir) + $paths
+            }
+          }
+          $env:PATH = $paths -join ';'
+
+          $libclang = Get-ChildItem "C:\Program Files\LLVM\bin\libclang.dll" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $libclang) {
+            throw "libclang.dll not found under C:\Program Files\LLVM\bin"
+          }
+          $libclangPath = $libclang.DirectoryName
+          $env:PATH = "$libclangPath;$env:PATH"
+          "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIBCLANG_PATH=$libclangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:LIBCLANG_PATH = $libclangPath
+
+          foreach ($tool in @('perl.exe', 'nasm.exe', 'clang.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "$tool is required for the Windows FIPS build"
+            }
+          }
+          perl --version
+          nasm -version
+          clang --version
+
+      - name: Setup MSVC environment
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-msvc
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Setup OpenSSL (Windows x64)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/setup-windows-openssl
+        with:
+          arch: x86_64
+          linkage: dynamic
+
+      - name: Verify Windows build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($tool in @('ninja.exe', 'go.exe', 'cl.exe', 'perl.exe', 'nasm.exe', 'clang.exe')) {
+            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+              throw "$tool is required for the Windows FIPS build"
+            }
+          }
+          if (-not (Test-Path (Join-Path $env:LIBCLANG_PATH "libclang.dll"))) {
+            throw "libclang.dll is missing from LIBCLANG_PATH"
+          }
+          $cmakeVersion = & $env:CMAKE --version
+          if ($cmakeVersion[0] -notmatch '^cmake version 3\.') {
+            throw "Expected CMake 3.x, got: $($cmakeVersion[0])"
+          }
+          $cmakeVersion
+          ninja --version
+          go version
+          cl
 
       - name: Restore Rust cache
         id: rust-cache
-        # Cache restore failures never fail the job — fall back to clean build.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "no-protobuf"
+          shared-key: ${{ matrix.cache_key }}
 
-      - name: Build sf_core without protobuf feature
-        run: cargo build --locked --package sf_core --no-default-features --features fips-tls
+      - name: Build sf_core with FIPS TLS
+        run: cargo build --locked --package sf_core --no-default-features --features fips-tls,protobuf
 
-      # Compile-test the library's unit tests (tests inside sf_core/src/*) to catch
-      # modules that use protobuf types without a `#[cfg(feature = "protobuf")]` guard.
-      # Scoped to --lib deliberately: the integration and e2e test harness under
-      # sf_core/tests/ hard-depends on protobuf (shared test helpers import protobuf
-      # types unconditionally). Gating every integration test file is a larger refactor
-      # tracked separately; this check still catches the more impactful class of bugs
-      # (accidentally exposing protobuf-dependent code in the library's public surface).
-      # The filter executes the FIPS assertions and still compiles every library
-      # unit test, while avoiding unrelated tests in this no-protobuf lane.
-      - name: Test FIPS provider without protobuf feature
-        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls tls::fips_tests
+      - name: Compile FIPS smoke tests
+        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls,protobuf
+
+      - name: Expose Windows FIPS DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $crypto = Get-ChildItem target -Recurse -Filter "aws_lc_fips_*_crypto.dll"
+          $wrapper = Get-ChildItem target -Recurse -Filter "aws_lc_fips_*_rust_wrapper.dll"
+          if (-not $crypto) {
+            throw "AWS-LC-FIPS crypto DLL was not produced"
+          }
+          if (-not $wrapper) {
+            throw "AWS-LC-FIPS Rust wrapper DLL was not produced"
+          }
+          (@($crypto) + @($wrapper)) |
+            ForEach-Object { $_.DirectoryName } |
+            Sort-Object -Unique |
+            ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+
+      - name: Run FIPS smoke tests
+        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf tls::fips_tests
 
       - name: Clean up python_bridge artifacts from target
         if: always()
+        shell: bash
         run: cargo clean --package python_bridge 2>/dev/null || true
 
       - name: Save Rust cache
         if: always()
-        # timeout-minutes is enforced here because it isn't supported on
-        # composite action steps. Bounds slim + registry save + target save.
         timeout-minutes: 20
-        # Cache failures (incl. timeout-induced cancellation) never fail the job.
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "no-protobuf"
+          shared-key: ${{ matrix.cache_key }}
+          slim-mode: aggressive
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
@@ -190,12 +347,6 @@ jobs:
       - name: Free runner disk space
         if: runner.os == 'Linux'
         uses: ./.github/actions/free-disk-space-linux
-
-      - name: Install Go (required by aws-lc-fips-sys)
-        uses: actions/setup-go@v7
-        with:
-          go-version: 'stable'
-          cache: false
 
       - name: Restore Rust cache
         id: rust-cache
@@ -389,14 +540,15 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # Non-FIPS ARM64 build and test.
-  # On windows-11-arm, --all-features fails for aarch64-pc-windows-msvc with:
+  # On windows-11-arm, fips-tls fails for aarch64-pc-windows-msvc with:
   #   library machine type 'x64' conflicts with target machine type 'ARM64'
   # Evidence points to aws-lc-fips-sys Windows build env setup:
   # builder/printenv.bat calls vcvarsall.bat x64, overriding ARM64 toolchain env.
-  # Workaround: do not enable fips-tls on this lane.
+  # This lane keeps fips-tls disabled.
   # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
-  # TODO: re-enable --all-features after fix.
+  # The FIPS smoke matrix excludes Windows ARM because it is not a supported
+  # FIPS release target.
   # Coverage note: the only tests gated behind cfg(feature = "fips-tls") are the
   # tls::fips_tests assertions, which verify FIPS-ness end to end: the linked
   # aws-lc module reports FIPS mode, and the installed rustls provider /
@@ -848,7 +1000,7 @@ jobs:
             --parameter-path "${{ github.workspace }}/parameters.json"
 
   rust-core-status:
-    needs: [format, test_sf_params_spec, build-without-protobuf, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
+    needs: [load-fips-matrix, format, test_sf_params_spec, fips_smoke, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -861,15 +1013,17 @@ jobs:
           # a downstream job to be auto-skipped, which would otherwise be
           # misread as "no relevant changes detected" and pass.
           if [[ "${{ needs.format.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.load-fips-matrix.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_sf_params_spec.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.build-without-protobuf.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.fips_smoke.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_x86.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Rust Core tests were RUN and FAILED or CANCELLED"
             echo "  - format: ${{ needs.format.result }}"
+            echo "  - load-fips-matrix: ${{ needs.load-fips-matrix.result }}"
             echo "  - test_sf_params_spec: ${{ needs.test_sf_params_spec.result }}"
-            echo "  - build-without-protobuf: ${{ needs.build-without-protobuf.result }}"
+            echo "  - fips_smoke: ${{ needs.fips_smoke.result }}"
             echo "  - test: ${{ needs.test.result }}"
             echo "  - test_windows_arm64_nonfips: ${{ needs.test_windows_arm64_nonfips.result }}"
             echo "  - test_windows_x86: ${{ needs.test_windows_x86.result }}"
@@ -877,11 +1031,14 @@ jobs:
           fi
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
-          if [[ "${{ needs.test.result }}" == "skipped" ]]; then
+          if [[ "${{ needs.test.result }}" == "skipped" ]] || \
+             [[ "${{ needs.fips_smoke.result }}" == "skipped" ]]; then
             # Driver CI only invokes this workflow for drivers it selected, so a
             # skip here means the gating is broken rather than "nothing to do".
             if [[ "${{ inputs.run_rust_core }}" == "true" ]]; then
-              echo "✗ Driver CI requested Rust Core tests but test was SKIPPED — check the job-level if: conditions."
+              echo "✗ Driver CI requested Rust Core tests but a required test job was SKIPPED — check the job-level if: conditions."
+              echo "  - test: ${{ needs.test.result }}"
+              echo "  - fips_smoke: ${{ needs.fips_smoke.result }}"
               exit 1
             fi
             echo "✓ Rust Core tests were SKIPPED (not requested by Driver CI)"

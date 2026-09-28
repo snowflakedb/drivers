@@ -13,6 +13,7 @@ import io
 import itertools
 import sys
 import tempfile
+import tomllib
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -808,7 +809,7 @@ class BlockListShapeTests(unittest.TestCase):
     next-CPython-release time.
     """
 
-    MODELS = ["core", "odbc", "python"]
+    MODELS = ["core", "core_fips", "odbc", "python"]
 
     def _is_valid_function(self, model_name: str):
         import ast
@@ -924,6 +925,16 @@ class ApplyConstraintsTests(unittest.TestCase):
 ODBC_PATH = gm.MODELS_DIR / "odbc.py"
 PYTHON_PATH = gm.MODELS_DIR / "python.py"
 CORE_PATH = gm.MODELS_DIR / "core.py"
+CORE_FIPS_PATH = gm.MODELS_DIR / "core_fips.py"
+SF_CORE_CARGO_TOML = gm.REPO_ROOT / "sf_core" / "Cargo.toml"
+
+
+class CoreCiFeaturesTests(unittest.TestCase):
+    def test_ci_all_non_fips_contains_every_non_fips_feature(self) -> None:
+        features = tomllib.loads(SF_CORE_CARGO_TOML.read_text())["features"]
+        actual = set(features["ci-all-non-fips"])
+        expected = set(features) - {"default", "fips-tls", "ci-all-non-fips"}
+        self.assertEqual(actual, expected)
 
 
 class OdbcMatrixTests(unittest.TestCase):
@@ -1199,8 +1210,8 @@ class CoreMatrixTests(unittest.TestCase):
 
     def test_cargo_flags_per_platform(self) -> None:
         flags = {r["name"]: r["cargo_flags"] for r in self.gha}
-        self.assertEqual(flags["ubuntu-x64"], "--all-features")
-        self.assertEqual(flags["macos-arm"], "--all-features")
+        self.assertEqual(flags["ubuntu-x64"], "--features ci-all-non-fips")
+        self.assertEqual(flags["macos-arm"], "--features ci-all-non-fips")
         self.assertEqual(flags["windows-arm-nonfips"], "")
         self.assertEqual(
             flags["windows-x86"],
@@ -1235,6 +1246,52 @@ class CoreMatrixTests(unittest.TestCase):
                          "ubuntu-x64 is in PR_CELLS — trigger_level must be 'pr'")
         self.assertTrue(mq[0].get("merge_queue_cell"),
                         "ubuntu-x64 is in MERGE_QUEUE_CELLS — merge_queue_cell must be True")
+
+
+class CoreFipsMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(CORE_FIPS_PATH, "core_fips")
+
+    def test_pr_has_every_supported_fips_host(self) -> None:
+        names = {r["name"] for r in self.gha if r["trigger_level"] == "pr"}
+        self.assertEqual(
+            names,
+            {
+                "ubuntu-x64",
+                "ubuntu-arm",
+                "macos-x64",
+                "macos-arm",
+                "windows-x64",
+            },
+        )
+
+    def test_windows_fips_uses_x64_msvc_on_windows_2022(self) -> None:
+        windows = next(r for r in self.gha if r["name"] == "windows-x64")
+        self.assertEqual(windows["os"], "windows-2022")
+        self.assertEqual(windows["msvc_arch"], "x64")
+        self.assertNotIn("windows-arm", {r["name"] for r in self.gha})
+
+    def test_cache_keys_are_unique_per_host(self) -> None:
+        keys = [r["cache_key"] for r in self.gha]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_required_keys_on_every_row(self) -> None:
+        required = {"name", "os", "platform", "arch", "trigger_level", "cache_key"}
+        for row in self.gha:
+            self.assertFalse(required - row.keys(), row["name"])
+
+    def test_only_ubuntu_x64_runs_in_merge_queue(self) -> None:
+        rows = gm.filter_active(self.gha, "merge_queue")
+        self.assertEqual([r["name"] for r in rows], ["ubuntu-x64"])
+
+    def test_all_hosts_run_at_every_cumulative_scope(self) -> None:
+        expected = {r["name"] for r in self.gha}
+        for level in ("pr", "merge", "nightly"):
+            self.assertEqual(
+                {r["name"] for r in gm.filter_active(self.gha, level)},
+                expected,
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,11 @@
 # CI Test Matrix
 
-Pairwise test matrix generation for ODBC, Python, and rust-core (`sf_core`) driver CI.
+Pairwise test matrix generation for ODBC, Python, rust-core (`sf_core`), and
+rust-core FIPS smoke-test CI.
 
 The generator combines a coverage **model** (which combinations exist) with a
-**mapping** (CI metadata for each combination) consumed by the `load-{odbc,python,core}-matrix` jobs in
+**mapping** (CI metadata for each combination) consumed by the
+`load-{odbc,python,core,fips}-matrix` jobs in
 `.github/workflows/`.
 
 ## Layout
@@ -15,12 +17,14 @@ ci/test_matrix/
 │   ├── __init__.py        schema documentation
 │   ├── odbc.py
 │   ├── python.py
-│   └── core.py
+│   ├── core.py
+│   └── core_fips.py
 ├── mappings/              (OS, Arch) → CI metadata lookups
 │   ├── shared.py          GHA_RUNNER (used by all drivers)
 │   ├── odbc.py            ODBC_PLATFORM
 │   ├── python.py          PYTHON_PLATFORM, SDIST_PY
-│   └── core.py            CORE_PLATFORM
+│   ├── core.py            CORE_PLATFORM
+│   └── core_fips.py       CORE_FIPS_PLATFORM
 ├── test_generate_matrix.py
 └── generated/             gitignored; written at workflow runtime
 ```
@@ -100,6 +104,10 @@ Labels can only upgrade scope — they never downgrade an event's level.
 `detect-changes` still gates which drivers run, so labeling a Python-only
 PR with `ci:scope-merge` runs Python tests at merge scope and leaves the
 ODBC and core test jobs skipped.
+
+The `core_fips` model runs smoke tests on Linux GNU x86_64/aarch64, macOS
+x86_64/arm64, and Windows x64 MSVC. All five hosts are PR cells and therefore
+also run on pushes to main and nightly. The merge queue runs only Linux x86_64.
 
 Adding a scope-up label cancels the in-flight run (via the workflow's
 `concurrency` group) and starts a fresh one at the upgraded scope. This
@@ -276,7 +284,7 @@ merge-level JSON count is pinned by `JsonVariantRegressionTests`.
 ## CLI
 
 ```
-python ci/test_matrix/generate_matrix.py [--driver odbc|python|core | --all]
+python ci/test_matrix/generate_matrix.py [--driver odbc|python|core|core_fips|dotnet | --all]
 python ci/test_matrix/generate_matrix.py --driver <D> --event <NAME> --emit-active
 ```
 

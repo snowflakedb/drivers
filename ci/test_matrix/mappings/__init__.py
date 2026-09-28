@@ -10,6 +10,7 @@ from .shared import GHA_RUNNER
 from .odbc import ODBC_PLATFORM
 from .python import PYTHON_PLATFORM, SDIST_PY
 from .core import CORE_PLATFORM
+from .core_fips import CORE_FIPS_PLATFORM
 from .dotnet import DOTNET_PLATFORM, DOTNET_TFM
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "ODBC_PLATFORM",
     "PYTHON_PLATFORM", "SDIST_PY",
     "CORE_PLATFORM",
+    "CORE_FIPS_PLATFORM",
     "DOTNET_PLATFORM", "DOTNET_TFM",
 ]

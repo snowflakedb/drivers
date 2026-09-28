@@ -177,7 +177,9 @@ jobs:
               - '.github/actions/setup-msvc/**'
               - '.github/actions/setup-windows-openssl/**'
               - 'ci/test_matrix/models/core.py'
+              - 'ci/test_matrix/models/core_fips.py'
               - 'ci/test_matrix/mappings/core.py'
+              - 'ci/test_matrix/mappings/core_fips.py'
             dotnet:
               - 'dotnet/**'
               - '.github/workflows/test-dotnet.yml'

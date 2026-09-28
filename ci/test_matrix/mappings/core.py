@@ -29,12 +29,12 @@ Per-row keys:
 
 CORE_PLATFORM: dict[tuple[str, str], dict] = {
     ("ubuntu",  "x64"): {
-        "cargo_flags": "--all-features",
+        "cargo_flags": "--features ci-all-non-fips",
         "coverage": True,
         "cache_key": "core-test",
     },
     ("macos",   "arm"): {
-        "cargo_flags": "--all-features",
+        "cargo_flags": "--features ci-all-non-fips",
         "coverage": True,
         "cache_key": "core-test",
     },

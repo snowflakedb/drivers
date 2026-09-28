@@ -9,6 +9,7 @@ Usage:
   python ci/test_matrix/generate_matrix.py --driver odbc
   python ci/test_matrix/generate_matrix.py --driver python
   python ci/test_matrix/generate_matrix.py --driver core
+  python ci/test_matrix/generate_matrix.py --driver core_fips
   python ci/test_matrix/generate_matrix.py --all
   python ci/test_matrix/generate_matrix.py --driver odbc \\
       --event pull_request --emit-active                         # for use in CI workflows
@@ -52,6 +53,7 @@ TRIGGER_LEVELS = ["pr", "merge_queue", "merge", "nightly"]
 #   - mappings/odbc.py    → ODBC_PLATFORM (one row per (OS, Arch) lane)
 #   - mappings/python.py  → PYTHON_PLATFORM, SDIST_PY
 #   - mappings/core.py    → CORE_PLATFORM
+#   - mappings/core_fips.py → CORE_FIPS_PLATFORM
 # ---------------------------------------------------------------------------
 
 # Make `from mappings import …` resolvable both when this file is run as a
@@ -65,6 +67,7 @@ from mappings import (  # noqa: E402
     PYTHON_PLATFORM,
     SDIST_PY,
     CORE_PLATFORM,
+    CORE_FIPS_PLATFORM,
     DOTNET_PLATFORM,
     DOTNET_TFM,
 )
@@ -309,6 +312,12 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
                 f"from CORE_PLATFORM in mappings/core.py — add a row there or "
                 f"constrain the model."
             )
+        if driver == "core_fips" and pair not in CORE_FIPS_PLATFORM:
+            raise RuntimeError(
+                f"({pair[0]}, {pair[1]}) is allowed by the core_fips model but missing "
+                f"from CORE_FIPS_PLATFORM in mappings/core_fips.py — add a row there "
+                f"or constrain the model."
+            )
         if driver == "dotnet" and pair not in DOTNET_PLATFORM:
             raise RuntimeError(
                 f"({pair[0]}, {pair[1]}) is allowed by the dotnet model but missing "
@@ -458,6 +467,23 @@ def _build_core_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | Non
     return row
 
 
+def _build_core_fips_row(combo: dict[str, str], trigger: str) -> dict[str, Any]:
+    """Build a row for the sf_core FIPS smoke-test job."""
+    os_, arch = combo["OS"], combo["Arch"]
+    platform = CORE_FIPS_PLATFORM[(os_, arch)]
+    row: dict[str, Any] = {
+        "name": f"{os_}-{arch}",
+        "os": platform.get("runner", GHA_RUNNER[(os_, arch)]),
+        "platform": os_,
+        "arch": arch,
+        "trigger_level": trigger,
+        "cache_key": platform["cache_key"],
+    }
+    if "msvc_arch" in platform:
+        row["msvc_arch"] = platform["msvc_arch"]
+    return row
+
+
 def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | None:
     """
     Build a row for the .NET driver test job.
@@ -523,6 +549,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
 
     is_python = "PyVersion" in params or "HatchEnv" in params
     is_core = driver == "core"
+    is_core_fips = driver == "core_fips"
     is_dotnet = driver == "dotnet"
 
     # Precompute the MERGE_QUEUE_CELLS key set so _routing_valid can exclude
@@ -567,6 +594,8 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         # placeholder value works. Pass "merge" for clarity.
         if is_core:
             return _build_core_row(combo, "merge") is not None
+        if is_core_fips:
+            return _build_core_fips_row(combo, "merge") is not None
         if is_dotnet:
             return _build_dotnet_row(combo, "merge") is not None
         return _build_gha_row(combo, "merge", is_python) is not None
@@ -622,6 +651,8 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         trigger = combo.pop("_trigger")
         if is_core:
             row = _build_core_row(combo, trigger)
+        elif is_core_fips:
+            row = _build_core_fips_row(combo, trigger)
         elif is_dotnet:
             row = _build_dotnet_row(combo, trigger)
         else:
@@ -639,7 +670,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     # sf_core's result-format coverage is exercised by ODBC and Python.
     # Variants are declared in the model file under [json_pr] / [json_merge] /
     # [json_nightly] sections; each row is duplicated with result_format="json".
-    if is_core:
+    if is_core or is_core_fips:
         return gha_rows
 
     valid_keys = {tuple(combo.get(p) for p in param_names) for combo in all_combos}
@@ -958,7 +989,7 @@ def emit_build_matrix(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pairwise CI matrix generator")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--driver", choices=["odbc", "python", "core", "dotnet"], help="Generate for a single driver")
+    group.add_argument("--driver", choices=["odbc", "python", "core", "core_fips", "dotnet"], help="Generate for a single driver")
     group.add_argument("--all", action="store_true", help="Regenerate all drivers")
     parser.add_argument(
         "--event",
@@ -1029,7 +1060,7 @@ def main() -> None:
         emit_build_matrix(args.driver, args.event, labels, level_override=args.level)
         return
 
-    drivers = ["odbc", "python", "core", "dotnet"] if args.all else [args.driver]
+    drivers = ["odbc", "python", "core", "core_fips", "dotnet"] if args.all else [args.driver]
     ok = True
     for driver in drivers:
         if not run_driver(driver):
