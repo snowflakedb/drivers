@@ -26,13 +26,13 @@ sonic-json = ["sonic-rs"]
 #   - `openssl` is still in `[dependencies]` (dev-only in practice, but
 #     `vendored-openssl` below still statically links an unvalidated copy where
 #     a customer cannot replace it). Removing it is the next step; see F2.
-#   - The linked module is on the certificated 3.x line (AWS-LC-FIPS 3.2.0,
-#     cert #4816), held there by the `aws-lc-rs` upper bound below. That covers
-#     the module version only -- a certificate also names the operating
-#     environments it was tested on, so shipping a `fips-tls` build on a
-#     platform outside that list still is not a validated configuration.
-# So an artifact built from this feature is still not a FIPS artifact, and
-# `fips` stays unclaimed for the complete thing.
+#   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
+#     does not establish CMVP validation. Certificate #5314 identifies
+#     the static AWS-LC FIPS 3.1.0 module; later 3.x point releases need
+#     their own validation basis. The built and deployed module must meet
+#     the policy's version, tested environment, and installation requirements.
+# So an artifact built with this feature is not yet a validated FIPS artifact,
+# and `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
 vendored-openssl = ["openssl/vendored"]
@@ -104,10 +104,6 @@ arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
 openssl = "0.10.73"
-# Azure's Content-MD5 is a non-security integrity value. The pure-Rust
-# implementation remains available when OpenSSL runs in FIPS mode, where MD5
-# digest operations are intentionally disabled.
-md-5 = ">=0.10, <0.12"
 # `default-features = false` drops oauth2's `rustls-tls`, which is only a
 # forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
 # cargo feature unification would re-arm reqwest's silent ring fallback for the
@@ -156,36 +152,25 @@ rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
-# Upper bound is load-bearing, not hygiene: it is what keeps `fips-tls` on the
-# *certificated* AWS-LC-FIPS module. The `aws-lc-rs` version chooses the
-# `aws-lc-fips-sys` version, which vendors the module itself --
-# `aws-lc-rs` <1.18 -> `aws-lc-fips-sys` 0.13.x -> the 3.x line (NIST cert
-# #4816; the lock currently sits on 0.13.12, which vendors AWS-LC-FIPS 3.2.0),
-# while `aws-lc-rs` >=1.18 -> `aws-lc-fips-sys` 0.14.x -> AWS-LC-FIPS 4.1.0,
-# which is still in process at CMVP rather than certificated.
+# Upper bound is load-bearing: `aws-lc-rs` <1.18 selects `aws-lc-fips-sys`
+# 0.13.x (AWS-LC FIPS 3.x), while >=1.18 selects 0.14.x (AWS-LC FIPS 4.x).
+# That bounds the module *family*, not its exact version or validation status:
+# certificate #5314 names the static AWS-LC FIPS 3.1.0 module, while
+# `aws-lc-fips-sys` 0.13.12 vendors 3.2.0 and 0.13.17 vendors 3.6.0.
+# Neither is named by that certificate.
 #
-# Without the bound a routine `cargo update` silently moves the linked module
-# off a certificated version, and nothing in the build or the test suite would
-# fail -- `try_fips_mode()` answers `true` on both, because both are genuine
-# FIPS builds. Only the certificate status differs, and `aws-lc-rs` exposes no
-# version accessor to assert on (`awslc_version_string` is bound in
-# `aws-lc-fips-sys`, reachable only by depending on that `links` crate
-# directly). So this bound is the enforcement point: cargo cannot cross it, and
-# crossing it takes a reviewed manifest edit. There is deliberately no runtime
-# guard -- do not go looking for one.
-#
-# That prevents drift without detecting it, which is a gap worth closing where
-# it is cheap: the resolved version *is* visible in the lockfile, so the
-# dependency-policy work (cargo-deny, Phase 5) can assert `aws-lc-fips-sys`
-# stays on 0.13.x without any of the `links`-crate coupling a runtime check
-# would need. The SBOM work in that same phase has to record the module
-# identity anyway.
+# A `cargo update` within 0.13.x can change the linked module version without
+# crossing this bound. `try_fips_mode()` confirms FIPS mode, not CMVP validation;
+# tests cannot establish certificate scope. Review the exact vendored version
+# and the policy's tested environments and installation/configuration rules
+# (sections 6 and 11.1) before a validated claim.
+# The resolved crate version belongs in the dependency-policy checks
+# (cargo-deny, Phase 5), and the SBOM must record the module identity too.
 #
 # Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
 # the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
 #
-# Raise this only together with the compliance claim. The upstream crate's
-# guidance is the same: pin `aws-lc-rs` to stay on a given module version.
+# Revisit the bound and build toolchain together when updating the module.
 # `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
 aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
@@ -228,9 +213,8 @@ cbc = "0.1"
 # needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
 # a FIPS build never derives a key with MD5; see `crypto::private_key`.
 #
-# Not a new SBOM entry: `md-5` is already in the graph unconditionally via
-# `aws-smithy-checksums`, which is finding F9 in the compliance plan rather
-# than anything this adds.
+# Azure Content-MD5 is also an upload integrity checksum, not a security
+# primitive; it remains available in a FIPS build.
 md-5 = "0.10"
 once_cell = "1.19"
 const-oid = "0.9"
