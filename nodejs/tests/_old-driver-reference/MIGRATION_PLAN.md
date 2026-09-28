@@ -250,6 +250,8 @@ called out explicitly.
   tests in the new driver. After beta, map each case to existing e2e tests and fill the gaps.
   The `getSqlText()` cases for execute success, execute failure, and `fetchResult()` now live
   in `nodejs/tests/e2e/statement.test.ts`; request-ID resubmission is still pending.
+  The `connect()` refusal for a fatally disconnected connection now lives in
+  `nodejs/tests/e2e/connection-state-errors.test.ts`.
   Partially migrated: the `connection.destroy()` refusals in the pristine and disconnected
   states now live in `nodejs/tests/e2e/connection-state-errors.test.ts`. The remaining case in
   that block, destroy while a login is in flight, is BD#27.

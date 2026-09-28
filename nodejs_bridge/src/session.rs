@@ -59,11 +59,10 @@ impl Session {
         let _lifecycle = self.lifecycle_lock.lock().await;
         match DRIVER.connection_is_usable(self.handles.connection).await {
             Ok(ConnectionUsability::Usable) => Err(BridgeError::AlreadyConnected),
-            Ok(_) => self.init().await.map_err(BridgeError::from),
-            Err(_) => Err(BridgeError::UnusableConnection(
-                ConnectionOperation::Request,
-                UnusableConnection::Terminated,
-            )),
+            Ok(ConnectionUsability::Terminated) | Err(_) => Err(BridgeError::ConnectionTerminated),
+            Ok(ConnectionUsability::NeverEstablished) => {
+                self.init().await.map_err(BridgeError::from)
+            }
         }
     }
 
@@ -180,6 +179,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connecting_a_closed_connection_is_refused() {
+        let session = session();
+        DRIVER
+            .connection_close(session.handles.connection)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            session.connect().await,
+            Err(BridgeError::ConnectionTerminated)
+        ));
+    }
+
+    #[tokio::test]
     async fn connecting_after_the_handle_is_gone_does_not_call_init() {
         let session = session();
         DRIVER
@@ -188,10 +201,7 @@ mod tests {
 
         assert!(matches!(
             session.connect().await,
-            Err(BridgeError::UnusableConnection(
-                ConnectionOperation::Request,
-                UnusableConnection::Terminated,
-            ))
+            Err(BridgeError::ConnectionTerminated)
         ));
     }
 

@@ -18,6 +18,7 @@ pub(crate) enum BridgeError {
         error_message: Option<String>,
     },
     AlreadyConnected,
+    ConnectionTerminated,
     Message(String),
 }
 
@@ -135,6 +136,17 @@ impl ClientError {
         }
     }
 
+    fn of_connection_terminated() -> Self {
+        Self {
+            name: Some("ClientError"),
+            message: "Connection already terminated. Cannot connect again.".to_string(),
+            code: Some(ErrorCode::Driver(405503)),
+            sql_state: Some("08003".to_string()),
+            cause: None,
+            is_fatal: false,
+        }
+    }
+
     fn build(&self, env: Env) -> napi::Result<napi::Error> {
         let mut error = new_js_error(&env, self.message.clone())?;
         if let Some(name) = self.name {
@@ -211,6 +223,9 @@ impl ToJsError for BridgeError {
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
             BridgeError::AlreadyConnected => ClientError::of_already_connected()
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::ConnectionTerminated => ClientError::of_connection_terminated()
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
             BridgeError::Message(message) => napi::Error::from_reason(message.clone()),
@@ -370,6 +385,20 @@ mod tests {
         assert_eq!(code_of(&error), Some("405502".to_string()));
         assert_eq!(error.message, "Already connected.");
         assert_eq!(error.sql_state.as_deref(), Some("08002"));
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn connecting_a_terminated_connection_is_not_fatal() {
+        let error = ClientError::of_connection_terminated();
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("405503".to_string()));
+        assert_eq!(
+            error.message,
+            "Connection already terminated. Cannot connect again."
+        );
+        assert_eq!(error.sql_state.as_deref(), Some("08003"));
         assert!(!error.is_fatal);
     }
 }

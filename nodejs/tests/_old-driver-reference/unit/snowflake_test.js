@@ -333,54 +333,6 @@ describe('connection.connect() asynchronous errors', function () {
       },
     );
   });
-
-  it('connect() while fatally disconnected', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-
-    async.series(
-      [
-        function (callback) {
-          connection.connect(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-        function (callback) {
-          connection.destroy(function (err, conn) {
-            assert.ok(!err, 'there should be no error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the logout() callback should be invoked with the connection',
-            );
-            callback();
-          });
-        },
-        function (callback) {
-          // connection.connect() should fail at this point because the
-          // connection has been destroyed
-          connection.connect(function (err, conn) {
-            assert.ok(err, 'there should be an error');
-            assert.strictEqual(
-              conn,
-              connection,
-              'the connect() callback should be invoked with the connection',
-            );
-            assert.strictEqual(err.code, ErrorCodes.ERR_CONN_CONNECT_STATUS_DISCONNECTED);
-            callback();
-          });
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
 });
 
 describe('connection.execute() synchronous errors', function () {

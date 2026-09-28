@@ -14,6 +14,32 @@ describe('Connection State Errors', () => {
     });
   });
 
+  it('should refuse to connect a destroyed connection again', async () => {
+    const connection = await createLiveConnection({}, false);
+    await destroyConnectionAsync(connection);
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'ClientError',
+      code: 405503,
+      sqlState: '08003',
+      message: 'Connection already terminated. Cannot connect again.',
+    });
+  });
+
+  it('should refuse to connect a connection whose login failed', async () => {
+    const connection = createConnection({
+      username: 'no_such_user_for_e2e',
+    });
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toThrow();
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'ClientError',
+      code: 405503,
+      sqlState: '08003',
+      message: 'Connection already terminated. Cannot connect again.',
+    });
+  });
+
   it('rejects a statement issued before the connection is established', async () => {
     const connection = createConnection();
     await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
