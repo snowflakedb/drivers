@@ -31,9 +31,10 @@ Feature: FILE type support
   #                               Column metadata                               #
   # =========================================================================== #
 
-  # ODBC reports FILE as SQL_VARCHAR via SQLDescribeCol. There is no dedicated
-  # ODBC SQL type or Python type_code FILE on the result descriptor.
-  @python_e2e @odbc_not_needed
+  # - ODBC reports FILE as SQL_VARCHAR via SQLDescribeCol. There is no dedicated
+  #   ODBC SQL type or Python type_code FILE on the result descriptor.
+  # - Node returns file as "object"
+  @python_e2e @odbc_not_needed @nodejs_e2e_not_needed
   Scenario: should report a FILE column with a dedicated type code
     # cursor.description[i].type_code reports FILE, matching the code legacy
     # snowflake-connector-python assigns, instead of falling back to TEXT
