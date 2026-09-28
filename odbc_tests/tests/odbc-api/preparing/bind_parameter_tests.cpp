@@ -272,6 +272,35 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid Par
   REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: TIME WITH TIMEZONE is accepted at bind by the new driver",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  char param_value[] = "12:00:00+00:00";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, 94, 0, 0, param_value, 0, &indicator);
+
+  OLD_DRIVER_ONLY("BD#166") { REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT); }
+  NEW_DRIVER_ONLY("BD#166") {
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "07006", stmt_handle(), SQL_HANDLE_STMT);
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLBindParameter: TIMESTAMP WITH TIMEZONE is accepted at bind by the new driver",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  char param_value[] = "2020-01-01 12:00:00+00:00";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, 95, 0, 0, param_value, 0, &indicator);
+
+  OLD_DRIVER_ONLY("BD#166") { REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT); }
+  NEW_DRIVER_ONLY("BD#166") {
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "07006", stmt_handle(), SQL_HANDLE_STMT);
+  }
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQL_GUID parameter type fails during SQLExecDirect",
                  "[odbc-api][bindparameter][preparing][error]") {
   SQLGUID value = {0x01234567, 0x89AB, 0xCDEF, {0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}};

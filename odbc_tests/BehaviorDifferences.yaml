@@ -3557,3 +3557,22 @@ behavior_differences:
       The new driver no longer serializes SQL_PARAM_OUTPUT (or SQL_RETURN_VALUE)
       bindings as input values. The old driver still requires a non-null data
       pointer at execute.
+
+  166:
+    name: "Timezone parameter types are accepted at bind"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLBindParameter with ParameterType 94 (SQL_TYPE_TIME_WITH_TIMEZONE) or 95
+      (SQL_TYPE_TIMESTAMP_WITH_TIMEZONE) returns SQL_ERROR with SQLSTATE HY004.
+    new_driver_behavior: |
+      SQLBindParameter accepts either ParameterType and returns SQL_SUCCESS.
+      SQLExecDirect then returns SQL_ERROR with SQLSTATE 07006 because conversion
+      to these parameter types is not supported.
+    description: |
+      The new driver recognizes the ODBC 4.0 SQL type identifiers at bind time.
+      Applications can distinguish a recognized but unsupported conversion from
+      an invalid SQL data type by the execute-time SQLSTATE.
