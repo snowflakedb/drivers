@@ -150,7 +150,7 @@ enum DecimalCSource {
 
 fn decimal_c_source(c_type: CDataType) -> Option<DecimalCSource> {
     match c_type {
-        CDataType::Char => Some(DecimalCSource::Char),
+        CDataType::Default | CDataType::Char => Some(DecimalCSource::Char),
         CDataType::WChar => Some(DecimalCSource::WChar),
         CDataType::Long | CDataType::SLong => Some(DecimalCSource::SLong),
         CDataType::Short | CDataType::SShort => Some(DecimalCSource::SShort),
@@ -652,6 +652,30 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
     unsafe { *apd.array_status_ptr.add(row_idx) == SQL_PARAM_IGNORE }
 }
 
+fn default_bind_c_type(sql_type: sql::SqlDataType) -> CDataType {
+    match sql_type {
+        sql::SqlDataType::SMALLINT
+        | sql::SqlDataType::INTEGER
+        | sql::SqlDataType::EXT_TINY_INT
+        | sql::SqlDataType::EXT_BIG_INT => super::number::default_c_type_for_integer_sql(sql_type),
+        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => CDataType::Date,
+        sql::SqlDataType::TIME | sql::SqlDataType::EXT_TIME_OR_INTERVAL => CDataType::Time,
+        sql::SqlDataType::TIMESTAMP
+        | sql::SqlDataType::EXT_TIMESTAMP
+        | SQL_SF_TIMESTAMP_NTZ
+        | SQL_SF_TIMESTAMP_LTZ
+        | SQL_SF_TIMESTAMP_TZ => CDataType::TimeStamp,
+        sql::SqlDataType::REAL | sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => {
+            CDataType::Double
+        }
+        sql::SqlDataType::EXT_BIT => CDataType::Bit,
+        sql::SqlDataType::EXT_BINARY
+        | sql::SqlDataType::EXT_VAR_BINARY
+        | sql::SqlDataType::EXT_LONG_VAR_BINARY => CDataType::Binary,
+        _ => CDataType::Char,
+    }
+}
+
 ///
 /// **Column-wise binding** (`bind_type == 0`, i.e. `SQL_PARAM_BIND_BY_COLUMN`):
 /// * For each column the application provided a contiguous array of values.
@@ -677,8 +701,11 @@ fn binding_for_row(
 
     let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
         // Fixed-size types are bound with BufferLength=0; stride by the C type's octet length.
-        let stride = apd_rec
-            .value_type
+        let stride_c_type = match apd_rec.value_type {
+            CDataType::Default => default_bind_c_type(ipd_rec.sql_data_type),
+            other => other,
+        };
+        let stride = stride_c_type
             .fixed_size()
             .unwrap_or(apd_rec.buffer_length as usize);
         let data_ptr = if apd_rec.data_ptr.is_null() {
@@ -2970,6 +2997,134 @@ mod tests {
     }
 
     #[test]
+    fn json_multi_row_default_integer_zero_buffer_length_strides_by_slong() -> TestResult {
+        let ids: [i32; 3] = [10, 20, 30];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::INTEGER,
+            ids.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "20", "30"]));
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_default_odbc2_time_zero_buffer_length_strides_by_time() -> TestResult {
+        let times: [sql::Time; 3] = [
+            sql::Time {
+                hour: 0,
+                minute: 0,
+                second: 1,
+            },
+            sql::Time {
+                hour: 0,
+                minute: 0,
+                second: 2,
+            },
+            sql::Time {
+                hour: 0,
+                minute: 0,
+                second: 3,
+            },
+        ];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::EXT_TIME_OR_INTERVAL,
+            times.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "TIME");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1000000000", "2000000000", "3000000000"])
+        );
+        Ok(())
+    }
+
+    fn json_multi_row_default_timestamp_sql_type_strides(sql_type: sql::SqlDataType) -> TestResult {
+        let stamps: [sql::Timestamp; 3] = [
+            sql::Timestamp {
+                year: 2024,
+                month: 6,
+                day: 15,
+                hour: 1,
+                minute: 2,
+                second: 3,
+                fraction: 0,
+            },
+            sql::Timestamp {
+                year: 2024,
+                month: 6,
+                day: 16,
+                hour: 4,
+                minute: 5,
+                second: 6,
+                fraction: 0,
+            },
+            sql::Timestamp {
+                year: 2024,
+                month: 6,
+                day: 17,
+                hour: 7,
+                minute: 8,
+                second: 9,
+                fraction: 0,
+            },
+        ];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql_type,
+            stamps.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        let values = parsed["1"]["value"].as_array().expect("value array");
+        assert_eq!(values.len(), 3);
+        assert_ne!(values[0], values[1]);
+        assert_ne!(values[1], values[2]);
+        if sql_type == SQL_SF_TIMESTAMP_NTZ {
+            assert_eq!(parsed["1"]["type"], "TEXT");
+            assert_eq!(
+                parsed["1"]["value"],
+                serde_json::json!([
+                    "2024-06-15 01:02:03",
+                    "2024-06-16 04:05:06",
+                    "2024-06-17 07:08:09"
+                ])
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_default_sf_timestamp_vendor_codes_zero_buffer_length_strides_by_timestamp()
+    -> TestResult {
+        json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_NTZ)?;
+        json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_LTZ)?;
+        json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_TZ)?;
+        Ok(())
+    }
+
+    #[test]
     fn json_multi_row_skips_param_ignore_sets() -> TestResult {
         // SNOW-3235553: SQL_ATTR_PARAM_OPERATION_PTR marks the middle set
         // SQL_PARAM_IGNORE, so only rows 0 and 2 are serialized for every param.
@@ -5110,6 +5265,154 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, "false".to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_decimal_reads_char() -> TestResult {
+        let mut buf = *b"12.34\0";
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::DECIMAL,
+            buf.as_mut_ptr() as sql::Pointer,
+            buf.len() as sql::Len,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, "12.34");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_smallint_reads_sshort() -> TestResult {
+        let val: i16 = 9;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::SMALLINT,
+            &val as *const i16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, "9");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_tinyint_reads_stinyint() -> TestResult {
+        let val: i8 = 5;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::EXT_TINY_INT,
+            &val as *const i8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, "5");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_bigint_reads_sbigint() -> TestResult {
+        let val: i64 = 9_000_000_000;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::EXT_BIG_INT,
+            &val as *const i64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, "9000000000");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_integer_reads_slong() -> TestResult {
+        let val: i32 = 77;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, "77");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_date_reads_date_struct() -> TestResult {
+        let val = sql::Date {
+            year: 2024,
+            month: 6,
+            day: 15,
+        };
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::DATE,
+            &val as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Date);
+        let expected_millis = (chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+            * 86_400_000;
+        assert_eq!(v, expected_millis.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_time_reads_time_struct() -> TestResult {
+        let val = sql::Time {
+            hour: 13,
+            minute: 45,
+            second: 9,
+        };
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::TIME,
+            &val as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Time);
+        assert_eq!(v, "49509000000000");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_timestamp_reads_timestamp_struct() -> TestResult {
+        let val = sql::Timestamp {
+            year: 2024,
+            month: 6,
+            day: 15,
+            hour: 1,
+            minute: 2,
+            second: 3,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::TIMESTAMP,
+            &val as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, "2024-06-15 01:02:03");
         Ok(())
     }
 

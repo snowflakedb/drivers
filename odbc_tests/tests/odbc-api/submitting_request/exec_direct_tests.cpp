@@ -323,6 +323,121 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Executes with bound para
   REQUIRE(result == 77);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound DECIMAL parameter executes",
+                 "[odbc-api][execdirect][submitting_request]") {
+  char param_val[] = "12.34";
+  SQLLEN ind = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_DECIMAL, 10, 2, param_val,
+                                   sizeof(param_val), &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char result[32] = {};
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, result, sizeof(result), &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(std::string(result) == "12.34");
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound INTEGER parameter executes",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQLINTEGER param_val = 77;
+  SQLLEN ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_INTEGER, 0, 0, &param_val, 0, &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = 0;
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &result, 0, &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 77);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound DATE parameter executes",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQL_DATE_STRUCT param_val = {2024, 6, 15};
+  SQLLEN ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_DATE, 0, 0, &param_val, 0, &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQL_DATE_STRUCT result = {};
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_TYPE_DATE, &result, 0, &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result.year == 2024);
+  REQUIRE(result.month == 6);
+  REQUIRE(result.day == 15);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound TIME parameter executes",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQL_TIME_STRUCT param_val = {13, 45, 9};
+  SQLLEN ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_TIME, 0, 0, &param_val, 0, &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQL_TIME_STRUCT result = {};
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_TYPE_TIME, &result, 0, &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result.hour == 13);
+  REQUIRE(result.minute == 45);
+  REQUIRE(result.second == 9);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound TIMESTAMP parameter executes",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQL_TIMESTAMP_STRUCT param_val = {2024, 6, 15, 1, 2, 3, 0};
+  SQLLEN ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_TIMESTAMP, 0, 0, &param_val, 0, &ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQL_TIMESTAMP_STRUCT result = {};
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_TYPE_TIMESTAMP, &result, 0, &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result.year == 2024);
+  REQUIRE(result.month == 6);
+  REQUIRE(result.day == 15);
+  REQUIRE(result.hour == 1);
+  REQUIRE(result.minute == 2);
+  REQUIRE(result.second == 3);
+  REQUIRE(result.fraction == 0);
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects non-contiguous parameter bindings",
                  "[odbc-api][execdirect][submitting_request][error]") {
   SQLINTEGER first = 1;

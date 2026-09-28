@@ -203,7 +203,7 @@ enum TimeCSource {
 
 fn time_c_source(c_type: CDataType) -> Option<TimeCSource> {
     match c_type {
-        CDataType::Time | CDataType::TypeTime => Some(TimeCSource::Time),
+        CDataType::Default | CDataType::Time | CDataType::TypeTime => Some(TimeCSource::Time),
         CDataType::Char | CDataType::WChar => Some(TimeCSource::Char),
         CDataType::Binary => Some(TimeCSource::Binary),
         CDataType::TimeStamp | CDataType::TypeTimestamp => Some(TimeCSource::Timestamp),

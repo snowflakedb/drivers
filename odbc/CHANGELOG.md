@@ -32,6 +32,7 @@ Bug fixes:
 - Fixed a parameter bound with a null data pointer and no `SQL_NULL_DATA` indicator so execute reports SQLSTATE `HY009` (Invalid use of null pointer) instead of the general error `HY000`. (snowflakedb/drivers#2151)
 - Fixed `SQLExecDirect` so lowering the application parameter descriptor `SQL_DESC_COUNT` after extra parameters were bound no longer fails a statement that uses fewer placeholders. (snowflakedb/drivers#2180)
 - Fixed `SQLBindParameter` so an unsupported C-to-SQL conversion is rejected at bind with SQLSTATE `07006`, matching ODBC 3.x. (snowflakedb/drivers#2155)
+- Fixed `SQL_C_DEFAULT` parameter binds for DECIMAL, integer, DATE, TIME, and TIMESTAMP so execute infers the ODBC default C type instead of failing with SQLSTATE `07006`. (snowflakedb/drivers#2316)
 
 ## v4.0.0-rc4
 

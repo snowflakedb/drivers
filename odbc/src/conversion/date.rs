@@ -199,7 +199,7 @@ enum DateCSource {
 
 fn date_c_source(c_type: CDataType) -> Option<DateCSource> {
     match c_type {
-        CDataType::Date | CDataType::TypeDate => Some(DateCSource::Date),
+        CDataType::Default | CDataType::Date | CDataType::TypeDate => Some(DateCSource::Date),
         CDataType::Char | CDataType::WChar => Some(DateCSource::Char),
         CDataType::Binary => Some(DateCSource::Binary),
         CDataType::TimeStamp | CDataType::TypeTimestamp => Some(DateCSource::Timestamp),

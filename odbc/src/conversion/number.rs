@@ -618,6 +618,16 @@ enum NumberCSource {
     SingleFieldInterval,
 }
 
+pub(crate) fn default_c_type_for_integer_sql(sql_type: sql::SqlDataType) -> CDataType {
+    match sql_type {
+        sql::SqlDataType::SMALLINT => CDataType::SShort,
+        sql::SqlDataType::INTEGER => CDataType::SLong,
+        sql::SqlDataType::EXT_TINY_INT => CDataType::STinyInt,
+        sql::SqlDataType::EXT_BIG_INT => CDataType::SBigInt,
+        _ => CDataType::SLong,
+    }
+}
+
 fn number_c_source(c_type: CDataType) -> Option<NumberCSource> {
     match c_type {
         CDataType::Long | CDataType::SLong => Some(NumberCSource::SLong),
@@ -647,14 +657,18 @@ fn number_c_source(c_type: CDataType) -> Option<NumberCSource> {
 
 impl ReadODBC for SnowflakeNumber {
     fn accepts_c_type(&self, c_type: CDataType) -> bool {
-        number_c_source(c_type).is_some()
+        c_type == CDataType::Default || number_c_source(c_type).is_some()
     }
 
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let value = match number_c_source(binding.value_type) {
+        let value_type = match binding.value_type {
+            CDataType::Default => default_c_type_for_integer_sql(binding.sql_data_type),
+            other => other,
+        };
+        let value = match number_c_source(value_type) {
             None => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,
