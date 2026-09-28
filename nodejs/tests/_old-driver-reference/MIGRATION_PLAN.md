@@ -252,9 +252,10 @@ called out explicitly.
   in `nodejs/tests/e2e/statement.test.ts`; request-ID resubmission is still pending.
   The `connect()` refusal for a fatally disconnected connection now lives in
   `nodejs/tests/e2e/connection-state-errors.test.ts`.
-  Partially migrated: the `connection.destroy()` refusals in the pristine and disconnected
-  states now live in `nodejs/tests/e2e/connection-state-errors.test.ts`. The remaining case in
-  that block, destroy while a login is in flight, is BD#27.
+  The `connect()` refusal while a login is in flight now lives in
+  `nodejs/tests/e2e/connection-state-errors.test.ts`.
+  The `connection.destroy()` refusals in the pristine and disconnected states, and destroy
+  while a login is in flight, now live in `nodejs/tests/e2e/connection-state-errors.test.ts`.
 
 ### Authentication
 

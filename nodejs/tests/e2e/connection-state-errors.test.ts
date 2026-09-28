@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { createConnection, createLiveConnection } from './utils/fixtures.js';
 import { connectAsyncWithErrorBD, destroyConnectionAsync, executeAsync } from './utils/index.js';
+import {
+  delayedLoginFailure,
+  delayedLoginSuccess,
+  logoutSuccess,
+  WiremockServer,
+} from './utils/wiremock/index.js';
 
 describe('Connection State Errors', () => {
   it('should refuse to connect an established connection again', async () => {
@@ -110,6 +116,107 @@ describe('Connection State Errors', () => {
       name: 'ClientError',
       code: 406502,
       message: 'Already disconnected.',
+    });
+  });
+});
+
+const LOGIN_IN_FLIGHT_DELAY_MS = 1000;
+const LOGIN_REQUEST_PATH = '/session/v1/login-request.*';
+
+describe('Connection State Errors with a delayed login', () => {
+  let wiremock: WiremockServer;
+
+  beforeAll(async () => {
+    wiremock = await WiremockServer.spawn();
+  });
+
+  afterAll(async () => {
+    await wiremock.destroy();
+  });
+
+  describe('that succeeds', () => {
+    beforeEach(async () => {
+      await wiremock.reset();
+      await wiremock.stub(delayedLoginSuccess(LOGIN_IN_FLIGHT_DELAY_MS));
+      await wiremock.stub(logoutSuccess());
+    });
+
+    it('should refuse a second connect while login is in progress', async () => {
+      const connection = createConnection(wiremock.connectionOptions);
+      onTestFinished(async () => {
+        if (connection.isUp()) {
+          await destroyConnectionAsync(connection);
+        }
+      });
+
+      const login = connectAsyncWithErrorBD(connection);
+      await expect
+        .poll(async () => (await wiremock.findRequests(LOGIN_REQUEST_PATH)).length, {
+          interval: 50,
+          timeout: 2500,
+        })
+        .toBeGreaterThan(0);
+
+      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+        name: 'ClientError',
+        code: 405501,
+        sqlState: '08002',
+        message: 'Connection already in progress.',
+      });
+      await expect(login).resolves.toBeUndefined();
+    });
+
+    it('should destroy a connection once a login in flight has settled', async () => {
+      const connection = createConnection(wiremock.connectionOptions);
+      onTestFinished(async () => {
+        if (connection.isUp()) {
+          await destroyConnectionAsync(connection);
+        }
+      });
+
+      const login = connectAsyncWithErrorBD(connection);
+      await expect
+        .poll(async () => (await wiremock.findRequests(LOGIN_REQUEST_PATH)).length, {
+          interval: 50,
+          timeout: 2500,
+        })
+        .toBeGreaterThan(0);
+      const destroy = destroyConnectionAsync(connection);
+
+      await expect(login).resolves.toBeUndefined();
+      await expect(destroy).resolves.toBeUndefined();
+    });
+  });
+
+  describe('that fails', () => {
+    beforeEach(async () => {
+      await wiremock.reset();
+      await wiremock.stub(delayedLoginFailure(LOGIN_IN_FLIGHT_DELAY_MS));
+    });
+
+    it('should refuse to destroy a connection whose login in flight failed', async () => {
+      const connection = createConnection(wiremock.connectionOptions);
+      onTestFinished(async () => {
+        if (connection.isUp()) {
+          await destroyConnectionAsync(connection);
+        }
+      });
+
+      const login = connectAsyncWithErrorBD(connection);
+      await expect
+        .poll(async () => (await wiremock.findRequests(LOGIN_REQUEST_PATH)).length, {
+          interval: 50,
+          timeout: 2500,
+        })
+        .toBeGreaterThan(0);
+      const destroy = destroyConnectionAsync(connection);
+
+      await expect(login).rejects.toThrow();
+      await expect(destroy).rejects.toMatchObject({
+        name: 'ClientError',
+        code: 406502,
+        message: 'Already disconnected.',
+      });
     });
   });
 });

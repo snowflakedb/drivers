@@ -27,6 +27,7 @@ export interface ResponseDefinition {
   jsonBody?: unknown;
   proxyBaseUrl?: string;
   transformers?: string[];
+  fixedDelayMilliseconds?: number;
 }
 
 export interface StubMapping {
@@ -81,6 +82,34 @@ export function loginSuccess(dataOverrides: Record<string, unknown> = {}): StubM
         ...dataOverrides,
       },
     }),
+  };
+}
+
+export function delayedLoginSuccess(delayMs: number): StubMapping {
+  const mapping = loginSuccess();
+  return {
+    ...mapping,
+    response: {
+      ...mapping.response,
+      fixedDelayMilliseconds: delayMs,
+    },
+  };
+}
+
+export function delayedLoginFailure(delayMs: number): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPathPattern: '/session/v1/login-request.*',
+    },
+    response: {
+      ...jsonResponse(200, {
+        success: false,
+        code: '390100',
+        message: 'Incorrect username or password was specified.',
+      }),
+      fixedDelayMilliseconds: delayMs,
+    },
   };
 }
 

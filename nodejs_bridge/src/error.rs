@@ -18,6 +18,7 @@ pub(crate) enum BridgeError {
         error_message: Option<String>,
     },
     AlreadyConnected,
+    AlreadyConnecting,
     ConnectionTerminated,
     Message(String),
 }
@@ -136,6 +137,17 @@ impl ClientError {
         }
     }
 
+    fn of_already_connecting() -> Self {
+        Self {
+            name: Some("ClientError"),
+            message: "Connection already in progress.".to_string(),
+            code: Some(ErrorCode::Driver(405501)),
+            sql_state: Some("08002".to_string()),
+            cause: None,
+            is_fatal: false,
+        }
+    }
+
     fn of_connection_terminated() -> Self {
         Self {
             name: Some("ClientError"),
@@ -223,6 +235,9 @@ impl ToJsError for BridgeError {
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
             BridgeError::AlreadyConnected => ClientError::of_already_connected()
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::AlreadyConnecting => ClientError::of_already_connecting()
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
             BridgeError::ConnectionTerminated => ClientError::of_connection_terminated()
@@ -384,6 +399,17 @@ mod tests {
         assert_eq!(error.name, Some("ClientError"));
         assert_eq!(code_of(&error), Some("405502".to_string()));
         assert_eq!(error.message, "Already connected.");
+        assert_eq!(error.sql_state.as_deref(), Some("08002"));
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn connecting_while_a_login_is_in_progress_is_not_fatal() {
+        let error = ClientError::of_already_connecting();
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("405501".to_string()));
+        assert_eq!(error.message, "Connection already in progress.");
         assert_eq!(error.sql_state.as_deref(), Some("08002"));
         assert!(!error.is_fatal);
     }

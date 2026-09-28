@@ -559,10 +559,10 @@ behavior_differences:
 
   27:
     name: 'destroy() issued while a connect is in flight is refused rather than queued'
-    status: todo
+    status: fixed
     type: bug
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A connection whose login is still running is in its own connecting state, and a destroy
@@ -570,14 +570,12 @@ behavior_differences:
       (StateConnecting.destroy -> enqueueRequest). The caller sees the outcome of that later
       destroy: success when the login succeeded, ClientError 406502 when it failed.
     new_driver_behavior: |
-      A destroy waits on the same lifecycle lock the connect holds, so one that reaches the lock
-      second behaves as the old driver does. One that reaches it first, before the connect has
-      begun, sees a connection with no login on it and is refused with ClientError 406501.
-      Which of the two happens depends on the order the two operations reach the lock.
+      A destroy issued while login is in flight waits until that login settles, then closes the
+      connection. The caller sees success when the login succeeded, ClientError 406502 when it
+      failed.
     status_rationale: |
-      Closing this needs the connecting state the connect error family (405501/405502/405503)
-      introduces, so that a destroy can tell a login in flight from one that never started and
-      wait for it. The window is only reachable by calling destroy without awaiting connect.
+      The connecting state used for ClientError 405501 also lets destroy tell a login in flight
+      from one that never started, so it waits for the login instead of refusing with 406501.
 
   28:
     name: 'The core silently drops non-whitelisted statement-level parameters'

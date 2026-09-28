@@ -274,29 +274,6 @@ describe('snowflake.createConnection() synchronous errors', function () {
 });
 
 describe('connection.connect() asynchronous errors', function () {
-  // This test is flaky. Sometimes the first connect is being executed too slow, so adding timeout = 0 on the second
-  // connect was a try to speed it up a bit.
-  // But sometimes the first connect is being executed too fast,
-  // and we get an error on the second attempt "already connected" instead of "connection already in progress".
-  xit('connect() while already connecting', function (done) {
-    // create a connection and connect
-    const connection = snowflake.createConnection(connectionOptions).connect();
-
-    // try to connect again
-    setTimeout(() => {
-      connection.connect(function (err, conn) {
-        assert.strictEqual(
-          conn,
-          connection,
-          'the connect() callback should be invoked with the connection',
-        );
-        assert.ok(err);
-        assert.strictEqual(err.code, ErrorCodes.ERR_CONN_CONNECT_STATUS_CONNECTING);
-        done();
-      });
-    }, 0); // when execution is on easy logging init it is not really connecting. Adding 0 timeout changes the order of code executions.
-  });
-
   it('connect() while already connected', function (done) {
     const connection = snowflake.createConnection(connectionOptions);
 
@@ -1195,59 +1172,6 @@ describe('connection.getQueryStatusThrowIfError() synchronous errors', function 
 // The snowflake.isStillRunning() / snowflake.isAnError() describe blocks that used to live
 // here have been migrated to nodejs/tests/e2e/query/query-status.test.ts and removed from this
 // file.
-
-describe('connection.destroy()', function () {
-  // "destroy without connecting" and "destroy while disconnected" moved to
-  // nodejs/tests/e2e/connection-state-errors.test.ts. The case below stays: the new driver
-  // has no connecting state, so a destroy issued during a login can be refused with 406501
-  // instead of being queued (BD#27).
-  it('destroy while connecting', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-
-    const context = {
-      connectcomplete: false,
-      destroycomplete: false,
-    };
-
-    connection.connect(function (err, conn) {
-      assert.ok(!err, 'there should be no error');
-      assert.strictEqual(
-        conn,
-        connection,
-        'the connect() callback should be invoked with the connection',
-      );
-
-      context.connectcomplete = true;
-      if (context.destroycomplete) {
-        done();
-      }
-    });
-
-    const tryDestroy = () => {
-      connection.destroy(function (err, conn) {
-        if (err && err.code === 406501) {
-          // ERR_CONN_DESTROY_STATUS_PRISTINE
-          // Still in pristine state, try again
-          setImmediate(tryDestroy);
-          return;
-        }
-
-        assert.ok(!err, 'there should be no error');
-        assert.strictEqual(
-          conn,
-          connection,
-          'the destroy() callback should be invoked with the connection',
-        );
-        context.destroycomplete = true;
-        if (context.connectcomplete) {
-          done();
-        }
-      });
-    };
-    setImmediate(tryDestroy);
-  });
-
-});
 
 describe('snowflake.createConnection() SERVICE_NAME', function () {
   it('createConnection() returns connection including SERVICE_NAME', function (done) {

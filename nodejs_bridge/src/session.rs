@@ -3,9 +3,10 @@ use crate::error::{BridgeError, ConnectionOperation, UnusableConnection};
 use crate::session_params::KnownSessionParameters;
 use sf_core::apis::database_driver_v1::{ApiError, ConnectionUsability};
 use sf_core::handle_manager::Handle;
+use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 struct Handles {
     connection: Handle,
@@ -32,7 +33,8 @@ impl Drop for Handles {
 #[derive(Clone)]
 pub(crate) struct Session {
     handles: Arc<Handles>,
-    lifecycle_lock: Arc<Mutex<()>>,
+    login_in_flight: Arc<Mutex<bool>>,
+    login_finished: Arc<Notify>,
 }
 
 pub(crate) struct Ready(Arc<Handles>);
@@ -51,19 +53,29 @@ impl Session {
                 database,
                 released: AtomicBool::new(false),
             }),
-            lifecycle_lock: Arc::new(Mutex::new(())),
+            login_in_flight: Arc::new(Mutex::new(false)),
+            login_finished: Arc::new(Notify::new()),
         }
     }
 
     pub(crate) async fn connect(&self) -> Result<(), BridgeError> {
-        let _lifecycle = self.lifecycle_lock.lock().await;
-        match DRIVER.connection_is_usable(self.handles.connection).await {
-            Ok(ConnectionUsability::Usable) => Err(BridgeError::AlreadyConnected),
-            Ok(ConnectionUsability::Terminated) | Err(_) => Err(BridgeError::ConnectionTerminated),
-            Ok(ConnectionUsability::NeverEstablished) => {
-                self.init().await.map_err(BridgeError::from)
+        {
+            let mut login_in_flight = self.login_in_flight.lock().await;
+            if *login_in_flight {
+                return Err(BridgeError::AlreadyConnecting);
+            }
+            match DRIVER.connection_is_usable(self.handles.connection).await {
+                Ok(ConnectionUsability::Usable) => return Err(BridgeError::AlreadyConnected),
+                Ok(ConnectionUsability::Terminated) | Err(_) => {
+                    return Err(BridgeError::ConnectionTerminated);
+                }
+                Ok(ConnectionUsability::NeverEstablished) => *login_in_flight = true,
             }
         }
+        let result = self.init().await.map_err(BridgeError::from);
+        *self.login_in_flight.lock().await = false;
+        self.login_finished.notify_waiters();
+        result
     }
 
     pub(crate) async fn ready(&self) -> Result<Ready, BridgeError> {
@@ -100,7 +112,24 @@ impl Session {
     }
 
     pub(crate) async fn close(&self) -> Result<(), BridgeError> {
-        let _lifecycle = self.lifecycle_lock.lock().await;
+        let _login = self.wait_for_login_to_finish().await;
+        self.close_connection().await
+    }
+
+    async fn wait_for_login_to_finish(&self) -> tokio::sync::MutexGuard<'_, bool> {
+        loop {
+            let mut finished = pin!(self.login_finished.notified());
+            finished.as_mut().enable();
+            let login_in_flight = self.login_in_flight.lock().await;
+            if !*login_in_flight {
+                return login_in_flight;
+            }
+            drop(login_in_flight);
+            finished.await;
+        }
+    }
+
+    async fn close_connection(&self) -> Result<(), BridgeError> {
         if let Some(unusable) = self.unusable().await {
             return Err(BridgeError::UnusableConnection(
                 ConnectionOperation::Destroy,
@@ -175,6 +204,17 @@ mod tests {
         assert!(matches!(
             session.unusable().await,
             Some(UnusableConnection::Terminated)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_second_connect_while_login_is_in_flight_is_refused() {
+        let session = session();
+        *session.login_in_flight.lock().await = true;
+
+        assert!(matches!(
+            session.connect().await,
+            Err(BridgeError::AlreadyConnecting)
         ));
     }
 
