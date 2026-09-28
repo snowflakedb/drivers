@@ -42,6 +42,7 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
   // And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE)
   const std::vector<std::string> types = {"gzip", "bzip2", "brotli", "zstd", "deflate"};
 
+  TempTestDir download_dir("odbc_put_get_sc_auto_");
   for (const auto& comp : types) {
     auto [filename, file] = test_file(comp);
 
@@ -55,7 +56,20 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX) == comp);
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX) == comp);
-    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == std::string("UPLOADED"));
+    // GCS (windows-arm-gcp) may report SKIPPED if a PUT is retried after the
+    // object already landed (overwrite=false existence-skip). ODBC does not set
+    // skip_upload_on_content_match, so this must not be a digest skip (BD#103).
+    const auto status = get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX);
+    if (status == "SKIPPED") {
+      CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX) == PUT_ROW_MESSAGE_SKIPPED);
+    } else {
+      CHECK(status == "UPLOADED");
+    }
+
+    auto get_stmt =
+        conn.execute_fetch("GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir.path()) + "/'");
+    CHECK(get_data<SQL_C_CHAR>(get_stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
+    REQUIRE(fs::exists(download_dir.path() / filename));
   }
 }
 
