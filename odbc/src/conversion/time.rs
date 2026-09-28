@@ -314,6 +314,11 @@ impl WriteWire for SnowflakeTime {
         Ok(total_nanos.to_string())
     }
 
+    fn write_stage_csv(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        let mut buf = [0u8; 32];
+        Ok(format_time_ascii(&value, &mut buf).to_string())
+    }
+
     fn sf_type(&self) -> SnowflakeLogicalType {
         SnowflakeLogicalType::Time
     }

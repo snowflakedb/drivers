@@ -722,17 +722,20 @@ pub(crate) trait ReadODBC: SnowflakeType {
     ) -> Result<Self::Representation<'a>, BindingError>;
 }
 
-/// Converts a typed representation into the canonical wire-text payload for
-/// the Snowflake parameter-binding protocol.
+/// Converts a typed representation into the wire-text payload for Snowflake
+/// parameter binding.
 ///
-/// Every Snowflake bind value is carried on the wire as text — JSON binding
-/// places it in the `"value"` field of `{"type": ..., "value": ...}`; CSV
-/// (stage) binding writes it as a single cell.  Both formats are thin
-/// wrappers around the same text payload, so converters produce that text
-/// directly and the format-specific encoders (`odbc_bindings_to_json` /
-/// `odbc_bindings_to_csv`) supply the envelope.
+/// JSON (`write_wire`) and stage CSV (`write_stage_csv`) share a payload for
+/// every type except TIME. Inline JSON TIME is nanoseconds since midnight;
+/// stage CSV TIME is `HH:MM:SS[.fffffffff]`, which is what `COPY` into a TIME
+/// column accepts and what the 3.x ODBC BindUploader convert/revert path
+/// exists to produce. Types that do not override `write_stage_csv` reuse
+/// `write_wire`.
 pub(crate) trait WriteWire: SnowflakeType {
     fn write_wire(&self, value: Self::Representation<'_>) -> Result<String, BindingError>;
+    fn write_stage_csv(&self, value: Self::Representation<'_>) -> Result<String, BindingError> {
+        self.write_wire(value)
+    }
     fn sf_type(&self) -> SnowflakeLogicalType;
 }
 

@@ -48,9 +48,11 @@ use super::warning::Warnings;
 ///
 /// Returns `(sf_type, text, warnings)`; the format-specific encoder
 /// (`odbc_bindings_to_json` for inline JSON, `odbc_bindings_to_csv` for the
-/// stage-binding CSV file) supplies the envelope around the text.  Keeping
-/// converters format-agnostic means every type has a single source of truth
-/// for its wire representation.
+/// stage-binding CSV file) supplies the envelope around the text.
+///
+/// `convert` is the JSON payload (`WriteWire::write_wire`). Stage CSV uses
+/// `convert_stage_csv`, which defaults to `convert` and only TIME diverges
+/// (clock string instead of nanoseconds).
 pub(crate) trait ParamConverter {
     fn accepts_c_type(&self, c_type: CDataType) -> bool;
 
@@ -58,6 +60,13 @@ pub(crate) trait ParamConverter {
         &self,
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError>;
+
+    fn convert_stage_csv(
+        &self,
+        binding: &ParameterBinding,
+    ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError> {
+        self.convert(binding)
+    }
 }
 
 /// Generic adapter: any type implementing `ReadODBC + WriteWire` automatically
@@ -77,6 +86,15 @@ impl<T: ReadODBC + WriteWire> ParamConverter for WireParamConverter<T> {
     ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError> {
         let value = self.snowflake_type.read_odbc(binding)?;
         let text = self.snowflake_type.write_wire(value)?;
+        Ok((self.snowflake_type.sf_type(), text, vec![]))
+    }
+
+    fn convert_stage_csv(
+        &self,
+        binding: &ParameterBinding,
+    ) -> Result<(SnowflakeLogicalType, String, Warnings), BindingError> {
+        let value = self.snowflake_type.read_odbc(binding)?;
+        let text = self.snowflake_type.write_stage_csv(value)?;
         Ok((self.snowflake_type.sf_type(), text, vec![]))
     }
 }
@@ -612,7 +630,7 @@ pub(crate) fn odbc_bindings_to_csv_into(
             }
 
             let converter = make_converter(&binding)?;
-            let (_, text, convert_warnings) = converter.convert(&binding)?;
+            let (_, text, convert_warnings) = converter.convert_stage_csv(&binding)?;
             warnings.extend(convert_warnings);
             append_escaped_csv_cell(&mut output, &text);
         }
@@ -6277,6 +6295,26 @@ mod tests {
         )]);
         let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
         assert_eq!(csv, "\"deadbeef\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_time_is_clock_string_not_nanoseconds() -> TestResult {
+        let t = sql::Time {
+            hour: 13,
+            minute: 14,
+            second: 15,
+        };
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::TypeTime,
+            sql::SqlDataType::TIME,
+            &t as *const sql::Time as sql::Pointer,
+            mem::size_of::<sql::Time>() as sql::Len,
+            std::ptr::null_mut(),
+        )]);
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
+        assert_eq!(csv, "\"13:14:15\"\n");
         Ok(())
     }
 

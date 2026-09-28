@@ -17,6 +17,7 @@
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "query_helpers.hpp"
+#include "timestamp_e2e.hpp"
 
 static std::string bulk_insert_id_name(Connection& conn, const std::string& table, int count, int id_offset,
                                        const std::string& name_prefix) {
@@ -70,39 +71,57 @@ static void check_id_name_row(StatementHandleWrapper& stmt, int64_t expected_id,
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 2) == expected_name);
 }
 
-// Bulk-inserts `count` rows into `table`(id, n, f, flag, txt) via column-wise
-// ODBC array binding.
-// Row i: id=i, n=NULL if i%7==0 else i*10, f=i*0.5, flag=i%2==0, txt="txt-"+str(i).
-// 13200 rows × 5 cols = 66000 cells, above the default 65280 threshold.
-// Returns the query ID of the INSERT via SQL_SF_STMT_ATTR_LAST_QUERY_ID.
+// Bulk-inserts `count` rows of the JDBC stage-bind type matrix via column-wise
+// ODBC array binding. Every row shares the same payload except id = 42 + row.
+// 13200 rows × 10 cols = 132000 cells, above the default 65280 threshold.
 static std::string bulk_insert_types(Connection& conn, const std::string& table, int count) {
-  constexpr int TXT_BUF = 24;
-  std::vector<SQLBIGINT> ids(count), ns(count);
-  std::vector<double> fs(count);
-  std::vector<SQLCHAR> flags(count);
+  constexpr int NUM_BUF = 48;
+  constexpr int TXT_BUF = 48;
+  constexpr int BIN_LEN = 8;
+  constexpr const char* kNumber = "12345678901234567890123456789.123456789";
+  constexpr const char* kText = "stage-bind-text";
+  constexpr SQLCHAR binary[BIN_LEN] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+  const std::string text(kText);
+  const SQL_DATE_STRUCT date{2024, 1, 15};
+  const SQL_TIME_STRUCT time{13, 14, 15};
+  const SQL_TIMESTAMP_STRUCT ltz = make_ts(2024, 1, 15, 10, 30, 0, 123456789);
+  const SQL_TIMESTAMP_STRUCT ntz = make_ts(2023, 6, 20, 14, 22, 33, 987654321);
+
+  std::vector<SQLBIGINT> ids(count);
+  std::vector<char> numbers(static_cast<size_t>(count) * NUM_BUF, '\0');
+  std::vector<double> fs(count, -12345.625);
+  std::vector<SQLCHAR> flags(count, 1);
   std::vector<char> txts(static_cast<size_t>(count) * TXT_BUF, '\0');
-  std::vector<SQLLEN> id_inds(count, 0), n_inds(count), f_inds(count, 0), flag_inds(count, 0), txt_inds(count);
+  std::vector<SQLCHAR> bins(static_cast<size_t>(count) * BIN_LEN);
+  std::vector<SQL_DATE_STRUCT> dates(count, date);
+  std::vector<SQL_TIME_STRUCT> times(count, time);
+  std::vector<SQL_TIMESTAMP_STRUCT> ltzs(count, ltz);
+  std::vector<SQL_TIMESTAMP_STRUCT> ntzs(count, ntz);
+  std::vector<SQLLEN> id_inds(count, 0), n_inds(count), f_inds(count, 0), flag_inds(count, 0), txt_inds(count),
+      bin_inds(count), date_inds(count, sizeof(SQL_DATE_STRUCT)), time_inds(count, sizeof(SQL_TIME_STRUCT)),
+      ltz_inds(count, sizeof(SQL_TIMESTAMP_STRUCT)), ntz_inds(count, sizeof(SQL_TIMESTAMP_STRUCT));
   std::vector<SQLUSMALLINT> param_status(count, 0);
   SQLULEN params_processed = 0;
 
   for (int i = 0; i < count; i++) {
-    ids[i] = static_cast<SQLBIGINT>(i);
-    if (i % 7 == 0) {
-      ns[i] = 0;
-      n_inds[i] = SQL_NULL_DATA;
-    } else {
-      ns[i] = static_cast<SQLBIGINT>(i) * 10;
-      n_inds[i] = 0;
-    }
-    fs[i] = i * 0.5;
-    flags[i] = static_cast<SQLCHAR>(i % 2 == 0 ? 1 : 0);
-    std::string txt = "txt-" + std::to_string(i);
-    std::strncpy(&txts[static_cast<size_t>(i) * TXT_BUF], txt.c_str(), TXT_BUF - 1);
-    txt_inds[i] = static_cast<SQLLEN>(txt.size());
+    ids[i] = 42 + i;
+    std::strncpy(&numbers[static_cast<size_t>(i) * NUM_BUF], kNumber, NUM_BUF - 1);
+    n_inds[i] = static_cast<SQLLEN>(std::strlen(kNumber));
+    std::strncpy(&txts[static_cast<size_t>(i) * TXT_BUF], text.c_str(), TXT_BUF - 1);
+    txt_inds[i] = static_cast<SQLLEN>(text.size());
+    std::memcpy(&bins[static_cast<size_t>(i) * BIN_LEN], binary, BIN_LEN);
+    bin_inds[i] = BIN_LEN;
   }
 
   auto stmt = conn.createStatement();
   SQLRETURN ret;
+  // ODBC 3.x turns SQL_ATTR_ENABLE_AUTO_IPD on by default, so SQLPrepare overwrites the parameter
+  // SQL types with the ones the server describes. Preparing first leaves the types passed to
+  // SQLBindParameter in effect; otherwise BINARY is described as text and reaches the stage CSV as
+  // raw bytes rather than hex.
+  const std::string sql = "INSERT INTO " + table + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  ret = SQLPrepare(stmt.getHandle(), sqlchar(sql.c_str()), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE,
@@ -115,8 +134,8 @@ static std::string bulk_insert_types(Connection& conn, const std::string& table,
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, ids.data(),
                          sizeof(SQLBIGINT), id_inds.data());
   REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, ns.data(),
-                         sizeof(SQLBIGINT), n_inds.data());
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_NUMERIC, 38, 9, numbers.data(), NUM_BUF,
+                         n_inds.data());
   REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, fs.data(),
                          sizeof(double), f_inds.data());
@@ -127,10 +146,22 @@ static std::string bulk_insert_types(Connection& conn, const std::string& table,
   ret = SQLBindParameter(stmt.getHandle(), 5, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 255, 0, txts.data(), TXT_BUF,
                          txt_inds.data());
   REQUIRE_ODBC(ret, stmt);
-
-  const std::string sql = "INSERT INTO " + table + " VALUES (?, ?, ?, ?, ?)";
-  ret = SQLPrepare(stmt.getHandle(), sqlchar(sql.c_str()), SQL_NTS);
+  ret = SQLBindParameter(stmt.getHandle(), 6, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_BINARY, 50, 0, bins.data(), BIN_LEN,
+                         bin_inds.data());
   REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 7, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_TYPE_DATE, 10, 0, dates.data(),
+                         sizeof(SQL_DATE_STRUCT), date_inds.data());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 8, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_TYPE_TIME, 8, 0, times.data(),
+                         sizeof(SQL_TIME_STRUCT), time_inds.data());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 9, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 29, 9,
+                         ltzs.data(), sizeof(SQL_TIMESTAMP_STRUCT), ltz_inds.data());
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 10, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 29, 9,
+                         ntzs.data(), sizeof(SQL_TIMESTAMP_STRUCT), ntz_inds.data());
+  REQUIRE_ODBC(ret, stmt);
+
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   REQUIRE(params_processed == static_cast<SQLULEN>(count));
@@ -139,6 +170,34 @@ static std::string bulk_insert_types(Connection& conn, const std::string& table,
   }
 
   return get_last_query_id(stmt);
+}
+
+static void check_type_matrix_row(StatementHandleWrapper& stmt, int row) {
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 42 + row);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "12345678901234567890123456789.123456789");
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(-12345.625));
+  CHECK(get_data<SQL_C_BIT>(stmt, 4) == 1);
+  CHECK(get_data_optional<SQL_C_CHAR>(stmt, 5) == "stage-bind-text");
+
+  SQLCHAR bin[8];
+  std::memset(bin, 0xff, sizeof(bin));
+  SQLLEN bin_ind = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 6, SQL_C_BINARY, bin, sizeof(bin), &bin_ind);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(bin_ind == 8);
+  const SQLCHAR expected_bin[8] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef};
+  CHECK(std::memcmp(bin, expected_bin, sizeof(bin)) == 0);
+
+  const auto date = get_data<SQL_C_TYPE_DATE>(stmt, 7);
+  CHECK(date.year == 2024);
+  CHECK(date.month == 1);
+  CHECK(date.day == 15);
+  const auto time = get_data<SQL_C_TYPE_TIME>(stmt, 8);
+  CHECK(time.hour == 13);
+  CHECK(time.minute == 14);
+  CHECK(time.second == 15);
+  require_ts(get_data<SQL_C_TYPE_TIMESTAMP>(stmt, 9), 2024, 1, 15, 10, 30, 0, 123456789);
+  require_ts(get_data<SQL_C_TYPE_TIMESTAMP>(stmt, 10), 2023, 6, 20, 14, 22, 33, 987654321);
 }
 
 // Returns the RFC-4180 hazard string for row i (7-cycle rotation):
@@ -337,13 +396,20 @@ TEST_CASE_METHOD(ConnSchemaFixture,
 TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip all bindable types via stage binding",
                  "[query][large_bindings]") {
   // Given Snowflake client is logged in
+  auto session_stmt = conn.createStatement();
+  SessionParameterOverride timezone_override(session_stmt.getHandle(), "TIMEZONE", "'UTC'");
+  SessionParameterOverride timestamp_mapping_override(session_stmt.getHandle(), "CLIENT_TIMESTAMP_TYPE_MAPPING",
+                                                      "'TIMESTAMP_NTZ'");
 
   // And A temporary table with the driver-specific stage-binding type matrix exists
-  ScopedTable table(conn, "lb_types", "id BIGINT, n BIGINT, f DOUBLE, flag BOOLEAN, txt VARCHAR");
+  ScopedTable table(conn, "lb_types",
+                    "id NUMBER, n NUMBER(38, 9), f FLOAT, flag BOOLEAN, txt VARCHAR, b BINARY, "
+                    "d DATE, t TIME, ts_ltz TIMESTAMP_LTZ, ts_ntz TIMESTAMP_NTZ");
 
   // When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
+  constexpr int row_count = 13200;
   auto before = list_system_bind_file_count(conn);
-  std::string qid = bulk_insert_types(conn, table.name(), 13200);
+  std::string qid = bulk_insert_types(conn, table.name(), row_count);
 
   // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
   auto after = list_system_bind_file_count(conn);
@@ -351,53 +417,19 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip all bindable types via st
   CHECK(after > before);
 
   // And All type-matrix columns are selected from the table in row order
-  auto verify = conn.execute_fetch("SELECT id, n, f, flag, txt FROM " + table.name() +
-                                   " WHERE id IN (0, 1, 7, 100, 13199) ORDER BY id");
+  auto verify =
+      conn.execute_fetch("SELECT id, n, f, flag, txt, b, d, t, ts_ltz, ts_ntz FROM " + table.name() + " ORDER BY id");
 
   // Then Result should contain the same values as the bound parameters
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 0);  // row 0: n=NULL (0%7=0), flag=TRUE
-  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 2) == std::nullopt);
-  CHECK(get_data<SQL_C_DOUBLE>(verify, 3) == Catch::Approx(0.0));
-  CHECK(get_data<SQL_C_BIT>(verify, 4) == 1);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 5) == "txt-0");
-
+  for (int row = 0; row < row_count; row++) {
+    if (row > 0) {
+      SQLRETURN ret = SQLFetch(verify.getHandle());
+      REQUIRE_ODBC(ret, verify);
+    }
+    INFO("row=" << row);
+    check_type_matrix_row(verify, row);
+  }
   SQLRETURN ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 1: n=10, f=0.5, flag=FALSE
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 1);
-  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 2) == 10LL);
-  CHECK(get_data<SQL_C_DOUBLE>(verify, 3) == Catch::Approx(0.5));
-  CHECK(get_data<SQL_C_BIT>(verify, 4) == 0);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 5) == "txt-1");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 7: n=NULL (7%7=0), f=3.5, flag=FALSE
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 7);
-  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 2) == std::nullopt);
-  CHECK(get_data<SQL_C_DOUBLE>(verify, 3) == Catch::Approx(3.5));
-  CHECK(get_data<SQL_C_BIT>(verify, 4) == 0);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 5) == "txt-7");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 100: n=1000, f=50.0, flag=TRUE
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 100);
-  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 2) == 1000LL);
-  CHECK(get_data<SQL_C_DOUBLE>(verify, 3) == Catch::Approx(50.0));
-  CHECK(get_data<SQL_C_BIT>(verify, 4) == 1);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 5) == "txt-100");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 13199: n=131990, f=6599.5, flag=FALSE
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 13199);
-  CHECK(get_data_optional<SQL_C_SBIGINT>(verify, 2) == 131990LL);
-  CHECK(get_data<SQL_C_DOUBLE>(verify, 3) == Catch::Approx(6599.5));
-  CHECK(get_data<SQL_C_BIT>(verify, 4) == 0);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 5) == "txt-13199");
-
-  ret = SQLFetch(verify.getHandle());
   CHECK(ret == SQL_NO_DATA);
 }
 

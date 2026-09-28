@@ -14,8 +14,9 @@ Feature: Large (stage-based) parameter binding
 
   @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should round-trip all bindable types via stage binding
-    # JDBC matrix: FIXED/NUMBER (integer and BigDecimal), REAL/FLOAT, BOOLEAN, TEXT/VARCHAR,
-    # BINARY, DATE, TIME, TIMESTAMP_LTZ, and TIMESTAMP_NTZ.
+    # JDBC and ODBC matrix: FIXED/NUMBER (integer and BigDecimal), REAL/FLOAT, BOOLEAN,
+    # TEXT/VARCHAR, BINARY, DATE, TIME, TIMESTAMP_LTZ, and TIMESTAMP_NTZ.
+    # Python still uses NUMBER, FLOAT, BOOLEAN, VARCHAR.
     Given Snowflake client is logged in
     And A temporary table with the driver-specific stage-binding type matrix exists
     When 13200 rows of driver-specific stage-binding values are inserted using multirow binding
