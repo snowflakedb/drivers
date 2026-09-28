@@ -25,6 +25,7 @@ Changes:
 Bug fixes:
 
 - Fixed stage-bind TIME cells in the CSV upload so they use `HH:MM:SS` instead of nanoseconds since midnight, matching ODBC 3.x bulk binding. (snowflakedb/drivers#2255)
+- Fixed `SQLPrepare` on statements the server declines to describe, such as `ALTER SESSION` and `COMMIT`, which previously failed with SQLSTATE `0A000` and native error `7` (statement not preparable); prepare now succeeds and the statement runs on `SQLExecute`, matching ODBC 3.x. (snowflakedb/drivers#2320)
 - Fixed query-result metadata so `SQL_DESC_TYPE_NAME` reports `GEOGRAPHY` or `GEOMETRY` while preserving the text or binary concise type selected by the output format. (snowflakedb/drivers#2222)
 - Fixed GET of a staged path that matches no object so it returns an empty result set, matching ODBC 3.x. (snowflakedb/drivers#2071)
 - Fixed `SQLExecute`/`SQLExecDirect` to return SQLSTATE `07S01` (Invalid use of default parameter) when any bound parameter has `StrLen_or_IndPtr = SQL_DEFAULT_PARAM (-5)`; previously the driver returned `HY000` where the ODBC spec requires `07S01`. (snowflakedb/drivers#1833)

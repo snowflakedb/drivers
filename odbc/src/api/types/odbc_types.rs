@@ -2293,6 +2293,12 @@ pub struct StatementInner {
     /// when consulting the flag. Cleared back to `None` whenever the
     /// statement leaves the prepared-state (SQLFreeStmt, new prepare, etc.).
     pub prepared_array_bind_supported: Option<bool>,
+    /// SQL text submitted by the most recent `SQLPrepare`, consulted by
+    /// `SQLExecute` to tell whether the statement it runs mutates session
+    /// parameters. Holds the attempted text even when the describe failed,
+    /// because that SQL is still what execute submits. `None` before the
+    /// first prepare or after exec-direct.
+    pub prepared_sql: Option<String>,
     /// `SQL_ATTR_QUERY_TIMEOUT` — query timeout in seconds (default 0 = no timeout).
     pub query_timeout: sql::ULen,
     /// `SQL_ATTR_NOSCAN` — whether to scan for ODBC escape sequences (default SQL_NOSCAN_OFF = 0).
@@ -2495,6 +2501,7 @@ impl Statement {
                 used_extended_fetch: false,
                 prepared_param_count: None,
                 prepared_array_bind_supported: None,
+                prepared_sql: None,
                 metadata_id,
                 query_timeout: 0,
                 noscan: SQL_NOSCAN_OFF,

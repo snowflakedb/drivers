@@ -139,6 +139,7 @@ fn exec_direct_impl(
 
         inner.prepared_param_count = None;
         inner.prepared_array_bind_supported = None;
+        inner.prepared_sql = None;
 
         let dae_params = inner.with_effective_apd(|apd| find_dae_params(apd, None));
         if !dae_params.is_empty() {
@@ -347,13 +348,11 @@ fn finalize_execute_response(
 
 /// Refresh the cached connection-level numeric settings after an execute.
 ///
-/// `last_sql` is the SQL text that was just executed, when available
-/// (it always is for `SQLExecDirect`; it's `None` for prepared
-/// `SQLExecute` since the prepared statement's text isn't kept on the
-/// client). It is consulted only by [`tz_format_needs_refresh`] to
-/// decide whether to issue the `TIMESTAMP_TZ_OUTPUT_FORMAT` RPC for
-/// this call -- see that function and PR #1068 follow-up for the
-/// rationale.
+/// `last_sql` is the SQL text that was just executed. `SQLExecDirect`
+/// passes its argument and `SQLExecute` passes the text retained by
+/// `SQLPrepare`; it is `None` only when neither ran. It is consulted
+/// only by [`tz_format_needs_refresh`] to decide whether to issue the
+/// `TIMESTAMP_TZ_OUTPUT_FORMAT` RPC for this call.
 fn update_numeric_settings(
     conn_handle: &ConnectionHandle,
     settings: &mut NumericSettings,
@@ -457,9 +456,11 @@ fn update_numeric_settings(
 /// - the SQL we just ran starts with `ALTER SESSION` (case-insensitive,
 ///   leading whitespace and SQL comments stripped).
 ///
-/// `last_sql == None` is the prepared `SQLExecute` path -- a prepared
-/// statement that holds an `ALTER SESSION` is pathological enough that
-/// we trade exactness for the perf win.
+/// `last_sql == None` means no statement text is associated with the
+/// call. Both `SQLExecDirect` and prepared `SQLExecute` supply their
+/// text, so an `ALTER SESSION` run through prepare/execute -- which is
+/// how Tableau sets its query tag and session parameters -- refreshes
+/// the cache.
 ///
 /// Known blind spots (all accepted -- they only ever cause a *stale*
 /// cache, never a crash, and none are reachable by the documented
@@ -702,9 +703,9 @@ mod tz_format_needs_refresh_tests {
 
     #[test]
     fn loaded_with_no_sql_skips_refresh() {
-        // Prepared `SQLExecute` path -- we never refresh just from a
-        // bare execute. A prepared `ALTER SESSION` is the documented
-        // edge case (see call site comment in `execute`).
+        // `None` is the absence of statement text, not the prepared
+        // `SQLExecute` path: that path supplies the text `SQLPrepare`
+        // retained, so a prepared `ALTER SESSION` refreshes the cache.
         assert!(!tz_format_needs_refresh(LOADED, None));
     }
 
@@ -871,6 +872,8 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             tracing::error!("prepare: cursor is already open");
             return CursorAlreadyOpenSnafu.fail();
         }
+
+        inner.prepared_sql = Some(query.to_string());
 
         let stmt_handle = guard.stmt_handle;
         let async_enabled = inner.async_enabled;
@@ -1166,19 +1169,14 @@ pub fn execute(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRe
 
     // === POST-PROCESSING (shared by poll and sync paths) ===
     tracing::info!("execute: Successfully executed statement");
-    // Prepared statement: text isn't kept on the client. We pass `None`
-    // and rely on the first-execute path to populate the
-    // `tz_offset_format` cache; subsequent prepared executes skip the
-    // RPC. An `ALTER SESSION` issued via prepare/execute (very rare) is
-    // the documented edge case where the new format won't take effect
-    // until the next `SQLExecDirect` runs.
+    let last_sql = inner.prepared_sql.clone();
     finalize_execute_response(
         &mut conn,
         &mut inner,
         outcome.conn_handle,
         outcome.response,
         origin,
-        None,
+        last_sql.as_deref(),
     )?;
     Ok(())
 }

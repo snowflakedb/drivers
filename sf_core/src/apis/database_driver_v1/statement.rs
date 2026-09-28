@@ -255,32 +255,17 @@ impl DatabaseDriverV1 {
         let prepare = Box::pin(async {
             let query = stmt.query.clone().unwrap_or_default();
 
-            // PUT/GET are client-side file transfers GS cannot describe: a
-            // `describeOnly` request is rejected with error 000007. Skip the
-            // describe and return empty prepare metadata; the transfer runs on
-            // execute when the stored SQL is submitted without `describeOnly`.
+            // PUT/GET are client-side file transfers GS cannot describe, so
+            // skipping the describe saves a round trip that would fail with
+            // `GS_CODE_STATEMENT_NOT_PREPARABLE` and land in the arm below.
+            // That arm covers every other statement GS refuses, so this check
+            // stays at the two verbs that are always file transfers rather than
+            // growing into a list of the statements GS declines to describe.
             if is_file_transfer(&query) {
-                return Ok(PrepareResult {
-                    stream: crate::chunks::empty_reader(),
-                    query_id: String::new(),
-                    columns: Vec::new(),
-                    number_of_binds: 0,
-                    query,
-                    sql_state: None,
-                    array_bind_supported: false,
-                    binds: Vec::new(),
-                    request_id: uuid::Uuid::new_v4(),
-                });
+                return Ok(describe_skipped_prepare_result(query));
             }
 
-            // Multi-statement query prepare is not supported. `request_id` is
-            // always `Some` here — `execute_query_internal` mints one on every
-            // path — so binding `Some` keeps `PrepareResult.request_id`
-            // non-optional without inventing a fallback value.
-            let ExecuteQueryResult::Single {
-                info: rs_info,
-                request_id: Some(request_id),
-            } = self
+            let executed = self
                 .execute_query_internal(
                     operation_ctx,
                     &report,
@@ -289,7 +274,24 @@ impl DatabaseDriverV1 {
                     Some(true),
                     None,
                 )
-                .await?
+                .await;
+
+            // Statements GS declines to describe also reject bind variables, so
+            // the zero parameter markers in this metadata are what a successful
+            // describe would have reported.
+            let executed = match executed {
+                Ok(value) => value,
+                Err(e) => return prepare_result_for_describe_error(e, query),
+            };
+
+            // Multi-statement query prepare is not supported. `request_id` is
+            // always `Some` here — `execute_query_internal` mints one on every
+            // path — so binding `Some` keeps `PrepareResult.request_id`
+            // non-optional without inventing a fallback value.
+            let ExecuteQueryResult::Single {
+                info: rs_info,
+                request_id: Some(request_id),
+            } = executed
             else {
                 return InvalidArgumentSnafu {
                     argument: "Multi-statement queries cannot be prepared".to_string(),
@@ -1069,6 +1071,42 @@ fn parse_bool_setting(setting: &Setting) -> Option<bool> {
     }
 }
 
+/// GS error code for "Statement provided can not be prepared", returned when a
+/// `describeOnly` request names a statement GS only accepts for direct
+/// execution, such as `ALTER SESSION`, `COMMIT`, `PUT`, and `GET`.
+const GS_CODE_STATEMENT_NOT_PREPARABLE: i32 = 7;
+
+/// Prepare metadata for a statement whose describe was skipped or refused.
+///
+/// The empty column and bind lists leave the statement executable: the SQL is
+/// already stored on the statement, and execute submits it without
+/// `describeOnly`.
+fn describe_skipped_prepare_result(query: String) -> PrepareResult {
+    PrepareResult {
+        stream: crate::chunks::empty_reader(),
+        query_id: String::new(),
+        columns: Vec::new(),
+        number_of_binds: 0,
+        query,
+        sql_state: None,
+        array_bind_supported: false,
+        binds: Vec::new(),
+        request_id: uuid::Uuid::new_v4(),
+    }
+}
+
+fn prepare_result_for_describe_error(
+    err: ApiError,
+    query: String,
+) -> Result<PrepareResult, ApiError> {
+    if err.vendor_code() == Some(GS_CODE_STATEMENT_NOT_PREPARABLE) {
+        tracing::debug!("statement_prepare: GS cannot describe this statement");
+        Ok(describe_skipped_prepare_result(query))
+    } else {
+        Err(err)
+    }
+}
+
 /// Best-effort detection of file transfer commands (PUT/GET) from SQL text.
 ///
 /// Snowflake's async API does not support file transfers. Submitting PUT/GET with
@@ -1409,6 +1447,96 @@ mod tests {
         );
         ds.statement_release(sh).unwrap();
         ds.connection_release(ch).unwrap();
+    }
+
+    #[test]
+    fn describe_skipped_prepare_result_reports_no_columns_or_binds() {
+        let mut result =
+            describe_skipped_prepare_result("ALTER SESSION SET QUERY_TAG = 'x'".into());
+
+        assert_eq!(result.number_of_binds, 0);
+        assert!(result.columns.is_empty());
+        assert!(result.binds.is_empty());
+        assert!(!result.array_bind_supported);
+        assert_eq!(result.sql_state, None);
+        assert_eq!(result.query_id, "");
+        assert_eq!(result.stream.schema().fields().len(), 0);
+        assert!(result.stream.next().is_none());
+    }
+
+    fn query_failed_with_code(code: i32) -> ApiError {
+        ApiError::Query {
+            source: Box::new(crate::rest::snowflake::RestError::QueryFailed {
+                message: "Statement provided can not be prepared".to_owned(),
+                code: Some(code),
+                sql_state: None,
+                ids: crate::rest::snowflake::QueryIds::default(),
+                location: snafu::location!(),
+                query_context: None,
+            }),
+            location: snafu::location!(),
+        }
+    }
+
+    fn query_backend_with_code(code: i32) -> ApiError {
+        ApiError::Query {
+            source: Box::new(crate::rest::snowflake::RestError::Backend {
+                source: crate::xp_backend::BackendError::new(code, "backend error"),
+                location: snafu::location!(),
+            }),
+            location: snafu::location!(),
+        }
+    }
+
+    /// `7` is the code GS puts on the wire for "Statement provided can not be
+    /// prepared"; spelling it as a literal here rather than reusing the constant
+    /// on both sides keeps the test honest about the value the deferral keys on.
+    #[test]
+    fn describe_error_code_seven_skips_prepare_and_keeps_the_query() {
+        let query = "ALTER SESSION SET WEEK_START = 1";
+        let result =
+            match prepare_result_for_describe_error(query_failed_with_code(7), query.into()) {
+                Ok(result) => result,
+                Err(e) => panic!("code 7 should skip describe: {e}"),
+            };
+
+        assert_eq!(result.query, query);
+        assert_eq!(result.number_of_binds, 0);
+        assert!(result.columns.is_empty());
+        assert!(!result.array_bind_supported);
+    }
+
+    #[test]
+    fn describe_error_backend_code_seven_skips_prepare() {
+        let result =
+            match prepare_result_for_describe_error(query_backend_with_code(7), "COMMIT".into()) {
+                Ok(result) => result,
+                Err(e) => panic!("backend code 7 should skip describe: {e}"),
+            };
+
+        assert_eq!(result.query, "COMMIT");
+        assert_eq!(result.number_of_binds, 0);
+    }
+
+    #[test]
+    fn describe_error_other_query_code_propagates() {
+        match prepare_result_for_describe_error(query_failed_with_code(1003), "SELECT 1".into()) {
+            Ok(_) => panic!("unrelated GS codes must not skip describe"),
+            Err(err) => assert_eq!(err.vendor_code(), Some(1003)),
+        }
+    }
+
+    #[test]
+    fn describe_error_without_vendor_code_propagates() {
+        let err = ApiError::InvalidArgument {
+            argument: "Statement handle not found".to_string(),
+            location: snafu::location!(),
+        };
+
+        assert!(
+            prepare_result_for_describe_error(err, "SELECT 1".into()).is_err(),
+            "errors without a GS code must not skip describe",
+        );
     }
 
     #[test]
