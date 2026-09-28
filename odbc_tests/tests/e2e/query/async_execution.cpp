@@ -118,7 +118,7 @@ TEST_CASE("should get async enable attribute value after setting it", "[query][a
   CHECK(value == SQL_ASYNC_ENABLE_ON);
 }
 
-TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
+TEST_CASE("should reject connection-level async", "[query][async]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -126,8 +126,42 @@ TEST_CASE("should reject connection-level async with HY092", "[query][async]") {
   const SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
                                           reinterpret_cast<SQLPOINTER>(SQL_ASYNC_DBC_ENABLE_ON), 0);
 
-  // Then the driver should reject it
-  REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+  // Then the set is rejected. The rejecting layer and SQLSTATE depend on the DM
+  // and the driver (BD#163).
+  REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()),
+               OdbcMatchers::IsError() && OdbcMatchers::HasSqlState(expected_async_dbc_enable_sqlstate()));
+}
+
+TEST_CASE("should handle disabling connection-level async", "[query][async]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When connection-level async is set to OFF
+  const SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
+                                          reinterpret_cast<SQLPOINTER>(SQL_ASYNC_DBC_ENABLE_OFF), 0);
+
+  // Then the outcome depends on the driver and DM (BD#163). The old driver
+  // rejects the identifier with HY092. unixODBC and iODBC forward OFF to the
+  // new driver, which accepts it. The Windows DM sees NOT_CAPABLE and fails
+  // the set itself with HY114.
+  OLD_DRIVER_ONLY("BD#163") {
+    REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY092"));
+  }
+  NEW_DRIVER_ONLY("BD#163") {
+    WINDOWS_ONLY {
+      REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()),
+                   OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY114"));
+    }
+    UNIX_ONLY {
+      REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::Succeeded());
+
+      SQLUINTEGER value = SQL_ASYNC_DBC_ENABLE_ON;
+      const SQLRETURN get_ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
+                                                  &value, sizeof(value), nullptr);
+      REQUIRE_THAT(OdbcResult(get_ret, conn.handleWrapper()), OdbcMatchers::Succeeded());
+      CHECK(value == SQL_ASYNC_DBC_ENABLE_OFF);
+    }
+  }
 }
 
 // =============================================================================
@@ -652,7 +686,7 @@ TEST_CASE("should report no limit for SQL_MAX_ASYNC_CONCURRENT_STATEMENTS", "[qu
   CHECK(max_stmts == 0);
 }
 
-TEST_CASE("should report SQL_ASYNC_DBC_CAPABLE for SQL_ASYNC_DBC_FUNCTIONS", "[query][async]") {
+TEST_CASE("should report SQL_ASYNC_DBC_FUNCTIONS capability", "[query][async]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -662,9 +696,10 @@ TEST_CASE("should report SQL_ASYNC_DBC_CAPABLE for SQL_ASYNC_DBC_FUNCTIONS", "[q
   SQLRETURN ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_ASYNC_DBC_FUNCTIONS, &dbc_funcs, sizeof(dbc_funcs), &len);
 
-  // Then it should report capable (so the DM passes DBC attr calls through)
+  // Then the old driver reports CAPABLE and the new driver reports NOT_CAPABLE
   REQUIRE_THAT(OdbcResult(ret, conn.handleWrapper()), OdbcMatchers::Succeeded());
-  CHECK(dbc_funcs == SQL_ASYNC_DBC_CAPABLE);
+  OLD_DRIVER_ONLY("BD#163") { CHECK(dbc_funcs == SQL_ASYNC_DBC_CAPABLE); }
+  NEW_DRIVER_ONLY("BD#163") { CHECK(dbc_funcs == SQL_ASYNC_DBC_NOT_CAPABLE); }
 }
 
 TEST_CASE("should report SQL_ASYNC_NOTIFICATION_NOT_CAPABLE", "[query][async]") {

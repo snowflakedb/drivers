@@ -19,6 +19,8 @@ Changes:
 - Changed leftover ODBC connection-string OCSP keywords `DisableOCSPCheck` and `OCSP_FAIL_OPEN` to be accepted and ignored, posting SQLSTATE `01000` on connect. Certificate revocation uses CRL; set `CRL_MODE` to `DISABLED`, `ENABLED`, or `ADVISORY`. (snowflakedb/drivers#2100)
 - Changed `CLIENT_STORE_TEMPORARY_CREDENTIAL` to default to true when the caller has not set it. An explicit value always wins. (snowflakedb/drivers#2057)
 - Changed leftover ODBC connection-string keyword `TRANSLATE` to be accepted and ignored, posting SQLSTATE `01000` on connect. Character-set translation DLLs are not supported. (snowflakedb/drivers#2195)
+- Changed `SQLGetInfo(SQL_ASYNC_DBC_FUNCTIONS)` to report `SQL_ASYNC_DBC_NOT_CAPABLE`, matching the driver's rejection of `SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE`; on Windows the Driver Manager now rejects that attribute with `HY114` before the driver sees it, instead of the driver's `HY092`. (snowflakedb/drivers#2142)
+- Changed `SQLSetConnectAttr(SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE)` so unixODBC and iODBC accept `SQL_ASYNC_DBC_ENABLE_OFF` and read it back, while enabling still fails with `HYC00`; on Windows the Driver Manager rejects both ON and OFF with `HY114` once GetInfo reports `NOT_CAPABLE`. (snowflakedb/drivers#2142)
 
 Bug fixes:
 

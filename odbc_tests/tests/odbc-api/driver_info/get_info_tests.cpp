@@ -41,7 +41,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_ASYNC_DBC_FUNCTIONS", "[
   ret = SQLGetInfo(dbc_handle(), SQL_ASYNC_DBC_FUNCTIONS, &asyncDbc, sizeof(asyncDbc), nullptr);
 
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(asyncDbc == SQL_ASYNC_DBC_CAPABLE);
+  OLD_DRIVER_ONLY("BD#163") { REQUIRE(asyncDbc == SQL_ASYNC_DBC_CAPABLE); }
+  NEW_DRIVER_ONLY("BD#163") { REQUIRE(asyncDbc == SQL_ASYNC_DBC_NOT_CAPABLE); }
 
   SQLDisconnect(dbc_handle());
 }

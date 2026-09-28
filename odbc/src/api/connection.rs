@@ -59,6 +59,8 @@ const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
 const SQL_CD_FALSE: sql::UInteger = 0;
 const SQL_CD_TRUE: sql::UInteger = 1;
 const SQL_FALSE: sql::UInteger = 0;
+const SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: sql::Integer = 117;
+const SQL_ASYNC_DBC_ENABLE_OFF: sql::UInteger = 0;
 
 const ODBC_DRIVER_NAME: &str = "ODBC";
 const ODBC_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1505,9 +1507,17 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     let dbc = conn_from_handle(connection_handle)?;
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
-    const SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE: sql::Integer = 117;
     if attribute == SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE {
-        return UnknownAttributeSnafu { attribute }.fail();
+        // The driver reports SQL_ASYNC_DBC_NOT_CAPABLE, so OFF is the state it is
+        // already in and asking for it succeeds. Enabling it is HYC00, matching
+        // what `get_connect_attr` reports for every other unimplemented
+        // ODBC-defined connection attribute.
+        return if value_ptr as sql::UInteger == SQL_ASYNC_DBC_ENABLE_OFF {
+            Ok(())
+        } else {
+            tracing::warn!("set_connect_attr: connection-level async is not supported");
+            UnsupportedAttributeSnafu { attribute }.fail()
+        };
     }
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -1750,6 +1760,22 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     let dbc = conn_from_handle(connection_handle)?;
     tracing::debug!("get_connect_attr: attribute={attribute}");
+
+    // Keeps set and get consistent: `set_connect_attr` accepts OFF for this
+    // attribute, so the value is readable rather than HYC00.
+    if attribute == SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE {
+        if !value_ptr.is_null() {
+            unsafe {
+                *(value_ptr as *mut sql::UInteger) = SQL_ASYNC_DBC_ENABLE_OFF;
+            }
+        }
+        if !string_length_ptr.is_null() {
+            unsafe {
+                *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+            }
+        }
+        return Ok(());
+    }
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
@@ -2334,7 +2360,7 @@ pub fn get_info<E: OdbcEncoding>(
         InfoType::OdbcInterfaceConformance => write_u32(1), // SQL_OIC_CORE
         InfoType::AsyncMode => write_u32(2),      // SQL_AM_STATEMENT
         InfoType::MaxAsyncConcurrentStatements => write_u32(0),
-        InfoType::AsyncDbcFunctions => write_u32(1), // SQL_ASYNC_DBC_CAPABLE
+        InfoType::AsyncDbcFunctions => write_u32(0), // SQL_ASYNC_DBC_NOT_CAPABLE
         InfoType::AsyncNotification => write_u32(0), // SQL_ASYNC_NOTIFICATION_NOT_CAPABLE
         // New scalar SQLUINTEGER InfoTypes
         InfoType::MaxBinaryLiteralLen => write_u32(0),

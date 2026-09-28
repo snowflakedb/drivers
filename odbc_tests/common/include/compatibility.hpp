@@ -87,6 +87,19 @@ extern bool is_iodbc_test_suite();
 #define JSON_ONLY(...) if (test_utils::get_query_result_format() == "JSON")
 #define ARROW_ONLY(...) if (test_utils::get_query_result_format() != "JSON")
 
+// SQLSTATE for SQLSetConnectAttr(SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
+// SQL_ASYNC_DBC_ENABLE_ON), which no driver supports. The old driver advertises
+// SQL_ASYNC_DBC_CAPABLE, so every Driver Manager forwards the set and its HY092
+// surfaces. The new driver advertises SQL_ASYNC_DBC_NOT_CAPABLE (BD#163): the
+// Windows DM then fails the set itself with HY114, while unixODBC and iODBC
+// forward it and the driver answers HYC00.
+inline const char* expected_async_dbc_enable_sqlstate() {
+  if (get_driver_type() != DRIVER_TYPE::NEW) {
+    return "HY092";
+  }
+  return get_platform() == PLATFORM::PLATFORM_WINDOWS ? "HY114" : "HYC00";
+}
+
 inline bool is_ascii_locale() {
 #ifdef _WIN32
   return false;

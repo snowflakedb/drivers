@@ -854,7 +854,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cross-thread cancel in
 // ============================================================================
 
 // Neither the reference driver nor the new driver support connection-level
-// async (SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE → HY092) or cancelable DBC
+// async (enabling SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE fails) or cancelable DBC
 // operations. With no child statement busy, SQLCancelHandle(SQL_HANDLE_DBC)
 // is a no-op: SQL_SUCCESS and clears DBC diagnostics. When a child statement
 // is mid-async or in SQL_NEED_DATA, the ODBC Diagnostics table requires
@@ -988,7 +988,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: idle DBC cancel diagno
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Driver rejects enabling connection-level async with HY092",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Driver rejects enabling connection-level async",
                  "[odbc-api][cancelhandle][connection]") {
   SKIP_IODBC(
       "iODBC's libiodbc.dylib does not export SQLCancelHandle "
@@ -997,9 +997,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Driver rejects enablin
 
   // Both drivers reject async DBC functions. Without that capability there is
   // no cancelable connection-level async operation for SQLCancelHandle(DBC).
+  // The rejecting layer and SQLSTATE depend on the DM and the driver (BD#163).
   const SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
                                           reinterpret_cast<SQLPOINTER>(SQL_ASYNC_DBC_ENABLE_ON), 0);
-  REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);
+  REQUIRE_EXPECTED_ERROR(ret, expected_async_dbc_enable_sqlstate(), dbc_handle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture,

@@ -3487,3 +3487,35 @@ behavior_differences:
     description: |
       The new driver rejects the invalid wide-character sequence while encoding
       JSON bindings. The old driver accepts it and submits the statement.
+
+  163:
+    name: "SQLGetInfo(SQL_ASYNC_DBC_FUNCTIONS) reports not capable; SQL_ASYNC_DBC_ENABLE_OFF is DM-dependent"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLGetInfo(SQL_ASYNC_DBC_FUNCTIONS) returns SQL_ASYNC_DBC_CAPABLE, so every
+      Driver Manager forwards SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE to the driver.
+      SQLSetConnectAttr of that attribute then fails with HY092 for both
+      SQL_ASYNC_DBC_ENABLE_ON and SQL_ASYNC_DBC_ENABLE_OFF. Connection-level
+      async is not implemented.
+    new_driver_behavior: |
+      SQLGetInfo(SQL_ASYNC_DBC_FUNCTIONS) returns SQL_ASYNC_DBC_NOT_CAPABLE.
+      On unixODBC and iODBC, SQLSetConnectAttr(SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
+      SQL_ASYNC_DBC_ENABLE_OFF) succeeds and SQLGetConnectAttr reads it back as
+      OFF, because OFF is the state the driver is in. The Windows DM sees
+      NOT_CAPABLE and fails both ON and OFF with HY114 ("Driver does not support
+      connection level asynchronous function execution") without reaching the
+      driver. Enabling it on unixODBC and iODBC is forwarded and the driver
+      returns HYC00. Statement-level async (SQL_ASYNC_MODE = SQL_AM_STATEMENT)
+      is unchanged.
+    description: |
+      GetInfo reports that connection-level async DBC functions are not supported.
+      Driver Managers that still forward SQL_ASYNC_DBC_ENABLE_OFF accept the
+      request for the state the driver is already in. The Windows DM does not
+      forward the set when GetInfo reports NOT_CAPABLE, so both ON and OFF fail
+      with HY114. HY092 ("invalid attribute identifier") does not describe an
+      identifier ODBC defines; HYC00 is the code for a recognized attribute the
+      driver does not implement.
