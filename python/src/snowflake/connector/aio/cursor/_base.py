@@ -11,15 +11,21 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
+from snowflake.connector._core import sf_core_python
+
 from ..._common.extras import pandas, pyarrow, requires_dependency
 from ..._internal.api_client.client_api import CHUNK_SIZE, async_core_driver
 from ..._internal.arrow_context import ArrowConverterContext
 from ..._internal.arrow_stream_async import (
     AsyncArrowStreamIterator,
     collect_arrow_table_async,
+    create_async_row_iterator_from_result_set,
+    create_async_row_iterator_from_stream_ptr,
     to_pandas_async,
 )
-from ..._internal.arrow_stream_utils import create_row_iterator, create_table_iterator
+from ..._internal.arrow_stream_utils import (
+    create_table_iterator,
+)
 from ..._internal.binding_converters import ParamStyle
 from ..._internal.cursor import (
     AsyncQueryResultWaiter,
@@ -59,6 +65,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
+    from ..._internal.arrow import AsyncArrowRowIterator
     from ..connection import Connection
 
 logger = get_logger(__name__)
@@ -75,7 +82,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     """
 
     _connection: Connection
-    _iterator: AsyncArrowStreamIterator | None
+    _iterator: AsyncArrowRowIterator | None
 
     def __init__(self, connection: Connection) -> None:
         """
@@ -579,15 +586,21 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    async def _create_row_iterator(self) -> AsyncArrowStreamIterator:
-        stream_ptr = await self._result_set.get_arrow_stream_ptr()
-        return AsyncArrowStreamIterator(
-            create_row_iterator(
-                stream_ptr=stream_ptr,
-                context=ArrowConverterContext.create(self._connection),
+    async def _create_row_iterator(self) -> AsyncArrowRowIterator:
+        context = ArrowConverterContext.create(self._connection)
+        use_numpy = bool(self._connection.config.numpy)
+        if sf_core_python.native_arrow_enabled():
+            return await create_async_row_iterator_from_result_set(
+                self._result_set._require_handle(),
+                context=context,
                 use_dict_result=self._use_dict_result,
-                use_numpy=bool(self._connection.config.numpy),
+                use_numpy=use_numpy,
             )
+        return create_async_row_iterator_from_stream_ptr(
+            await self._result_set.get_arrow_stream_ptr(),
+            context=context,
+            use_dict_result=self._use_dict_result,
+            use_numpy=use_numpy,
         )
 
     @pep249

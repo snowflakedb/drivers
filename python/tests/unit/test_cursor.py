@@ -1378,6 +1378,66 @@ class TestCreateRowIteratorNumpyFlag:
         )
 
 
+class TestAsyncCreateRowIteratorNativeArrow:
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        conn.config.numpy = True
+        conn._session_parameters = {"TIMEZONE": "UTC"}
+        return conn
+
+    def test_uses_result_set_factory_when_native_arrow_enabled(self, mock_connection):
+        cursor = AsyncSnowflakeCursor(mock_connection)
+        handle = ResultSetHandle(id=7, magic=11)
+        cursor._result_set = MagicMock()
+        cursor._result_set._require_handle.return_value = handle
+        iterator = MagicMock(name="native_async_iterator")
+
+        with (
+            patch("snowflake.connector.aio.cursor._base.sf_core_python") as mock_core,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_result_set",
+                new=AsyncMock(return_value=iterator),
+            ) as mock_create,
+        ):
+            mock_core.native_arrow_enabled.return_value = True
+            result = asyncio.run(cursor._create_row_iterator())
+
+        assert result is iterator
+        mock_create.assert_awaited_once_with(
+            handle,
+            context=ANY,
+            use_dict_result=False,
+            use_numpy=True,
+        )
+        cursor._result_set.get_arrow_stream_ptr.assert_not_called()
+
+    def test_uses_stream_ptr_when_native_arrow_disabled(self, mock_connection):
+        cursor = AsyncSnowflakeCursor(mock_connection)
+        cursor._result_set = MagicMock()
+        cursor._result_set.get_arrow_stream_ptr = AsyncMock(return_value=42)
+        iterator = MagicMock(name="thread_async_iterator")
+
+        with (
+            patch("snowflake.connector.aio.cursor._base.sf_core_python") as mock_core,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_stream_ptr",
+                return_value=iterator,
+            ) as mock_create,
+        ):
+            mock_core.native_arrow_enabled.return_value = False
+            result = asyncio.run(cursor._create_row_iterator())
+
+        assert result is iterator
+        mock_create.assert_called_once_with(
+            42,
+            context=ANY,
+            use_dict_result=False,
+            use_numpy=True,
+        )
+
+
 class TestCheckCanUseArrowResultset:
     """Unit tests for SnowflakeCursorBase.check_can_use_arrow_resultset."""
 

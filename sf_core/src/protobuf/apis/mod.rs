@@ -1,3 +1,4 @@
+use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::operation_ctx::OperationCtx;
 use crate::protobuf::apis::database_driver_v1::{DatabaseDriverImpl, DriverProviders};
 use crate::protobuf::generated::database_driver_v1::{
@@ -38,6 +39,10 @@ impl RustTransport {
 
     pub fn is_troubleshooting(&self) -> bool {
         self.driver.is_troubleshooting()
+    }
+
+    pub fn database_driver(&self) -> &DatabaseDriverV1 {
+        self.driver.driver()
     }
 
     /// Route a decoded RPC to its service. Shared by both [`Transport`] entry

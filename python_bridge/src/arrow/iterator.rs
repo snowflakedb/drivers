@@ -62,20 +62,13 @@ impl ArrowStreamIterator {
         use_numpy: bool,
     ) -> PyResult<Self> {
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
-        let context = if use_dict_result {
-            ConversionContext::with_dict_keys(
-                py,
-                stream.schema().as_ref(),
-                session_timezone,
-                use_numpy,
-            )?
-        } else {
-            ConversionContext::with_session_timezone(
-                stream.schema().as_ref(),
-                session_timezone,
-                use_numpy,
-            )?
-        };
+        let context = ConversionContext::from_flags(
+            py,
+            stream.schema().as_ref(),
+            session_timezone,
+            use_dict_result,
+            use_numpy,
+        )?;
         let mut this = Self {
             stream: Mutex::new(stream),
             context,

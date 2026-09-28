@@ -3,7 +3,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from snowflake.connector._internal.arrow_context import ArrowConverterContext
-from snowflake.connector._internal.arrow_stream_utils import create_row_iterator
+from snowflake.connector._internal.arrow_stream_utils import (
+    create_row_iterator,
+)
 
 
 def test_forwards_use_dict_result_on_native_path():

@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING, Any, cast
 from .._common.extras import pandas, pyarrow, requires_dependency
 from .._internal.api_client.client_api import async_core_driver
 from .._internal.arrow_stream_async import (
-    AsyncArrowStreamIterator,
     collect_arrow_table_async,
+    create_async_row_iterator_from_stream_ptr,
     to_pandas_async,
 )
-from .._internal.arrow_stream_utils import create_row_iterator, create_table_iterator
+from .._internal.arrow_stream_utils import (
+    create_table_iterator,
+)
 from .._internal.protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
 from .._internal.result_batch import IterTableStructure, IterUnit, ResultBatchMixin
 from .._internal.statement_utils import get_stream_ptr
@@ -115,14 +117,11 @@ class ResultBatch(ResultBatchMixin):
             )
             return
 
-        stream_ptr = await self._take_arrow_stream_ptr(conn)
-        iterator = AsyncArrowStreamIterator(
-            create_row_iterator(
-                stream_ptr,
-                context=self._arrow_context,
-                use_dict_result=use_dict_result,
-                use_numpy=self._numpy,
-            )
+        iterator = create_async_row_iterator_from_stream_ptr(
+            await self._take_arrow_stream_ptr(conn),
+            context=self._arrow_context,
+            use_dict_result=use_dict_result,
+            use_numpy=self._numpy,
         )
         async for row in iterator:
             yield row

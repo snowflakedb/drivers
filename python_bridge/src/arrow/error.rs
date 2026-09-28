@@ -1,5 +1,5 @@
 use error_trace::ErrorTrace;
-use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration, PyStopIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::PyType;
@@ -105,7 +105,7 @@ pub(crate) fn wrap_rows_conversion(py: Python<'_>, err: PyErr) -> PyErr {
 }
 
 fn wrap_conversion(py: Python<'_>, err: PyErr, prefix: &str) -> PyErr {
-    if err.is_instance_of::<PyStopIteration>(py) {
+    if err.is_instance_of::<PyStopIteration>(py) || err.is_instance_of::<PyStopAsyncIteration>(py) {
         return err;
     }
     let Ok(cls) = interface_error_type(py) else {

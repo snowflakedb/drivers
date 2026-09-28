@@ -20,6 +20,12 @@ if TYPE_CHECKING:
     from .cursor.result_metadata import ResultMetadata
 
 
+def _missing_native_class(name: str) -> InternalError:
+    return InternalError(
+        msg=f"sf_core_python.{name} is unavailable; rebuild with --features native-arrow / SF_NATIVE_ARROW=1",
+    )
+
+
 def release_arrow_stream(stream_ptr: int | None) -> None:
     """Release an ArrowArrayStream pointer to prevent memory leaks.
 
@@ -60,12 +66,7 @@ def create_row_iterator(
         iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
         if iterator_cls is None:
             release_arrow_stream(stream_ptr)
-            raise InternalError(
-                msg=(
-                    "sf_core_python.ArrowStreamIterator is unavailable; "
-                    "rebuild with --features native-arrow / SF_NATIVE_ARROW=1"
-                )
-            )
+            raise _missing_native_class("ArrowStreamIterator")
         return cast(
             ArrowRowIterator,
             iterator_cls(

@@ -16,14 +16,19 @@ use sf_core::telemetry::snowflake_exporter::SessionRegistry;
 use tracing::instrument::WithSubscriber;
 
 #[cfg(feature = "native-arrow")]
-use crate::arrow::ArrowStreamIterator;
+use crate::arrow::{ArrowStreamIterator, AsyncArrowStreamIterator};
 
 static BRIDGE: OnceLock<Bridge> = OnceLock::new();
 
-struct Bridge {
-    runtime: tokio::runtime::Runtime,
-    transport: RustTransport,
-    dispatch: tracing::dispatcher::Dispatch,
+#[cfg(feature = "native-arrow")]
+pub(crate) fn initialized_bridge() -> Option<&'static Bridge> {
+    BRIDGE.get()
+}
+
+pub(crate) struct Bridge {
+    pub(crate) runtime: tokio::runtime::Runtime,
+    pub(crate) transport: RustTransport,
+    pub(crate) dispatch: tracing::dispatcher::Dispatch,
 }
 
 impl Bridge {
@@ -269,6 +274,8 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(native_arrow_enabled, m)?)?;
     #[cfg(feature = "native-arrow")]
     m.add_class::<ArrowStreamIterator>()?;
+    #[cfg(feature = "native-arrow")]
+    m.add_class::<AsyncArrowStreamIterator>()?;
     Ok(())
 }
 

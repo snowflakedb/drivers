@@ -83,6 +83,10 @@ impl DatabaseDriverImpl {
     pub fn is_troubleshooting(&self) -> bool {
         self.driver.is_troubleshooting()
     }
+
+    pub(crate) fn driver(&self) -> &DatabaseDriverV1 {
+        &self.driver
+    }
 }
 
 impl DatabaseDriver for DatabaseDriverImpl {

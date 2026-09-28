@@ -61,17 +61,25 @@ from __future__ import annotations
 import asyncio
 
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from .arrow_stream_utils import collect_arrow_table
+from snowflake.connector._core import sf_core_python
+
+from .arrow_stream_utils import (
+    _missing_native_class,
+    collect_arrow_table,
+    create_row_iterator,
+)
 
 
 if TYPE_CHECKING:
     from pyarrow import Table
 
-    from .arrow import ArrowRowIterator
+    from .arrow import ArrowRowIterator, AsyncArrowRowIterator
+    from .arrow_context import ArrowConverterContext
     from .arrow_stream_iterator import ArrowStreamTableIterator
     from .cursor.result_metadata import ResultMetadata
+    from .protobuf_gen.database_driver_v1_pb2 import ResultSetHandle
 
 
 # Sentinel handed to ``next(iterator, default)`` so a ``StopIteration`` raised
@@ -131,6 +139,102 @@ class AsyncArrowStreamIterator(AsyncIterator[Any]):
     async def fetch_all(self) -> list[Any]:
         """Fetch all remaining rows in a single threaded C++ call."""
         return await asyncio.to_thread(self._iterator.fetch_all)  # type: ignore[union-attr]
+
+
+class NativeArrowBatchReader(Protocol):
+    """The ``native-arrow`` reader: one awaitable for I/O, the rest synchronous."""
+
+    async def next_batch(self) -> bool: ...
+    def take_row(self, default: object = None) -> Any: ...
+    def convert(self, count: int | None = None) -> int: ...
+    def take_converted(self) -> list[Any]: ...
+
+
+class NativeAsyncArrowRowIterator(AsyncIterator[Any]):
+    """Row iterator over a :class:`NativeArrowBatchReader`.
+
+    Only ``next_batch`` suspends, and it does no Python-object work. Every row
+    is materialized by a synchronous call, so conversion runs on whichever
+    thread drives the coroutine — the event-loop thread — rather than on a
+    core runtime worker.
+    """
+
+    def __init__(self, reader: NativeArrowBatchReader) -> None:
+        self._reader = reader
+
+    def __aiter__(self) -> NativeAsyncArrowRowIterator:
+        return self
+
+    async def __anext__(self) -> Any:
+        row = await self.fetch_next(_ITER_DONE)
+        if row is _ITER_DONE:
+            raise StopAsyncIteration
+        return row
+
+    async def fetch_next(self, default: object = None) -> Any:
+        while True:
+            row = self._reader.take_row(_ITER_DONE)
+            if row is not _ITER_DONE:
+                return row
+            if not await self._reader.next_batch():
+                return default
+
+    async def fetch_many(self, size: int) -> list[Any]:
+        remaining = size
+        while remaining > 0:
+            remaining -= self._reader.convert(remaining)
+            if remaining > 0 and not await self._reader.next_batch():
+                break
+        return self._reader.take_converted()
+
+    async def fetch_all(self) -> list[Any]:
+        while True:
+            self._reader.convert()
+            if not await self._reader.next_batch():
+                return self._reader.take_converted()
+
+
+async def create_async_row_iterator_from_result_set(
+    result_set_handle: ResultSetHandle,
+    *,
+    context: ArrowConverterContext,
+    use_dict_result: bool = False,
+    use_numpy: bool = False,
+) -> AsyncArrowRowIterator:
+    """Yield rows from the live result set; upcoming chunks download in the background."""
+    iterator_cls = getattr(sf_core_python, "AsyncArrowStreamIterator", None)
+    if iterator_cls is None:
+        raise _missing_native_class("AsyncArrowStreamIterator")
+    reader = await iterator_cls.from_result_set(
+        result_set_handle.id,
+        result_set_handle.magic,
+        session_timezone=context.timezone,
+        use_dict_result=use_dict_result,
+        use_numpy=use_numpy,
+    )
+    return NativeAsyncArrowRowIterator(reader)
+
+
+def create_async_row_iterator_from_stream_ptr(
+    stream_ptr: int,
+    *,
+    context: ArrowConverterContext,
+    use_dict_result: bool = False,
+    use_numpy: bool = False,
+) -> AsyncArrowRowIterator:
+    """Wrap the sync iterator in ``asyncio.to_thread``.
+
+    Used when native-arrow is off, and for ResultBatches that still
+    arrive as a C stream pointer.
+    """
+    return AsyncArrowStreamIterator(
+        create_row_iterator(
+            stream_ptr,
+            context=context,
+            use_dict_result=use_dict_result,
+            use_numpy=use_numpy,
+        )
+    )
 
 
 async def collect_arrow_table_async(

@@ -58,6 +58,7 @@ impl ConversionContext {
         Self::from_schema(schema, RowShape::Tuple, None, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_session_timezone(
         schema: &arrow::datatypes::Schema,
         session_timezone: Option<String>,
@@ -66,18 +67,19 @@ impl ConversionContext {
         Self::from_schema(schema, RowShape::Tuple, session_timezone, use_numpy)
     }
 
-    pub(crate) fn with_dict_keys(
+    pub(crate) fn from_flags(
         py: Python<'_>,
         schema: &arrow::datatypes::Schema,
         session_timezone: Option<String>,
+        use_dict_result: bool,
         use_numpy: bool,
     ) -> PyResult<Self> {
-        Self::from_schema(
-            schema,
-            dict_row_shape(py, schema),
-            session_timezone,
-            use_numpy,
-        )
+        let row_shape = if use_dict_result {
+            dict_row_shape(py, schema)
+        } else {
+            RowShape::Tuple
+        };
+        Self::from_schema(schema, row_shape, session_timezone, use_numpy)
     }
 
     fn from_schema(

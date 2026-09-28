@@ -1,3 +1,4 @@
+mod async_iterator;
 mod batch_converter;
 mod converters;
 mod error;
@@ -9,4 +10,5 @@ mod stream;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+pub use async_iterator::AsyncArrowStreamIterator;
 pub use iterator::ArrowStreamIterator;
