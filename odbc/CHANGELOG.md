@@ -34,6 +34,7 @@ Bug fixes:
 - Fixed `SQLExecDirect` so lowering the application parameter descriptor `SQL_DESC_COUNT` after extra parameters were bound no longer fails a statement that uses fewer placeholders. (snowflakedb/drivers#2180)
 - Fixed `SQLBindParameter` so an unsupported C-to-SQL conversion is rejected at bind with SQLSTATE `07006`, matching ODBC 3.x. (snowflakedb/drivers#2155)
 - Fixed `SQL_C_DEFAULT` parameter binds for DECIMAL, integer, DATE, TIME, and TIMESTAMP so execute infers the ODBC default C type instead of failing with SQLSTATE `07006`. (snowflakedb/drivers#2316)
+- Fixed `SQL_PARAM_OUTPUT` binds so they are omitted from execute-time JSON/CSV encoding instead of failing with SQLSTATE `HY009` when the output buffer pointer is null. (snowflakedb/drivers#2317)
 
 ## v4.0.0-rc4
 

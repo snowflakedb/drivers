@@ -3537,3 +3537,23 @@ behavior_differences:
       The new driver previously reported the full, un-stripped source key (including any
       stage subdirectory prefix) in this column instead of the basename it already used for
       the local file name written to disk. This entry documents that the gap is closed.
+
+  165:
+    name: "SQL_PARAM_OUTPUT with a null data pointer is not encoded as input"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      Binding SQL_PARAM_OUTPUT with a null ParameterValuePtr and a non-null
+      indicator makes SQLExecDirect return SQL_ERROR with SQLSTATE HY000
+      (native 10001, a general error from an empty internal buffer).
+    new_driver_behavior: |
+      The same call omits the output parameter from JSON/CSV encode, so
+      SQLExecDirect succeeds when the statement does not need that parameter
+      as input.
+    description: |
+      The new driver no longer serializes SQL_PARAM_OUTPUT (or SQL_RETURN_VALUE)
+      bindings as input values. The old driver still requires a non-null data
+      pointer at execute.

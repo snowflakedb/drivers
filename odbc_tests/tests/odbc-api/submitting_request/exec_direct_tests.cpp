@@ -438,6 +438,45 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_C_DEFAULT bound TIME
   REQUIRE(result.fraction == 0);
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_PARAM_OUTPUT with null data pointer does not fail HY009",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQLLEN out_ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_OUTPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, nullptr, 0, &out_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1 AS val"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#165") { REQUIRE(ret == SQL_SUCCESS); }
+  OLD_DRIVER_ONLY("BD#165") { REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT); }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Encodes SQL_PARAM_INPUT next to a null SQL_PARAM_OUTPUT",
+                 "[odbc-api][execdirect][submitting_request]") {
+  SQLINTEGER in_val = 77;
+  SQLLEN in_ind = 0;
+  SQLLEN out_ind = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &in_val, 0, &in_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_OUTPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, nullptr, 0, &out_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#165") { REQUIRE(ret == SQL_SUCCESS); }
+  OLD_DRIVER_ONLY("BD#165") {
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+    return;
+  }
+
+  SQLINTEGER result = 0;
+  SQLLEN rind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &result, 0, &rind);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 77);
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects non-contiguous parameter bindings",
                  "[odbc-api][execdirect][submitting_request][error]") {
   SQLINTEGER first = 1;

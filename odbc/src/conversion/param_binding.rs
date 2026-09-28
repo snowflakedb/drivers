@@ -13,7 +13,9 @@ use crate::api::CDataType;
 use crate::api::TimestampSubtype;
 use crate::api::encoding::{OdbcEncoding, Wide, WideChar, wchar_byte_size, wide_strlen_bounded};
 use crate::api::types::{SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
-use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding, SQL_PARAM_IGNORE};
+use crate::api::{
+    ApdDescriptor, IpdDescriptor, ParamDirection, ParameterBinding, SQL_PARAM_IGNORE,
+};
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -485,6 +487,13 @@ pub fn odbc_bindings_to_json(
     odbc_bindings_to_json_into(apd, ipd, max_params, &mut Vec::new())
 }
 
+fn is_output_only_param(ipd_rec: &crate::api::IpdRecord) -> bool {
+    matches!(
+        ParamDirection::try_from(ipd_rec.direction),
+        Ok(ParamDirection::Output | ParamDirection::ReturnValue)
+    )
+}
+
 pub(crate) fn odbc_bindings_to_json_into(
     apd: &ApdDescriptor,
     ipd: &IpdDescriptor,
@@ -515,6 +524,9 @@ pub(crate) fn odbc_bindings_to_json_into(
             );
             InvalidParameterIndicesSnafu
         })?;
+        if is_output_only_param(ipd_rec) {
+            continue;
+        }
 
         let mut snowflake_type = SnowflakeLogicalType::Any;
         let mut values: Vec<Value> = Vec::with_capacity(array_size);
@@ -615,6 +627,9 @@ pub(crate) fn odbc_bindings_to_csv_into(
 
             if param_num > 1 {
                 output.push(',');
+            }
+            if is_output_only_param(ipd_rec) {
+                continue;
             }
 
             let binding = binding_for_row(apd_rec, ipd_rec, row_idx, bind_type, bind_offset);
@@ -3121,6 +3136,84 @@ mod tests {
         json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_NTZ)?;
         json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_LTZ)?;
         json_multi_row_default_timestamp_sql_type_strides(SQL_SF_TIMESTAMP_TZ)?;
+        Ok(())
+    }
+
+    #[test]
+    fn json_omits_output_param_even_when_data_pointer_is_null() -> TestResult {
+        let input: i32 = 10;
+        let (apd, mut ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::SLong,
+                sql::SqlDataType::INTEGER,
+                &input as *const i32 as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::SLong,
+                sql::SqlDataType::INTEGER,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        ipd.records.get_mut(&2).unwrap().direction = ParamDirection::Output as sql::SmallInt;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 2)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "FIXED");
+        assert_eq!(parsed["1"]["value"], "10");
+        assert!(parsed.get("2").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn json_encodes_input_output_param() -> TestResult {
+        let val: i32 = 11;
+        let (apd, mut ipd) = make_descriptors(vec![(
+            1,
+            CDataType::SLong,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        ipd.records.get_mut(&1).unwrap().direction = ParamDirection::InputOutput as sql::SmallInt;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["value"], "11");
+        Ok(())
+    }
+
+    #[test]
+    fn csv_output_param_is_empty_cell() -> TestResult {
+        let input: i32 = 10;
+        let (apd, mut ipd) = make_descriptors(vec![
+            (
+                1,
+                CDataType::SLong,
+                sql::SqlDataType::INTEGER,
+                &input as *const i32 as sql::Pointer,
+                0,
+                std::ptr::null_mut(),
+            ),
+            (
+                2,
+                CDataType::SLong,
+                sql::SqlDataType::INTEGER,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            ),
+        ]);
+        ipd.records.get_mut(&2).unwrap().direction = ParamDirection::Output as sql::SmallInt;
+
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 2)?;
+        assert_eq!(csv, "\"10\",\n");
         Ok(())
     }
 
