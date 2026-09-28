@@ -2,41 +2,18 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection, SnowflakeDate } from '../../../types/sdk-types.js';
 import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
-  dateAtUtc,
   destroyConnectionAsync,
   executeAsync,
   getStatementColumn,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
 import { setSessionParameterForTest } from '../../utils/query.js';
+import {
+  createTestNtzDate,
+  createTestLtzDate,
+  expectSnowflakeDate,
+} from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
-
-type ExpectedNtzValue = Date | null | { date: Date | null; nanoSeconds?: number; scale?: number };
-
-function expectNtzDates(values: unknown[], expected: ExpectedNtzValue[]): void {
-  expect(values).toHaveLength(expected.length);
-  expected.forEach((entry, index) => {
-    const { date, nanoSeconds, scale } =
-      entry === null || entry instanceof Date
-        ? { date: entry, nanoSeconds: undefined, scale: undefined }
-        : entry;
-    const value = values[index];
-    if (date === null) {
-      expect(value).toBeNull();
-      return;
-    }
-    const actual = value as SnowflakeDate;
-    expect(actual).toBeInstanceOf(Date);
-    expect(actual).toEqual(date);
-    expect(actual.getTimezone()).toBe('UTC');
-    if (nanoSeconds !== undefined) {
-      expect(actual.getNanoSeconds()).toBe(nanoSeconds);
-    }
-    if (scale !== undefined) {
-      expect(actual.getScale()).toBe(scale);
-    }
-  });
-}
 
 describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => {
   let connection: Connection;
@@ -59,33 +36,35 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
         connection,
         `SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ`,
       );
-      const column = getStatementColumn(statement, 0);
-      const value = Object.values(rows[0])[0];
 
       // Then All values should be returned as appropriate type
+      const column = getStatementColumn(statement, 0);
       expect(column.getType()).toBe('timestamp_ntz');
       expect(column.isTimestamp()).toBe(true);
       expect(column.isTimestampNtz()).toBe(true);
 
       // And Values should not have timezone info
-      expectNtzDates([value], [dateAtUtc('2024-01-15T10:30:00')]);
+      expectSnowflakeDate(Object.values(rows[0]), [createTestNtzDate('2024-01-15T10:30:00')]);
     });
 
-    it.each<{ values: string; query: string; expected: ExpectedNtzValue[] }>([
+    it.each<{ values: string; query: string; expected: (SnowflakeDate | null)[] }>([
       {
         values: 'basic',
         query: `'2024-01-15 10:30:00'::TIMESTAMP_NTZ, '2024-06-20 14:45:30'::TIMESTAMP_NTZ`,
-        expected: [dateAtUtc('2024-01-15T10:30:00'), dateAtUtc('2024-06-20T14:45:30')],
+        expected: [
+          createTestNtzDate('2024-01-15T10:30:00'),
+          createTestNtzDate('2024-06-20T14:45:30'),
+        ],
       },
       {
         values: 'epoch',
         query: `'1970-01-01 00:00:00'::TIMESTAMP_NTZ`,
-        expected: [dateAtUtc('1970-01-01T00:00:00')],
+        expected: [createTestNtzDate('1970-01-01T00:00:00')],
       },
       {
         values: 'microseconds',
         query: `'2024-01-15 10:30:00.123456'::TIMESTAMP_NTZ`,
-        expected: [{ date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123456000 }],
+        expected: [createTestNtzDate('2024-01-15T10:30:00.123', { nanoSeconds: 123456000 })],
       },
     ])('should select timestamp_ntz $values', async ({ query, expected }) => {
       // Given Snowflake client is logged in
@@ -98,17 +77,20 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
       void 0;
 
       // And Values should not have timezone info
-      expectNtzDates(Object.values(rows[0]), expected);
+      expectSnowflakeDate(Object.values(rows[0]), expected);
     });
 
-    it.each<{ scale: number; expected: ExpectedNtzValue }>([
+    it.each<{ scale: number; expected: SnowflakeDate | null }>([
       {
         scale: 0,
-        expected: { date: dateAtUtc('2024-01-15T10:30:00'), nanoSeconds: 0, scale: 0 },
+        expected: createTestNtzDate('2024-01-15T10:30:00', { nanoSeconds: 0, scale: 0 }),
       },
       {
         scale: 3,
-        expected: { date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123000000, scale: 3 },
+        expected: createTestNtzDate('2024-01-15T10:30:00.123', {
+          nanoSeconds: 123000000,
+          scale: 3,
+        }),
       },
     ])('should handle timestamp_ntz precision $scale', async ({ scale, expected }) => {
       // Given Snowflake client is logged in
@@ -124,7 +106,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
       void 0;
 
       // And Values should not have timezone info
-      expectNtzDates(Object.values(rows[0]), [expected]);
+      expectSnowflakeDate(Object.values(rows[0]), [expected]);
     });
 
     it('should select sub-second timestamp_ntz values before epoch', async () => {
@@ -139,11 +121,14 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
       );
 
       // Then Result should contain the expected sub-second values before the epoch
-      expectNtzDates(
+      expectSnowflakeDate(
         [rows[0].NEAR_EPOCH, rows[0].SCALE_3],
         [
-          { date: dateAtUtc('1969-12-31T23:59:59.999'), nanoSeconds: 999999999 },
-          { date: dateAtUtc('1969-12-31T23:59:58.500'), nanoSeconds: 500000000 },
+          createTestNtzDate('1969-12-31T23:59:59.999', { nanoSeconds: 999999999 }),
+          createTestNtzDate('1969-12-31T23:59:58.500', {
+            nanoSeconds: 500000000,
+            scale: 3,
+          }),
         ],
       );
     });
@@ -159,32 +144,38 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
       );
 
       // Then Result should contain [2024-01-15 10:30:00, NULL]
-      expectNtzDates(Object.values(rows[0]), [dateAtUtc('2024-01-15T10:30:00'), null]);
+      expectSnowflakeDate(Object.values(rows[0]), [createTestNtzDate('2024-01-15T10:30:00'), null]);
     });
 
-    it.each<{ values: string; insert: string; expected: ExpectedNtzValue[] }>([
+    it.each<{ values: string; insert: string; expected: (SnowflakeDate | null)[] }>([
       {
         values: 'basic',
         insert: `('2024-01-15 10:30:00'), ('2024-06-20 14:45:30')`,
-        expected: [dateAtUtc('2024-01-15T10:30:00'), dateAtUtc('2024-06-20T14:45:30')],
+        expected: [
+          createTestNtzDate('2024-01-15T10:30:00'),
+          createTestNtzDate('2024-06-20T14:45:30'),
+        ],
       },
       {
         values: 'epoch',
         insert: `('1970-01-01 00:00:00'), ('2024-01-15 10:30:00')`,
-        expected: [dateAtUtc('1970-01-01T00:00:00'), dateAtUtc('2024-01-15T10:30:00')],
+        expected: [
+          createTestNtzDate('1970-01-01T00:00:00'),
+          createTestNtzDate('2024-01-15T10:30:00'),
+        ],
       },
       {
         values: 'microseconds',
         insert: `('2024-01-15 10:30:00'), ('2024-01-15 10:30:00.123456')`,
         expected: [
-          dateAtUtc('2024-01-15T10:30:00'),
-          { date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123456000 },
+          createTestNtzDate('2024-01-15T10:30:00'),
+          createTestNtzDate('2024-01-15T10:30:00.123', { nanoSeconds: 123456000 }),
         ],
       },
       {
         values: 'null',
         insert: `(NULL), ('2024-01-15 10:30:00')`,
-        expected: [dateAtUtc('2024-01-15T10:30:00'), null],
+        expected: [createTestNtzDate('2024-01-15T10:30:00'), null],
       },
     ])('should select $values from table for timestamp_ntz', async ({ insert, expected }) => {
       // Given Snowflake client is logged in
@@ -201,7 +192,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
       );
 
       // Then Result should contain timestamps <expected_values>
-      expectNtzDates(
+      expectSnowflakeDate(
         rows.map((row) => row.COL),
         expected,
       );
@@ -222,9 +213,9 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
         // Then Result should contain [2024-01-15 10:30:00, 2024-06-20 14:45:30]
         void 0;
         // And Values should not have timezone info
-        expectNtzDates(Object.values(rows[0]), [
-          dateAtUtc('2024-01-15T10:30:00'),
-          dateAtUtc('2024-06-20T14:45:30'),
+        expectSnowflakeDate(Object.values(rows[0]), [
+          createTestNtzDate('2024-01-15T10:30:00'),
+          createTestNtzDate('2024-06-20T14:45:30'),
         ]);
       });
 
@@ -238,7 +229,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
         });
 
         // Then Result should contain [NULL]
-        expectNtzDates(Object.values(rows[0]), [null]);
+        expectSnowflakeDate(Object.values(rows[0]), [null]);
       });
 
       it('should insert timestamp_ntz using parameter binding', async () => {
@@ -260,9 +251,13 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
         );
 
         // Then SELECT should return the inserted values in ascending order
-        expectNtzDates(
+        expectSnowflakeDate(
           rows.map((row) => row.COL),
-          [dateAtUtc('2024-01-15T10:30:00'), dateAtUtc('2024-06-20T14:45:30'), null],
+          [
+            createTestNtzDate('2024-01-15T10:30:00'),
+            createTestNtzDate('2024-06-20T14:45:30'),
+            null,
+          ],
         );
       });
 
@@ -288,9 +283,12 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
         void 0;
 
         // And Values should not have timezone info
-        expectNtzDates(Object.values(rows[0]), [
-          { date: dateAtUtc('2024-01-15T10:30:00'), nanoSeconds: 0, scale: 0 },
-          { date: dateAtUtc('2024-01-15T10:30:00.123'), nanoSeconds: 123000000, scale: 3 },
+        expectSnowflakeDate(Object.values(rows[0]), [
+          createTestNtzDate('2024-01-15T10:30:00', { nanoSeconds: 0, scale: 0 }),
+          createTestNtzDate('2024-01-15T10:30:00.123', {
+            nanoSeconds: 123000000,
+            scale: 3,
+          }),
         ]);
       });
     });
@@ -310,15 +308,14 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
             connection,
             `SELECT '2024-01-15 10:30:00'::${typeName}`,
           );
-          const column = getStatementColumn(statement, 0);
-          const value = Object.values(rows[0])[0];
 
           // Then All values should be returned as appropriate type
+          const column = getStatementColumn(statement, 0);
           expect(column.getType()).toBe('timestamp_ntz');
           expect(column.isTimestampNtz()).toBe(true);
 
           // And Values should not have timezone info
-          expectNtzDates([value], [dateAtUtc('2024-01-15T10:30:00')]);
+          expectSnowflakeDate(Object.values(rows[0]), [createTestNtzDate('2024-01-15T10:30:00')]);
         },
       );
 
@@ -335,16 +332,16 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
           connection,
           `SELECT '2024-01-15 10:30:00'::TIMESTAMP`,
         );
-        const column = getStatementColumn(statement, 0);
-        const value = Object.values(rows[0])[0] as SnowflakeDate;
 
         // Then All values should be returned as appropriate type
+        const column = getStatementColumn(statement, 0);
         expect(column.getType()).toBe('timestamp_ltz');
         expect(column.isTimestampLtz()).toBe(true);
-        expect(value).toBeInstanceOf(Date);
 
         // And Values should have timezone info
-        expect(value.getTimezone()).toBe('America/New_York');
+        expectSnowflakeDate(Object.values(rows[0]), [
+          createTestLtzDate('2024-01-15T15:30:00', { timezone: 'America/New_York' }),
+        ]);
       });
     });
 
@@ -363,11 +360,11 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
 
         // Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00
         expect(rows).toHaveLength(rowCount);
-        expectNtzDates(
+        expectSnowflakeDate(
           [rows[0].TS, rows[rowCount - 1].TS],
           [
-            dateAtUtc('2024-01-01T00:00:00'),
-            new Date(dateAtUtc('2024-01-01T00:00:00').getTime() + (rowCount - 1) * 1000),
+            createTestNtzDate('2024-01-01T00:00:00'),
+            createTestNtzDate(Date.parse('2024-01-01T00:00:00Z') + (rowCount - 1) * 1000),
           ],
         );
       });
@@ -393,11 +390,11 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => 
 
         // Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00
         expect(rows).toHaveLength(rowCount);
-        expectNtzDates(
+        expectSnowflakeDate(
           [rows[0].COL, rows[rowCount - 1].COL],
           [
-            dateAtUtc('2024-01-01T00:00:00'),
-            new Date(dateAtUtc('2024-01-01T00:00:00').getTime() + (rowCount - 1) * 1000),
+            createTestNtzDate('2024-01-01T00:00:00'),
+            createTestNtzDate(Date.parse('2024-01-01T00:00:00Z') + (rowCount - 1) * 1000),
           ],
         );
       });

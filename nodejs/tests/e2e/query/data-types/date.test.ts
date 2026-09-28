@@ -2,12 +2,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection, SnowflakeDate } from '../../../types/sdk-types.js';
 import { createLiveConnection, createTemporaryTable } from '../../utils/fixtures.js';
 import {
-  dateAtUtcMidnight,
   destroyConnectionAsync,
   executeAsync,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
 import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
+import { createTestDate } from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
 describe('DATE data type', () => {
@@ -39,9 +39,9 @@ describe('DATE data type', () => {
       }
       // And No precision loss should occur
       expect(Object.values(rows[0])).toEqual([
-        dateAtUtcMidnight('2024-01-15'),
-        dateAtUtcMidnight('1970-01-01'),
-        dateAtUtcMidnight('1999-12-31'),
+        createTestDate('2024-01-15'),
+        createTestDate('1970-01-01'),
+        createTestDate('1999-12-31'),
       ]);
     });
 
@@ -57,9 +57,9 @@ describe('DATE data type', () => {
 
       // Then Result should contain dates [2024-01-15, 1970-01-01, 1999-12-31]
       expect(Object.values(rows[0])).toEqual([
-        dateAtUtcMidnight('2024-01-15'),
-        dateAtUtcMidnight('1970-01-01'),
-        dateAtUtcMidnight('1999-12-31'),
+        createTestDate('2024-01-15'),
+        createTestDate('1970-01-01'),
+        createTestDate('1999-12-31'),
       ]);
     });
 
@@ -75,9 +75,9 @@ describe('DATE data type', () => {
 
       // Then Result should contain dates [1970-01-01, 1969-12-31, 1900-01-01]
       expect(Object.values(rows[0])).toEqual([
-        dateAtUtcMidnight('1970-01-01'),
-        dateAtUtcMidnight('1969-12-31'),
-        dateAtUtcMidnight('1900-01-01'),
+        createTestDate('1970-01-01'),
+        createTestDate('1969-12-31'),
+        createTestDate('1900-01-01'),
       ]);
     });
 
@@ -93,9 +93,9 @@ describe('DATE data type', () => {
 
       // Then Result should contain dates [0001-01-01, 1582-10-15, 9999-12-31]
       expect(Object.values(rows[0])).toEqual([
-        dateAtUtcMidnight('0001-01-01'),
-        dateAtUtcMidnight('1582-10-15'),
-        dateAtUtcMidnight('9999-12-31'),
+        createTestDate('0001-01-01'),
+        createTestDate('1582-10-15'),
+        createTestDate('9999-12-31'),
       ]);
     });
 
@@ -110,7 +110,7 @@ describe('DATE data type', () => {
       );
 
       // Then Result should contain [NULL, 2024-01-15, NULL]
-      expect(Object.values(rows[0])).toEqual([null, dateAtUtcMidnight('2024-01-15'), null]);
+      expect(Object.values(rows[0])).toEqual([null, createTestDate('2024-01-15'), null]);
     });
 
     describe('table operations', () => {
@@ -133,9 +133,9 @@ describe('DATE data type', () => {
 
         // Then Result should contain dates [1970-01-01, 1999-12-31, 2024-01-15]
         expect(rows.map((row) => row.COL)).toEqual([
-          dateAtUtcMidnight('1970-01-01'),
-          dateAtUtcMidnight('1999-12-31'),
-          dateAtUtcMidnight('2024-01-15'),
+          createTestDate('1970-01-01'),
+          createTestDate('1999-12-31'),
+          createTestDate('2024-01-15'),
         ]);
       });
 
@@ -158,8 +158,8 @@ describe('DATE data type', () => {
 
         // Then Result should contain [1999-12-31, 2024-01-15, NULL]
         expect(rows.map((row) => row.COL)).toEqual([
-          dateAtUtcMidnight('1999-12-31'),
-          dateAtUtcMidnight('2024-01-15'),
+          createTestDate('1999-12-31'),
+          createTestDate('2024-01-15'),
           null,
         ]);
       });
@@ -183,10 +183,10 @@ describe('DATE data type', () => {
 
         // Then Result should contain dates [0001-01-01, 0100-03-01, 1582-10-15, 9999-12-31]
         expect(rows.map((row) => row.COL)).toEqual([
-          dateAtUtcMidnight('0001-01-01'),
-          dateAtUtcMidnight('0100-03-01'),
-          dateAtUtcMidnight('1582-10-15'),
-          dateAtUtcMidnight('9999-12-31'),
+          createTestDate('0001-01-01'),
+          createTestDate('0100-03-01'),
+          createTestDate('1582-10-15'),
+          createTestDate('9999-12-31'),
         ]);
       });
     });
@@ -208,9 +208,9 @@ describe('DATE data type', () => {
 
         // Then Result should contain 100000 rows with sequential dates starting from 1970-01-01
         expect(rows).toHaveLength(rowCount);
-        expect(rows[0].D).toEqual(dateAtUtcMidnight('1970-01-01'));
+        expect(rows[0].D).toEqual(createTestDate('1970-01-01'));
         expect(rows[rowCount - 1].D).toEqual(
-          new Date(dateAtUtcMidnight('1970-01-01').getTime() + (rowCount - 1) * ONE_DAY_MS),
+          createTestDate(createTestDate('1970-01-01').getTime() + (rowCount - 1) * ONE_DAY_MS),
         );
       });
 
@@ -237,9 +237,9 @@ describe('DATE data type', () => {
 
         // Then Result should contain 100000 rows with sequential dates starting from 1970-01-01
         expect(rows).toHaveLength(rowCount);
-        expect(rows[0].COL).toEqual(dateAtUtcMidnight('1970-01-01'));
+        expect(rows[0].COL).toEqual(createTestDate('1970-01-01'));
         expect(rows[rowCount - 1].COL).toEqual(
-          new Date(dateAtUtcMidnight('1970-01-01').getTime() + (rowCount - 1) * ONE_DAY_MS),
+          createTestDate(createTestDate('1970-01-01').getTime() + (rowCount - 1) * ONE_DAY_MS),
         );
       });
     });
@@ -258,9 +258,9 @@ describe('DATE data type', () => {
 
         // Then Result should contain [2024-01-15, 1970-01-01, 1999-12-31]
         expect(Object.values(rows[0])).toEqual([
-          dateAtUtcMidnight('2024-01-15'),
-          dateAtUtcMidnight('1970-01-01'),
-          dateAtUtcMidnight('1999-12-31'),
+          createTestDate('2024-01-15'),
+          createTestDate('1970-01-01'),
+          createTestDate('1999-12-31'),
         ]);
       });
 
@@ -296,9 +296,9 @@ describe('DATE data type', () => {
 
         // Then Result should contain dates [1970-01-01, 1999-12-31, 2024-01-15]
         expect(rows.map((row) => row.COL)).toEqual([
-          dateAtUtcMidnight('1970-01-01'),
-          dateAtUtcMidnight('1999-12-31'),
-          dateAtUtcMidnight('2024-01-15'),
+          createTestDate('1970-01-01'),
+          createTestDate('1999-12-31'),
+          createTestDate('2024-01-15'),
         ]);
       });
     });

@@ -6,8 +6,8 @@ import {
   executeAsync,
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
-  dateAtUtcMidnight,
 } from '../../utils/index.js';
+import { createTestDate } from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
 // INTERVAL cells are the interval's internal integer as a string:
@@ -987,8 +987,8 @@ describe('INTERVAL data type', () => {
 
       // Then the result should contain:
       expect(Object.values(rows[0])).toEqual([
-        dateAtUtcMidnight('2020-03-01'),
-        dateAtUtcMidnight('2020-02-29'),
+        createTestDate('2020-03-01'),
+        createTestDate('2020-02-29'),
       ]);
     });
 

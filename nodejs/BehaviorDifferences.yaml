@@ -946,3 +946,23 @@ behavior_differences:
       `'002003'` matches the SQL compilation vendor code from execute. -1 is a
       generic error code that the old driver uses when it cannot determine the
       error code from the Snowflake server.
+
+  48:
+    name: 'SnowflakeDate is a public export used for DATE and TIMESTAMP values'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      DATE and TIMESTAMP cells come back as a Date carrying the extra
+      getEpochSeconds/getNanoSeconds/getScale/getTimezone/getFormat methods, but the
+      type behind them is not exported, so a TypeScript caller cannot name it and has
+      to cast to a hand-written shape to reach those methods.
+    new_driver_behavior: |
+      The same value shape is returned, and its class SnowflakeDate is exported from
+      the package, so callers can import the type and use the extra methods without a
+      hand-written declaration.
+    status_rationale: |
+      Purely additive: the runtime value is unchanged from the old driver, this only
+      publishes the type that was already being returned, so no existing caller breaks.
