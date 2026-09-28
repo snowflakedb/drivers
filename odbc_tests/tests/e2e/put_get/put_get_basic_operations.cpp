@@ -146,3 +146,23 @@ TEST_CASE("should return correct rowset for GET", "[put_get]") {
 
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_ENCRYPTION_IDX) == "DECRYPTED");
 }
+
+TEST_CASE("should return local basename for GET from stage subdirectory", "[put_get]") {
+  // Given File is uploaded to a stage subdirectory
+  Connection conn;
+  const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_GET_SUBDIR"));
+  auto [filename, file] = basic_test_file();
+
+  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage + "/some_prefix";
+  conn.execute(put_sql);
+
+  // When The subdirectory is downloaded using GET command
+  TempTestDir download_dir("odbc_put_get_");
+
+  std::string get_sql = "GET @" + stage + "/some_prefix 'file://" + as_file_uri(download_dir.path()) + "/'";
+  auto stmt = conn.execute_fetch(get_sql);
+
+  // Then The file column reports the local basename, not the stage-relative path
+  CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");
+  CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
+}

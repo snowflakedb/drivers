@@ -247,6 +247,10 @@ def test_should_get_file_from_subdirectory_in_stage(connection):
             get_result = cursor.fetchone()
 
             # Then File should be downloaded flat into the local directory
+            if OLD_DRIVER_ONLY("BD#102"):
+                assert get_result[0] == f"subdir/{filename}"
+            elif NEW_DRIVER_ONLY("BD#102"):
+                assert get_result[0] == filename
             assert get_result[2] == "DOWNLOADED"
             downloaded_file = download_dir / filename
             assert downloaded_file.exists(), (
