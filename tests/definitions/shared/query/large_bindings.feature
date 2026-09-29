@@ -27,10 +27,45 @@ Feature: Large (stage-based) parameter binding
   Scenario: should preserve CSV escaping hazards via stage binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, txt VARCHAR) exists
-    When 33000 rows are inserted using multirow binding with values cycling every 7 rows through [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
+    When 33000 rows are inserted using multirow binding with values cycling every 16 rows through [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"], [10, "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
     Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
-    And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
-    Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
+    And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 15 ORDER BY id" is executed
+    Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"], [10, "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
+
+  @jdbc_e2e
+  Scenario Outline: should reject invalid numeric text at the configured batch threshold
+    Given Snowflake client is logged in
+    And A temporary table with columns (id INTEGER, value INTEGER) exists
+    When "notAnInt" is batch-bound into the numeric column at threshold <threshold>
+    Then the batch execution should fail with SQLException
+
+    Examples:
+      | threshold |
+      | 0         |
+      | 2         |
+
+  @jdbc_e2e
+  Scenario Outline: should resolve NULL and FLOAT array-bind types on inline and stage paths
+    Given Snowflake client is logged in
+    And A temporary table with columns (id INTEGER, value FLOAT) exists
+    When NULL values declared as NUMERIC, BOOLEAN, and CHAR are batched with FLOAT values at threshold <threshold>
+    Then NULL and FLOAT values should round-trip
+    And SYSTEM$BIND usage should match threshold <threshold>
+    And adding a STRING value to the FLOAT batch should fail with SQLSTATE 0A000 and vendor code 200023
+
+    Examples:
+      | threshold |
+      | 0         |
+      | 1         |
+
+  @jdbc_e2e
+  Scenario: should stage-bind timestamp strings into TZ and NTZ columns
+    Given Snowflake client is logged in
+    And A temporary table with columns (ts_tz TIMESTAMP_TZ, ts_ntz TIMESTAMP_NTZ) exists
+    And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
+    When timestamp strings with explicit and implicit offsets are inserted using multirow binding
+    Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values as the bound parameters
+    And the TZ and NTZ values should preserve their expected timestamps and offsets
 
   @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should not stage-bind scalar or non-INSERT queries even when threshold is crossed

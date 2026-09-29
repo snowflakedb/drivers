@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
@@ -23,6 +24,8 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Stage (SYSTEM$BIND) array-binding coverage for the shared scenarios in {@code
@@ -196,23 +199,40 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
     // And A temporary table with columns (id NUMBER, txt VARCHAR) exists
     String tableName = createTempTable(connection, "ud_large_bindings_", "id NUMBER, txt VARCHAR");
 
-    // comma, embedded quote, newline, backslashes, empty string, SQL NULL, multibyte UTF-8
-    String[] hazards = {"val,0", "say\"1\"", "a\nb", "C:\\dir\\3", "", null, "日本語"};
+    String[] hazards = {
+      "val,0",
+      "say\"1\"",
+      "a\nb",
+      "C:\\dir\\3",
+      "",
+      null,
+      "日本語",
+      "\"",
+      ",",
+      "\n",
+      "\r\n",
+      "\"\"",
+      "null",
+      "\\\n",
+      "\",",
+      "\\\",\\\""
+    };
 
-    // When 33000 rows are inserted using multirow binding with values cycling every 7 rows through
+    // When 33000 rows are inserted using multirow binding with values cycling every 16 rows through
     // [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6,
-    // "日本語"]]
+    // "日本語"], [7, "\""], [8, ","], [9, "\n"], [10, "\r\n"], [11, "\"\""], [12, "null"], [13,
+    // "\\\n"], [14, "\","], [15, "\\\",\\\""]]
     int rowCount = 33000; // 33000 x 2 columns = 66000 cells, above the default 65280 threshold
     long beforeInsert = countSystemBindFiles(connection);
     String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
     try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
       for (int row = 0; row < rowCount; row++) {
-        int slot = row % 7;
-        preparedStatement.setInt(1, slot);
-        if (hazards[slot] == null) {
+        preparedStatement.setInt(1, row);
+        String hazard = hazards[row % hazards.length];
+        if (hazard == null) {
           preparedStatement.setNull(2, Types.VARCHAR);
         } else {
-          preparedStatement.setString(2, hazards[slot]);
+          preparedStatement.setString(2, hazard);
         }
         preparedStatement.addBatch();
       }
@@ -226,18 +246,18 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
         countSystemBindFiles(connection) > beforeInsert,
         "CSV-hazard bulk insert should upload a bind file to SYSTEM$BIND");
 
-    // And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
+    // And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 15 ORDER BY id" is executed
     try (Statement statement = connection.createStatement();
         ResultSet resultSet =
             statement.executeQuery(
-                "SELECT id, txt FROM " + tableName + " WHERE id BETWEEN 0 AND 6 ORDER BY id")) {
+                "SELECT id, txt FROM " + tableName + " WHERE id BETWEEN 0 AND 15 ORDER BY id")) {
       // Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3,
-      // "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
-      boolean[] seen = new boolean[7];
-      while (resultSet.next()) {
-        int id = resultSet.getInt(1);
-        assertTrue(id >= 0 && id <= 6, "Unexpected id outside the cycled range: " + id);
-        seen[id] = true;
+      // "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"], [10,
+      // "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
+      for (int id = 0; id < hazards.length; id++) {
+        assertTrue(resultSet.next(), "Expected hazard row for id " + id);
+        assertEquals(id, resultSet.getInt(1), "Unexpected hazard row id");
+        assertFalse(resultSet.wasNull(), "Hazard row id should not be NULL");
         String txt = resultSet.getString(2);
         if (hazards[id] == null) {
           assertNull(txt, "Expected SQL NULL for id " + id);
@@ -247,8 +267,187 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
           assertEquals(hazards[id], txt, "Unexpected round-tripped hazard value for id " + id);
         }
       }
-      for (int id = 0; id <= 6; id++) {
-        assertTrue(seen[id], "Expected at least one row for cycled id " + id);
+      assertFalse(resultSet.next(), "Expected exactly " + hazards.length + " hazard rows");
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, 2})
+  public void shouldRejectInvalidNumericTextAtTheConfiguredBatchThreshold(int threshold)
+      throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      // And A temporary table with columns (id INTEGER, value INTEGER) exists
+      String tableName =
+          createTempTable(connection, "ud_large_bindings_", "id INTEGER, value INTEGER");
+      // When "notAnInt" is batch-bound into the numeric column at threshold <threshold>
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = " + threshold);
+      try (PreparedStatement preparedStatement =
+          connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?, ?)")) {
+        preparedStatement.setInt(1, threshold);
+        preparedStatement.setString(2, "notAnInt");
+        preparedStatement.addBatch();
+        // Then the batch execution should fail with SQLException
+        assertThrows(
+            SQLException.class,
+            preparedStatement::executeBatch,
+            "Invalid numeric text should fail at threshold " + threshold);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, 1})
+  public void shouldResolveNullAndFloatArrayBindTypesOnInlineAndStagePaths(int threshold)
+      throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = " + threshold);
+      // And A temporary table with columns (id INTEGER, value FLOAT) exists
+      String tableName =
+          createTempTable(connection, "ud_large_bindings_", "id INTEGER, value FLOAT");
+      String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+      long beforeInsert = countSystemBindFiles(connection);
+
+      // When NULL values declared as NUMERIC, BOOLEAN, and CHAR are batched with FLOAT values at
+      // threshold <threshold>
+      try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+        preparedStatement.setInt(1, 1);
+        preparedStatement.setNull(2, Types.NUMERIC);
+        preparedStatement.addBatch();
+        preparedStatement.setInt(1, 2);
+        preparedStatement.setFloat(2, 4.0f);
+        preparedStatement.addBatch();
+        preparedStatement.executeBatch();
+      }
+      try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+        preparedStatement.setInt(1, 3);
+        preparedStatement.setFloat(2, 4.0f);
+        preparedStatement.addBatch();
+        preparedStatement.setInt(1, 4);
+        preparedStatement.setNull(2, Types.BOOLEAN);
+        preparedStatement.addBatch();
+        preparedStatement.executeBatch();
+      }
+      try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+        preparedStatement.setInt(1, 5);
+        preparedStatement.setNull(2, Types.CHAR);
+        preparedStatement.addBatch();
+        preparedStatement.setInt(1, 6);
+        preparedStatement.setFloat(2, 4.0f);
+        preparedStatement.addBatch();
+        preparedStatement.executeBatch();
+      }
+
+      // Then NULL and FLOAT values should round-trip
+      try (Statement statement = connection.createStatement();
+          ResultSet resultSet =
+              statement.executeQuery("SELECT id, value FROM " + tableName + " ORDER BY id")) {
+        assertMixedNullFloatRow(resultSet, 1, true);
+        assertMixedNullFloatRow(resultSet, 2, false);
+        assertMixedNullFloatRow(resultSet, 3, false);
+        assertMixedNullFloatRow(resultSet, 4, true);
+        assertMixedNullFloatRow(resultSet, 5, true);
+        assertMixedNullFloatRow(resultSet, 6, false);
+        assertFalse(resultSet.next(), "Expected exactly six mixed-null rows");
+      }
+
+      // And SYSTEM$BIND usage should match threshold <threshold>
+      assertEquals(
+          threshold != 0,
+          countSystemBindFiles(connection) > beforeInsert,
+          "Threshold "
+              + threshold
+              + " should "
+              + (threshold == 0 ? "stay on the inline JSON path" : "upload a SYSTEM$BIND file"));
+
+      try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+        preparedStatement.setInt(1, 7);
+        preparedStatement.setNull(2, Types.NUMERIC);
+        preparedStatement.addBatch();
+        preparedStatement.setInt(1, 8);
+        preparedStatement.setFloat(2, 4.0f);
+        preparedStatement.addBatch();
+        preparedStatement.setInt(1, 9);
+        preparedStatement.setString(2, "test1");
+        // And adding a STRING value to the FLOAT batch should fail with SQLSTATE 0A000 and vendor
+        // code 200023
+        SQLException failure =
+            assertThrows(
+                SQLException.class,
+                preparedStatement::addBatch,
+                "Mixed STRING and FLOAT array binds should fail");
+        assertEquals("0A000", failure.getSQLState(), "Unexpected mixed-type SQLSTATE");
+        assertEquals(200023, failure.getErrorCode(), "Unexpected mixed-type vendor code");
+      }
+    }
+  }
+
+  @Test
+  public void shouldStageBindTimestampStringsIntoTzAndNtzColumns() throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      execute(connection, "ALTER SESSION SET TIMEZONE = 'America/Los_Angeles'");
+      // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 1
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 1");
+      // And A temporary table with columns (ts_tz TIMESTAMP_TZ, ts_ntz TIMESTAMP_NTZ) exists
+      String tableName =
+          createTempTable(
+              connection, "ud_large_bindings_", "ts_tz TIMESTAMP_TZ, ts_ntz TIMESTAMP_NTZ");
+      long beforeInsert = countSystemBindFiles(connection);
+
+      // When timestamp strings with explicit and implicit offsets are inserted using multirow
+      // binding
+      try (PreparedStatement preparedStatement =
+          connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?, ?)")) {
+        preparedStatement.setString(1, "2017-11-30 18:17:05.123456789 +08:00");
+        preparedStatement.setString(2, "2017-11-30 18:17:05.123456789");
+        preparedStatement.addBatch();
+        preparedStatement.setString(1, "2017-05-03 16:44:42.0");
+        preparedStatement.setString(2, "2017-05-03 16:44:42.0");
+        preparedStatement.addBatch();
+        int[] counts = preparedStatement.executeBatch();
+        assertEquals(2, counts.length, "Expected two timestamp-string rows");
+      }
+
+      // Then the bind file on SYSTEM$BIND from the last bulk insert should contain the same values
+      // as the bound parameters
+      assertTrue(
+          countSystemBindFiles(connection) > beforeInsert,
+          "Timestamp-string batch at threshold 1 should upload a bind file to SYSTEM$BIND");
+
+      // And the TZ and NTZ values should preserve their expected timestamps and offsets
+      try (Statement statement = connection.createStatement();
+          ResultSet resultSet =
+              statement.executeQuery(
+                  "SELECT TO_VARCHAR(ts_tz, 'YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM'),"
+                      + " TO_VARCHAR(ts_ntz, 'YYYY-MM-DD HH24:MI:SS.FF9') FROM "
+                      + tableName
+                      + " ORDER BY ts_ntz DESC")) {
+        assertTrue(resultSet.next(), "Expected explicit-offset timestamp row");
+        assertEquals(
+            "2017-11-30 18:17:05.123456789 +0800",
+            resultSet.getString(1),
+            "Unexpected TIMESTAMP_TZ with explicit offset");
+        assertFalse(resultSet.wasNull(), "Explicit-offset TIMESTAMP_TZ should not be NULL");
+        assertEquals(
+            "2017-11-30 18:17:05.123456789",
+            resultSet.getString(2),
+            "Unexpected TIMESTAMP_NTZ with fractional seconds");
+        assertFalse(resultSet.wasNull(), "Fractional TIMESTAMP_NTZ should not be NULL");
+
+        assertTrue(resultSet.next(), "Expected session-offset timestamp row");
+        assertEquals(
+            "2017-05-03 16:44:42.000000000 -0700",
+            resultSet.getString(1),
+            "Unexpected TIMESTAMP_TZ with session offset");
+        assertFalse(resultSet.wasNull(), "Session-offset TIMESTAMP_TZ should not be NULL");
+        assertEquals(
+            "2017-05-03 16:44:42.000000000",
+            resultSet.getString(2),
+            "Unexpected TIMESTAMP_NTZ without fractional input");
+        assertFalse(resultSet.wasNull(), "Whole-second TIMESTAMP_NTZ should not be NULL");
+        assertFalse(resultSet.next(), "Expected exactly two timestamp-string rows");
       }
     }
   }
@@ -465,6 +664,20 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
         connection,
         "ud_large_bindings_null_",
         "id INTEGER, colA DOUBLE, colB FLOAT, colC VARCHAR, colD NUMBER, colE INTEGER");
+  }
+
+  private static void assertMixedNullFloatRow(
+      ResultSet resultSet, int expectedId, boolean valueIsNull) throws SQLException {
+    assertTrue(resultSet.next(), "Expected mixed-null row " + expectedId);
+    assertEquals(expectedId, resultSet.getInt(1), "Unexpected mixed-null row id");
+    assertFalse(resultSet.wasNull(), "Mixed-null row id should not be NULL");
+    float value = resultSet.getFloat(2);
+    if (valueIsNull) {
+      assertTrue(resultSet.wasNull(), "Expected NULL FLOAT for id " + expectedId);
+    } else {
+      assertFalse(resultSet.wasNull(), "Expected non-NULL FLOAT for id " + expectedId);
+      assertEquals(4.0f, value, 0.0f, "Unexpected FLOAT for id " + expectedId);
+    }
   }
 
   private void insertAllNullRow(Connection connection, String tableName) throws Exception {

@@ -200,33 +200,14 @@ static void check_type_matrix_row(StatementHandleWrapper& stmt, int row) {
   require_ts(get_data<SQL_C_TYPE_TIMESTAMP>(stmt, 10), 2023, 6, 20, 14, 22, 33, 987654321);
 }
 
-// Returns the RFC-4180 hazard string for row i (7-cycle rotation):
-//   0 – comma, 1 – double-quote, 2 – newline, 3 – backslash,
-//   4 – empty string, 5 – NULL (indicator set by caller), 6 – UTF-8 multibyte.
-static std::string make_hazard_string(int i) {
-  switch (i % 7) {
-    case 0:
-      return "val," + std::to_string(i);
-    case 1:
-      return "say\"" + std::to_string(i) + "\"";
-    case 2:
-      return "a\nb";
-    case 3:
-      return "C:\\dir\\" + std::to_string(i);
-    case 4:
-      return "";
-    case 5:
-      return "";  // NULL — indicator must be SQL_NULL_DATA
-    case 6:
-      return "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e";  // 日本語
-  }
-  return "";
-}
+static constexpr const char* kCsvHazardCycle[] = {
+    "val,0", "say\"1\"",  "a\nb", "C:\\dir\\3", "",     nullptr, "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e",
+    "\"",    ",",         "\n",   "\r\n",       "\"\"", "null",  "\\\n",
+    "\",",   "\\\",\\\"",
+};
+static constexpr int kCsvHazardCycleLen = static_cast<int>(sizeof(kCsvHazardCycle) / sizeof(kCsvHazardCycle[0]));
+static constexpr int kJapaneseHazardIndex = 6;
 
-// Bulk-inserts `count` rows into `table`(id BIGINT, txt VARCHAR) with hazard
-// strings via column-wise ODBC array binding.
-// 33000 rows × 2 cols = 66000 cells, above the default 65280 threshold.
-// Returns the query ID of the INSERT via SQL_SF_STMT_ATTR_LAST_QUERY_ID.
 static std::string bulk_insert_hazard_strings(Connection& conn, const std::string& table, int count) {
   constexpr int TXT_BUF = 128;
   std::vector<SQLBIGINT> ids(count);
@@ -237,12 +218,12 @@ static std::string bulk_insert_hazard_strings(Connection& conn, const std::strin
 
   for (int i = 0; i < count; i++) {
     ids[i] = static_cast<SQLBIGINT>(i);
-    if (i % 7 == 5) {
+    const char* hazard = kCsvHazardCycle[i % kCsvHazardCycleLen];
+    if (hazard == nullptr) {
       txt_inds[i] = SQL_NULL_DATA;
     } else {
-      std::string s = make_hazard_string(i);
-      std::strncpy(&txts[static_cast<size_t>(i) * TXT_BUF], s.c_str(), TXT_BUF - 1);
-      txt_inds[i] = static_cast<SQLLEN>(s.size());
+      std::strncpy(&txts[static_cast<size_t>(i) * TXT_BUF], hazard, TXT_BUF - 1);
+      txt_inds[i] = static_cast<SQLLEN>(std::strlen(hazard));
     }
   }
 
@@ -440,8 +421,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should preserve CSV escaping hazards via st
   // And A temporary table with columns (id NUMBER, txt VARCHAR) exists
   ScopedTable table(conn, "lb_hazards", "id BIGINT, txt VARCHAR");
 
-  // When 33000 rows are inserted using multirow binding with values cycling every 7 rows through [[0, "val,0"], [1,
-  // "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
+  // When 33000 rows are inserted using multirow binding with values cycling every 16 rows through [[0, "val,0"], [1,
+  // "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"],
+  // [10,
+  // "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
   auto before = list_system_bind_file_count(conn);
   std::string qid = bulk_insert_hazard_strings(conn, table.name(), 33000);
 
@@ -450,78 +433,55 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should preserve CSV escaping hazards via st
   INFO("INSERT query_id: " << qid);
   CHECK(after > before);
 
-  // And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
-  auto verify = conn.execute_fetch("SELECT id, txt FROM " + table.name() + " WHERE id BETWEEN 0 AND 6 ORDER BY id");
+  // And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 15 ORDER BY id" is executed
+  auto verify = conn.execute_fetch("SELECT id, txt FROM " + table.name() + " WHERE id BETWEEN 0 AND 15 ORDER BY id");
 
   // Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""], [5, NULL],
-  // [6, "日本語"]]
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 0);  // row 0: comma
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == "val,0");
-
-  SQLRETURN ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 1: double-quote
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 1);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == "say\"1\"");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 2: newline
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 2);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == "a\nb");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 3: backslash
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 3);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == "C:\\dir\\3");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 4: empty string (distinct from NULL)
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 4);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == "");
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  // row 5: NULL
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 5);
-  CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == std::nullopt);
-
-  ret = SQLFetch(verify.getHandle());
-  REQUIRE_ODBC(ret, verify);
-  CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == 6);
-  {
-    SQLCHAR buffer[128];
-    memset(buffer, 0xFF, sizeof(buffer));
-    SQLLEN indicator = 0;
-    ret = SQLGetData(verify.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    REQUIRE_ODBC(ret, verify);
-    WINDOWS_ONLY {
-      // Win-1252 double-encoding: 9 UTF-8 bytes → 19 bytes (see string_conversion_to_c_binary).
-      CHECK(indicator == 19);
-      CHECK(buffer[0] == 0xC3);
-      CHECK(buffer[1] == 0xA6);
-      CHECK(buffer[2] == 0xE2);
-      CHECK(buffer[3] == 0x80);
-      CHECK(buffer[4] == 0x94);
+  // [6, "日本語"], [7, "\""], [8, ","], [9, "\n"], [10, "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","],
+  // [15, "\\\",\\\""]]
+  for (int id = 0; id < kCsvHazardCycleLen; id++) {
+    if (id > 0) {
+      SQLRETURN ret = SQLFetch(verify.getHandle());
+      REQUIRE_ODBC(ret, verify);
     }
-    UNIX_ONLY {
-      // Raw UTF-8: [E6 97 A5 E6 9C AC E8 AA 9E]
-      CHECK(indicator == 9);
-      CHECK(buffer[0] == 0xE6);
-      CHECK(buffer[1] == 0x97);
-      CHECK(buffer[2] == 0xA5);
-      CHECK(buffer[3] == 0xE6);
-      CHECK(buffer[4] == 0x9C);
-      CHECK(buffer[5] == 0xAC);
-      CHECK(buffer[6] == 0xE8);
-      CHECK(buffer[7] == 0xAA);
-      CHECK(buffer[8] == 0x9E);
+    INFO("id=" << id);
+    CHECK(get_data<SQL_C_SBIGINT>(verify, 1) == id);
+    if (id == kJapaneseHazardIndex) {
+      SQLCHAR buffer[128];
+      memset(buffer, 0xFF, sizeof(buffer));
+      SQLLEN indicator = 0;
+      SQLRETURN ret = SQLGetData(verify.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+      REQUIRE_ODBC(ret, verify);
+      WINDOWS_ONLY {
+        // Win-1252 double-encoding: 9 UTF-8 bytes → 19 bytes (see string_conversion_to_c_binary).
+        CHECK(indicator == 19);
+        CHECK(buffer[0] == 0xC3);
+        CHECK(buffer[1] == 0xA6);
+        CHECK(buffer[2] == 0xE2);
+        CHECK(buffer[3] == 0x80);
+        CHECK(buffer[4] == 0x94);
+      }
+      UNIX_ONLY {
+        // Raw UTF-8: [E6 97 A5 E6 9C AC E8 AA 9E]
+        CHECK(indicator == 9);
+        CHECK(buffer[0] == 0xE6);
+        CHECK(buffer[1] == 0x97);
+        CHECK(buffer[2] == 0xA5);
+        CHECK(buffer[3] == 0xE6);
+        CHECK(buffer[4] == 0x9C);
+        CHECK(buffer[5] == 0xAC);
+        CHECK(buffer[6] == 0xE8);
+        CHECK(buffer[7] == 0xAA);
+        CHECK(buffer[8] == 0x9E);
+      }
+    } else if (kCsvHazardCycle[id] == nullptr) {
+      CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == std::nullopt);
+    } else {
+      CHECK(get_data_optional<SQL_C_CHAR>(verify, 2) == std::string(kCsvHazardCycle[id]));
     }
   }
 
-  ret = SQLFetch(verify.getHandle());
+  SQLRETURN ret = SQLFetch(verify.getHandle());
   CHECK(ret == SQL_NO_DATA);
 }
 

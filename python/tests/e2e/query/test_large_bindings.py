@@ -137,27 +137,29 @@ def bulk_insert_types(cursor, table: str, count: int) -> None:
     cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
 
 
-def hazard_string(i: int) -> str | None:
-    match i % 7:
-        case 0:
-            return f"val,{i}"
-        case 1:
-            return f'say"{i}"'
-        case 2:
-            return "a\nb"
-        case 3:
-            return f"C:\\dir\\{i}"
-        case 4:
-            return ""
-        case 5:
-            return None
-        case 6:
-            return "日本語"
-    return ""
+CSV_HAZARD_CYCLE: tuple[str | None, ...] = (
+    "val,0",
+    'say"1"',
+    "a\nb",
+    "C:\\dir\\3",
+    "",
+    None,
+    "日本語",
+    '"',
+    ",",
+    "\n",
+    "\r\n",
+    '""',
+    "null",
+    "\\\n",
+    '",',
+    '\\",\\"',
+)
 
 
 def bulk_insert_hazard_strings(cursor, table: str, count: int) -> None:
-    rows = [(i, hazard_string(i)) for i in range(count)]
+    cycle = CSV_HAZARD_CYCLE
+    rows = [(i, cycle[i % len(cycle)]) for i in range(count)]
     placeholders = _insert_placeholders(cursor, 2)
     cursor.executemany(f"INSERT INTO {table} VALUES ({placeholders})", rows)
 
@@ -272,9 +274,10 @@ class TestLargeBindings:
         table = f"{tmp_schema}.lb_hazards"
         cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table} (id NUMBER, txt VARCHAR)")
 
-        # When 33000 rows are inserted using multirow binding with values cycling every 7 rows
+        # When 33000 rows are inserted using multirow binding with values cycling every 16 rows
         # through [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"], [3, "C:\\dir\\3"], [4, ""],
-        # [5, NULL], [6, "日本語"]]
+        # [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"], [10, "\r\n"], [11, "\"\""],
+        # [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
         before = list_bind_stage_file_count(cursor.connection)
         bulk_insert_hazard_strings(cursor, table, 33000)
 
@@ -283,11 +286,12 @@ class TestLargeBindings:
         after = list_bind_stage_file_count(cursor.connection)
         assert_bind_stage_file_count_increased(cursor.connection, before, after)
 
-        # And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id" is executed
-        cursor.execute(f"SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 6 ORDER BY id")
+        # And Query "SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 15 ORDER BY id" is executed
+        cursor.execute(f"SELECT id, txt FROM {table} WHERE id BETWEEN 0 AND 15 ORDER BY id")
 
         # Then Result should contain rows [[0, "val,0"], [1, "say\"1\""], [2, "a\nb"],
-        # [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"]]
+        # [3, "C:\\dir\\3"], [4, ""], [5, NULL], [6, "日本語"], [7, "\""], [8, ","], [9, "\n"],
+        # [10, "\r\n"], [11, "\"\""], [12, "null"], [13, "\\\n"], [14, "\","], [15, "\\\",\\\""]]
         assert cursor.fetchall() == [
             (0, "val,0"),
             (1, 'say"1"'),
@@ -296,6 +300,15 @@ class TestLargeBindings:
             (4, ""),
             (5, None),
             (6, "日本語"),
+            (7, '"'),
+            (8, ","),
+            (9, "\n"),
+            (10, "\r\n"),
+            (11, '""'),
+            (12, "null"),
+            (13, "\\\n"),
+            (14, '",'),
+            (15, '\\",\\"'),
         ]
 
     def test_should_not_stage_bind_scalar_or_non_insert_queries_even_when_threshold_is_crossed(self, cursor):
