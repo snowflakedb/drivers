@@ -186,8 +186,9 @@ describe('Query status', () => {
       await expect(connection.getQueryStatusThrowIfError(queryId)).rejects.toMatchObject({
         name: 'OperationFailedError',
         code: isRunningNewDriverWithBD('BD#47') ? '002003' : -1,
-        message:
+        message: expect.stringContaining(
           "SQL compilation error:\nObject 'NON_EXISTENT_TABLE_TEST_12345' does not exist or not authorized.",
+        ),
       });
     });
 

@@ -867,8 +867,13 @@ behavior_differences:
     impact: low
     old_driver_behavior: |
       An unknown query ID (`queries[]` empty) returns `'NO_QUERY_DATA'`.
+      `'NO_QUERY_DATA'` is not still-running, so `getResultsFromQueryId` throws
+      ClientError 460002 on the first status poll if query id is not found.
     new_driver_behavior: |
       An unknown query ID returns `'NO_DATA'`.
+      `'NO_DATA'` is still-running, so `getResultsFromQueryId` polls 25 times (~105s)
+      and then throws ClientError 460002 with
+      `Cannot retrieve data. No information returned from server for query <id>`.
     status_rationale: |
       `'NO_QUERY_DATA'` is a custom status used only by the Node.js driver. Python and
       JDBC, map a missing monitoring row to `NO_DATA`. Moreover NodeJs also defines

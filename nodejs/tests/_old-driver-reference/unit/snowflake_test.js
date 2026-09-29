@@ -1070,60 +1070,10 @@ describe('connection.fetchResult() statement failure', function () {
   });
 });
 
-describe('connection.getResultsFromQueryId() asynchronous errors', function () {
-  const queryId = '00000000-0000-0000-0000-000000000000';
-
-  it('not success status', function (done) {
-    const connection = snowflake.createConnection(connectionOptions);
-    async.series(
-      [
-        function (callback) {
-          connection.connect(function (err) {
-            assert.ok(!err, JSON.stringify(err));
-            callback();
-          });
-        },
-        async function () {
-          try {
-            await connection.getResultsFromQueryId({ queryId: queryId });
-            assert.fail();
-          } catch (err) {
-            assert.strictEqual(err.code, ErrorCodes.ERR_GET_RESULTS_QUERY_ID_NOT_SUCCESS_STATUS);
-          }
-        },
-        function (callback) {
-          connection.destroy(function (err) {
-            assert.ok(!err, JSON.stringify(err));
-            callback();
-          });
-        },
-      ],
-      done,
-    );
-  });
-});
-
-describe('connection.getResultsFromQueryId() synchronous errors', function () {
-  const connection = snowflake.createConnection(connectionOptions);
-
-  const testCases = [
-    {
-      name: 'invalid queryId',
-      options: { queryId: 'invalidQueryId' },
-      errorCode: ErrorCodes.ERR_GET_RESPONSE_QUERY_INVALID_UUID,
-    },
-  ];
-
-  testCases.forEach((testCase) => {
-    it(testCase.name, async function () {
-      try {
-        await connection.getResultsFromQueryId(testCase.options);
-      } catch (err) {
-        assert.strictEqual(err.code, testCase.errorCode);
-      }
-    });
-  });
-});
+// The "connection.getResultsFromQueryId() asynchronous errors" and
+// "connection.getResultsFromQueryId() synchronous errors" describe blocks that used to live
+// here have been migrated to nodejs/tests/e2e/query/get-results-from-query-id.test.ts and
+// removed from this file.
 
 describe('connection.getQueryStatus() synchronous errors', function () {
   const connection = snowflake.createConnection(connectionOptions);

@@ -15,6 +15,7 @@ export type ConnectionOptions =
 
 export type RowStatement = newSnowflakeSdk.RowStatement | oldSnowflakeSdk.RowStatement;
 export type StatementOption = newSnowflakeSdk.StatementOption | oldSnowflakeSdk.StatementOption;
+export type FetchResultOptions = newSnowflakeSdk.FetchResultOptions;
 export type Binds = newSnowflakeSdk.Binds | oldSnowflakeSdk.Binds;
 export type RowMode = newSnowflakeSdk.RowMode | oldSnowflakeSdk.RowMode;
 export type QueryStatus = newSnowflakeSdk.QueryStatus | oldSnowflakeSdk.QueryStatus;

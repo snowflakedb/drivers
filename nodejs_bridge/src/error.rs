@@ -7,7 +7,7 @@ pub trait ToJsError {
     fn to_js_error(&self, env: Env) -> napi::Error;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum BridgeError {
     Core(Arc<ApiError>),
     UnusableConnection(ConnectionOperation, UnusableConnection),
@@ -20,16 +20,21 @@ pub(crate) enum BridgeError {
     AlreadyConnected,
     AlreadyConnecting,
     ConnectionTerminated,
+    QueryIdNoData(String),
+    QueryIdNotSuccess {
+        query_id: String,
+        status: String,
+    },
     Message(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum UnusableConnection {
     NeverEstablished,
     Terminated,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ConnectionOperation {
     Request,
     Destroy,
@@ -159,6 +164,30 @@ impl ClientError {
         }
     }
 
+    fn of_query_id_no_data(query_id: &str) -> Self {
+        Self {
+            name: Some("ClientError"),
+            message: format!(
+                "Cannot retrieve data. No information returned from server for query {query_id}"
+            ),
+            code: Some(ErrorCode::Driver(460002)),
+            sql_state: None,
+            cause: None,
+            is_fatal: true,
+        }
+    }
+
+    fn of_query_id_not_success(query_id: &str, status: &str) -> Self {
+        Self {
+            name: Some("ClientError"),
+            message: format!("Status of query {query_id} is {status}, results are unavailable"),
+            code: Some(ErrorCode::Driver(460003)),
+            sql_state: None,
+            cause: None,
+            is_fatal: true,
+        }
+    }
+
     fn build(&self, env: Env) -> napi::Result<napi::Error> {
         let mut error = new_js_error(&env, self.message.clone())?;
         if let Some(name) = self.name {
@@ -243,6 +272,14 @@ impl ToJsError for BridgeError {
             BridgeError::ConnectionTerminated => ClientError::of_connection_terminated()
                 .build(env)
                 .unwrap_or_else(construct_js_error_fail),
+            BridgeError::QueryIdNoData(query_id) => ClientError::of_query_id_no_data(query_id)
+                .build(env)
+                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::QueryIdNotSuccess { query_id, status } => {
+                ClientError::of_query_id_not_success(query_id, status)
+                    .build(env)
+                    .unwrap_or_else(construct_js_error_fail)
+            }
             BridgeError::Message(message) => napi::Error::from_reason(message.clone()),
         }
     }
@@ -426,5 +463,33 @@ mod tests {
         );
         assert_eq!(error.sql_state.as_deref(), Some("08003"));
         assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn no_data_for_a_query_id_is_a_fatal_client_error() {
+        let error = ClientError::of_query_id_no_data("qid");
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("460002".to_string()));
+        assert_eq!(
+            error.message,
+            "Cannot retrieve data. No information returned from server for query qid"
+        );
+        assert_eq!(error.sql_state, None);
+        assert!(error.is_fatal);
+    }
+
+    #[test]
+    fn a_non_success_terminal_status_is_a_fatal_client_error() {
+        let error = ClientError::of_query_id_not_success("qid", "RESTARTED");
+
+        assert_eq!(error.name, Some("ClientError"));
+        assert_eq!(code_of(&error), Some("460003".to_string()));
+        assert_eq!(
+            error.message,
+            "Status of query qid is RESTARTED, results are unavailable"
+        );
+        assert_eq!(error.sql_state, None);
+        assert!(error.is_fatal);
     }
 }

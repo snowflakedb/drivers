@@ -8,6 +8,7 @@ import { expect } from 'vitest';
 import type {
   Connection,
   ConnectionOptions,
+  FetchResultOptions,
   FileAndStageBindStatement,
   QueryStatus,
   RowStatement,
@@ -155,6 +156,41 @@ export function executeAsync(
   rows: Record<string, unknown>[];
 }> {
   return sendExecute(connection, sqlText, additionalParameters).completion;
+}
+
+export function getResultFromQueryIdForTest(
+  connection: Connection,
+  options: FetchResultOptions,
+): Promise<RowStatement | FileAndStageBindStatement> {
+  return Promise.resolve(
+    connection.getResultsFromQueryId({
+      ...options,
+      _testOnlyRetryIntervalMs: 1,
+    } as never),
+  );
+}
+
+export function getResultsFromQueryIdAsync(
+  connection: Connection,
+  options: FetchResultOptions,
+): Promise<{
+  statement: RowStatement | FileAndStageBindStatement;
+  rows: Record<string, unknown>[];
+}> {
+  return new Promise((resolve, reject) => {
+    void getResultFromQueryIdForTest(connection, {
+      ...options,
+      complete: (error, statement, rows) => {
+        if (error) {
+          reject({ error, statement });
+        } else {
+          resolve({ statement, rows: rows as Record<string, unknown>[] });
+        }
+      },
+    }).catch((error: unknown) => {
+      reject({ error, statement: undefined });
+    });
+  });
 }
 
 export function collectStreamedRows(statement: RowStatement): Promise<Record<string, unknown>[]> {

@@ -41,6 +41,7 @@ export declare class Connection {
   execute(query: string, bindings?: QueryBindings | undefined | null, parameters?: Record<string, string> | undefined | null): Statement
   getQueryStatus(queryId: string): Promise<QueryStatus>
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
+  waitForQueryResult(queryId: string, retryIntervalMs?: number | undefined | null): Promise<undefined>
   getQueryResult(queryId: string): Statement
   destroy(): Promise<undefined>
 }

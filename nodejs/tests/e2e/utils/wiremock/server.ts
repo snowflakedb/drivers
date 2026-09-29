@@ -49,7 +49,13 @@ export class WiremockServer {
     };
   }
 
-  async stub(mapping: StubMapping): Promise<void> {
+  async stub(mapping: StubMapping | StubMapping[]): Promise<void> {
+    if (Array.isArray(mapping)) {
+      for (const item of mapping) {
+        await this.stub(item);
+      }
+      return;
+    }
     const { status, text } = await this.#admin('POST', '/__admin/mappings', mapping);
     if (status !== 200 && status !== 201) {
       throw new Error(`Failed to register WireMock stub: ${status} ${text}`);

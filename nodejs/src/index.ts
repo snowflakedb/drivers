@@ -291,8 +291,13 @@ export class Connection {
     });
   }
 
-  getResultsFromQueryId(): RowStatement | FileAndStageBindStatement {
-    throw new Error('Not implemented');
+  async getResultsFromQueryId(
+    options: FetchResultOptions,
+  ): Promise<RowStatement | FileAndStageBindStatement> {
+    const retryIntervalMs = (options as { _testOnlyRetryIntervalMs?: number })
+      ._testOnlyRetryIntervalMs;
+    await this.#core.waitForQueryResult(options.queryId, retryIntervalMs);
+    return this.fetchResult(options);
   }
 
   #runStatement(

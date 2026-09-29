@@ -24,7 +24,7 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 - they both require `queryId` which is optional in StatementOption
 - most of `StatementOption` does not apply to fetch/get results. They work only for `.execute()`
-- `getResultsFromQueryId` has inconsistent async patterns: it's an async method but also accepts a callback for error/result handling. This mixed pattern should be reviewed when designing the new async-first API for the entire driver
+- `getResultsFromQueryId` has inconsistent async patterns: it's an async method but also accepts a `complete` callback. The Promise settles when status polling finishes; `complete` is invoked later when `fetchResult` has collected rows. Taking both a callback and a Promise is a poor Node API. A later BCR should drop `complete`, settle the Promise when fetch is finished, and always treat `streamResult` as true so callers can `streamRows()` / `fetchRows()` after await. `fetchResult` remains the callback-shaped counterpart.
 
 ### snowflake .connectAsync(callback)
 
@@ -65,3 +65,4 @@ These are potential improvements to consider after the UD release:
 - Default `rowMode` is `'object'`, which keys each row by column name and silently overwrites duplicates (last value wins). `'object_with_renamed_duplicated_columns'` already exists as an opt-in that keeps every column by renaming the 2nd+ occurrence (`NAME_2`, `NAME_3`, …, skipping names already taken). Consider making that the default instead of `'object'`, so joins and other queries with repeated names do not drop values.
 - `QueryStatus` can be exported enum. `connection.isStillRunning(status)` and `connection.isAnError(status)` could take status as both string or enum (no BCR). `connection.getQueryStatus()` could also return this enum. It would match the python driver (BCR).
 - `connection.isStillRunning(status)` and `connection.isAnError(status)` are instance methods that do not use connection state; classifying a status does not belong on a connection instance. Python defines them as `@staticmethod`s on `Connection`. A later BCR could move them to static methods (or package-level utils) to match.
+- `getResultsFromQueryId` should drop `complete`, settle the returned Promise when fetch is finished, and always treat `streamResult` as true. Taking a callback and returning a Promise is a mixed pattern; see the typing section above.

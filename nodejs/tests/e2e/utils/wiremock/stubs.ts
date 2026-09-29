@@ -176,8 +176,13 @@ export function authenticatorRequestSuccess(): StubMapping {
   };
 }
 
-export function monitoringQueryStatus(queryId: string, status: string): StubMapping {
+export function monitoringQueryStatus(
+  queryId: string,
+  status: string,
+  queryFields: Record<string, unknown> = {},
+): StubMapping {
   return {
+    priority: 1,
     request: {
       method: 'GET',
       urlPathPattern: `/monitoring/queries/+${queryId}.*`,
@@ -185,7 +190,7 @@ export function monitoringQueryStatus(queryId: string, status: string): StubMapp
     response: jsonResponse(200, {
       success: true,
       data: {
-        queries: [{ status, id: queryId }],
+        queries: [{ status, id: queryId, ...queryFields }],
       },
     }),
   };
@@ -203,4 +208,20 @@ export function monitoringQueryFailure(
     },
     response: jsonResponse(httpStatus, body),
   };
+}
+
+export function monitoringQueryStatuses(
+  queryId: string,
+  statuses: readonly string[],
+): StubMapping[] {
+  const scenarioName = `query-status-${queryId}`;
+  return statuses.map((status, index) => {
+    const mapping = monitoringQueryStatus(queryId, status);
+    mapping.scenarioName = scenarioName;
+    mapping.requiredScenarioState = index === 0 ? 'Started' : `s${index}`;
+    if (index < statuses.length - 1) {
+      mapping.newScenarioState = `s${index + 1}`;
+    }
+    return mapping;
+  });
 }

@@ -21,6 +21,22 @@ pub enum QueryStatus {
 }
 
 impl QueryStatus {
+    const ALL: [(Self, &'static str); 13] = [
+        (Self::Running, "RUNNING"),
+        (Self::Aborting, "ABORTING"),
+        (Self::Success, "SUCCESS"),
+        (Self::FailedWithError, "FAILED_WITH_ERROR"),
+        (Self::Aborted, "ABORTED"),
+        (Self::Queued, "QUEUED"),
+        (Self::FailedWithIncident, "FAILED_WITH_INCIDENT"),
+        (Self::Disconnected, "DISCONNECTED"),
+        (Self::ResumingWarehouse, "RESUMING_WAREHOUSE"),
+        (Self::QueuedReparingWarehouse, "QUEUED_REPARING_WAREHOUSE"),
+        (Self::Restarted, "RESTARTED"),
+        (Self::Blocked, "BLOCKED"),
+        (Self::NoData, "NO_DATA"),
+    ];
+
     pub(crate) fn parse(status_name: &str) -> Self {
         Self::from_str(status_name).unwrap_or(Self::NoData)
     }
@@ -47,28 +63,28 @@ impl QueryStatus {
                 | Self::NoData
         )
     }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        for (status, name) in Self::ALL {
+            if status == self {
+                return name;
+            }
+        }
+        unreachable!("QueryStatus::ALL lists every variant")
+    }
 }
 
 impl FromStr for QueryStatus {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_uppercase().as_str() {
-            "RUNNING" => Ok(Self::Running),
-            "ABORTING" => Ok(Self::Aborting),
-            "SUCCESS" => Ok(Self::Success),
-            "FAILED_WITH_ERROR" => Ok(Self::FailedWithError),
-            "ABORTED" => Ok(Self::Aborted),
-            "QUEUED" => Ok(Self::Queued),
-            "FAILED_WITH_INCIDENT" => Ok(Self::FailedWithIncident),
-            "DISCONNECTED" => Ok(Self::Disconnected),
-            "RESUMING_WAREHOUSE" => Ok(Self::ResumingWarehouse),
-            "QUEUED_REPARING_WAREHOUSE" => Ok(Self::QueuedReparingWarehouse),
-            "RESTARTED" => Ok(Self::Restarted),
-            "BLOCKED" => Ok(Self::Blocked),
-            "NO_DATA" => Ok(Self::NoData),
-            _ => Err(()),
+        let upper = s.to_ascii_uppercase();
+        for (status, name) in Self::ALL {
+            if name == upper {
+                return Ok(status);
+            }
         }
+        Err(())
     }
 }
 
@@ -104,6 +120,16 @@ pub(crate) fn require_valid_query_id(query_id: &str) -> Result<(), BridgeError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_status_parse_roundtrips_as_str_and_is_case_insensitive() {
+        for (status, name) in QueryStatus::ALL {
+            assert_eq!(status.as_str(), name);
+            assert_eq!(QueryStatus::from_str(name), Ok(status));
+        }
+        assert_eq!(QueryStatus::parse("restarted"), QueryStatus::Restarted);
+        assert_eq!(QueryStatus::parse("not-a-status"), QueryStatus::NoData);
+    }
 
     #[test]
     fn query_id_accepts_hyphenated_hex_of_either_case() {
