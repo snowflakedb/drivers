@@ -649,6 +649,144 @@ class TestDriverIdentity:
         assert identity.language_compiler == platform.python_compiler()
 
 
+class TestMfaCallback:
+    class _BoundedCallback:
+        def __init__(self, values):
+            self._inner = iter(values)
+            self.calls = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self.calls += 1
+            if self.calls > 20:
+                raise AssertionError("mfa_callback was advanced after it was exhausted")
+            return next(self._inner)
+
+    def test_advances_callback_iterator_while_connection_init_is_pending(self, mock_db_api):
+        import threading
+
+        callback_advanced = threading.Event()
+        ticks = []
+
+        def mfa_callback():
+            while True:
+                ticks.append(None)
+                callback_advanced.set()
+                yield
+
+        mock_db_api.connection_init.side_effect = lambda _: callback_advanced.wait(timeout=1)
+
+        Connection(user="u", account="a", mfa_callback=mfa_callback)
+
+        assert ticks
+
+    def test_async_advances_callback_iterator_while_connection_init_is_pending(self, mock_async_db_api):
+        import asyncio
+        import threading
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        callback_advanced = threading.Event()
+        ticks = []
+
+        def mfa_callback():
+            while True:
+                ticks.append(None)
+                callback_advanced.set()
+                yield
+
+        async def slow_init(_request):
+            await asyncio.to_thread(callback_advanced.wait, 1)
+
+        mock_async_db_api.connection_init.side_effect = slow_init
+
+        async_connection = AsyncConnection(user="u", account="a", mfa_callback=mfa_callback)
+        asyncio.run(async_connection.connect())
+
+        assert ticks
+
+    def test_exhausted_callback_iterator_waits_for_connection_init(self, mock_db_api):
+        import threading
+
+        init_released = threading.Event()
+        bounded = None
+
+        def mfa_callback():
+            nonlocal bounded
+
+            def remaining():
+                yield
+                init_released.set()
+
+            bounded = self._BoundedCallback(remaining())
+            return bounded
+
+        mock_db_api.connection_init.side_effect = lambda _: init_released.wait(timeout=1)
+
+        Connection(user="u", account="a", mfa_callback=mfa_callback)
+
+        assert bounded is not None
+        assert bounded.calls <= 2
+
+    def test_async_exhausted_callback_iterator_waits_for_connection_init(self, mock_async_db_api):
+        import asyncio
+        import threading
+
+        from snowflake.connector.aio.connection._connection import Connection as AsyncConnection
+
+        init_released = threading.Event()
+        bounded = None
+
+        def mfa_callback():
+            nonlocal bounded
+
+            def remaining():
+                yield
+                init_released.set()
+
+            bounded = self._BoundedCallback(remaining())
+            return bounded
+
+        async def slow_init(_request):
+            await asyncio.to_thread(init_released.wait, 1)
+
+        mock_async_db_api.connection_init.side_effect = slow_init
+
+        async_connection = AsyncConnection(user="u", account="a", mfa_callback=mfa_callback)
+        asyncio.run(async_connection.connect())
+
+        assert bounded is not None
+        assert bounded.calls <= 2
+
+    def test_connection_init_error_surfaces_when_callback_raises(self, mock_db_api):
+        import threading
+
+        init_started = threading.Event()
+        callback_raised = threading.Event()
+
+        def mfa_callback():
+            init_started.wait(timeout=1)
+            callback_raised.set()
+
+            def iterator():
+                raise RuntimeError("callback boom")
+                yield
+
+            return iterator()
+
+        def slow_fail(_request):
+            init_started.set()
+            callback_raised.wait(timeout=1)
+            raise ProgrammingError(msg="init failed", errno=ER_INVALID_VALUE)
+
+        mock_db_api.connection_init.side_effect = slow_fail
+
+        with pytest.raises(ProgrammingError, match="init failed"):
+            Connection(user="u", account="a", mfa_callback=mfa_callback)
+
+
 class TestWifConflictErrnoRemap:
     """Unit tests for the WIF cross-param errno remap in Connection._connect().
 

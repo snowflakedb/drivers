@@ -497,6 +497,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             isa: std::env::consts::ARCH.to_string(),
             core_version: env!("CARGO_PKG_VERSION").to_string(),
         },
+        spcs_token: login_parameters.spcs_token.clone(),
         ..Default::default()
     }
 }
@@ -799,7 +800,6 @@ pub async fn auth_request_data(
     crl_worker: SharedCrlWorker,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
-    data.spcs_token = login_parameters.spcs_token.clone();
 
     if let Some(secondary_roles) = login_parameters.secondary_roles.as_deref()
         && !secondary_roles.is_empty()
@@ -1072,13 +1072,32 @@ pub async fn auth_request_data(
     Ok(data)
 }
 
+const LOGIN_REQUEST_TIMEOUT: Duration =
+    Duration::from_millis(if cfg!(test) { 200 } else { 30_000 });
+
+#[derive(Clone, Copy)]
+struct LoginHttpOptions {
+    timeout: Option<Duration>,
+    allow_post_retry: bool,
+}
+
+impl LoginHttpOptions {
+    fn standard() -> Self {
+        Self {
+            timeout: Some(LOGIN_REQUEST_TIMEOUT),
+            allow_post_retry: true,
+        }
+    }
+}
+
 async fn send_login_request(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     login_request: &AuthRequest,
     policy: &RetryPolicy,
+    options: LoginHttpOptions,
 ) -> Result<AuthResponse, RestError> {
-    use crate::http::retry::{HttpContext, execute_with_retry};
+    use crate::http::retry::HttpContext;
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
@@ -1135,8 +1154,10 @@ async fn send_login_request(
             .json(login_request)
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
-            .header("Authorization", "Snowflake Token=\"None\"")
-            .timeout(Duration::from_secs(30));
+            .header("Authorization", "Snowflake Token=\"None\"");
+        if let Some(timeout) = options.timeout {
+            builder = builder.timeout(timeout);
+        }
         if let Some(signer) = dpop_signer.as_ref() {
             // Signing is infallible once `from_jwk_json` succeeded above
             // (only openssl primitive failures could surface here, which
@@ -1148,7 +1169,10 @@ async fn send_login_request(
         builder
     };
 
-    let http_ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
+    let mut http_ctx = HttpContext::new(Method::POST, "/session/v1/login-request");
+    if options.allow_post_retry {
+        http_ctx = http_ctx.allow_post_retry();
+    }
 
     let response = execute_with_retry(build_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
@@ -1158,6 +1182,119 @@ async fn send_login_request(
         })?;
 
     read_response_json::<auth::AuthResponseMain>(response).await
+}
+
+fn is_duo_challenge(next_action: Option<&str>) -> bool {
+    matches!(
+        next_action,
+        Some("EXT_AUTHN_DUO_ALL" | "EXT_AUTHN_DUO_PUSH_N_PASSCODE")
+    )
+}
+
+fn remaining_login_timeout(login_deadline: Option<Instant>) -> Result<Option<Duration>, RestError> {
+    match login_deadline {
+        Some(deadline) => {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                OperationTimeoutSnafu {
+                    operation: "login".to_string(),
+                    budget: Duration::ZERO,
+                    ids: QueryIds::default(),
+                }
+                .fail()
+            } else {
+                Ok(Some(remaining))
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+fn duo_continuation_failed(response: AuthResponse) -> Result<AuthResponse, RestError> {
+    let message = response
+        .message
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "MFA authentication failed".to_string());
+    let code = response
+        .code
+        .as_deref()
+        .and_then(|c| c.parse::<i32>().ok())
+        .unwrap_or(GS_CODE_UNAVAILABLE);
+    LoginSnafu {
+        message,
+        code,
+        reauthentication_required: false,
+    }
+    .fail()
+}
+
+async fn complete_duo_challenge(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    login_request: &AuthRequest,
+    initial_response: AuthResponse,
+    retry_policy: &RetryPolicy,
+    login_deadline: Option<Instant>,
+) -> Result<AuthResponse, RestError> {
+    if !is_duo_challenge(initial_response.data.next_action.as_deref()) {
+        return Ok(initial_response);
+    }
+
+    let in_flight_ctx =
+        initial_response
+            .data
+            .in_flight_ctx
+            .clone()
+            .context(MissingResponseFieldSnafu {
+                field: "MFA in-flight context",
+            })?;
+    let mut push_request = login_request.clone();
+    push_request.in_flight_ctx = Some(in_flight_ctx);
+    push_request.data.ext_authn_duo_method = Some("push".to_string());
+
+    let push_timeout = remaining_login_timeout(login_deadline)?;
+    let mut duo_policy = retry_policy.clone();
+    duo_policy.per_request_timeout = push_timeout;
+    let push_response = send_login_request(
+        client,
+        login_parameters,
+        &push_request,
+        &duo_policy,
+        LoginHttpOptions {
+            timeout: push_timeout,
+            allow_post_retry: false,
+        },
+    )
+    .await?;
+
+    if push_response.data.next_action.as_deref() == Some("EXT_AUTHN_SUCCESS") {
+        let final_in_flight_ctx =
+            push_response
+                .data
+                .in_flight_ctx
+                .clone()
+                .context(MissingResponseFieldSnafu {
+                    field: "MFA success in-flight context",
+                })?;
+        let final_request = AuthRequest {
+            data: base_auth_request_data(login_parameters),
+            in_flight_ctx: Some(final_in_flight_ctx),
+        };
+        return send_login_request(
+            client,
+            login_parameters,
+            &final_request,
+            retry_policy,
+            LoginHttpOptions::standard(),
+        )
+        .await;
+    }
+
+    if push_response.data.token.is_some() {
+        return Ok(push_response);
+    }
+
+    duo_continuation_failed(push_response)
 }
 
 /// Drift C.5: per-request DPoP signing context for `send_login_request`.
@@ -1190,6 +1327,7 @@ pub async fn snowflake_login(
         None,
         None,
         crl_worker,
+        None,
     )
     .await
 }
@@ -1203,7 +1341,8 @@ pub async fn snowflake_login(
         retry_policy,
         prebuilt_credentials,
         xp_backend,
-        crl_worker
+        crl_worker,
+        login_deadline
     ),
     fields(account_name, login_name)
 )]
@@ -1218,6 +1357,7 @@ pub async fn snowflake_login_with_client(
     prebuilt_credentials: Option<Credentials>,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
     crl_worker: SharedCrlWorker,
+    login_deadline: Option<Instant>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -1362,6 +1502,7 @@ pub async fn snowflake_login_with_client(
     tracing::Span::current().record("login_name", &login_request_data.login_name);
     let login_request = AuthRequest {
         data: login_request_data,
+        in_flight_ctx: None,
     };
 
     tracing::debug!(
@@ -1371,8 +1512,23 @@ pub async fn snowflake_login_with_client(
     );
 
     // Send the actual login request
-    let mut auth_response =
-        send_login_request(client, login_parameters, &login_request, retry_policy).await?;
+    let initial_response = send_login_request(
+        client,
+        login_parameters,
+        &login_request,
+        retry_policy,
+        LoginHttpOptions::standard(),
+    )
+    .await?;
+    let mut auth_response = complete_duo_challenge(
+        client,
+        login_parameters,
+        &login_request,
+        initial_response,
+        retry_policy,
+        login_deadline,
+    )
+    .await?;
 
     // Revoke cached token and retry if cached token caused failure
     if !auth_response.success {
@@ -1416,10 +1572,27 @@ pub async fn snowflake_login_with_client(
                     crl_worker.clone(),
                 )
                 .await?;
-                let retry_request = AuthRequest { data: retry_data };
-                auth_response =
-                    send_login_request(client, login_parameters, &retry_request, retry_policy)
-                        .await?;
+                let retry_request = AuthRequest {
+                    data: retry_data,
+                    in_flight_ctx: None,
+                };
+                let retry_response = send_login_request(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_policy,
+                    LoginHttpOptions::standard(),
+                )
+                .await?;
+                auth_response = complete_duo_challenge(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_response,
+                    retry_policy,
+                    login_deadline,
+                )
+                .await?;
             }
         }
         // OAuth refresh-on-failure: when GS rejects the OAuth access token
@@ -1474,10 +1647,27 @@ pub async fn snowflake_login_with_client(
                     crl_worker.clone(),
                 )
                 .await?;
-                let retry_request = AuthRequest { data: retry_data };
-                auth_response =
-                    send_login_request(client, login_parameters, &retry_request, retry_policy)
-                        .await?;
+                let retry_request = AuthRequest {
+                    data: retry_data,
+                    in_flight_ctx: None,
+                };
+                let retry_response = send_login_request(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_policy,
+                    LoginHttpOptions::standard(),
+                )
+                .await?;
+                auth_response = complete_duo_challenge(
+                    client,
+                    login_parameters,
+                    &retry_request,
+                    retry_response,
+                    retry_policy,
+                    login_deadline,
+                )
+                .await?;
             }
         }
     }
@@ -3438,6 +3628,7 @@ mod tests {
             None,
             Some(&backend),
             crate::crl::worker::CrlWorker::shared_lazy(),
+            None,
         )
         .await;
 
@@ -4315,10 +4506,17 @@ mod tests {
                     password: Some("testpass".into()),
                     ..Default::default()
                 },
+                in_flight_ctx: None,
             };
 
-            let result =
-                send_login_request(&client, &params, &auth_req, &RetryPolicy::default()).await;
+            let result = send_login_request(
+                &client,
+                &params,
+                &auth_req,
+                &RetryPolicy::default(),
+                LoginHttpOptions::standard(),
+            )
+            .await;
 
             assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
             assert_eq!(
@@ -4326,6 +4524,601 @@ mod tests {
                 3,
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
+            );
+        }
+
+        #[tokio::test]
+        async fn completes_duo_push_continuation() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |_: &Request| {
+                    if attempt_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "nextAction": "EXT_AUTHN_SUCCESS",
+                                "inFlightCtx": "approved-context"
+                            }
+                        }))
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "session-token",
+                                "masterToken": "master-token",
+                                "sessionId": 42
+                            }
+                        }))
+                    }
+                })
+                .expect(2)
+                .mount(&server)
+                .await;
+
+            let client = reqwest::Client::new();
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let request = AuthRequest {
+                data: AuthRequestData::default(),
+                in_flight_ctx: None,
+            };
+            let initial_response = serde_json::from_value(serde_json::json!({
+                "success": true,
+                "data": {
+                    "nextAction": "EXT_AUTHN_DUO_ALL",
+                    "inFlightCtx": "challenge-context"
+                }
+            }))
+            .unwrap();
+
+            let response = complete_duo_challenge(
+                &client,
+                &params,
+                &request,
+                initial_response,
+                &RetryPolicy::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                response
+                    .data
+                    .token
+                    .as_ref()
+                    .map(|token| token.reveal().as_str()),
+                Some("session-token")
+            );
+        }
+
+        #[tokio::test]
+        async fn accepts_tokens_from_duo_push_response() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "token": "session-token",
+                        "masterToken": "master-token",
+                        "sessionId": 42
+                    }
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let initial_response = serde_json::from_value(serde_json::json!({
+                "success": true,
+                "data": {
+                    "nextAction": "EXT_AUTHN_DUO_PUSH_N_PASSCODE",
+                    "inFlightCtx": "challenge-context"
+                }
+            }))
+            .unwrap();
+            let response = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                initial_response,
+                &RetryPolicy::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                response
+                    .data
+                    .token
+                    .as_ref()
+                    .map(|token| token.reveal().as_str()),
+                Some("session-token")
+            );
+        }
+
+        #[tokio::test]
+        async fn duo_challenge_without_in_flight_ctx_is_missing_response_field() {
+            let initial_response = serde_json::from_value(serde_json::json!({
+                "success": true,
+                "data": {
+                    "nextAction": "EXT_AUTHN_DUO_ALL"
+                }
+            }))
+            .unwrap();
+
+            let result = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &test_login_params(),
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                initial_response,
+                &RetryPolicy::default(),
+                None,
+            )
+            .await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(RestError::MissingResponseField {
+                        field: "MFA in-flight context",
+                        ..
+                    })
+                ),
+                "expected missing MFA in-flight context, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn duo_success_without_in_flight_ctx_is_missing_response_field() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "nextAction": "EXT_AUTHN_SUCCESS"
+                    }
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let initial_response = serde_json::from_value(serde_json::json!({
+                "success": true,
+                "data": {
+                    "nextAction": "EXT_AUTHN_DUO_PUSH_N_PASSCODE",
+                    "inFlightCtx": "challenge-context"
+                }
+            }))
+            .unwrap();
+
+            let result = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                initial_response,
+                &RetryPolicy::default(),
+                None,
+            )
+            .await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(RestError::MissingResponseField {
+                        field: "MFA success in-flight context",
+                        ..
+                    })
+                ),
+                "expected missing MFA success in-flight context, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn login_completes_duo_challenge_through_snowflake_login() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |req: &Request| {
+                    let n = attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    let body: serde_json::Value =
+                        serde_json::from_slice(&req.body).expect("login body is JSON");
+                    match n {
+                        0 => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "nextAction": "EXT_AUTHN_DUO_ALL",
+                                "inFlightCtx": "challenge-context"
+                            }
+                        })),
+                        1 => {
+                            assert_eq!(body["inFlightCtx"], "challenge-context");
+                            assert_eq!(body["data"]["EXT_AUTHN_DUO_METHOD"], "push");
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "success": true,
+                                "data": {
+                                    "nextAction": "EXT_AUTHN_SUCCESS",
+                                    "inFlightCtx": "approved-context"
+                                }
+                            }))
+                        }
+                        _ => {
+                            assert_eq!(body["inFlightCtx"], "approved-context");
+                            assert!(body["data"]["PASSWORD"].is_null());
+                            assert!(body["data"]["PASSCODE"].is_null());
+                            assert!(body["data"]["EXT_AUTHN_DUO_METHOD"].is_null());
+                            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                                "success": true,
+                                "data": {
+                                    "token": "session-token",
+                                    "masterToken": "master-token",
+                                    "sessionId": 42
+                                }
+                            }))
+                        }
+                    }
+                })
+                .expect(3)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                login_method: LoginMethod::UserPasswordMfa {
+                    username: "testuser".to_string(),
+                    password: "testpass".into(),
+                    passcode_in_password: false,
+                    passcode: None,
+                    client_store_temporary_credential: false,
+                },
+                ..test_login_params()
+            };
+            let result = snowflake_login_with_client(
+                &reqwest::Client::new(),
+                &params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
+                None,
+            )
+            .await
+            .expect("MFA login should complete the Duo continuation");
+
+            assert_eq!(
+                result.tokens.session_token.reveal().as_str(),
+                "session-token"
+            );
+            assert_eq!(result.tokens.session_id, Some(42));
+            assert_eq!(attempt.load(Ordering::SeqCst), 3);
+        }
+
+        fn duo_challenge_response() -> AuthResponse {
+            serde_json::from_value(serde_json::json!({
+                "success": true,
+                "data": {
+                    "nextAction": "EXT_AUTHN_DUO_ALL",
+                    "inFlightCtx": "challenge-context"
+                }
+            }))
+            .unwrap()
+        }
+
+        #[test]
+        fn remaining_login_timeout_is_unbounded_without_deadline() {
+            assert_eq!(remaining_login_timeout(None).unwrap(), None);
+        }
+
+        #[tokio::test]
+        async fn duo_push_wait_can_exceed_standard_login_http_timeout() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(LOGIN_REQUEST_TIMEOUT + Duration::from_millis(100))
+                        .set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "session-token",
+                                "masterToken": "master-token",
+                                "sessionId": 42
+                            }
+                        })),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let response = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                duo_challenge_response(),
+                &RetryPolicy::default(),
+                Some(Instant::now() + LOGIN_REQUEST_TIMEOUT + Duration::from_secs(10)),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                response
+                    .data
+                    .token
+                    .as_ref()
+                    .map(|token| token.reveal().as_str()),
+                Some("session-token")
+            );
+        }
+
+        #[tokio::test]
+        async fn duo_push_wait_has_no_http_timeout_when_login_deadline_is_absent() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(LOGIN_REQUEST_TIMEOUT + Duration::from_millis(100))
+                        .set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "session-token",
+                                "masterToken": "master-token",
+                                "sessionId": 42
+                            }
+                        })),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let response = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                duo_challenge_response(),
+                &RetryPolicy::default(),
+                None,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                response
+                    .data
+                    .token
+                    .as_ref()
+                    .map(|token| token.reveal().as_str()),
+                Some("session-token")
+            );
+        }
+
+        #[tokio::test]
+        async fn duo_push_timeout_does_not_retry_the_post() {
+            let server = MockServer::start().await;
+            let attempt = Arc::new(AtomicU32::new(0));
+            let attempt_clone = attempt.clone();
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |_: &Request| {
+                    attempt_clone.fetch_add(1, Ordering::SeqCst);
+                    ResponseTemplate::new(200)
+                        .set_delay(Duration::from_secs(2))
+                        .set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "session-token",
+                                "masterToken": "master-token",
+                                "sessionId": 42
+                            }
+                        }))
+                })
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let result = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                duo_challenge_response(),
+                &RetryPolicy::default(),
+                Some(Instant::now() + Duration::from_millis(300)),
+            )
+            .await;
+
+            assert!(result.is_err(), "expected Duo wait timeout, got {result:?}");
+            assert_eq!(attempt.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn duo_push_success_false_is_login_error() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": false,
+                    "code": "390144",
+                    "message": "Duo authentication failed",
+                    "data": {}
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let result = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                duo_challenge_response(),
+                &RetryPolicy::default(),
+                None,
+            )
+            .await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(RestError::LoginError {
+                        code: 390144,
+                        ref message,
+                        ..
+                    }) if message == "Duo authentication failed"
+                ),
+                "expected MFA login error with server code and message, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn unexpected_duo_next_action_without_tokens_is_login_error() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "code": "390999",
+                    "message": "unexpected MFA state",
+                    "data": {
+                        "nextAction": "EXT_AUTHN_LOCKED"
+                    }
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                ..test_login_params()
+            };
+            let result = complete_duo_challenge(
+                &reqwest::Client::new(),
+                &params,
+                &AuthRequest {
+                    data: AuthRequestData::default(),
+                    in_flight_ctx: None,
+                },
+                duo_challenge_response(),
+                &RetryPolicy::default(),
+                None,
+            )
+            .await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(RestError::LoginError {
+                        code: 390999,
+                        ref message,
+                        ..
+                    }) if message == "unexpected MFA state"
+                ),
+                "expected MFA login error for unexpected nextAction, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn passcode_login_does_not_enter_duo_continuation() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "token": "session-token",
+                        "masterToken": "master-token",
+                        "sessionId": 42
+                    }
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                login_method: LoginMethod::UserPasswordMfa {
+                    username: "testuser".to_string(),
+                    password: "testpass".into(),
+                    passcode_in_password: false,
+                    passcode: Some("123456".into()),
+                    client_store_temporary_credential: false,
+                },
+                ..test_login_params()
+            };
+            let result = snowflake_login_with_client(
+                &reqwest::Client::new(),
+                &params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                None,
+                crate::crl::worker::CrlWorker::shared_lazy(),
+                None,
+            )
+            .await
+            .expect("passcode MFA login should complete without a Duo continuation");
+
+            assert_eq!(
+                result.tokens.session_token.reveal().as_str(),
+                "session-token"
             );
         }
     }
@@ -4362,6 +5155,7 @@ mod tests {
                 None,
                 None,
                 crate::crl::worker::CrlWorker::shared_lazy(),
+                None,
             )
             .await
         }

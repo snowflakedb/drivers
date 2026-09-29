@@ -9,7 +9,7 @@ import platform
 import threading
 import warnings
 
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Iterator
 from functools import cached_property
 from io import StringIO
 from typing import Any, cast
@@ -170,17 +170,10 @@ class Connection(ConnectionMixin[CursorInstance]):
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
         try:
-            core_driver.connection_init(
-                conn_handle=self.conn_handle,  # type: ignore[arg-type]
-                db_handle=self.db_handle,  # type: ignore[arg-type]
-                wrapper_identity=WrapperIdentity(
-                    driver_name=APPLICATION_NAME,
-                    driver_version=__version__,
-                    language_runtime=platform.python_implementation(),
-                    language_version=platform.python_version(),
-                    language_compiler=platform.python_compiler(),
-                ),
-            )
+            if self.config.mfa_callback is None:
+                self._initialize_core_connection()
+            else:
+                self._initialize_core_connection_with_mfa_callback(self.config.mfa_callback)
         except ProgrammingError as e:
             # The WIF cross-param guards fire in sf_core only via connection_init
             # (ConnectionConfig::build -> validate_settings), surfaced as errno
@@ -199,6 +192,46 @@ class Connection(ConnectionMixin[CursorInstance]):
 
         if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
+
+    def _initialize_core_connection(self) -> None:
+        core_driver.connection_init(
+            conn_handle=self.conn_handle,  # type: ignore[arg-type]
+            db_handle=self.db_handle,  # type: ignore[arg-type]
+            wrapper_identity=WrapperIdentity(
+                driver_name=APPLICATION_NAME,
+                driver_version=__version__,
+                language_runtime=platform.python_implementation(),
+                language_version=platform.python_version(),
+                language_compiler=platform.python_compiler(),
+            ),
+        )
+
+    def _initialize_core_connection_with_mfa_callback(self, mfa_callback: Callable[[], Iterator[None]]) -> None:
+        callback = mfa_callback()
+        completed = threading.Event()
+        errors: list[Exception] = []
+
+        def initialize() -> None:
+            try:
+                self._initialize_core_connection()
+            except Exception as error:
+                errors.append(error)
+            finally:
+                completed.set()
+
+        init_task = threading.Thread(target=initialize)
+        init_task.start()
+        try:
+            while not completed.is_set():
+                try:
+                    next(callback)
+                except StopIteration:
+                    completed.wait()
+                    break
+        finally:
+            init_task.join()
+            if errors:
+                raise errors[0]
 
     # ------------------------------------------------------------------
     # Lifecycle

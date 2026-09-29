@@ -27,13 +27,13 @@ pub mod authenticator {
 
 // TODO: Delete all unused fields when we are sure they are not needed
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct AuthRequestClientCapabilities {
     #[serde(rename = "SMK_ID_AS_STRING")]
     pub smk_id_as_string: bool,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct AuthRequestClientEnvironment {
     #[serde(rename = "APPLICATION")]
     pub application: String,
@@ -63,7 +63,7 @@ pub struct AuthRequestClientEnvironment {
     pub core_version: String,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct AuthRequestData {
     #[serde(rename = "CLIENT_APP_ID")]
     pub client_app_id: String,
@@ -130,9 +130,11 @@ pub struct AuthRequestData {
     pub consent_cache_id_token: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct AuthRequest {
     pub data: AuthRequestData,
+    #[serde(rename = "inFlightCtx", skip_serializing_if = "Option::is_none")]
+    pub in_flight_ctx: Option<SensitiveString>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +211,10 @@ pub struct AuthResponseMain {
     pub _sso_url: Option<String>,
     #[serde(rename = "proofKey")]
     pub _proof_key: Option<String>,
+    #[serde(rename = "nextAction")]
+    pub next_action: Option<String>,
+    #[serde(rename = "inFlightCtx")]
+    pub in_flight_ctx: Option<SensitiveString>,
 }
 
 pub(crate) type AuthResponse = crate::rest::snowflake::SnowflakeResponse<AuthResponseMain>;
@@ -335,5 +341,18 @@ mod tests {
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["ISA"], "x86_64");
         assert_eq!(json["CORE_VERSION"], "1.2.3");
+    }
+
+    #[test]
+    fn in_flight_ctx_is_redacted_in_debug() {
+        let request = AuthRequest {
+            data: AuthRequestData::default(),
+            in_flight_ctx: Some("duo-continuation-secret".into()),
+        };
+        let debug = format!("{request:?}");
+        assert!(
+            !debug.contains("duo-continuation-secret"),
+            "in_flight_ctx leaked in Debug: {debug}"
+        );
     }
 }

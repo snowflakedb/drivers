@@ -517,6 +517,9 @@ impl DatabaseDriverV1 {
                     prebuilt_credentials,
                     xp_backend.as_deref(),
                     self.crl_worker.clone(),
+                    timeout_config
+                        .login_timeout
+                        .map(|budget| std::time::Instant::now() + budget),
                 );
 
                 let login_result = if let Some(budget) = timeout_config.login_timeout {

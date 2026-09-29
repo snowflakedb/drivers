@@ -297,7 +297,10 @@ async fn request_authenticator(
     data.login_name = Some(username.to_string());
     data.authenticator = Some("EXTERNALBROWSER".to_string());
     data.browser_mode_redirect_port = Some(redirect_port.to_string());
-    let authn_req = AuthRequest { data };
+    let authn_req = AuthRequest {
+        data,
+        in_flight_ctx: None,
+    };
     let authn_url = format!(
         "{}{}",
         login_parameters.server_url, SF_AUTHENTICATOR_REQUEST_PATH

@@ -18,7 +18,7 @@ import re
 import sys
 import warnings
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, fields, replace
 from typing import Any, ClassVar, TypeVar
 
@@ -72,6 +72,15 @@ class ConnectionConfigMixin:
 
     autocommit: bool | None = None
     """Enable/disable autocommit at connection time."""
+
+    mfa_callback: Callable[[], Iterator[None]] | None = None
+    """Callable that returns an iterator advanced throughout connection initialization.
+
+    Each step of the iterator runs until either the iterator is exhausted or
+    ``connection_init`` finishes. Exhaustion does not fail the connect; the
+    driver then waits for initialization to complete. The iterator is advanced
+    for the whole init, not only while a Duo approval is pending.
+    """
 
     timezone: str | None = None
     """Session TIMEZONE to set at connection time.
@@ -143,6 +152,7 @@ class ConnectionConfigMixin:
             "arrow_number_to_decimal",
             "paramstyle",
             "autocommit",
+            "mfa_callback",
             "timezone",
             "interpolate_empty_sequences",
             "reuse_results",
@@ -516,6 +526,7 @@ class ConnectionConfigMixin:
           ``__version__``.
         * ``autocommit`` - type-checked (must be ``bool``), then merged into
           ``session_parameters["AUTOCOMMIT"]``.
+        * ``mfa_callback`` - type-checked (must be callable).
         * ``timezone`` - type-checked (must be ``str``), then merged into
           ``session_parameters["TIMEZONE"]``, overwriting any TIMEZONE already
           present in ``session_parameters``.
@@ -554,6 +565,9 @@ class ConnectionConfigMixin:
             if config.session_parameters is None:
                 config.session_parameters = {}
             config.session_parameters["AUTOCOMMIT"] = str(config.autocommit).lower()
+
+        if config.mfa_callback is not None and not callable(config.mfa_callback):
+            raise ProgrammingError(f"Invalid mfa_callback parameter: {config.mfa_callback!r}. Pass a callable or None.")
 
         if config.timezone is not None:
             if not isinstance(config.timezone, str):

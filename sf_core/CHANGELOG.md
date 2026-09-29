@@ -4,6 +4,7 @@
 
 New features:
 
+- Added Duo push continuation for username/password MFA so a pending Duo challenge can wait for device approval and then finish login. (snowflakedb/drivers#2021)
 - Added a Python `platform_detection_timeout_seconds` connection parameter that limits each cloud-metadata platform check. Setting it to `0` skips those HTTP and STS queries and keeps only environment-based detection, matching the legacy Python connector. (snowflakedb/drivers#2186)
 - Added Azure blob Content-MD5 on PUT (single Put Blob and Put Block List), hashed in the same streaming pass as SHA-256 and over ciphertext when client-side encryption is on. (snowflakedb/drivers#2232)
 - Added an opt-in `fips-tls` build that routes TLS through AWS-LC-FIPS and fails closed if a non-FIPS crypto provider is active. (snowflakedb/drivers#2055)

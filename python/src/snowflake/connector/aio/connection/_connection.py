@@ -7,7 +7,7 @@ import os
 import platform
 import warnings
 
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Iterator
 from io import StringIO
 from typing import Any
 
@@ -63,6 +63,13 @@ logger = get_logger(__name__)
 # parameter names or message text.
 def _is_wif_conflict(exc: ProgrammingError) -> bool:
     return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
+
+
+_CALLBACK_EXHAUSTED = object()
+
+
+def _next_or_exhausted(iterator: Iterator[None]) -> object:
+    return next(iterator, _CALLBACK_EXHAUSTED)
 
 
 class Connection(ConnectionMixin[CursorInstance]):
@@ -144,17 +151,12 @@ class Connection(ConnectionMixin[CursorInstance]):
             )
 
         try:
-            await async_core_driver.connection_init(
-                conn_handle=conn_handle,
-                db_handle=db_handle,
-                wrapper_identity=WrapperIdentity(
-                    driver_name=APPLICATION_NAME,
-                    driver_version=__version__,
-                    language_runtime=platform.python_implementation(),
-                    language_version=platform.python_version(),
-                    language_compiler=platform.python_compiler(),
-                ),
-            )
+            if self.config.mfa_callback is None:
+                await self._initialize_core_connection(conn_handle, db_handle)
+            else:
+                await self._initialize_core_connection_with_mfa_callback(
+                    conn_handle, db_handle, self.config.mfa_callback
+                )
         except ProgrammingError as e:
             # The WIF cross-param guards fire in sf_core only via connection_init
             # (ConnectionConfig::build -> validate_settings), surfaced as errno
@@ -174,6 +176,35 @@ class Connection(ConnectionMixin[CursorInstance]):
         self._session_parameters = _SessionParametersProxy(conn_handle)
         self._connection_info = _ConnectionInfoProxy(conn_handle)
         self._telemetry_client = AsyncTelemetryClient(conn_handle)
+
+    async def _initialize_core_connection(self, conn_handle: ConnectionHandle, db_handle: DatabaseHandle) -> None:
+        await async_core_driver.connection_init(
+            conn_handle=conn_handle,
+            db_handle=db_handle,
+            wrapper_identity=WrapperIdentity(
+                driver_name=APPLICATION_NAME,
+                driver_version=__version__,
+                language_runtime=platform.python_implementation(),
+                language_version=platform.python_version(),
+                language_compiler=platform.python_compiler(),
+            ),
+        )
+
+    async def _initialize_core_connection_with_mfa_callback(
+        self,
+        conn_handle: ConnectionHandle,
+        db_handle: DatabaseHandle,
+        mfa_callback: Callable[[], Iterator[None]],
+    ) -> None:
+        callback = mfa_callback()
+        init_task = asyncio.create_task(self._initialize_core_connection(conn_handle, db_handle))
+        try:
+            while not init_task.done():
+                item = await asyncio.to_thread(_next_or_exhausted, callback)
+                if item is _CALLBACK_EXHAUSTED:
+                    break
+        finally:
+            await init_task
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -253,7 +253,10 @@ async fn request_authenticator_endpoints(
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
     data.login_name = Some(config.username.to_string());
     data.authenticator = Some(config.okta_url.as_str().to_string());
-    let authn_req = AuthRequest { data };
+    let authn_req = AuthRequest {
+        data,
+        in_flight_ctx: None,
+    };
     let authn_url = format!(
         "{}{}",
         login_parameters.server_url, SF_AUTHENTICATOR_REQUEST_PATH

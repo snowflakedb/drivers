@@ -498,6 +498,17 @@ class TestFromConnectionArgs:
         with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
             ConnectionConfig.from_connection_args(user="u", autocommit=1)
 
+    def test_mfa_callback_is_retained(self):
+        def callback():
+            return iter(())
+
+        config = ConnectionConfig.from_connection_args(user="u", mfa_callback=callback)
+        assert config.mfa_callback is callback
+
+    def test_mfa_callback_non_callable_raises(self):
+        with pytest.raises(ProgrammingError, match="Invalid mfa_callback parameter"):
+            ConnectionConfig.from_connection_args(user="u", mfa_callback="not callable")
+
     def test_timezone_injects_session_parameter(self):
         config = ConnectionConfig.from_connection_args(user="u", timezone="America/Los_Angeles")
         assert config.timezone == "America/Los_Angeles"
@@ -778,6 +789,7 @@ class TestClassVariables:
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
+        assert "mfa_callback" in ConnectionConfig._PYTHON_ONLY
         assert "timezone" in ConnectionConfig._PYTHON_ONLY
         assert "interpolate_empty_sequences" in ConnectionConfig._PYTHON_ONLY
         assert "reuse_results" in ConnectionConfig._PYTHON_ONLY
