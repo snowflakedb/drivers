@@ -190,6 +190,7 @@ glob = "0.3.3"
 rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
+webpki-roots = "1.0.2"
 thiserror = "1.0.69"
 # Upper bound is load-bearing: `aws-lc-rs` <1.18 selects `aws-lc-fips-sys`
 # 0.13.x (AWS-LC FIPS 3.x), while >=1.18 selects 0.14.x (AWS-LC FIPS 4.x).

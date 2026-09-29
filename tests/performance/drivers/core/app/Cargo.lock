@@ -3882,6 +3882,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webbrowser",
+ "webpki-roots",
  "x509-cert",
  "x509-parser",
  "zeroize",
