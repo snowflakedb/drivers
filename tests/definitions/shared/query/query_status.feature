@@ -21,7 +21,7 @@ Feature: Query status
     Then the query status should indicate an error
     And the query should not be indicated as still running
 
-  @python_e2e
+  @python_e2e @nodejs_e2e
   Scenario: should indicate still running for in-progress query
     Given Snowflake client is logged in
     When A long-running query is submitted asynchronously

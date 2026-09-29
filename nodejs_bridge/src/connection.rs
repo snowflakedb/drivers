@@ -13,6 +13,7 @@ use sf_core::apis::operation_ctx::OperationCtx;
 use sf_core::config::param_names;
 use sf_core::config::rest_parameters::BrowserOpenFn;
 use sf_core::config::settings::Setting;
+use sf_core::handle_manager::Handle;
 use sf_core::rest::snowflake::QueryStatusResult;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,6 +42,14 @@ pub enum QueryBindingFormat {
 pub struct QueryBindings {
     pub format: QueryBindingFormat,
     pub data: String,
+}
+
+#[napi(object)]
+pub struct ExecuteParams {
+    pub query: String,
+    pub bindings: Option<QueryBindings>,
+    pub parameters: Option<HashMap<String, String>>,
+    pub async_exec: Option<bool>,
 }
 
 #[napi]
@@ -147,44 +156,51 @@ impl Connection {
     }
 
     #[napi]
-    pub fn execute(
-        &self,
-        query: String,
-        bindings: Option<QueryBindings>,
-        parameters: Option<HashMap<String, String>>,
-    ) -> Statement {
+    pub fn execute(&self, params: ExecuteParams) -> Statement {
         let session = self.session.clone();
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
-        Statement::from_pending(Some(operation_ctx.clone()), async move {
-            let ready = session.ready().await?;
-            let stmt_handle = DRIVER.statement_new(ready.connection())?;
-            let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
-            let result = async {
-                DRIVER.statement_set_sql_query(stmt_handle, query).await?;
-                if let Some(parameters) = parameters {
-                    let options = parameters
-                        .into_iter()
-                        .map(|(k, v)| (k, Setting::String(v)))
-                        .collect();
-                    DRIVER.statement_set_options(stmt_handle, options).await?;
-                }
-                let bindings = binding_bytes.as_ref().map(|(format, bytes)| {
-                    let ptr = DataPtr::new(bytes.as_ptr(), bytes.len() as i64);
-                    match format {
-                        QueryBindingFormat::Csv => BindingType::Csv(ptr),
-                        QueryBindingFormat::Json => BindingType::Json(ptr),
-                    }
-                });
-                DRIVER
-                    .statement_execute_query(Some(&operation_ctx), stmt_handle, bindings, None)
-                    .await
-            }
-            .await;
-            let _ = DRIVER.statement_release(stmt_handle);
-            result
+        let ExecuteParams {
+            query,
+            bindings,
+            parameters,
+            async_exec,
+        } = params;
+        if async_exec.unwrap_or(false) {
+            Statement::from_async_exec(Some(operation_ctx.clone()), async move {
+                let ready = session.ready().await?;
+                run_new_statement(
+                    ready.connection(),
+                    query,
+                    bindings,
+                    parameters,
+                    async move |stmt, binds| {
+                        DRIVER
+                            .statement_execute_async(Some(&operation_ctx), stmt, binds)
+                            .await
+                            .map_err(BridgeError::from)
+                    },
+                )
+                .await
+            })
+        } else {
+            Statement::from_query_result(Some(operation_ctx.clone()), async move {
+                let ready = session.ready().await?;
+                run_new_statement(
+                    ready.connection(),
+                    query,
+                    bindings,
+                    parameters,
+                    async move |stmt, binds| {
+                        DRIVER
+                            .statement_execute_query(Some(&operation_ctx), stmt, binds, None)
+                            .await
+                            .map_err(BridgeError::from)
+                    },
+                )
+                .await
                 .map(|result| (ready, result))
-                .map_err(BridgeError::from)
-        })
+            })
+        }
     }
 
     #[napi]
@@ -254,7 +270,7 @@ impl Connection {
         let session = self.session.clone();
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
-        Statement::from_pending(Some(operation_ctx.clone()), async move {
+        Statement::from_query_result(Some(operation_ctx.clone()), async move {
             require_valid_query_id(&query_id)?;
             let ready = session.ready().await?;
             DRIVER
@@ -294,6 +310,41 @@ fn browser_opener_from_js(callback: Function<String, ()>) -> Result<BrowserOpenF
             .recv()
             .unwrap_or_else(|_| Err("openExternalBrowserCallback did not return".into()))
     }))
+}
+
+async fn run_new_statement<T>(
+    connection: Handle,
+    query: String,
+    bindings: Option<QueryBindings>,
+    parameters: Option<HashMap<String, String>>,
+    run: impl for<'a> AsyncFnOnce(
+        Handle,
+        Option<BindingType<'a>>,
+    ) -> std::result::Result<T, BridgeError>,
+) -> std::result::Result<T, BridgeError> {
+    let stmt_handle = DRIVER.statement_new(connection)?;
+    let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
+    let result = async {
+        DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+        if let Some(parameters) = parameters {
+            let options = parameters
+                .into_iter()
+                .map(|(k, v)| (k, Setting::String(v)))
+                .collect();
+            DRIVER.statement_set_options(stmt_handle, options).await?;
+        }
+        let bindings = binding_bytes.as_ref().map(|(format, bytes)| {
+            let ptr = DataPtr::new(bytes.as_ptr(), bytes.len() as i64);
+            match format {
+                QueryBindingFormat::Csv => BindingType::Csv(ptr),
+                QueryBindingFormat::Json => BindingType::Json(ptr),
+            }
+        });
+        run(stmt_handle, bindings).await
+    }
+    .await;
+    let _ = DRIVER.statement_release(stmt_handle);
+    result
 }
 
 async fn get_query_status_result(

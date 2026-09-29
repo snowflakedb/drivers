@@ -202,6 +202,7 @@ export function monitoringQueryFailure(
   body: unknown,
 ): StubMapping {
   return {
+    priority: 1,
     request: {
       method: 'GET',
       urlPathPattern: `/monitoring/queries/+${queryId}.*`,

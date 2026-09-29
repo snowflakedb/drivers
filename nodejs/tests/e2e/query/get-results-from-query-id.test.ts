@@ -13,6 +13,7 @@ import {
   isRunningNewDriverWithBD,
 } from '../utils/index.js';
 import {
+  monitoringQueryFailure,
   monitoringQueryStatus,
   monitoringQueryStatuses,
   proxyAllTo,
@@ -157,5 +158,28 @@ describe('getResultsFromQueryId with Wiremock', () => {
       code: 460003,
       message: `Status of query ${queryId} is RESTARTED, results are unavailable`,
     } satisfies Partial<SnowflakeError>);
+  });
+
+  it('should reject when monitoring returns HTTP 500', async () => {
+    const queryId = '12345678-1234-4123-a123-123456789012';
+    await wiremock.stub(
+      monitoringQueryFailure(queryId, 500, {
+        success: false,
+        message: 'Internal server error',
+      }),
+    );
+
+    await expect(getResultFromQueryIdForTest(connection, { queryId })).rejects.toMatchObject(
+      isRunningNewDriverWithBD('BD#46')
+        ? {
+            name: 'Error',
+            message: 'HTTP request failed after retries: query status',
+          }
+        : {
+            name: 'RequestFailedError',
+            code: 401002,
+            message: 'Request to Snowflake failed.',
+          },
+    );
   });
 });

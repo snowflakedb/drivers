@@ -38,7 +38,7 @@ export declare class Connection {
   isUp(): boolean
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
-  execute(query: string, bindings?: QueryBindings | undefined | null, parameters?: Record<string, string> | undefined | null): Statement
+  execute(params: ExecuteParams): Statement
   getQueryStatus(queryId: string): Promise<QueryStatus>
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
   waitForQueryResult(queryId: string, retryIntervalMs?: number | undefined | null): Promise<undefined>
@@ -71,6 +71,13 @@ export declare class Statement {
   getColumn(identifier: string | number): Column | null
   close(): void
   cancel(): Promise<void>
+}
+
+export interface ExecuteParams {
+  query: string
+  bindings?: QueryBindings
+  parameters?: Record<string, string>
+  asyncExec?: boolean
 }
 
 export declare function isAnError(status: QueryStatus): boolean

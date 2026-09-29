@@ -969,3 +969,27 @@ behavior_differences:
     status_rationale: |
       Purely additive: the runtime value is unchanged from the old driver, this only
       publishes the type that was already being returned, so no existing caller breaks.
+
+  49:
+    name: 'asyncExec complete callback does not pass { queryId } as the rows argument'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      execute({ asyncExec: true, complete }) invokes complete(null, stmt, { queryId }).
+      The third argument is overloaded: a row array for normal execute, or { queryId } for
+      asyncExec. queryId is also available on stmt.getQueryId(). After complete,
+      stmt.getNumRows(), stmt.getColumns(), and stmt.getColumn(...) throw TypeError instead
+      of returning undefined.
+    new_driver_behavior: |
+      execute({ asyncExec: true, complete }) invokes complete(undefined, stmt, undefined).
+      Callers read queryId from stmt.getQueryId() only. The third argument is a row array
+      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(), and
+      stmt.getColumn(...) return undefined because the statement has no result set.
+    status_rationale: |
+      The old driver's third-argument is typed as row array or undefined (not { queryId }),
+      and callers can already obtain queryId from stmt.getQueryId(). The new driver keeps
+      the third argument as a row array or undefined for every execute path. Moreover, this
+      third argument is called rows, so it doesn't make sense to put queryId in it.

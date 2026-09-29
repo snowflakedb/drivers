@@ -7,7 +7,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   isRunningNewDriverWithBD,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../utils/index.js';
 import {
   loginSuccess,
@@ -74,28 +73,25 @@ describe('Query status', () => {
       expect(connection.isStillRunning(status)).toBe(false);
     });
 
-    it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-      'should indicate still running for in-progress query',
-      async () => {
-        // Given Snowflake client is logged in
-        void connection;
+    it('should indicate still running for in-progress query', async () => {
+      // Given Snowflake client is logged in
+      void connection;
 
-        // When A long-running query is submitted asynchronously
-        const { statement } = await executeAsync(connection, 'SELECT SYSTEM$WAIT(30)', {
-          asyncExec: true,
-        });
+      // When A long-running query is submitted asynchronously
+      const { statement } = await executeAsync(connection, 'SELECT SYSTEM$WAIT(30)', {
+        asyncExec: true,
+      });
 
-        // And Query status is retrieved immediately
-        const queryId = statement.getQueryId()!;
-        const status = await connectionGetQueryStatusWithBD(connection, queryId);
+      // And Query status is retrieved immediately
+      const queryId = statement.getQueryId()!;
+      const status = await connectionGetQueryStatusWithBD(connection, queryId);
 
-        // Then the query status should indicate still running
-        expect(connection.isStillRunning(status)).toBe(true);
+      // Then the query status should indicate still running
+      expect(connection.isStillRunning(status)).toBe(true);
 
-        // And the query should not be indicated as an error
-        expect(connectionIsAnErrorWithBD(connection, status)).toBe(false);
-      },
-    );
+      // And the query should not be indicated as an error
+      expect(connectionIsAnErrorWithBD(connection, status)).toBe(false);
+    });
 
     it('should return no data status for a non-existent query ID', async () => {
       // Given Snowflake client is logged in

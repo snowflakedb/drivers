@@ -15,13 +15,11 @@ use crate::session::Ready;
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use result::{ResultData, StatementResult};
-use sf_core::apis::database_driver_v1::{ApiError, ExecuteQueryResult};
+use result::{ResultData, StatementOutcome, StatementResult};
+use sf_core::apis::database_driver_v1::{AsyncExecuteResult, ExecuteQueryResult};
 use sf_core::apis::operation_ctx::OperationCtx;
-use sf_core::handle_manager::Handle;
 use std::future::Future;
 use std::sync::Arc;
-use stream_state::StreamState;
 
 #[napi]
 pub struct Statement {
@@ -31,7 +29,7 @@ pub struct Statement {
 
 #[napi]
 impl Statement {
-    pub(crate) fn from_pending(
+    pub(crate) fn from_query_result(
         operation_ctx: Option<Arc<OperationCtx>>,
         result_future: impl Future<
             Output = std::result::Result<(Ready, ExecuteQueryResult), BridgeError>,
@@ -41,7 +39,25 @@ impl Statement {
         Self {
             result: StatementResult::from_future(async move {
                 let (ready, result) = result_future.await?;
-                result_data_from(result, ready.connection()).await
+                Ok(StatementOutcome::Rows(Box::new(
+                    ResultData::from_execute_query(result, ready.connection()).await?,
+                )))
+            }),
+            operation_ctx,
+        }
+    }
+
+    pub(crate) fn from_async_exec(
+        operation_ctx: Option<Arc<OperationCtx>>,
+        result_future: impl Future<Output = std::result::Result<AsyncExecuteResult, BridgeError>>
+        + Send
+        + 'static,
+    ) -> Self {
+        Self {
+            result: StatementResult::from_future(async move {
+                Ok(StatementOutcome::AsyncSubmitted {
+                    query_id: result_future.await?.query_id,
+                })
             }),
             operation_ctx,
         }
@@ -60,11 +76,22 @@ impl Statement {
     pub fn fetch_next_batch(&self, env: &Env) -> Result<AsyncBlock<bool>> {
         let result = self.result.clone();
         async_to_js(env, async move {
-            let data = result.ready().await?;
+            let outcome = result.ready().await?;
+            let Some(data) = outcome.rows() else {
+                return Ok(false);
+            };
             data.stream_state
                 .fetch_next_batch(&data.session_params)
                 .await
         })
+    }
+
+    fn ready_rows(&self, env: &Env) -> Result<Option<&ResultData>> {
+        match self.result.get() {
+            None => Ok(None),
+            Some(Ok(outcome)) => Ok(outcome.rows()),
+            Some(Err(error)) => Err(error.to_js_error(*env)),
+        }
     }
 
     /// Returns the next row of the current batch, or `null` once that batch
@@ -72,10 +99,9 @@ impl Statement {
     /// another.
     #[napi]
     pub fn get_next_row<'env>(&self, env: &'env Env) -> Result<Option<Array<'env>>> {
-        match self.result.get() {
+        match self.ready_rows(env)? {
+            Some(data) => data.stream_state.next_row(env),
             None => Ok(None),
-            Some(Ok(data)) => data.stream_state.next_row(env),
-            Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
@@ -86,7 +112,7 @@ impl Statement {
     pub fn get_query_id(&self, _env: &Env) -> Result<Option<String>> {
         match self.result.get() {
             None => Ok(None),
-            Some(Ok(data)) => Ok(Some(data.result_set_descriptor.query_id.clone())),
+            Some(Ok(outcome)) => Ok(Some(outcome.query_id().to_string())),
             Some(Err(BridgeError::Core(api_error))) => Ok(api_error.query_id()),
             Some(Err(_)) => Ok(None),
         }
@@ -94,11 +120,9 @@ impl Statement {
 
     #[napi]
     pub fn get_num_rows(&self, env: &Env) -> Result<Option<i64>> {
-        match self.result.get() {
-            None => Ok(None),
-            Some(Ok(data)) => Ok(data.result_set_descriptor.row_count),
-            Some(Err(error)) => Err(error.to_js_error(*env)),
-        }
+        Ok(self
+            .ready_rows(env)?
+            .and_then(|data| data.result_set_descriptor.row_count))
     }
 
     /// Not part of the driver's public API. Callers are suposed toinvoke this only after the
@@ -110,54 +134,56 @@ impl Statement {
                 "session parameters snapshot requested before the statement finished".to_string(),
             )
             .to_js_error(*env)),
-            Some(Ok(data)) => Ok((*data.session_params).clone()),
+            Some(Ok(outcome)) => match outcome.rows() {
+                Some(data) => Ok((*data.session_params).clone()),
+                None => Err(BridgeError::Message(
+                    "session parameters snapshot requested on a statement with no result set"
+                        .to_string(),
+                )
+                .to_js_error(*env)),
+            },
             Some(Err(error)) => Err(error.to_js_error(*env)),
         }
     }
 
     #[napi]
     pub fn get_columns(&self, env: &Env) -> Result<Option<Vec<Column>>> {
-        match self.result.get() {
-            None => Ok(None),
-            Some(Ok(data)) => Ok(Some(
-                data.result_set_descriptor
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, meta)| Column::from_metadata(i as u32, meta))
-                    .collect(),
-            )),
-            Some(Err(error)) => Err(error.to_js_error(*env)),
-        }
+        Ok(self.ready_rows(env)?.map(|data| {
+            data.result_set_descriptor
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, meta)| Column::from_metadata(i as u32, meta))
+                .collect()
+        }))
     }
 
     #[napi]
     pub fn get_column(&self, env: &Env, identifier: Either<String, u32>) -> Result<Option<Column>> {
-        match self.result.get() {
-            None => Ok(None),
-            Some(Ok(data)) => {
-                let columns = &data.result_set_descriptor.columns;
-                let column = match identifier {
-                    Either::A(name) => columns
-                        .iter()
-                        .enumerate()
-                        .find(|(_, meta)| meta.name == name)
-                        .map(|(i, meta)| Column::from_metadata(i as u32, meta)),
-                    Either::B(index) => columns
-                        .get(index as usize)
-                        .map(|meta| Column::from_metadata(index, meta)),
-                };
-                Ok(column)
-            }
-            Some(Err(error)) => Err(error.to_js_error(*env)),
-        }
+        let Some(data) = self.ready_rows(env)? else {
+            return Ok(None);
+        };
+        let columns = &data.result_set_descriptor.columns;
+        let column = match identifier {
+            Either::A(name) => columns
+                .iter()
+                .enumerate()
+                .find(|(_, meta)| meta.name == name)
+                .map(|(i, meta)| Column::from_metadata(i as u32, meta)),
+            Either::B(index) => columns
+                .get(index as usize)
+                .map(|meta| Column::from_metadata(index, meta)),
+        };
+        Ok(column)
     }
 
     // TODO: instead of Node calling close, maybe we should call it when the result set is
     // processed from the bridge
     #[napi]
     pub fn close(&self) -> Result<()> {
-        if let Some(Ok(data)) = self.result.get() {
+        if let Some(Ok(outcome)) = self.result.get()
+            && let Some(data) = outcome.rows()
+        {
             let _ = DRIVER.result_set_release(data.result_set_handle);
         }
         Ok(())
@@ -172,33 +198,4 @@ impl Statement {
         }
         Ok(())
     }
-}
-
-async fn result_data_from(
-    result: ExecuteQueryResult,
-    conn_handle: Handle,
-) -> std::result::Result<ResultData, BridgeError> {
-    let (result_set_handle, result_set_descriptor) = match result {
-        ExecuteQueryResult::Single { info, .. } => (info.handle, info.descriptor),
-        ExecuteQueryResult::Multi { .. } => {
-            return Err(ApiError::invalid_argument(
-                "multi-statement results are not supported yet",
-            )
-            .into());
-        }
-    };
-
-    // Snapshotted once here (rather than per-decoder-call) so every column
-    // reader in this result set shares the same session-parameter snapshot.
-    let session_params = Arc::new(KnownSessionParameters::from_connection(conn_handle).await?);
-    let batch_fetcher = DRIVER
-        .result_set_get_async_stream(result_set_handle)
-        .await?;
-
-    Ok(ResultData {
-        result_set_handle,
-        result_set_descriptor,
-        stream_state: Arc::new(StreamState::new(batch_fetcher)),
-        session_params,
-    })
 }

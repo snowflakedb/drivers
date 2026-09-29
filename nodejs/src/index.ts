@@ -249,16 +249,25 @@ export class Connection {
       parameters = { ...parameters, cwd: options.cwd };
     }
 
-    return this.#runStatement(this.#core.execute(options.sqlText, bindings, parameters), {
-      complete: options.complete,
-      streamResult: options.streamResult,
-      sqlText: options.sqlText,
-      rowOptions: {
-        ...this.#defaultRowOptions,
-        ...(options.rowMode && { rowMode: options.rowMode }),
-        ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
+    return this.#runStatement(
+      this.#core.execute({
+        query: options.sqlText,
+        bindings: bindings ?? undefined,
+        parameters: parameters ?? undefined,
+        asyncExec: options.asyncExec,
+      }),
+      {
+        complete: options.complete,
+        streamResult: options.streamResult,
+        sqlText: options.sqlText,
+        asyncExec: options.asyncExec,
+        rowOptions: {
+          ...this.#defaultRowOptions,
+          ...(options.rowMode && { rowMode: options.rowMode }),
+          ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
+        },
       },
-    });
+    );
   }
 
   async getQueryStatus(queryId: string): Promise<QueryStatus> {
@@ -306,14 +315,15 @@ export class Connection {
       complete?: StatementCallback;
       streamResult?: boolean;
       sqlText?: string;
+      asyncExec?: boolean;
       rowOptions: RowOptions;
     },
   ): RowStatement | FileAndStageBindStatement {
-    const { complete, streamResult, sqlText, rowOptions } = options;
+    const { complete, streamResult, sqlText, asyncExec, rowOptions } = options;
     const statement = new RowStatement(coreStatement, rowOptions, sqlText);
     (async () => {
       try {
-        if (streamResult === true) {
+        if (asyncExec === true || streamResult === true) {
           await coreStatement.waitForCompletion();
           complete?.(undefined, statement, undefined);
         } else {

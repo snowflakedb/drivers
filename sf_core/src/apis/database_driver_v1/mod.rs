@@ -55,5 +55,5 @@ pub use result_set::{
     AsyncArrowBatchFetcher, ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult,
     InlineData, ResultSetDescriptor, ResultSetInfo,
 };
-pub use statement::{BindingType, DataPtr};
+pub use statement::{AsyncExecuteResult, BindingType, DataPtr};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};
