@@ -69,6 +69,13 @@ const buildDefaults = (): ResolvedConfig => ({
     try {
       return JSON.parse(rawColumnValue);
     } catch {
+      // NOTE:
+      // JSON.parse (RFC 8259) throws on values such as undefined, NaN, and Infinity,
+      // but Snowflake can return them when STRICT_JSON_OUTPUT is FALSE (default).
+      // This fallback evaluates only VARIANT output from the trusted Snowflake service,
+      // whose encoder does not emit executable JavaScript.
+      //
+      // https://docs.snowflake.com/en/sql-reference/parameters#strict_json_output
       const result = new Function(`return (${rawColumnValue});`)();
       context?.onNonJsonCompliantVariant();
       return result;
