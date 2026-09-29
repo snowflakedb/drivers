@@ -1008,3 +1008,19 @@ behavior_differences:
     new_driver_behavior: |
       Every query returns RowStatement. RowStatement exposes `hasNext()` and `NextResult()`, and
       there is no separate FileAndStageBindStatement type.
+
+  51:
+    name: 'isTokenValid is not implemented'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Connection.isTokenValid() exists at runtime and returns whether both session and
+      master token expiries are still in the future. It is omitted from dist/index.d.ts.
+    new_driver_behavior: |
+      Connection has no isTokenValid method.
+    status_rationale: |
+      The old driver already omitted the method from the published types. The new driver
+      does not add a runtime-only copy of an unpublished API.

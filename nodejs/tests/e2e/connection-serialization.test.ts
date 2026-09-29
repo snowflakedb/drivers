@@ -37,13 +37,16 @@ function deserializeConnection(serialized: string): Connection {
   );
 }
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deserialization', () => {
+function serializeConnection(connection: Connection): string {
+  return (snowflake.serializeConnection as (connection: Connection) => string)(connection);
+}
+
+describe('Connection Serialization & Deserialization', () => {
   describe('serialize()', () => {
     it('should return an empty tokenInfo for a connection that never connected', () => {
       const connection = createConnection();
       expect(connection.serialize()).toBe(PAYLOAD_WITHOUT_TOKENS);
-      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
-      expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
+      expect(serializeConnection(connection)).toBe(connection.serialize());
     });
 
     it('should return both tokens with an expiration time each', async () => {
@@ -61,8 +64,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
 
     it('should return the same string as snowflake.serializeConnection()', async () => {
       const connection = await createLiveConnection();
-      // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
-      expect(snowflake.serializeConnection(connection)).toBe(connection.serialize());
+      expect(serializeConnection(connection)).toBe(connection.serialize());
     });
 
     it('should return an empty tokenInfo after the connection is destroyed', async () => {
@@ -72,7 +74,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Connection Serialization & Deser
     });
   });
 
-  describe('snowflake.deserializeConnection()', () => {
+  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('snowflake.deserializeConnection()', () => {
     it('should deserialize into the originating session and leave it usable', async () => {
       const connection = await createLiveConnection();
       const originalSessionId = await sessionIdOf(connection);

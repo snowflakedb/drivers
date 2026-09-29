@@ -1,7 +1,7 @@
 use crate::DRIVER;
 use crate::error::{BridgeError, ConnectionOperation, UnusableConnection};
 use crate::session_params::KnownSessionParameters;
-use sf_core::apis::database_driver_v1::{ApiError, ConnectionUsability};
+use sf_core::apis::database_driver_v1::{ApiError, ConnectionInfo, ConnectionUsability};
 use sf_core::handle_manager::Handle;
 use std::pin::pin;
 use std::sync::Arc;
@@ -109,6 +109,16 @@ impl Session {
             return Ok(KnownSessionParameters::defaults());
         }
         KnownSessionParameters::from_connection(self.handles.connection).await
+    }
+
+    pub(crate) async fn info(&self) -> Result<Option<ConnectionInfo>, ApiError> {
+        if self.unusable().await.is_some() {
+            return Ok(None);
+        }
+        DRIVER
+            .connection_get_info(self.handles.connection)
+            .await
+            .map(Some)
     }
 
     pub(crate) async fn close(&self) -> Result<(), BridgeError> {
@@ -265,5 +275,24 @@ mod tests {
             assert!(!params.js_treat_integer_as_big_int);
             assert_eq!(params.client_stage_array_binding_threshold, 100_000);
         }
+    }
+
+    #[tokio::test]
+    async fn an_unusable_session_answers_token_info_with_none() {
+        let never_established = session();
+        let released = session();
+        DRIVER
+            .connection_release(released.handles.connection)
+            .unwrap();
+
+        let Ok(never_established) = never_established.info().await else {
+            panic!("empty token info, not a core error");
+        };
+        let Ok(released) = released.info().await else {
+            panic!("empty token info, not a core error");
+        };
+
+        assert!(never_established.is_none());
+        assert!(released.is_none());
     }
 }

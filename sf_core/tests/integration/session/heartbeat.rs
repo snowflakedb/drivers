@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::json;
 use sf_core::apis::database_driver_v1::heartbeat::spawn_heartbeat_task;
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
-use sf_core::rest::snowflake::SessionTokens;
+use sf_core::rest::snowflake::{SessionTokens, TokenExpiry};
 use sf_core::sensitive::SensitiveString;
 use tokio::sync::RwLock as AsyncRwLock;
 use wiremock::matchers::{body_partial_json, method, path, path_regex};
@@ -592,7 +592,7 @@ fn test_tokens(session_token: &str) -> SessionTokens {
         master_token: SensitiveString::from("master_tok"),
         session_id: Some(1),
         session_expires_at: None,
-        master_expires_at: Some(std::time::Instant::now() + Duration::from_secs(14400)),
+        master_expires_at: Some(TokenExpiry::from_duration(Duration::from_secs(14400))),
         master_validity: Some(Duration::from_secs(14400)),
     }
 }

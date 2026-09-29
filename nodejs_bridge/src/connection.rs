@@ -52,6 +52,15 @@ pub struct ExecuteParams {
     pub async_exec: Option<bool>,
 }
 
+#[napi(object)]
+#[derive(Default)]
+pub struct ConnectionTokenInfo {
+    pub session_token: Option<String>,
+    pub master_token: Option<String>,
+    pub session_token_expires_at_ms: Option<i64>,
+    pub master_token_expires_at_ms: Option<i64>,
+}
+
 #[napi]
 impl Connection {
     #[napi(constructor)]
@@ -153,6 +162,21 @@ impl Connection {
     #[napi]
     pub fn get_session_parameters(&self, env: &Env) -> Result<KnownSessionParameters> {
         block_on(self.session.known_session_parameters()).map_err(|e| e.to_js_error(*env))
+    }
+
+    #[napi]
+    pub fn get_token_info(&self, env: &Env) -> Result<ConnectionTokenInfo> {
+        block_on(self.session.info())
+            .map(|info| match info {
+                Some(info) => ConnectionTokenInfo {
+                    session_token: info.session_token.map(|token| token.reveal().to_string()),
+                    master_token: info.master_token.map(|token| token.reveal().to_string()),
+                    session_token_expires_at_ms: info.session_token_expires_at_ms,
+                    master_token_expires_at_ms: info.master_token_expires_at_ms,
+                },
+                None => ConnectionTokenInfo::default(),
+            })
+            .map_err(|e: ApiError| e.to_js_error(*env))
     }
 
     #[napi]

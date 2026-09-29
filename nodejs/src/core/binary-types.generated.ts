@@ -38,6 +38,7 @@ export declare class Connection {
   isUp(): boolean
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
+  getTokenInfo(): ConnectionTokenInfo
   execute(params: ExecuteParams): Statement
   getQueryStatus(queryId: string): Promise<QueryStatus>
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
@@ -74,6 +75,13 @@ export declare class Statement {
   isMultiStatement(): boolean
   nextResult(): Promise<boolean>
   cancel(): Promise<void>
+}
+
+export interface ConnectionTokenInfo {
+  sessionToken?: string
+  masterToken?: string
+  sessionTokenExpiresAtMs?: number
+  masterTokenExpiresAtMs?: number
 }
 
 export interface ExecuteParams {

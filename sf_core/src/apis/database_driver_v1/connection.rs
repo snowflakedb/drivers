@@ -3190,6 +3190,7 @@ mod tests {
     use crate::apis::database_driver_v1::global_state::DriverProviders;
     use crate::config::ParamStore;
     use crate::config::param_registry::param_names;
+    use crate::rest::snowflake::TokenExpiry;
 
     fn make_connection_with_settings(settings: Vec<(&str, Setting)>) -> Connection {
         let mut conn = Connection::new();
@@ -4706,9 +4707,9 @@ mod tests {
                 master_token: "test-master-token".into(),
                 session_id: Some(1),
                 session_expires_at: None,
-                master_expires_at: Some(
-                    std::time::Instant::now() + std::time::Duration::from_secs(14400),
-                ),
+                master_expires_at: Some(TokenExpiry::from_duration(
+                    std::time::Duration::from_secs(14400),
+                )),
                 master_validity: Some(std::time::Duration::from_secs(14400)),
             };
             *conn.tokens.write().await = Some(tokens);

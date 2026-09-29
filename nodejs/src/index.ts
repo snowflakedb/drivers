@@ -10,6 +10,7 @@ import type {
   QueryStatus,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
+import { serializeTokenInfo } from './connection-serialization.js';
 import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
@@ -219,7 +220,8 @@ export class Connection {
   }
 
   serialize(): string {
-    throw new Error('Not implemented');
+    const info = this.#core.getTokenInfo();
+    return serializeTokenInfo(info.sessionToken ? info : {});
   }
 
   isUp(): boolean {
@@ -348,6 +350,7 @@ export class Connection {
 //   it is exported as default
 export const configure = (options: ConfigureOptions) => updateGlobalConfig(options);
 export const createConnection = (options: ConnectionOptions) => new Connection(options);
+export const serializeConnection = (connection: Connection): string => connection.serialize();
 // TODO: document that a deserialized connection shares the originating session,
 // so destroying it logs out a session its originator still owns.
 export const deserializeConnection = () => {
@@ -357,6 +360,8 @@ export const deserializeConnection = () => {
 export default {
   configure,
   createConnection,
+  serializeConnection,
+  deserializeConnection,
   ErrorCode,
   ocspModes,
 };

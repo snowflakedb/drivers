@@ -207,6 +207,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::config::rest_parameters::test_fixtures::test_client_info;
+    use crate::rest::snowflake::TokenExpiry;
     use crate::sensitive::SensitiveString;
 
     fn test_tokens(session_token: &str) -> SessionTokens {
@@ -215,7 +216,7 @@ mod tests {
             master_token: SensitiveString::from("master_token".to_string()),
             session_id: Some(1),
             session_expires_at: None,
-            master_expires_at: Some(std::time::Instant::now() + Duration::from_secs(14400)),
+            master_expires_at: Some(TokenExpiry::from_duration(Duration::from_secs(14400))),
             master_validity: Some(Duration::from_secs(14400)),
         }
     }

@@ -189,6 +189,21 @@ pub(crate) fn parse_gs_code_or_unavailable(code: Option<&str>) -> i32 {
     try_parse_gs_code(code).unwrap_or(GS_CODE_UNAVAILABLE)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TokenExpiry {
+    pub monotonic: Instant,
+    pub epoch_ms: i64,
+}
+
+impl TokenExpiry {
+    pub fn from_duration(duration: Duration) -> Self {
+        Self {
+            monotonic: Instant::now() + duration,
+            epoch_ms: current_epoch_millis() + duration.as_millis() as i64,
+        }
+    }
+}
+
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
 pub struct SessionTokens {
@@ -201,9 +216,9 @@ pub struct SessionTokens {
     /// in until its RENEW returns.
     pub session_id: Option<i64>,
     /// When the session token expires
-    pub session_expires_at: Option<std::time::Instant>,
+    pub session_expires_at: Option<TokenExpiry>,
     /// When the master token expires (after this, full re-auth is needed)
-    pub master_expires_at: Option<std::time::Instant>,
+    pub master_expires_at: Option<TokenExpiry>,
     /// Configured master-token TTL as returned by the server (`masterValidityInSeconds`).
     /// Unlike the remaining time derived from `master_expires_at`, this does not shrink
     /// as the token ages, so it is the right input for heartbeat-cadence computation.
@@ -233,41 +248,29 @@ impl SessionTokens {
     /// Check if the master token is expired or about to expire
     pub fn is_master_expired(&self) -> bool {
         self.master_expires_at
-            .map(|exp| exp < std::time::Instant::now())
+            .map(|exp| exp.monotonic < Instant::now())
             .unwrap_or(false)
     }
 
     /// Check if the session token is expired or about to expire
     pub fn is_session_expired(&self) -> bool {
         self.session_expires_at
-            .map(|exp| exp < std::time::Instant::now())
+            .map(|exp| exp.monotonic < Instant::now())
             .unwrap_or(false)
     }
 
     /// Get remaining validity for the master token
     pub fn master_valid_for(&self) -> Option<std::time::Duration> {
         self.master_expires_at
-            .and_then(|exp| exp.checked_duration_since(std::time::Instant::now()))
+            .and_then(|exp| exp.monotonic.checked_duration_since(Instant::now()))
     }
 
-    /// Session token expiry in epoch milliseconds, read off the wall clock at
-    /// call time rather than at the time the token was issued
     pub fn session_expires_at_epoch_ms(&self) -> Option<i64> {
-        self.session_expires_at.map(instant_to_epoch_ms)
+        self.session_expires_at.map(|exp| exp.epoch_ms)
     }
 
-    /// Master token expiry in epoch milliseconds, on the same terms
     pub fn master_expires_at_epoch_ms(&self) -> Option<i64> {
-        self.master_expires_at.map(instant_to_epoch_ms)
-    }
-}
-
-fn instant_to_epoch_ms(instant: Instant) -> i64 {
-    let now = Instant::now();
-    let now_epoch_ms = current_epoch_millis();
-    match instant.checked_duration_since(now) {
-        Some(remaining) => now_epoch_ms + remaining.as_millis() as i64,
-        None => now_epoch_ms - now.duration_since(instant).as_millis() as i64,
+        self.master_expires_at.map(|exp| exp.epoch_ms)
     }
 }
 
@@ -1394,7 +1397,7 @@ pub async fn snowflake_login_with_client(
             master_token: master_token.clone(),
             session_id: None,
             session_expires_at: None,
-            master_expires_at: master_validity.map(|d| std::time::Instant::now() + d),
+            master_expires_at: master_validity.map(TokenExpiry::from_duration),
             master_validity,
         };
         let tokens = if login_parameters.validate_session_token {
@@ -1776,9 +1779,11 @@ pub async fn snowflake_login_with_client(
             field: "session ID",
         })?;
 
-    let now = std::time::Instant::now();
-    let session_expires_at = auth_response.data.validity.map(|d| now + d);
-    let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
+    let session_expires_at = auth_response.data.validity.map(TokenExpiry::from_duration);
+    let master_expires_at = auth_response
+        .data
+        .master_validity
+        .map(TokenExpiry::from_duration);
 
     // Extract session parameters from auth response
     let session_params = auth_response.data._parameters.map(|params| {
@@ -1916,9 +1921,8 @@ pub async fn refresh_session(
         field: "session refresh data",
     })?;
 
-    let now = std::time::Instant::now();
-    let session_expires_at = data.validity.map(|d| now + d);
-    let master_expires_at = data.master_validity.map(|d| now + d);
+    let session_expires_at = data.validity.map(TokenExpiry::from_duration);
+    let master_expires_at = data.master_validity.map(TokenExpiry::from_duration);
 
     tracing::info!(
         session_id = data.session_id,
@@ -3263,29 +3267,30 @@ mod tests {
     }
 
     #[test]
-    fn instant_to_epoch_ms_puts_a_live_token_ahead_of_the_current_time() {
+    fn token_expiry_epoch_ms_is_about_an_hour_ahead() {
         let now_epoch_ms = current_epoch_millis();
-
-        let expires_at = instant_to_epoch_ms(Instant::now() + Duration::from_secs(3600));
-
-        let ahead_by = expires_at - now_epoch_ms;
+        let expiry = TokenExpiry::from_duration(Duration::from_secs(3600));
+        let ahead_by = expiry.epoch_ms - now_epoch_ms;
         assert!(
             (3_595_000..=3_605_000).contains(&ahead_by),
-            "expected roughly an hour ahead of {now_epoch_ms}, got {expires_at}"
+            "expected roughly an hour ahead of {now_epoch_ms}, got {}",
+            expiry.epoch_ms
         );
     }
 
     #[test]
-    fn instant_to_epoch_ms_puts_an_expired_token_behind_the_current_time() {
-        let now_epoch_ms = current_epoch_millis();
-
-        let expired_at = instant_to_epoch_ms(Instant::now() - Duration::from_secs(60));
-
-        let behind_by = now_epoch_ms - expired_at;
-        assert!(
-            (55_000..=65_000).contains(&behind_by),
-            "expected roughly a minute behind {now_epoch_ms}, got {expired_at}"
-        );
+    fn token_expiry_epoch_ms_is_stable_across_reads() {
+        let tokens = SessionTokens {
+            session_token: "session".into(),
+            master_token: "master".into(),
+            session_id: Some(1),
+            session_expires_at: Some(TokenExpiry::from_duration(Duration::from_secs(3600))),
+            master_expires_at: None,
+            master_validity: None,
+        };
+        let first = tokens.session_expires_at_epoch_ms();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(first, tokens.session_expires_at_epoch_ms());
     }
 
     #[test]

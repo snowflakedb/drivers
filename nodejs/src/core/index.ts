@@ -62,3 +62,4 @@ export type CoreColumnInstance = InstanceType<typeof CoreColumn>;
 export type CoreQueryBindings = CoreBinary.QueryBindings;
 export type CoreKnownSessionParameters = CoreBinary.KnownSessionParameters;
 export type QueryStatus = CoreBinary.QueryStatus;
+export type ConnectionTokenInfo = CoreBinary.ConnectionTokenInfo;

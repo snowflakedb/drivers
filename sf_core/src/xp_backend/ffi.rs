@@ -51,7 +51,8 @@ use super::{
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::rest::snowflake::{
-    LoginResult, QueryExecutionMode, QueryInput, SessionTokens, query_request, query_response,
+    LoginResult, QueryExecutionMode, QueryInput, SessionTokens, TokenExpiry, query_request,
+    query_response,
 };
 use crate::sensitive::SensitiveString;
 
@@ -358,7 +359,6 @@ pub struct XpSessionInfo {
 
 impl From<XpSessionInfo> for LoginResult {
     fn from(info: XpSessionInfo) -> Self {
-        let now = std::time::Instant::now();
         let session_validity = info.validity_in_seconds.map(std::time::Duration::from_secs);
         let master_validity = info
             .master_validity_in_seconds
@@ -369,8 +369,8 @@ impl From<XpSessionInfo> for LoginResult {
                 session_token: SensitiveString::from(info.session_token),
                 master_token: SensitiveString::from(info.master_token),
                 session_id: Some(info.session_id),
-                session_expires_at: session_validity.map(|d| now + d),
-                master_expires_at: master_validity.map(|d| now + d),
+                session_expires_at: session_validity.map(TokenExpiry::from_duration),
+                master_expires_at: master_validity.map(TokenExpiry::from_duration),
                 master_validity,
             },
             session_parameters: info.session_parameters.map(|params| {
