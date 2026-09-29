@@ -96,6 +96,13 @@ impl Statement {
         }
     }
 
+    fn rows(&self) -> Option<MutexGuard<'_, Box<ResultData>>> {
+        match self.result.get() {
+            Some(Ok(outcome)) => outcome.rows(),
+            None | Some(Err(_)) => None,
+        }
+    }
+
     /// Returns the next row of the current batch, or `null` once that batch
     /// is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
     /// another.
@@ -121,10 +128,9 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get_num_rows(&self, env: &Env) -> Result<Option<i64>> {
-        Ok(self
-            .ready_rows(env)?
-            .and_then(|data| data.result_set_descriptor.row_count))
+    pub fn get_num_rows(&self) -> Option<i64> {
+        self.rows()
+            .and_then(|data| data.result_set_descriptor.row_count)
     }
 
     /// Not part of the driver's public API. Callers are suposed toinvoke this only after the
@@ -149,24 +155,22 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get_columns(&self, env: &Env) -> Result<Option<Vec<Column>>> {
-        Ok(self.ready_rows(env)?.map(|data| {
+    pub fn get_columns(&self) -> Option<Vec<Column>> {
+        self.rows().map(|data| {
             data.result_set_descriptor
                 .columns
                 .iter()
                 .enumerate()
                 .map(|(i, meta)| Column::from_metadata(i as u32, meta))
                 .collect()
-        }))
+        })
     }
 
     #[napi]
-    pub fn get_column(&self, env: &Env, identifier: Either<String, u32>) -> Result<Option<Column>> {
-        let Some(data) = self.ready_rows(env)? else {
-            return Ok(None);
-        };
+    pub fn get_column(&self, identifier: Either<String, u32>) -> Option<Column> {
+        let data = self.rows()?;
         let columns = &data.result_set_descriptor.columns;
-        let column = match identifier {
+        match identifier {
             Either::A(name) => columns
                 .iter()
                 .enumerate()
@@ -175,8 +179,7 @@ impl Statement {
             Either::B(index) => columns
                 .get(index as usize)
                 .map(|meta| Column::from_metadata(index, meta)),
-        };
-        Ok(column)
+        }
     }
 
     // TODO: instead of Node calling close, maybe we should call it when the result set is

@@ -301,15 +301,17 @@ behavior_differences:
     old_driver_behavior: |
       The old driver's TypeScript types declare getColumn(): Column, getNumRows(): number,
       getQueryId(): string, and getSqlText(): string — none include undefined. At runtime all
-      four can still return undefined: getColumn and getNumRows when no result is available yet,
-      getQueryId when the query id is not yet known (its JSDoc even says so), and getSqlText
-      when the statement was created by fetchResult without sqlText. Callers who type-check
-      against the old .d.ts never see undefined, even though calling the functions can return it.
+      four can still return undefined: getColumn and getNumRows when no result is available yet
+      or after execute fails, getQueryId when the query id is not yet known (its JSDoc even
+      says so), and getSqlText when the statement was created by fetchResult without sqlText.
+      Callers who type-check against the old .d.ts never see undefined, even though calling
+      the functions can return it.
     new_driver_behavior: |
       The new driver types getColumn, getNumRows, getQueryId, and getSqlText as T | undefined.
       After a successful execute they still return defined values, same as the old driver;
-      TypeScript now requires handling undefined. fetchResult still returns undefined from
-      getSqlText at runtime on both drivers.
+      after a failed execute they return undefined on both drivers. TypeScript now requires
+      handling undefined. fetchResult still returns undefined from getSqlText at runtime on
+      both drivers.
     description: |
       Status is unknown: investigate and decide among (1) keeping the honest T | undefined
       signatures (a TypeScript-visible API change), (2) matching the old driver's types, which
