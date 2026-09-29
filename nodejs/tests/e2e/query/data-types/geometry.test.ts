@@ -37,7 +37,7 @@ const POLYGON_GEOJSON = {
   ],
 };
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('GEOMETRY data type', () => {
+describe('GEOMETRY data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {
@@ -222,7 +222,8 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('GEOMETRY data type', () => {
     });
   });
 
-  describe('fetchAsString', () => {
+  // fetchAsString JSON does not stringify object, array, or map; see BCR_LOG.md
+  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
     it('should return GEOMETRY unchanged when fetchAsString is set', async () => {
       const { rows } = await executeAsync(connection, `SELECT TO_GEOMETRY('${POINT_SQL}')`, {
         fetchAsString: ['JSON'],

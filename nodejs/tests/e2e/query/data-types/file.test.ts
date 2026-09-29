@@ -32,7 +32,7 @@ const OTHER_FILE_DOCUMENT = {
 };
 const OTHER_FILE_EXPRESSION = `TO_FILE(PARSE_JSON('${JSON.stringify(OTHER_FILE_DOCUMENT)}'))`;
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('FILE data type', () => {
+describe('FILE data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {
@@ -153,7 +153,8 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('FILE data type', () => {
     );
   });
 
-  describe('fetchAsString', () => {
+  // fetchAsString JSON does not stringify object, array, or map; see BCR_LOG.md
+  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
     it('should return FILE unchanged when fetchAsString is set', async () => {
       const { rows } = await executeAsync(connection, `SELECT ${FILE_EXPRESSION}`, {
         fetchAsString: ['JSON'],
