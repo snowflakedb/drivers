@@ -90,6 +90,18 @@ impl DatabaseDriverImpl {
 }
 
 impl DatabaseDriver for DatabaseDriverImpl {
+    #[instrument(name = "DatabaseDriverV1::driver_get_tls_status", skip(self, _input))]
+    async fn driver_get_tls_status(
+        &self,
+        _input: DriverGetTlsStatusRequest,
+    ) -> Result<DriverGetTlsStatusResponse, DriverException> {
+        let status = crate::tls::tls_status();
+        Ok(DriverGetTlsStatusResponse {
+            tls_provider_is_fips: status.tls_provider_is_fips,
+            fips_tls_build_enabled: status.fips_tls_build_enabled,
+        })
+    }
+
     #[instrument(name = "DatabaseDriverV1::database_new", skip(self, _input))]
     async fn database_new(
         &self,
@@ -1427,6 +1439,10 @@ where
 /// the generated async client methods directly.
 #[allow(clippy::result_large_err)]
 pub trait DatabaseDriverClientBlockingExt {
+    fn driver_get_tls_status_blocking(
+        &self,
+        input: DriverGetTlsStatusRequest,
+    ) -> BlockingProtoResult<DriverGetTlsStatusResponse>;
     fn database_new_blocking(
         &self,
         input: DatabaseNewRequest,
@@ -1588,6 +1604,13 @@ pub trait DatabaseDriverClientBlockingExt {
 
 #[allow(clippy::result_large_err)]
 impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
+    fn driver_get_tls_status_blocking(
+        &self,
+        input: DriverGetTlsStatusRequest,
+    ) -> BlockingProtoResult<DriverGetTlsStatusResponse> {
+        block_on_client_call(self.driver_get_tls_status(input))
+    }
+
     fn database_new_blocking(
         &self,
         input: DatabaseNewRequest,

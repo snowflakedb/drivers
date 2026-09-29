@@ -73,24 +73,12 @@ pub(crate) fn ensure_crypto_provider() {
 /// key loading, client-side file encryption -- and this answers for none of
 /// it.
 ///
-/// The artifact-level question, the one a customer or a compliance
-/// questionnaire actually asks -- "is the linked module in approved mode" --
-/// is `aws_lc_rs::try_fips_mode()`, asserted by `aws_lc_reports_fips_mode` in
-/// the test module below. That test stays the source of truth; this accessor
-/// must not be presented as a substitute for it.
+/// The module-mode question is answered by `aws_lc_rs::try_fips_mode()`,
+/// not this provider check. Neither establishes validated-module or whole-driver
+/// compliance.
 ///
-/// Deliberately not gated on the feature. The wrappers will surface this as a
-/// customer-facing accessor (plan Phase 4), and a function that is *absent*
-/// from standard builds would make "you installed the wrong artifact" look
-/// identical to "you are running a driver too old to have the accessor at
-/// all". Always present, answering `false`, keeps those two distinguishable.
-///
-/// `pub` rather than `pub(crate)` for the same reason: its in-crate callers
-/// sit under `#[cfg(feature = "fips-tls")]`, so a crate-private version is
-/// dead code in every standard build. The only ways to keep it crate-private
-/// are an `#[allow(dead_code)]` or the feature gate this doc block just
-/// explained we do not want -- both of which hide the accessor Phase 4 is
-/// going to export anyway.
+/// This function remains available in both builds for Rust consumers. For a
+/// no-connection status report in any wrapper, use [`tls_status`].
 ///
 /// Phase 3 note: this used to read `CryptoProvider::get_default()`, so that a
 /// standard build into which an embedding application had installed a FIPS
@@ -109,6 +97,26 @@ pub(crate) fn ensure_crypto_provider() {
 /// change.
 pub fn tls_provider_is_fips() -> bool {
     crypto_module::CryptoModule::get().provider_is_fips()
+}
+
+/// The scope of the no-connection TLS status API. A provider verdict and
+/// a Cargo feature are distinct facts; neither certifies the complete driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TlsStatus {
+    pub tls_provider_is_fips: bool,
+    pub fips_tls_build_enabled: bool,
+}
+
+/// Reports the linked rustls TLS provider's FIPS verdict and this build's
+/// `fips-tls` feature, without initializing a connection or making network calls.
+///
+/// This does not attest to an installed process-global provider, other driver
+/// cryptography, a validated module version, or the complete artifact.
+pub fn tls_status() -> TlsStatus {
+    TlsStatus {
+        tls_provider_is_fips: tls_provider_is_fips(),
+        fips_tls_build_enabled: cfg!(feature = "fips-tls"),
+    }
 }
 
 /// Fails closed in `fips-tls` builds unless *both* the linked crypto module and
@@ -226,5 +234,30 @@ mod fips_tests {
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
         assert!(config.fips(), "ClientConfig is not FIPS-approved");
+    }
+
+    #[cfg(feature = "protobuf")]
+    #[test]
+    fn public_rpc_reports_fips_provider_without_connection() {
+        use crate::protobuf::apis::database_driver_v1::{
+            DatabaseDriverClientBlockingExt, database_driver_client,
+        };
+        use crate::protobuf::generated::database_driver_v1::DriverGetTlsStatusRequest;
+
+        let status = database_driver_client()
+            .driver_get_tls_status_blocking(DriverGetTlsStatusRequest {})
+            .expect("no-connection status RPC must succeed");
+        assert!(status.tls_provider_is_fips);
+        assert!(status.fips_tls_build_enabled);
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    #[test]
+    fn status_describes_linked_tls_provider_in_both_builds() {
+        let status = super::tls_status();
+        assert_eq!(status.fips_tls_build_enabled, cfg!(feature = "fips-tls"));
+        assert_eq!(status.tls_provider_is_fips, cfg!(feature = "fips-tls"));
     }
 }

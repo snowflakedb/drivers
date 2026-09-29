@@ -12,6 +12,8 @@ import {
 
 const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
 const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
+const fipsTlsMode = process.env.SF_CORE_EXPECT_FIPS_TLS?.toLowerCase();
+const buildWithFipsTls = fipsTlsMode === '1' || fipsTlsMode === 'true';
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
 // package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),
@@ -47,7 +49,8 @@ const { task } = await cli.build({
   packageJsonPath: NODE_SDK_PACKAGE_JSON_PATH,
   outputDir: BUILD_CORE_PACKAGE_DIR,
   cwd: ROOT_DIR,
-  cargoOptions: ['--locked'],
+  // The test marker selects both the expected TLS status and the native build mode.
+  cargoOptions: buildWithFipsTls ? ['--locked', '--features', 'fips-tls'] : ['--locked'],
   noJsBinding: true,
   dtsHeader: `\
 /**

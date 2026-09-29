@@ -39,6 +39,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetTlsStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -60,6 +61,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Uploa
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 
 public interface CoreDriverApi {
+
+  DriverGetTlsStatusResponse driverGetTlsStatus();
 
   // Database lifecycle
 

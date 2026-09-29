@@ -78,6 +78,8 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetTlsStatusRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetTlsStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultChunk;
@@ -122,6 +124,11 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Wrapp
 class CoreDriverApiImpl implements CoreDriverApi {
 
   private final DatabaseDriverService client;
+
+  @Override
+  public DriverGetTlsStatusResponse driverGetTlsStatus() {
+    return invoke(() -> client.driverGetTlsStatus(DriverGetTlsStatusRequest.getDefaultInstance()));
+  }
 
   // =========================================================================
   // Database lifecycle
