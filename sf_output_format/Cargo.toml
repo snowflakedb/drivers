@@ -4,4 +4,17 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+e2e = ["dep:sf_core", "dep:serde", "dep:serde_json", "dep:tokio"]
+
 [dependencies]
+chrono = "0.4.43"
+sf_core = { path = "../sf_core", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+
+[[test]]
+name = "date_output_format_parity"
+path = "tests/date_output_format_parity.rs"
+required-features = ["e2e"]

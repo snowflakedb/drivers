@@ -1,6 +1,7 @@
 //! Shared rendering of decoded Snowflake values into their canonical string
-//! form, for front ends that string-render in Rust. INTERVAL is the value type
-//! rendered here today.
+//! form, for front ends that string-render in Rust. INTERVAL is rendered by
+//! this module; DATE / TIME / TIMESTAMP rendering through a Snowflake
+//! date-time output format lives in [`datetime`].
 //!
 //! The Arrow decode — one signed integer per cell — lives in
 //! `sf_types::SnowflakeIntervalYearMonth` (total months) and
@@ -13,6 +14,8 @@
 //! Arrow `scale` on `INTERVAL_DAY_TIME` is a subtype code, not TIME-style
 //! precision. [`day_time_fraction_scale`] maps that code to the `0`/`9` width
 //! [`format_day_time`] consumes.
+
+pub mod datetime;
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 const SECONDS_PER_MINUTE: u128 = 60;

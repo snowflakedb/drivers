@@ -323,6 +323,63 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
+  # sf_output_format e2e parity (real cloud session formats). Not part of the
+  # sf_core llvm-cov matrix; `--features e2e` is the only path that pulls sf_core in.
+  date_output_format_parity:
+    if: inputs.run_rust_core && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_CLOUD_PROVIDER: aws
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free runner disk space
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Install Go (required by aws-lc-fips-sys)
+        uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: "core-test"
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+
+      - name: Run date output format parity
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo test --locked -p sf_output_format --features e2e --test date_output_format_parity -- --ignored
+
+      - name: Clean up python_bridge artifacts from target
+        if: always()
+        run: cargo clean --package python_bridge 2>/dev/null || true
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "core-test"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
   test:
     needs: load-core-matrix
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.test_matrix != '[]'
@@ -1000,7 +1057,7 @@ jobs:
             --parameter-path "${{ github.workspace }}/parameters.json"
 
   rust-core-status:
-    needs: [load-fips-matrix, format, test_sf_params_spec, fips_smoke, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
+    needs: [load-fips-matrix, format, test_sf_params_spec, fips_smoke, date_output_format_parity, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1016,6 +1073,7 @@ jobs:
              [[ "${{ needs.load-fips-matrix.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_sf_params_spec.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.fips_smoke.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.date_output_format_parity.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_x86.result }}" =~ ^(failure|cancelled)$ ]]; then
@@ -1024,6 +1082,7 @@ jobs:
             echo "  - load-fips-matrix: ${{ needs.load-fips-matrix.result }}"
             echo "  - test_sf_params_spec: ${{ needs.test_sf_params_spec.result }}"
             echo "  - fips_smoke: ${{ needs.fips_smoke.result }}"
+            echo "  - date_output_format_parity: ${{ needs.date_output_format_parity.result }}"
             echo "  - test: ${{ needs.test.result }}"
             echo "  - test_windows_arm64_nonfips: ${{ needs.test_windows_arm64_nonfips.result }}"
             echo "  - test_windows_x86: ${{ needs.test_windows_x86.result }}"

@@ -4886,6 +4886,13 @@ dependencies = [
 [[package]]
 name = "sf_output_format"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sf_core",
+ "tokio",
+]
 
 [[package]]
 name = "sf_params_codegen"
