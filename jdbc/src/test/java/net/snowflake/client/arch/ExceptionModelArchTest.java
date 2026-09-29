@@ -49,11 +49,11 @@ import org.junit.jupiter.api.condition.DisabledForJreRange;
  * <p>TODO(SNOW-3735420): {@code Driver#connect} still constructs {@code SnowflakeSQLException} for
  * an invalid URL. That allow stays until the path uses a carrier.
  *
- * <p>Disabled on JRE 22+: ArchUnit 1.3.0 (pinned for a Java 8 runtime — see jdbc/build.gradle)
- * cannot parse class files newer than Java 21, so {@code ClassFileImporter} imports zero classes
- * and every {@code should()} rule trips {@code failOnEmptyShould}. These arch invariants are
- * JVM-independent, so exercising them on the Java 8/11/17/21 lanes fully covers them; the Java 25
- * lane skips this class rather than failing on a toolchain limitation.
+ * <p>Disabled on JRE 22+: the Java 8-compatible ArchUnit release pinned in jdbc/build.gradle cannot
+ * parse class files newer than Java 21, so {@code ClassFileImporter} imports zero classes and every
+ * {@code should()} rule trips {@code failOnEmptyShould}. These arch invariants are JVM-independent,
+ * so exercising them on the Java 8/11/17/21 lanes fully covers them; the Java 25 lane skips this
+ * class rather than failing on a toolchain limitation.
  */
 @DisabledForJreRange(minVersion = 22)
 class ExceptionModelArchTest {

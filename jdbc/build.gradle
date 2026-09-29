@@ -8,19 +8,19 @@ plugins {
     id 'checkstyle'
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
     id 'com.adarshr.test-logger' version '4.0.0'
-    id 'org.gradle.test-retry' version '1.6.2'
+    id 'org.gradle.test-retry' version '1.6.6'
     // Fat jar (shadowJar). Needs JDK 11+, so CI assembles on JDK 21 (bytecode stays 1.8).
-    id 'com.gradleup.shadow' version '8.3.6'
+    id 'com.gradleup.shadow' version '8.3.11'
 }
 
 // ====================
 // Project metadata
 // ====================
 def oldJdbcVersion = '4.3.4'
-def slf4jVersion = '2.0.18'
-def lombokVersion = '1.18.46'
+def slf4jVersion = '2.0.20'
+def lombokVersion = '1.18.48'
 // Override arrow's transitive 2.17.x (backward-compatible). Stays on 2.x (Java 8); 3.x needs Java 17.
-def jacksonVersion = '2.22.1'
+def jacksonVersion = '2.22.3'
 // jackson-annotations dropped its patch segment at 2.20, so it trails core/databind.
 def jacksonAnnotationsVersion = '2.22'
 def arrowVersion = '17.0.0'
@@ -66,7 +66,7 @@ dependencies {
     implementation "org.apache.arrow:arrow-memory-core:${arrowVersion}"
     implementation "org.apache.arrow:arrow-memory-netty:${arrowVersion}"
     implementation "org.apache.arrow:arrow-c-data:${arrowVersion}"
-    implementation 'com.google.protobuf:protobuf-java:4.33.2'
+    implementation 'com.google.protobuf:protobuf-java:4.33.6'
     // All three pinned so the POM overrides arrow-vector's transitive 2.17.x (databind alone isn't enough).
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
     implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
@@ -79,11 +79,11 @@ dependencies {
     // would otherwise get Gradle's stale bundled launcher (no OutputDirectoryCreator → discovery crash).
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.14.4'
     testImplementation 'org.mockito:mockito-core:4.11.0'         // last 4.x; mockito 5.x needs Java 11
-    testImplementation 'com.tngtech.archunit:archunit:1.3.0'     // 1.3.x still supports a Java 8 runtime
-    testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.6.2'
-    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.85'
+    testImplementation 'com.tngtech.archunit:archunit:1.3.2'     // 1.3.x still supports a Java 8 runtime
+    testImplementation 'org.apache.httpcomponents.client5:httpclient5:5.6.4'
+    testImplementation 'org.bouncycastle:bcpkix-jdk18on:1.86'
     testImplementation 'com.zaxxer:HikariCP:4.0.3'              // last 4.x; HikariCP 5.x+ needs Java 11
-    testImplementation 'com.mchange:c3p0:0.14.1'
+    testImplementation 'com.mchange:c3p0:0.14.2'
     testImplementation 'commons-dbcp:commons-dbcp:1.4'          // successor commons-dbcp2 is a separate artifact
     testImplementation 'commons-pool:commons-pool:1.6'          // successor commons-pool2 is a separate artifact
     testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
@@ -137,7 +137,7 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 jacoco {
-    toolVersion = "0.8.12"
+    toolVersion = "0.8.15"
 }
 
 // ====================
