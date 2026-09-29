@@ -405,7 +405,7 @@ behavior_differences:
     old_driver_behavior: |
       Under fetchAsString a NULL cell becomes the string 'NULL' (representNullAsStringNull, on by
       default), but some types never reach that rule and stay null -- e.g. DECFLOAT, VARIANT,
-      INTERVAL, and FILE.
+      INTERVAL, FILE, and GEOMETRY.
     new_driver_behavior: |
       Every type fetched as a string renders NULL as 'NULL', with no exceptions.
     status_rationale: |
