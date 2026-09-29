@@ -83,7 +83,9 @@ reviewers:
   dawid-heyman_snow:
   rafal-kowalski_snow:
   ruslan-savenok_snow:
-  piotr-bulawa_snow:
+  # Temporarily removed while OOO — restore under reviewers, dotnet, and odbc
+  # (and the nodejs PuPr TODO below) when Piotr Bulawa is back.
+  # piotr-bulawa_snow:
   michal-lorenc-cepiga_snow:
   michal-hofman_snow:
   jakub-szczerbinski_snow:
@@ -102,7 +104,7 @@ rules:
     - bartosz-oler_snow
   dotnet:
     - michal-lorenc-cepiga_snow
-    - piotr-bulawa_snow
+    # - piotr-bulawa_snow  # temporarily OOO
     - michal-hofman_snow
     - dawid-heyman_snow
     - marcin-erbel_snow
@@ -122,14 +124,14 @@ rules:
     - filip-pawlowski_snow
     # TODO: the commented users will be restored once we're close to PuPr release
     #- rafal-kowalski_snow
-    #- piotr-bulawa_snow
+    #- piotr-bulawa_snow  # also temporarily OOO from active pools
     #- michal-lorenc-cepiga_snow
   odbc:
     - michal-hofman_snow
     - jakub-szczerbinski_snow
     - devansh-das_snow
     - maxymilian-kowalski_snow
-    - piotr-bulawa_snow
+    # - piotr-bulawa_snow  # temporarily OOO
   python:
     - antoni-solarski_snow
     - filip-pawlowski_snow
