@@ -23,16 +23,21 @@ sonic-json = ["sonic-rs"]
 # TLS-only in practice.
 #
 # The name stays because the *claim* is not yet complete:
-#   - `openssl` is still in `[dependencies]` (dev-only in practice, but
-#     `vendored-openssl` below still statically links an unvalidated copy where
-#     a customer cannot replace it). Removing it is the next step; see F2.
-#   - AWS-LC-FIPS 4.x is "in process" at CMVP rather than certificated; the
-#     issued certs cover the 3.x line.
-# So an artifact built from this feature is still not a FIPS artifact, and
-# `fips` stays unclaimed for the complete thing.
+#   - SigV4 request signing computes HMAC-SHA256 outside the module:
+#     `aws-sigv4` uses RustCrypto unconditionally, and `aws-sdk-s3` enables
+#     `sigv4a` by default, which links ring. That is every stage transfer, not
+#     an edge case; see F7.
+#   - OAuth CSRF and PKCE randomness comes from `oauth2`, which draws on `rand`
+#     rather than the module's DRBG; see F8.
+#   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
+#     does not establish CMVP validation. Certificate #5314 identifies
+#     the static AWS-LC FIPS 3.1.0 module; later 3.x point releases need
+#     their own validation basis. The built and deployed module must meet
+#     the policy's version, tested environment, and installation requirements.
+# So an artifact built with this feature is not yet a validated FIPS artifact,
+# and `fips` stays unclaimed for the complete thing.
 fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
 protobuf = ["prost", "proto_utils"]
-vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
 auth_spcs_e2e = []
@@ -43,7 +48,6 @@ cli = ["clap"]
 ci-all-non-fips = [
     "sonic-json",
     "protobuf",
-    "vendored-openssl",
     "auth_mfa_e2e",
     "auth_oauth_e2e",
     "auth_spcs_e2e",
@@ -100,7 +104,6 @@ base64 = "0.22.1"
 arrow = { version = ">=54.0.0, <59", features = ["ffi"] }
 arrow-ipc = ">=54.0.0, <59"
 flate2 = "1.1.2"
-openssl = "0.10.73"
 # `default-features = false` drops oauth2's `rustls-tls`, which is only a
 # forwarder to `reqwest/rustls-tls` -- and that pulls `__rustls-ring`, which via
 # cargo feature unification would re-arm reqwest's silent ring fallback for the
@@ -149,7 +152,27 @@ rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 thiserror = "1.0.69"
-aws-lc-rs = "1.13.2"
+# Upper bound is load-bearing: `aws-lc-rs` <1.18 selects `aws-lc-fips-sys`
+# 0.13.x (AWS-LC FIPS 3.x), while >=1.18 selects 0.14.x (AWS-LC FIPS 4.x).
+# That bounds the module *family*, not its exact version or validation status:
+# certificate #5314 names the static AWS-LC FIPS 3.1.0 module, while
+# `aws-lc-fips-sys` 0.13.12 vendors 3.2.0 and 0.13.17 vendors 3.6.0.
+# Neither is named by that certificate.
+#
+# A `cargo update` within 0.13.x can change the linked module version without
+# crossing this bound. `try_fips_mode()` confirms FIPS mode, not CMVP validation;
+# tests cannot establish certificate scope. Review the exact vendored version
+# and the policy's tested environments and installation/configuration rules
+# (sections 6 and 11.1) before a validated claim.
+# The resolved crate version belongs in the dependency-policy checks
+# (cargo-deny, Phase 5), and the SBOM must record the module identity too.
+#
+# Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
+# the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
+#
+# Revisit the bound and build toolchain together when updating the module.
+# `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
+aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
 der-parser = "9.0"
 x509-cert = "0.2"
@@ -184,14 +207,14 @@ pkcs8 = { version = "0.10", features = ["3des"] }
 # approved. See `crypto::private_key` for why it must be supported.
 des = "0.8"
 cbc = "0.1"
-# Traditional encrypted PEM derives its key with the format-defined MD5-based
-# `EVP_BytesToKey`, while Azure Content-MD5 uses MD5 as a non-security
-# integrity value. The private-key path is disabled under `fips-tls`; Azure's
-# pure-Rust digest remains available because OpenSSL disables MD5 in FIPS mode.
+# Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
+# OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
+# format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
+# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# a FIPS build never derives a key with MD5; see `crypto::private_key`.
 #
-# Not a new SBOM entry: `md-5` is already in the graph unconditionally via
-# `aws-smithy-checksums`, which is finding F9 in the compliance plan rather
-# than anything this adds.
+# Azure Content-MD5 is also an upload integrity checksum, not a security
+# primitive; it remains available in a FIPS build.
 md-5 = "0.10"
 once_cell = "1.19"
 const-oid = "0.9"
@@ -232,6 +255,20 @@ brotli = "8.0.2"
 zstd = "0.13.3"
 flate2 = "1.1.2"
 test-case = "3.3.1"
+# Test-only, and deliberately kept rather than ported. It generates the X.509
+# and CRL fixtures (`crl/certificate_parser.rs`, `tls/x509_utils.rs`,
+# `tls/test_helpers.rs`) and gives the AWS-LC crypto paths an independent
+# implementation to check against -- porting it would put the same library on
+# both sides of those tests and stop them proving anything.
+#
+# It is a dev-dependency rather than a normal one because `cargo build` does not
+# compile dev-dependencies: shipped artifacts now link no OpenSSL at all, which
+# is what retired the `vendored-openssl` feature (F2). Left unvendored on
+# purpose -- a cargo feature cannot reference a dev-dependency, so `vendored`
+# would have to be unconditional, and that would make every Windows test build
+# compile OpenSSL from source through Perl and nmake. The test lanes supply it
+# instead (vcpkg on Windows, distro packages elsewhere).
+openssl = "0.10.73"
 # Dev/test reqwest: also rustls-only so test builds don't re-introduce
 # native-tls (feature unification would otherwise pull `default-tls` back in).
 # Mirrors the `-no-provider` selection above for the same reason: feature

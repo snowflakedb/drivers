@@ -48,7 +48,7 @@ jobs:
                   "os": "ubuntu-latest",
                   "container": "quay.io/pypa/manylinux_2_28_x86_64",
                   "cargo_lib": "libsf_core_python.so",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "cargo_extra_args": "--config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_x86_64",
                   "artifact_id": "manylinux_x86_64",
@@ -58,7 +58,7 @@ jobs:
                   "os": "ubuntu-24.04-arm",
                   "container": "quay.io/pypa/manylinux_2_28_aarch64",
                   "cargo_lib": "libsf_core_python.so",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "cargo_extra_args": "--config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "manylinux_aarch64",
                   "artifact_id": "manylinux_aarch64",
@@ -68,7 +68,7 @@ jobs:
                   "os": "macos-15-intel",
                   "container": "",
                   "cargo_lib": "libsf_core_python.dylib",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "cargo_extra_args": "--config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "macosx_x86_64",
                   "artifact_id": "macosx_x86_64",
@@ -78,7 +78,7 @@ jobs:
                   "os": "macos-latest",
                   "container": "",
                   "cargo_lib": "libsf_core_python.dylib",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2",
+                  "cargo_extra_args": "--config profile.release.opt-level=2",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "macosx_arm64",
                   "artifact_id": "macosx_arm64",
@@ -88,7 +88,7 @@ jobs:
                   "os": "windows-latest",
                   "container": "",
                   "cargo_lib": "sf_core_python.dll",
-                  "cargo_extra_args": "--features vendored-openssl --config profile.release.opt-level=2 --config profile.release.strip=false",
+                  "cargo_extra_args": "--config profile.release.opt-level=2 --config profile.release.strip=false",
                   "wheel_method": "cibuildwheel",
                   "cibw_arch": "win_amd64",
                   "artifact_id": "win_amd64",
@@ -414,15 +414,9 @@ jobs:
           CARGO_LIB: ${{ matrix.cargo_lib }}
         shell: bash
         run: |
-          # Prefer Strawberry Perl over Git's MSYS perl. openssl-src's Configure
-          # needs Locale::Maketext::Simple (and friends) which Git usr/bin perl
-          # lacks; cold builds that compile vendored OpenSSL fail otherwise.
-          # Only prepend perl/bin — not Strawberry c/bin (gcc/link), which would
-          # shadow MSVC tools if anything ever stops using absolute paths.
-          if [[ -d "/c/Strawberry/perl/bin" ]]; then
-            export PATH="/c/Strawberry/perl/bin:$PATH"
-          fi
-          echo "perl: $(command -v perl)"
+          # No Strawberry Perl prepend here any more: it existed for
+          # openssl-src's Configure, and F2 removed the last thing that compiled
+          # OpenSSL from source.
           mkdir -p python/src/snowflake/connector/_core
           for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
             PY="$(uv python find "$V")"

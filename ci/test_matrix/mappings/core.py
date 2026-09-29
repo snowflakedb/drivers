@@ -46,7 +46,7 @@ CORE_PLATFORM: dict[tuple[str, str], dict] = {
         "cache_key": "arm64-nonfips",
     },
     ("windows", "x86"): {
-        "cargo_flags": "--no-default-features --features protobuf,vendored-openssl",
+        "cargo_flags": "--no-default-features --features protobuf",
         "cargo_target": "i686-pc-windows-msvc",
         "msvc_arch": "x86",
         "coverage": False,

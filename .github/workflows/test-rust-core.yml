@@ -885,9 +885,8 @@ jobs:
           mode: restore
           shared-key: "x86-core-test"
 
-      # vcpkg-installed OpenSSL replaces the `vendored-openssl` cargo feature.
-      # `vendored-openssl` shells out to Perl + nmake to build OpenSSL from
-      # source on every cache-miss compile (~3-5 min). Mirrors the ARM64 lane.
+      # vcpkg-installed OpenSSL for tests that still use it as a
+      # `sf_core` dev-dependency. Mirrors the ARM64 lane.
       - name: Setup OpenSSL (Windows x86)
         uses: ./.github/actions/setup-windows-openssl
         with:

@@ -296,11 +296,20 @@ fn build_crl_rustls_config(
     )
     .context(VerifierBuildSnafu)?;
 
+    // Explicit provider rather than `ClientConfig::builder()`: the latter reads
+    // the process-global default, so the module verifying this connection's
+    // chain would be whichever one won a startup race. Under `fips-tls` that
+    // race is the compliance claim.
+    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
     let version_builder = if protocol_versions.is_empty() {
         tracing::debug!("empty TLS protocol-version window; falling back to rustls defaults");
-        ClientConfig::builder()
+        ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .context(RustlsConfigSnafu)?
     } else {
-        ClientConfig::builder_with_protocol_versions(protocol_versions)
+        ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(protocol_versions)
+            .context(RustlsConfigSnafu)?
     };
     Ok(version_builder
         .dangerous()

@@ -21,7 +21,7 @@ Per-row keys:
                    passed to actions/cargo-cache for the build_odbc_driver job.
                    validate_mappings raises if missing on a built lane.
   cargo_extra      (str, optional) Extra cargo flags consumed by
-                   build_odbc_driver (e.g. "--features vendored-openssl").
+                   build_odbc_driver (e.g. "--no-default-features").
                    Empty string is fine.
   cargo_target     (str, optional) Cross-compile target triple for
                    `cargo build --target <triple>`. Currently only Windows x86
@@ -40,15 +40,13 @@ ODBC_PLATFORM: dict[tuple[str, str], dict[str, str]] = {
     ("macos",   "arm"): {"driver_lib": "libsfodbc.dylib", "driver_artifact": "macOS ARM64",
                          "cache_key": "odbc"},
     ("windows", "x64"): {"driver_lib": "sfodbc.dll",      "driver_artifact": "Windows x64",
-                         "vcpkg_triplet": "x64-windows", "cache_key": "odbc-x64",
-                         "cargo_extra": "--features vendored-openssl"},
+                         "vcpkg_triplet": "x64-windows", "cache_key": "odbc-x64"},
     ("windows", "x86"): {"driver_lib": "sfodbc32.dll",    "driver_artifact": "Windows x86",
                          "msvc_arch": "x86", "vcpkg_triplet": "x86-windows",
                          "cache_key": "odbc-x86",
-                         "cargo_extra": "--no-default-features --features vendored-openssl",
+                         "cargo_extra": "--no-default-features",
                          "cargo_target": "i686-pc-windows-msvc"},
     ("windows", "arm"): {"driver_lib": "sfodbc.dll",      "driver_artifact": "Windows ARM64",
                          "msvc_arch": "arm64", "vcpkg_triplet": "arm64-windows",
-                         "cache_key": "odbc-arm64",
-                         "cargo_extra": "--features vendored-openssl"},
+                         "cache_key": "odbc-arm64"},
 }

@@ -24,12 +24,11 @@ mkdir -p "$ARTIFACT_DIR"
 # ---------------------------------------------------------------------------
 # sf_core WIF e2e test binary
 # ---------------------------------------------------------------------------
-# Build (not run) the e2e_tests target. We vendor OpenSSL so the shipped binary
-# depends only on glibc/libgcc at runtime, keeping the public runtime container
-# minimal and avoiding an openssl-libs version mismatch on the VM.
+# Build (not run) the e2e_tests target. Shipped artifacts no longer link
+# OpenSSL, so the public runtime container only needs glibc/libgcc.
 echo "Building sf_core e2e test binary (target: e2e_tests)..."
 SF_CORE_BIN="$(
-  cargo test --locked -p sf_core --test e2e_tests --features vendored-openssl --no-run \
+  cargo test --locked -p sf_core --test e2e_tests --no-run \
     --message-format=json \
     | jq -r 'select(.reason=="compiler-artifact" and .target.name=="e2e_tests" and .executable != null) | .executable' \
     | tail -n 1
