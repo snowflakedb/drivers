@@ -56,6 +56,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed Python `cursor.description` reporting GEOGRAPHY and GEOMETRY columns as OBJECT when the server sent those names in a separate extended type field. (snowflakedb/drivers#2326)
 - Fixed statement prepare failing with server error `000007` (statement not preparable) for statements the server only accepts for direct execution, such as `ALTER SESSION` and `COMMIT`; prepare now returns empty metadata and the statement runs on execute. (snowflakedb/drivers#2320)
 - Fixed Python `ALTER SESSION SET` cache updates panicking or skipping the assignment when non-ASCII text appeared before the keyword. (snowflakedb/drivers#2209)
 - Fixed the external-browser callback listener to accept CORS Origin headers only from the connected Snowflake account host. (SNOW-3663593) (snowflakedb/drivers#2120)

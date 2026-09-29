@@ -343,20 +343,13 @@ pub(super) fn response_to_descriptor(
     }
 }
 
-fn effective_type(ext_type_name: Option<&String>, base_type: &str) -> String {
-    ext_type_name
-        .filter(|s| !s.is_empty())
-        .cloned()
-        .unwrap_or_else(|| base_type.to_string())
-}
-
 fn field_metadata_to_columns(fields: Option<&Vec<FieldMetadata>>) -> Vec<ColumnMetadata> {
     fields
         .map(|fs| {
             fs.iter()
                 .map(|f| ColumnMetadata {
                     name: f.name.clone().unwrap_or_default(),
-                    r#type: effective_type(f.ext_type_name.as_ref(), &f.type_),
+                    r#type: f.type_.clone(),
                     precision: f.precision.map(|v| v as i64),
                     scale: f.scale.map(|v| v as i64),
                     length: f.length.map(|v| v as i64),
@@ -394,7 +387,7 @@ fn row_types_to_columns(row_types: &[RowType]) -> Vec<ColumnMetadata> {
                 .map(|v| v as i64);
             ColumnMetadata {
                 name: rt.name.clone(),
-                r#type: effective_type(rt.ext_type_name.as_ref(), &rt.type_),
+                r#type: rt.type_.clone(),
                 precision: rt.precision.map(|v| v as i64),
                 scale: rt.scale.map(|v| v as i64),
                 length: rt.length.map(|v| v as i64),
@@ -1304,7 +1297,7 @@ mod tests {
     }
 
     #[test]
-    fn row_types_to_columns_prefers_ext_type_name_for_type() {
+    fn row_types_to_columns_keeps_wire_type_and_ext_type_name_separate() {
         use crate::rest::snowflake::query_response::RowType;
 
         let row_types = vec![RowType {
@@ -1320,7 +1313,7 @@ mod tests {
 
         assert_eq!(columns.len(), 1);
         assert_eq!(columns[0].name, "geo_col");
-        assert_eq!(columns[0].r#type, "GEOGRAPHY");
+        assert_eq!(columns[0].r#type, "object");
         assert_eq!(columns[0].ext_col_type_name, "GEOGRAPHY");
         assert_eq!(columns[0].udt_output_type, "binary");
     }
@@ -1415,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn row_types_to_columns_prefers_ext_type_name_for_nested_field_type() {
+    fn row_types_to_columns_keeps_nested_wire_type_and_ext_type_name_separate() {
         let row_type: RowType = serde_json::from_str(
             r#"{
                 "name": "ARR",
@@ -1430,7 +1423,7 @@ mod tests {
 
         let columns = row_types_to_columns(&[row_type]);
 
-        assert_eq!(columns[0].fields[0].r#type, "GEOGRAPHY");
+        assert_eq!(columns[0].fields[0].r#type, "object");
         assert_eq!(columns[0].fields[0].ext_col_type_name, "GEOGRAPHY");
     }
 }

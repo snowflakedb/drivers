@@ -15,6 +15,13 @@ from ..type_codes import get_type_code
 _TEXT_TYPES = ("TEXT", "VARCHAR", "CHAR", "STRING")
 
 
+def _type_code_name(col: Any) -> str:
+    ext = getattr(col, "ext_col_type_name", "")
+    if isinstance(ext, str) and ext:
+        return ext
+    return str(col.type)
+
+
 def _column_display_size(col: Any) -> int | None:
     # Char count, text-only — a new-driver-only enhancement (BD#90); the old driver leaves it unset.
     return col.length if col.HasField("length") and col.type.upper() in _TEXT_TYPES else None
@@ -44,7 +51,7 @@ class ResultMetadata(NamedTuple):
     @classmethod
     def from_column(cls, col: Any) -> ResultMetadata:
         """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
-        type_code = get_type_code(col.type)
+        type_code = get_type_code(_type_code_name(col))
 
         display_size = _column_display_size(col)
         internal_size = _column_internal_size(col)
@@ -195,7 +202,7 @@ class ResultMetadataV2:
         absent name as the empty string, which maps back to ``None`` here for
         parity with the old driver.
         """
-        type_code = get_type_code(col.type)
+        type_code = get_type_code(_type_code_name(col))
         display_size = _column_display_size(col)
         internal_size = _column_internal_size(col)
         precision = col.precision if col.HasField("precision") else None

@@ -55,14 +55,16 @@ public class SnowflakeColumnMetadata implements Serializable {
 
     List<FieldMetadata> fieldsMetadata = Collections.emptyList();
     int fixedColType = jdbcTreatDecimalAsInt && this.scale == 0 ? Types.BIGINT : Types.DECIMAL;
+    String extColTypeName = nullIfEmpty(colMetadata.getExtColTypeName());
+    String wireType = colMetadata.getType();
     ColumnTypeInfo columnTypeInfo =
         getSnowflakeType(
-            colMetadata.getType(),
-            nullIfEmpty(colMetadata.getExtColTypeName()),
+            effectiveSnowflakeTypeName(wireType, extColTypeName),
+            extColTypeName,
             nullIfEmpty(colMetadata.getUdtOutputType()),
             fixedColType,
             !fieldsMetadata.isEmpty(),
-            isVectorType(colMetadata.getType()));
+            isVectorType(wireType));
 
     this.typeName = columnTypeInfo.getExtColTypeName();
     this.type = columnTypeInfo.getColumnType();
@@ -132,5 +134,12 @@ public class SnowflakeColumnMetadata implements Serializable {
     this.columnSrcSchema = colNode.path("schema").asText();
     this.columnSrcTable = colNode.path("table").asText();
     this.isAutoIncrement = colNode.path("isAutoIncrement").asBoolean();
+  }
+
+  private static String effectiveSnowflakeTypeName(String wireType, String extColTypeName) {
+    if (extColTypeName != null && !extColTypeName.isEmpty()) {
+      return extColTypeName;
+    }
+    return wireType;
   }
 }

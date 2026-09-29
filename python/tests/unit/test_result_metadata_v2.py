@@ -30,6 +30,7 @@ def _column(
     scale: int | None = None,
     dimension: int | None = None,
     fields: list[ColumnMetadata] | None = None,
+    ext_col_type_name: str | None = None,
 ) -> ColumnMetadata:
     """Build a real proto ``ColumnMetadata``.
 
@@ -44,6 +45,7 @@ def _column(
         ("precision", precision),
         ("scale", scale),
         ("dimension", dimension),
+        ("ext_col_type_name", ext_col_type_name),
     ):
         if value is not None:
             setattr(col, attr, value)
@@ -139,6 +141,34 @@ class TestResultMetadataV2FromColumn:
         v2 = ResultMetadataV2.from_column(col)
         assert FIELD_ID_TO_NAME[v2.type_code] == "FIXED"
         assert v2.scale is None
+
+    def test_geography_type_code_uses_ext_col_type_name(self):
+        col = _column(col_type="object", ext_col_type_name="GEOGRAPHY")
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.type_code] == "GEOGRAPHY"
+
+    def test_geography_type_code_uses_ext_col_type_name_on_binary_wire_type(self):
+        col = _column(col_type="binary", ext_col_type_name="GEOGRAPHY")
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.type_code] == "GEOGRAPHY"
+
+    def test_geometry_type_code_uses_ext_col_type_name(self):
+        col = _column(col_type="object", ext_col_type_name="GEOMETRY")
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.type_code] == "GEOMETRY"
+
+    def test_empty_ext_col_type_name_falls_back_to_wire_type(self):
+        col = _column(col_type="TEXT", ext_col_type_name="")
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.type_code] == "TEXT"
+
+    def test_nested_geography_field_uses_ext_col_type_name(self):
+        col = _column(
+            col_type="ARRAY",
+            fields=[_column(name="", col_type="object", ext_col_type_name="GEOGRAPHY")],
+        )
+        v2 = ResultMetadataV2.from_column(col)
+        assert FIELD_ID_TO_NAME[v2.fields[0].type_code] == "GEOGRAPHY"
 
 
 class TestResultMetadataV2CreateDescription:
@@ -523,6 +553,11 @@ class TestResultMetadataFromColumnFieldSizes:
         v1 = ResultMetadata.from_column(col)
         assert v1.display_size is None
         assert v1.internal_size == 8
+
+    def test_geography_type_code_uses_ext_col_type_name(self):
+        col = _column(col_type="object", ext_col_type_name="GEOGRAPHY")
+        v1 = ResultMetadata.from_column(col)
+        assert FIELD_ID_TO_NAME[v1.type_code] == "GEOGRAPHY"
 
 
 class TestResultMetadataV2ToV1:
