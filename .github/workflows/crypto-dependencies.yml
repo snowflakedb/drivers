@@ -42,9 +42,13 @@ jobs:
           cp python/Cargo.lock.sdist "$sdist_workspace/Cargo.lock"
           # Mirror the reduced workspace in scripts/python-sdist-cargo-lock.sh.
           for member in \
-            sf_core python_bridge sf_params_spec sf_types proto_utils \
-            error_trace error_trace_derive proto_generator; do
-            ln -s "$GITHUB_WORKSPACE/$member" "$sdist_workspace/$member"
+            sf_core sf_core/tests/common/arrow_deserialize_macro \
+            python_bridge python_bridge/stub_gen sf_params_spec sf_types \
+            proto_utils error_trace error_trace_derive proto_generator; do
+            if [[ ! -e "$sdist_workspace/$member" ]]; then
+              mkdir -p "$(dirname "$sdist_workspace/$member")"
+              ln -s "$GITHUB_WORKSPACE/$member" "$sdist_workspace/$member"
+            fi
           done
           "$RUNNER_TEMP/cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny" \
             --manifest-path "$sdist_workspace/Cargo.toml" \
