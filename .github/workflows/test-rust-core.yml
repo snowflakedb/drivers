@@ -309,12 +309,18 @@ jobs:
 
       # One supported x64 Linux lane links all FIPS binding artifacts;
       # sf_core's library tests above must still execute on every FIPS lane.
+      - name: Install Linux ODBC build headers
+        if: matrix.name == 'ubuntu-x64'
+        run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
+
       - name: Build FIPS binding crates
         if: matrix.name == 'ubuntu-x64'
         run: |
           cargo build --locked \
             --package odbc --package jdbc_bridge --package nodejs_bridge --package python_bridge \
             --features odbc/fips-tls,jdbc_bridge/fips-tls,nodejs_bridge/fips-tls,python_bridge/fips-tls
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Clean up python_bridge artifacts from target
         if: always()
