@@ -4,7 +4,9 @@ Thanks for your interest in contributing to drivers!
 
 > This repository is a public mirror. Changes are reviewed here, then imported
 > into the maintainers' internal repository, validated against the canonical CI,
-> and merged — after which the merged change is mirrored back to this repo.
+> and merged — after which the merged change is mirrored back to this repo, 
+> where commits are rewritten but retain the original author attribution via the Authored-by field 
+> so your contributions remain visible in the public commit history.
 
 ## How to contribute
 
