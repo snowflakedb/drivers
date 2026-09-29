@@ -315,6 +315,13 @@ fn build_crl_rustls_config(
     if !verify_hostname {
         tracing::warn!("Hostname verification disabled (CRL path)");
     }
+    // Reject an empty version window instead of silently restoring rustls's
+    // defaults, which could re-enable a protocol the caller excluded.
+    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
+    let version_builder = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(protocol_versions)
+        .context(RustlsConfigSnafu)?;
+
     let crl_verifier = CrlServerCertVerifier::new_with_root_store(
         crl_config,
         root_store_override,
@@ -327,17 +334,6 @@ fn build_crl_rustls_config(
     // the process-global default, so the module verifying this connection's
     // chain would be whichever one won a startup race. Under `fips-tls` that
     // race is the compliance claim.
-    let provider = crate::tls::crypto_module::CryptoModule::get().provider();
-    let version_builder = if protocol_versions.is_empty() {
-        tracing::debug!("empty TLS protocol-version window; falling back to rustls defaults");
-        ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .context(RustlsConfigSnafu)?
-    } else {
-        ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(protocol_versions)
-            .context(RustlsConfigSnafu)?
-    };
     let mut config = version_builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(crl_verifier))
@@ -919,25 +915,32 @@ mod tests {
     fn inverted_public_version_window_does_not_silently_enable_tls12() {
         use crate::tls::config::{TlsVersion, TlsVersions};
 
-        let config = TlsConfig {
-            versions: TlsVersions {
-                min: TlsVersion::Tls13,
-                max: TlsVersion::Tls12,
-            },
-            ..Default::default()
-        };
-        let result = create_tls_client_with_proxy(
-            config,
-            Some(&ProxyConfig::default()),
-            crate::crl::CrlWorker::shared_lazy(),
-        );
-        assert!(
-            matches!(
-                &result,
-                Err(TlsError::ClientBuild { .. } | TlsError::RustlsConfig { .. })
-            ),
-            "a reversed TLS version window must be rejected before connecting: {result:?}"
-        );
+        for check_mode in [
+            CertRevocationCheckMode::Disabled,
+            CertRevocationCheckMode::Enabled,
+            CertRevocationCheckMode::Advisory,
+        ] {
+            let config = TlsConfig {
+                versions: TlsVersions {
+                    min: TlsVersion::Tls13,
+                    max: TlsVersion::Tls12,
+                },
+                crl_config: CrlConfig {
+                    check_mode,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let result = create_tls_client_with_proxy(
+                config,
+                Some(&ProxyConfig::default()),
+                crate::crl::CrlWorker::shared_lazy(),
+            );
+            assert!(
+                matches!(&result, Err(TlsError::RustlsConfig { .. })),
+                "a reversed TLS version window must be rejected before connecting: {result:?}"
+            );
+        }
     }
 
     #[test]
