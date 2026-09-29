@@ -132,7 +132,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.load-fips-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    name: fips smoke (${{ matrix.name }})
+    name: FIPS sf_core library tests (${{ matrix.name }})
     timeout-minutes: 75
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -282,7 +282,8 @@ jobs:
       - name: Build sf_core with FIPS TLS
         run: cargo build --locked --package sf_core --no-default-features --features fips-tls,protobuf
 
-      - name: Compile FIPS smoke tests
+      # Build the test binary before exposing the Windows FIPS DLL directories.
+      - name: Compile sf_core FIPS library tests
         run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls,protobuf
 
       - name: Expose Windows FIPS DLLs
@@ -303,8 +304,17 @@ jobs:
             Sort-Object -Unique |
             ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
 
-      - name: Run FIPS smoke tests
-        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf tls::fips_tests
+      - name: Run sf_core FIPS library tests
+        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf
+
+      # One supported x64 Linux lane links all FIPS binding artifacts;
+      # sf_core's library tests above must still execute on every FIPS lane.
+      - name: Build FIPS binding crates
+        if: matrix.name == 'ubuntu-x64'
+        run: |
+          cargo build --locked \
+            --package odbc --package jdbc_bridge --package nodejs_bridge --package python_bridge \
+            --features odbc/fips-tls,jdbc_bridge/fips-tls,nodejs_bridge/fips-tls,python_bridge/fips-tls
 
       - name: Clean up python_bridge artifacts from target
         if: always()
@@ -606,14 +616,9 @@ jobs:
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # The FIPS smoke matrix excludes Windows ARM because it is not a supported
   # FIPS release target.
-  # Coverage note: the only tests gated behind cfg(feature = "fips-tls") are the
-  # tls::fips_tests assertions, which verify FIPS-ness end to end: the linked
-  # aws-lc module reports FIPS mode, and the installed rustls provider /
-  # ClientConfig are FIPS (approved cipher suites only). All of that is
-  # meaningless on this non-FIPS lane by construction, so
-  # skipping them here loses no coverage. Every other test runs identically with
-  # and without fips-tls; only the linked TLS crypto backend differs
-  # (aws-lc-sys vs aws-lc-fips-sys).
+  # This lane stays non-FIPS: the FIPS library test job above covers all
+  # supported FIPS platforms, while Windows ARM64 runs the core suite against
+  # its supported non-FIPS backend.
   test_windows_arm64_nonfips:
     needs: load-core-matrix
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
