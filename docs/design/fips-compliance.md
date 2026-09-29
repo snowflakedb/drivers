@@ -103,7 +103,7 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | F11 | Low | No module identity report, SBOM policy, or dependency-deny guard exists | Repository-wide |
 | F12 | Medium | `aws-lc-fips-sys` has platform and toolchain limitations, including Windows ARM64 and current GCC/Clang failures. With a single backend there is no alternative, so this bounds which platforms can have a FIPS build at all | `fips` build infrastructure |
 | F13 | Low | JDBC retains key bytes in a Java `String`; Python may load a second unvalidated OpenSSL | JDBC and Python wrappers |
-| F14 | Blocker | TLS verification algorithms and CRL signature verification called AWS-LC directly rather than through the selected module, and rustls configs read the process-global provider | `tls/crl_verifier.rs`, `tls/client.rs` — **partially addressed in Phase 3; still open.** Every rustls config this crate builds itself now takes the module's provider explicitly, which closes the verification-algorithm half. The second half stands: only the CRL-enabled paths hand reqwest a config (`use_preconfigured_tls`). On the default `CertRevocationCheckMode::Disabled` path reqwest still builds its own config and resolves `CryptoProvider::get_default()`, so "we own the module that verifies the connection" holds only when a customer turns CRL on. Closing it means giving every traffic-carrying client a module-backed config, which narrows the trust anchors (see Phase 3 Remaining) and needs its own change |
+| F14 | Blocker | TLS verification algorithms and CRL signature verification called AWS-LC directly rather than through the selected module, and rustls configs read the process-global provider | `tls/crl_verifier.rs`, `tls/client.rs` — **partially addressed in Phase 3; still open for auxiliary clients.** Verified connection and cloud-storage requests now give reqwest a config built with the module's provider, including CRL-disabled, enabled and advisory paths. Their trust store preserves native ∪ webpki roots, custom-root replacement and extra-root additions. Insecure and auxiliary raw clients still depend on the global-provider boundary; those paths must be classified or migrated before a whole-artifact claim. |
 | F15 | Low (build/inventory only) | `rustls/fips` transitively enables `aws-lc-rs/aws-lc-sys`, so a FIPS build compiles **both** AWS-LC modules. Verified 2026-09-15 that this does **not** contaminate the artifact: `libaws_lc_sys-*.rlib` is never passed to the linker (aws-lc-rs omits `extern crate aws_lc_sys` under `fips`), the binary holds 1558 `aws_lc_fips_0_13_12_*` symbols and **0** `aws_lc_0_38_0_*`, and the two archives' exported symbol sets are disjoint with 3824/3824 non-FIPS exports prefixed. Cost is wasted build time plus an SBOM that lists two crypto modules. Not fixable in `sf_core`; file upstream with rustls | `rustls` feature wiring (0.23.32–0.23.45) |
 | F16 | Resolved (decision taken) — **FIPS builds only** | Traditional encrypted PEM keys (`RSA PRIVATE KEY` + `Proc-Type: 4,ENCRYPTED`, from `openssl rsa -aes256`) load in **standard builds** and are refused in **`fips-tls` builds**. Their KDF is `EVP_BytesToKey`, which is MD5-based and definitional to the format; AWS-LC exposes no MD5, so a FIPS build cannot read them under any reading of the rules. Distinct from the 3DES arm, where PBKDF2-HMAC-SHA is approved and SP 800-131A permits TDEA unwrapping for legacy use. **Decision (2026-09-15): parity for default artifacts wins.** Refusing everywhere dropped a working format from every shipped artifact to protect a claim only the FIPS artifact makes; a standard build asserts no FIPS compliance, so MD5-unwrapping a key its owner already holds compromises nothing. Implemented behind `cfg(not(feature = "fips-tls"))`; only the KDF is MD5, the bulk decryption still runs in AWS-LC (AES) / `des` (3DES). **This is the only place a build flag changes which keys load rather than only which module does the work** — so the FIPS-build error says so explicitly, to keep "wrong build" distinguishable from "broken key". Residual: still worth a release note for FIPS-build users | `crypto/private_key.rs::legacy_pem`; raised by both review bots on PR #1346 |
 
@@ -210,8 +210,9 @@ Only the cryptographic boundaries come from the module:
 1. TLS handshake and certificate-chain signatures use the module's
    `WebPkiSupportedAlgorithms`.
 2. Downloaded CRL signatures use the module's certificate-signature verifier.
-3. HTTPS CRL downloads use an explicitly configured TLS client from the same
-   module, without recursively enabling CRL checks.
+3. HTTPS CRL downloads must eventually use a TLS client configured from the
+   same module without recursively enabling CRL checks. Today their separate
+   reqwest client still resolves the process-global provider.
 
 The signature verifier must accept the CRL signature `AlgorithmIdentifier`,
 issuer SPKI, exact DER-encoded `tbsCertList`, and signature bytes. It must:
@@ -266,8 +267,9 @@ Landed:
 - `CryptoModule`, holding the module's own rustls provider.
 - Every rustls `ClientConfig`, `WebPkiServerVerifier`, `CrlServerCertVerifier`
   and `NoVerifyCertVerifier` that **this crate builds** takes that provider
-  explicitly. That is half of F14; the rest is listed under Remaining, because
-  reqwest only receives one of those configs on the CRL-enabled paths.
+  explicitly. Verified connection and cloud-storage clients now hand reqwest
+  module-backed configs on the CRL-disabled, enabled and advisory paths,
+  retaining native ∪ webpki trust roots and configured custom/extra roots.
 - `tls_provider_is_fips()` reports on the linked module's provider rather than
   the global slot. Named for the TLS provider deliberately: it is rustls's
   per-provider flag, not the artifact-level answer. `try_fips_mode()`, asserted
@@ -277,18 +279,11 @@ Landed:
 
 Remaining:
 
-- **Close F14** by giving the *default* (CRL-disabled) connection path a
-  module-backed config too. Today it is the only shape where reqwest builds its
-  own config and resolves the process-global provider, so the module boundary
-  is real only for customers who enable CRL. Blocked on trust-anchor scope:
-  reqwest is configured with both `rustls-tls-native-roots-no-provider` and
-  `rustls-tls-webpki-roots-no-provider`, so its default trust set is native
-  roots ∪ webpki roots, while the configs this module builds use native roots
-  only. Switching the default path silently narrows every connection's trust
-  anchors, which needs its own change and its own testing.
-- Convert the auxiliary reqwest clients (telemetry, CRL fetch, IMDS) to
-  explicit rustls configs, then retire `ensure_crypto_provider()` and the
-  process-global install entirely.
+- Classify or migrate the insecure and auxiliary raw reqwest clients
+  (telemetry, CRL fetch, IMDS). Unlike verified connection and cloud-storage
+  traffic, they still rely on the process-global provider; only after those
+  boundaries are resolved can `ensure_crypto_provider()` and the global
+  install be retired.
 - Keep feature selection a separate axis from functional features.
 
 ### Phase 4 — Port crypto off OpenSSL

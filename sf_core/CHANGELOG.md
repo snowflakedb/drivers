@@ -47,6 +47,7 @@ New features:
 
 Changes:
 
+- Changed verified connection and cloud-storage TLS clients to select the configured crypto module's rustls provider explicitly, including CRL-enabled clients, instead of depending on process-global provider initialization order. Inverted TLS version bounds now fail rather than restoring default protocols. (SNOW-3927213)
 - Improved GCS PUT throughput by streaming each file in one request instead of sending sequential chunks. (snowflakedb/drivers#2267)
 - Changed `connection_is_usable` to report a connection as terminated once the server has said this session cannot be recovered (GS 390111 gone or 390117 closed, on a query, heartbeat, or token-request RENEW). Other RENEW refusals, and a renewal that fails to reach the server, leave the connection alone. The background heartbeat task stops rather than beating such a session. The error each operation returns is unchanged. (snowflakedb/drivers#2149)
 - Improved first-connection latency on non-FIPS builds by dropping AWS-LC's CPU jitter entropy source from cold start. (snowflakedb/drivers#2108)
