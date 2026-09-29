@@ -133,6 +133,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
                 root_store_override,
                 tls_config.verify_hostname,
                 &protocol_versions,
+                ClientAlpn::Default,
                 crl_worker,
             )?;
             let mut client_builder = configure_http_client(Client::builder(), proxy)?
@@ -208,6 +209,15 @@ enum ClientAlpn {
     Http1Only,
 }
 
+impl ClientAlpn {
+    fn protocols(self) -> Vec<Vec<u8>> {
+        match self {
+            Self::Default => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            Self::Http1Only => vec![b"http/1.1".to_vec()],
+        }
+    }
+}
+
 /// Shared reqwest TLS policy for HTTP/1.1 storage clients. Explicit provider,
 /// roots, versions, and ALPN must be set before `.use_preconfigured_tls`:
 /// reqwest ignores TLS options subsequently set on its builder.
@@ -253,6 +263,7 @@ fn configure_tls_builder(
                 root_store_override,
                 tls_config.verify_hostname,
                 &protocol_versions,
+                alpn,
                 crl_worker,
             )?;
             Ok(builder.use_preconfigured_tls(rustls_cfg))
@@ -298,6 +309,7 @@ fn build_crl_rustls_config(
     root_store_override: Option<rustls::RootCertStore>,
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
+    alpn: ClientAlpn,
     crl_worker: SharedCrlWorker,
 ) -> Result<rustls::ClientConfig, TlsError> {
     if !verify_hostname {
@@ -326,10 +338,12 @@ fn build_crl_rustls_config(
             .with_protocol_versions(protocol_versions)
             .context(RustlsConfigSnafu)?
     };
-    Ok(version_builder
+    let mut config = version_builder
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(crl_verifier))
-        .with_no_client_auth())
+        .with_no_client_auth();
+    config.alpn_protocols = alpn.protocols();
+    Ok(config)
 }
 
 /// Diagnostic-only rustls [`ClientConfig`] without CRL verification. Unlike
@@ -390,10 +404,7 @@ fn build_verified_rustls_config(
             }))
             .with_no_client_auth()
     };
-    config.alpn_protocols = match alpn {
-        ClientAlpn::Default => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
-        ClientAlpn::Http1Only => vec![b"http/1.1".to_vec()],
-    };
+    config.alpn_protocols = alpn.protocols();
     Ok(config)
 }
 
