@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.statement;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,14 +25,22 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
+import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.PrepareResult;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
@@ -43,6 +52,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 public class SnowflakePreparedStatementImplTest {
 
@@ -83,6 +93,60 @@ public class SnowflakePreparedStatementImplTest {
   private PreparedStatement createDecoratedPreparedStatement(String sql) {
     return new DecoratedSnowflakePreparedStatementImpl(
         createPreparedStatement(sql), Telemetry.NOOP);
+  }
+
+  @Test
+  void shouldRetryArrayBindBatchWithInlineJsonWhenStageBindingIsDisabled() throws Exception {
+    forceStageArrayBindingThreshold(1L);
+
+    SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenThrow(new CoreException(stageBindingDisabledError(), null))
+        .thenReturn(insertResponse(1L));
+
+    ps.setInt(1, 42);
+    ps.addBatch();
+
+    assertArrayEquals(new int[] {1}, ps.executeBatch());
+
+    ArgumentCaptor<QueryBindings> bindingsCaptor = ArgumentCaptor.forClass(QueryBindings.class);
+    verify(mockCoreApi, times(2)).statementExecuteQuery(any(), bindingsCaptor.capture());
+    List<QueryBindings> attempts = bindingsCaptor.getAllValues();
+    assertTrue(attempts.get(0).hasCsv(), "first attempt must use stage (CSV) bindings");
+    assertFalse(attempts.get(0).hasJson());
+    assertTrue(attempts.get(1).hasJson(), "retry must fall back to inline JSON bindings");
+    assertFalse(attempts.get(1).hasCsv());
+  }
+
+  @Test
+  void shouldNotRetryWhenStageBindingFailsOnTheInlineJsonPath() throws Exception {
+    PreparedStatement ps = createDecoratedPreparedStatement("INSERT INTO t VALUES (?)");
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenThrow(new CoreException(stageBindingDisabledError(), null));
+
+    ps.setInt(1, 1);
+    ps.addBatch();
+
+    BatchUpdateException ex = assertThrows(BatchUpdateException.class, ps::executeBatch);
+    assertEquals(Statement.EXECUTE_FAILED, ex.getUpdateCounts()[0]);
+    verify(mockCoreApi, times(1)).statementExecuteQuery(any(), notNull(QueryBindings.class));
+  }
+
+  @Test
+  void shouldNotRetryNonStageBindingFailuresOnTheStageBindPath() throws Exception {
+    forceStageArrayBindingThreshold(1L);
+
+    PreparedStatement ps = createDecoratedPreparedStatement("INSERT INTO t VALUES (?)");
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenThrow(driverExceptionWithVendorCode(7));
+
+    ps.setInt(1, 1);
+    ps.addBatch();
+
+    BatchUpdateException ex = assertThrows(BatchUpdateException.class, ps::executeBatch);
+    assertEquals(7, ex.getErrorCode());
+    assertEquals(Statement.EXECUTE_FAILED, ex.getUpdateCounts()[0]);
+    verify(mockCoreApi, times(1)).statementExecuteQuery(any(), notNull(QueryBindings.class));
   }
 
   @Test
@@ -417,6 +481,21 @@ public class SnowflakePreparedStatementImplTest {
       verify(ps).setString(1, "pooling clob");
       verify(mockCoreApi, times(1)).statementExecuteQuery(any(), notNull(QueryBindings.class));
     }
+  }
+
+  private void forceStageArrayBindingThreshold(long threshold) {
+    Map<String, ConfigSetting> parameters =
+        Collections.singletonMap(
+            Parameter.CLIENT_STAGE_ARRAY_BINDING_THRESHOLD.getKey(),
+            ConfigSettingFactory.from(threshold));
+    when(mockConnection.getParameters()).thenReturn(new FrozenParametersRegistry(parameters));
+  }
+
+  private static DriverException stageBindingDisabledError() {
+    return DriverException.newBuilder()
+        .setMessage("SYSTEM$BIND stage is disabled")
+        .setKind(ErrorKind.ERROR_KIND_STAGE_BINDING)
+        .build();
   }
 
   private static CoreException driverExceptionWithVendorCode(int vendorCode) {

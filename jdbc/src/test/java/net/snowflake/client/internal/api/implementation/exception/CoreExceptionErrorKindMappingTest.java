@@ -1,8 +1,10 @@
 package net.snowflake.client.internal.api.implementation.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.stream.Stream;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -58,6 +60,31 @@ public class CoreExceptionErrorKindMappingTest {
     assertEquals(123456, thrown.getErrorCode());
     assertEquals("42S02", thrown.getSQLState());
     assertSame(carrier, thrown.getCause());
+  }
+
+  @Test
+  public void shouldDetectStageBindingDisabledFromErrorKind() {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("SYSTEM$BIND stage is disabled")
+            .setKind(ErrorKind.ERROR_KIND_STAGE_BINDING)
+            .build();
+    CoreException carrier = new CoreException(payload, null);
+
+    assertTrue(carrier.isStageBindingDisabled());
+  }
+
+  @Test
+  public void shouldNotTreatOtherErrorKindsAsStageBindingDisabled() {
+    CoreException messageOnly = new CoreException("transport failure");
+    assertFalse(messageOnly.isStageBindingDisabled());
+
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("cancelled")
+            .setKind(ErrorKind.ERROR_KIND_CANCELLED)
+            .build();
+    assertFalse(new CoreException(payload, null).isStageBindingDisabled());
   }
 
   @Test
