@@ -8,7 +8,6 @@ export async function collectRows(
   rowOptions: RowOptions,
 ): Promise<unknown[]> {
   try {
-    await coreStatement.waitForCompletion();
     const columns = coreStatement.getColumns()!;
     const sessionParameters = coreStatement.getSessionParametersSnapshot();
     const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
@@ -35,8 +34,6 @@ export function createRowStream(
   const sessionParameters = coreStatement.getSessionParametersSnapshot();
   const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
 
-  // Decodes one row out of the resident batch, returning false once it is
-  // drained and the stream needs a refill.
   const pushNextRow = (stream: Readable): boolean => {
     const row = coreStatement.getNextRow();
     if (row === null) {
@@ -67,7 +64,9 @@ export function createRowStream(
         });
     },
     destroy(err, callback) {
-      coreStatement.close();
+      if (!coreStatement.hasNext()) {
+        coreStatement.close();
+      }
       callback(err);
     },
   });

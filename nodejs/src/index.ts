@@ -33,7 +33,7 @@ import {
   selectBindPayload,
 } from './query-result/binds.js';
 import { collectRows } from './query-result/rows.js';
-import { RowStatement, FileAndStageBindStatement } from './query-result/RowStatement.js';
+import { RowStatement } from './query-result/RowStatement.js';
 import { SnowflakeDate } from './query-result/SnowflakeDate.js';
 
 // TODO:
@@ -234,7 +234,7 @@ export class Connection {
     return this.#core.isValidAsync();
   }
 
-  execute(options: StatementOption): RowStatement | FileAndStageBindStatement {
+  execute(options: StatementOption): RowStatement {
     const bindings = selectBindPayload(
       options.binds,
       this.#core.getSessionParameters().clientStageArrayBindingThreshold,
@@ -286,7 +286,7 @@ export class Connection {
     return coreIsAnError(status);
   }
 
-  fetchResult(options: FetchResultOptions): RowStatement | FileAndStageBindStatement {
+  fetchResult(options: FetchResultOptions): RowStatement {
     return this.#runStatement(this.#core.getQueryResult(options.queryId), {
       complete: options.complete,
       streamResult: options.streamResult,
@@ -300,9 +300,7 @@ export class Connection {
     });
   }
 
-  async getResultsFromQueryId(
-    options: FetchResultOptions,
-  ): Promise<RowStatement | FileAndStageBindStatement> {
+  async getResultsFromQueryId(options: FetchResultOptions): Promise<RowStatement> {
     const retryIntervalMs = (options as { _testOnlyRetryIntervalMs?: number })
       ._testOnlyRetryIntervalMs;
     await this.#core.waitForQueryResult(options.queryId, retryIntervalMs);
@@ -318,13 +316,13 @@ export class Connection {
       asyncExec?: boolean;
       rowOptions: RowOptions;
     },
-  ): RowStatement | FileAndStageBindStatement {
+  ): RowStatement {
     const { complete, streamResult, sqlText, asyncExec, rowOptions } = options;
-    const statement = new RowStatement(coreStatement, rowOptions, sqlText);
+    const statement = new RowStatement(coreStatement, rowOptions, sqlText, complete);
     (async () => {
       try {
-        if (asyncExec === true || streamResult === true) {
-          await coreStatement.waitForCompletion();
+        await coreStatement.waitForCompletion();
+        if (asyncExec === true || streamResult === true || coreStatement.hasNext()) {
           complete?.(undefined, statement, undefined);
         } else {
           complete?.(undefined, statement, await collectRows(coreStatement, rowOptions));

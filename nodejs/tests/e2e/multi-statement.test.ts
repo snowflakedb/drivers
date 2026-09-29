@@ -4,10 +4,10 @@ import {
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
+  isRunningNewDriverWithBD,
 } from './utils/index.js';
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
+describe('Multi Statement', () => {
   let connection: Connection;
 
   beforeAll(async () => {
@@ -20,7 +20,7 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('executes a parameterised multi-statement query and streams rows from every sub-result', async () => {
+  it('should execute a parameterised multi-statement query and stream every sub-result', async () => {
     let cellCount = 0;
     await new Promise<void>((resolve, reject) => {
       connection.execute({
@@ -33,6 +33,8 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
             .on('error', reject)
             .on('data', (row: Record<string, unknown>) => {
               cellCount += Object.values(row).length;
+            })
+            .on('end', () => {
               if ('hasNext' in stmt && stmt.hasNext()) {
                 stmt.NextResult();
               } else {
@@ -46,7 +48,28 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Multi Statement', () => {
     expect(cellCount).toBe(6);
   });
 
-  it('exposes the per-statement SQL text while iterating with NextResult', async () => {
+  it('should expose multi-statement navigation on RowStatement', async () => {
+    const { statement } = await executeAsync(connection, 'select 1');
+
+    if (isRunningNewDriverWithBD('BD#50')) {
+      expect('hasNext' in statement).toBe(true);
+      expect('NextResult' in statement).toBe(true);
+      if ('hasNext' in statement && 'NextResult' in statement) {
+        expect(statement.hasNext()).toBe(false);
+        const sqlText = statement.getSqlText();
+        const queryId = statement.getQueryId();
+        statement.NextResult();
+        expect(statement.hasNext()).toBe(false);
+        expect(statement.getSqlText()).toBe(sqlText);
+        expect(statement.getQueryId()).toBe(queryId);
+      }
+    } else {
+      expect('hasNext' in statement).toBe(false);
+      expect('NextResult' in statement).toBe(false);
+    }
+  });
+
+  it('should expose the per-statement SQL text while iterating with NextResult', async () => {
     const sqlText = 'select 1; select 2,3; select 4,5,6';
     const expectedSqlTexts = sqlText.split(';');
 

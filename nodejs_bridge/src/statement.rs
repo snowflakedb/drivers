@@ -9,11 +9,11 @@ mod time_format;
 
 pub use column::Column;
 
-use crate::DRIVER;
 use crate::error::{BridgeError, ToJsError, async_to_js};
 use crate::session::Ready;
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::*;
+use napi::tokio::sync::{Mutex, MutexGuard};
 use napi_derive::napi;
 use result::{ResultData, StatementOutcome, StatementResult};
 use sf_core::apis::database_driver_v1::{AsyncExecuteResult, ExecuteQueryResult};
@@ -39,9 +39,9 @@ impl Statement {
         Self {
             result: StatementResult::from_future(async move {
                 let (ready, result) = result_future.await?;
-                Ok(StatementOutcome::Rows(Box::new(
-                    ResultData::from_execute_query(result, ready.connection()).await?,
-                )))
+                Ok(StatementOutcome::Rows(Mutex::new(Box::new(
+                    ResultData::from_execute_result(result, ready.connection()).await?,
+                ))))
             }),
             operation_ctx,
         }
@@ -77,16 +77,18 @@ impl Statement {
         let result = self.result.clone();
         async_to_js(env, async move {
             let outcome = result.ready().await?;
-            let Some(data) = outcome.rows() else {
+            let StatementOutcome::Rows(mutex) = outcome else {
                 return Ok(false);
             };
-            data.stream_state
-                .fetch_next_batch(&data.session_params)
-                .await
+            let data = mutex.lock().await;
+            let stream_state = Arc::clone(&data.stream_state);
+            let session_params = Arc::clone(&data.session_params);
+            drop(data);
+            stream_state.fetch_next_batch(&session_params).await
         })
     }
 
-    fn ready_rows(&self, env: &Env) -> Result<Option<&ResultData>> {
+    fn ready_rows(&self, env: &Env) -> Result<Option<MutexGuard<'_, Box<ResultData>>>> {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(outcome)) => Ok(outcome.rows()),
@@ -112,7 +114,7 @@ impl Statement {
     pub fn get_query_id(&self, _env: &Env) -> Result<Option<String>> {
         match self.result.get() {
             None => Ok(None),
-            Some(Ok(outcome)) => Ok(Some(outcome.query_id().to_string())),
+            Some(Ok(outcome)) => Ok(Some(outcome.query_id())),
             Some(Err(BridgeError::Core(api_error))) => Ok(api_error.query_id()),
             Some(Err(_)) => Ok(None),
         }
@@ -184,9 +186,38 @@ impl Statement {
         if let Some(Ok(outcome)) = self.result.get()
             && let Some(data) = outcome.rows()
         {
-            let _ = DRIVER.result_set_release(data.result_set_handle);
+            data.close();
         }
         Ok(())
+    }
+
+    #[napi]
+    pub fn has_next(&self) -> bool {
+        match self.result.get() {
+            Some(Ok(outcome)) => outcome.rows().is_some_and(|data| data.has_next()),
+            _ => false,
+        }
+    }
+
+    #[napi]
+    pub fn is_multi_statement(&self) -> bool {
+        match self.result.get() {
+            Some(Ok(outcome)) => outcome.rows().is_some_and(|data| data.is_multi_statement()),
+            _ => false,
+        }
+    }
+
+    #[napi]
+    pub fn next_result(&self, env: &Env) -> Result<AsyncBlock<bool>> {
+        let result = self.result.clone();
+        async_to_js(env, async move {
+            let outcome = result.ready().await?;
+            let StatementOutcome::Rows(mutex) = outcome else {
+                return Ok(false);
+            };
+            let mut data = mutex.lock().await;
+            data.next_result().await
+        })
     }
 
     // TODO: surface genuine cancel failures (e.g. CancelTimeout) instead of

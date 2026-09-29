@@ -70,6 +70,9 @@ export declare class Statement {
   getColumns(): Array<Column> | null
   getColumn(identifier: string | number): Column | null
   close(): void
+  hasNext(): boolean
+  isMultiStatement(): boolean
+  nextResult(): Promise<boolean>
   cancel(): Promise<void>
 }
 

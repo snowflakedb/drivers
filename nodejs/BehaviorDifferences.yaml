@@ -993,3 +993,18 @@ behavior_differences:
       and callers can already obtain queryId from stmt.getQueryId(). The new driver keeps
       the third argument as a row array or undefined for every execute path. Moreover, this
       third argument is called rows, so it doesn't make sense to put queryId in it.
+
+  50:
+    name: 'Multi-statement navigation methods are on RowStatement'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `hasNext()` and `NextResult()` are available only on FileAndStageBindStatement, which is
+      returned for multi-statement queries, PUT and GET commands, and stage-bound bulk inserts.
+      An ordinary RowStatement does not expose either method.
+    new_driver_behavior: |
+      Every query returns RowStatement. RowStatement exposes `hasNext()` and `NextResult()`, and
+      there is no separate FileAndStageBindStatement type.

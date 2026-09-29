@@ -1,6 +1,6 @@
 import type { CoreColumnInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
-import type { RowStatement, FileAndStageBindStatement } from './RowStatement.js';
+import type { RowStatement } from './RowStatement.js';
 
 // TODO: consider converting to an enum -- these string literals are reused
 // as bare values across many test cases, which risks silent typos. Public API
@@ -27,7 +27,7 @@ export interface RowOptions {
 
 export type StatementCallback = (
   err: SnowflakeError | undefined,
-  stmt: RowStatement | FileAndStageBindStatement,
+  stmt: RowStatement,
   rows: Array<unknown> | undefined,
 ) => void;
 
@@ -39,7 +39,7 @@ export interface StreamOptions {
 
 export interface FetchRowsOptions {
   each: (row: unknown) => boolean | void;
-  end: (err: SnowflakeError | undefined, stmt: RowStatement | FileAndStageBindStatement) => void;
+  end: (err: SnowflakeError | undefined, stmt: RowStatement) => void;
 }
 
 export type { QueryStatus } from '../core/index.js';
