@@ -1329,3 +1329,19 @@ behavior_differences:
       JDBC auto URLs use the same profile resolution and validation rules as the shared
       configuration layer while preserving JDBC `Properties` precedence and a classifiable
       missing-profile error.
+  72:
+    name: "Failed array-bind executeBatch throws BatchUpdateException"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      A failed array-bind (single-RPC) `executeBatch()` INSERT throws `SnowflakeSQLException`.
+    new_driver_behavior: |
+      The same failure throws `BatchUpdateException`. SQLSTATE is unchanged; a `catch` of only
+      `SnowflakeSQLException` does not see it. Per-row `Statement.executeBatch` and non-array-bind
+      prepared batches already throw `BatchUpdateException` on both drivers.
+    description: |
+      Aligns array-bind batch failures with the JDBC contract. Applications should catch
+      `SQLException` or `BatchUpdateException`.

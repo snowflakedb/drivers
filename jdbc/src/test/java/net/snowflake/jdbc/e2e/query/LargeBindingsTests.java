@@ -18,12 +18,18 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.List;
 import java.util.TimeZone;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.jdbc.utils.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -188,6 +194,128 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
         }
         assertFalse(resultSet.next(), "Expected exactly " + rowCount + " representative rows");
       }
+    }
+  }
+
+  @Test
+  public void shouldRejectAStageBoundTimestampTzOffsetPairOnTheOldAndNewJdbcDrivers()
+      throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      // And A temporary table with columns (id NUMBER, ts_tz TIMESTAMP_TZ) exists
+      String tableName = createTimestampTzTable(connection);
+
+      // And CLIENT_TIMESTAMP_TYPE_MAPPING session parameter is set to TIMESTAMP_TZ
+      execute(connection, "ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_TZ'");
+      // And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 4
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 4");
+
+      // When 10 rows carrying a non-UTC offset are inserted using multirow binding with an
+      // explicit Calendar
+      Timestamp bound = Timestamp.from(TIMESTAMP_TZ_BOUND);
+      Calendar indiaStandardTime = Calendar.getInstance(TimeZone.getTimeZone("Asia/Kolkata"));
+      long beforeInsert = countSystemBindFiles(connection);
+      SQLException failure =
+          assertThrows(
+              SQLException.class,
+              () -> insertTimestampTzRows(connection, tableName, 0, bound, indiaStandardTime),
+              "Expected the staged TIMESTAMP_TZ offset pair to be rejected");
+
+      // The upload precedes the INSERT, so the rejected batch still leaves its file behind. Without
+      // this the assertion above would also pass if the batch had never left the inline path.
+      assertTrue(
+          countSystemBindFiles(connection) > beforeInsert,
+          "20 bound cells above a threshold of 4 must stage-bind before the server rejects them");
+
+      // Then the bulk insert should fail with SQLSTATE 22007
+      assertTrue(
+          sqlStates(failure).contains(TIMESTAMP_NOT_RECOGNIZED_SQL_STATE),
+          "Expected SQLSTATE "
+              + TIMESTAMP_NOT_RECOGNIZED_SQL_STATE
+              + " somewhere in the reported chain, got "
+              + sqlStates(failure));
+    }
+  }
+
+  @Test
+  @ResourceLock(Resources.TIME_ZONE)
+  public void shouldPreserveTheTimestampTzInstantWithPathSpecificOffsets() throws Exception {
+    // Given Snowflake client is logged in
+    try (Connection connection = openConnection()) {
+      // And A temporary table with columns (id NUMBER, ts_tz TIMESTAMP_TZ) exists
+      String tableName = createTimestampTzTable(connection);
+
+      // CLIENT_TIMESTAMP_TYPE_MAPPING stays at its TIMESTAMP_LTZ default, so a plain setTimestamp
+      // binds as LTZ and the server coerces it into the TZ column.
+
+      // And the session timezone differs from the JVM timezone
+      String sessionZone = sessionZoneUnlikeJvm();
+      // ALTER SESSION SET TIMEZONE does not accept a bind parameter. sessionZone is
+      // SESSION_ZONE or FALLBACK_SESSION_ZONE, both declared in this file.
+      execute(connection, "ALTER SESSION SET TIMEZONE = '" + sessionZone + "'");
+
+      Timestamp bound = Timestamp.from(TIMESTAMP_TZ_BOUND);
+
+      // When 10 rows are inserted using multirow binding below
+      // CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 1000");
+      // Both drivers name the bind stage SYSTEM$BIND and compare the threshold against the bound
+      // cell count (columns x rows), so the path each batch took is observable on either driver.
+      long beforeInline = countSystemBindFiles(connection);
+      insertTimestampTzRows(connection, tableName, 0, bound, null);
+      assertEquals(
+          beforeInline,
+          countSystemBindFiles(connection),
+          "20 bound cells below a threshold of 1000 must stay on the inline JSON path");
+
+      // And 10 rows carrying the same instant are inserted using multirow binding above
+      // CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
+      execute(connection, "ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD = 4");
+      insertTimestampTzRows(connection, tableName, TIMESTAMP_TZ_ROW_COUNT, bound, null);
+      assertTrue(
+          countSystemBindFiles(connection) > beforeInline,
+          "20 bound cells above a threshold of 4 must stage-bind");
+
+      // And Query "SELECT id, ts_tz, TO_VARCHAR(ts_tz, 'TZHTZM') FROM {table} ORDER BY id" is
+      // executed
+      Calendar utc = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+      String inlineOffset = null;
+      String stagedOffset = null;
+      try (Statement statement = connection.createStatement();
+          ResultSet resultSet =
+              statement.executeQuery(
+                  "SELECT id, ts_tz, TO_VARCHAR(ts_tz, 'TZHTZM') FROM "
+                      + tableName
+                      + " ORDER BY id")) {
+        // Then every row should hold the bound instant
+        for (int row = 0; row < 2 * TIMESTAMP_TZ_ROW_COUNT; row++) {
+          assertTrue(resultSet.next(), "Expected row " + row);
+          assertEquals(row, resultSet.getInt(1), "Unexpected id");
+          assertEquals(
+              bound.toInstant(),
+              resultSet.getTimestamp(2, utc).toInstant(),
+              "Unexpected TIMESTAMP_TZ instant for id " + row);
+          assertFalse(resultSet.wasNull(), "TIMESTAMP_TZ should not be NULL");
+          String offset = resultSet.getString(3);
+          assertFalse(resultSet.wasNull(), "TO_VARCHAR offset should not be NULL");
+          if (row < TIMESTAMP_TZ_ROW_COUNT) {
+            inlineOffset = offset;
+          } else {
+            stagedOffset = offset;
+          }
+        }
+        assertFalse(resultSet.next(), "Expected exactly " + 2 * TIMESTAMP_TZ_ROW_COUNT + " rows");
+      }
+
+      // And the inline rows should use the session offset while the staged rows use the JVM offset
+      assertEquals(
+          renderedOffset(bound, ZoneId.of(sessionZone)),
+          inlineOffset,
+          "Inline TIMESTAMP_TZ should use the session offset");
+      assertEquals(
+          renderedOffset(bound, TimeZone.getDefault().toZoneId()),
+          stagedOffset,
+          "Staged TIMESTAMP_TZ should use the JVM offset");
     }
   }
 
@@ -680,6 +808,10 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
     }
   }
 
+  private String createTimestampTzTable(Connection connection) throws Exception {
+    return createTempTable(connection, "ud_large_bindings_", TIMESTAMP_TZ_TABLE_COLUMNS);
+  }
+
   private void insertAllNullRow(Connection connection, String tableName) throws Exception {
     String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?, ?, ?, ?, ?)";
     try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
@@ -715,6 +847,68 @@ public class LargeBindingsTests extends SnowflakeIntegrationTestBase {
       assertTrue(resultSet.wasNull(), "colE should read back as SQL NULL");
       assertFalse(resultSet.next(), "Expected exactly one row");
     }
+  }
+
+  // SQLSTATE the server returns when a staged CSV cell cannot be parsed as a timestamp literal.
+  private static final String TIMESTAMP_NOT_RECOGNIZED_SQL_STATE = "22007";
+
+  private static final int TIMESTAMP_TZ_ROW_COUNT = 10;
+
+  private static final String TIMESTAMP_TZ_TABLE_COLUMNS = "id NUMBER, ts_tz TIMESTAMP_TZ";
+
+  private static final Instant TIMESTAMP_TZ_BOUND = Instant.parse("2024-06-20T14:22:33.246813579Z");
+
+  // Two zones that observe different UTC offsets on the bound instant, so the session offset and
+  // the JVM offset cannot coincide whichever of them the CI runner uses.
+  private static final String SESSION_ZONE = "America/Los_Angeles";
+  private static final String FALLBACK_SESSION_ZONE = "Asia/Tokyo";
+
+  private static String sessionZoneUnlikeJvm() {
+    return SESSION_ZONE.equals(TimeZone.getDefault().getID())
+        ? FALLBACK_SESSION_ZONE
+        : SESSION_ZONE;
+  }
+
+  private static String renderedOffset(Timestamp timestamp, ZoneId zoneId) {
+    return DateTimeFormatter.ofPattern("XX").format(timestamp.toInstant().atZone(zoneId));
+  }
+
+  // A null calendar selects the two-argument setTimestamp, which never appends an offset token;
+  // passing one selects the overload that emits the `<epoch_nanos> <offset>` pair.
+  private void insertTimestampTzRows(
+      Connection connection, String tableName, int idStart, Timestamp value, Calendar calendar)
+      throws Exception {
+    String insertSql = "INSERT INTO " + tableName + " VALUES (?, ?)";
+    try (PreparedStatement preparedStatement = connection.prepareStatement(insertSql)) {
+      for (int row = 0; row < TIMESTAMP_TZ_ROW_COUNT; row++) {
+        preparedStatement.setInt(1, idStart + row);
+        if (calendar == null) {
+          preparedStatement.setTimestamp(2, value);
+        } else {
+          preparedStatement.setTimestamp(2, value, calendar);
+        }
+        preparedStatement.addBatch();
+      }
+      preparedStatement.executeBatch();
+    }
+  }
+
+  // Array-bind executeBatch wraps a server error as BatchUpdateException on the new driver and as
+  // a direct SQLException on the old driver, so the discriminant is asserted against every
+  // SQLSTATE reachable from the reported failure rather than the outermost one.
+  private static List<String> sqlStates(SQLException failure) {
+    List<String> states = new ArrayList<>();
+    for (SQLException current = failure; current != null; current = current.getNextException()) {
+      if (current.getSQLState() != null) {
+        states.add(current.getSQLState());
+      }
+      for (Throwable cause = current.getCause(); cause != null; cause = cause.getCause()) {
+        if (cause instanceof SQLException && ((SQLException) cause).getSQLState() != null) {
+          states.add(((SQLException) cause).getSQLState());
+        }
+      }
+    }
+    return states;
   }
 
   private void insertNamedRows(

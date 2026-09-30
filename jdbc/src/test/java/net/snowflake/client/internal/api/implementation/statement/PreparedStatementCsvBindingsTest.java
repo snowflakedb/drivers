@@ -197,4 +197,31 @@ public class PreparedStatementCsvBindingsTest {
             .getBytes(StandardCharsets.UTF_8);
     assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 6));
   }
+
+  @Test
+  public void shouldPreserveBinaryHexAndDecimalTextForStageCsv() throws Exception {
+    Map<Integer, ParameterValue> columns = new HashMap<>();
+    columns.put(1, column(SnowflakeType.BINARY, "00FF10", ""));
+    columns.put(2, column(SnowflakeType.FIXED, "12345678901234567890123456789.123456789", "-0.01"));
+
+    byte[] expected =
+        ("\"00FF10\",\"12345678901234567890123456789.123456789\"\n" + "\"\",\"-0.01\"\n")
+            .getBytes(StandardCharsets.UTF_8);
+    assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 2));
+  }
+
+  // Legacy BindUploader reformats only DATE, TIME, TIMESTAMP_LTZ and TIMESTAMP_NTZ, so the
+  // `<epoch_nanos> <offset_minutes + 1440>` pair that setTimestamp(int, Timestamp, Calendar)
+  // produces for a TZ bind reaches the CSV verbatim, and only the inline JSON protocol can decode
+  // it. The server currently rejects such a cell with SQLSTATE 22007; this driver reproduces the
+  // legacy bytes rather than repairing them.
+  @Test
+  public void shouldPreserveTimestampTzWireTokensForStageCsv() throws Exception {
+    Map<Integer, ParameterValue> columns = new HashMap<>();
+    columns.put(1, column(SnowflakeType.TIMESTAMP_TZ, "1718894730246813579 1770", "0 1440", null));
+
+    byte[] expected =
+        ("\"1718894730246813579 1770\"\n" + "\"0 1440\"\n" + "\n").getBytes(StandardCharsets.UTF_8);
+    assertArrayEquals(expected, PreparedStatementCsvBindings.buildCsv(columns, 3));
+  }
 }

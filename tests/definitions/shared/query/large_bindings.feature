@@ -23,6 +23,34 @@ Feature: Large (stage-based) parameter binding
     And All type-matrix columns are selected from the table in row order
     Then Result should contain the same values as the bound parameters
 
+  @jdbc_e2e
+  Scenario: should reject a stage-bound TIMESTAMP_TZ offset pair on the old and new JDBC drivers
+    # CLIENT_TIMESTAMP_TYPE_MAPPING = TIMESTAMP_TZ makes setTimestamp(index, value, Calendar)
+    # emit the `<epoch_nanos> <offset_minutes + 1440>` pair that only the inline JSON bind
+    # protocol decodes. The staged file is untyped CSV, so the server reads the cell as a
+    # timestamp literal and rejects it.
+    Given Snowflake client is logged in
+    And A temporary table with columns (id NUMBER, ts_tz TIMESTAMP_TZ) exists
+    And CLIENT_TIMESTAMP_TYPE_MAPPING session parameter is set to TIMESTAMP_TZ
+    And CLIENT_STAGE_ARRAY_BINDING_THRESHOLD session parameter is set to 4
+    When 10 rows carrying a non-UTC offset are inserted using multirow binding with an explicit Calendar
+    Then the bulk insert should fail with SQLSTATE 22007
+
+  @jdbc_e2e
+  Scenario: should preserve the TIMESTAMP_TZ instant with path-specific offsets
+    # Under the default CLIENT_TIMESTAMP_TYPE_MAPPING a plain setTimestamp binds as TIMESTAMP_LTZ,
+    # which the server coerces into a TIMESTAMP_TZ column. Inline, the bind travels as epoch nanos
+    # and the server attaches the session offset; staged, it is formatted into a literal carrying
+    # the JVM offset.
+    Given Snowflake client is logged in
+    And A temporary table with columns (id NUMBER, ts_tz TIMESTAMP_TZ) exists
+    And the session timezone differs from the JVM timezone
+    When 10 rows are inserted using multirow binding below CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
+    And 10 rows carrying the same instant are inserted using multirow binding above CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
+    And Query "SELECT id, ts_tz, TO_VARCHAR(ts_tz, 'TZHTZM') FROM {table} ORDER BY id" is executed
+    Then every row should hold the bound instant
+    And the inline rows should use the session offset while the staged rows use the JVM offset
+
   @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should preserve CSV escaping hazards via stage binding
     Given Snowflake client is logged in
