@@ -22,13 +22,12 @@
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_credential_types::provider::ProvideCredentials as _;
+use aws_lc_rs::{digest, hmac};
 use aws_sdk_sts::config::SharedCredentialsProvider;
 use aws_sdk_sts::{Client as StsClient, config::Builder as StsConfigBuilder};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::collections::BTreeMap;
 
@@ -40,8 +39,6 @@ use super::AttestationEndpoints;
 const SNOWFLAKE_AUDIENCE: &str = "snowflakecomputing.com";
 const AWS_WIF_SIGNING_ALGORITHM: &str = "ES384";
 const EMPTY_BODY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
-type HmacSha256 = Hmac<Sha256>;
 
 /// Errors raised while building an AWS Workload Identity attestation.
 ///
@@ -103,12 +100,6 @@ pub enum AwsAttestationError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to create HMAC-SHA256 instance"))]
-    HmacInit {
-        source: hmac::digest::InvalidLength,
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 /// Primary AWS WIF entry point.
@@ -162,7 +153,7 @@ async fn get_caller_identity_token(
         &region,
         &amz_date,
         &date_stamp,
-    )?;
+    );
 
     let json = serde_json::to_string(&request).context(TokenSerializeSnafu)?;
     Ok(BASE64.encode(json.as_bytes()))
@@ -182,7 +173,7 @@ fn build_signed_caller_identity_request(
     region: &str,
     amz_date: &str,
     date_stamp: &str,
-) -> Result<SignedCallerIdentityRequest, AwsAttestationError> {
+) -> SignedCallerIdentityRequest {
     let host = sts_hostname(region);
     let url = format!("https://{host}/?Action=GetCallerIdentity&Version=2011-06-15");
 
@@ -199,23 +190,20 @@ fn build_signed_caller_identity_request(
 
     let signed_headers = signed_header_names.join(";");
 
-    // Canonical request (Task 1)
     let canonical_request = format!(
         "POST\n/\nAction=GetCallerIdentity&Version=2011-06-15\n{canonical_headers}\n{signed_headers}\n{EMPTY_BODY_HASH}"
     );
 
-    // String to sign (Task 2)
     let credential_scope = format!("{date_stamp}/{region}/sts/aws4_request");
     let string_to_sign = format!(
         "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
         sha256_hex(canonical_request.as_bytes())
     );
 
-    // Signing key (Task 3)
-    let signing_key = derive_signing_key(secret_access_key, date_stamp, region, "sts")?;
+    let signing_key = derive_signing_key(secret_access_key, date_stamp, region, "sts");
 
-    // Signature (Task 4)
-    let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes())?);
+    let signature =
+        hex::encode(hmac_sha256(signing_key.as_ref(), string_to_sign.as_bytes()).as_ref());
 
     let authorization = format!(
         "AWS4-HMAC-SHA256 Credential={access_key_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
@@ -233,11 +221,11 @@ fn build_signed_caller_identity_request(
         SNOWFLAKE_AUDIENCE.to_string(),
     );
 
-    Ok(SignedCallerIdentityRequest {
+    SignedCallerIdentityRequest {
         url,
         method: "POST",
         headers,
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -549,14 +537,14 @@ fn sts_hostname(region: &str) -> String {
     }
 }
 
+// Keep local WIF signing on AWS-LC so fips-tls uses its FIPS module for both
+// the canonical request hash and HMAC; SDK-managed SigV4 is a separate path.
 fn sha256_hex(data: &[u8]) -> String {
-    hex::encode(Sha256::digest(data))
+    hex::encode(digest::digest(&digest::SHA256, data).as_ref())
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<Vec<u8>, AwsAttestationError> {
-    let mut mac = HmacSha256::new_from_slice(key).context(HmacInitSnafu)?;
-    mac.update(data);
-    Ok(mac.finalize().into_bytes().to_vec())
+fn hmac_sha256(key: &[u8], data: &[u8]) -> hmac::Tag {
+    hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), data)
 }
 
 fn derive_signing_key(
@@ -564,12 +552,12 @@ fn derive_signing_key(
     date_stamp: &str,
     region: &str,
     service: &str,
-) -> Result<Vec<u8>, AwsAttestationError> {
+) -> hmac::Tag {
     let k_secret = format!("AWS4{secret_access_key}");
-    let k_date = hmac_sha256(k_secret.as_bytes(), date_stamp.as_bytes())?;
-    let k_region = hmac_sha256(&k_date, region.as_bytes())?;
-    let k_service = hmac_sha256(&k_region, service.as_bytes())?;
-    hmac_sha256(&k_service, b"aws4_request")
+    let k_date = hmac_sha256(k_secret.as_bytes(), date_stamp.as_bytes());
+    let k_region = hmac_sha256(k_date.as_ref(), region.as_bytes());
+    let k_service = hmac_sha256(k_region.as_ref(), service.as_bytes());
+    hmac_sha256(k_service.as_ref(), b"aws4_request")
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,7 +1286,8 @@ mod tests {
     }
 
     #[test]
-    fn caller_identity_token_structure() {
+    fn caller_identity_request_matches_sigv4_reference_with_session_token()
+    -> Result<(), serde_json::Error> {
         let request = build_signed_caller_identity_request(
             "AKIAIOSFODNN7EXAMPLE",
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -1306,43 +1295,35 @@ mod tests {
             "us-east-1",
             "20240101T120000Z",
             "20240101",
-        )
-        .unwrap();
+        );
 
-        let json = serde_json::to_string(&request).unwrap();
-        let decoded: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&request)?;
+        let decoded: serde_json::Value = serde_json::from_str(&json)?;
 
-        let url = decoded["url"].as_str().unwrap();
-        assert!(url.starts_with("https://sts.us-east-1.amazonaws.com/"));
-        assert!(url.contains("Action=GetCallerIdentity"));
-        assert!(url.contains("Version=2011-06-15"));
-        assert_eq!(decoded["method"].as_str().unwrap(), "POST");
+        assert_eq!(
+            decoded["url"],
+            "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15"
+        );
+        assert_eq!(decoded["method"], "POST");
 
         let headers = &decoded["headers"];
+        assert_eq!(headers["Host"], "sts.us-east-1.amazonaws.com");
+        assert_eq!(headers["X-Snowflake-Audience"], "snowflakecomputing.com");
+        assert_eq!(headers["X-Amz-Date"], "20240101T120000Z");
+        assert_eq!(headers["X-Amz-Security-Token"], "session-token");
+        // Independent SigV4 reference using Python's hashlib/hmac over the
+        // canonical POST request, including the session token in SignedHeaders.
         assert_eq!(
-            headers["Host"].as_str().unwrap(),
-            "sts.us-east-1.amazonaws.com"
+            headers["Authorization"],
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20240101/us-east-1/sts/aws4_request, SignedHeaders=host;x-amz-date;x-amz-security-token;x-snowflake-audience, Signature=ce598263c65db61df01e9b76a7226fdfcd6673fc474cbca3cbdc7ae4ccf53bca"
         );
-        assert_eq!(
-            headers["X-Snowflake-Audience"].as_str().unwrap(),
-            "snowflakecomputing.com"
-        );
-        assert_eq!(headers["X-Amz-Date"].as_str().unwrap(), "20240101T120000Z");
-        assert_eq!(
-            headers["X-Amz-Security-Token"].as_str().unwrap(),
-            "session-token"
-        );
-        assert!(
-            headers["Authorization"]
-                .as_str()
-                .unwrap()
-                .starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"),
-            "authorization header should start with AWS4-HMAC-SHA256"
-        );
+
+        Ok(())
     }
 
     #[test]
-    fn caller_identity_token_without_session_token() {
+    fn caller_identity_request_matches_sigv4_reference_without_session_token()
+    -> Result<(), serde_json::Error> {
         let request = build_signed_caller_identity_request(
             "AKIAIOSFODNN7EXAMPLE",
             "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -1350,38 +1331,17 @@ mod tests {
             "eu-west-1",
             "20240101T120000Z",
             "20240101",
-        )
-        .unwrap();
+        );
 
-        let json = serde_json::to_string(&request).unwrap();
-        let decoded: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&request)?;
+        let decoded: serde_json::Value = serde_json::from_str(&json)?;
 
         assert!(decoded["headers"].get("X-Amz-Security-Token").is_none());
-        assert!(
-            decoded["headers"]["Authorization"]
-                .as_str()
-                .unwrap()
-                .contains("SignedHeaders=host;x-amz-date;x-snowflake-audience"),
+        assert_eq!(
+            decoded["headers"]["Authorization"],
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20240101/eu-west-1/sts/aws4_request, SignedHeaders=host;x-amz-date;x-snowflake-audience, Signature=7f6f01b5ad72d73b9af0f5e06e3c782fd3d63600efd29a1bcdd28fa379d0fbce"
         );
-    }
 
-    #[test]
-    fn caller_identity_token_is_base64_encoded_json() {
-        let request = build_signed_caller_identity_request(
-            "AKIAIOSFODNN7EXAMPLE",
-            "secret",
-            None,
-            "us-west-2",
-            "20240101T120000Z",
-            "20240101",
-        )
-        .unwrap();
-        let json = serde_json::to_string(&request).unwrap();
-        let encoded = BASE64.encode(json.as_bytes());
-
-        // Must decode back to valid JSON
-        let decoded_bytes = BASE64.decode(&encoded).unwrap();
-        let decoded: serde_json::Value = serde_json::from_slice(&decoded_bytes).unwrap();
-        assert_eq!(decoded["method"].as_str().unwrap(), "POST");
+        Ok(())
     }
 }
