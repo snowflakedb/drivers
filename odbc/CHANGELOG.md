@@ -2,6 +2,8 @@
 
 ## Upcoming Release
 
+## v4.0.0
+
 Breaking changes:
 
 - Changed catalog functions so a NULL `CatalogName` is no longer replaced with the current database by default. Set `UseCurrentCatalog=true` (or enable `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX`) to restore that substitution. Unconstrained NULL-catalog searches issue account-wide `SHOW` statements.
