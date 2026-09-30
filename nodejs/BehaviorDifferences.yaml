@@ -1062,3 +1062,24 @@ behavior_differences:
     status_rationale: |
       Completes the old driver's COPY TODO. The number is rows loaded into the table, not
       file count. UNLOAD is left at -1 because exporting to files is not a table-row update.
+
+  54:
+    name: 'client rejects a non-UUID requestId before talking to GS'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Any string is sent as `?requestId=` on `POST /queries/v1/query-request`.
+      GS does not accept a non-UUID value: live `requestId: 'foobar'` returns
+      HTTP 400, which the driver surfaces as RequestFailedError `401002`.
+      Only a UUID from `getRequestId()` actually resubmits.
+    new_driver_behavior: |
+      `execute()` throws synchronously with `460001` / InvalidParameterError and
+      `Invalid requestId: {id}` for a malformed `requestId`. No statement is
+      returned and no HTTP call is made.
+    status_rationale: |
+      The old client check was wrong. GS never executed a non-UUID `requestId`;
+      rejecting up front with the same code as a bad `queryId` is the fix, not
+      an incompatibility.

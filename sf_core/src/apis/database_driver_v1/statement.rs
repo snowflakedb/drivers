@@ -273,6 +273,7 @@ impl DatabaseDriverV1 {
                     bindings,
                     Some(true),
                     None,
+                    None,
                 )
                 .await;
 
@@ -324,6 +325,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
+        request_id: Option<uuid::Uuid>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr =
             self.statements
@@ -347,6 +349,7 @@ impl DatabaseDriverV1 {
                 bindings,
                 None,
                 timeout_seconds,
+                request_id,
             )),
         )
         .instrument(crate::snowflake_op_span!(
@@ -432,6 +435,7 @@ impl DatabaseDriverV1 {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_query_internal<'a>(
         &self,
         operation_ctx: Option<&OperationCtx>,
@@ -440,6 +444,7 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
         timeout_seconds: Option<u32>,
+        request_id: Option<uuid::Uuid>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let query = extract_query(stmt)?;
         let _session_guard = self.lock_session_if_needed(&stmt.conn).await;
@@ -456,10 +461,7 @@ impl DatabaseDriverV1 {
 
         let conn_arc = stmt.conn.clone();
 
-        // Mint the requestId, the whole function shares one identity for the query:
-        // the submission below, the abort fired on cancellation, and the abort fired on client-side
-        // timeout all key on this one value. It stays a plain local.
-        let request_id = uuid::Uuid::new_v4();
+        let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
 
         let (query_bindings, csv_bytes) = split_bindings(&bindings)?;
 
@@ -665,6 +667,7 @@ impl DatabaseDriverV1 {
         operation_ctx: Option<&OperationCtx>,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
+        request_id: Option<uuid::Uuid>,
     ) -> Result<AsyncExecuteResult, ApiError> {
         let report = AbortReport::default();
         let session_id = match self.statements.get_obj(stmt_handle) {
@@ -727,7 +730,7 @@ impl DatabaseDriverV1 {
                 query_parameters: query_parameter_map,
                 query_context,
             };
-            let request_id = uuid::Uuid::new_v4();
+            let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
 
             let abort_cleanup = abort_on_cancel(
                 conn_arc.clone(),
@@ -2286,7 +2289,7 @@ mod tests {
         let sh = ds.statement_new(ch).unwrap();
         ds.statements.get_obj(sh).unwrap().lock().await.query = Some("SELECT 1".to_string());
 
-        let _ = ds.statement_execute_async(None, sh, None).await;
+        let _ = ds.statement_execute_async(None, sh, None, None).await;
 
         assert_eq!(
             captured

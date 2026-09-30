@@ -712,7 +712,6 @@ describe('connection.execute() statement failure', function () {
 
 describe('connection.execute() with requestId', function () {
   const connection = snowflake.createConnection(connectionOptions);
-  const sqlText = 'select 1;';
   const blankSqlText = '';
   const requestId = 'SNOW-728803-requestId';
 
@@ -726,34 +725,6 @@ describe('connection.execute() with requestId', function () {
       );
 
       done();
-    });
-  });
-
-  it('keep original sqlText when resubmitting requests', function (done) {
-    // request with sqlText and requestId specified
-    const statement = connection.execute({
-      sqlText: sqlText,
-      requestId: requestId,
-      complete: function (err, stmt) {
-        // if there's an error, fail the test with the error
-        if (err) {
-          done(err);
-        } else {
-          assert.ok(!err, 'there should be no error');
-          assert.strictEqual(
-            stmt,
-            statement,
-            'the execute() callback should be invoked with the statement',
-          );
-
-          // the sql text and request id should be the same as what was passed
-          // in
-          assert.strictEqual(statement.getSqlText(), sqlText);
-          assert.strictEqual(statement.getRequestId(), requestId);
-
-          done();
-        }
-      },
     });
   });
 

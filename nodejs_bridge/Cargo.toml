@@ -29,6 +29,7 @@ tracing = "0.1.41"
 # `sync`: the async mutex that serializes connect/destroy. `time`: polling
 # sleep in wait_for_query_result. The runtime itself comes from `sf_core`.
 tokio = { version = "1.50.0", features = ["sync", "time"] }
+uuid = { version = "1.18", features = ["v4"] }
 
 [dev-dependencies]
 tokio = { version = "1.50.0", features = ["macros", "rt"] }

@@ -27,12 +27,14 @@ const NUM_UPDATED_ROWS_NOT_APPLICABLE: i64 = -1;
 pub struct Statement {
     result: StatementResult,
     operation_ctx: Option<Arc<OperationCtx>>,
+    request_id: Option<uuid::Uuid>,
 }
 
 #[napi]
 impl Statement {
     pub(crate) fn from_query_result(
         operation_ctx: Option<Arc<OperationCtx>>,
+        request_id: Option<uuid::Uuid>,
         result_future: impl Future<
             Output = std::result::Result<(Ready, ExecuteQueryResult), BridgeError>,
         > + Send
@@ -46,11 +48,13 @@ impl Statement {
                 ))))
             }),
             operation_ctx,
+            request_id,
         }
     }
 
     pub(crate) fn from_async_exec(
         operation_ctx: Option<Arc<OperationCtx>>,
+        request_id: Option<uuid::Uuid>,
         result_future: impl Future<Output = std::result::Result<AsyncExecuteResult, BridgeError>>
         + Send
         + 'static,
@@ -62,6 +66,7 @@ impl Statement {
                 })
             }),
             operation_ctx,
+            request_id,
         }
     }
 
@@ -114,6 +119,11 @@ impl Statement {
             Some(data) => data.stream_state.next_row(env),
             None => Ok(None),
         }
+    }
+
+    #[napi]
+    pub fn get_request_id(&self) -> Option<String> {
+        self.request_id.map(|id| id.to_string())
     }
 
     // TODO:

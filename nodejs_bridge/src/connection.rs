@@ -1,9 +1,10 @@
 use crate::DRIVER;
 use crate::error::{BridgeError, ToJsError, async_to_js};
-use crate::query::{QueryStatus, require_valid_query_id};
+use crate::query::QueryStatus;
 use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
+use crate::validation_utils::{require_valid_query_id, require_valid_request_id};
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
@@ -50,6 +51,7 @@ pub struct ExecuteParams {
     pub bindings: Option<QueryBindings>,
     pub parameters: Option<HashMap<String, String>>,
     pub async_exec: Option<bool>,
+    pub request_id: Option<String>,
 }
 
 #[napi(object)]
@@ -180,7 +182,7 @@ impl Connection {
     }
 
     #[napi]
-    pub fn execute(&self, params: ExecuteParams) -> Statement {
+    pub fn execute(&self, env: &Env, params: ExecuteParams) -> Result<Statement> {
         let session = self.session.clone();
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
         let ExecuteParams {
@@ -188,42 +190,64 @@ impl Connection {
             bindings,
             parameters,
             async_exec,
+            request_id,
         } = params;
+        let request_id = resolve_execute_request_id(request_id, uuid::Uuid::new_v4)
+            .map_err(|error| error.to_js_error(*env))?;
         if async_exec.unwrap_or(false) {
-            Statement::from_async_exec(Some(operation_ctx.clone()), async move {
-                let ready = session.ready().await?;
-                run_new_statement(
-                    ready.connection(),
-                    query,
-                    bindings,
-                    parameters,
-                    async move |stmt, binds| {
-                        DRIVER
-                            .statement_execute_async(Some(&operation_ctx), stmt, binds)
-                            .await
-                            .map_err(BridgeError::from)
-                    },
-                )
-                .await
-            })
+            Ok(Statement::from_async_exec(
+                Some(operation_ctx.clone()),
+                Some(request_id),
+                async move {
+                    let ready = session.ready().await?;
+                    run_new_statement(
+                        ready.connection(),
+                        query,
+                        bindings,
+                        parameters,
+                        async move |stmt, binds| {
+                            DRIVER
+                                .statement_execute_async(
+                                    Some(&operation_ctx),
+                                    stmt,
+                                    binds,
+                                    Some(request_id),
+                                )
+                                .await
+                                .map_err(BridgeError::from)
+                        },
+                    )
+                    .await
+                },
+            ))
         } else {
-            Statement::from_query_result(Some(operation_ctx.clone()), async move {
-                let ready = session.ready().await?;
-                run_new_statement(
-                    ready.connection(),
-                    query,
-                    bindings,
-                    parameters,
-                    async move |stmt, binds| {
-                        DRIVER
-                            .statement_execute_query(Some(&operation_ctx), stmt, binds, None)
-                            .await
-                            .map_err(BridgeError::from)
-                    },
-                )
-                .await
-                .map(|result| (ready, result))
-            })
+            Ok(Statement::from_query_result(
+                Some(operation_ctx.clone()),
+                Some(request_id),
+                async move {
+                    let ready = session.ready().await?;
+                    run_new_statement(
+                        ready.connection(),
+                        query,
+                        bindings,
+                        parameters,
+                        async move |stmt, binds| {
+                            DRIVER
+                                .statement_execute_query(
+                                    Some(&operation_ctx),
+                                    stmt,
+                                    binds,
+                                    None,
+                                    Some(request_id),
+                                )
+                                .await
+                                .map_err(BridgeError::from)
+                        },
+                    )
+                    .await
+                    .map(|result| (ready, result))
+                },
+            ))
         }
     }
 
@@ -294,7 +318,7 @@ impl Connection {
         let session = self.session.clone();
         // Shared with the `Statement` handed back, whose `cancel()` triggers it.
         let operation_ctx = Arc::new(OperationCtx::with_own_token());
-        Statement::from_query_result(Some(operation_ctx.clone()), async move {
+        Statement::from_query_result(Some(operation_ctx.clone()), None, async move {
             require_valid_query_id(&query_id)?;
             let ready = session.ready().await?;
             DRIVER
@@ -334,6 +358,20 @@ fn browser_opener_from_js(callback: Function<String, ()>) -> Result<BrowserOpenF
             .recv()
             .unwrap_or_else(|_| Err("openExternalBrowserCallback did not return".into()))
     }))
+}
+
+fn resolve_execute_request_id(
+    request_id: Option<String>,
+    uuid_supplier: impl FnOnce() -> uuid::Uuid,
+) -> std::result::Result<uuid::Uuid, BridgeError> {
+    match request_id.filter(|id| !id.is_empty()) {
+        None => Ok(uuid_supplier()),
+        // Uuid::parse_str also accepts 32-char, braced, and urn forms.
+        // require_valid_request_id keeps requestId on the same hyphenated check as queryId.
+        Some(id) => require_valid_request_id(&id).and_then(|()| {
+            uuid::Uuid::parse_str(&id).map_err(|_| BridgeError::InvalidRequestId(id))
+        }),
+    }
 }
 
 async fn run_new_statement<T>(
@@ -398,4 +436,50 @@ async fn query_status_throw_if_error(
         });
     }
     Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_execute_request_id_creates_uuid_when_omitted() {
+        let supplied = uuid::Uuid::from_u128(0x1234_5678_1234_4123_a123_1234_5678_9012);
+        let Ok(parsed) = resolve_execute_request_id(None, || supplied) else {
+            panic!("minted request id parses");
+        };
+        assert_eq!(parsed, supplied);
+    }
+
+    #[test]
+    fn resolve_execute_request_id_creates_uuid_when_empty() {
+        let supplied = uuid::Uuid::from_u128(0x1234_5678_1234_4123_a123_1234_5678_9012);
+        let Ok(parsed) = resolve_execute_request_id(Some(String::new()), || supplied) else {
+            panic!("empty request id mints");
+        };
+        assert_eq!(parsed, supplied);
+    }
+
+    #[test]
+    fn resolve_execute_request_id_keeps_a_valid_caller_id() {
+        let request_id = "12345678-1234-4123-A123-123456789012";
+        let Ok(parsed) =
+            resolve_execute_request_id(Some(request_id.to_string()), uuid::Uuid::new_v4)
+        else {
+            panic!("valid request id parses");
+        };
+        assert_eq!(
+            parsed.to_string().to_ascii_lowercase(),
+            request_id.to_ascii_lowercase()
+        );
+    }
+
+    #[test]
+    fn resolve_execute_request_id_rejects_malformed_values() {
+        let request_id = "foobar";
+        assert!(matches!(
+            resolve_execute_request_id(Some(request_id.to_string()), uuid::Uuid::new_v4),
+            Err(BridgeError::InvalidRequestId(id)) if id == request_id
+        ));
+    }
 }

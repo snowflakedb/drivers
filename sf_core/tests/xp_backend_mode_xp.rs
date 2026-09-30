@@ -440,7 +440,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .await
         .expect("set sql");
     let result = driver
-        .statement_execute_query(None, stmt, None, None)
+        .statement_execute_query(None, stmt, None, None, None)
         .await
         .expect("statement_execute_query should go through the host");
     assert!(matches!(result, ExecuteQueryResult::Single { .. }));

@@ -21,6 +21,7 @@ mod query;
 mod session;
 mod session_params;
 mod statement;
+mod validation_utils;
 
 pub use connection::Connection;
 pub use date_format::DateFormatter;

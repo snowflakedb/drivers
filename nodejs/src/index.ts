@@ -156,6 +156,12 @@ export interface StatementOption {
    * that is different from the connector directory.
    */
   cwd?: string;
+  /**
+   * UUID used to resubmit a request. When omitted, the driver creates one.
+   *
+   * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
+   */
+  requestId?: string;
 }
 
 export interface FetchResultOptions {
@@ -265,6 +271,7 @@ export class Connection {
         bindings: bindings ?? undefined,
         parameters: parameters ?? undefined,
         asyncExec: options.asyncExec,
+        requestId: options.requestId,
       }),
       {
         complete: options.complete,

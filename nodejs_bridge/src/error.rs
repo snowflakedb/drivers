@@ -12,6 +12,7 @@ pub(crate) enum BridgeError {
     Core(Arc<ApiError>),
     UnusableConnection(ConnectionOperation, UnusableConnection),
     InvalidQueryId(String),
+    InvalidRequestId(String),
     QueryStatusFailed {
         query_id: String,
         error_code: Option<i32>,
@@ -119,10 +120,10 @@ impl ClientError {
         }
     }
 
-    fn of_invalid_query_id(query_id: &str) -> Self {
+    fn of_invalid_id(field: &str, value: &str) -> Self {
         Self {
             name: Some("InvalidParameterError"),
-            message: format!("Invalid queryId: {query_id}"),
+            message: format!("Invalid {field}: {value}"),
             // TODO: move error codes enum to bridge
             code: Some(ErrorCode::Driver(460001)),
             sql_state: None,
@@ -253,9 +254,16 @@ impl ToJsError for BridgeError {
                     .build(env)
                     .unwrap_or_else(construct_js_error_fail)
             }
-            BridgeError::InvalidQueryId(query_id) => ClientError::of_invalid_query_id(query_id)
-                .build(env)
-                .unwrap_or_else(construct_js_error_fail),
+            BridgeError::InvalidQueryId(query_id) => {
+                ClientError::of_invalid_id("queryId", query_id)
+                    .build(env)
+                    .unwrap_or_else(construct_js_error_fail)
+            }
+            BridgeError::InvalidRequestId(request_id) => {
+                ClientError::of_invalid_id("requestId", request_id)
+                    .build(env)
+                    .unwrap_or_else(construct_js_error_fail)
+            }
             BridgeError::QueryStatusFailed {
                 query_id,
                 error_code,
@@ -396,11 +404,22 @@ mod tests {
 
     #[test]
     fn an_invalid_query_id_is_an_invalid_parameter_error() {
-        let error = ClientError::of_invalid_query_id("invalidQueryId");
+        let error = ClientError::of_invalid_id("queryId", "invalidQueryId");
 
         assert_eq!(error.name, Some("InvalidParameterError"));
         assert_eq!(code_of(&error), Some("460001".to_string()));
         assert_eq!(error.message, "Invalid queryId: invalidQueryId");
+        assert_eq!(error.sql_state, None);
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn an_invalid_request_id_is_an_invalid_parameter_error() {
+        let error = ClientError::of_invalid_id("requestId", "foobar");
+
+        assert_eq!(error.name, Some("InvalidParameterError"));
+        assert_eq!(code_of(&error), Some("460001".to_string()));
+        assert_eq!(error.message, "Invalid requestId: foobar");
         assert_eq!(error.sql_state, None);
         assert!(!error.is_fatal);
     }
