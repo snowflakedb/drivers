@@ -1045,3 +1045,20 @@ behavior_differences:
       Those elements print `Z`, matching `TO_CHAR` for a zero UTC offset.
     description: |
       The new driver follows the server. The old driver always writes a numeric offset.
+
+  53:
+    name: 'getNumUpdatedRows reports COPY rows_loaded instead of -1'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      COPY INTO <table> is DML-family but not in the INSERT/UPDATE/DELETE/MERGE/multi-insert
+      whitelist, so getNumUpdatedRows() returns -1.
+    new_driver_behavior: |
+      COPY INTO <table> returns the sum of the rows_loaded status-column, matching JDBC
+      getUpdateCount for COPY. UNLOAD (COPY INTO <location>) stays -1 on both drivers.
+    status_rationale: |
+      Completes the old driver's COPY TODO. The number is rows loaded into the table, not
+      file count. UNLOAD is left at -1 because exporting to files is not a table-row update.

@@ -52,6 +52,10 @@ export class RowStatement {
     return this.#core.getNumRows() ?? undefined;
   }
 
+  getNumUpdatedRows(): number | undefined {
+    return this.#core.getNumUpdatedRows() ?? undefined;
+  }
+
   getQueryId(): string | undefined {
     return this.#core.getQueryId() ?? undefined;
   }

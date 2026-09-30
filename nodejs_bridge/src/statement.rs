@@ -17,8 +17,11 @@ use napi_derive::napi;
 use result::{ResultData, StatementOutcome, StatementResult};
 use sf_core::apis::database_driver_v1::{AsyncExecuteResult, ExecuteQueryResult};
 use sf_core::apis::operation_ctx::OperationCtx;
+use sf_core::query_types::QueryType;
 use std::future::Future;
 use std::sync::Arc;
+
+const NUM_UPDATED_ROWS_NOT_APPLICABLE: i64 = -1;
 
 #[napi]
 pub struct Statement {
@@ -130,6 +133,27 @@ impl Statement {
     pub fn get_num_rows(&self) -> Option<i64> {
         self.rows()
             .and_then(|data| data.result_set_descriptor.row_count)
+    }
+
+    #[napi]
+    pub fn get_num_updated_rows(&self) -> Option<i64> {
+        let data = self.rows()?;
+        let query_type = QueryType::from_raw(data.result_set_descriptor.statement_type_id);
+        Some(
+            if matches!(
+                query_type,
+                QueryType::INSERT
+                    | QueryType::UPDATE
+                    | QueryType::DELETE
+                    | QueryType::MERGE
+                    | QueryType::MULTI_TABLE_INSERT
+                    | QueryType::COPY
+            ) {
+                data.result_set_descriptor.rows_affected.unwrap_or(0)
+            } else {
+                NUM_UPDATED_ROWS_NOT_APPLICABLE
+            },
+        )
     }
 
     /// Not part of the driver's public API. Callers are suposed toinvoke this only after the

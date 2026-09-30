@@ -64,6 +64,7 @@ export declare class Statement {
   getNextRow(): unknown[] | null
   getQueryId(): string | null
   getNumRows(): number | null
+  getNumUpdatedRows(): number | null
   /**
    * Not part of the driver's public API. Callers are suposed toinvoke this only after the
    * statement has finished, so a result that is not yet ready is a programming error

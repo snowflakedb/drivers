@@ -45,7 +45,7 @@ Ensure the public API of the statement returned by `connection.execute` is fully
   `getSqlText()` behavior for successful and failed execution now lives in
   `nodejs/tests/e2e/statement.test.ts`. The remaining statement API is still pending.
 - `integration/testStreamRows.js`
-- `integration/testUpdatedRows.js`
+- `integration/testUpdatedRows.js` — migrated to `nodejs/tests/e2e/query/num-updated-rows.test.ts`.
 
 ### Query binding
 

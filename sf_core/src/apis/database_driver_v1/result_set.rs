@@ -225,15 +225,21 @@ fn effective_statement_type_id(data: &Data) -> Option<i64> {
 ///   generic success marker for these; surfacing it as `rows_affected = 1` is
 ///   misleading, so we report "not applicable" instead.
 ///
-/// COPY is wrapper-specific: JDBC sums `rows_loaded` (matching snowflake-jdbc),
-/// while ODBC/Python report the status-row count in `data.total`.
+/// COPY is wrapper-specific: JDBC and Node.js sum `rows_loaded` (matching
+/// snowflake-jdbc `getUpdateCount` / Node `getNumUpdatedRows`); ODBC/Python
+/// report the status-row count in `data.total`.
 pub(super) fn calculate_rows_affected(
     data: &Data,
     statement_type_id: Option<i64>,
     flavor: &PutGetResultsetFlavor,
 ) -> Option<i64> {
     let query_type = QueryType::from_raw(statement_type_id);
-    if query_type == QueryType::COPY && *flavor == PutGetResultsetFlavor::Jdbc {
+    if query_type == QueryType::COPY
+        && matches!(
+            flavor,
+            PutGetResultsetFlavor::Jdbc | PutGetResultsetFlavor::NodeJs
+        )
+    {
         return Some(sum_copy_rows_loaded(data));
     }
     match query_type.result_kind() {
@@ -1269,6 +1275,14 @@ mod tests {
         let data: Data =
             serde_json::from_str(COPY_STATUS_ROWSET).expect("fixture must deserialize");
         let descriptor = response_to_descriptor(&data, &WrapperPresets::jdbc());
+        assert_eq!(descriptor.rows_affected, Some(5));
+    }
+
+    #[test]
+    fn response_to_descriptor_copy_nodejs_sums_rows_loaded() {
+        let data: Data =
+            serde_json::from_str(COPY_STATUS_ROWSET).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::nodejs());
         assert_eq!(descriptor.rows_affected, Some(5));
     }
 

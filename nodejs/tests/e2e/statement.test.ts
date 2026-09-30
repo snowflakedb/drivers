@@ -78,6 +78,7 @@ describe('RowStatement', () => {
       const { statement, completion } = sendExecute(connection, 'SELECT 1 AS n');
 
       expect(statement.getNumRows()).toBeUndefined();
+      expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
       expect(statement.getColumn(0)).toBeUndefined();
       expect(statement.getColumn('N')).toBeUndefined();
@@ -85,6 +86,7 @@ describe('RowStatement', () => {
       await completion;
 
       expect(statement.getNumRows()).toBe(1);
+      expect(statement.getNumUpdatedRows()).toBe(-1);
       expectColumnsNames(statement as RowStatement, ['N']);
       expect(getStatementColumn(statement as RowStatement, 0).getName()).toBe('N');
     });
@@ -96,12 +98,14 @@ describe('RowStatement', () => {
       );
 
       expect(statement.getNumRows()).toBeUndefined();
+      expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
       expect(statement.getColumn(0)).toBeUndefined();
       expect(statement.getColumn('COL')).toBeUndefined();
 
       await expect(completion).rejects.toMatchObject({ error: expect.any(Error) });
       expect(statement.getNumRows()).toBeUndefined();
+      expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
       expect(statement.getColumn(0)).toBeUndefined();
       expect(statement.getColumn('COL')).toBeUndefined();
