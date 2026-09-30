@@ -7,7 +7,41 @@ as defined in PEP 249.
 
 from __future__ import annotations
 
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, distribution
 from typing import Any
+
+
+# The distribution guard must run before importing any other connector modules:
+# both wheels install this package, regardless of which one was installed last.
+try:
+    distribution("snowflake-connector-python-fips-candidate")
+except PackageNotFoundError:
+    pass
+else:
+    try:
+        distribution("snowflake-connector-python")
+    except PackageNotFoundError:
+        pass
+    else:
+        raise RuntimeError(
+            "snowflake-connector-python and snowflake-connector-python-fips-candidate "
+            "cannot be installed together: uninstall both distributions, then install "
+            "only the one you intend to use."
+        )
+
+    # Candidate wheels must carry a matching profile and native bridge. Ordinary
+    # source installs can be pure Python, so do not require the bridge for them.
+    from ._internal._distribution_profile import FIPS_TLS_CANDIDATE
+
+    if not FIPS_TLS_CANDIDATE:
+        raise RuntimeError(
+            "The installed FIPS-TLS candidate metadata conflicts with the "
+            "snowflake.connector FIPS-TLS build profile and native bridge. "
+            "Uninstall both distributions, then reinstall only the intended wheel."
+        )
+    import_module("snowflake.connector._core")
+
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
 from ._internal.decorators import pep249

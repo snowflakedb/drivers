@@ -262,6 +262,13 @@ fn native_arrow_enabled() -> bool {
     cfg!(feature = "native-arrow")
 }
 
+/// Returns True if the ``fips-tls`` Cargo feature is compiled in.
+/// This identifies the build choice; it does not certify or validate FIPS compliance.
+#[pyfunction]
+fn fips_tls_enabled() -> bool {
+    cfg!(feature = "fips-tls")
+}
+
 #[pymodule]
 fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
@@ -272,6 +279,7 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_perf_data, m)?)?;
     m.add_function(wrap_pyfunction!(reset_perf_metrics, m)?)?;
     m.add_function(wrap_pyfunction!(native_arrow_enabled, m)?)?;
+    m.add_function(wrap_pyfunction!(fips_tls_enabled, m)?)?;
     #[cfg(feature = "native-arrow")]
     m.add_class::<ArrowStreamIterator>()?;
     #[cfg(feature = "native-arrow")]
