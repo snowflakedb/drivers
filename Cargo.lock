@@ -4772,7 +4772,6 @@ dependencies = [
  "serde_json",
  "sf_core",
  "sf_params_spec",
- "sha2",
  "signature",
  "snafu 0.8.9",
  "sonic-rs",

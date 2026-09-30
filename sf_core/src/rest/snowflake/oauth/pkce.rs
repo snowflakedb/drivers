@@ -39,8 +39,8 @@ pub(crate) fn generate() -> PkceMaterial {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_lc_rs::digest;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::{Digest, Sha256};
 
     #[test]
     fn generated_verifier_is_at_least_43_chars() {
@@ -96,10 +96,8 @@ mod tests {
     #[test]
     fn challenge_equals_b64url_sha256_of_verifier() {
         let m = generate();
-        let mut hasher = Sha256::new();
-        hasher.update(m.verifier.reveal().as_bytes());
-        let digest = hasher.finalize();
-        let expected = URL_SAFE_NO_PAD.encode(digest);
+        let digest = digest::digest(&digest::SHA256, m.verifier.reveal().as_bytes());
+        let expected = URL_SAFE_NO_PAD.encode(digest.as_ref());
         assert_eq!(m.challenge, expected);
     }
 }

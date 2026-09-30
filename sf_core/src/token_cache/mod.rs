@@ -29,11 +29,11 @@
 pub(crate) mod file_cache;
 mod keyring_cache;
 
+use aws_lc_rs::digest;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub use keyring_cache::KeyringTokenCache;
-use sha2::{Digest, Sha256};
 use snafu::{Location, Snafu};
 
 const KEY_VERSION: u32 = 2;
@@ -228,7 +228,7 @@ pub trait TokenCache: Send + Sync {
 /// dot-separated segment of the key prefix, enabling per-type keystore cleanup.
 pub fn build_cache_key(key: &CacheKey) -> String {
     let serialized = serialize_cache_key(key);
-    let hash = hex::encode(Sha256::digest(serialized.as_bytes()));
+    let hash = hex::encode(digest::digest(&digest::SHA256, serialized.as_bytes()).as_ref());
     format!(
         "{KEY_PREFIX}.v{KEY_VERSION}.{}.{hash}",
         key.token_type.as_str()
