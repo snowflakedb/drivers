@@ -196,11 +196,6 @@ describe('Connection State Errors with a delayed login', () => {
 
     it('should refuse to destroy a connection whose login in flight failed', async () => {
       const connection = createConnection(wiremock.connectionOptions);
-      onTestFinished(async () => {
-        if (connection.isUp()) {
-          await destroyConnectionAsync(connection);
-        }
-      });
 
       const login = connectAsyncWithErrorBD(connection);
       await expect
@@ -211,12 +206,14 @@ describe('Connection State Errors with a delayed login', () => {
         .toBeGreaterThan(0);
       const destroy = destroyConnectionAsync(connection);
 
-      await expect(login).rejects.toThrow();
-      await expect(destroy).rejects.toMatchObject({
-        name: 'ClientError',
-        code: 406502,
-        message: 'Already disconnected.',
-      });
+      await Promise.all([
+        expect(login).rejects.toThrow(),
+        expect(destroy).rejects.toMatchObject({
+          name: 'ClientError',
+          code: 406502,
+          message: 'Already disconnected.',
+        }),
+      ]);
     });
   });
 });
