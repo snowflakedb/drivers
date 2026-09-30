@@ -235,6 +235,31 @@ tasks.named('javadocJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
 //
 // org.apache.arrow.c.** is NOT relocated: arrow_cdata_jni resolves those classes by
 // hardcoded name, so relocating breaks native FindClass (references still get rewritten).
+// Both fat jars shade the same Java dependencies; only their native sources and identity differ.
+def configureShadedContents = { shaded ->
+    shaded.dependencies {
+        exclude(dependency('org.slf4j:slf4j-simple:.*'))
+        exclude(dependency('com.google.code.findbugs:jsr305:.*'))
+        exclude(dependency('javax.annotation:javax.annotation-api:.*'))
+    }
+
+    def internal = 'net.snowflake.client.jdbc.internal'
+    shaded.relocate('org.apache.arrow', "${internal}.apache.arrow") {
+        exclude 'org.apache.arrow.c.**'
+    }
+    shaded.relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
+    shaded.relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
+    shaded.relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
+    shaded.relocate 'io.netty', "${internal}.io.netty"
+    shaded.relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
+    shaded.mergeServiceFiles()
+
+    shaded.exclude 'META-INF/*.SF'
+    shaded.exclude 'META-INF/*.DSA'
+    shaded.exclude 'META-INF/*.RSA'
+    shaded.exclude '**/module-info.class'
+}
+
 shadowJar {
     // Replace the thin jar as the main artifact (no "-all" classifier).
     archiveClassifier = ''
@@ -250,31 +275,8 @@ shadowJar {
         )
     }
 
-    // Exclude compile-only annotations + the slf4j binding (consumer's choice).
-    dependencies {
-        exclude(dependency('org.slf4j:slf4j-simple:.*'))
-        exclude(dependency('com.google.code.findbugs:jsr305:.*'))
-        exclude(dependency('javax.annotation:javax.annotation-api:.*'))
-    }
-
-    def internal = 'net.snowflake.client.jdbc.internal'
-    relocate('org.apache.arrow', "${internal}.apache.arrow") {
-        exclude 'org.apache.arrow.c.**'
-    }
-    relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
-    relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
-    relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
-    relocate 'io.netty', "${internal}.io.netty"
-    relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
-    // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
-
-    mergeServiceFiles()
-
-    // Drop stale signatures + module descriptors.
-    exclude 'META-INF/*.SF'
-    exclude 'META-INF/*.DSA'
-    exclude 'META-INF/*.RSA'
-    exclude '**/module-info.class'
+    // No backend, compile-only annotations, stale signatures or module descriptors in either fat jar.
+    configureShadedContents(delegate)
 }
 
 // Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
@@ -292,6 +294,12 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
             zf.entries().collect { it.name }
         }
         def problems = []
+        def candidateMarker = new java.util.jar.JarFile(jarFile).withCloseable { jar ->
+            jar.manifest?.mainAttributes?.getValue('Snowflake-JDBC-FIPS-Candidate')
+        }
+        if (candidateMarker != null) {
+            problems << "ordinary fat jar contains the FIPS-TLS candidate marker"
+        }
         def want = { String p -> if (!entries.any { it.startsWith(p) }) problems << "expected present but missing: ${p}" }
         def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
 
@@ -455,6 +463,110 @@ def nativePlatforms = [
 ]
 
 def hostPlatform = nativePlatforms.find { it.dirs.contains(hostDir) }
+
+// Local host-only FIPS-TLS candidate. Not a Maven publication or a replacement for shadowJar:
+// cargo output is isolated so neither ordinary shadowJar nor classifier jars can pick it up.
+def fipsCandidateTarget = layout.buildDirectory.dir('fips-candidate/cargo-target').get().asFile
+def fipsCandidateNative = new File(
+    layout.buildDirectory.dir('fips-candidate/native').get().asFile,
+    hostPlatform?.lib ?: 'unsupported')
+def candidateRustHosts = [
+    'x86_64-unknown-linux-gnu': 'linux-x86_64-gnu',
+    'aarch64-unknown-linux-gnu': 'linux-aarch64-gnu',
+    'x86_64-unknown-linux-musl': 'linux-x86_64-musl',
+    'aarch64-unknown-linux-musl': 'linux-aarch64-musl',
+    'x86_64-apple-darwin': 'darwin-x86_64',
+    'aarch64-apple-darwin': 'darwin-aarch64',
+    'x86_64-pc-windows-msvc': 'windows-x86_64',
+    'x86_64-pc-windows-gnu': 'windows-x86_64',
+]
+
+def buildFipsCandidateNative = tasks.register('buildFipsCandidateNative', Exec) {
+    def rustHost
+    workingDir workspaceRoot
+    doFirst {
+        if (hostPlatform == null || project.hasProperty('hostLibc')) {
+            throw new GradleException("Unsupported FIPS-TLS candidate host or -PhostLibc override: ${hostDir}")
+        }
+        def rustcOutput = new ByteArrayOutputStream()
+        project.exec {
+            commandLine System.getenv('RUSTC') ?: 'rustc', '-vV'
+            standardOutput = rustcOutput
+        }
+        rustHost = rustcOutput.toString('UTF-8').readLines()
+            .find { it.startsWith('host: ') }?.substring(6)
+        if (candidateRustHosts[rustHost] != hostDir) {
+            throw new GradleException("Rust host ${rustHost} does not match JDBC candidate platform ${hostDir}")
+        }
+        commandLine 'cargo', 'build', '--locked', '--release', '--package', 'jdbc_bridge',
+            '--features', 'fips-tls', '--target', rustHost,
+            '--target-dir', fipsCandidateTarget.absolutePath
+    }
+    doLast {
+        def builtNative = new File(fipsCandidateTarget, "${rustHost}/release/${hostPlatform.lib}")
+        if (!builtNative.isFile()) {
+            throw new GradleException("Missing FIPS-TLS candidate native: ${builtNative}")
+        }
+        project.copy {
+            from builtNative
+            into fipsCandidateNative.parentFile
+        }
+    }
+}
+
+tasks.register('fipsCandidateJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    dependsOn 'classes', buildFipsCandidateNative
+    archiveBaseName = 'snowflake-jdbc-fips-candidate'
+    archiveClassifier = ''
+    from sourceSets.main.output
+    configurations = [project.configurations.runtimeClasspath]
+    from(fipsCandidateNative) {
+        into "${nativeResourcePath}/${hostDir}"
+    }
+    manifest {
+        attributes(
+            'Implementation-Title': 'Snowflake JDBC FIPS-TLS Candidate',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Snowflake Inc.',
+            'Multi-Release': 'true',
+            'Snowflake-JDBC-FIPS-Candidate': 'true'
+        )
+    }
+    configureShadedContents(delegate)
+
+    // Check the completed archive, not just its inputs: no default/platform-staged bridge may
+    // leak into a candidate even if another task has already built an ordinary native.
+    doLast {
+        def expectedNative = "${nativeResourcePath}/${hostDir}/${hostPlatform.lib}".toString()
+        def problems = []
+        new java.util.jar.JarFile(archiveFile.get().asFile).withCloseable { jar ->
+            def entries = jar.entries().collect { it.name }
+            if (entries.count { it == 'META-INF/MANIFEST.MF' } != 1 ||
+                jar.manifest?.mainAttributes?.getValue('Snowflake-JDBC-FIPS-Candidate') != 'true') {
+                problems << 'missing or duplicate FIPS-TLS candidate manifest marker'
+            }
+            def bundledNatives = entries.findAll {
+                !it.endsWith('/') && (
+                    it.startsWith("${nativeResourcePath}/") ||
+                    it.endsWith('libjdbc_bridge.so') ||
+                    it.endsWith('libjdbc_bridge.dylib') ||
+                    it.endsWith('jdbc_bridge.dll'))
+            }
+            if (bundledNatives != [expectedNative]) {
+                problems << "expected exactly ${expectedNative}, found ${bundledNatives}"
+            }
+            if (!entries.contains('net/snowflake/client/api/driver/SnowflakeDriver.class') ||
+                !entries.contains('META-INF/services/java.sql.Driver') ||
+                !entries.any { it.startsWith('net/snowflake/client/jdbc/internal/') }) {
+                problems << 'candidate is missing the driver, JDBC service, or shaded classes'
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("FIPS-TLS candidate JAR verification failed:\n  " + problems.join('\n  '))
+        }
+        logger.lifecycle("fipsCandidateJar: host-only FIPS-TLS candidate with exactly ${expectedNative}; not certified.")
+    }
+}
 
 // Only bundle libc subdirs actually present in the staged tree, so a not-yet-wired variant degrades
 // to shipping what exists rather than failing the release; a platform with none is caught by verify.

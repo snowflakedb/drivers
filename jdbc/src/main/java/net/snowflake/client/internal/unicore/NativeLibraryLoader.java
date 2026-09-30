@@ -12,7 +12,9 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 /**
  * Loads the {@code libjdbc_bridge} native library for {@link JNICoreTransport}.
  *
- * <p>Resolution order:
+ * <p>In a marker-bearing FIPS-TLS candidate JAR, explicit native overrides are refused and only
+ * the host native from the JAR that defined this class may be loaded. Without that marker, the
+ * ordinary driver keeps this resolution order:
  *
  * <ol>
  *   <li>{@code CORE_PATH} env var — explicit absolute path (back-compat for dev/CI setups).
@@ -34,9 +36,8 @@ final class NativeLibraryLoader {
       SFLoggerFactory.getDeliveryLogger(NativeLibraryLoader.class.getName());
 
   /**
-   * Root resource dir for the native libs. The fat JAR carries one lib per platform under an {@code
-   * <os>-<arch>} subdir; each {@code snowflake-jdbc-native} artifact carries one. {@link #load()}
-   * picks the running platform's at startup.
+   * Ordinary fat jars carry platform-specific natives under this root; platform classifier jars
+   * and the FIPS-TLS candidate carry only their designated native(s).
    */
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
@@ -53,6 +54,24 @@ final class NativeLibraryLoader {
 
   private static void load() {
     String corePath = System.getenv("CORE_PATH");
+    try (CandidateNativeLibrary candidate =
+        CandidateNativeLibrary.fromCodeSource(
+            NativeLibraryLoader.class.getProtectionDomain().getCodeSource())) {
+      if (candidate != null) {
+        Path extracted =
+            candidate.extract(
+                corePath,
+                System.getProperty("jdbc.library.path"),
+                System.getProperty("os.name", ""),
+                osArchDir(),
+                nativeLibFileName());
+        System.load(extracted.toAbsolutePath().toString());
+        return;
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to load FIPS-TLS candidate native from defining JAR", e);
+    }
+
     if (corePath != null && !corePath.isEmpty()) {
       System.load(corePath);
       return;
