@@ -3,7 +3,7 @@
 # Builds the WIF e2e test artifacts on the Jenkins node, inside the
 # rhel8-universal-driver-coverage image (which carries the Rust toolchain and
 # the C/C++ build deps). The resulting binaries are staged under
-# ci/wif/artifacts/ so the outer ci/test_wif.sh can scp them to the bare WIF
+# tests/auth/wif/artifacts/ so tests/auth/run_wif.sh can scp them to the bare WIF
 # cloud VMs and run them there in a public runtime container.
 #
 # Why prebuild here instead of on the VM: the WIF VMs have Docker + scp but no
@@ -14,12 +14,12 @@
 set -o pipefail
 
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_ROOT="$( cd "$THIS_DIR/.." && pwd )"
+REPO_ROOT="$( cd "$THIS_DIR/../.." && pwd )"
 ARTIFACT_DIR="$THIS_DIR/wif/artifacts"
 
 cd "$REPO_ROOT"
-rm -rf "$ARTIFACT_DIR"
 mkdir -p "$ARTIFACT_DIR"
+rm -f "$ARTIFACT_DIR/sf_core_e2e"
 
 # ---------------------------------------------------------------------------
 # sf_core WIF e2e test binary

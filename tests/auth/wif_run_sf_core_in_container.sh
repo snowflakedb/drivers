@@ -1,7 +1,7 @@
 #!/bin/bash -e
 #
 # Runs INSIDE the public runtime container on a WIF cloud VM. The outer
-# ci/test_wif.sh scp's the prebuilt artifacts plus this script and the
+# tests/auth/run_wif.sh scp's the prebuilt artifacts plus this script and the
 # generated parameters.json into /tests, then `docker run`s a public image
 # (rockylinux:8 — the same base as the coverage image used to build) with
 # /tests mounted and invokes this script.

@@ -56,12 +56,13 @@ def detectChanges() {
     'thrift/',
     'error_trace/',
     'error_trace_derive/',
-    'ci/wif/',
     'ci/Jenkinsfile.wif-tests',
-    'ci/test_wif.sh',
     'ci/setup_gpg_home.sh',
-    'ci/build_wif_artifacts.sh',
     'scripts/decode_secrets.sh',
+    'tests/auth/run_wif.sh',
+    'tests/auth/wif/',
+    'tests/auth/build_wif_sf_core_artifacts.sh',
+    'tests/auth/wif_run_sf_core_in_container.sh',
     'tests/definitions/shared/authentication/workload_identity.feature',
     'Cargo.toml',
     'Cargo.lock',
@@ -140,7 +141,7 @@ pipeline {
                 // are required by openssl-src's Configure when building vendored
                 // OpenSSL 3.x from source (Time::Piece, IPC::Cmd, Data::Dumper).
                 sh label: 'Install build deps', script: 'yum install -y jq unzip perl-Time-Piece perl-IPC-Cmd perl-Data-Dumper'
-                sh label: 'Build WIF test binary', script: '$WORKSPACE/ci/build_wif_artifacts.sh'
+                sh label: 'Build WIF test binary', script: '$WORKSPACE/tests/auth/build_wif_sf_core_artifacts.sh'
               }
             }
           }
@@ -153,7 +154,7 @@ pipeline {
             ]) {
               sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
             }
-            sh label: 'Test WIF', script: '$WORKSPACE/ci/test_wif.sh'
+            sh label: 'Test WIF', script: '$WORKSPACE/tests/auth/run_wif.sh sf_core'
           }
         }
       }

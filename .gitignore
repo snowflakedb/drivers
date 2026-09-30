@@ -74,12 +74,12 @@ ci/test_matrix/generated/
 # direnv / nix local env artifacts (machine-local)
 .direnv/
 
-# WIF e2e artifacts -- prebuilt binaries staged by ci/build_wif_artifacts.sh,
+# WIF e2e artifacts -- prebuilt binaries staged by tests/auth/build_wif_*,
 # and decrypted secrets produced by scripts/decode_secrets.sh wif
-ci/wif/artifacts/
-ci/wif/parameters/rsa_wif_aws_azure
-ci/wif/parameters/rsa_wif_gcp
-ci/wif/parameters/parameters_wif.json
+tests/auth/wif/artifacts/
+tests/auth/wif/parameters/rsa_wif_aws_azure
+tests/auth/wif/parameters/rsa_wif_gcp
+tests/auth/wif/parameters/parameters_wif.json
 
 # Cross-language MFA TOTP used-code / lockout state written by auth-browser CI
 .ud-mfa-totp-state/

@@ -1,17 +1,26 @@
 #!/bin/bash -e
 #
-# WIF e2e test orchestrator. Runs on the Jenkins node.
+# WIF e2e test orchestrator. Jenkins invokes this script directly; local runs
+# use tests/auth/run_wif_local.sh.
 #
 # Strategy (mirrors snowflake-odbc): the bare WIF cloud VMs have Docker + scp
-# but no Rust/cmake toolchain and no access to our private Artifactory. So the
-# test binaries are prebuilt on the Jenkins node by ci/build_wif_artifacts.sh
-# (inside the coverage image), and this script ships them to each VM and runs
-# them there inside a public runtime container. The container inherits the VM's
-# cloud identity via IMDS, which is what the WIF flow attests against.
+# but no Rust/cmake/napi toolchain and no access to our private Artifactory. So
+# the test artifacts are prebuilt off the VM — on the Jenkins node in CI, or on
+# the developer's machine under tests/auth/run_wif_local.sh — and this script ships them
+# to each VM and runs them there inside a public runtime container. The
+# container inherits the VM's cloud identity via IMDS, which is what the WIF
+# flow attests against.
 #
-# Prerequisites (run before this script):
-#   * ci/build_wif_artifacts.sh has populated ci/wif/artifacts/
-#   * ./scripts/decode_secrets.sh wif has decoded ci/wif/parameters/
+# Usage:
+#   ./tests/auth/run_wif.sh <sf_core|nodejs>
+#
+# The first argument selects which artifact is shipped and run. There is no
+# default: a missing or unknown lane is an error. Extra arguments are an error.
+#
+# Prerequisites:
+#   * ./scripts/decode_secrets.sh wif has decoded tests/auth/wif/parameters/
+#   * tests/auth/wif/artifacts/ holds the artifact for the selected lane
+#   * Do not use parameters_preprod.json.
 
 set -o pipefail
 
@@ -24,10 +33,52 @@ export ARTIFACT_DIR="$THIS_DIR/wif/artifacts"
 # Public runtime image. Shares the rockylinux:8 base used to build the binary,
 # so the prebuilt binary's glibc/libstdc++ deps line up.
 RUNTIME_IMAGE="${WIF_RUNTIME_IMAGE:-rockylinux:8}"
+NODEJS_RUNTIME_IMAGE="${WIF_NODEJS_RUNTIME_IMAGE:-node:22-slim}"
+
+if [[ -n "${WIF_LANE:-}" ]]; then
+  echo "ERROR: WIF_LANE is unused; pass the lane as the first argument" >&2
+  echo "Usage: $0 <sf_core|nodejs>" >&2
+  exit 1
+fi
+
+WIF_LANE="${1:-}"
+case "$WIF_LANE" in
+  sf_core|nodejs)
+    shift
+    ;;
+  *)
+    echo "Usage: $0 <sf_core|nodejs>" >&2
+    exit 1
+    ;;
+esac
+
+if [[ $# -ne 0 ]]; then
+  echo "ERROR: extra arguments are not accepted: $*" >&2
+  exit 1
+fi
+
+case "$WIF_LANE" in
+  sf_core)
+    LANE_ARTIFACT="$ARTIFACT_DIR/sf_core_e2e"
+    LANE_BUILD_SCRIPT="tests/auth/build_wif_sf_core_artifacts.sh"
+    LANE_IMAGE="$RUNTIME_IMAGE"
+    LANE_ENTRYPOINT="wif_run_sf_core_in_container.sh"
+    ;;
+  nodejs)
+    LANE_ARTIFACT="$ARTIFACT_DIR/nodejs_wif.tar.gz"
+    LANE_BUILD_SCRIPT="tests/auth/build_wif_nodejs_artifacts.sh"
+    LANE_IMAGE="$NODEJS_RUNTIME_IMAGE"
+    LANE_ENTRYPOINT="wif_run_nodejs_in_container.sh"
+    ;;
+  *)
+    echo "ERROR: lane must be sf_core or nodejs (got '$WIF_LANE')" >&2
+    exit 1
+    ;;
+esac
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-# Generate the parameters.json the sf_core e2e binary expects (PARAMETER_PATH).
+# Generate the parameters.json the tests expect (PARAMETER_PATH).
 # Uses jq -n so values are JSON-encoded safely.
 write_parameters_json() {
   local out="$1" provider="$2" snowflake_host="$3" snowflake_user="$4" impersonation_path="$5"
@@ -54,7 +105,7 @@ run_wif_tests() {
   local provider="$1" host="$2" snowflake_host="$3" rsa_key_path="$4"
   local snowflake_user="$5" impersonation_path="$6"
 
-  local remote_dir="wif_${provider}_${TIMESTAMP}"
+  local remote_dir="wif_${provider}_${WIF_LANE}_${TIMESTAMP}"
   local ssh_opts=(-i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p 443)
   local scp_opts=(-P 443 -i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no)
 
@@ -63,7 +114,7 @@ run_wif_tests() {
   write_parameters_json "$params_file" "$provider" "$snowflake_host" "$snowflake_user" "$impersonation_path"
 
   echo "==================================================================="
-  echo "WIF tests: ${provider}  (host=${host}, remote_dir=${remote_dir})"
+  echo "WIF tests: ${provider} lane=${WIF_LANE} (host=${host}, remote_dir=${remote_dir})"
   echo "==================================================================="
 
   ssh "${ssh_opts[@]}" "$host" "mkdir -p \"$remote_dir\"" || {
@@ -72,11 +123,13 @@ run_wif_tests() {
     return 1
   }
 
+  local transfers=(
+    "$params_file|parameters.json"
+    "$LANE_ARTIFACT|$(basename "$LANE_ARTIFACT")"
+    "$THIS_DIR/$LANE_ENTRYPOINT|$LANE_ENTRYPOINT"
+  )
   local src dst spec
-  for spec in \
-    "$ARTIFACT_DIR/sf_core_e2e|sf_core_e2e" \
-    "$THIS_DIR/wif/run_in_container.sh|run_in_container.sh" \
-    "$params_file|parameters.json"; do
+  for spec in "${transfers[@]}"; do
     src="${spec%%|*}"
     dst="${spec##*|}"
     scp "${scp_opts[@]}" "$src" "$host:$remote_dir/$dst" || {
@@ -88,7 +141,7 @@ run_wif_tests() {
   rm -f "$params_file"
 
   ssh "${ssh_opts[@]}" "$host" \
-    env REMOTE_DIR="$remote_dir" RUNTIME_IMAGE="$RUNTIME_IMAGE" bash <<'EOF'
+    env REMOTE_DIR="$remote_dir" RUNTIME_IMAGE="$LANE_IMAGE" ENTRYPOINT="$LANE_ENTRYPOINT" bash <<'EOF'
     set -e
     set -o pipefail
     docker run \
@@ -96,8 +149,9 @@ run_wif_tests() {
       --cpus=2 \
       -m 2g \
       -v "$HOME/$REMOTE_DIR":/tests \
+      -e SNOWFLAKE_RUNNING_INSIDE_WIF_VM=true \
       "$RUNTIME_IMAGE" \
-      bash /tests/run_in_container.sh
+      bash "/tests/$ENTRYPOINT"
 EOF
 }
 
@@ -116,7 +170,7 @@ run_tests_and_set_result() {
   fi
 
   ssh -i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p 443 "$host" \
-    "rm -rf \"wif_${provider}_${TIMESTAMP}\"" || true
+    "rm -rf \"wif_${provider}_${WIF_LANE}_${TIMESTAMP}\"" || true
 }
 
 get_branch() {
@@ -141,8 +195,8 @@ setup_parameters() {
   eval $(jq -r '.wif | to_entries | map("export \(.key)=\(.value|tostring)")|.[]' "$PARAMETERS_FILE_PATH")
 }
 
-if [[ ! -x "$ARTIFACT_DIR/sf_core_e2e" ]]; then
-  echo "ERROR: $ARTIFACT_DIR/sf_core_e2e not found. Run ci/build_wif_artifacts.sh first." >&2
+if [[ ! -f "$LANE_ARTIFACT" ]]; then
+  echo "ERROR: $LANE_ARTIFACT not found. Run $LANE_BUILD_SCRIPT first." >&2
   exit 1
 fi
 

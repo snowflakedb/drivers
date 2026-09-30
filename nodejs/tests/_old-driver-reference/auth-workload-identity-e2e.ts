@@ -12,7 +12,7 @@ snowflake.configure({
 // Running this test locally:
 // * Push branch to repository
 // * Set environment variable PARAMETERS_SECRET
-// * Run ci/test_wif.sh
+// * Run tests/auth/run_wif.sh
 describe('Workload Identity Authentication E2E', () => {
   const account = getValueFromEnv('SNOWFLAKE_TEST_WIF_ACCOUNT');
   const host = getValueFromEnv('SNOWFLAKE_TEST_WIF_HOST');

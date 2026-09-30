@@ -13,7 +13,7 @@ if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" && "${
 fi
 if [[ "${CLOUD}" == "wif" && $# -ge 2 ]]; then
     echo "Usage: $0 wif" >&2
-    echo "WIF writes ci/wif/parameters/{parameters_wif.json,rsa_wif_aws_azure,rsa_wif_gcp}; it does not take an output file." >&2
+    echo "WIF writes tests/auth/wif/parameters/{parameters_wif.json,rsa_wif_aws_azure,rsa_wif_gcp}; it does not take an output file." >&2
     exit 1
 fi
 
@@ -61,7 +61,7 @@ if [[ "${CLOUD}" == "wif" ]]; then
     THIS_DIR="${REPO_ROOT}/ci"
     # shellcheck source=../ci/setup_gpg_home.sh
     source "${THIS_DIR}/setup_gpg_home.sh"
-    WIF_PARAMETERS_DIR="${REPO_ROOT}/ci/wif/parameters"
+    WIF_PARAMETERS_DIR="${REPO_ROOT}/tests/auth/wif/parameters"
     WIF_RSA_KEY_PATH_AWS_AZURE="${WIF_PARAMETERS_DIR}/rsa_wif_aws_azure"
     WIF_RSA_KEY_PATH_GCP="${WIF_PARAMETERS_DIR}/rsa_wif_gcp"
     WIF_PARAMETERS_FILE_PATH="${WIF_PARAMETERS_DIR}/parameters_wif.json"
