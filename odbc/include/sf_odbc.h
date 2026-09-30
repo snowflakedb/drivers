@@ -1,14 +1,25 @@
 /*
  * sf_odbc.h — Public header for Snowflake-specific ODBC extensions.
  *
- * Defines custom connection attribute IDs for use with SQLSetConnectAttr /
- * SQLGetConnectAttr.  Numeric values are kept in sync with the old
+ * Defines the Snowflake vendor SQL data type codes and the custom connection
+ * and statement attribute IDs.  Numeric values are kept in sync with the old
  * snowflake-odbc driver so that existing applications can migrate without
  * source changes.
  */
 
 #ifndef SF_ODBC_H
 #define SF_ODBC_H
+
+/* -------------------------------------------------------------------------
+ * Snowflake vendor SQL data type codes
+ * -------------------------------------------------------------------------*/
+
+#define SQL_SF_TIMESTAMP_LTZ 2000
+#define SQL_SF_TIMESTAMP_TZ 2001
+#define SQL_SF_TIMESTAMP_NTZ 2002
+#define SQL_SF_ARRAY 2003
+#define SQL_SF_OBJECT 2004
+#define SQL_SF_VARIANT 2005
 
 #ifndef SQL_DRIVER_CONN_ATTR_BASE
 #define SQL_DRIVER_CONN_ATTR_BASE 0x00004000

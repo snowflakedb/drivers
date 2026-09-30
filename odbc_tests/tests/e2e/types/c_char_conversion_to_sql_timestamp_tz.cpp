@@ -33,7 +33,7 @@
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
-#include "snowflake_odbc_constants.hpp"
+#include "sf_odbc.h"
 
 // ============================================================================
 // SQL_C_CHAR — space-separated and ISO 8601 T-separated variants

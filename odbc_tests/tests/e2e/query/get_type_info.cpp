@@ -6,7 +6,7 @@
 #include "Connection.hpp"
 #include "compatibility.hpp"
 #include "odbc_matchers.hpp"
-#include "snowflake_odbc_constants.hpp"
+#include "sf_odbc.h"
 #include "test_setup.hpp"
 
 static SQLINTEGER type_info_column_size(StatementHandleWrapper& stmt, SQLSMALLINT sqlType) {

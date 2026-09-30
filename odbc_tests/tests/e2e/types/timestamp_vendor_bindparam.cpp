@@ -20,7 +20,7 @@
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
-#include "snowflake_odbc_constants.hpp"
+#include "sf_odbc.h"
 
 TEST_CASE("SQL_SF_TIMESTAMP_NTZ binds SQL_C_TYPE_TIMESTAMP into a TIMESTAMP_NTZ column",
           "[timestamp_ntz][bind_fetch][vendor_codes]") {
