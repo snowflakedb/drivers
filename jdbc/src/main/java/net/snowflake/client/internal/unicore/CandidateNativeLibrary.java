@@ -21,6 +21,8 @@ import java.util.jar.Manifest;
 /** Keeps candidate native selection within the JAR that defined the loader, not the classpath. */
 final class CandidateNativeLibrary implements AutoCloseable {
   private static final String MARKER = "Snowflake-JDBC-FIPS-Candidate";
+  private static final String CLASSPATH_MARKER =
+      "META-INF/snowflake/jdbc/fips-tls-candidate.marker";
   private static final String NATIVE_DIR = "net/snowflake/client/internal/unicore/native/";
 
   private final JarFile jar;
@@ -29,7 +31,8 @@ final class CandidateNativeLibrary implements AutoCloseable {
     this.jar = jar;
   }
 
-  static CandidateNativeLibrary fromCodeSource(CodeSource codeSource) throws IOException {
+  static CandidateNativeLibrary fromCodeSource(CodeSource codeSource, ClassLoader definingLoader)
+      throws IOException {
     if (codeSource == null || codeSource.getLocation() == null) {
       throw new IOException("Cannot inspect JDBC driver defining archive: missing code source");
     }
@@ -44,6 +47,7 @@ final class CandidateNativeLibrary implements AutoCloseable {
       throw new IOException("Invalid JDBC driver code source: " + location, e);
     }
     if (Files.isDirectory(path)) {
+      rejectCandidateOnClasspath(definingLoader);
       return null;
     }
     if (!Files.isRegularFile(path)) {
@@ -54,6 +58,7 @@ final class CandidateNativeLibrary implements AutoCloseable {
     boolean candidate = false;
     try {
       if (!hasCandidateMarker(jar)) {
+        rejectCandidateOnClasspath(definingLoader);
         return null;
       }
       candidate = true;
@@ -62,6 +67,14 @@ final class CandidateNativeLibrary implements AutoCloseable {
       if (!candidate) {
         jar.close();
       }
+    }
+  }
+
+  private static void rejectCandidateOnClasspath(ClassLoader definingLoader) {
+    if (definingLoader == null || definingLoader.getResource(CLASSPATH_MARKER) != null) {
+      throw new IllegalStateException(
+          "Ordinary JDBC driver cannot load a native bridge while a FIPS-TLS candidate JAR "
+              + "is visible to its defining classloader; use only one JDBC driver artifact");
     }
   }
 

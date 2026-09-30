@@ -32,6 +32,7 @@ targetCompatibility = '1.8'
 
 // Base publication artifactId: thin uses it as-is, fat appends "-all".
 def artifactBaseName = 'snowflake-jdbc-native'
+def candidateMarkerPath = 'META-INF/snowflake/jdbc/fips-tls-candidate.marker'
 
 // ====================
 // Dependency resolution
@@ -300,6 +301,9 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
         if (candidateMarker != null) {
             problems << "ordinary fat jar contains the FIPS-TLS candidate marker"
         }
+        if (entries.contains(candidateMarkerPath)) {
+            problems << "ordinary fat jar contains the FIPS-TLS candidate classpath marker"
+        }
         def want = { String p -> if (!entries.any { it.startsWith(p) }) problems << "expected present but missing: ${p}" }
         def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
 
@@ -481,6 +485,17 @@ def candidateRustHosts = [
     'x86_64-pc-windows-gnu': 'windows-x86_64',
 ]
 
+def fipsCandidateMarkerRoot = layout.buildDirectory.dir('fips-candidate/marker')
+def fipsCandidateMarkerFile = layout.buildDirectory.file("fips-candidate/marker/${candidateMarkerPath}")
+def generateFipsCandidateMarker = tasks.register('generateFipsCandidateMarker') {
+    outputs.file(fipsCandidateMarkerFile)
+    doLast {
+        def markerFile = fipsCandidateMarkerFile.get().asFile
+        markerFile.parentFile.mkdirs()
+        markerFile.setText('FIPS-TLS candidate\n', 'UTF-8')
+    }
+}
+
 def buildFipsCandidateNative = tasks.register('buildFipsCandidateNative', Exec) {
     def rustHost
     workingDir workspaceRoot
@@ -515,11 +530,12 @@ def buildFipsCandidateNative = tasks.register('buildFipsCandidateNative', Exec) 
 }
 
 tasks.register('fipsCandidateJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
-    dependsOn 'classes', buildFipsCandidateNative
+    dependsOn 'classes', buildFipsCandidateNative, generateFipsCandidateMarker
     archiveBaseName = 'snowflake-jdbc-fips-candidate'
     archiveClassifier = ''
     from sourceSets.main.output
     configurations = [project.configurations.runtimeClasspath]
+    from(fipsCandidateMarkerRoot)
     from(fipsCandidateNative) {
         into "${nativeResourcePath}/${hostDir}"
     }
@@ -544,6 +560,9 @@ tasks.register('fipsCandidateJar', com.github.jengelman.gradle.plugins.shadow.ta
             if (entries.count { it == 'META-INF/MANIFEST.MF' } != 1 ||
                 jar.manifest?.mainAttributes?.getValue('Snowflake-JDBC-FIPS-Candidate') != 'true') {
                 problems << 'missing or duplicate FIPS-TLS candidate manifest marker'
+            }
+            if (entries.count { it == candidateMarkerPath } != 1) {
+                problems << 'missing or duplicate FIPS-TLS candidate classpath marker'
             }
             def bundledNatives = entries.findAll {
                 !it.endsWith('/') && (
@@ -672,6 +691,7 @@ def verifyThinJar = tasks.register('verifyThinJar') {
          'io/netty/', 'org/slf4j/'].each { absent it }
         // No bundled native — that ships in the per-platform classifier jars (verified below).
         absent 'net/snowflake/client/internal/unicore/native/'
+        absent candidateMarkerPath
         // Real driver + JDBC auto-registration service must be present.
         present 'net/snowflake/client/api/driver/SnowflakeDriver.class'
         present 'META-INF/services/java.sql.Driver'
@@ -724,6 +744,9 @@ def verifyThinPlatformJars = tasks.register('verifyThinPlatformJars') {
             }
             if (!entries.contains('META-INF/services/java.sql.Driver')) {
                 problems << "${s.classifier}: missing META-INF/services/java.sql.Driver"
+            }
+            if (entries.contains(candidateMarkerPath)) {
+                problems << "${s.classifier}: ordinary platform jar contains the FIPS-TLS candidate classpath marker"
             }
             // A runnable classifier jar must carry at least one native; and exactly the libc
             // variant(s) staged for this platform, each at the loader's resource path.

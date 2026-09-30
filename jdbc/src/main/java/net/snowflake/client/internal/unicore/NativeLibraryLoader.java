@@ -13,8 +13,10 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * Loads the {@code libjdbc_bridge} native library for {@link JNICoreTransport}.
  *
  * <p>In a marker-bearing FIPS-TLS candidate JAR, explicit native overrides are refused and only
- * the host native from the JAR that defined this class may be loaded. Without that marker, the
- * ordinary driver keeps this resolution order:
+ * the host native from the JAR that defined this class may be loaded. If an ordinary JAR defines
+ * this class while a candidate resource is visible to its classloader, initialization fails before
+ * any ordinary native is loaded. Without either candidate marker, the ordinary driver keeps this
+ * resolution order:
  *
  * <ol>
  *   <li>{@code CORE_PATH} env var — explicit absolute path (back-compat for dev/CI setups).
@@ -56,7 +58,8 @@ final class NativeLibraryLoader {
     String corePath = System.getenv("CORE_PATH");
     try (CandidateNativeLibrary candidate =
         CandidateNativeLibrary.fromCodeSource(
-            NativeLibraryLoader.class.getProtectionDomain().getCodeSource())) {
+            NativeLibraryLoader.class.getProtectionDomain().getCodeSource(),
+            NativeLibraryLoader.class.getClassLoader())) {
       if (candidate != null) {
         Path extracted =
             candidate.extract(

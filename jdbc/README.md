@@ -78,8 +78,15 @@ an ordinary native.
 Unlike ordinary JDBC artifacts, this candidate rejects non-empty `CORE_PATH`
 and `jdbc.library.path` overrides. It loads its platform native exclusively
 from the JAR that defined `NativeLibraryLoader`; a missing or mismatched native
-fails instead of searching another JAR on the classpath. Ordinary JDBC override
-precedence and publishing are unchanged.
+fails instead of searching another JAR on the classpath. The candidate also
+carries a unique classpath marker resource. If an ordinary JDBC JAR defines
+`NativeLibraryLoader` while that resource is visible to its defining
+classloader, initialization fails before consulting overrides or bundled
+natives. Do not put ordinary and candidate JDBC JARs on the same classpath:
+the classpath order must not determine which native bridge loads. With only
+ordinary artifacts, `CORE_PATH`, then `jdbc.library.path`, then the bundled
+resource retain their existing precedence. The candidate marker identifies
+the artifact type; it does not authenticate the archive.
 
 To smoke-test the **packaged** candidate after building it on its intended
 host, compile a tiny probe and launch it in separate JVMs (class initialization
@@ -98,6 +105,7 @@ public final class Probe {
 JAVA
 javac -d "$tmp" "$tmp/Probe.java"
 unzip -p "$jar" META-INF/MANIFEST.MF  # Snowflake-JDBC-FIPS-Candidate: true
+jar tf "$jar"                          # META-INF/snowflake/jdbc/fips-tls-candidate.marker
 jar tf "$jar"                          # exactly one unicore/native/<host>/ bridge
 env -u CORE_PATH java -Djdbc.library.path= -cp "$tmp:$jar" Probe
 env CORE_PATH=/tmp/not-a-bridge.so java -cp "$tmp:$jar" Probe
@@ -108,7 +116,8 @@ The first JVM must print `candidate native loaded`; the latter two must fail
 with the respective override refusal, not try to load either external path.
 Remove the temporary directory afterward. An ordinary `shadowJar`, by
 contrast, still honors `CORE_PATH` before `jdbc.library.path` and bundled
-resources when supplied a valid ordinary bridge.
+resources when supplied a valid ordinary bridge. Ordinary fat, thin, and
+platform-classifier artifacts must not contain the candidate classpath marker.
 
 **This is a FIPS-TLS candidate, not a certified or FIPS-compliant JDBC
 artifact.** The locked `aws-lc-fips-sys 0.13.17` embeds AWS-LC FIPS 3.6.0,
