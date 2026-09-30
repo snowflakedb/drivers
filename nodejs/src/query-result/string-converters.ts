@@ -32,11 +32,16 @@ export const realAsStringConverter: CellConverter = (value) => {
 export const binaryAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : (value as Buffer).toString('hex').toUpperCase();
 
-// TODO: honor a non-default DATE_OUTPUT_FORMAT once session parameters are read
-// from the server response; YYYY-MM-DD is the default and all that is reachable
-// today.
-export const dateAsStringConverter: CellConverter = (value) =>
-  value === null ? NULL_AS_STRING : (value as Date).toISOString().slice(0, 'YYYY-MM-DD'.length);
+export const dateAsStringConverter: CellConverter = (value, context) => {
+  if (value === null) {
+    return NULL_AS_STRING;
+  }
+  const formatter = context.dateFormatter;
+  if (formatter === undefined) {
+    throw new Error('dateFormatter is required for date fetchAsString conversion');
+  }
+  return formatter.format(value as Date);
+};
 
 export const vectorAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : JSON.stringify(value);

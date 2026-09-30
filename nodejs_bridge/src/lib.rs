@@ -15,6 +15,7 @@
 #![recursion_limit = "256"]
 
 mod connection;
+mod date_format;
 mod error;
 mod query;
 mod session;
@@ -22,6 +23,7 @@ mod session_params;
 mod statement;
 
 pub use connection::Connection;
+pub use date_format::DateFormatter;
 pub use session_params::KnownSessionParameters;
 pub use statement::{Column, Statement};
 

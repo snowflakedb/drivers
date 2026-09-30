@@ -1,4 +1,4 @@
-import type { CoreColumnInstance } from '../core/index.js';
+import type { CoreColumnInstance, CoreDateFormatterInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type { RowStatement } from './RowStatement.js';
 
@@ -13,6 +13,7 @@ export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buff
 export interface ConversionContext {
   scale: number | null;
   treatIntegerAsBigInt: boolean;
+  dateFormatter?: CoreDateFormatterInstance;
 }
 
 export type CellConverter = (value: unknown, context: ConversionContext) => unknown;

@@ -48,6 +48,11 @@ export declare class Connection {
   destroy(): Promise<undefined>
 }
 
+export declare class DateFormatter {
+  constructor(format: string)
+  format(date: Date): string
+}
+
 export declare class Statement {
   waitForCompletion(): Promise<undefined>
   /**
@@ -128,6 +133,7 @@ export declare function isStillRunning(status: QueryStatus): boolean
  * them for now.
  */
 export interface KnownSessionParameters {
+  dateOutputFormat: string
   timeOutputFormat: string
   jsTreatIntegerAsBigInt: boolean
   clientStageArrayBindingThreshold: number

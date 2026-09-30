@@ -6,7 +6,7 @@ import {
   executeAsync,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { setSessionParameter, unsetSessionParameter } from '../../utils/query.js';
+import { setSessionParameterForTest } from '../../utils/query.js';
 import { createTestDate } from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
@@ -352,32 +352,33 @@ describe('DATE data type', () => {
       },
     );
 
-    describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-      'when DATE_OUTPUT_FORMAT is set on the session',
-      () => {
-        beforeAll(async () => {
-          await setSessionParameter(connection, 'DATE_OUTPUT_FORMAT', 'DD-MON-YYYY');
-        });
-
-        afterAll(async () => {
-          await unsetSessionParameter(connection, 'DATE_OUTPUT_FORMAT');
-        });
-
-        it('should honor DATE_OUTPUT_FORMAT for fetchAsString', async () => {
-          const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE as VAL`, {
-            fetchAsString: ['Date'],
-          });
-          expect(rows[0].VAL).toBe('15-Jan-2024');
-        });
-
-        it('should honor DATE_OUTPUT_FORMAT for toJSON and getFormat', async () => {
-          const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE as VAL`);
-          const date = rows[0].VAL as SnowflakeDate;
-          expect(date.toJSON()).toBe('15-Jan-2024');
-          expect(date.getFormat()).toBe('DD-MON-YYYY');
-        });
+    it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
+      'should honor DATE_OUTPUT_FORMAT for toJSON and getFormat when set on the session',
+      async () => {
+        await setSessionParameterForTest(connection, 'DATE_OUTPUT_FORMAT', 'DD-MON-YYYY');
+        const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE as VAL`);
+        const date = rows[0].VAL as SnowflakeDate;
+        expect(date.toJSON()).toBe('15-Jan-2024');
+        expect(date.getFormat()).toBe('DD-MON-YYYY');
       },
     );
+
+    it('should honor session DATE_OUTPUT_FORMAT for fetchAsString', async () => {
+      await setSessionParameterForTest(connection, 'DATE_OUTPUT_FORMAT', 'DD-MON-YYYY');
+      const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE`, {
+        fetchAsString: ['Date'],
+      });
+      expect(Object.values(rows[0])).toEqual(['15-Jan-2024']);
+    });
+
+    it('should keep DATE digits under a non-UTC session TIMEZONE', async () => {
+      await setSessionParameterForTest(connection, 'DATE_OUTPUT_FORMAT', 'YYYY-MM-DD');
+      await setSessionParameterForTest(connection, 'TIMEZONE', 'America/Los_Angeles');
+      const { rows } = await executeAsync(connection, `SELECT '2024-01-15'::DATE`, {
+        fetchAsString: ['Date'],
+      });
+      expect(Object.values(rows[0])).toEqual(['2024-01-15']);
+    });
   });
 
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(

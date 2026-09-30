@@ -1,5 +1,6 @@
 import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
 import type { CellConverter, ConversionContext, DataType, RowOptions } from './types.js';
+import { CoreDateFormatter } from '../core/index.js';
 import { resolveColumnNames } from './column-names.js';
 import {
   binaryAsStringConverter,
@@ -11,6 +12,8 @@ import {
 } from './string-converters.js';
 import { fixedConverter, variantConverter } from './value-converters.js';
 
+// TODO: store converter factories taking (column, sessionParameters) so converters capture
+//  their own state (date formatter, scale, bigint flag) and ConversionContext can be removed
 const CONVERTERS_BY_COLUMN_TYPE: Record<
   string,
   {
@@ -95,6 +98,10 @@ export function createRowFormatter({
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
 
+  const dateFormatter = asStringColumnTypes.has('date')
+    ? new CoreDateFormatter(sessionParameters.dateOutputFormat)
+    : undefined;
+
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {
     const convert = selectConverter(column, asStringColumnTypes, {
@@ -107,6 +114,7 @@ export function createRowFormatter({
         context: {
           scale: column.getScale(),
           treatIntegerAsBigInt: sessionParameters.jsTreatIntegerAsBigInt,
+          dateFormatter,
         },
       });
     }

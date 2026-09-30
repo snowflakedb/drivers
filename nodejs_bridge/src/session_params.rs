@@ -36,6 +36,7 @@ use std::collections::HashMap;
 #[napi(object)]
 #[derive(Clone)]
 pub struct KnownSessionParameters {
+    pub date_output_format: String,
     pub time_output_format: String,
     pub js_treat_integer_as_big_int: bool,
     pub client_stage_array_binding_threshold: i64,
@@ -53,6 +54,7 @@ impl KnownSessionParameters {
 
     fn from_parameters(params: &HashMap<String, Setting>) -> Self {
         Self {
+            date_output_format: string_or_default(params, "DATE_OUTPUT_FORMAT", "YYYY-MM-DD"),
             time_output_format: string_or_default(params, "TIME_OUTPUT_FORMAT", "HH24:MI:SS"),
             js_treat_integer_as_big_int: bool_or_default(
                 params,
@@ -107,6 +109,7 @@ mod tests {
             panic!("fresh connection has a parameter map");
         };
 
+        assert_eq!(params.date_output_format, "YYYY-MM-DD");
         assert_eq!(params.time_output_format, "HH24:MI:SS");
         assert!(!params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 100_000);
@@ -121,6 +124,10 @@ mod tests {
             .connection_set_options(
                 handle,
                 HashMap::from([
+                    (
+                        "DATE_OUTPUT_FORMAT".to_string(),
+                        Setting::String("DD-MON-YYYY".to_string()),
+                    ),
                     (
                         "TIME_OUTPUT_FORMAT".to_string(),
                         Setting::String("HH24:MI:SS.FF3".to_string()),
@@ -144,6 +151,7 @@ mod tests {
             panic!("options are visible on the parameter map");
         };
 
+        assert_eq!(params.date_output_format, "DD-MON-YYYY");
         assert_eq!(params.time_output_format, "HH24:MI:SS.FF3");
         assert!(params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 64);
@@ -167,6 +175,7 @@ mod tests {
     fn the_defaults_are_the_client_values() {
         let params = KnownSessionParameters::defaults();
 
+        assert_eq!(params.date_output_format, "YYYY-MM-DD");
         assert_eq!(params.time_output_format, "HH24:MI:SS");
         assert!(!params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 100_000);
