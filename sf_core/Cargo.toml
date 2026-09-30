@@ -239,11 +239,9 @@ time = "0.3"
 # and it was weighed against the correctness risk of hand-rolled ASN.1 in a
 # private-key path.
 pkcs8 = { version = "0.10", features = ["3des"] }
-# Legacy 3DES unwrap only, deliberately outside the validated module: AWS-LC
-# has no 3DES cipher (`aws_lc_rs::cipher` is AES-only; its only 3DES is
-# `cmac::TDES_FOR_LEGACY_USE_ONLY`, a MAC), and 3DES is not an approved
-# algorithm in any module, so running it inside AWS-LC would not make it
-# approved. See `crypto::private_key` for why it must be supported.
+# Standard builds retain legacy 3DES private-key decryption; `fips-tls` builds
+# reject PBES2/3DES keys before deriving or decrypting. The `pkcs8/3des`
+# parser feature still resolves `des` transitively in both build graphs.
 des = "0.8"
 cbc = "0.1"
 # Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
