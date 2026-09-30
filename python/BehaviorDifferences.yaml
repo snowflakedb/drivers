@@ -218,12 +218,17 @@ behavior_differences:
       `ProgrammingError("No results available (already consumed or not produced by this query)", errno=252009)` (`ER_NO_DATA_FOUND`).
 
   23:
-    name: "Connection does not expose a public connect() method"
-    status: unknown
+    name: "Removes connect() method on SnowflakeConnection class"
+    status: allowed
     type: api_incompatibility
     reviewed: true
     is_breaking_change: true
     impact: high
+    status_rationale: |
+      Construction already establishes the session on both drivers, and the old
+      connect() method was not a reconnect path (credentials are wiped after the
+      first login). Removing the method drops an unusable public surface rather
+      than a working reconnect API.
     old_driver_behavior: |
       `SnowflakeConnection` exposes a public `connect(**kwargs)` method that `__init__` calls at the end of construction.
       Despite being public, the method was not usable as a reconnect mechanism: after a successful connection
@@ -235,12 +240,16 @@ behavior_differences:
       All connection parameters must be provided at construction time.
 
   24:
-    name: "region connection parameter and Connection.region property removed"
-    status: unknown
+    name: "Removes region parameter from SnowflakeConnection class"
+    status: allowed
     type: api_incompatibility
     reviewed: true
     is_breaking_change: true
     impact: medium
+    status_rationale: |
+      Hostname construction moved to a fully-qualified account identifier or an
+      explicit host; keeping a separate region kwarg would duplicate that
+      configuration with no remaining consumer in the new driver.
     old_driver_behavior: |
       `region` is accepted as a `connect()` kwarg and used internally to
       construct the Snowflake hostname. `Connection.region` returns the value, emitting a
@@ -1536,3 +1545,130 @@ behavior_differences:
       directory level, which was a defect fixed by this change. The residual difference
       documented here is limited to source keys with two or more directory levels, where
       the old driver's single-segment strip still leaves part of the path in the value.
+
+  103:
+    name: "Removes converter_class parameter from SnowflakeConnection"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `connect(converter_class=...)` accepts a custom converter class; the default is
+      selected by `DefaultConverterClass()` (e.g. `SnowflakeNoConverterToPython` to skip
+      native type conversion).
+    new_driver_behavior: |
+      Passing `converter_class` with a class object raises `ProgrammingError`
+      (`Unsupported connection option type for 'converter_class'`).
+      `DefaultConverterClass` does not exist (`AttributeError`).
+    description: |
+      Result conversion moved into the new driver Arrow path and is no longer a
+      Python-pluggable hook. The Windows-specific `SnowflakeConverterIssue23517` workaround
+      and null-converter opt-out are not applicable under that architecture.
+
+  104:
+    name: "Removes OCSP support in favor of CRLs"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: high
+    old_driver_behavior: |
+      Certificate revocation uses OCSP, controlled by parameters such as
+      `ocsp_fail_open`, `ocsp_response_cache_filename`, and `insecure_mode`.
+    new_driver_behavior: |
+      OCSP is not implemented. Certificate revocation uses CRLs, configured via
+      CRL parameters (`crl_check_mode`, `enable_crl_memory_cache`,
+      `enable_crl_file_cache`, etc.). OCSP-specific connection parameters are not accepted.
+    description: |
+      The new driver performs TLS revocation checking with CRL support shared
+      across wrappers. OCSP was not ported; callers must migrate to CRL configuration.
+      See also BD#42 for CRL cache toggle changes.
+
+  105:
+    name: "Removes modules snowflake.connector.dbapi and snowflake.connector.auth (internal API)"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `snowflake.connector.dbapi` and `snowflake.connector.auth` (including authenticator
+      subclasses such as `AuthByOkta`, `AuthByOauth`, etc.) are importable public modules.
+    new_driver_behavior: |
+      `import snowflake.connector.dbapi` raises `ModuleNotFoundError`. Authenticator
+      subclasses such as `AuthByOkta` and `AuthByOauth` are not exported from
+      `snowflake.connector.auth` (`AttributeError`).
+    description: |
+      Authentication is configured via connection parameters and implemented in the new
+      driver, so the Python authenticator class hierarchy is unnecessary. A minimal
+      `snowflake.connector.auth` package stub remains for limited backward-compat symbols
+      only (e.g. `workload_identity`), not the old auth API surface. PEP 249 entry points
+      live on `snowflake.connector` itself; the separate `dbapi` module is unused.
+
+  106:
+    name: "Deprecates HTTP and internal error classes retained only for import compatibility"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Raises (or uses as internal retry/control-flow signals): `HttpError`,
+      `InternalServerError`, `ServiceUnavailableError`, `GatewayTimeoutError`,
+      `ForbiddenError`, `RequestTimeoutError`, `BadRequest`, `BadGatewayError`,
+      `MethodNotAllowed`, `TooManyRequests`, `OtherHTTPRetryableError`,
+      `RevocationCheckError`, `RefreshTokenError`, `BindUploadError`,
+      `RequestExceedMaxRetryError`, `TokenExpiredError`, `PresignedUrlExpiredError`.
+    new_driver_behavior: |
+      Those classes remain importable from `snowflake.connector.errors` but emit a
+      `DeprecationWarning` on first access and are never raised by the new driver.
+      Failures surface as PEP 249 exception types instead.
+    description: |
+      HTTP retries, token refresh, revocation checks, and stage-transfer retries moved into
+      the new driver. The old typed HTTP/internal exceptions were Python-layer control-flow
+      signals that no longer participate in that path. They are kept importable only so
+      existing `except` / `isinstance` code does not break immediately, and may be removed
+      later. `except HttpError` (and similar) no longer matches those failures.
+
+  107:
+    name: "Removes file-transfer and type-helper symbols from snowflake.connector.constants"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `snowflake.connector.constants` exports `DIRS`, `FileTransferType`, `ResultStatus`,
+      `CMD_TYPE_UPLOAD`, `CMD_TYPE_DOWNLOAD`, `S3_FS`, `AZURE_FS`, `GCS_FS`, `LOCAL_FS`,
+      `FILE_PROTOCOL`, `S3_MAX_PART_SIZE`, `S3_MIN_PART_SIZE`, `S3_MAX_PARTS`,
+      `AZURE_CHUNK_SIZE`, `S3_CHUNK_SIZE`, `get_binary_types()`, `get_string_types()`,
+      `get_number_types()`, `get_timestamp_types()`, `is_binary_type_name()`,
+      `is_string_type_name()`, `is_number_type_name()`, `is_timestamp_type_name()`,
+      `is_date_type_name()`, `array_pa_type()`, `map_pa_type()`, `struct_pa_type()`,
+      `vector_pa_type()`.
+    new_driver_behavior: |
+      Those symbols are not exported; accessing them raises `AttributeError`.
+      `QueryStatus` remains available on the module.
+    description: |
+      File-transfer sizing, cloud FS labels, and type-name helpers were implementation
+      details of the old Python PUT/GET and converter stacks. That logic now lives in the
+      new driver, so exposing the constants from Python would be misleading and unused.
+
+  108:
+    name: "Removes DownloadMetrics, RemoteChunkInfo, and related symbols from result_batch"
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `snowflake.connector.result_batch` exports `DownloadMetrics`, `RemoteChunkInfo`,
+      `DOWNLOAD_TIMEOUT`, `MAX_DOWNLOAD_RETRY`, `SSE_C_AES`, `SSE_C_ALGORITHM`, and
+      `SSE_C_KEY`.
+    new_driver_behavior: |
+      Those symbols do not exist; accessing them raises `AttributeError`.
+    description: |
+      Chunk download, retry budgets, and SSE-C handling moved into the new driver. The
+      Python `ResultBatch` surface is limited to iteration / Arrow / pandas conversion, so
+      the old download-metrics and SSE constants have no Python-side consumer.
