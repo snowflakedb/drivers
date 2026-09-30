@@ -18,6 +18,7 @@ fips-tls = ["sf_core/fips-tls"]
 
 [dependencies]
 sf_core = { path = "../sf_core" }
+sf_output_format = { path = "../sf_output_format" }
 sf_types = { path = "../sf_types" }
 napi = { version = "3", default-features = false, features = ["napi9", "async", "chrono_date"] }
 napi-derive = "3"

@@ -3,15 +3,15 @@ use arrow::array::{
     Float64Array, PrimitiveArray, StringArray, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
-use chrono::NaiveTime;
+use chrono::{DateTime, NaiveTime};
 
 use super::column_reader_util::{
     IntColumn, decimal_string, downcast_array, read_cell, scale_from_metadata, usize_from_metadata,
 };
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
-use super::time_format;
 use crate::session_params::KnownSessionParameters;
+use sf_output_format::datetime::{DateTimeFormat, DateTimeValue, Zone};
 use sf_types::{ReadArrowError, ReadArrowType};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -25,15 +25,10 @@ const MAX_TIME_SCALE: u32 = 9;
 /// encoding (see [`validate_time_range`]).
 const SECONDS_PER_DAY: i64 = 86_400;
 
-/// Per-column state a `TIME` decoder needs beyond the raw Arrow array:
-/// the column's declared scale (0-9 fractional-second digits) and the
-/// session parameters the stream was built with, whose `time_output_format`
-/// the renderer reads. A named struct, not a positional tuple, so the two
-/// `Time*` variants below can't have `scale`/`params` swapped at a construction
-/// or match site.
+/// Arrow scale and a compiled session `TIME_OUTPUT_FORMAT` for one TIME column.
 pub(crate) struct TimeMeta {
     scale: u32,
-    params: Arc<KnownSessionParameters>,
+    format: DateTimeFormat,
 }
 
 /// Decodes one Arrow column into [`JsCell`]s, one cell at a time.
@@ -143,7 +138,7 @@ impl ColumnReader {
                 }
                 let meta = TimeMeta {
                     scale,
-                    params: Arc::clone(session_params),
+                    format: DateTimeFormat::compile(&session_params.time_output_format),
                 };
                 match column.data_type() {
                     DataType::Int32 => {
@@ -444,7 +439,16 @@ where
         .unwrap_or_else(|_| {
             unreachable!("non-null, range-validated TIME cell always decodes to a NaiveTime")
         });
-    time_format::render(time, meta.scale, &meta.params.time_output_format)
+    // A TIME has no calendar date and no timezone. The server formats one by
+    // reading `secs_since_midnight` as an instant, which lands on the Unix
+    // epoch at UTC, so date elements in a TIME format render 1970-01-01 and
+    // timezone elements render a zero offset.
+    meta.format.format(&DateTimeValue {
+        local: DateTime::UNIX_EPOCH.naive_utc().date().and_time(time),
+        offset_minutes: 0,
+        scale: meta.scale,
+        zone: Zone::Named("GMT"),
+    })
 }
 
 #[cfg(test)]
@@ -719,6 +723,31 @@ mod tests {
             "Int64 TIME should route to the TimeI64 arm"
         );
         assert_eq!(reader.read(0), str_cell("10:30:00.123456789"));
+    }
+
+    #[test]
+    fn time_renders_date_elements_as_the_unix_epoch_and_a_zero_offset() {
+        let field = time_field("0");
+        let array = Int32Array::from(vec![Some(37_800)]);
+        let reader = reader_with_format(&field, &array, "YYYY-MM-DD DY HH24:MI:SS TZH:TZM");
+        assert_eq!(reader.read(0), str_cell("1970-01-01 Thu 10:30:00 Z"));
+    }
+
+    #[test]
+    fn time_fraction_width_follows_the_format_not_the_column_scale() {
+        // The stored value carries no fractional digits, but FF3 still asks
+        // for three, so three zeros are printed — and a bare FF, which takes
+        // its width from the scale, prints none and leaves the '.' behind.
+        let field = time_field("0");
+        let array = Int32Array::from(vec![Some(37_800)]);
+        assert_eq!(
+            reader_with_format(&field, &array, "HH24:MI:SS.FF3").read(0),
+            str_cell("10:30:00.000")
+        );
+        assert_eq!(
+            reader_with_format(&field, &array, "HH24:MI:SS.FF").read(0),
+            str_cell("10:30:00.")
+        );
     }
 
     #[test]

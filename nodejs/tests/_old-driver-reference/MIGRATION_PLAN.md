@@ -223,16 +223,13 @@ called out explicitly.
   then check whether the new driver's result-handling coverage has gaps that these tests
   highlight. TIME-related files, against the TIME e2e in `query-data-types.test.ts`:
   - [`datetime_format_converter_test.js`](./unit/connection/result/datetime_format_converter_test.js) —
-    dropped. Mixed `HH24`+`HH12` is
-    `mixed_hh24_and_hh12_with_comma_ff_separator` in `time_format.rs`; the remaining
-    composites (`YYYY-MM-DD`/`TZH:TZM`, concatenated `AM`/`PM`, `MMMM`/`MON`/`DY`,
-    `TZH`) are `converter_composite_formats_from_legacy_datetime_format_converter`
-    in `time_format.rs`. `MMMM` → January is a converter accident (BCR_LOG.md),
-    not a TIME month. Timestamp-only moment mapping is not a TIME contract.
+    dropped. Token coverage lives in `sf_output_format` unit tests;
+    [`time.test.ts`](../e2e/query/data-types/time.test.ts) (`TIME_OUTPUT_FORMAT`) wires
+    session `TIME_OUTPUT_FORMAT` (bare `FF`, `FFn`, date tokens, `TZH:TZM`).
+    Timestamp-only moment mapping is not a TIME contract.
   - [`sf_timestamp_test.js`](./unit/connection/result/sf_timestamp_test.js) — `Time: basic`
-    dropped; faithful equivalent is `time_basic_format_matrix_from_legacy_sf_timestamp`
-    in `time_format.rs` (same four scale/nanos/format triples, including bare `FF` at
-    scale 3). Timestamp blocks stay parked until TIMESTAMP output formats land.
+    dropped; scale/`FF` wiring is in `time.test.ts`. Timestamp blocks stay
+    parked until the driver returns TIMESTAMP columns at all.
 
 ### Configuration / global config
 

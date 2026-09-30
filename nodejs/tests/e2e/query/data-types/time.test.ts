@@ -73,10 +73,10 @@ describe('TIME data type', () => {
     });
 
     it.each([
-      { scale: 0, expected: '10:30:00', oldDriverExpected: '10:30:00.000000000' },
-      { scale: 3, expected: '10:30:00.123', oldDriverExpected: '10:30:00.123000000' },
-      { scale: 6, expected: '10:30:00.123456', oldDriverExpected: '10:30:00.123456000' },
-    ])('should handle time precision $scale', async ({ scale, expected, oldDriverExpected }) => {
+      { scale: 0, expected: '10:30:00.000000000' },
+      { scale: 3, expected: '10:30:00.123000000' },
+      { scale: 6, expected: '10:30:00.123456000' },
+    ])('should handle time precision $scale', async ({ scale, expected }) => {
       // Given Snowflake client is logged in
       void connection;
 
@@ -88,11 +88,7 @@ describe('TIME data type', () => {
       );
 
       // Then Result should contain [<expected>]
-      if (isRunningNewDriverWithBD('BD#16')) {
-        expect(Object.values(rows[0])).toEqual([expected]);
-      } else {
-        expect(Object.values(rows[0])).toEqual([oldDriverExpected]);
-      }
+      expect(Object.values(rows[0])).toEqual([expected]);
     });
 
     it('should preserve nanosecond precision for time', async () => {
@@ -356,6 +352,107 @@ describe('TIME data type', () => {
       await setTimeOutputFormat('HH12:MI:SS AM');
       const { rows } = await executeAsync(connection, `SELECT '14:45:30'::TIME as VAL`);
       expect(rows[0].VAL).toBe('02:45:30 PM');
+    });
+
+    it.each([
+      { scale: 0, expected: '10:30:00.' },
+      { scale: 3, expected: '10:30:00.123' },
+      { scale: 6, expected: '10:30:00.123456' },
+    ])(
+      'should honor column scale with bare FF in TIME_OUTPUT_FORMAT for precision $scale',
+      async ({ scale, expected }) => {
+        await setTimeOutputFormat('HH24:MI:SS.FF');
+        const { rows } = await executeAsync(
+          connection,
+          `SELECT '10:30:00.123456789'::TIME(${scale})`,
+        );
+        expect(Object.values(rows[0])).toEqual([expected]);
+      },
+    );
+
+    it.each([
+      { scale: 0, expected: '10:30:00.000000000' },
+      { scale: 3, expected: '10:30:00.123000000' },
+      { scale: 6, expected: '10:30:00.123456000' },
+    ])(
+      'should honor explicit FF9 width in TIME_OUTPUT_FORMAT for precision $scale',
+      async ({ scale, expected }) => {
+        await setTimeOutputFormat('HH24:MI:SS.FF9');
+        const { rows } = await executeAsync(
+          connection,
+          `SELECT '10:30:00.123456789'::TIME(${scale})`,
+        );
+        expect(Object.values(rows[0])).toEqual([expected]);
+      },
+    );
+
+    it.each([
+      {
+        format: 'HH24:MI:SS',
+        sql: `SELECT '10:30:00.123'::TIME(0)`,
+        expected: '10:30:00',
+      },
+      {
+        format: 'HH24:MI:SS.FF',
+        sql: `SELECT '10:30:00.123'::TIME(0)`,
+        expected: '10:30:00.',
+      },
+      {
+        format: 'HH24:MI:SS.FF3',
+        sql: `SELECT '10:30:00.123'::TIME(0)`,
+        expected: '10:30:00.000',
+      },
+      {
+        format: 'YYYY-MM-DD',
+        sql: `SELECT '10:30:00'::TIME(0)`,
+        expected: '1970-01-01',
+      },
+      {
+        format: 'HH24:MI:SS.FF3',
+        sql: `SELECT '10:30:00'::TIME(3)`,
+        expected: '10:30:00.000',
+      },
+    ])('should render TIME with session format $format', async ({ format, sql, expected }) => {
+      await setTimeOutputFormat(format);
+      const { rows } = await executeAsync(connection, sql);
+      expect(Object.values(rows[0])[0]).toBe(expected);
+    });
+
+    it.each([
+      {
+        token: 'TZH:TZM',
+        oldExpected: '1970-01-01 10:30:00 +00:00',
+        newExpected: '1970-01-01 10:30:00 Z',
+      },
+      {
+        token: 'TZHTZM',
+        oldExpected: '1970-01-01 10:30:00 +0000',
+        newExpected: '1970-01-01 10:30:00 Z',
+      },
+      {
+        token: 'TZH',
+        oldExpected: '1970-01-01 10:30:00 +00',
+        newExpected: '1970-01-01 10:30:00 Z',
+      },
+    ])(
+      'should render a zero UTC offset as Z for $token (BD#52)',
+      async ({ token, oldExpected, newExpected }) => {
+        await setTimeOutputFormat(`YYYY-MM-DD HH24:MI:SS ${token}`);
+        const { rows } = await executeAsync(connection, `SELECT '10:30:00'::TIME(0)`);
+        const value = Object.values(rows[0])[0];
+        if (isRunningNewDriverWithBD('BD#52')) {
+          expect(value).toBe(newExpected);
+        } else {
+          expect(value).toBe(oldExpected);
+        }
+      },
+    );
+
+    it('should keep TIME clock digits when session TIMEZONE is not UTC', async () => {
+      await setSessionParameterForTest(connection, 'TIMEZONE', 'America/Los_Angeles');
+      await setTimeOutputFormat('HH24:MI:SS');
+      const { rows } = await executeAsync(connection, `SELECT '10:30:00'::TIME(0)`);
+      expect(Object.values(rows[0])[0]).toBe('10:30:00');
     });
   });
 });

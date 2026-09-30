@@ -38,9 +38,12 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 
 - The `isArray` and `isObject` methods are bugged and return false because server doesn't return `fieldsMetadata`
 
-### TIME has no month — `MMMM` → `January` is a converter accident
+### TIME has no month, but date elements in a TIME format render the Unix epoch
 
-TIME is a clock (`14:45:30`), not a date. The old format converter has no `MMMM` tag; it maps `MM` twice, so `MMMM` becomes moment `MMMM` (full month). Formatting TIME then prints `January` because the old driver uses Unix epoch as a fake calendar. The new TIME renderer currently copies that. Investigate whether date tokens on TIME (especially `MMMM`) should keep emitting epoch or stop pretending TIME has a month.
+TIME is a clock (`14:45:30`), not a date, yet `YYYY-MM-DD` against a TIME renders
+`1970-01-01` and `MMMM` renders `January`. Snowflake's `TO_CHAR` treats a TIME as
+seconds-since-midnight on an instant, which at UTC is the Unix epoch — not a quirk
+of the old Node format converter.
 
 ## Known bugs in both drivers
 

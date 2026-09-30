@@ -341,37 +341,42 @@ behavior_differences:
       real null. Verified live against both drivers.
 
   15:
-    name: "Bare FF against a scale-0 TIME column no longer leaves a dangling '.'"
-    status: allowed
+    name: 'Bare FF against a scale-0 TIME column keeps the separator when width is zero'
+    status: fixed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The old driver's format engine emits a trailing literal '.' with no digits after it.
-      when a bare FF token is requested against a scale-0 TIME column
-      (e.g. 'HH24:MI:SS.FF' -> '12:34:56.').
+      A bare FF token against a scale-0 TIME column renders the fractional width as zero digits
+      and keeps the preceding separator (e.g. 'HH24:MI:SS.FF' -> '12:34:56.'), matching TO_CHAR.
     new_driver_behavior: |
-      The universal driver drops the digit-less fractional suffix entirely in this case.
+      Same as the old driver: 'HH24:MI:SS.FF' on TIME(0) renders '12:34:56.' via sf_output_format.
+    status_rationale: |
+      An early universal-driver TIME formatter dropped the digit-less suffix; TIME now renders
+      through sf_output_format, which follows the server, so the old and new drivers match again.
     description: |
-      A documented old-driver formatting quirk, not a contract. Verified live against both drivers.
+      No longer a difference between drivers. TO_CHAR keeps the separator when the fractional
+      width resolves to zero.
 
   16:
-    name: "FFn against TIME renders only the column's real scale digits, not always n zero-padded digits"
-    status: todo
+    name: 'FFn against TIME zero-pads to the requested width, not the column scale'
+    status: fixed
     type: bugfix
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The old driver's FFn (digit-suffixed) token ignores the column's declared scale — it.
-      always renders exactly n digits, zero-padding past whatever precision the column actually
-      stored (e.g. a TIME(0) column under 'HH24:MI:SS.FF9' renders '.000000000', a TIME(3)
-      column renders '.123000000').
+      An explicit FFn width wins over the column scale: a TIME(0) column under 'HH24:MI:SS.FF9'
+      renders '.000000000', and a TIME(3) column under the same format renders '.123000000'.
     new_driver_behavior: |
-      The universal driver renders only min(n, scale) real digits and nothing invented.
+      Same as the old driver: explicit FFn width wins; bare FF still takes its width from scale.
+    status_rationale: |
+      An early universal-driver TIME formatter capped FFn at column scale; TIME now renders through
+      sf_output_format, which follows the server, so the old and new drivers match again.
     description: |
-      Seems like a bug. Why scale wins, but no scale always respect output format?
+      No longer a difference between drivers. Column scale only governs bare FF; FFn always pads
+      to n digits.
 
   17:
     name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"
@@ -1026,3 +1031,17 @@ behavior_differences:
     status_rationale: |
       The old driver already omitted the method from the published types. The new driver
       does not add a runtime-only copy of an unpublished API.
+
+  52:
+    name: 'Zero UTC offset in a TIME format prints Z, not +00:00'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Offset elements on a TIME (`TZH:TZM`, `TZHTZM`, `TZH`) print `+00:00` / `+0000` / `+00`.
+    new_driver_behavior: |
+      Those elements print `Z`, matching `TO_CHAR` for a zero UTC offset.
+    description: |
+      The new driver follows the server. The old driver always writes a numeric offset.

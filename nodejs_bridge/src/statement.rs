@@ -5,7 +5,6 @@ mod decfloat;
 mod js_cell;
 mod result;
 mod stream_state;
-mod time_format;
 
 pub use column::Column;
 
