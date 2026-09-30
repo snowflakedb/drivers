@@ -29,9 +29,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqwest::header::HeaderMap;
 use snafu::{OptionExt, ResultExt};
 use url::Url;
-use uuid::Uuid;
 
 use super::error::{DPoPJwkParseSnafu, DPoPProofGenerationSnafu, OAuthError};
+use super::random;
 use crate::sensitive::SensitiveString;
 
 const DPOP_NONCE_HEADER: &str = "DPoP-Nonce";
@@ -233,7 +233,13 @@ pub(crate) fn proof_jwt(
     );
 
     let htu = htu_value(url);
-    let jti = Uuid::new_v4().to_string();
+    // The proof's replay identifier, drawn from the module rather than
+    // `Uuid::new_v4()` (which draws on `getrandom`). RFC 9449 only requires
+    // `jti` be unique, so the encoding is free -- and leaving it on `getrandom`
+    // would have put off-module randomness in every proof, next to a signature
+    // the same function takes from `SystemRandom`. 16 bytes matches a UUIDv4's
+    // 122 bits of entropy. Fails the proof the way the other module draws do.
+    let jti = random::token_b64url(16, "DPoP proof jti")?;
     let claims = match nonce {
         Some(n) => {
             let n_escaped = json_escape(n);
@@ -402,6 +408,25 @@ mod tests {
             sig.len(),
             64,
             "ES256 JOSE signature must be exactly 64 bytes"
+        );
+    }
+
+    /// `jti` is the proof's replay identifier, so distinctness across proofs
+    /// is the property that matters -- the assertion above only catches an
+    /// empty claim. Guards the wiring, not the DRBG: a `jti` reused between
+    /// two proofs of the same request would let a captured proof be replayed.
+    #[test]
+    fn proof_jwt_mints_a_fresh_jti_per_proof() {
+        let key = DPoPKey::generate().unwrap();
+        let url = Url::parse("https://idp.example.com/oauth/token-request").unwrap();
+        let first = proof_jwt(&key, "POST", &url, None).unwrap();
+        let second = proof_jwt(&key, "POST", &url, None).unwrap();
+        let (_, a, _) = split_jwt(first.reveal());
+        let (_, b, _) = split_jwt(second.reveal());
+        assert_ne!(
+            a["jti"].as_str().unwrap(),
+            b["jti"].as_str().unwrap(),
+            "two proofs for the same request reused a jti"
         );
     }
 

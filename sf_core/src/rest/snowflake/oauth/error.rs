@@ -130,6 +130,23 @@ pub enum OAuthError {
         location: Location,
     },
 
+    /// A security-relevant OAuth value -- the PKCE verifier, CSRF `state`, or
+    /// DPoP `jti` -- could not be drawn from AWS-LC's DRBG.
+    ///
+    /// Fails the login or proof rather than falling back to another source.
+    /// Under `fips-tls`, that would draw security randomness outside AWS-LC
+    /// and undermine the build's module boundary. As with
+    /// `DPoPProofGeneration`, `Unspecified` carries no detail: AWS-LC does not
+    /// report why a primitive failed.
+    #[snafu(display("Failed to generate OAuth random value ({purpose})"))]
+    RandomGeneration {
+        /// Names the value, never carries it -- these must not reach a log.
+        purpose: &'static str,
+        source: aws_lc_rs::error::Unspecified,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// DPoP proof JWT could not be constructed because of an underlying
     /// AWS-LC primitive (key generation, signing, coordinate export).
     ///
