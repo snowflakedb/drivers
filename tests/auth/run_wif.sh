@@ -78,6 +78,10 @@ esac
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
+log() {
+  printf '[wif][%s] %s\n' "$(date -u +'%H:%M:%S')" "$*"
+}
+
 # Generate the parameters.json the tests expect (PARAMETER_PATH).
 # Uses jq -n so values are JSON-encoded safely.
 write_parameters_json() {
@@ -117,6 +121,7 @@ run_wif_tests() {
   echo "WIF tests: ${provider} lane=${WIF_LANE} (host=${host}, remote_dir=${remote_dir})"
   echo "==================================================================="
 
+  log "${provider}: creating ${remote_dir}"
   ssh "${ssh_opts[@]}" "$host" "mkdir -p \"$remote_dir\"" || {
     echo "ERROR: failed to create remote dir '$remote_dir' on $host" >&2
     rm -f "$params_file"
@@ -128,18 +133,28 @@ run_wif_tests() {
     "$LANE_ARTIFACT|$(basename "$LANE_ARTIFACT")"
     "$THIS_DIR/$LANE_ENTRYPOINT|$LANE_ENTRYPOINT"
   )
-  local src dst spec
+  local src dst spec scp_started
   for spec in "${transfers[@]}"; do
     src="${spec%%|*}"
     dst="${spec##*|}"
+    # The artifact is hundreds of megabytes over a 443 tunnel and scp prints no
+    # progress when stdout is not a terminal, so the size and duration here are
+    # the only signal that a long pause is a transfer rather than a hang.
+    log "${provider}: sending ${dst} ($(du -h "$src" | cut -f1))"
+    scp_started=$SECONDS
     scp "${scp_opts[@]}" "$src" "$host:$remote_dir/$dst" || {
       echo "ERROR: failed to scp '$src' to $host:$remote_dir/$dst" >&2
       rm -f "$params_file"
       return 1
     }
+    log "${provider}: sent ${dst} in $((SECONDS - scp_started))s"
   done
   rm -f "$params_file"
 
+  # A cold VM pulls the runtime image here, which is minutes before the
+  # entrypoint prints anything of its own.
+  log "${provider}: running ${LANE_ENTRYPOINT} in ${LANE_IMAGE}"
+  local run_started=$SECONDS
   ssh "${ssh_opts[@]}" "$host" \
     env REMOTE_DIR="$remote_dir" RUNTIME_IMAGE="$LANE_IMAGE" ENTRYPOINT="$LANE_ENTRYPOINT" bash <<'EOF'
     set -e
@@ -153,12 +168,16 @@ run_wif_tests() {
       "$RUNTIME_IMAGE" \
       bash "/tests/$ENTRYPOINT"
 EOF
+  local run_status=$?
+  log "${provider}: container exited $run_status after $((SECONDS - run_started))s"
+  return $run_status
 }
 
 run_tests_and_set_result() {
   local provider="$1" host="$2" snowflake_host="$3" rsa_key_path="$4"
   local snowflake_user="$5" impersonation_path="$6"
 
+  local provider_started=$SECONDS
   run_wif_tests "$provider" "$host" "$snowflake_host" "$rsa_key_path" "$snowflake_user" "$impersonation_path"
   local status=$?
 
@@ -168,7 +187,9 @@ run_tests_and_set_result() {
   else
     echo "$provider tests passed"
   fi
+  log "${provider}: lane=${WIF_LANE} finished in $((SECONDS - provider_started))s"
 
+  log "${provider}: removing the remote working directory"
   ssh -i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p 443 "$host" \
     "rm -rf \"wif_${provider}_${WIF_LANE}_${TIMESTAMP}\"" || true
 }
@@ -202,6 +223,8 @@ fi
 
 BRANCH=$(get_branch)
 export BRANCH
+log "Lane ${WIF_LANE} on branch ${BRANCH}"
+log "Decrypting the WIF keys and parameters"
 setup_parameters
 
 # Run tests for all cloud providers

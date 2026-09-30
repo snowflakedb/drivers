@@ -9,6 +9,11 @@ set -euo pipefail
 
 WORKSPACE=/workspace
 
+log() {
+  printf '[wif-build][%s] %s\n' "$(date -u +'%H:%M:%S')" "$*"
+}
+
+log "Copying the repository into $WORKSPACE"
 # /source is read-only. Node and Rust need a writable tree, so this copies the
 # mount into $WORKSPACE. `nodejs/_build` and `nodejs/node_modules` are left
 # behind on purpose: on a macOS host they hold Darwin binaries, and napi would
@@ -31,3 +36,4 @@ rustup show
 export CARGO_TARGET_DIR=/cargo-target
 ./tests/auth/build_wif_nodejs_artifacts.sh
 cp "$WORKSPACE/tests/auth/wif/artifacts/nodejs_wif.tar.gz" /artifacts/nodejs_wif.tar.gz
+log "Artifact ready: $(du -h /artifacts/nodejs_wif.tar.gz | cut -f1)"

@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+log() {
+  printf '[wif-local][%s] %s\n' "$(date -u +'%H:%M:%S')" "$*"
+}
+
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$THIS_DIR/../.." && pwd)"
 NODEJS_BUILD_IMAGE="${NODEJS_BUILD_IMAGE:-ud-wif-nodejs-local:latest}"
@@ -40,11 +44,11 @@ done
 
 mkdir -p "$THIS_DIR/wif/artifacts"
 
-echo "Building $NODEJS_BUILD_IMAGE"
+log "Building $NODEJS_BUILD_IMAGE"
 PLATFORM="$PLATFORM" IMAGE_TAG="$NODEJS_BUILD_IMAGE" \
   "$REPO_ROOT/tests/docker/wif-nodejs/build.sh"
 
-echo "Building the linux/amd64 artifact in $NODEJS_BUILD_IMAGE"
+log "Building the linux/amd64 artifact in $NODEJS_BUILD_IMAGE"
 docker run \
   --rm \
   --platform "$PLATFORM" \
@@ -59,5 +63,5 @@ docker run \
   "$NODEJS_BUILD_IMAGE" \
   bash /source/tests/docker/wif-nodejs/build_in_container.sh
 
-echo "Handing over to run_wif.sh nodejs"
+log "Handing over to run_wif.sh nodejs"
 exec "$THIS_DIR/run_wif.sh" nodejs
