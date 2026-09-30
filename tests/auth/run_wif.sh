@@ -12,10 +12,13 @@
 # flow attests against.
 #
 # Usage:
-#   ./tests/auth/run_wif.sh <sf_core|nodejs>
+#   ./tests/auth/run_wif.sh <sf_core|nodejs> [--reference]
 #
 # The first argument selects which artifact is shipped and run. There is no
-# default: a missing or unknown lane is an error. Extra arguments are an error.
+# default: a missing or unknown lane is an error. --reference runs that
+# lane's reference suite against the same artifact instead of its own: for
+# `nodejs` that is Vitest project e2e-old-driver, which exercises the old
+# snowflake-sdk. `sf_core` has no reference suite and rejects the flag.
 #
 # Prerequisites:
 #   * ./scripts/decode_secrets.sh wif has decoded tests/auth/wif/parameters/
@@ -37,7 +40,7 @@ NODEJS_RUNTIME_IMAGE="${WIF_NODEJS_RUNTIME_IMAGE:-node:22-slim}"
 
 if [[ -n "${WIF_LANE:-}" ]]; then
   echo "ERROR: WIF_LANE is unused; pass the lane as the first argument" >&2
-  echo "Usage: $0 <sf_core|nodejs>" >&2
+  echo "Usage: $0 <sf_core|nodejs> [--reference]" >&2
   exit 1
 fi
 
@@ -47,28 +50,46 @@ case "$WIF_LANE" in
     shift
     ;;
   *)
-    echo "Usage: $0 <sf_core|nodejs>" >&2
+    echo "Usage: $0 <sf_core|nodejs> [--reference]" >&2
     exit 1
     ;;
 esac
 
-if [[ $# -ne 0 ]]; then
-  echo "ERROR: extra arguments are not accepted: $*" >&2
-  exit 1
-fi
+REFERENCE=0
+for arg in "$@"; do
+  case "$arg" in
+    --reference)
+      REFERENCE=1
+      ;;
+    *)
+      echo "ERROR: unknown argument '$arg'" >&2
+      exit 1
+      ;;
+  esac
+done
 
 case "$WIF_LANE" in
   sf_core)
+    if [[ "$REFERENCE" -eq 1 ]]; then
+      echo "ERROR: the sf_core lane has no reference suite to run with --reference" >&2
+      exit 1
+    fi
     LANE_ARTIFACT="$ARTIFACT_DIR/sf_core_e2e"
     LANE_BUILD_SCRIPT="tests/auth/build_wif_sf_core_artifacts.sh"
     LANE_IMAGE="$RUNTIME_IMAGE"
     LANE_ENTRYPOINT="wif_run_sf_core_in_container.sh"
+    SUITE=""
     ;;
   nodejs)
     LANE_ARTIFACT="$ARTIFACT_DIR/nodejs_wif.tar.gz"
     LANE_BUILD_SCRIPT="tests/auth/build_wif_nodejs_artifacts.sh"
     LANE_IMAGE="$NODEJS_RUNTIME_IMAGE"
     LANE_ENTRYPOINT="wif_run_nodejs_in_container.sh"
+    if [[ "$REFERENCE" -eq 1 ]]; then
+      SUITE="e2e-old-driver"
+    else
+      SUITE="e2e"
+    fi
     ;;
   *)
     echo "ERROR: lane must be sf_core or nodejs (got '$WIF_LANE')" >&2
@@ -81,6 +102,46 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 log() {
   printf '[wif][%s] %s\n' "$(date -u +'%H:%M:%S')" "$*"
 }
+
+# ServerAlive* bounds a stalled transfer: without it a dropped connection
+# hangs with no output until the Jenkins stage timeout.
+set_wif_remote_opts() {
+  local rsa_key_path="$1"
+  local ssh_common=(
+    -i "$rsa_key_path"
+    -o IdentitiesOnly=yes
+    -o StrictHostKeyChecking=no
+    -o ConnectTimeout=30
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=10
+  )
+  ssh_opts=("${ssh_common[@]}" -p 443)
+  scp_opts=("${ssh_common[@]}" -P 443)
+}
+
+ACTIVE_REMOTE_HOST=""
+ACTIVE_REMOTE_DIR=""
+ACTIVE_REMOTE_RSA_KEY_PATH=""
+
+cleanup_active_remote() {
+  if [[ -z "$ACTIVE_REMOTE_DIR" ]]; then
+    return 0
+  fi
+
+  local host="$ACTIVE_REMOTE_HOST"
+  local remote_dir="$ACTIVE_REMOTE_DIR"
+  local rsa_key_path="$ACTIVE_REMOTE_RSA_KEY_PATH"
+  ACTIVE_REMOTE_HOST=""
+  ACTIVE_REMOTE_DIR=""
+  ACTIVE_REMOTE_RSA_KEY_PATH=""
+
+  local ssh_opts scp_opts
+  set_wif_remote_opts "$rsa_key_path"
+  ssh "${ssh_opts[@]}" "$host" "rm -rf \"$remote_dir\"" || true
+}
+
+# Jenkins aborts terminate the script before provider cleanup can run.
+trap cleanup_active_remote EXIT
 
 # Generate the parameters.json the tests expect (PARAMETER_PATH).
 # Uses jq -n so values are JSON-encoded safely.
@@ -110,15 +171,15 @@ run_wif_tests() {
   local snowflake_user="$5" impersonation_path="$6"
 
   local remote_dir="wif_${provider}_${WIF_LANE}_${TIMESTAMP}"
-  local ssh_opts=(-i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p 443)
-  local scp_opts=(-P 443 -i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no)
+  local ssh_opts scp_opts
+  set_wif_remote_opts "$rsa_key_path"
 
   local params_file
   params_file="$(mktemp)"
   write_parameters_json "$params_file" "$provider" "$snowflake_host" "$snowflake_user" "$impersonation_path"
 
   echo "==================================================================="
-  echo "WIF tests: ${provider} lane=${WIF_LANE} (host=${host}, remote_dir=${remote_dir})"
+  echo "WIF tests: ${provider} lane=${WIF_LANE}${SUITE:+ suite=$SUITE} (host=${host}, remote_dir=${remote_dir})"
   echo "==================================================================="
 
   log "${provider}: creating ${remote_dir}"
@@ -127,6 +188,9 @@ run_wif_tests() {
     rm -f "$params_file"
     return 1
   }
+  ACTIVE_REMOTE_HOST="$host"
+  ACTIVE_REMOTE_DIR="$remote_dir"
+  ACTIVE_REMOTE_RSA_KEY_PATH="$rsa_key_path"
 
   local transfers=(
     "$params_file|parameters.json"
@@ -156,7 +220,7 @@ run_wif_tests() {
   log "${provider}: running ${LANE_ENTRYPOINT} in ${LANE_IMAGE}"
   local run_started=$SECONDS
   ssh "${ssh_opts[@]}" "$host" \
-    env REMOTE_DIR="$remote_dir" RUNTIME_IMAGE="$LANE_IMAGE" ENTRYPOINT="$LANE_ENTRYPOINT" bash <<'EOF'
+    env REMOTE_DIR="$remote_dir" RUNTIME_IMAGE="$LANE_IMAGE" ENTRYPOINT="$LANE_ENTRYPOINT" VITEST_PROJECT="$SUITE" bash <<'EOF'
     set -e
     set -o pipefail
     docker run \
@@ -165,6 +229,7 @@ run_wif_tests() {
       -m 2g \
       -v "$HOME/$REMOTE_DIR":/tests \
       -e SNOWFLAKE_RUNNING_INSIDE_WIF_VM=true \
+      -e VITEST_PROJECT="$VITEST_PROJECT" \
       "$RUNTIME_IMAGE" \
       bash "/tests/$ENTRYPOINT"
 EOF
@@ -187,11 +252,10 @@ run_tests_and_set_result() {
   else
     echo "$provider tests passed"
   fi
-  log "${provider}: lane=${WIF_LANE} finished in $((SECONDS - provider_started))s"
+  log "${provider}: lane=${WIF_LANE}${SUITE:+ suite=$SUITE} finished in $((SECONDS - provider_started))s"
 
   log "${provider}: removing the remote working directory"
-  ssh -i "$rsa_key_path" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -p 443 "$host" \
-    "rm -rf \"wif_${provider}_${WIF_LANE}_${TIMESTAMP}\"" || true
+  cleanup_active_remote
 }
 
 get_branch() {
@@ -223,7 +287,7 @@ fi
 
 BRANCH=$(get_branch)
 export BRANCH
-log "Lane ${WIF_LANE} on branch ${BRANCH}"
+log "Lane ${WIF_LANE}${SUITE:+ suite=$SUITE} on branch ${BRANCH}"
 log "Decrypting the WIF keys and parameters"
 setup_parameters
 

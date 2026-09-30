@@ -2,6 +2,7 @@
 #
 # Runs inside Docker with Node installed on a WIF cloud VM.
 # Expects /tests/nodejs_wif.tar.gz and /tests/parameters.json.
+# VITEST_PROJECT selects e2e (universal) or e2e-old-driver (reference).
 
 set -euo pipefail
 
@@ -24,5 +25,9 @@ log "Unpacked in $((SECONDS - unpack_started))s"
 export PARAMETER_PATH="$TESTS_DIR/parameters.json"
 export SKIP_NODEJS_BUILD=true
 
-log "Starting npm run test:e2e"
-npm run test:e2e -- tests/e2e/authentication/workload-identity.test.ts
+NPM_SCRIPT=test:e2e
+if [[ "${VITEST_PROJECT:-e2e}" == e2e-old-driver ]]; then
+  NPM_SCRIPT=test:e2e-old-driver
+fi
+log "Starting npm run ${NPM_SCRIPT}"
+npm run "${NPM_SCRIPT}" -- tests/e2e/authentication/workload-identity.test.ts
