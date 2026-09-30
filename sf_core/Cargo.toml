@@ -384,6 +384,22 @@ path = "tests/logging_query_tests.rs"
 name = "byte_source_roundtrip"
 path = "tests/byte_source_roundtrip.rs"
 
+# One binary per backend mode: C registration targets a process-wide OnceLock,
+# so HTTP / XP / unregistered each need their own process. Host tests run on
+# Linux only; other targets compile a stub so Windows `/DEF:exports.def` still
+# resolves.
+[[test]]
+name = "xp_backend_mode_xp"
+path = "tests/xp_backend_mode_xp.rs"
+
+[[test]]
+name = "xp_backend_mode_http"
+path = "tests/xp_backend_mode_http.rs"
+
+[[test]]
+name = "xp_backend_mode_xp_unregistered"
+path = "tests/xp_backend_mode_xp_unregistered.rs"
+
 [[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"

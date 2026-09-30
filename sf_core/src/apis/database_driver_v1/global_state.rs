@@ -289,8 +289,8 @@ impl DatabaseDriverV1 {
         self.xp_slot.register(backend)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn xp_backend(
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn xp_backend(
         &self,
     ) -> Result<Option<&Arc<dyn SnowflakeBackend>>, crate::xp_backend::BackendError> {
         self.xp_slot.active()

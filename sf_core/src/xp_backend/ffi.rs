@@ -1210,6 +1210,20 @@ mod tests {
     }
 
     #[test]
+    fn get_version_returns_a_nonempty_utf8_string() {
+        let mut version: *mut c_char = std::ptr::null_mut();
+        assert_eq!(unsafe { sf_core_get_version(&mut version) }, 0);
+        assert!(!version.is_null());
+        let reported = unsafe { CStr::from_ptr(version) }
+            .to_str()
+            .expect("version is UTF-8")
+            .to_string();
+        assert!(!reported.is_empty());
+        unsafe { sf_core_free_string(version) };
+        unsafe { sf_core_free_string(std::ptr::null_mut()) };
+    }
+
+    #[test]
     fn guard_converts_a_panic_into_an_error() {
         let err = guard("execute_query", || -> BackendResult<()> {
             panic!("simulated adapter bug");
