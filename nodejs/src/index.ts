@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SnowflakeError } from './error.js';
 import type {
   StatementCallback,
@@ -170,6 +171,7 @@ export interface FetchResultOptions {
 export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
+  #id: string;
 
   constructor(options: ConnectionOptions) {
     const {
@@ -181,6 +183,7 @@ export class Connection {
       openExternalBrowserCallback,
       ...coreOptions
     } = options;
+    this.#id = randomUUID();
 
     this.#defaultRowOptions = {
       rowMode: rowMode ?? 'object',
@@ -227,6 +230,10 @@ export class Connection {
 
   isUp(): boolean {
     return this.#core.isUp();
+  }
+
+  getId(): string {
+    return this.#id;
   }
 
   /**
