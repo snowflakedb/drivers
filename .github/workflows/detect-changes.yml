@@ -270,10 +270,22 @@ jobs:
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
-              # Minimal sdist workspace manifest. Adding or removing a member
-              # here only breaks at sdist-build time, so it has to run the
-              # packaging job.
               - 'python/Cargo.toml.sdist'
+              - 'python/Cargo.lock.sdist'
+              - 'python/fips-candidate/**'
+              - 'python/tests/packaging/**'
+              - 'python/src/snowflake/connector/__init__.py'
+              - 'python/src/snowflake/connector/_core/__init__.py'
+              - 'python/src/snowflake/connector/_internal/_distribution_profile.py'
+              - 'python/src/snowflake/connector/_internal/_private_key_helper.py'
+              - 'python_bridge/Cargo.toml'
+              - 'python_bridge/src/**'
+              - 'sf_core/Cargo.toml'
+              - 'sf_core/build.rs'
+              - 'sf_core/src/**'
+              - 'build_common.rs'
+              - 'Cargo.lock'
+              - '.github/workflows/test-python.yml'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'

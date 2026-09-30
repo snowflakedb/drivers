@@ -323,6 +323,41 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
+  # Exercise the candidate source-to-wheel boundary on the provisioned FIPS toolchain.
+  # This is a packaging regression test, not a certification or release lane.
+  packaging_tests_fips_candidate:
+    if: inputs.run_python_packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install FIPS build compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-13 g++-13
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.x'
+          cache: false
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Test isolated FIPS-TLS candidate package
+        env:
+          AWS_LC_FIPS_SYS_CC: gcc-13
+          AWS_LC_FIPS_SYS_CXX: g++-13
+          CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/candidate-core-target
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/candidate-proto-target
+        run: |
+          uv run --no-project --python 3.13 --with pytest --with pytest-timeout \
+            --with build --with cryptography pytest -q -o addopts= \
+            --confcutdir=python/tests/packaging python/tests/packaging/test_fips_candidate.py
+
   # Native-arrow overlays python_bridge in install-wheel and runs its :cov suite.
   python_tests:
     needs: [build_wheels, load-python-matrix]
@@ -1025,7 +1060,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [build_wheels, packaging_tests_wheel, packaging_tests_sdist, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
+    needs: [build_wheels, packaging_tests_wheel, packaging_tests_sdist, packaging_tests_fips_candidate, load-python-matrix, python_tests, cleanup_python, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1041,15 +1076,23 @@ jobs:
           if [[ "${{ needs.build_wheels.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests_sdist.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests_fips_candidate.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheels: ${{ needs.build_wheels.result }}"
             echo "  - packaging_tests_wheel: ${{ needs.packaging_tests_wheel.result }}"
             echo "  - packaging_tests_sdist: ${{ needs.packaging_tests_sdist.result }}"
+            echo "  - packaging_tests_fips_candidate: ${{ needs.packaging_tests_fips_candidate.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
+            exit 1
+          fi
+
+          if [[ "${{ inputs.run_python_packaging }}" == "true" && \
+                "${{ needs.packaging_tests_fips_candidate.result }}" == "skipped" ]]; then
+            echo "✗ Driver CI requested Python packaging tests but the FIPS-TLS candidate job was SKIPPED."
             exit 1
           fi
 
@@ -1071,6 +1114,7 @@ jobs:
           echo "  - build_wheels: ${{ needs.build_wheels.result }}"
           echo "  - packaging_tests_wheel: ${{ needs.packaging_tests_wheel.result }}"
           echo "  - packaging_tests_sdist: ${{ needs.packaging_tests_sdist.result }}"
+          echo "  - packaging_tests_fips_candidate: ${{ needs.packaging_tests_fips_candidate.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"

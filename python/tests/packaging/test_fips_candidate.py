@@ -110,9 +110,12 @@ def test_candidate_sdist_builds_a_distinct_native_wheel() -> None:
                 "src/snowflake/connector/_core/__init__.py",
                 "src/snowflake/connector/_internal/_distribution_profile.py",
             } <= names
-            # All entries are confined regular files/directories; Python 3.11.0
-            # does not provide tarfile's filter= argument.
-            archive.extractall(temp_path, members=members)
+            # All entries are confined regular files/directories. Older 3.11
+            # patch releases lack tarfile's extraction filter.
+            if hasattr(tarfile, "data_filter"):
+                archive.extractall(temp_path, members=members, filter="data")
+            else:
+                archive.extractall(temp_path, members=members)
 
         unpacked = temp_path / archive_root
         wheel_build = run_build("--wheel", "--outdir", str(wheel_dist), cwd=unpacked)
