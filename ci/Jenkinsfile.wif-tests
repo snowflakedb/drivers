@@ -6,24 +6,53 @@ import com.snowflake.DevEnvUtils
 // WIF e2e binary here, then ship it to the bare WIF cloud VMs (which have no
 // toolchain) and run it there in a public runtime container.
 def E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+// Node napi needs Node + Rust in one image. The coverage image has no Node;
+// the external-browser image has both. Runtime on the VM is still public
+// node:22-slim (see tests/auth/run_wif.sh).
+def NODEJS_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:4'
 
-@Field def runWif = false
+@Field String FULL_AUTH_SUITE_LABEL = 'run_full_auth_tests'
+// One WIF VM per cloud for the org; lanes hold this for the whole three-cloud run.
+@Field String WIF_VM_LOCK = 'drivers-wif-cloud-vms'
+@Field boolean runSfCore = false
+@Field boolean runNodejs = false
 
 def isMergeQueue() {
   return env.BRANCH_NAME?.startsWith('gh-readonly-queue/')
 }
 
-// Decide whether this build should occupy the WIF cloud VMs.
+boolean prHasLabel(String name) {
+  if (env.CHANGE_ID == null) {
+    return false
+  }
+  try {
+    return pullRequest.labels.contains(name)
+  } catch (Throwable ignored) {
+    echo "Could not read pullRequest.labels; treating '${name}' as absent"
+    return false
+  }
+}
+
+def runAllLanes(String reason) {
+  runSfCore = true
+  runNodejs = true
+  echo "Running the full WIF suite: ${reason}"
+}
+
+// Decide which WIF language lanes should occupy the cloud VMs.
 //
-// main / non-PR: always run (same as VPN, auth-browser, uSUT, build-matrix).
-// Merge-queue: skipped by the stage `when` (those jobs also skip MQ).
-// PRs: run only when a path that can change the sf_core WIF e2e binary or
-// its orchestration changed. Docs / skills / wrapper-only PRs skip.
+// main / non-PR: both lanes (same as VPN, auth-browser, uSUT, build-matrix).
+// Merge-queue: skipped by the stage `when`.
+// `run_full_auth_tests` label: both lanes.
+// Empty diff: both lanes (force-push race or missing target fetch).
+// PRs: sf_core and Node.js independently, from the paths each lane builds.
 def detectChanges() {
   if (env.CHANGE_ID == null) {
-    runWif = true
-    echo '=== WIF Tests Change Detection ==='
-    echo '  Non-PR build — running WIF e2e.'
+    runAllLanes("non-PR build of ${env.BRANCH_NAME}")
+    return
+  }
+  if (prHasLabel(FULL_AUTH_SUITE_LABEL)) {
+    runAllLanes("${FULL_AUTH_SUITE_LABEL} label on the PR")
     return
   }
 
@@ -35,18 +64,12 @@ def detectChanges() {
   echo "Changed files (${changedFiles.size()}):"
   changedFiles.each { echo "  ${it}" }
 
-  // Empty diff is unexpected (force-push race, missing target fetch).
   if (changedFiles.isEmpty()) {
-    runWif = true
-    echo '=== WIF Tests Change Detection ==='
-    echo '  Empty changeset — running WIF e2e to be safe.'
+    runAllLanes('Empty changeset — running both WIF lanes to be safe.')
     return
   }
 
-  // This job builds `sf_core --test e2e_tests` and runs the WIF scenarios on
-  // live AWS/Azure/GCP VMs. Trigger on the core cascade (VPN/auth-browser)
-  // plus WIF orchestration and the shared feature file.
-  def relevantPatterns = [
+  def bothLanePatterns = [
     'sf_core/',
     'sf_params_spec/',
     'sf_params_codegen/',
@@ -61,21 +84,42 @@ def detectChanges() {
     'scripts/decode_secrets.sh',
     'tests/auth/run_wif.sh',
     'tests/auth/wif/',
-    'tests/auth/build_wif_sf_core_artifacts.sh',
-    'tests/auth/wif_run_sf_core_in_container.sh',
     'tests/definitions/shared/authentication/workload_identity.feature',
     'Cargo.toml',
     'Cargo.lock',
     'rust-toolchain.toml',
     'build_common.rs',
   ]
+  def sfCoreOnlyPatterns = [
+    'tests/auth/build_wif_sf_core_artifacts.sh',
+    'tests/auth/wif_run_sf_core_in_container.sh',
+  ]
+  def nodejsOnlyPatterns = [
+    'nodejs/',
+    'nodejs_bridge/',
+    'tests/auth/build_wif_nodejs_artifacts.sh',
+    'tests/auth/run_wif_local.sh',
+    'tests/auth/wif_nodejs_artifact_validation.sh',
+    'tests/auth/wif_run_nodejs_in_container.sh',
+    'tests/docker/wif-nodejs/',
+  ]
 
-  runWif = changedFiles.any { f ->
-    relevantPatterns.any { p -> f == p || f.startsWith(p) }
+  changedFiles.each { f ->
+    if (bothLanePatterns.any { p -> f == p || f.startsWith(p) }) {
+      runSfCore = true
+      runNodejs = true
+    }
+    if (sfCoreOnlyPatterns.any { p -> f == p || f.startsWith(p) }) {
+      runSfCore = true
+    }
+    if (nodejsOnlyPatterns.any { p -> f == p || f.startsWith(p) }) {
+      runNodejs = true
+    }
   }
 
   echo '=== WIF Tests Change Detection ==='
-  echo "  Run WIF: ${runWif}"
+  echo "  Run sf_core: ${runSfCore}"
+  echo "  Run Node.js: ${runNodejs}"
 }
 
 def e2eDockerSetup(String image) {
@@ -90,8 +134,12 @@ pipeline {
   options {
     timestamps()
     disableResume()
+    // A superseded build would otherwise keep occupying the three shared WIF
+    // VMs (see WIF_VM_LOCK) while a newer push has already made its result moot.
+    disableConcurrentBuilds(abortPrevious: true)
     buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
-    timeout(time: 1, unit: 'HOURS')
+    // Includes time spent waiting for WIF_VM_LOCK, which the lanes now queue on.
+    timeout(time: 2, unit: 'HOURS')
   }
   stages {
     stage('Detect Changes') {
@@ -113,48 +161,108 @@ pipeline {
         beforeAgent true
         allOf {
           expression { !isMergeQueue() }
-          expression { runWif }
+          expression { runSfCore || runNodejs }
         }
       }
-      agent { label 'parallelizable-snowos' }
-      stages {
-        stage('Checkout') {
-          steps {
-            script {
-              def scmInfo = checkout scm
-              env.GIT_BRANCH = scmInfo.GIT_BRANCH
-              env.GIT_COMMIT = scmInfo.GIT_COMMIT
-            }
+      parallel {
+        stage('sf_core') {
+          when {
+            beforeAgent true
+            expression { runSfCore }
           }
-        }
-
-        stage('Build WIF artifacts') {
-          steps {
-            script {
-              e2eDockerSetup(E2E_DOCKER_IMAGE)
-              docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
-                // Rocky Linux rotates dnf metadata hashes weekly, which breaks
-                // pre-built images shipping stale caches. Refresh before installing.
-                sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
-                // jq parses cargo's --message-format=json output; unzip extracts the
-                // protoc release the sf_core build script downloads; the perl-* modules
-                // are required by openssl-src's Configure when building vendored
-                // OpenSSL 3.x from source (Time::Piece, IPC::Cmd, Data::Dumper).
-                sh label: 'Install build deps', script: 'yum install -y jq unzip perl-Time-Piece perl-IPC-Cmd perl-Data-Dumper'
-                sh label: 'Build WIF test binary', script: '$WORKSPACE/tests/auth/build_wif_sf_core_artifacts.sh'
+          agent { label 'parallelizable-snowos' }
+          stages {
+            stage('Checkout') {
+              steps {
+                script {
+                  def scmInfo = checkout scm
+                  env.GIT_BRANCH = scmInfo.GIT_BRANCH
+                  env.GIT_COMMIT = scmInfo.GIT_COMMIT
+                }
+              }
+            }
+            stage('Build') {
+              steps {
+                script {
+                  e2eDockerSetup(E2E_DOCKER_IMAGE)
+                  docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                    // Rocky Linux rotates dnf metadata hashes weekly, which breaks
+                    // pre-built images shipping stale caches. Refresh before installing.
+                    sh label: 'Refresh dnf metadata', script: 'dnf clean all && dnf makecache --refresh -y'
+                    // jq parses cargo's --message-format=json output; unzip extracts the
+                    // protoc release the sf_core build script downloads; the perl-* modules
+                    // are required by openssl-src's Configure when building vendored
+                    // OpenSSL 3.x from source (Time::Piece, IPC::Cmd, Data::Dumper).
+                    sh label: 'Install build deps', script: 'yum install -y jq unzip perl-Time-Piece perl-IPC-Cmd perl-Data-Dumper'
+                    sh label: 'Build WIF test binary', script: '$WORKSPACE/tests/auth/build_wif_sf_core_artifacts.sh'
+                  }
+                }
+              }
+            }
+            stage('Test') {
+              steps {
+                lock(WIF_VM_LOCK) {
+                  withCredentials([
+                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                  ]) {
+                    sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
+                  }
+                  sh label: 'Test WIF (sf_core)', script: '$WORKSPACE/tests/auth/run_wif.sh sf_core'
+                }
               }
             }
           }
         }
-
-        stage('Test WIF') {
-          steps {
-            withCredentials([
-              string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-            ]) {
-              sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
+        stage('nodejs') {
+          when {
+            beforeAgent true
+            expression { runNodejs }
+          }
+          agent { label 'parallelizable-snowos' }
+          stages {
+            stage('Checkout') {
+              steps {
+                script {
+                  def scmInfo = checkout scm
+                  env.GIT_BRANCH = scmInfo.GIT_BRANCH
+                  env.GIT_COMMIT = scmInfo.GIT_COMMIT
+                }
+              }
             }
-            sh label: 'Test WIF', script: '$WORKSPACE/tests/auth/run_wif.sh sf_core'
+            stage('Build') {
+              steps {
+                script {
+                  e2eDockerSetup(NODEJS_DOCKER_IMAGE)
+                  docker.image(NODEJS_DOCKER_IMAGE).inside('-u root') {
+                    sh label: 'Build Node.js WIF artifact', script: '$WORKSPACE/tests/auth/build_wif_nodejs_artifacts.sh'
+                  }
+                }
+              }
+            }
+            stage('Universal') {
+              steps {
+                lock(WIF_VM_LOCK) {
+                  withCredentials([
+                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                  ]) {
+                    sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
+                  }
+                  sh label: 'Test WIF (nodejs universal)', script: '$WORKSPACE/tests/auth/run_wif.sh nodejs'
+                }
+              }
+            }
+            stage('Reference') {
+              steps {
+                lock(WIF_VM_LOCK) {
+                  withCredentials([
+                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                  ]) {
+                    sh label: 'Decode Secrets', script: '$WORKSPACE/scripts/decode_secrets.sh wif'
+                  }
+                  sh label: 'Test WIF (nodejs reference)', script: '$WORKSPACE/tests/auth/run_wif.sh nodejs --reference'
+                }
+              }
+            }
           }
         }
       }

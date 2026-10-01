@@ -52,4 +52,34 @@ class SnowflakeColumnTypesTest {
     assertTrue(SnowflakeColumnTypes.isVectorType("VECTOR"));
     assertTrue(SnowflakeColumnTypes.isVectorType("vector"));
   }
+
+  @Test
+  void shouldMapGeographyInternalTypeToBinaryWhenUdtOutputIsBinary() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType(
+            "GEOGRAPHY", "GEOGRAPHY", "binary", Types.NUMERIC, false, false);
+    assertEquals(Types.BINARY, info.getColumnType());
+    assertEquals("GEOGRAPHY", info.getExtColTypeName());
+    assertEquals(SnowflakeType.GEOGRAPHY, info.getSnowflakeType());
+  }
+
+  @Test
+  void shouldMapGeometryInternalTypeToVarcharWhenUdtOutputIsText() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType(
+            "GEOMETRY", "GEOMETRY", "text", Types.NUMERIC, false, false);
+    assertEquals(Types.VARCHAR, info.getColumnType());
+    assertEquals("GEOMETRY", info.getExtColTypeName());
+    assertEquals(SnowflakeType.GEOMETRY, info.getSnowflakeType());
+  }
+
+  @Test
+  void shouldReportUnknownInternalTypeAsJdbcOtherWithExtName() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType(
+            "uuid", "CUSTOM_EXT", null, Types.NUMERIC, false, false);
+    assertEquals(Types.OTHER, info.getColumnType());
+    assertEquals("CUSTOM_EXT", info.getExtColTypeName());
+    assertEquals(SnowflakeType.ANY, info.getSnowflakeType());
+  }
 }

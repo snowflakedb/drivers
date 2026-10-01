@@ -35,8 +35,19 @@ export async function createTemporaryTable(
   columns: string,
   shouldCleanupAfterTest = true,
 ): Promise<string> {
+  return createTable(connection, columns, shouldCleanupAfterTest, true);
+}
+
+// A non-temporary table is visible to other sessions; a temporary table is not.
+export async function createTable(
+  connection: Connection,
+  columns: string,
+  shouldCleanupAfterTest = true,
+  temporary = false,
+): Promise<string> {
   const tableName = randomizeName('nodejs_');
-  await executeAsync(connection, `CREATE OR REPLACE TEMPORARY TABLE ${tableName} (${columns})`);
+  const kind = temporary ? 'TEMPORARY TABLE' : 'TABLE';
+  await executeAsync(connection, `CREATE OR REPLACE ${kind} ${tableName} (${columns})`);
   if (shouldCleanupAfterTest) {
     onTestFinished(async () => {
       await executeAsync(connection, `DROP TABLE IF EXISTS ${tableName}`);

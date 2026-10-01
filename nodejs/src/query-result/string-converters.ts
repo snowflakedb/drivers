@@ -1,4 +1,5 @@
-import type { CellConverter } from './types.js';
+import type { CellConverter, ConverterFactory } from './types.js';
+import { CoreDateFormatter } from '../core/index.js';
 
 // TODO: measure building these strings in the bridge instead of here
 
@@ -32,15 +33,9 @@ export const realAsStringConverter: CellConverter = (value) => {
 export const binaryAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : (value as Buffer).toString('hex').toUpperCase();
 
-export const dateAsStringConverter: CellConverter = (value, context) => {
-  if (value === null) {
-    return NULL_AS_STRING;
-  }
-  const formatter = context.dateFormatter;
-  if (formatter === undefined) {
-    throw new Error('dateFormatter is required for date fetchAsString conversion');
-  }
-  return formatter.format(value as Date);
+export const createDateAsStringConverter: ConverterFactory = (_column, { dateOutputFormat }) => {
+  const formatter = new CoreDateFormatter(dateOutputFormat);
+  return (value) => (value === null ? NULL_AS_STRING : formatter.format(value as Date));
 };
 
 export const vectorAsStringConverter: CellConverter = (value) =>

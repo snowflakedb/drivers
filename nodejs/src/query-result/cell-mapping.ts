@@ -1,40 +1,37 @@
 import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
-import type { CellConverter, ConversionContext, DataType, RowOptions } from './types.js';
-import { CoreDateFormatter } from '../core/index.js';
+import type { CellConverter, ConverterFactory, DataType, RowOptions } from './types.js';
 import { resolveColumnNames } from './column-names.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
-  dateAsStringConverter,
+  createDateAsStringConverter,
   realAsStringConverter,
   textAsStringConverter,
   vectorAsStringConverter,
 } from './string-converters.js';
-import { fixedConverter, variantConverter } from './value-converters.js';
+import { createFixedConverter, variantConverter } from './value-converters.js';
 
-// TODO: store converter factories taking (column, sessionParameters) so converters capture
-//  their own state (date formatter, scale, bigint flag) and ConversionContext can be removed
-const CONVERTERS_BY_COLUMN_TYPE: Record<
+const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   string,
   {
-    asValue: CellConverter | null;
-    asString: CellConverter | null;
+    asValue: ConverterFactory | null;
+    asString: ConverterFactory | null;
   }
 > = {
-  text: { asValue: null, asString: textAsStringConverter },
-  fixed: { asValue: fixedConverter, asString: textAsStringConverter },
-  real: { asValue: null, asString: realAsStringConverter },
-  vector: { asValue: null, asString: vectorAsStringConverter },
-  decfloat: { asValue: null, asString: textAsStringConverter },
-  interval_year_month: { asValue: null, asString: textAsStringConverter },
-  interval_day_time: { asValue: null, asString: textAsStringConverter },
-  boolean: { asValue: null, asString: booleanAsStringConverter },
-  binary: { asValue: null, asString: binaryAsStringConverter },
-  date: { asValue: null, asString: dateAsStringConverter },
-  variant: { asValue: variantConverter, asString: textAsStringConverter },
-  object: { asValue: variantConverter, asString: null },
-  array: { asValue: variantConverter, asString: null },
-  map: { asValue: variantConverter, asString: null },
+  text: { asValue: null, asString: () => textAsStringConverter },
+  fixed: { asValue: createFixedConverter, asString: () => textAsStringConverter },
+  real: { asValue: null, asString: () => realAsStringConverter },
+  vector: { asValue: null, asString: () => vectorAsStringConverter },
+  decfloat: { asValue: null, asString: () => textAsStringConverter },
+  interval_year_month: { asValue: null, asString: () => textAsStringConverter },
+  interval_day_time: { asValue: null, asString: () => textAsStringConverter },
+  boolean: { asValue: null, asString: () => booleanAsStringConverter },
+  binary: { asValue: null, asString: () => binaryAsStringConverter },
+  date: { asValue: null, asString: createDateAsStringConverter },
+  variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
+  object: { asValue: () => variantConverter, asString: null },
+  array: { asValue: () => variantConverter, asString: null },
+  map: { asValue: () => variantConverter, asString: null },
 };
 
 const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
@@ -46,38 +43,38 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   JSON: ['variant'],
 };
 
-function selectConverter(
+function createColumnConverter(
   column: CoreColumnInstance,
   asStringColumnTypes: ReadonlySet<string>,
+  sessionParameters: CoreKnownSessionParameters,
   options: { representNullAsStringNull: boolean },
 ): CellConverter | null {
   const columnType = column.getType();
-  const converters = CONVERTERS_BY_COLUMN_TYPE[columnType];
-  if (!converters) {
+  const factories = CONVERTER_FACTORIES_BY_COLUMN_TYPE[columnType];
+  if (!factories) {
     return null;
   }
 
   if (!asStringColumnTypes.has(columnType)) {
-    return converters.asValue;
+    return factories.asValue?.(column, sessionParameters) ?? null;
   }
 
-  const asString = converters.asString;
+  const asString = factories.asString?.(column, sessionParameters) ?? null;
   if (!asString) {
     return null;
   }
 
-  return (value, context) => {
+  return (value) => {
     if (value === null && options.representNullAsStringNull === false) {
       return null;
     }
-    return asString(value, context);
+    return asString(value);
   };
 }
 
 interface ColumnConverter {
   index: number;
   convert: CellConverter;
-  context: ConversionContext;
 }
 
 interface RowFormatterOptions {
@@ -98,33 +95,21 @@ export function createRowFormatter({
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
 
-  const dateFormatter = asStringColumnTypes.has('date')
-    ? new CoreDateFormatter(sessionParameters.dateOutputFormat)
-    : undefined;
-
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {
-    const convert = selectConverter(column, asStringColumnTypes, {
+    const convert = createColumnConverter(column, asStringColumnTypes, sessionParameters, {
       representNullAsStringNull: rowOptions.representNullAsStringNull,
     });
     if (convert !== null) {
-      columnConverters.push({
-        index: column.getIndex(),
-        convert,
-        context: {
-          scale: column.getScale(),
-          treatIntegerAsBigInt: sessionParameters.jsTreatIntegerAsBigInt,
-          dateFormatter,
-        },
-      });
+      columnConverters.push({ index: column.getIndex(), convert });
     }
   }
 
   return (row) => {
     // The bridge builds a fresh row array per call, so converting cells in
     // place is safe: nothing else holds a reference to this array.
-    for (const { index, convert, context } of columnConverters) {
-      row[index] = convert(row[index], context);
+    for (const { index, convert } of columnConverters) {
+      row[index] = convert(row[index]);
     }
     if (rowOptions.rowMode === 'array') {
       return row;

@@ -1,0 +1,24 @@
+# Check the all-features union of workspace and target-specific dependency
+# edges, but not test-only dependencies. Build dependencies remain visible as
+# a conservative superset of what a released artifact can link; the final
+# binary still needs an audit.
+[graph]
+all-features = true
+exclude-dev = true
+
+[bans]
+# This policy guards crypto backends, not unrelated version/style lints.
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    { crate = "ring", reason = "Shipped crypto must use the selected AWS-LC module" },
+    { crate = "openssl", reason = "Shipped crypto must use the selected AWS-LC module" },
+    { crate = "openssl-sys", reason = "Shipped crypto must use the selected AWS-LC module" },
+    { crate = "openssl-src", reason = "Do not vendor a second crypto module" },
+    { crate = "openssl-macros", reason = "Do not reintroduce the OpenSSL Rust binding" },
+    { crate = "native-tls", reason = "Do not reintroduce an alternate platform TLS backend" },
+]
+# openssl-probe only discovers OS certificate locations for rustls-native-certs;
+# it does not link OpenSSL or provide cryptographic operations. Do not ban it.
+# sha2, hmac, md-5, des and SDK checksum crates have separately classified
+# call sites in docs/design/fips-compliance.md; a crate-wide ban is not valid.

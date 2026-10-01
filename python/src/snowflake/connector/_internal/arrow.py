@@ -1,4 +1,4 @@
-"""Shared protocols for Arrow row iterators (Cython nanoarrow and native PyO3)."""
+"""Shared protocols for Arrow row and table iterators (Cython nanoarrow and native PyO3)."""
 
 from __future__ import annotations
 
@@ -32,3 +32,16 @@ class AsyncArrowRowIterator(Protocol):
     async def fetch_next(self, default: object = None) -> Any: ...
     async def fetch_many(self, size: int) -> list[Any]: ...
     async def fetch_all(self) -> list[Any]: ...
+
+
+class ArrowTableIterator(Protocol):
+    """RecordBatch iterator produced by ``create_table_iterator``.
+
+    Both the Cython ``ArrowStreamTableIterator`` and the PyO3
+    ``sf_core_python.ArrowStreamTableIterator`` (``native-arrow`` builds)
+    satisfy this protocol, so call sites do not branch on the backend.
+    """
+
+    def __iter__(self) -> ArrowTableIterator: ...
+    def __next__(self) -> Any: ...
+    def get_converted_schema(self) -> Any: ...

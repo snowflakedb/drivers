@@ -60,6 +60,10 @@ export class RowStatement {
     return this.#core.getQueryId() ?? undefined;
   }
 
+  getRequestId(): string | undefined {
+    return this.#core.getRequestId() ?? undefined;
+  }
+
   getColumns(): Column[] | undefined {
     return this.#core.getColumns() ?? undefined;
   }

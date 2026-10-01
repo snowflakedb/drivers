@@ -12,8 +12,8 @@
 use arrow::datatypes::{DataType, Field, Schema};
 
 use crate::arrow::error::{
-    InvalidMetadataSnafu, MissingLogicalTypeSnafu, MissingMetadataSnafu, PlanError,
-    UnsupportedLogicalTypeSnafu,
+    InvalidMetadataSnafu, MissingLogicalTypeSnafu, MissingMetadataSnafu, NestedArrowTypeSnafu,
+    PlanError, UnsupportedLogicalTypeSnafu,
 };
 
 /// Copied from `odbc/src/conversion/number.rs` (`SF_DEFAULT_VARCHAR_MAX_LEN`).
@@ -166,6 +166,7 @@ impl SnowflakeFieldType {
             // The server sends these as Utf8 JSON today, including structured
             // ARRAY(T), OBJECT(...), and MAP(K, V). They share the TEXT path.
             "OBJECT" | "ARRAY" | "VARIANT" | "MAP" => {
+                reject_nested_arrow_type(logical_type, field.data_type())?;
                 let len = match get_field_metadata(field, "charLength") {
                     Ok(len) => len,
                     Err(PlanError::MissingMetadata { .. }) => SF_DEFAULT_VARCHAR_MAX_LEN,
@@ -237,6 +238,32 @@ impl LogicalPlan {
             .map(|field| SnowflakeFieldType::from_field(field.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { field_types })
+    }
+}
+
+pub(crate) fn is_nested_arrow_type(data_type: &DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::List(_)
+            | DataType::LargeList(_)
+            | DataType::FixedSizeList(_, _)
+            | DataType::Map(_, _)
+            | DataType::Struct(_)
+    )
+}
+
+pub(crate) fn reject_nested_arrow_type(
+    logical_type: &str,
+    data_type: &DataType,
+) -> Result<(), PlanError> {
+    if is_nested_arrow_type(data_type) {
+        NestedArrowTypeSnafu {
+            logical_type,
+            data_type: data_type.to_string(),
+        }
+        .fail()
+    } else {
+        Ok(())
     }
 }
 
@@ -355,6 +382,26 @@ mod tests {
                 SnowflakeFieldType::TimestampNtz { scale: 6 },
             ]
         );
+    }
+
+    #[test]
+    fn from_schema_errors_on_nested_array() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "a",
+            DataType::List(std::sync::Arc::new(Field::new(
+                "item",
+                DataType::Int64,
+                true,
+            ))),
+            logical_meta("ARRAY", &[]),
+        )]);
+        let err = LogicalPlan::from_schema(&schema).unwrap_err();
+        match err {
+            PlanError::NestedArrowType { logical_type, .. } => {
+                assert_eq!(logical_type, "ARRAY");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

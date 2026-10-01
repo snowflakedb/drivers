@@ -562,6 +562,24 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Ignores an IPD record pa
   REQUIRE(result_ind == sizeof(result));
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: Rejects SQL_DEFAULT_PARAM during JSON binding",
+                 "[odbc-api][execdirect][submitting_request][error]") {
+  SQLINTEGER value = 0;
+  SQLLEN indicator = SQL_DEFAULT_PARAM;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#167") { REQUIRE_EXPECTED_ERROR(ret, "07S01", stmt_handle(), SQL_HANDLE_STMT); }
+  OLD_DRIVER_ONLY("BD#167") {
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+    const auto records = get_diag_rec(SQL_HANDLE_STMT, stmt_handle());
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].nativeError == 19);
+  }
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: SQL_NEED_DATA with data-at-execution parameter",
                  "[odbc-api][execdirect][submitting_request]") {
   SQLLEN dae_ind = SQL_DATA_AT_EXEC;

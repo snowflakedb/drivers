@@ -2,20 +2,24 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::PyTzInfo;
 
-pub(super) struct TimezoneProvider {
+pub(crate) struct TimezoneProvider {
     name: Option<String>,
     tz: PyOnceLock<Py<PyTzInfo>>,
 }
 
 impl TimezoneProvider {
-    pub(super) fn new(name: Option<String>) -> Self {
+    pub(crate) fn new(name: Option<String>) -> Self {
         Self {
             name,
             tz: PyOnceLock::new(),
         }
     }
 
-    pub(super) fn get<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTzInfo>> {
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.name.as_deref().filter(|name| !name.is_empty())
+    }
+
+    pub(crate) fn get<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTzInfo>> {
         self.tz
             .get_or_try_init(py, || resolve_session_timezone(py, self.name.as_deref()))
             .map(|tz| tz.bind(py).clone())

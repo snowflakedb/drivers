@@ -147,24 +147,8 @@ describe('Statement.execute()', function () {
       },
       errorCode: ErrorCodes.ERR_INTERNAL_ASSERT_FAILED,
     },
-    {
-      name: 'execute() invalid request id with sqlText',
-      options: {
-        statementOptions: { sqlText: 'sqlText', requestId: 1234 },
-        services: {},
-        connectionConfig: null,
-      },
-      errorCode: ErrorCodes.ERR_CONN_EXEC_STMT_INVALID_REQUEST_ID,
-    },
-    {
-      name: 'execute() invalid request id without sqlText',
-      options: {
-        statementOptions: { requestId: 1234 },
-        services: {},
-        connectionConfig: null,
-      },
-      errorCode: ErrorCodes.ERR_CONN_EXEC_STMT_INVALID_REQUEST_ID,
-    },
+    // The 409013 non-string requestId cases were removed. TypeScript types
+    // requestId as string, so that runtime check is not ported.
     {
       name: 'execute() missing sqlText and requestId',
       options: {
