@@ -2,7 +2,8 @@
 
 CORE_FIPS_PLATFORM: dict[tuple[str, str], dict] = {
     ("ubuntu", "x64"): {
-        "cache_key": "core-fips-ubuntu-x64",
+        # Keep the linker-flagged target separate from pre-flag Ubuntu x64 caches.
+        "cache_key": "core-fips-ubuntu-x64-rustflags-v1",
     },
     ("ubuntu", "arm"): {
         "cache_key": "core-fips-ubuntu-arm",
