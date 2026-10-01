@@ -141,6 +141,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # Keep core tests and binding builds on the same Cargo fingerprint.
+      - name: Configure Ubuntu x64 linker flag
+        if: matrix.name == 'ubuntu-x64'
+        run: echo 'RUSTFLAGS=-C link-arg=-Wl,--undefined-version' >> "$GITHUB_ENV"
+
       - name: Free runner disk space
         if: runner.os == 'Linux'
         uses: ./.github/actions/free-disk-space-linux
@@ -319,8 +324,6 @@ jobs:
           cargo build --locked \
             --package odbc --package jdbc_bridge --package nodejs_bridge --package python_bridge \
             --features odbc/fips-tls,jdbc_bridge/fips-tls,nodejs_bridge/fips-tls,python_bridge/fips-tls
-        env:
-          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Clean up python_bridge artifacts from target
         if: always()
