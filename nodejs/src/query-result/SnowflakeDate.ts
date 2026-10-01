@@ -1,9 +1,12 @@
+import { type CoreDateFormatterInstance } from '../core/index.js';
+
 interface SnowflakeDateConfig {
   value: number | Date;
   nanoSeconds: number;
   scale: number;
   timezone: string | number;
   format: string;
+  formatter: CoreDateFormatterInstance;
 }
 
 // TODO: for better performance, nodejs_bridge should return this rather than Node constructing it
@@ -12,6 +15,7 @@ export class SnowflakeDate extends Date {
   readonly #scale: number;
   readonly #timezone: string | number;
   readonly #format: string;
+  readonly #formatter: CoreDateFormatterInstance;
 
   constructor(config: SnowflakeDateConfig) {
     super(config.value);
@@ -19,6 +23,7 @@ export class SnowflakeDate extends Date {
     this.#scale = config.scale;
     this.#timezone = config.timezone;
     this.#format = config.format;
+    this.#formatter = config.formatter;
   }
 
   getEpochSeconds(): number {
@@ -44,5 +49,14 @@ export class SnowflakeDate extends Date {
 
   getFormat(): string {
     return this.#format;
+  }
+
+  toJSON(): string {
+    return this.#formatter.formatTimestamp(
+      this.getTime(),
+      this.#nanoSeconds,
+      this.#scale,
+      this.#timezone,
+    );
   }
 }

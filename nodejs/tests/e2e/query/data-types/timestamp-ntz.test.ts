@@ -401,7 +401,7 @@ describe('TIMESTAMP_NTZ data type', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
+  describe('fetchAsString', () => {
     it('should render timestamp_ntz as YYYY-MM-DD HH24:MI:SS.FF3', async () => {
       const { rows } = await executeAsync(
         connection,
@@ -427,102 +427,99 @@ describe('TIMESTAMP_NTZ data type', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    'TIMESTAMP_NTZ_OUTPUT_FORMAT and TIMESTAMP_OUTPUT_FORMAT',
-    () => {
-      async function selectNtz(
-        literal: string,
-        options?: Parameters<typeof executeAsync>[2],
-      ): Promise<unknown> {
-        const { rows } = await executeAsync(
+  describe('TIMESTAMP_NTZ_OUTPUT_FORMAT and TIMESTAMP_OUTPUT_FORMAT', () => {
+    async function selectNtz(
+      literal: string,
+      options?: Parameters<typeof executeAsync>[2],
+    ): Promise<unknown> {
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT '${literal}'::TIMESTAMP_NTZ`,
+        options,
+      );
+      return Object.values(rows[0])[0];
+    }
+
+    // statement-level is a known bug in both drivers documented in BCR_LOG.md
+    it.each([
+      {
+        name: 'NTZ only',
+        parameters: { TIMESTAMP_NTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6' },
+      },
+      { name: 'generic only', parameters: { TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI' } },
+      {
+        name: 'both',
+        parameters: {
+          TIMESTAMP_NTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6',
+          TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI',
+        },
+      },
+    ])('should ignore statement-level $name output format', async ({ parameters }) => {
+      expect(await selectNtz('2024-01-15 10:30:00', { parameters, fetchAsString: ['Date'] })).toBe(
+        '2024-01-15 10:30:00.000',
+      );
+
+      const date = (await selectNtz('2024-01-15 10:30:00', { parameters })) as SnowflakeDate;
+      expect(date.toJSON()).toBe('2024-01-15 10:30:00.000');
+      expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3');
+    });
+
+    describe('session-level', () => {
+      it('should honor TIMESTAMP_OUTPUT_FORMAT when TIMESTAMP_NTZ_OUTPUT_FORMAT is empty', async () => {
+        await setSessionParameterForTest(connection, 'TIMESTAMP_NTZ_OUTPUT_FORMAT', '');
+        await setSessionParameterForTest(
           connection,
-          `SELECT '${literal}'::TIMESTAMP_NTZ`,
-          options,
+          'TIMESTAMP_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI',
         );
-        return Object.values(rows[0])[0];
-      }
 
-      // statement-level is a known bug in both drivers documented in BCR_LOG.md
-      it.each([
-        {
-          name: 'NTZ only',
-          parameters: { TIMESTAMP_NTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6' },
-        },
-        { name: 'generic only', parameters: { TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI' } },
-        {
-          name: 'both',
-          parameters: {
-            TIMESTAMP_NTZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6',
-            TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI',
-          },
-        },
-      ])('should ignore statement-level $name output format', async ({ parameters }) => {
-        expect(
-          await selectNtz('2024-01-15 10:30:00', { parameters, fetchAsString: ['Date'] }),
-        ).toBe('2024-01-15 10:30:00.000');
+        expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30',
+        );
 
-        const date = (await selectNtz('2024-01-15 10:30:00', { parameters })) as SnowflakeDate;
-        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000');
-        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3');
+        const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI');
       });
 
-      describe('session-level', () => {
-        it('should honor TIMESTAMP_OUTPUT_FORMAT when TIMESTAMP_NTZ_OUTPUT_FORMAT is empty', async () => {
-          await setSessionParameterForTest(connection, 'TIMESTAMP_NTZ_OUTPUT_FORMAT', '');
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI',
-          );
+      it('should honor TIMESTAMP_NTZ_OUTPUT_FORMAT', async () => {
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_NTZ_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI:SS.FF6',
+        );
 
-          expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30',
-          );
+        expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30:00.000000',
+        );
 
-          const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI');
-        });
-
-        it('should honor TIMESTAMP_NTZ_OUTPUT_FORMAT', async () => {
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_NTZ_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI:SS.FF6',
-          );
-
-          expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30:00.000000',
-          );
-
-          const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6');
-        });
-
-        it('should prefer TIMESTAMP_NTZ_OUTPUT_FORMAT when both timestamp output formats are set', async () => {
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI',
-          );
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_NTZ_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI:SS.FF6',
-          );
-
-          expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30:00.000000',
-          );
-
-          const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6');
-        });
+        const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6');
       });
-    },
-  );
+
+      it('should prefer TIMESTAMP_NTZ_OUTPUT_FORMAT when both timestamp output formats are set', async () => {
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI',
+        );
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_NTZ_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI:SS.FF6',
+        );
+
+        expect(await selectNtz('2024-01-15 10:30:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30:00.000000',
+        );
+
+        const date = (await selectNtz('2024-01-15 10:30:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6');
+      });
+    });
+  });
 
   it('should expose SnowflakeDate custom methods', async () => {
     const { rows } = await executeAsync(
@@ -536,8 +533,6 @@ describe('TIMESTAMP_NTZ data type', () => {
     expect(date.getScale()).toBe(9);
     expect(date.getTimezone()).toBe('UTC');
     expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3');
-    if (!NOT_IMPLEMENTED_IN_NEW_DRIVER) {
-      expect(date.toJSON()).toBe('2024-01-15 10:30:00.123');
-    }
+    expect(date.toJSON()).toBe('2024-01-15 10:30:00.123');
   });
 });

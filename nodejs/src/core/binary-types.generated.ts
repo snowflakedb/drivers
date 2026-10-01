@@ -50,6 +50,7 @@ export declare class Connection {
 export declare class DateFormatter {
   constructor(format: string)
   format(date: Date): string
+  formatTimestamp(epochMillis: number, nanos: number, scale: number, timezone: string | number): string
 }
 
 export declare class Statement {

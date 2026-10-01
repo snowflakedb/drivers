@@ -228,8 +228,10 @@ called out explicitly.
     session `TIME_OUTPUT_FORMAT` (bare `FF`, `FFn`, date tokens, `TZH:TZM`).
     Timestamp-only moment mapping is not a TIME contract.
   - [`sf_timestamp_test.js`](./unit/connection/result/sf_timestamp_test.js) — `Time: basic`
-    dropped; scale/`FF` wiring is in `time.test.ts`. Timestamp blocks stay
-    parked until the driver returns TIMESTAMP columns at all.
+    dropped; scale/`FF` wiring is in `time.test.ts`. `Timestamp: basic` lives in
+    `nodejs_bridge` `date_format.rs` and the timestamp e2e files
+    (`timestamp-ntz.test.ts`, `timestamp-ltz.test.ts`, `timestamp-tz.test.ts`).
+    `Date: basic` stays until DATE cells are `SnowflakeDate`.
 
 ### Configuration / global config
 

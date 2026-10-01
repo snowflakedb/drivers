@@ -495,7 +495,7 @@ describe('TIMESTAMP_TZ data type', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
+  describe('fetchAsString', () => {
     it('should render timestamp_tz as YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM', async () => {
       const { rows } = await executeAsync(
         connection,
@@ -521,104 +521,97 @@ describe('TIMESTAMP_TZ data type', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    'TIMESTAMP_TZ_OUTPUT_FORMAT and TIMESTAMP_OUTPUT_FORMAT',
-    () => {
-      async function selectTz(
-        literal: string,
-        options?: Parameters<typeof executeAsync>[2],
-      ): Promise<unknown> {
-        const { rows } = await executeAsync(
+  describe('TIMESTAMP_TZ_OUTPUT_FORMAT and TIMESTAMP_OUTPUT_FORMAT', () => {
+    async function selectTz(
+      literal: string,
+      options?: Parameters<typeof executeAsync>[2],
+    ): Promise<unknown> {
+      const { rows } = await executeAsync(connection, `SELECT '${literal}'::TIMESTAMP_TZ`, options);
+      return Object.values(rows[0])[0];
+    }
+
+    // statement-level is a known bug in both drivers documented in BCR_LOG.md
+    it.each([
+      {
+        name: 'TZ only',
+        parameters: { TIMESTAMP_TZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM' },
+      },
+      { name: 'generic only', parameters: { TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI' } },
+      {
+        name: 'both',
+        parameters: {
+          TIMESTAMP_TZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
+          TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI',
+        },
+      },
+    ])('should ignore statement-level $name output format', async ({ parameters }) => {
+      expect(
+        await selectTz('2024-01-15 10:30:00 +05:00', { parameters, fetchAsString: ['Date'] }),
+      ).toBe('2024-01-15 10:30:00.000 +0500');
+
+      const date = (await selectTz('2024-01-15 10:30:00 +05:00', {
+        parameters,
+      })) as SnowflakeDate;
+      expect(date.toJSON()).toBe('2024-01-15 10:30:00.000 +0500');
+      expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM');
+    });
+
+    describe('session-level', () => {
+      it('should honor TIMESTAMP_OUTPUT_FORMAT when TIMESTAMP_TZ_OUTPUT_FORMAT is empty', async () => {
+        await setSessionParameterForTest(connection, 'TIMESTAMP_TZ_OUTPUT_FORMAT', '');
+        await setSessionParameterForTest(
           connection,
-          `SELECT '${literal}'::TIMESTAMP_TZ`,
-          options,
+          'TIMESTAMP_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI TZH:TZM',
         );
-        return Object.values(rows[0])[0];
-      }
 
-      // statement-level is a known bug in both drivers documented in BCR_LOG.md
-      it.each([
-        {
-          name: 'TZ only',
-          parameters: { TIMESTAMP_TZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM' },
-        },
-        { name: 'generic only', parameters: { TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI' } },
-        {
-          name: 'both',
-          parameters: {
-            TIMESTAMP_TZ_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
-            TIMESTAMP_OUTPUT_FORMAT: 'YYYY-MM-DD HH24:MI',
-          },
-        },
-      ])('should ignore statement-level $name output format', async ({ parameters }) => {
-        expect(
-          await selectTz('2024-01-15 10:30:00 +05:00', { parameters, fetchAsString: ['Date'] }),
-        ).toBe('2024-01-15 10:30:00.000 +0500');
+        expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30 +05:00',
+        );
 
-        const date = (await selectTz('2024-01-15 10:30:00 +05:00', {
-          parameters,
-        })) as SnowflakeDate;
-        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000 +0500');
-        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM');
+        const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30 +05:00');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI TZH:TZM');
       });
 
-      describe('session-level', () => {
-        it('should honor TIMESTAMP_OUTPUT_FORMAT when TIMESTAMP_TZ_OUTPUT_FORMAT is empty', async () => {
-          await setSessionParameterForTest(connection, 'TIMESTAMP_TZ_OUTPUT_FORMAT', '');
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI TZH:TZM',
-          );
+      it('should honor TIMESTAMP_TZ_OUTPUT_FORMAT', async () => {
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_TZ_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
+        );
 
-          expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30 +05:00',
-          );
+        expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30:00.000000 +05:00',
+        );
 
-          const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30 +05:00');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI TZH:TZM');
-        });
-
-        it('should honor TIMESTAMP_TZ_OUTPUT_FORMAT', async () => {
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_TZ_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
-          );
-
-          expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30:00.000000 +05:00',
-          );
-
-          const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000 +05:00');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM');
-        });
-
-        it('should prefer TIMESTAMP_TZ_OUTPUT_FORMAT when both timestamp output formats are set', async () => {
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI',
-          );
-          await setSessionParameterForTest(
-            connection,
-            'TIMESTAMP_TZ_OUTPUT_FORMAT',
-            'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
-          );
-
-          expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
-            '2024-01-15 10:30:00.000000 +05:00',
-          );
-
-          const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
-          expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000 +05:00');
-          expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM');
-        });
+        const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000 +05:00');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM');
       });
-    },
-  );
+
+      it('should prefer TIMESTAMP_TZ_OUTPUT_FORMAT when both timestamp output formats are set', async () => {
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI',
+        );
+        await setSessionParameterForTest(
+          connection,
+          'TIMESTAMP_TZ_OUTPUT_FORMAT',
+          'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM',
+        );
+
+        expect(await selectTz('2024-01-15 10:30:00 +05:00', { fetchAsString: ['Date'] })).toBe(
+          '2024-01-15 10:30:00.000000 +05:00',
+        );
+
+        const date = (await selectTz('2024-01-15 10:30:00 +05:00')) as SnowflakeDate;
+        expect(date.toJSON()).toBe('2024-01-15 10:30:00.000000 +05:00');
+        expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM');
+      });
+    });
+  });
 
   it('should expose SnowflakeDate custom methods', async () => {
     const { rows } = await executeAsync(
@@ -632,8 +625,6 @@ describe('TIMESTAMP_TZ data type', () => {
     expect(date.getScale()).toBe(9);
     expect(date.getTimezone()).toBe(300);
     expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM');
-    if (!NOT_IMPLEMENTED_IN_NEW_DRIVER) {
-      expect(date.toJSON()).toBe('2024-01-15 10:30:00.123 +0500');
-    }
+    expect(date.toJSON()).toBe('2024-01-15 10:30:00.123 +0500');
   });
 });

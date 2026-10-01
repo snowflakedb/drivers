@@ -1,4 +1,5 @@
 import type { CellConverter, ConverterFactory } from './types.js';
+import { CoreDateFormatter } from '../core/index.js';
 import { GlobalConfig } from '../global-config.js';
 import { SnowflakeDate } from './SnowflakeDate.js';
 
@@ -16,6 +17,7 @@ export const createFixedConverter: ConverterFactory = (column, { jsTreatIntegerA
 
 export const timestampTzConverter: ConverterFactory = (column, { timestampTzOutputFormat }) => {
   const scale = column.getScale()!;
+  const formatter = new CoreDateFormatter(timestampTzOutputFormat);
   return (value) => {
     if (value === null || value === undefined) {
       return value;
@@ -27,6 +29,7 @@ export const timestampTzConverter: ConverterFactory = (column, { timestampTzOutp
       scale,
       timezone: cell.offsetMinutes,
       format: timestampTzOutputFormat,
+      formatter,
     });
   };
 };
@@ -36,6 +39,7 @@ export const timestampLtzConverter: ConverterFactory = (
   { timestampLtzOutputFormat, timezone },
 ) => {
   const scale = column.getScale()!;
+  const formatter = new CoreDateFormatter(timestampLtzOutputFormat);
   return (value) => {
     if (value === null || value === undefined) {
       return value;
@@ -47,12 +51,14 @@ export const timestampLtzConverter: ConverterFactory = (
       scale,
       timezone,
       format: timestampLtzOutputFormat,
+      formatter,
     });
   };
 };
 
 export const timestampNtzConverter: ConverterFactory = (column, { timestampNtzOutputFormat }) => {
   const scale = column.getScale()!;
+  const formatter = new CoreDateFormatter(timestampNtzOutputFormat);
   return (value) => {
     if (value === null || value === undefined) {
       return value;
@@ -64,6 +70,7 @@ export const timestampNtzConverter: ConverterFactory = (column, { timestampNtzOu
       scale,
       timezone: 'UTC',
       format: timestampNtzOutputFormat,
+      formatter,
     });
   };
 };
