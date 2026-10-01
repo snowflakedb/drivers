@@ -8,7 +8,7 @@ import com.snowflake.DevEnvUtils
 def E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
 // Node napi needs Node + Rust in one image. The coverage image has no Node;
 // the external-browser image has both. Runtime on the VM is still public
-// node:22-bookworm (see tests/auth/run_wif.sh).
+// node:22-slim (see tests/auth/run_wif.sh).
 def NODEJS_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-development-docker-drivers-local/snowflakedb/snowdrivers-test-external-browser-universal-driver:4'
 
 @Field String FULL_AUTH_SUITE_LABEL = 'run_full_auth_tests'
@@ -99,6 +99,7 @@ def detectChanges() {
     'nodejs_bridge/',
     'tests/auth/build_wif_nodejs_artifacts.sh',
     'tests/auth/run_wif_local.sh',
+    'tests/auth/wif_nodejs_artifact_validation.sh',
     'tests/auth/wif_run_nodejs_in_container.sh',
     'tests/docker/wif-nodejs/',
   ]

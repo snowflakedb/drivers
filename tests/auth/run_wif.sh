@@ -1,7 +1,7 @@
 #!/bin/bash -e
 #
 # WIF e2e test orchestrator. Jenkins invokes this script directly; local runs
-# use tests/auth/run_wif_local.sh.
+# use tests/auth/run_wif_local.sh <sf_core|nodejs>.
 #
 # Strategy (mirrors snowflake-odbc): the bare WIF cloud VMs have Docker + scp
 # but no Rust/cmake/napi toolchain and no access to our private Artifactory. So
@@ -12,16 +12,22 @@
 # flow attests against.
 #
 # Usage:
-#   ./tests/auth/run_wif.sh <sf_core|nodejs> [--reference]
+#   ./tests/auth/run_wif.sh <sf_core|nodejs> [--reference] [wrapper args...]
 #
-# The first argument selects which artifact is shipped and run. There is no
-# default: a missing or unknown lane is an error. --reference runs that
-# lane's reference suite against the same artifact instead of its own: for
-# `nodejs` that is Vitest project e2e-old-driver, which exercises the old
-# snowflake-sdk. `sf_core` has no reference suite and rejects the flag.
+# Arguments, in order:
+#   * lane (required) selects which artifact is shipped and run.
+#   * --reference (optional) runs the lane's reference suite instead of its own.
+#   * everything else goes to the lane's wrapper.
+#
+# Examples (the lane's artifact must already be in tests/auth/wif/artifacts/):
+#   ./tests/auth/run_wif.sh sf_core
+#   ./tests/auth/run_wif.sh nodejs                                        # universal (e2e)
+#   ./tests/auth/run_wif.sh nodejs --reference                            # reference (e2e-old-driver)
+#   ./tests/auth/run_wif.sh nodejs -t "should authenticate"
+#   ./tests/auth/run_wif.sh nodejs --reference -t "should authenticate"
 #
 # Prerequisites:
-#   * ./scripts/decode_secrets.sh wif has decoded tests/auth/wif/parameters/
+#   * "./scripts/decode_secrets.sh wif" has decoded tests/auth/wif/parameters/
 #   * tests/auth/wif/artifacts/ holds the artifact for the selected lane
 #   * Do not use parameters_preprod.json.
 
@@ -40,7 +46,7 @@ NODEJS_RUNTIME_IMAGE="${WIF_NODEJS_RUNTIME_IMAGE:-node:22-slim}"
 
 if [[ -n "${WIF_LANE:-}" ]]; then
   echo "ERROR: WIF_LANE is unused; pass the lane as the first argument" >&2
-  echo "Usage: $0 <sf_core|nodejs> [--reference]" >&2
+  echo "Usage: $0 <sf_core|nodejs> [--reference] [wrapper args...]" >&2
   exit 1
 fi
 
@@ -50,28 +56,26 @@ case "$WIF_LANE" in
     shift
     ;;
   *)
-    echo "Usage: $0 <sf_core|nodejs> [--reference]" >&2
+    echo "Usage: $0 <sf_core|nodejs> [--reference] [wrapper args...]" >&2
     exit 1
     ;;
 esac
 
 REFERENCE=0
-for arg in "$@"; do
-  case "$arg" in
-    --reference)
-      REFERENCE=1
-      ;;
-    *)
-      echo "ERROR: unknown argument '$arg'" >&2
-      exit 1
-      ;;
-  esac
-done
+if [[ "${1:-}" == --reference ]]; then
+  REFERENCE=1
+  shift
+fi
+TEST_ARGS=("$@")
 
 case "$WIF_LANE" in
   sf_core)
     if [[ "$REFERENCE" -eq 1 ]]; then
       echo "ERROR: the sf_core lane has no reference suite to run with --reference" >&2
+      exit 1
+    fi
+    if [[ ${#TEST_ARGS[@]} -ne 0 ]]; then
+      echo "ERROR: the sf_core lane runs a fixed test binary and takes no test arguments" >&2
       exit 1
     fi
     LANE_ARTIFACT="$ARTIFACT_DIR/sf_core_e2e"
@@ -174,7 +178,7 @@ run_wif_tests() {
   local ssh_opts scp_opts
   set_wif_remote_opts "$rsa_key_path"
 
-  local params_file
+  local params_file test_args_file=""
   params_file="$(mktemp)"
   write_parameters_json "$params_file" "$provider" "$snowflake_host" "$snowflake_user" "$impersonation_path"
 
@@ -197,6 +201,16 @@ run_wif_tests() {
     "$LANE_ARTIFACT|$(basename "$LANE_ARTIFACT")"
     "$THIS_DIR/$LANE_ENTRYPOINT|$LANE_ENTRYPOINT"
   )
+  if [[ "$WIF_LANE" == "nodejs" ]]; then
+    test_args_file="$(mktemp)"
+    # printf with no arguments still emits one '\0', which reads back as an
+    # empty Vitest filter.
+    if [[ ${#TEST_ARGS[@]} -gt 0 ]]; then
+      printf '%s\0' "${TEST_ARGS[@]}" > "$test_args_file"
+    fi
+    transfers+=("$test_args_file|nodejs_test_args")
+  fi
+
   local src dst spec scp_started
   for spec in "${transfers[@]}"; do
     src="${spec%%|*}"
@@ -208,12 +222,12 @@ run_wif_tests() {
     scp_started=$SECONDS
     scp "${scp_opts[@]}" "$src" "$host:$remote_dir/$dst" || {
       echo "ERROR: failed to scp '$src' to $host:$remote_dir/$dst" >&2
-      rm -f "$params_file"
+      rm -f "$params_file" "$test_args_file"
       return 1
     }
     log "${provider}: sent ${dst} in $((SECONDS - scp_started))s"
   done
-  rm -f "$params_file"
+  rm -f "$params_file" "$test_args_file"
 
   # A cold VM pulls the runtime image here, which is minutes before the
   # entrypoint prints anything of its own.

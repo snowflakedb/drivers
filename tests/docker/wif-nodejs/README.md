@@ -13,7 +13,8 @@ repository is bind-mounted at runtime; it is not baked into the image.
 `PLATFORM` defaults to `linux/amd64`, and `IMAGE_TAG` defaults to
 `ud-wif-nodejs-local:latest`.
 
-`tests/auth/run_wif_local.sh` builds this image and the artifact automatically.
+`tests/auth/run_wif_local.sh nodejs` builds this image and the artifact automatically
+unless `--skip-build` is passed.
 
 Jenkins does not use this image. CI builds the Node artifact with the
 Artifactory image named by `NODEJS_DOCKER_IMAGE`. The WIF VMs run that
