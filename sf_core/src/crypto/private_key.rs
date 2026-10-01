@@ -644,7 +644,8 @@ pub enum PrivateKeyError {
     #[snafu(display(
         "This private key uses PBES2/3DES-CBC, which is not supported in FIPS \
          builds. Standard builds can read this key. To use a FIPS build, convert \
-         it with: openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8"
+         it with: openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8. \
+         For DER input, add -inform DER before -in <key>."
     ))]
     DesEde3Rejected {
         #[snafu(implicit)]
@@ -831,10 +832,17 @@ mod tests {
             .expect("encrypted pkcs8 der");
 
         for encrypted_key in [&pem[..], &der[..]] {
-            let error = load_rsa_key(encrypted_key, Some(PASSPHRASE))
-                .expect_err("FIPS builds must reject PBES2/3DES private keys");
-            assert!(error.to_string().contains("3DES"), "{error}");
-            assert!(error.to_string().contains("FIPS"), "{error}");
+            for passphrase in [PASSPHRASE, "wrong passphrase"] {
+                let error = load_rsa_key(encrypted_key, Some(passphrase))
+                    .expect_err("FIPS builds must reject PBES2/3DES private keys");
+                assert!(matches!(error, PrivateKeyError::DesEde3Rejected { .. }));
+                let message = error.to_string();
+                assert!(
+                    message.contains("openssl pkcs8 -topk8 -v2 aes-256-cbc"),
+                    "{message}"
+                );
+                assert!(message.contains("-inform DER"), "{message}");
+            }
         }
     }
 

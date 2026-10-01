@@ -503,6 +503,8 @@ flag makes unnecessary.
    following the documented `openssl pkcs8 -v2 des3` key-generation command?
    FIPS builds reject these keys before derivation or decryption; convert them
    with `openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8`.
+   For bare DER input, add `-inform DER` before `-in <key>`:
+   `openssl pkcs8 -topk8 -v2 aes-256-cbc -inform DER -in <key> -out <key>.p8`.
    Standard builds retain legacy unwrapping outside the module, while transitive
    `des` still requires explanation in whole-artifact dependency inventories.
 7. `aws-sigv4` computes plain SigV4 HMAC-SHA256 via RustCrypto on S3 requests.
