@@ -1,9 +1,8 @@
 use chrono::NaiveDateTime;
-use napi::bindgen_prelude::{Buffer, Null, ToNapiValue};
-use napi::{Result, sys};
+use napi::bindgen_prelude::{Buffer, Null, Object, ToNapiValue};
+use napi::{Env, Result, sys};
 use std::borrow::Cow;
 
-/// Rust stand-in for a JS cell so Arrow conversion can be asserted without napi env
 #[derive(Debug, PartialEq)]
 pub(crate) enum JsCell<'a> {
     Null,
@@ -13,6 +12,11 @@ pub(crate) enum JsCell<'a> {
     NumberArray(Vec<f64>),
     Buffer(&'a [u8]),
     Date(NaiveDateTime),
+    Timestamp {
+        epoch_millis: f64,
+        offset_minutes: i32,
+        nanos: u32,
+    },
 }
 
 impl<'a> ToNapiValue for JsCell<'a> {
@@ -25,6 +29,17 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::NumberArray(vals) => unsafe { Vec::<f64>::to_napi_value(env, vals) },
             JsCell::Buffer(bytes) => unsafe { Buffer::to_napi_value(env, bytes.to_vec().into()) },
             JsCell::Date(date) => unsafe { NaiveDateTime::to_napi_value(env, date) },
+            JsCell::Timestamp {
+                epoch_millis,
+                offset_minutes,
+                nanos,
+            } => {
+                let mut obj = Object::new(&Env::from(env))?;
+                obj.set("epochMillis", epoch_millis)?;
+                obj.set("offsetMinutes", offset_minutes)?;
+                obj.set("nanos", nanos)?;
+                unsafe { ToNapiValue::to_napi_value(env, obj) }
+            }
         }
     }
 }

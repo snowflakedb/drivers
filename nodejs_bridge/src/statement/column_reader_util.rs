@@ -92,10 +92,10 @@ pub(super) fn scale_from_metadata(field: &Field) -> Result<u32, String> {
     let raw = field
         .metadata()
         .get("scale")
-        .ok_or_else(|| format!("FIXED column {:?} is missing scale metadata", field.name()))?;
+        .ok_or_else(|| format!("column {:?} is missing scale metadata", field.name()))?;
     raw.parse().map_err(|_| {
         format!(
-            "FIXED column {:?} has non-numeric scale metadata {raw:?}",
+            "column {:?} has non-numeric scale metadata {raw:?}",
             field.name()
         )
     })

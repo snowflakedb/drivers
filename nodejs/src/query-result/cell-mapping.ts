@@ -9,7 +9,12 @@ import {
   textAsStringConverter,
   vectorAsStringConverter,
 } from './string-converters.js';
-import { createFixedConverter, variantConverter } from './value-converters.js';
+import {
+  createFixedConverter,
+  timestampTzAsStringConverter,
+  timestampTzConverter,
+  variantConverter,
+} from './value-converters.js';
 
 const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   string,
@@ -28,6 +33,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   boolean: { asValue: null, asString: () => booleanAsStringConverter },
   binary: { asValue: null, asString: () => binaryAsStringConverter },
   date: { asValue: null, asString: createDateAsStringConverter },
+  timestamp_tz: { asValue: timestampTzConverter, asString: timestampTzAsStringConverter },
   variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
   object: { asValue: () => variantConverter, asString: null },
   array: { asValue: () => variantConverter, asString: null },
@@ -39,7 +45,7 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],
-  Date: ['date'],
+  Date: ['date', 'timestamp_tz'],
   JSON: ['variant'],
 };
 

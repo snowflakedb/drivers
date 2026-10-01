@@ -40,6 +40,7 @@ pub struct KnownSessionParameters {
     pub time_output_format: String,
     pub js_treat_integer_as_big_int: bool,
     pub client_stage_array_binding_threshold: i64,
+    pub timestamp_tz_output_format: String,
 }
 
 impl KnownSessionParameters {
@@ -66,8 +67,23 @@ impl KnownSessionParameters {
                 "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD",
                 100_000,
             ),
+            timestamp_tz_output_format: nonempty_string(params, "TIMESTAMP_TZ_OUTPUT_FORMAT")
+                .or_else(|| nonempty_string(params, "TIMESTAMP_OUTPUT_FORMAT"))
+                .unwrap_or_else(|| "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM".to_string()),
         }
     }
+}
+
+fn nonempty_string(params: &HashMap<String, Setting>, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|setting| match setting {
+            Setting::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
 }
 
 fn string_or_default(params: &HashMap<String, Setting>, key: &str, default: &str) -> String {
@@ -179,5 +195,27 @@ mod tests {
         assert_eq!(params.time_output_format, "HH24:MI:SS");
         assert!(!params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 100_000);
+        assert_eq!(
+            params.timestamp_tz_output_format,
+            "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM"
+        );
+    }
+
+    #[test]
+    fn timestamp_tz_format_inherits_timestamp_output_format() {
+        let mut params = HashMap::new();
+        params.insert(
+            "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+            Setting::String(String::new()),
+        );
+        params.insert(
+            "TIMESTAMP_OUTPUT_FORMAT".to_string(),
+            Setting::String("YYYY/MM/DD HH24:MI:SS TZHTZM".into()),
+        );
+        let snapshot = KnownSessionParameters::from_parameters(&params);
+        assert_eq!(
+            snapshot.timestamp_tz_output_format,
+            "YYYY/MM/DD HH24:MI:SS TZHTZM"
+        );
     }
 }
