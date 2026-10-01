@@ -144,6 +144,17 @@ export function logoutSuccess(): StubMapping {
   };
 }
 
+export function heartbeatSuccess(): StubMapping {
+  return {
+    priority: 1,
+    request: {
+      method: 'POST',
+      urlPathPattern: '/session/heartbeat.*',
+    },
+    response: jsonResponse(200, { success: true }),
+  };
+}
+
 export function telemetrySuccess(): StubMapping {
   return {
     request: {

@@ -1083,3 +1083,18 @@ behavior_differences:
       The old client check was wrong. GS never executed a non-UUID `requestId`;
       rejecting up front with the same code as a bad `queryId` is the fix, not
       an incompatibility.
+
+  55:
+    name: 'createPool factory-create errors keep the connect error object'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When a pooled connection fails to connect, `acquire()` / `use()` reject with a plain
+      `Error` whose message is the connect error message. Vendor code and SQLSTATE from the
+      original error are dropped.
+    new_driver_behavior: |
+      The same calls reject with the error `connectAsync()` rejected with, including vendor
+      code and SQLSTATE when the driver supplies them.

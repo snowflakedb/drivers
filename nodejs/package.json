@@ -60,6 +60,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "fast-xml-parser": "^5.4.1"
+    "fast-xml-parser": "^5.4.1",
+    "generic-pool": "^3.9.0"
   }
 }

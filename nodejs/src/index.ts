@@ -21,6 +21,7 @@ import {
   type CoreConnectionInstance,
   type CoreStatementInstance,
 } from './core/index.js';
+import { createPool } from './create-pool.js';
 import {
   GlobalConfig,
   updateGlobalConfig,
@@ -37,6 +38,9 @@ import {
 import { collectRows } from './query-result/rows.js';
 import { RowStatement } from './query-result/RowStatement.js';
 import { SnowflakeDate } from './query-result/SnowflakeDate.js';
+
+export { createPool };
+export type { Pool, PoolOptions } from './create-pool.js';
 
 // TODO:
 // consider exporting directly from files so its easier to understand where the type comes from
@@ -375,6 +379,7 @@ export const deserializeConnection = () => {
 export default {
   configure,
   createConnection,
+  createPool,
   serializeConnection,
   deserializeConnection,
   ErrorCode,
