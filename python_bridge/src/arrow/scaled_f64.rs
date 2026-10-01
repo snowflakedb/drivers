@@ -14,7 +14,7 @@ const POW10: [f64; MAX_EXACT_POW10 as usize + 1] = [
 /// `coefficient as f64 * 10f64.powi(exponent)` is wrong for both ranges: it
 /// rounds the power of ten and then rounds the product, which lands up to 4
 /// ULP away.
-pub(super) fn scaled_f64(coefficient: i128, exponent: i32) -> f64 {
+pub(crate) fn scaled_f64(coefficient: i128, exponent: i32) -> f64 {
     if coefficient == 0 {
         return 0.0;
     }

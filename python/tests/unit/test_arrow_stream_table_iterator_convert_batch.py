@@ -20,6 +20,7 @@ import pytest
 from snowflake.connector._internal.arrow_context import ArrowConverterContext
 from snowflake.connector._internal.arrow_stream_utils import create_table_iterator
 from snowflake.connector.errors import InterfaceError
+from tests.compatibility import native_arrow_enabled
 
 
 pa = pytest.importorskip("pyarrow")
@@ -206,16 +207,37 @@ def test_should_raise_on_invalid_scale_for_timestamp_family(logical_type: str):
         _iterate_batches(columns)
 
 
-def test_should_raise_on_mismatched_array_physical_type():
+def test_should_handle_mismatched_array_physical_type():
     # Given ARRAY logicalType paired with a non-list/non-string physical type
-    # (the malformed-schema path exercised in the PR smoke test)
     field = pa.field("arr", pa.int64(), metadata={"logicalType": "ARRAY"})
     columns = [(field, pa.array([1], type=pa.int64()))]
 
-    # When convertBatch validates the schema under the GIL-released loop
-    # Then InterfaceError is raised for the unknown ARRAY physical type
-    with pytest.raises(InterfaceError, match="unknown arrow type.*ARRAY"):
-        _iterate_batches(columns)
+    # When the batch is converted
+    if native_arrow_enabled():
+        # Then the native table path leaves non-nested ARRAY columns unchanged
+        batches = _iterate_batches(columns)
+        assert len(batches) == 1
+        assert batches[0].schema.field("arr").type == pa.int64()
+        assert batches[0].column("arr")[0].as_py() == 1
+    else:
+        # Then Cython raises for the unknown ARRAY physical type
+        with pytest.raises(InterfaceError, match="unknown arrow type.*ARRAY"):
+            _iterate_batches(columns)
+
+
+def test_should_raise_on_nested_array_list():
+    # Given ARRAY stored as a real Arrow list instead of a JSON string
+    list_type = pa.list_(pa.int64())
+    field = pa.field("arr", list_type, metadata={"logicalType": "ARRAY"})
+    columns = [(field, pa.array([[1, 2]], type=list_type))]
+
+    # When the batch is converted
+    if native_arrow_enabled():
+        with pytest.raises(InterfaceError, match="nested Arrow type"):
+            _iterate_batches(columns)
+    else:
+        batches = _iterate_batches(columns)
+        assert batches[0].column("arr")[0].as_py() == [1, 2]
 
 
 @pytest.mark.parametrize("epoch", [EPOCH_YEAR_9999, EPOCH_YEAR_0001], ids=["year 9999", "year 0001"])
@@ -286,15 +308,21 @@ def test_should_truncate_out_of_range_nanoseconds_when_microsecond_precision_is_
     [EXTREME_DAY_TIME_NS, -EXTREME_DAY_TIME_NS],
     ids=["spec max", "spec min"],
 )
-def test_should_silently_wrap_extreme_interval_day_time_decimal128_to_int64_duration_ns(nanos: int):
+def test_should_handle_extreme_interval_day_time_decimal128(nanos: int):
     # Given an INTERVAL_DAY_TIME Decimal128 nanosecond count that does not fit in int64
     columns = [_interval_day_time_decimal_column("iv", nanos)]
 
     # When convertBatch rewrites the column to Arrow duration[ns]
+    if native_arrow_enabled():
+        # Then the native path rejects the value instead of wrapping
+        with pytest.raises(InterfaceError, match="does not fit in an Arrow duration"):
+            _iterate_batches(columns)
+        return
+
     batches = _iterate_batches(columns)
 
-    # Then conversion succeeds (no overflow error) and the duration value is the
-    # low 64 bits of the nanosecond count, not the original magnitude
+    # Then Cython succeeds and the duration value is the low 64 bits of the
+    # nanosecond count, not the original magnitude
     duration_type = batches[0].schema.field("iv").type
     assert pa.types.is_duration(duration_type)
     assert duration_type.unit == "ns"
@@ -347,15 +375,26 @@ def test_should_survive_convert_errors_under_concurrent_python_threads():
                         _text_column("unused", ["z"]),
                     ]
                 )
-            with pytest.raises(InterfaceError, match="unknown arrow type.*ARRAY"):
-                _iterate_batches(
-                    [
-                        (
-                            pa.field("arr", pa.int64(), metadata={"logicalType": "ARRAY"}),
-                            pa.array([1], type=pa.int64()),
-                        )
-                    ]
-                )
+            if native_arrow_enabled():
+                with pytest.raises(InterfaceError, match="unsupported Snowflake type: DECFLOAT"):
+                    _iterate_batches(
+                        [
+                            (
+                                pa.field("d", pa.string(), metadata={"logicalType": "DECFLOAT"}),
+                                pa.array(["1E0"], type=pa.string()),
+                            )
+                        ]
+                    )
+            else:
+                with pytest.raises(InterfaceError, match="unknown arrow type.*ARRAY"):
+                    _iterate_batches(
+                        [
+                            (
+                                pa.field("arr", pa.int64(), metadata={"logicalType": "ARRAY"}),
+                                pa.array([1], type=pa.int64()),
+                            )
+                        ]
+                    )
     finally:
         stop.set()
         for worker in workers:

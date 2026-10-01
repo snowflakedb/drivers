@@ -15,6 +15,8 @@ mod timestamp_ntz;
 mod timestamp_tz;
 mod timezone;
 mod util;
+
+pub(crate) use timezone::TimezoneProvider;
 mod vector;
 
 #[cfg(test)]

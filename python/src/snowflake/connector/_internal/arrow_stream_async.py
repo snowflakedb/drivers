@@ -3,7 +3,7 @@
 Why every advance goes through ``asyncio.to_thread``
 ----------------------------------------------------
 The Arrow stream iterators (:class:`ArrowStreamIterator`,
-:class:`ArrowStreamTableIterator`) and the helpers in :mod:`arrow_stream_utils`
+the table iterator from :func:`create_table_iterator`) and the helpers in :mod:`arrow_stream_utils`
 expose a purely synchronous API: there is no native async entry point. A single
 ``next()`` does two kinds of work, and both are unfriendly to the event loop:
 
@@ -75,9 +75,8 @@ from .arrow_stream_utils import (
 if TYPE_CHECKING:
     from pyarrow import Table
 
-    from .arrow import ArrowRowIterator, AsyncArrowRowIterator
+    from .arrow import ArrowRowIterator, ArrowTableIterator, AsyncArrowRowIterator
     from .arrow_context import ArrowConverterContext
-    from .arrow_stream_iterator import ArrowStreamTableIterator
     from .cursor.result_metadata import ResultMetadata
     from .protobuf_gen.database_driver_v1_pb2 import ResultSetHandle
 
@@ -100,8 +99,8 @@ def _next_or_default(iterator: Any, default: object) -> Any:
 class AsyncArrowStreamIterator(AsyncIterator[Any]):
     """Async facade over a synchronous nanoarrow iterator.
 
-    Wraps an :class:`ArrowStreamIterator` (row iterator) or an
-    :class:`ArrowStreamTableIterator` (RecordBatch iterator) and exposes async
+    Wraps an :class:`ArrowRowIterator` (row iterator) or an
+    :class:`ArrowTableIterator` (RecordBatch iterator) and exposes async
     iteration plus bulk ``fetch_many`` / ``fetch_all`` helpers. Every advance of
     the underlying iterator runs on a worker thread via :func:`asyncio.to_thread`
     (see module docstring for why).
@@ -109,7 +108,7 @@ class AsyncArrowStreamIterator(AsyncIterator[Any]):
 
     def __init__(
         self,
-        iterator: ArrowRowIterator | ArrowStreamTableIterator,
+        iterator: ArrowRowIterator | ArrowTableIterator,
     ) -> None:
         self._iterator = iterator
 
@@ -238,7 +237,7 @@ def create_async_row_iterator_from_stream_ptr(
 
 
 async def collect_arrow_table_async(
-    table_iterator: ArrowStreamTableIterator,
+    table_iterator: ArrowTableIterator,
     columns_metadata: Sequence[ResultMetadata] | None = None,
     force_return_table: bool = False,
 ) -> Table | None:

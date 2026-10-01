@@ -7,16 +7,16 @@ from snowflake.connector._core import sf_core_python
 from snowflake.connector.errors import InternalError
 
 from .._common.extras import pyarrow
-from .arrow import ArrowRowIterator
 from .arrow_context import ArrowConverterContext
 from .arrow_stream_iterator import ArrowStreamIterator as CythonArrowStreamIterator
-from .arrow_stream_iterator import ArrowStreamTableIterator
+from .arrow_stream_iterator import ArrowStreamTableIterator as CythonArrowStreamTableIterator
 from .type_codes import FIXED
 
 
 if TYPE_CHECKING:
     from pyarrow import Schema, Table
 
+    from .arrow import ArrowRowIterator, ArrowTableIterator
     from .cursor.result_metadata import ResultMetadata
 
 
@@ -68,7 +68,7 @@ def create_row_iterator(
             release_arrow_stream(stream_ptr)
             raise _missing_native_class("ArrowStreamIterator")
         return cast(
-            ArrowRowIterator,
+            "ArrowRowIterator",
             iterator_cls(
                 stream_ptr,
                 session_timezone=context.timezone,
@@ -90,9 +90,30 @@ def create_table_iterator(
     context: ArrowConverterContext,
     number_to_decimal: bool = False,
     force_microsecond_precision: bool = False,
-) -> ArrowStreamTableIterator:
-    """Build an :class:`ArrowStreamTableIterator` that yields one RecordBatch at a time."""
-    return ArrowStreamTableIterator(
+) -> ArrowTableIterator:
+    """Build a table iterator that yields one RecordBatch at a time.
+
+    When ``sf_core_python`` is built with the ``native-arrow`` feature, returns
+    the PyO3 ``ArrowStreamTableIterator``. Otherwise uses the Cython
+    nanoarrow iterator.
+    """
+    if sf_core_python.native_arrow_enabled():
+        # Class is only exported when built with ``native-arrow``; stub_gen
+        # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
+        iterator_cls = getattr(sf_core_python, "ArrowStreamTableIterator", None)
+        if iterator_cls is None:
+            release_arrow_stream(stream_ptr)
+            raise _missing_native_class("ArrowStreamTableIterator")
+        return cast(
+            "ArrowTableIterator",
+            iterator_cls(
+                stream_ptr,
+                session_timezone=context.timezone,
+                number_to_decimal=number_to_decimal,
+                force_microsecond_precision=force_microsecond_precision,
+            ),
+        )
+    return CythonArrowStreamTableIterator(
         stream_ptr,
         context,
         number_to_decimal=number_to_decimal,
@@ -122,7 +143,7 @@ def normalize_fixed_column_types(
 
 
 def collect_arrow_table(
-    table_iterator: ArrowStreamTableIterator,
+    table_iterator: ArrowTableIterator,
     columns_metadata: Sequence[ResultMetadata] | None = None,
     force_return_table: bool = False,
 ) -> Table | None:

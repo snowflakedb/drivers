@@ -63,10 +63,77 @@ pub(crate) enum PlanError {
         location: Location,
     },
 
+    #[snafu(display(
+        "[Snowflake Exception] invalid scale value {scale} for {logical_type} column (expected 0-9)"
+    ))]
+    InvalidScale {
+        scale: i32,
+        logical_type: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("missing {key} metadata for column '{column}'"))]
     MissingMetadata {
         key: String,
         column: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("failed to convert Arrow column: {source}"))]
+    ColumnConvert {
+        source: arrow::error::ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "INTERVAL_DAY_TIME nanosecond value {value} does not fit in an Arrow duration"
+    ))]
+    IntervalOverflow {
+        value: i128,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "The total number of nanoseconds {epoch}{frac:09} overflows int64 range. If you use a timestamp with the nanosecond part over 6-digits in the Snowflake database, the timestamp must be between '1677-09-21 00:12:43.145224192' and '2262-04-11 23:47:16.854775807' to not overflow. Pass force_microsecond_precision=True to truncate to microseconds instead."
+    ))]
+    TimestampOverflow {
+        epoch: i64,
+        frac: i64,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Snowflake Exception] unknown byteLength({byte_length}) for TIMESTAMP_TZ"))]
+    UnknownByteLength {
+        byte_length: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Snowflake Exception] unsupported Snowflake type: {logical_type}"))]
+    UnsupportedSnowflakeType {
+        logical_type: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Snowflake Exception] TIME value {value} does not fit in time32"))]
+    TimeDoesNotFit {
+        value: i64,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "[Snowflake Exception] nested Arrow type {data_type} is not supported for {logical_type} column"
+    ))]
+    NestedArrowType {
+        logical_type: String,
+        data_type: String,
         #[snafu(implicit)]
         location: Location,
     },
