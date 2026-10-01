@@ -41,6 +41,8 @@ pub struct KnownSessionParameters {
     pub js_treat_integer_as_big_int: bool,
     pub client_stage_array_binding_threshold: i64,
     pub timestamp_tz_output_format: String,
+    pub timestamp_ltz_output_format: String,
+    pub timezone: String,
 }
 
 impl KnownSessionParameters {
@@ -70,6 +72,10 @@ impl KnownSessionParameters {
             timestamp_tz_output_format: nonempty_string(params, "TIMESTAMP_TZ_OUTPUT_FORMAT")
                 .or_else(|| nonempty_string(params, "TIMESTAMP_OUTPUT_FORMAT"))
                 .unwrap_or_else(|| "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM".to_string()),
+            timestamp_ltz_output_format: nonempty_string(params, "TIMESTAMP_LTZ_OUTPUT_FORMAT")
+                .or_else(|| nonempty_string(params, "TIMESTAMP_OUTPUT_FORMAT"))
+                .unwrap_or_else(|| "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM".to_string()),
+            timezone: string_or_default(params, "TIMEZONE", "America/Los_Angeles"),
         }
     }
 }
@@ -198,6 +204,24 @@ mod tests {
         assert_eq!(
             params.timestamp_tz_output_format,
             "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM"
+        );
+        assert_eq!(
+            params.timestamp_ltz_output_format,
+            "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM"
+        );
+        assert_eq!(params.timezone, "America/Los_Angeles");
+    }
+
+    #[test]
+    fn timestamp_ltz_format_inherits_timestamp_output_format() {
+        let params = HashMap::from([(
+            "TIMESTAMP_OUTPUT_FORMAT".to_string(),
+            Setting::String("YYYY/MM/DD HH24:MI:SS TZHTZM".into()),
+        )]);
+        let snapshot = KnownSessionParameters::from_parameters(&params);
+        assert_eq!(
+            snapshot.timestamp_ltz_output_format,
+            "YYYY/MM/DD HH24:MI:SS TZHTZM"
         );
     }
 

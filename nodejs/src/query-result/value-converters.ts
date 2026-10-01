@@ -2,10 +2,10 @@ import type { CellConverter, ConverterFactory } from './types.js';
 import { GlobalConfig } from '../global-config.js';
 import { SnowflakeDate } from './SnowflakeDate.js';
 
-interface TimestampTzCell {
+interface TimestampCell {
   epochMillis: number;
-  offsetMinutes: number;
   nanos: number;
+  offsetMinutes?: number;
 }
 
 const toNumber = (value: unknown) => (value === null ? null : Number(value));
@@ -20,7 +20,7 @@ export const timestampTzConverter: ConverterFactory = (column, { timestampTzOutp
     if (value === null || value === undefined) {
       return value;
     }
-    const cell = value as TimestampTzCell;
+    const cell = value as Required<TimestampCell>;
     return new SnowflakeDate({
       value: cell.epochMillis,
       nanoSeconds: cell.nanos,
@@ -31,9 +31,24 @@ export const timestampTzConverter: ConverterFactory = (column, { timestampTzOutp
   };
 };
 
-export const timestampTzAsStringConverter: ConverterFactory = (column, params) => {
-  const toDate = timestampTzConverter(column, params);
-  return (value) => (value === null ? 'NULL' : (toDate(value) as Date).toJSON());
+export const timestampLtzConverter: ConverterFactory = (
+  column,
+  { timestampLtzOutputFormat, timezone },
+) => {
+  const scale = column.getScale()!;
+  return (value) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    const cell = value as TimestampCell;
+    return new SnowflakeDate({
+      value: cell.epochMillis,
+      nanoSeconds: cell.nanos,
+      scale,
+      timezone,
+      format: timestampLtzOutputFormat,
+    });
+  };
 };
 
 export const variantConverter: CellConverter = (value) => {

@@ -12,7 +12,7 @@ use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use crate::session_params::KnownSessionParameters;
 use sf_output_format::datetime::{DateTimeFormat, DateTimeValue, Zone};
-use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTimestampTz};
+use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTimestampLtz, SnowflakeTimestampTz};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -43,6 +43,8 @@ pub(crate) enum ColumnReader {
     TimeI32(PrimitiveArray<Int32Type>, TimeMeta),
     TimeI64(PrimitiveArray<Int64Type>, TimeMeta),
     TimestampTz(StructArray, u32),
+    TimestampLtzStruct(StructArray, u32),
+    TimestampLtzI64(PrimitiveArray<Int64Type>, u32),
     Variant(StringArray),
     Text(StringArray),
     Fixed(IntColumn, u32),
@@ -228,6 +230,23 @@ impl ColumnReader {
                     )),
                 }
             }
+            Some("TIMESTAMP_LTZ") => {
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Struct(_) => Ok(Self::TimestampLtzStruct(
+                        downcast_array(column, "StructArray")?,
+                        scale,
+                    )),
+                    DataType::Int64 => Ok(Self::TimestampLtzI64(
+                        downcast_array(column, "Int64Array")?,
+                        scale,
+                    )),
+                    other => Err(format!(
+                        "column {:?} has unsupported TIMESTAMP_LTZ physical type {other:?}",
+                        field.name()
+                    )),
+                }
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -335,12 +354,32 @@ impl ColumnReader {
                 let utc = instant.utc.and_utc();
                 JsCell::Timestamp {
                     epoch_millis: utc.timestamp_millis() as f64,
-                    offset_minutes: instant.offset_minutes,
                     nanos: utc.timestamp_subsec_nanos(),
+                    offset_minutes: Some(instant.offset_minutes),
                 }
             }),
+            Self::TimestampLtzStruct(array, scale) => read_timestamp_ltz(array, row_index, *scale),
+            Self::TimestampLtzI64(array, scale) => read_timestamp_ltz(array, row_index, *scale),
         }
     }
+}
+
+fn read_timestamp_ltz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
+where
+    A: Array,
+    SnowflakeTimestampLtz: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let utc = SnowflakeTimestampLtz { scale }
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_LTZ row {row_index} must decode"))
+            .and_utc();
+        JsCell::Timestamp {
+            epoch_millis: utc.timestamp_millis() as f64,
+            nanos: utc.timestamp_subsec_nanos(),
+            offset_minutes: None,
+        }
+    })
 }
 
 /// Validates every non-null cell in a TIME column's raw array is a legal
@@ -1197,11 +1236,28 @@ mod tests {
                 nanos,
             } => {
                 assert_eq!(epoch_millis, 1_453_386_764_000.0);
-                assert_eq!(offset_minutes, -480);
+                assert_eq!(offset_minutes, Some(-480));
                 assert_eq!(nanos, 0);
             }
             other => panic!("expected TimestampTz cell, got {other:?}"),
         }
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_ltz_reads_int64_parts_and_null() {
+        let field = field("TIMESTAMP_LTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500), None]);
+        let reader = reader(&field, &array);
+        assert!(matches!(reader, ColumnReader::TimestampLtzI64(_, 3)));
+        assert_eq!(
+            reader.read(0),
+            JsCell::Timestamp {
+                epoch_millis: -1_500.0,
+                nanos: 500_000_000,
+                offset_minutes: None,
+            }
+        );
         assert_eq!(reader.read(1), JsCell::Null);
     }
 

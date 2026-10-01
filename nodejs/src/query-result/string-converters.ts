@@ -1,5 +1,6 @@
 import type { CellConverter, ConverterFactory } from './types.js';
 import { CoreDateFormatter } from '../core/index.js';
+import { timestampLtzConverter, timestampTzConverter } from './value-converters.js';
 
 // TODO: measure building these strings in the bridge instead of here
 
@@ -40,3 +41,13 @@ export const createDateAsStringConverter: ConverterFactory = (_column, { dateOut
 
 export const vectorAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : JSON.stringify(value);
+
+const timestampAsStringConverter =
+  (toDate: ConverterFactory): ConverterFactory =>
+  (column, params) => {
+    const convert = toDate(column, params);
+    return (value) => (value === null ? NULL_AS_STRING : (convert(value) as Date).toJSON());
+  };
+
+export const timestampTzAsStringConverter = timestampAsStringConverter(timestampTzConverter);
+export const timestampLtzAsStringConverter = timestampAsStringConverter(timestampLtzConverter);

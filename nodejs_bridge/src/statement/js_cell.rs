@@ -14,8 +14,8 @@ pub(crate) enum JsCell<'a> {
     Date(NaiveDateTime),
     Timestamp {
         epoch_millis: f64,
-        offset_minutes: i32,
         nanos: u32,
+        offset_minutes: Option<i32>,
     },
 }
 
@@ -31,13 +31,15 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::Date(date) => unsafe { NaiveDateTime::to_napi_value(env, date) },
             JsCell::Timestamp {
                 epoch_millis,
-                offset_minutes,
                 nanos,
+                offset_minutes,
             } => {
                 let mut obj = Object::new(&Env::from(env))?;
                 obj.set("epochMillis", epoch_millis)?;
-                obj.set("offsetMinutes", offset_minutes)?;
                 obj.set("nanos", nanos)?;
+                if let Some(offset_minutes) = offset_minutes {
+                    obj.set("offsetMinutes", offset_minutes)?;
+                };
                 unsafe { ToNapiValue::to_napi_value(env, obj) }
             }
         }

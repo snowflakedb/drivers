@@ -139,6 +139,8 @@ export interface KnownSessionParameters {
   jsTreatIntegerAsBigInt: boolean
   clientStageArrayBindingThreshold: number
   timestampTzOutputFormat: string
+  timestampLtzOutputFormat: string
+  timezone: string
 }
 
 export declare enum QueryBindingFormat {
