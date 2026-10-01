@@ -8,12 +8,14 @@ import {
   realAsStringConverter,
   textAsStringConverter,
   timestampLtzAsStringConverter,
+  timestampNtzAsStringConverter,
   timestampTzAsStringConverter,
   vectorAsStringConverter,
 } from './string-converters.js';
 import {
   createFixedConverter,
   timestampLtzConverter,
+  timestampNtzConverter,
   timestampTzConverter,
   variantConverter,
 } from './value-converters.js';
@@ -37,6 +39,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   date: { asValue: null, asString: createDateAsStringConverter },
   timestamp_tz: { asValue: timestampTzConverter, asString: timestampTzAsStringConverter },
   timestamp_ltz: { asValue: timestampLtzConverter, asString: timestampLtzAsStringConverter },
+  timestamp_ntz: { asValue: timestampNtzConverter, asString: timestampNtzAsStringConverter },
   variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
   object: { asValue: () => variantConverter, asString: null },
   array: { asValue: () => variantConverter, asString: null },
@@ -48,7 +51,7 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],
-  Date: ['date', 'timestamp_tz', 'timestamp_ltz'],
+  Date: ['date', 'timestamp_tz', 'timestamp_ltz', 'timestamp_ntz'],
   JSON: ['variant'],
 };
 

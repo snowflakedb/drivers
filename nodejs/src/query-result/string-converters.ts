@@ -1,6 +1,10 @@
 import type { CellConverter, ConverterFactory } from './types.js';
 import { CoreDateFormatter } from '../core/index.js';
-import { timestampLtzConverter, timestampTzConverter } from './value-converters.js';
+import {
+  timestampLtzConverter,
+  timestampNtzConverter,
+  timestampTzConverter,
+} from './value-converters.js';
 
 // TODO: measure building these strings in the bridge instead of here
 
@@ -51,3 +55,4 @@ const timestampAsStringConverter =
 
 export const timestampTzAsStringConverter = timestampAsStringConverter(timestampTzConverter);
 export const timestampLtzAsStringConverter = timestampAsStringConverter(timestampLtzConverter);
+export const timestampNtzAsStringConverter = timestampAsStringConverter(timestampNtzConverter);

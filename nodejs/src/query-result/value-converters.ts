@@ -51,6 +51,23 @@ export const timestampLtzConverter: ConverterFactory = (
   };
 };
 
+export const timestampNtzConverter: ConverterFactory = (column, { timestampNtzOutputFormat }) => {
+  const scale = column.getScale()!;
+  return (value) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    const cell = value as TimestampCell;
+    return new SnowflakeDate({
+      value: cell.epochMillis,
+      nanoSeconds: cell.nanos,
+      scale,
+      timezone: 'UTC',
+      format: timestampNtzOutputFormat,
+    });
+  };
+};
+
 export const variantConverter: CellConverter = (value) => {
   if (value === null || value === undefined) {
     return value;

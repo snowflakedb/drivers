@@ -12,7 +12,10 @@ use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use crate::session_params::KnownSessionParameters;
 use sf_output_format::datetime::{DateTimeFormat, DateTimeValue, Zone};
-use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTimestampLtz, SnowflakeTimestampTz};
+use sf_types::{
+    ReadArrowError, ReadArrowType, SnowflakeTimestampLtz, SnowflakeTimestampNtz,
+    SnowflakeTimestampTz,
+};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -45,6 +48,8 @@ pub(crate) enum ColumnReader {
     TimestampTz(StructArray, u32),
     TimestampLtzStruct(StructArray, u32),
     TimestampLtzI64(PrimitiveArray<Int64Type>, u32),
+    TimestampNtzStruct(StructArray, u32),
+    TimestampNtzI64(PrimitiveArray<Int64Type>, u32),
     Variant(StringArray),
     Text(StringArray),
     Fixed(IntColumn, u32),
@@ -247,6 +252,23 @@ impl ColumnReader {
                     )),
                 }
             }
+            Some("TIMESTAMP_NTZ") => {
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Struct(_) => Ok(Self::TimestampNtzStruct(
+                        downcast_array(column, "StructArray")?,
+                        scale,
+                    )),
+                    DataType::Int64 => Ok(Self::TimestampNtzI64(
+                        downcast_array(column, "Int64Array")?,
+                        scale,
+                    )),
+                    other => Err(format!(
+                        "column {:?} has unsupported TIMESTAMP_NTZ physical type {other:?}",
+                        field.name()
+                    )),
+                }
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -360,6 +382,8 @@ impl ColumnReader {
             }),
             Self::TimestampLtzStruct(array, scale) => read_timestamp_ltz(array, row_index, *scale),
             Self::TimestampLtzI64(array, scale) => read_timestamp_ltz(array, row_index, *scale),
+            Self::TimestampNtzStruct(array, scale) => read_timestamp_ntz(array, row_index, *scale),
+            Self::TimestampNtzI64(array, scale) => read_timestamp_ntz(array, row_index, *scale),
         }
     }
 }
@@ -373,6 +397,24 @@ where
         let utc = SnowflakeTimestampLtz { scale }
             .read_arrow_type(array, row_index)
             .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_LTZ row {row_index} must decode"))
+            .and_utc();
+        JsCell::Timestamp {
+            epoch_millis: utc.timestamp_millis() as f64,
+            nanos: utc.timestamp_subsec_nanos(),
+            offset_minutes: None,
+        }
+    })
+}
+
+fn read_timestamp_ntz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
+where
+    A: Array,
+    SnowflakeTimestampNtz: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let utc = SnowflakeTimestampNtz { scale }
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_NTZ row {row_index} must decode"))
             .and_utc();
         JsCell::Timestamp {
             epoch_millis: utc.timestamp_millis() as f64,
@@ -1250,6 +1292,23 @@ mod tests {
         let array = Int64Array::from(vec![Some(-1_500), None]);
         let reader = reader(&field, &array);
         assert!(matches!(reader, ColumnReader::TimestampLtzI64(_, 3)));
+        assert_eq!(
+            reader.read(0),
+            JsCell::Timestamp {
+                epoch_millis: -1_500.0,
+                nanos: 500_000_000,
+                offset_minutes: None,
+            }
+        );
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_ntz_reads_int64_parts_and_null() {
+        let field = field("TIMESTAMP_NTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500), None]);
+        let reader = reader(&field, &array);
+        assert!(matches!(reader, ColumnReader::TimestampNtzI64(_, 3)));
         assert_eq!(
             reader.read(0),
             JsCell::Timestamp {

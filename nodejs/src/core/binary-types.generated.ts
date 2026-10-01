@@ -140,6 +140,7 @@ export interface KnownSessionParameters {
   clientStageArrayBindingThreshold: number
   timestampTzOutputFormat: string
   timestampLtzOutputFormat: string
+  timestampNtzOutputFormat: string
   timezone: string
 }
 
