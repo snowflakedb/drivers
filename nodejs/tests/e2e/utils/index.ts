@@ -147,6 +147,12 @@ export function sendExecute(
   return { statement, completion };
 }
 
+export function cancelStatementAsync(statement: RowStatement): Promise<void> {
+  return new Promise((resolve, reject) => {
+    statement.cancel((err) => (err ? reject(err) : resolve()));
+  });
+}
+
 export function executeAsync(
   connection: Connection,
   sqlText: string,

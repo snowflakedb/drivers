@@ -277,9 +277,6 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-            // Statements GS declines to describe also reject bind variables, so
-            // the zero parameter markers in this metadata are what a successful
-            // describe would have reported.
             let executed = match executed {
                 Ok(value) => value,
                 Err(e) => return prepare_result_for_describe_error(e, query),
@@ -326,6 +323,7 @@ impl DatabaseDriverV1 {
         bindings: Option<BindingType<'a>>,
         timeout_seconds: Option<u32>,
         request_id: Option<uuid::Uuid>,
+        describe_only: Option<bool>,
     ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr =
             self.statements
@@ -347,7 +345,7 @@ impl DatabaseDriverV1 {
                 &report,
                 &mut stmt,
                 bindings,
-                None,
+                describe_only,
                 timeout_seconds,
                 request_id,
             )),
@@ -668,6 +666,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         request_id: Option<uuid::Uuid>,
+        describe_only: Option<bool>,
     ) -> Result<AsyncExecuteResult, ApiError> {
         let report = AbortReport::default();
         let session_id = match self.statements.get_obj(stmt_handle) {
@@ -726,7 +725,7 @@ impl DatabaseDriverV1 {
                 sql: query.clone(),
                 bindings: query_bindings,
                 bind_stage: bind_stage_path,
-                describe_only: None,
+                describe_only,
                 query_parameters: query_parameter_map,
                 query_context,
             };
@@ -2289,7 +2288,7 @@ mod tests {
         let sh = ds.statement_new(ch).unwrap();
         ds.statements.get_obj(sh).unwrap().lock().await.query = Some("SELECT 1".to_string());
 
-        let _ = ds.statement_execute_async(None, sh, None, None).await;
+        let _ = ds.statement_execute_async(None, sh, None, None, None).await;
 
         assert_eq!(
             captured

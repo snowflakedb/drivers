@@ -166,6 +166,10 @@ export interface StatementOption {
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   requestId?: string;
+  /**
+   * When `true`, the query is submitted for column metadata only.
+   */
+  describeOnly?: boolean;
 }
 
 export interface FetchResultOptions {
@@ -276,6 +280,7 @@ export class Connection {
         parameters: parameters ?? undefined,
         asyncExec: options.asyncExec,
         requestId: options.requestId,
+        describeOnly: options.describeOnly,
       }),
       {
         complete: options.complete,

@@ -97,6 +97,7 @@ export interface ExecuteParams {
   parameters?: Record<string, string>
   asyncExec?: boolean
   requestId?: string
+  describeOnly?: boolean
 }
 
 export declare function isAnError(status: QueryStatus): boolean

@@ -1098,3 +1098,26 @@ behavior_differences:
     new_driver_behavior: |
       The same calls reject with the error `connectAsync()` rejected with, including vendor
       code and SQLSTATE when the driver supplies them.
+
+  56:
+    name: 'describeOnly multi-statement throws instead of returning the wrapper result'
+    status: unknown
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      execute({ describeOnly: true }) on a multi-statement query succeeds. complete receives
+      empty rows and a parent wrapper column named `multiple statement execution`. GS does
+      not return child resultIds, so hasNext is absent (ordinary RowStatement).
+    new_driver_behavior: |
+      The same request is classified as ExecuteQueryResult::Multi. With no child query IDs,
+      the bridge throws GenericFailure "multi-statement result contained no child query IDs".
+      The statement object in the error still has hasNext/NextResult (BD#50).
+    description: |
+      Closing this difference requires a core change. Core classifies the parent execute
+      response as Multi and drops the wrapper rowset before the bridge sees it, so the
+      bridge cannot reconstruct the old driver's wrapper result from empty child query IDs.
+    status_rationale: |
+      describeOnly on a multi-statement query does not work: the server does not return child
+      query IDs, so there is no per-statement metadata to describe anyway.
