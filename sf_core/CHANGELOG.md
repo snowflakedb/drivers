@@ -94,6 +94,7 @@ Bug fixes:
 
 Internal improvements:
 
+- Added warehouse, database, schema, and role names from each query response onto `ResultSetDescriptor`, so a wrapper can read that statement's session snapshot instead of only the connection cache. (snowflakedb/drivers#2352)
 - Replaced the boolean-token matches that already agreed with three named parsers in `sf_core::utils`, one per accepted token set. `SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS` now uses the shared `env_flag` parser (`true`/`1`), the same as the other process env flags. (snowflakedb/drivers#2178)
 - Added a `stage_binding_disabled` telemetry event recorded once per connection, the first time `CREATE STAGE` fails for the session-scoped array-bind stage. Previously ODBC alone reported a similar event on every statement that subsequently retried with inline JSON bindings. (snowflakedb/drivers#2205)
 - Fixed `statement_execute_async` missing a session-tagged tracing span, which silently dropped telemetry (including `stage_binding_disabled`) emitted on the JDBC async-execute and Python `execute_async()` path. (snowflakedb/drivers#2231)

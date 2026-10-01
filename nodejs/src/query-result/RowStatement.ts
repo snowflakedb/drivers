@@ -5,6 +5,7 @@ import type {
   Column,
   FetchRowsOptions,
   RowOptions,
+  SessionState,
   StatementCallback,
   StreamOptions,
 } from './types.js';
@@ -62,6 +63,10 @@ export class RowStatement {
 
   getRequestId(): string | undefined {
     return this.#core.getRequestId() ?? undefined;
+  }
+
+  getSessionState(): SessionState | undefined {
+    return this.#core.getSessionState() ?? undefined;
   }
 
   getColumns(): Column[] | undefined {

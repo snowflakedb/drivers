@@ -9,6 +9,7 @@ import type {
   RowMode,
   RowOptions,
   QueryStatus,
+  SessionState,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import { serializeTokenInfo } from './connection-serialization.js';
@@ -61,6 +62,7 @@ export {
   type ConfigureOptions,
   type QueryStatus,
   SnowflakeDate,
+  type SessionState,
 };
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)

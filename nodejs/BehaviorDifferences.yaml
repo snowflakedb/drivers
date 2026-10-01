@@ -988,13 +988,14 @@ behavior_differences:
       execute({ asyncExec: true, complete }) invokes complete(null, stmt, { queryId }).
       The third argument is overloaded: a row array for normal execute, or { queryId } for
       asyncExec. queryId is also available on stmt.getQueryId(). After complete,
-      stmt.getNumRows(), stmt.getColumns(), and stmt.getColumn(...) throw TypeError instead
-      of returning undefined.
+      stmt.getNumRows(), stmt.getColumns(), stmt.getColumn(...), and stmt.getSessionState()
+      throw TypeError instead of returning undefined.
     new_driver_behavior: |
       execute({ asyncExec: true, complete }) invokes complete(undefined, stmt, undefined).
       Callers read queryId from stmt.getQueryId() only. The third argument is a row array
-      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(), and
-      stmt.getColumn(...) return undefined because the statement has no result set.
+      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(),
+      stmt.getColumn(...), and stmt.getSessionState() return undefined because the statement
+      has no result set.
     status_rationale: |
       The old driver's third-argument is typed as row array or undefined (not { queryId }),
       and callers can already obtain queryId from stmt.getQueryId(). The new driver keeps
@@ -1121,3 +1122,36 @@ behavior_differences:
     status_rationale: |
       describeOnly on a multi-statement query does not work: the server does not return child
       query IDs, so there is no per-statement metadata to describe anyway.
+
+  57:
+    name: 'getSessionState returns a typed SessionState'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      RowStatement.getSessionState() is typed as object | undefined. At runtime it is still an
+      object of getters (getCurrentDatabase, getCurrentSchema, getCurrentWarehouse,
+      getCurrentRole, and getCurrentDatabaseProvider) after a successful complete.
+    new_driver_behavior: |
+      RowStatement.getSessionState() is typed as SessionState | undefined. SessionState is a
+      class that provides the same getters as the old driver.
+    status_rationale: |
+      Runtime for the session-name getters is the same. SessionState is the honest
+      TypeScript type; object was not.
+
+  58:
+    name: 'SessionState has no getCurrentDatabaseProvider'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SessionState.getCurrentDatabaseProvider() returns the query JSON databaseProvider
+      value, which is always null.
+    new_driver_behavior: |
+      SessionState has no getCurrentDatabaseProvider method.
+    status_rationale: |
+      The Snowflake server marks databaseProvider as deprecated and always returns null.

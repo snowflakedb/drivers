@@ -11,6 +11,7 @@ pub use column::Column;
 use crate::error::{BridgeError, ToJsError, async_to_js};
 use crate::session::Ready;
 use crate::session_params::KnownSessionParameters;
+use crate::session_state::SessionState;
 use napi::bindgen_prelude::*;
 use napi::tokio::sync::{Mutex, MutexGuard};
 use napi_derive::napi;
@@ -164,6 +165,12 @@ impl Statement {
                 NUM_UPDATED_ROWS_NOT_APPLICABLE
             },
         )
+    }
+
+    #[napi]
+    pub fn get_session_state(&self) -> Option<SessionState> {
+        self.rows()
+            .map(|data| SessionState::from_descriptor(&data.result_set_descriptor))
     }
 
     /// Not part of the driver's public API. Callers are suposed toinvoke this only after the

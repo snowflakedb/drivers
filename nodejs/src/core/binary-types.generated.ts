@@ -53,6 +53,13 @@ export declare class DateFormatter {
   formatTimestamp(epochMillis: number, nanos: number, scale: number, timezone: string | number): string
 }
 
+export declare class SessionState {
+  getCurrentRole(): string | null
+  getCurrentWarehouse(): string | null
+  getCurrentDatabase(): string | null
+  getCurrentSchema(): string | null
+}
+
 export declare class Statement {
   waitForCompletion(): Promise<undefined>
   /**
@@ -71,6 +78,7 @@ export declare class Statement {
   getQueryId(): string | null
   getNumRows(): number | null
   getNumUpdatedRows(): number | null
+  getSessionState(): SessionState | null
   /**
    * Not part of the driver's public API. Callers are suposed toinvoke this only after the
    * statement has finished, so a result that is not yet ready is a programming error
