@@ -27,6 +27,7 @@ use tokio_stream::wrappers::ReceiverStream;
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region, SdkConfig};
 use aws_credential_types::Credentials;
+use aws_lc_rs::digest;
 use aws_sdk_s3::config::RequestChecksumCalculation;
 use aws_sdk_s3::config::retry::RetryConfig as AwsRetryConfig;
 use aws_sdk_s3::config::timeout::TimeoutConfig as AwsTimeoutConfig;
@@ -35,7 +36,6 @@ use aws_sdk_s3::types::BucketAccelerateStatus;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_smithy_types::body::SdkBody;
-use sha2::{Digest, Sha256};
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
 const SNOWFLAKE_DOWNLOAD_PROVIDER: &str = "snowflake-download";
@@ -1927,7 +1927,9 @@ fn s3_creds_fingerprint(creds: &CloudCredentials) -> Option<String> {
                 .map(|t| t.reveal().as_str())
                 .unwrap_or("");
             let material = format!("{}:{token}", aws_key_id.reveal());
-            Some(hex::encode(Sha256::digest(material.as_bytes())))
+            Some(hex::encode(
+                digest::digest(&digest::SHA256, material.as_bytes()).as_ref(),
+            ))
         }
         _ => None,
     }
@@ -2691,6 +2693,14 @@ mod tests {
             aws_secret_key: "secret".to_string().into(),
             aws_token: Some("token".to_string().into()),
         }
+    }
+
+    #[test]
+    fn s3_creds_fingerprint_preserves_sts_cache_key() {
+        assert_eq!(
+            s3_creds_fingerprint(&s3_creds("AKIA1")).as_deref(),
+            Some("3d34dfe320119e79244eae97a751d802ceaf9e7992e2fc24bcd0c2f974727fcd")
+        );
     }
 
     // --- aws_key_id helper used by S3StsRefresher's rotation check ---

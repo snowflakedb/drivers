@@ -6,13 +6,13 @@ use crate::crl::error::{
 };
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
 use crate::utils::sync::MutexRecoverExt;
+use aws_lc_rs::digest;
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use once_cell::sync::OnceCell;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 use reqwest::Method;
-use sha2::{Digest, Sha256};
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::io::Write;
@@ -931,10 +931,7 @@ impl CrlCache {
     }
 
     pub fn url_digest(url: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(url.as_bytes());
-        let digest = hasher.finalize();
-        hex::encode(digest)
+        hex::encode(digest::digest(&digest::SHA256, url.as_bytes()).as_ref())
     }
 
     #[cfg(test)]
@@ -1445,6 +1442,14 @@ mod tests {
     use super::*;
     use tokio::runtime::Builder;
     use tokio::time::timeout;
+
+    #[test]
+    fn url_digest_preserves_disk_cache_filename() {
+        assert_eq!(
+            CrlCache::url_digest("https://example.com/foo.crl"),
+            "68ca88702d45a2e76f4994133f55d850551fe8f064465e97cef9b390620003a9"
+        );
+    }
 
     fn test_config() -> CrlConfig {
         CrlConfig {

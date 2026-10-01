@@ -5,6 +5,7 @@ use snafu::{Location, OptionExt, ResultExt, Snafu};
 use crate::crl::error::{
     CertificateParseSnafu, CrlDataParseSnafu, CrlError, CrlListParseSnafu, CrlToDerSnafu,
 };
+use aws_lc_rs::digest;
 use const_oid::ObjectIdentifier;
 use num_traits::cast::ToPrimitive;
 use rustls::pki_types::TrustAnchor;
@@ -480,20 +481,14 @@ pub fn subject_der_hash(issuer_der: &[u8]) -> Option<Vec<u8>> {
     if let Ok(cert) = x509_cert::Certificate::from_der(issuer_der)
         && let Ok(der) = cert.tbs_certificate.subject.to_der()
     {
-        let mut hasher = sha2::Sha256::new();
-        use sha2::Digest;
-        hasher.update(&der);
-        return Some(hasher.finalize().to_vec());
+        return Some(digest::digest(&digest::SHA256, &der).as_ref().to_vec());
     }
     #[cfg(test)]
     {
         // Test-only fallback: treat input as "subject\0issuer" bytes
         if let Some(pos) = issuer_der.iter().position(|b| *b == 0) {
             let subject = &issuer_der[..pos];
-            let mut hasher = sha2::Sha256::new();
-            use sha2::Digest;
-            hasher.update(subject);
-            return Some(hasher.finalize().to_vec());
+            return Some(digest::digest(&digest::SHA256, subject).as_ref().to_vec());
         }
     }
     None
@@ -505,19 +500,13 @@ pub fn issuer_der_hash(cert_der: &[u8]) -> Option<Vec<u8>> {
     if let Ok(cert) = x509_cert::Certificate::from_der(cert_der)
         && let Ok(der) = cert.tbs_certificate.issuer.to_der()
     {
-        let mut hasher = sha2::Sha256::new();
-        use sha2::Digest;
-        hasher.update(&der);
-        return Some(hasher.finalize().to_vec());
+        return Some(digest::digest(&digest::SHA256, &der).as_ref().to_vec());
     }
     #[cfg(test)]
     {
         if let Some(pos) = cert_der.iter().position(|b| *b == 0) {
             let issuer = &cert_der[pos + 1..];
-            let mut hasher = sha2::Sha256::new();
-            use sha2::Digest;
-            hasher.update(issuer);
-            return Some(hasher.finalize().to_vec());
+            return Some(digest::digest(&digest::SHA256, issuer).as_ref().to_vec());
         }
     }
     None

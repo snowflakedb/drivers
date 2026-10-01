@@ -22,9 +22,10 @@ sonic-json = ["sonic-rs"]
 # transitive activation into the same crate.
 #
 # The name stays because the *claim* is not yet complete:
-#   - SigV4 request signing computes HMAC-SHA256 outside the module:
-#     `aws-sigv4` uses RustCrypto unconditionally. That is every stage
-#     transfer, not an edge case; see F7. `ring` itself is no longer linked --
+#   - SDK SigV4 request signing computes HMAC-SHA256 outside the module:
+#     `aws-sigv4` uses RustCrypto unconditionally, on every S3 stage
+#     transfer; see F7. The driver's own WIF `GetCallerIdentity` signer
+#     uses `aws_lc_rs`. `ring` itself is no longer linked --
 #     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
 #     block below) -- so this bullet is now about RustCrypto alone.
 #   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
@@ -270,7 +271,6 @@ hex = "0.4"
 memchr = "2"
 sonic-rs = { version = "0.5", optional = true }
 sha2 = "0.10"
-hmac = "0.12"
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
