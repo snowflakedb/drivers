@@ -1,0 +1,55 @@
+name: Shipped Rust crypto dependencies
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  shipped-crypto:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pinned cargo-deny
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz"
+          curl --fail --location --silent --show-error --retry 3 \
+            'https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz' \
+            --output "$archive"
+          echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" \
+            cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny
+
+      - name: Reject prohibited shipped crypto backends
+        run: |
+          "$RUNNER_TEMP/cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny" \
+            --manifest-path Cargo.toml --config deny.toml --locked check bans
+
+      - name: Reject prohibited Python sdist crypto backends
+        run: |
+          set -euo pipefail
+          sdist_workspace="$(mktemp -d "$RUNNER_TEMP/python-sdist-crypto.XXXXXX")"
+          trap 'rm -rf "$sdist_workspace"' EXIT
+          cp python/Cargo.toml.sdist "$sdist_workspace/Cargo.toml"
+          cp python/Cargo.lock.sdist "$sdist_workspace/Cargo.lock"
+          # Mirror the reduced workspace in scripts/python-sdist-cargo-lock.sh.
+          for member in \
+            sf_core sf_core/tests/common/arrow_deserialize_macro \
+            python_bridge python_bridge/stub_gen sf_params_spec sf_types \
+            proto_utils error_trace error_trace_derive proto_generator; do
+            if [[ ! -e "$sdist_workspace/$member" ]]; then
+              mkdir -p "$(dirname "$sdist_workspace/$member")"
+              ln -s "$GITHUB_WORKSPACE/$member" "$sdist_workspace/$member"
+            fi
+          done
+          "$RUNNER_TEMP/cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny" \
+            --manifest-path "$sdist_workspace/Cargo.toml" \
+            --config "$GITHUB_WORKSPACE/deny.toml" --locked check bans
