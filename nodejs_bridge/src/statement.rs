@@ -24,6 +24,13 @@ use std::sync::Arc;
 
 const NUM_UPDATED_ROWS_NOT_APPLICABLE: i64 = -1;
 
+#[napi(string_enum = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatementStatus {
+    Fetching,
+    Complete,
+}
+
 #[napi]
 pub struct Statement {
     result: StatementResult,
@@ -125,6 +132,15 @@ impl Statement {
     #[napi]
     pub fn get_request_id(&self) -> Option<String> {
         self.request_id.map(|id| id.to_string())
+    }
+
+    #[napi]
+    pub fn get_status(&self) -> StatementStatus {
+        if self.result.get().is_some() {
+            StatementStatus::Complete
+        } else {
+            StatementStatus::Fetching
+        }
     }
 
     // TODO:

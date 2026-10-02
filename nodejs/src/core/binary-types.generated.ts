@@ -74,6 +74,7 @@ export declare class Statement {
    */
   getNextRow(): unknown[] | null
   getRequestId(): string | null
+  getStatus(): StatementStatus
   getQueryId(): string | null
   getNumRows(): number | null
   getNumUpdatedRows(): number | null
@@ -180,3 +181,6 @@ export type QueryStatus =  'RUNNING'|
 'RESTARTED'|
 'BLOCKED'|
 'NO_DATA';
+
+export type StatementStatus =  'fetching'|
+'complete';

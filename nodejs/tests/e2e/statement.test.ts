@@ -7,6 +7,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   expectColumnsNames,
+  fetchResultAsync,
   getStatementColumn,
   isRunningNewDriverWithBD,
   randomizeName,
@@ -54,18 +55,8 @@ describe('RowStatement', () => {
       const queryId = executedStatement.getQueryId();
       expect(queryId).toBeDefined();
 
-      let fetchedStatement!: RowStatement;
-      const completion = new Promise<RowStatement>((resolve, reject) => {
-        fetchedStatement = connection.fetchResult({
-          queryId: queryId!,
-          complete: (error, completedStatement) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve(completedStatement);
-            }
-          },
-        });
+      const { statement: fetchedStatement, completion } = fetchResultAsync(connection, {
+        queryId: queryId!,
       });
 
       expect(fetchedStatement.getSqlText()).toBeUndefined();
@@ -87,6 +78,7 @@ describe('RowStatement', () => {
     it('should return from result-set getters only after a successful execute', async () => {
       const { statement, completion } = sendExecute(connection, 'SELECT 1 AS n');
 
+      expect(statement.getStatus()).toBe('fetching');
       expect(statement.getNumRows()).toBeUndefined();
       expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
@@ -96,6 +88,7 @@ describe('RowStatement', () => {
 
       await completion;
 
+      expect(statement.getStatus()).toBe('complete');
       expect(statement.getNumRows()).toBe(1);
       expect(statement.getNumUpdatedRows()).toBe(-1);
       expectColumnsNames(statement as RowStatement, ['N']);
@@ -109,6 +102,7 @@ describe('RowStatement', () => {
         'select * from a_table_that_does_not_exist',
       );
 
+      expect(statement.getStatus()).toBe('fetching');
       expect(statement.getNumRows()).toBeUndefined();
       expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
@@ -117,6 +111,7 @@ describe('RowStatement', () => {
       expect(statement.getSessionState()).toBeUndefined();
 
       await expect(completion).rejects.toMatchObject({ error: expect.any(Error) });
+      expect(statement.getStatus()).toBe('complete');
       expect(statement.getNumRows()).toBeUndefined();
       expect(statement.getNumUpdatedRows()).toBeUndefined();
       expect(statement.getColumns()).toBeUndefined();
@@ -216,6 +211,22 @@ describe('RowStatement', () => {
       expect(getSessionState(resultB.statement)?.getCurrentSchema()?.toUpperCase()).toBe(
         schemaB.toUpperCase(),
       );
+    });
+  });
+
+  describe('getStatus', () => {
+    it('should report fetching then complete for a statement created by fetchResult', async () => {
+      const { statement: executedStatement } = await executeAsync(connection, 'SELECT 1');
+      const queryId = executedStatement.getQueryId();
+      expect(queryId).toBeDefined();
+
+      const { statement: fetchedStatement, completion } = fetchResultAsync(connection, {
+        queryId: queryId!,
+      });
+
+      expect(fetchedStatement.getStatus()).toBe('fetching');
+      await completion;
+      expect(fetchedStatement.getStatus()).toBe('complete');
     });
   });
 });

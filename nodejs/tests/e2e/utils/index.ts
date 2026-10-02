@@ -164,6 +164,29 @@ export function executeAsync(
   return sendExecute(connection, sqlText, additionalParameters).completion;
 }
 
+export function fetchResultAsync(
+  connection: Connection,
+  options: Omit<FetchResultOptions, 'complete'>,
+): {
+  statement: RowStatement;
+  completion: Promise<{ statement: RowStatement }>;
+} {
+  let statement!: RowStatement;
+  const completion = new Promise<{ statement: RowStatement }>((resolve, reject) => {
+    statement = connection.fetchResult({
+      ...options,
+      complete: (error, completedStatement) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve({ statement: completedStatement });
+        }
+      },
+    });
+  });
+  return { statement, completion };
+}
+
 export function getResultFromQueryIdForTest(
   connection: Connection,
   options: FetchResultOptions,

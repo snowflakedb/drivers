@@ -48,4 +48,4 @@ export interface FetchRowsOptions {
   end: (err: SnowflakeError | undefined, stmt: RowStatement) => void;
 }
 
-export type { QueryStatus } from '../core/index.js';
+export type { QueryStatus, StatementStatus } from '../core/index.js';
