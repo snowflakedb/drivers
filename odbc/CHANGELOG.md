@@ -10,6 +10,7 @@ New features:
 - Added the `PUT_COMPRESSLV` connection parameter so PUT AUTO_COMPRESS can select gzip compression levels 0–9. Unset and out-of-range values keep gzip level 6. (snowflakedb/drivers#2083)
 - Added the `PUT_TEMPDIR` connection parameter so PUT AUTO_COMPRESS can write gzip tempfiles to a caller-supplied directory. Unset and empty values keep the process temp directory. Nested directories are created. (snowflakedb/drivers#2084)
 - Added the Snowflake vendor SQL data type macros (`SQL_SF_TIMESTAMP_LTZ`, `SQL_SF_TIMESTAMP_TZ`, `SQL_SF_TIMESTAMP_NTZ`, `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`) to the public `sf_odbc.h`, so applications written against the 3.x header compile without redefining them. (snowflakedb/drivers#2366)
+- Added `SQL_SF_VECTOR` (2006) to the public `sf_odbc.h` so applications can name the VECTOR type that `SQLGetTypeInfo` already reports. Binding VECTOR remains unsupported. (snowflakedb/drivers#2400)
 
 Changes:
 
