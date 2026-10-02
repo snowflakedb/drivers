@@ -40,7 +40,7 @@ export class SnowflakeDate extends Date {
 
   /**
    * Timezone of the value:
-   * - `string` for TIMESTAMP_NTZ / TIMESTAMP_LTZ (e.g. `'UTC'`, `'America/New_York'`).
+   * - `string` for DATE / TIMESTAMP_NTZ / TIMESTAMP_LTZ (e.g. `'UTC'`, `'America/New_York'`).
    * - `number` for TIMESTAMP_TZ: the offset from UTC in minutes (e.g. `+05:00` -> `300`).
    */
   getTimezone(): string | number {
@@ -52,11 +52,6 @@ export class SnowflakeDate extends Date {
   }
 
   toJSON(): string {
-    return this.#formatter.formatTimestamp(
-      this.getTime(),
-      this.#nanoSeconds,
-      this.#scale,
-      this.#timezone,
-    );
+    return this.#formatter.format(this.getTime(), this.#nanoSeconds, this.#scale, this.#timezone);
   }
 }

@@ -4,7 +4,7 @@ import { resolveColumnNames } from './column-names.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
-  createDateAsStringConverter,
+  dateAsStringConverter,
   realAsStringConverter,
   textAsStringConverter,
   timestampLtzAsStringConverter,
@@ -13,6 +13,7 @@ import {
   vectorAsStringConverter,
 } from './string-converters.js';
 import {
+  dateConverter,
   createFixedConverter,
   timestampLtzConverter,
   timestampNtzConverter,
@@ -36,7 +37,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   interval_day_time: { asValue: null, asString: () => textAsStringConverter },
   boolean: { asValue: null, asString: () => booleanAsStringConverter },
   binary: { asValue: null, asString: () => binaryAsStringConverter },
-  date: { asValue: null, asString: createDateAsStringConverter },
+  date: { asValue: dateConverter, asString: dateAsStringConverter },
   timestamp_tz: { asValue: timestampTzConverter, asString: timestampTzAsStringConverter },
   timestamp_ltz: { asValue: timestampLtzConverter, asString: timestampLtzAsStringConverter },
   timestamp_ntz: { asValue: timestampNtzConverter, asString: timestampNtzAsStringConverter },

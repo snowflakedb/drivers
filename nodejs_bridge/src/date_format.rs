@@ -21,14 +21,15 @@ fn utc_from_parts(epoch_millis: f64, nanos: u32) -> napi::Result<DateTime<Utc>> 
 fn local_in_timezone(
     utc: DateTime<Utc>,
     timezone: Either<String, i32>,
-) -> napi::Result<(NaiveDateTime, i32)> {
+) -> napi::Result<(NaiveDateTime, i32, Zone)> {
     match timezone {
         Either::B(offset_minutes) => Ok((
             utc.naive_utc() + TimeDelta::minutes(i64::from(offset_minutes)),
             offset_minutes,
+            Zone::Offset,
         )),
         Either::A(name) if name.eq_ignore_ascii_case("UTC") || name.eq_ignore_ascii_case("GMT") => {
-            Ok((utc.naive_utc(), 0))
+            Ok((utc.naive_utc(), 0, Zone::Named("GMT")))
         }
         Either::A(name) => {
             let tz: Tz = name
@@ -38,6 +39,7 @@ fn local_in_timezone(
             Ok((
                 local.naive_local(),
                 local.offset().fix().local_minus_utc() / 60,
+                Zone::Offset,
             ))
         }
     }
@@ -53,30 +55,20 @@ impl DateFormatter {
     }
 
     #[napi]
-    pub fn format(&self, date: DateTime<Utc>) -> String {
-        self.format.format(&DateTimeValue {
-            local: date.naive_utc(),
-            offset_minutes: 0,
-            scale: 0,
-            zone: Zone::Named("GMT"),
-        })
-    }
-
-    #[napi]
-    pub fn format_timestamp(
+    pub fn format(
         &self,
         epoch_millis: f64,
         nanos: u32,
         scale: u32,
         timezone: Either<String, i32>,
     ) -> napi::Result<String> {
-        let (local, offset_minutes) =
+        let (local, offset_minutes, zone) =
             local_in_timezone(utc_from_parts(epoch_millis, nanos)?, timezone)?;
         Ok(self.format.format(&DateTimeValue {
             local,
             offset_minutes,
             scale,
-            zone: Zone::Offset,
+            zone,
         }))
     }
 }
@@ -96,15 +88,21 @@ mod tests {
             .timestamp_millis() as f64;
         assert_eq!(
             formatter("YYYY-MM-DD")
-                .format_timestamp(epoch, 0, 0, Either::A("UTC".into()))
+                .format(epoch, 0, 0, Either::A("UTC".into()))
                 .unwrap(),
             "2024-01-15"
         );
         assert_eq!(
             formatter("DD-MON-YYYY")
-                .format_timestamp(epoch, 0, 0, Either::A("UTC".into()))
+                .format(epoch, 0, 0, Either::A("UTC".into()))
                 .unwrap(),
             "15-Jan-2024"
+        );
+        assert_eq!(
+            formatter("YYYY-MM-DD TZD")
+                .format(epoch, 0, 0, Either::A("UTC".into()))
+                .unwrap(),
+            "2024-01-15 GMT"
         );
     }
 
@@ -115,7 +113,7 @@ mod tests {
             .timestamp_millis() as f64;
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF3")
-                .format_timestamp(epoch, 123_456_789, 9, Either::A("UTC".into()))
+                .format(epoch, 123_456_789, 9, Either::A("UTC".into()))
                 .unwrap(),
             "2024-01-15 10:30:00.123"
         );
@@ -128,7 +126,7 @@ mod tests {
             .timestamp_millis() as f64;
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM")
-                .format_timestamp(epoch, 123_000_000, 9, Either::B(300))
+                .format(epoch, 123_000_000, 9, Either::B(300))
                 .unwrap(),
             "2024-01-15 10:30:00.123 +0500"
         );
@@ -140,25 +138,25 @@ mod tests {
         let zone = Either::A("America/Los_Angeles".into());
         assert_eq!(
             formatter("DY, DD MON YYYY HH24:MI:SS TZHTZM")
-                .format_timestamp(epoch, 906_000_000, 9, zone.clone())
+                .format(epoch, 906_000_000, 9, zone.clone())
                 .unwrap(),
             "Thu, 26 Nov 2015 12:42:51 -0800"
         );
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF TZHTZM")
-                .format_timestamp(epoch, 123_456_000, 6, zone.clone())
+                .format(epoch, 123_456_000, 6, zone.clone())
                 .unwrap(),
             "2015-11-26 12:42:51.123456 -0800"
         );
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM")
-                .format_timestamp(epoch, 123_456_789, 9, zone.clone())
+                .format(epoch, 123_456_789, 9, zone.clone())
                 .unwrap(),
             "2015-11-26 12:42:51.123 -0800"
         );
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM")
-                .format_timestamp(epoch, 123_456_789, 9, zone)
+                .format(epoch, 123_456_789, 9, zone)
                 .unwrap(),
             "2015-11-26 12:42:51.123456789 -0800"
         );
@@ -168,7 +166,7 @@ mod tests {
     fn formats_negative_epoch_millis() {
         assert_eq!(
             formatter("YYYY-MM-DD HH24:MI:SS.FF3")
-                .format_timestamp(-1_500.0, 500_000_000, 3, Either::A("UTC".into()))
+                .format(-1_500.0, 500_000_000, 3, Either::A("UTC".into()))
                 .unwrap(),
             "1969-12-31 23:59:58.500"
         );
@@ -179,12 +177,12 @@ mod tests {
         let formatter = formatter("YYYY-MM-DD");
         assert!(
             formatter
-                .format_timestamp(0.0, 0, 0, Either::A("Not/AZone".into()))
+                .format(0.0, 0, 0, Either::A("Not/AZone".into()))
                 .is_err()
         );
         assert!(
             formatter
-                .format_timestamp(0.0, 1_000_000_000, 9, Either::A("UTC".into()))
+                .format(0.0, 1_000_000_000, 9, Either::A("UTC".into()))
                 .is_err()
         );
     }

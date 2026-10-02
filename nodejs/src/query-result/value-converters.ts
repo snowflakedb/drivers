@@ -75,6 +75,23 @@ export const timestampNtzConverter: ConverterFactory = (column, { timestampNtzOu
   };
 };
 
+export const dateConverter: ConverterFactory = (_column, { dateOutputFormat }) => {
+  const formatter = new CoreDateFormatter(dateOutputFormat);
+  return (value) => {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    return new SnowflakeDate({
+      value: value as Date,
+      nanoSeconds: 0,
+      scale: 0,
+      timezone: 'UTC',
+      format: dateOutputFormat,
+      formatter,
+    });
+  };
+};
+
 export const variantConverter: CellConverter = (value) => {
   if (value === null || value === undefined) {
     return value;
