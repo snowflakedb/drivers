@@ -30,10 +30,22 @@ Deferred work — covered **last**, only once the corresponding feature support 
   one only when support for the corresponding auth provider (Key Pair, MFA, OAuth, Okta, PAT,
   session-token renewal) lands in the new driver.
   - [`authentication/testExternalBrowser.js`](./authentication/testExternalBrowser.js) —
-    Okta happy path and cached-ID-token reuse live in
-    `nodejs/tests/e2e/authentication/external-browser.test.ts`. ID-token store / evict /
-    retry-with-browser internals live in
-    `sf_core/tests/integration/authentication/external_browser_id_token_cache.rs`.
+    Honest counterparts in `nodejs/tests/e2e/authentication/external-browser.test.ts`:
+    `Successful connection` → `should authenticate with external browser via Okta IdP`;
+    `Wrong credentials` → `should fail with timeout when the IdP rejects the credentials`;
+    `obtains the id token from the server and saves it on the local storage` → first
+    connect of `should reuse cached ID token without browser interaction`;
+    `authenticates by token, browser credentials not needed` → second connect of that
+    same `it`;
+    `External browser timeout` → `should fail with timeout when no browser callback arrives`
+    (no token on the loopback; a real Okta tab is not required for that contract);
+    `Mismatched Username` → `should fail when login request reports an IdP username mismatch`
+    (same 390191; live IdP identity is not required for that contract).
+    ID-token cache `it`s that Node does not read from the credential manager are
+    covered in `sf_core/tests/integration/authentication/external_browser_id_token_cache.rs`
+    (`should_store_id_token_after_successful_browser_login`,
+    `should_authenticate_with_cached_id_token`,
+    `should_retry_with_browser_flow_when_cached_id_token_fails`).
 
 ## Integration tests (`integration/`), sorted by priority
 
@@ -152,8 +164,9 @@ Each of these depends on the corresponding auth provider landing in `sf_core` + 
   new Node driver.
 - `integration/wiremock/testOauthRefreshToken.js` — once all auth providers are in `sf_core`,
   verify this case is covered there.
-- `integration/wiremock/testExternalBrowserSsoUrlError.ts` — once all auth providers are in
-  `sf_core`, verify this case is covered there.
+- `integration/wiremock/testExternalBrowserSsoUrlError.ts` — runnable case replaced by the
+  comment in that file pointing at `nodejs/tests/e2e/authentication/external-browser.test.ts`
+  (`should fail when authenticator-request reports SSO URL generation failure`).
 - `integration/wiremock/testPoolAuthCoordination.ts` — migrate once all auth providers **and** the
   connection pool are implemented in the new driver.
 
@@ -228,8 +241,10 @@ called out explicitly.
     session `TIME_OUTPUT_FORMAT` (bare `FF`, `FFn`, date tokens, `TZH:TZM`).
     Timestamp-only moment mapping is not a TIME contract.
   - [`sf_timestamp_test.js`](./unit/connection/result/sf_timestamp_test.js) — `Time: basic`
-    dropped; scale/`FF` wiring is in `time.test.ts`. Timestamp blocks stay
-    parked until the driver returns TIMESTAMP columns at all.
+    dropped; scale/`FF` wiring is in `time.test.ts`. `Timestamp: basic` lives in
+    `nodejs_bridge` `date_format.rs` and the timestamp e2e files
+    (`timestamp-ntz.test.ts`, `timestamp-ltz.test.ts`, `timestamp-tz.test.ts`).
+    `Date: basic` stays until DATE cells are `SnowflakeDate`.
 
 ### Configuration / global config
 

@@ -1,13 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import getTestParameter, { getTestParametersFromSameSource } from '../utils/getTestParameter.js';
-import {
-  baseConnectionOptions,
-  destroyConnectionAsync,
-  executeAsync,
-  snowflake,
-} from '../utils/index.js';
-import { NOT_IN_AUTH_TEST_CONTAINER } from './utils.js';
+import { baseConnectionOptions, executeAsync, snowflake } from '../utils/index.js';
+import { destroyConnectionAfterTest, NOT_IN_AUTH_TEST_CONTAINER } from './utils.js';
 
 const OKTA_USER_KEY = 'SNOWFLAKE_TEST_OKTA_USER';
 const OKTA_PASSWORD_KEY = 'SNOWFLAKE_TEST_OKTA_PASSWORD';
@@ -74,9 +69,7 @@ describe.skipIf(NOT_IN_AUTH_TEST_CONTAINER)('OAuth authentication', () => {
 
     // When Trying to Connect
     await connection.connectAsync();
-    onTestFinished(async () => {
-      await destroyConnectionAsync(connection);
-    });
+    destroyConnectionAfterTest(connection);
 
     // Then Login is successful and a simple query can be executed
     const { rows } = await executeAsync(connection, 'SELECT 1');

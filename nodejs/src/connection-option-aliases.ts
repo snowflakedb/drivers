@@ -21,6 +21,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   useEnvProxy: 'use_proxy_env',
   port: 'port',
   protocol: 'protocol',
+  queryTag: 'query_tag',
 };
 
 export function normalizeConnectionOptions(
@@ -32,7 +33,7 @@ export function normalizeConnectionOptions(
       continue;
     }
     if (key === 'browserActionTimeout') {
-      // The Node SDK takes milliseconds; sf_core takes authentication_timeout in seconds (BD#48).
+      // The Node SDK takes milliseconds; sf_core takes authentication_timeout in seconds (BD#59).
       if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
         throw new Error('browserActionTimeout must be a positive number');
       }

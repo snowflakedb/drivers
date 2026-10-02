@@ -20,12 +20,14 @@ mod error;
 mod query;
 mod session;
 mod session_params;
+mod session_state;
 mod statement;
 mod validation_utils;
 
 pub use connection::Connection;
 pub use date_format::DateFormatter;
 pub use session_params::KnownSessionParameters;
+pub use session_state::SessionState;
 pub use statement::{Column, Statement};
 
 use napi_derive::napi;

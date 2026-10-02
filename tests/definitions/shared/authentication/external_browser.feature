@@ -25,7 +25,7 @@ Feature: External Browser Authentication
   # Integration Tests - Mocked External Browser Authentication
   # =============================================================================
 
-  @core_int @python_int @odbc_int @jdbc_int
+  @core_int @python_int @odbc_int @jdbc_int @nodejs_int
   Scenario: should login with external browser using simulated callback
     Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
     And Login endpoint returns success
@@ -42,32 +42,32 @@ Feature: External Browser Authentication
     When Trying to Connect
     Then The injected opener receives the SSO URL and login is successful
 
-  @core_int @python_int @odbc_int @jdbc_int
+  @core_int @python_int @odbc_int @jdbc_int @nodejs_int
   Scenario: should fail when authenticator-request returns forbidden
     Given Wiremock returns HTTP 403 for authenticator-request
     When Trying to Connect
     Then Connection fails with authenticator error
 
-  @core_int @python_int @odbc_int @jdbc_int
+  @core_int @python_int @odbc_int @jdbc_int @nodejs_int
   Scenario: should fail when authenticator-request returns logical failure
     Given Wiremock returns success false for authenticator-request
     When Trying to Connect
     Then Connection fails with authenticator error
 
-  @core_int
+  @core_int @nodejs_int
   Scenario: should fail when authenticator-request reports SSO URL generation failure
     Given Wiremock returns SSO URL generation failure for authenticator-request
     When Trying to Connect
     Then Connection fails with error 390511
 
-  @core_int @python_int @odbc_int @jdbc_int
+  @core_int @python_int @odbc_int @jdbc_int @nodejs_int
   Scenario: should fail with timeout when no browser callback arrives
     Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
     And Authentication timeout is set to 2 seconds
     When Trying to Connect without any browser callback
     Then Connection fails with timeout or browser error
 
-  @core_int @python_int @odbc_int @jdbc_int
+  @core_int @python_int @odbc_int @jdbc_int @nodejs_int
   Scenario: should fail when login request is rejected after browser callback
     Given Wiremock returns valid ssoUrl and proofKey for authenticator-request
     And Login endpoint returns failure

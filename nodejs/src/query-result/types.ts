@@ -1,4 +1,8 @@
-import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
+import type {
+  CoreColumnInstance,
+  CoreKnownSessionParameters,
+  CoreSessionStateInstance,
+} from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type { RowStatement } from './RowStatement.js';
 
@@ -18,6 +22,8 @@ export type ConverterFactory = (
 export type CellConverter = (value: unknown) => unknown;
 
 export type Column = CoreColumnInstance;
+
+export type SessionState = CoreSessionStateInstance;
 
 export interface RowOptions {
   representNullAsStringNull: boolean;
@@ -42,4 +48,4 @@ export interface FetchRowsOptions {
   end: (err: SnowflakeError | undefined, stmt: RowStatement) => void;
 }
 
-export type { QueryStatus } from '../core/index.js';
+export type { QueryStatus, StatementStatus } from '../core/index.js';

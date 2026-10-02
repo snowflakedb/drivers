@@ -1075,6 +1075,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 bindings_opt,
                 timeout_seconds,
                 None,
+                None,
             )
             .await
             .to_protobuf()?;
@@ -1096,7 +1097,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let result = self
             .driver
-            .statement_execute_async(operation_ctx, stmt_handle.into(), bindings_opt, None)
+            .statement_execute_async(operation_ctx, stmt_handle.into(), bindings_opt, None, None)
             .await
             .to_protobuf()?;
 

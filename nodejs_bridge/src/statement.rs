@@ -11,6 +11,7 @@ pub use column::Column;
 use crate::error::{BridgeError, ToJsError, async_to_js};
 use crate::session::Ready;
 use crate::session_params::KnownSessionParameters;
+use crate::session_state::SessionState;
 use napi::bindgen_prelude::*;
 use napi::tokio::sync::{Mutex, MutexGuard};
 use napi_derive::napi;
@@ -22,6 +23,13 @@ use std::future::Future;
 use std::sync::Arc;
 
 const NUM_UPDATED_ROWS_NOT_APPLICABLE: i64 = -1;
+
+#[napi(string_enum = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatementStatus {
+    Fetching,
+    Complete,
+}
 
 #[napi]
 pub struct Statement {
@@ -126,6 +134,15 @@ impl Statement {
         self.request_id.map(|id| id.to_string())
     }
 
+    #[napi]
+    pub fn get_status(&self) -> StatementStatus {
+        if self.result.get().is_some() {
+            StatementStatus::Complete
+        } else {
+            StatementStatus::Fetching
+        }
+    }
+
     // TODO:
     // - reusable error handling
     // - maybe an util to get field value so we don't repeat the match
@@ -164,6 +181,12 @@ impl Statement {
                 NUM_UPDATED_ROWS_NOT_APPLICABLE
             },
         )
+    }
+
+    #[napi]
+    pub fn get_session_state(&self) -> Option<SessionState> {
+        self.rows()
+            .map(|data| SessionState::from_descriptor(&data.result_set_descriptor))
     }
 
     /// Not part of the driver's public API. Callers are suposed toinvoke this only after the

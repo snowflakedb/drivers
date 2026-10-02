@@ -1,0 +1,20 @@
+{
+  "name": "Snowflake authenticator-request SSO URL generation failure",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.AUTHENTICATOR == 'EXTERNALBROWSER')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": false,
+      "code": "390511",
+      "message": "SSO URL generation failed in External browser's SAML Request flow"
+    }
+  }
+}

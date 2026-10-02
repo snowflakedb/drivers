@@ -1,6 +1,7 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import type { Connection, RowStatement, SnowflakeError } from '../../types/sdk-types.js';
 import {
+  cancelStatementAsync,
   createTestConnection,
   destroyConnectionAsync,
   executeAsync,
@@ -11,12 +12,6 @@ import {
 const NOT_EXECUTING_CODE = '000605';
 const POLL_MS = 250;
 const CANCEL_START_DEADLINE_MS = 30_000;
-
-function cancelStatement(statement: RowStatement) {
-  return new Promise<void>((resolve, reject) => {
-    statement.cancel((err) => (err ? reject(err) : resolve()));
-  });
-}
 
 function isNotCurrentlyExecuting(err: unknown): boolean {
   return (err as SnowflakeError).code === NOT_EXECUTING_CODE;
@@ -30,7 +25,7 @@ async function cancelOnceExecuting(statement: RowStatement): Promise<void> {
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      await cancelStatement(statement);
+      await cancelStatementAsync(statement);
       return;
     } catch (err) {
       if (!isNotCurrentlyExecuting(err)) {
@@ -73,7 +68,7 @@ describe('Query Cancellation', () => {
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('throws when failing to cancel a query', async () => {
     const { statement } = await executeAsync(connection, 'select 1');
     // Query is completed = nothing to cancel
-    await expect(cancelStatement(statement)).rejects.toMatchObject({
+    await expect(cancelStatementAsync(statement)).rejects.toMatchObject({
       code: NOT_EXECUTING_CODE,
       sqlState: '01000',
     });

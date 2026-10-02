@@ -3,10 +3,10 @@
 //! `aws-smithy-http-client`'s TLS API configures only the crypto provider and
 //! trust store — no min/max protocol-version knob, no CRL hook, no custom root
 //! store — so it cannot honour the connection's full [`TlsConfig`]. This adapter
-//! instead hands the AWS SDK an [`HttpClient`] over the same `reqwest::Client`
-//! stack that Azure and GCS transfers build via [`configure_tls_builder`], so
-//! every AWS SDK consumer that *has* a connection — S3 transfers and the WIF
-//! STS calls made during login — inherits one implementation of that
+//! instead hands the AWS SDK an [`HttpClient`] over the same reqwest TLS core
+//! Azure and GCS use, with SDK-specific HTTP/1.1 ALPN selected by
+//! [`configure_http1_tls_builder`]. Every AWS SDK consumer with a connection —
+//! S3 transfers and the WIF STS calls made during login — inherits that
 //! connection's TLS policy (version window, CRL, custom root store) and proxy
 //! handling (`proxy_host`/`proxy_port`/`no_proxy`/`use_proxy_env`, HTTPS
 //! CONNECT-tunnelling, `HTTP_PROXY`/`HTTPS_PROXY` fallback).
@@ -18,14 +18,12 @@
 //! root-store, or proxy settings. They still share the SDK-owned transport
 //! adjustments below.
 //!
-//! It stops one step short of [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder), the
-//! Azure/GCS entry point, which is that function plus `.no_gzip()`. Gzip has to
-//! be off here too — the driver treats downloaded bytes as opaque, so digest,
-//! Content-Length and ranged-offset math all assume wire bytes are body bytes
-//! (SNOW-4073008) — but [`AwsSdkReqwestClient::with_default_tls`] has no
-//! connection-specific settings and so cannot route through the storage builder.
-//! Applying it alongside the other two adjustments keeps one place responsible
-//! for all three, on both constructors.
+//! Azure/GCS use [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder),
+//! which also supplies HTTP/1.1-only ALPN for their `.http1_only()` callers.
+//! On reqwest's preconfigured rustls path, setting `.http1_only()` after TLS
+//! configuration cannot change the advertised ALPN protocols. Both paths
+//! disable gzip for opaque storage bytes whose digests, Content-Length and
+//! offsets assume wire bytes equal body bytes (SNOW-4073008).
 //!
 //! Two further `reqwest` defaults are adjusted for the SDK:
 //! - redirect following — the SDK owns signing and retries, and a SigV4-signed
@@ -49,7 +47,7 @@ use aws_smithy_types::body::SdkBody;
 use snafu::ResultExt;
 
 use crate::crl::worker::SharedCrlWorker;
-use crate::tls::client::configure_tls_builder;
+use crate::tls::client::configure_http1_tls_builder;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{ClientBuildSnafu, TlsError};
 
@@ -65,11 +63,10 @@ pub(crate) struct AwsSdkReqwestClient(reqwest::Client);
 impl AwsSdkReqwestClient {
     /// Builds the SDK-backing client for a connection context.
     ///
-    /// Delegates to [`configure_tls_builder`] — the TLS + proxy core that the
-    /// Azure and GCS transfers also reach, through the `.no_gzip()` wrapper
-    /// [`configure_storage_client_builder`](crate::tls::client::configure_storage_client_builder) — so the SDK gets identical
-    /// `TlsConfig`/`ProxyConfig` handling, then applies the SDK adjustments
-    /// (gzip among them, see the module docs).
+    /// Delegates to [`configure_http1_tls_builder`] — the shared TLS + proxy
+    /// core with HTTP/1.1-only ALPN for the SDK — so it honors the same
+    /// `TlsConfig`/`ProxyConfig` as Azure and GCS transfers while keeping
+    /// reqwest's negotiated TLS protocol in step with the SDK's HTTP version.
     /// No request-level `.timeout()` is set: the SDK's `TimeoutConfig`
     /// (`operation_attempt_timeout`/`operation_timeout`) governs request
     /// timing.
@@ -83,7 +80,7 @@ impl AwsSdkReqwestClient {
         proxy: Option<&ProxyConfig>,
         crl_worker: SharedCrlWorker,
     ) -> Result<Self, TlsError> {
-        Self::finish(configure_tls_builder(
+        Self::finish(configure_http1_tls_builder(
             reqwest::Client::builder(),
             tls_config,
             proxy,
@@ -98,16 +95,13 @@ impl AwsSdkReqwestClient {
     /// (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`) are still auto-detected, same
     /// as a plain `reqwest::Client::new()`.
     ///
-    /// Installs the process crypto provider itself (this can be the first
-    /// client the process builds) and applies the same fail-closed FIPS gate
-    /// as [`configure_tls_builder`].
+    /// Installs the process crypto provider (this can be the first client)
+    /// and applies the same fail-closed FIPS gate as the connected transport.
     ///
-    /// Because there is no `TlsConfig` here, the builder is left plain and
-    /// reqwest resolves the process-global provider for the handshake. The gate
-    /// is what makes that acceptable under `fips-tls`: it requires the global
-    /// provider to be FIPS as well as the linked module, so this constructor
-    /// cannot hand the AWS SDK a client running non-approved crypto. See
-    /// [`crate::tls::require_fips_provider`].
+    /// The default verified TLS policy now uses a linked-module config.
+    /// The global gate is still checked here because other connection paths
+    /// (including insecure TLS) depend on it; unrelated raw clients that
+    /// do not call the gate are outside this constructor's guarantee.
     pub(crate) fn with_default_tls() -> Result<Self, TlsError> {
         Self::build(
             &TlsConfig::default(),
@@ -120,7 +114,6 @@ impl AwsSdkReqwestClient {
         builder
             .redirect(reqwest::redirect::Policy::none())
             .no_gzip()
-            .http1_only()
             .build()
             .context(ClientBuildSnafu)
             .map(Self)
@@ -578,13 +571,11 @@ mod tests {
         (addr, cert_pem, alpn_rx)
     }
 
-    /// `AwsSdkReqwestClient` pins the client to HTTP/1.1 (`.http1_only()`) so
-    /// it never negotiates HTTP/2 with S3, even though the `http2` feature is
-    /// compiled in. Against a TLS server offering both `h2` (preferred) and
-    /// `http/1.1`, a client that still advertised `h2` would negotiate it — so
-    /// the exchange coming back over HTTP/1.1, and the server seeing `http/1.1`
-    /// as the negotiated ALPN, together prove the pin holds. Dropping
-    /// `.http1_only()` flips ALPN to `h2` and fails both assertions.
+    /// `AwsSdkReqwestClient` pins both reqwest and its rustls ALPN to HTTP/1.1,
+    /// even though `http2` is compiled in. A TLS server offering `h2` first
+    /// would select it if the config advertised h2; a successful HTTP/1.1
+    /// exchange and server-observed HTTP/1.1 ALPN prove the pin survives
+    /// `.use_preconfigured_tls()`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn adapter_pins_http1_even_when_server_offers_h2() {
         let (addr, cert_pem, alpn_rx) = spawn_tls_server_alpn_h2_first().await;
@@ -624,5 +615,120 @@ mod tests {
             "client pinned to HTTP/1.1 must offer only http/1.1 in ALPN; \
              server offering h2+http/1.1 negotiated {negotiated:?}",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn azure_gcs_storage_builder_pins_http1_alpn() {
+        let (addr, cert_pem, alpn_rx) = spawn_tls_server_alpn_h2_first().await;
+        let mut cert_file = tempfile::NamedTempFile::new().expect("temp file");
+        cert_file.write_all(cert_pem.as_bytes()).expect("write pem");
+        cert_file.flush().expect("flush");
+
+        let config = TlsConfig {
+            custom_root_store_path: Some(cert_file.path().to_path_buf()),
+            ..Default::default()
+        };
+        // Mirrors cloud_http.rs: Azure and GCS pin reqwest to HTTP/1.1
+        // after configure_storage_client_builder returns its TLS config.
+        let client = crate::tls::client::configure_storage_client_builder(
+            reqwest::Client::builder(),
+            &config,
+            Some(&crate::tls::config::ProxyConfig::default()),
+            CrlWorker::new_lazy(),
+        )
+        .expect("configure storage TLS client")
+        .http1_only()
+        .build()
+        .expect("build storage TLS client");
+
+        let url = format!("https://127.0.0.1:{}/", addr.port());
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(10), client.get(url).send())
+                .await
+                .expect("request must not hang")
+                .expect("storage client must complete HTTP/1.1 request");
+        assert_eq!(response.version(), http::Version::HTTP_11);
+        let negotiated = alpn_rx.await.expect("server reports negotiated ALPN");
+        assert_eq!(
+            negotiated.as_deref(),
+            Some(b"http/1.1".as_ref()),
+            "storage client must not offer h2 when reqwest sends HTTP/1.1"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn general_client_advertises_h2_when_server_offers_it() {
+        let (addr, cert_pem, alpn_rx) = spawn_tls_server_alpn_h2_first().await;
+        let mut cert_file = tempfile::NamedTempFile::new().expect("temp file");
+        cert_file.write_all(cert_pem.as_bytes()).expect("write pem");
+        cert_file.flush().expect("flush");
+
+        let config = TlsConfig {
+            custom_root_store_path: Some(cert_file.path().to_path_buf()),
+            ..Default::default()
+        };
+        let client = crate::tls::create_tls_client_with_proxy(
+            config,
+            Some(&crate::tls::config::ProxyConfig::default()),
+            CrlWorker::new_lazy(),
+        )
+        .expect("build connection-level TLS client");
+
+        // The fixture deliberately responds with HTTP/1.1 even after selecting
+        // h2; this test checks the negotiated TLS ALPN, not its HTTP response.
+        let url = format!("https://127.0.0.1:{}/", addr.port());
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), client.get(url).send())
+            .await
+            .expect("TLS handshake must not hang");
+        let negotiated = alpn_rx.await.expect("server reports negotiated ALPN");
+        assert_eq!(
+            negotiated.as_deref(),
+            Some(b"h2".as_ref()),
+            "general reqwest client must continue offering h2 before http/1.1"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn diagnostic_http10_probe_does_not_negotiate_h2() {
+        let (addr, cert_pem, alpn_rx) = spawn_tls_server_alpn_h2_first().await;
+        let mut cert_file = tempfile::NamedTempFile::new().expect("temp file");
+        cert_file.write_all(cert_pem.as_bytes()).expect("write pem");
+        cert_file.flush().expect("flush");
+
+        let (_, diagnostic) = crate::tls::client::build_tls_client_and_rustls_config(
+            &TlsConfig {
+                custom_root_store_path: Some(cert_file.path().to_path_buf()),
+                ..Default::default()
+            },
+            Some(&crate::tls::config::ProxyConfig::default()),
+            CrlWorker::new_lazy(),
+            None,
+            true,
+        )
+        .expect("build connection with diagnostic config");
+        let connector = tokio_rustls::TlsConnector::from(diagnostic.expect("diagnostic config"));
+        let server_name = rustls::pki_types::ServerName::try_from("127.0.0.1".to_string())
+            .expect("valid IP server name");
+        let tcp = tokio::net::TcpStream::connect(addr).await.expect("connect");
+        let mut tls = connector
+            .connect(server_name, tcp)
+            .await
+            .expect("diagnostic TLS handshake");
+        let negotiated = alpn_rx.await.expect("server reports negotiated ALPN");
+        assert!(
+            negotiated.is_none() || negotiated.as_deref() == Some(b"http/1.1".as_ref()),
+            "the HTTP/1.0 diagnostic must not send plaintext HTTP to an h2 connection"
+        );
+
+        tls.write_all(b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write HTTP/1.0 diagnostic probe");
+        let mut response = [0u8; 128];
+        let size =
+            tokio::time::timeout(std::time::Duration::from_secs(10), tls.read(&mut response))
+                .await
+                .expect("diagnostic read must not hang")
+                .expect("read diagnostic response");
+        assert!(response[..size].starts_with(b"HTTP/1.1 200 OK"));
     }
 }

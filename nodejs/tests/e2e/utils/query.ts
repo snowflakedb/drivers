@@ -1,6 +1,12 @@
-import { onTestFinished } from 'vitest';
+import { expect, onTestFinished } from 'vitest';
 import type { Connection } from '../../types/sdk-types.js';
 import { executeAsync } from './index.js';
+
+export async function verifySimpleQuery(connection: Connection): Promise<void> {
+  const { rows } = await executeAsync(connection, 'SELECT 1');
+  expect(rows).toHaveLength(1);
+  expect(Object.values(rows[0])).toEqual([1]);
+}
 
 export async function getSessionParameterFromServer(
   connection: Connection,
