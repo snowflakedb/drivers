@@ -1,5 +1,20 @@
 This document outlines API behavior changes that should be reviewed or addressed in the new driver.
 
+### Browser authentication coordination
+
+TODO: To be verified.
+
+Old Node (`lib/authentication/auth_coordinator.ts`) keeps one in-flight external-browser or authorization-code login per `host:username:authenticator`. Concurrent connects, including a pool acquire, share that flow's token or error and each still creates its own session. This runs with temporary-credential storage on or off.
+
+Core's prompt lock runs when temporary-credential storage is on (the default) and `disable_parallel_user_prompt` is true (the default). One connect opens the browser and stores the token; the others wait and reuse it. A successful login therefore opens one browser on both drivers.
+
+They differ in two cases:
+
+- **Temporary-credential storage off.** Core takes no lock. Each concurrent connect sends its own authenticator-request and opens its own browser. Old Node still shares one browser flow.
+- **The first login fails or times out, storage on.** Core stores nothing, releases the lock, and each waiting connect opens its own browser. Old Node gives every waiting connect that same error, so the failed flow is not tried again.
+
+Decide whether those two cases should keep core's separate retry or share one token or error the way old Node does.
+
 ### API Argument Validation
 
 In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.

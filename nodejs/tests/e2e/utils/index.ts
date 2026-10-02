@@ -83,6 +83,15 @@ export function createTestConnection(overrides: Partial<ConnectionOptions> = {})
   });
 }
 
+/**
+ * Connects and rejects on every connect error, on both drivers (BD#11).
+ *
+ * - Old driver: `connectAsync` sends some errors only to its callback (the promise still
+ *   resolves) and throws others, so awaiting it misses errors. `.connect()` delivers both kinds.
+ * - New driver: `connectAsync()` rejects on every error.
+ *
+ * Use this only for tests that assert a connect error.
+ */
 export async function connectAsyncWithErrorBD(connection: Connection): Promise<void> {
   if (isRunningNewDriverWithBD('BD#11')) {
     await connection.connectAsync();
