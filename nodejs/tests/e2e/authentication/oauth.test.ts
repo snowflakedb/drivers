@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
 import getTestParameter, { getTestParametersFromSameSource } from '../utils/getTestParameter.js';
 import { baseConnectionOptions, executeAsync, snowflake } from '../utils/index.js';
-import { destroyConnectionAfterTest, NOT_IN_AUTH_TEST_CONTAINER } from './utils.js';
+import { destroyConnectionAfterTest } from './utils.js';
 
 const OKTA_USER_KEY = 'SNOWFLAKE_TEST_OKTA_USER';
 const OKTA_PASSWORD_KEY = 'SNOWFLAKE_TEST_OKTA_PASSWORD';
@@ -55,7 +55,7 @@ async function mintOauthAccessToken(user: string, password: string): Promise<str
   return payload.access_token;
 }
 
-describe.skipIf(NOT_IN_AUTH_TEST_CONTAINER)('OAuth authentication', () => {
+describe('OAuth authentication', { tags: ['requires_auth_test_container'] }, () => {
   it('should authenticate with a pre-acquired access token', async () => {
     // Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied via `token=`
     const { user, password } = requireOktaCredentials();

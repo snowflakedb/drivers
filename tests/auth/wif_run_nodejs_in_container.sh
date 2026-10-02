@@ -38,5 +38,8 @@ if [[ ! -f "$TESTS_DIR/nodejs_test_args" ]]; then
 fi
 mapfile -d '' -t vitest_args < "$TESTS_DIR/nodejs_test_args"
 
-log "Starting npm run ${NPM_SCRIPT} ${vitest_args[*]}"
-npm run "${NPM_SCRIPT}" -- tests/e2e/authentication/workload-identity.test.ts "${vitest_args[@]}"
+# --tags-filter always applies so this job selects the WIF suite. The file
+# path still limits the run to that file; extra args (for example -t) come
+# from nodejs_test_args.
+log "Starting npm run ${NPM_SCRIPT} -- --tags-filter requires_wif_vm tests/e2e/authentication/workload-identity.test.ts ${vitest_args[*]}"
+npm run "${NPM_SCRIPT}" -- --tags-filter requires_wif_vm tests/e2e/authentication/workload-identity.test.ts "${vitest_args[@]}"

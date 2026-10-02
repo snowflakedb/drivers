@@ -35,7 +35,6 @@ import {
   TERMINATED_QUERY,
   cleanBrowserProcesses,
   deliverBrowserCallbackAfter,
-  NOT_IN_AUTH_TEST_CONTAINER,
   patchOldDriverHttpsProtocol,
   requireOktaCredentials,
   waitForChromium,
@@ -296,62 +295,66 @@ describe('EXTERNALBROWSER authentication', () => {
       });
     });
 
-    describe.skipIf(NOT_IN_AUTH_TEST_CONTAINER)('Live external browser authentication', () => {
-      let tokenCacheDir: TempDir;
+    describe(
+      'Live external browser authentication',
+      { tags: ['requires_auth_test_container'] },
+      () => {
+        let tokenCacheDir: TempDir;
 
-      beforeEach(() => {
-        tokenCacheDir = new TempDir();
-        vi.stubEnv('SF_TEMPORARY_CREDENTIAL_CACHE_DIR', tokenCacheDir.path);
-      });
-
-      afterEach(async () => {
-        vi.unstubAllEnvs();
-        tokenCacheDir.cleanup();
-        await cleanBrowserProcesses();
-      });
-
-      it('should authenticate with external browser via Okta IdP', async () => {
-        // Given External browser authentication is configured with valid Okta user
-        const { user, password } = requireOktaCredentials();
-        const connection = createExternalBrowserConnection(user);
-
-        // When Trying to Connect with headless browser providing valid credentials
-        await connectWithBrowserAutomation(() => connection.connectAsync(), user, password);
-        destroyConnectionAfterTest(connection);
-
-        // Then Login is successful and simple query can be executed
-        await verifySimpleQuery(connection);
-      });
-
-      it('should reuse cached ID token without browser interaction', async () => {
-        // Given External browser authentication is configured with caching enabled and a token has been cached from a previous connection
-        const { user, password } = requireOktaCredentials();
-        const browserLoginConnection = createExternalBrowserConnection(user, {
-          clientStoreTemporaryCredential: true,
+        beforeEach(() => {
+          tokenCacheDir = new TempDir();
+          vi.stubEnv('SF_TEMPORARY_CREDENTIAL_CACHE_DIR', tokenCacheDir.path);
         });
-        await connectWithBrowserAutomation(
-          () => browserLoginConnection.connectAsync(),
-          user,
-          password,
-        );
-        destroyConnectionAfterTest(browserLoginConnection);
-        await verifySimpleQuery(browserLoginConnection);
 
-        // When Trying to Connect without browser interaction
-        const cachedTokenConnection = createExternalBrowserConnection(user, {
-          clientStoreTemporaryCredential: true,
-          browserActionTimeout: 2000,
-          openExternalBrowserCallback: () => {
-            throw new Error('Browser should not be launched');
-          },
+        afterEach(async () => {
+          vi.unstubAllEnvs();
+          tokenCacheDir.cleanup();
+          await cleanBrowserProcesses();
         });
-        await cachedTokenConnection.connectAsync();
-        destroyConnectionAfterTest(cachedTokenConnection);
 
-        // Then Login is successful and simple query can be executed
-        await verifySimpleQuery(cachedTokenConnection);
-      });
-    });
+        it('should authenticate with external browser via Okta IdP', async () => {
+          // Given External browser authentication is configured with valid Okta user
+          const { user, password } = requireOktaCredentials();
+          const connection = createExternalBrowserConnection(user);
+
+          // When Trying to Connect with headless browser providing valid credentials
+          await connectWithBrowserAutomation(() => connection.connectAsync(), user, password);
+          destroyConnectionAfterTest(connection);
+
+          // Then Login is successful and simple query can be executed
+          await verifySimpleQuery(connection);
+        });
+
+        it('should reuse cached ID token without browser interaction', async () => {
+          // Given External browser authentication is configured with caching enabled and a token has been cached from a previous connection
+          const { user, password } = requireOktaCredentials();
+          const browserLoginConnection = createExternalBrowserConnection(user, {
+            clientStoreTemporaryCredential: true,
+          });
+          await connectWithBrowserAutomation(
+            () => browserLoginConnection.connectAsync(),
+            user,
+            password,
+          );
+          destroyConnectionAfterTest(browserLoginConnection);
+          await verifySimpleQuery(browserLoginConnection);
+
+          // When Trying to Connect without browser interaction
+          const cachedTokenConnection = createExternalBrowserConnection(user, {
+            clientStoreTemporaryCredential: true,
+            browserActionTimeout: 2000,
+            openExternalBrowserCallback: () => {
+              throw new Error('Browser should not be launched');
+            },
+          });
+          await cachedTokenConnection.connectAsync();
+          destroyConnectionAfterTest(cachedTokenConnection);
+
+          // Then Login is successful and simple query can be executed
+          await verifySimpleQuery(cachedTokenConnection);
+        });
+      },
+    );
   });
 
   describe('WireMock EXTERNALBROWSER behavior', () => {
@@ -465,7 +468,7 @@ describe('EXTERNALBROWSER authentication', () => {
     });
   });
 
-  describe.skipIf(NOT_IN_AUTH_TEST_CONTAINER)('Live external browser timeout', () => {
+  describe('Live external browser timeout', { tags: ['requires_auth_test_container'] }, () => {
     let tokenCacheDir: TempDir;
 
     beforeEach(() => {

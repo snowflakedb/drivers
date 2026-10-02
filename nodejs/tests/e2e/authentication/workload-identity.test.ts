@@ -4,11 +4,7 @@ import { createLiveConnection } from '../utils/fixtures.js';
 import getTestParameter from '../utils/getTestParameter.js';
 import { executeAsync } from '../utils/index.js';
 
-// Runs only inside a WIF VM, because attestation needs the host's cloud
-// identity from IMDS. tests/auth/run_wif.sh sets this env in that container.
-const NOT_IN_WIF_VM = process.env.SNOWFLAKE_RUNNING_INSIDE_WIF_VM !== 'true';
-
-describe.skipIf(NOT_IN_WIF_VM)('Workload identity authentication', () => {
+describe('Workload identity authentication', { tags: ['requires_wif_vm'] }, () => {
   let WIF_PROVIDER: NonNullable<ConnectionOptions['workloadIdentityProvider']>;
 
   beforeAll(() => {
