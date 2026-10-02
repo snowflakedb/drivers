@@ -1,10 +1,10 @@
 import { request as httpRequest } from 'node:http';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Connection, SnowflakeError } from '../../types/sdk-types.js';
 import {
   connectAsyncWithErrorBD,
-  destroyConnectionAsync,
   IS_RUNNING_FOR_OLD_DRIVER,
+  isRunningNewDriverWithBD,
   snowflake,
 } from '../utils/index.js';
 import {
@@ -13,6 +13,7 @@ import {
   logoutSuccess,
   WiremockServer,
 } from '../utils/wiremock/index.js';
+import { destroyConnectionAfterTest } from './utils.js';
 
 function completeSsoLoopback(loginUrl: string): Promise<void> {
   const callbackPort = new URL(loginUrl).searchParams.get('browser_mode_redirect_port');
@@ -53,7 +54,6 @@ describe('openExternalBrowserCallback', () => {
 
   beforeEach(async () => {
     await wiremock.reset();
-    await wiremock.stub(logoutSuccess());
   });
 
   // The legacy driver HTTP-GETs the SSO URL (the IdP host) as part of login.
@@ -63,6 +63,7 @@ describe('openExternalBrowserCallback', () => {
     async () => {
       await wiremock.stub(authenticatorRequestSuccess());
       await wiremock.stub(loginSuccess());
+      await wiremock.stub(logoutSuccess());
 
       const seen: string[] = [];
       let resolveLoopback!: () => void;
@@ -81,10 +82,8 @@ describe('openExternalBrowserCallback', () => {
           completeSsoLoopback(url).then(resolveLoopback, rejectLoopback);
         },
       }) as Connection;
-      onTestFinished(async () => {
-        await destroyConnectionAsync(connection);
-      });
       await Promise.all([connection.connectAsync(), loopback]);
+      destroyConnectionAfterTest(connection);
 
       expect(seen).toHaveLength(1);
       expect(seen[0]).toMatch(/^https:\/\/idp\.snowflake\.com\/sso\?/);
@@ -94,24 +93,29 @@ describe('openExternalBrowserCallback', () => {
   it('should fail connect when openExternalBrowserCallback throws', async () => {
     await wiremock.stub(authenticatorRequestSuccess());
 
+    const callbackErrorMessage = "you don't have a browser";
+
     const connection = snowflake.createConnection({
       account: 'testaccount',
       username: 'alice',
       authenticator: 'EXTERNALBROWSER',
       ...wiremock.connectionOptions,
-      ...(IS_RUNNING_FOR_OLD_DRIVER ? { disableConsoleLogin: false } : {}),
+      ...(!isRunningNewDriverWithBD('BD#63') ? { disableConsoleLogin: false } : {}),
       openExternalBrowserCallback: () => {
-        throw new Error("you don't have a browser");
+        throw new Error(callbackErrorMessage);
       },
     }) as Connection;
-    onTestFinished(async () => {
-      if (connection.isUp()) {
-        await destroyConnectionAsync(connection);
-      }
-    });
 
     await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
-      message: expect.stringContaining("you don't have a browser"),
+      // The new driver appends the thrown error's stack, so the path is not part of the
+      // pinned text. The message starts with this exact prefix.
+      message: isRunningNewDriverWithBD('BD#67')
+        ? expect.stringMatching(
+            new RegExp(
+              `^Failed to login: External browser SSO failed: Error: ${callbackErrorMessage}\n`,
+            ),
+          )
+        : callbackErrorMessage,
     } satisfies Partial<SnowflakeError>);
   });
 });

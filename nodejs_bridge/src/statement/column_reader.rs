@@ -12,14 +12,13 @@ use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use crate::session_params::KnownSessionParameters;
 use sf_output_format::datetime::{DateTimeFormat, DateTimeValue, Zone};
-use sf_types::{ReadArrowError, ReadArrowType};
+use sf_types::{
+    ReadArrowError, ReadArrowType, SnowflakeTimestampLtz, SnowflakeTimestampNtz,
+    SnowflakeTimestampTz,
+};
 use std::borrow::Cow;
 use std::sync::Arc;
 
-/// Snowflake's maximum TIME fractional-second precision (`TIME(0)` ..
-/// `TIME(9)`). A local naming choice, not an established convention —
-/// `odbc`'s and `sf_core`'s equivalent arithmetic leave this bare.
-const MAX_TIME_SCALE: u32 = 9;
 /// Seconds in a day — the exclusive upper bound for a valid
 /// `secs_since_midnight` component of the `secs * 10^scale + frac` TIME
 /// encoding (see [`validate_time_range`]).
@@ -46,18 +45,17 @@ pub(crate) enum ColumnReader {
     Date(PrimitiveArray<Date32Type>),
     TimeI32(PrimitiveArray<Int32Type>, TimeMeta),
     TimeI64(PrimitiveArray<Int64Type>, TimeMeta),
+    TimestampTz(StructArray, u32),
+    TimestampLtzStruct(StructArray, u32),
+    TimestampLtzI64(PrimitiveArray<Int64Type>, u32),
+    TimestampNtzStruct(StructArray, u32),
+    TimestampNtzI64(PrimitiveArray<Int64Type>, u32),
     Variant(StringArray),
     Text(StringArray),
-    Fixed {
-        values: IntColumn,
-        scale: u32,
-    },
+    Fixed(IntColumn, u32),
     RealF32(Float32Array),
     RealF64(Float64Array),
-    Decfloat {
-        array: StructArray,
-        precision: usize,
-    },
+    Decfloat(StructArray, usize),
     Vector(FixedSizeListArray),
     IntervalYearMonth(IntColumn),
     IntervalDayTime(IntColumn),
@@ -103,10 +101,10 @@ impl ColumnReader {
             }
             Some("FIXED") => {
                 let scale = scale_from_metadata(field)?;
-                Ok(Self::Fixed {
-                    values: IntColumn::from_column(column, "FIXED", field.name())?,
+                Ok(Self::Fixed(
+                    IntColumn::from_column(column, "FIXED", field.name())?,
                     scale,
-                })
+                ))
             }
             Some("DATE") => {
                 let array = column
@@ -119,23 +117,7 @@ impl ColumnReader {
                 Ok(Self::Date(array))
             }
             Some("TIME") => {
-                let scale: u32 = field
-                    .metadata()
-                    .get("scale")
-                    .ok_or_else(|| format!("column {:?} is missing scale metadata", field.name()))?
-                    .parse()
-                    .map_err(|e| {
-                        format!(
-                            "column {:?} has non-numeric scale metadata: {e}",
-                            field.name()
-                        )
-                    })?;
-                if scale > MAX_TIME_SCALE {
-                    return Err(format!(
-                        "column {:?} has TIME scale {scale} exceeding maximum of {MAX_TIME_SCALE}",
-                        field.name()
-                    ));
-                }
+                let scale = scale_from_metadata(field)?;
                 let meta = TimeMeta {
                     scale,
                     format: DateTimeFormat::compile(&session_params.time_output_format),
@@ -193,7 +175,7 @@ impl ColumnReader {
                 let precision = usize_from_metadata(field, "precision")?;
                 sf_types::DecfloatColumn::try_new(&array)
                     .map_err(|e| format!("DECFLOAT column: {e}"))?;
-                Ok(Self::Decfloat { array, precision })
+                Ok(Self::Decfloat(array, precision))
             }
             Some("VECTOR") => {
                 let child_type = match column.data_type() {
@@ -233,6 +215,60 @@ impl ColumnReader {
                 "INTERVAL_DAY_TIME",
                 field.name(),
             )?)),
+            Some("TIMESTAMP_TZ") => {
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Struct(_) => {
+                        let array = column
+                            .as_any()
+                            .downcast_ref::<StructArray>()
+                            .cloned()
+                            .ok_or_else(|| {
+                                "Arrow column could not be downcast to StructArray for TIMESTAMP_TZ"
+                                    .to_string()
+                            })?;
+                        Ok(Self::TimestampTz(array, scale))
+                    }
+                    other => Err(format!(
+                        "column {:?} has unsupported TIMESTAMP_TZ physical type {other:?}",
+                        field.name()
+                    )),
+                }
+            }
+            Some("TIMESTAMP_LTZ") => {
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Struct(_) => Ok(Self::TimestampLtzStruct(
+                        downcast_array(column, "StructArray")?,
+                        scale,
+                    )),
+                    DataType::Int64 => Ok(Self::TimestampLtzI64(
+                        downcast_array(column, "Int64Array")?,
+                        scale,
+                    )),
+                    other => Err(format!(
+                        "column {:?} has unsupported TIMESTAMP_LTZ physical type {other:?}",
+                        field.name()
+                    )),
+                }
+            }
+            Some("TIMESTAMP_NTZ") => {
+                let scale = scale_from_metadata(field)?;
+                match column.data_type() {
+                    DataType::Struct(_) => Ok(Self::TimestampNtzStruct(
+                        downcast_array(column, "StructArray")?,
+                        scale,
+                    )),
+                    DataType::Int64 => Ok(Self::TimestampNtzI64(
+                        downcast_array(column, "Int64Array")?,
+                        scale,
+                    )),
+                    other => Err(format!(
+                        "column {:?} has unsupported TIMESTAMP_NTZ physical type {other:?}",
+                        field.name()
+                    )),
+                }
+            }
             Some(logical_type) => Err(format!(
                 "no decoder registered for logicalType {logical_type:?}"
             )),
@@ -261,7 +297,7 @@ impl ColumnReader {
                     });
                 JsCell::Buffer(value)
             }),
-            Self::Fixed { values, scale } => read_int(values, row_index, |mantissa| {
+            Self::Fixed(values, scale) => read_int(values, row_index, |mantissa| {
                 decimal_string(mantissa, *scale)
             }),
             Self::Date(array) => read_cell(array, row_index, || {
@@ -302,7 +338,7 @@ impl ColumnReader {
             }),
             Self::RealF32(array) => read_real(array, row_index),
             Self::RealF64(array) => read_real(array, row_index),
-            Self::Decfloat { array, precision } => read_decfloat(array, row_index, *precision),
+            Self::Decfloat(array, precision) => read_decfloat(array, row_index, *precision),
             Self::Vector(array) => read_cell(array, row_index, || {
                 // `read_cell` already dropped NULL. `for_field` admits only
                 // Int32/Float32 children, so `sf_types` cannot return
@@ -331,8 +367,61 @@ impl ColumnReader {
             }),
             Self::IntervalYearMonth(values) => read_int(values, row_index, |v| v.to_string()),
             Self::IntervalDayTime(values) => read_int(values, row_index, |v| v.to_string()),
+            Self::TimestampTz(array, scale) => read_cell(array, row_index, || {
+                let instant = SnowflakeTimestampTz { scale: *scale }
+                    .read_arrow_type(array, row_index)
+                    .unwrap_or_else(|_| {
+                        unreachable!("non-null TIMESTAMP_TZ row {row_index} must decode")
+                    });
+                let utc = instant.utc.and_utc();
+                JsCell::Timestamp {
+                    epoch_millis: utc.timestamp_millis() as f64,
+                    nanos: utc.timestamp_subsec_nanos(),
+                    offset_minutes: Some(instant.offset_minutes),
+                }
+            }),
+            Self::TimestampLtzStruct(array, scale) => read_timestamp_ltz(array, row_index, *scale),
+            Self::TimestampLtzI64(array, scale) => read_timestamp_ltz(array, row_index, *scale),
+            Self::TimestampNtzStruct(array, scale) => read_timestamp_ntz(array, row_index, *scale),
+            Self::TimestampNtzI64(array, scale) => read_timestamp_ntz(array, row_index, *scale),
         }
     }
+}
+
+fn read_timestamp_ltz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
+where
+    A: Array,
+    SnowflakeTimestampLtz: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let utc = SnowflakeTimestampLtz { scale }
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_LTZ row {row_index} must decode"))
+            .and_utc();
+        JsCell::Timestamp {
+            epoch_millis: utc.timestamp_millis() as f64,
+            nanos: utc.timestamp_subsec_nanos(),
+            offset_minutes: None,
+        }
+    })
+}
+
+fn read_timestamp_ntz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
+where
+    A: Array,
+    SnowflakeTimestampNtz: ReadArrowType<A>,
+{
+    read_cell(array, row_index, || {
+        let utc = SnowflakeTimestampNtz { scale }
+            .read_arrow_type(array, row_index)
+            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_NTZ row {row_index} must decode"))
+            .and_utc();
+        JsCell::Timestamp {
+            epoch_millis: utc.timestamp_millis() as f64,
+            nanos: utc.timestamp_subsec_nanos(),
+            offset_minutes: None,
+        }
+    })
 }
 
 /// Validates every non-null cell in a TIME column's raw array is a legal
@@ -477,6 +566,7 @@ mod tests {
     fn session_params(time_format: &str) -> Arc<KnownSessionParameters> {
         Arc::new(KnownSessionParameters {
             time_output_format: time_format.to_string(),
+            timestamp_tz_output_format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM".to_string(),
             ..KnownSessionParameters::defaults()
         })
     }
@@ -807,21 +897,6 @@ mod tests {
     }
 
     #[test]
-    fn for_field_rejects_scale_above_nine() {
-        let field = time_field("10");
-        let array = Int32Array::from(vec![Some(0)]);
-        let err = expect_err(ColumnReader::for_field(
-            &field,
-            &array,
-            &session_params("HH24:MI:SS"),
-        ));
-        assert!(
-            err.contains("scale 10"),
-            "error should name the invalid scale, got: {err}"
-        );
-    }
-
-    #[test]
     fn for_field_rejects_missing_scale_metadata() {
         let mut metadata = HashMap::new();
         metadata.insert("logicalType".to_string(), "TIME".to_string());
@@ -923,13 +998,7 @@ mod tests {
         let array = Int64Array::from(vec![Some(42), Some(-1), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(
-                reader,
-                ColumnReader::Fixed {
-                    values: IntColumn::I64(_),
-                    ..
-                }
-            ),
+            matches!(reader, ColumnReader::Fixed(IntColumn::I64(_), _)),
             "Int64 FIXED should route to the Fixed arm on an I64 IntColumn"
         );
         assert_eq!(reader.read(0), str_cell("42"));
@@ -954,13 +1023,7 @@ mod tests {
         let i8 = Int8Array::from(vec![Some(42i8), None]);
         let i8_reader = reader(&i8_field, &i8);
         assert!(
-            matches!(
-                i8_reader,
-                ColumnReader::Fixed {
-                    values: IntColumn::I8(_),
-                    ..
-                }
-            ),
+            matches!(i8_reader, ColumnReader::Fixed(IntColumn::I8(_), _)),
             "Int8 FIXED should keep an I8 IntColumn, not widen to Int64"
         );
         assert_eq!(i8_reader.read(0), str_cell("42"));
@@ -970,13 +1033,7 @@ mod tests {
         let i16 = Int16Array::from(vec![Some(123i16)]);
         let i16_reader = reader(&i16_field, &i16);
         assert!(
-            matches!(
-                i16_reader,
-                ColumnReader::Fixed {
-                    values: IntColumn::I16(_),
-                    ..
-                }
-            ),
+            matches!(i16_reader, ColumnReader::Fixed(IntColumn::I16(_), _)),
             "Int16 FIXED should keep an I16 IntColumn, not widen to Int64"
         );
         assert_eq!(i16_reader.read(0), str_cell("1.23"));
@@ -985,13 +1042,7 @@ mod tests {
         let i32 = Int32Array::from(vec![Some(-1)]);
         let i32_reader = reader(&i32_field, &i32);
         assert!(
-            matches!(
-                i32_reader,
-                ColumnReader::Fixed {
-                    values: IntColumn::I32(_),
-                    ..
-                }
-            ),
+            matches!(i32_reader, ColumnReader::Fixed(IntColumn::I32(_), _)),
             "Int32 FIXED should keep an I32 IntColumn, not widen to Int64"
         );
         assert_eq!(i32_reader.read(0), str_cell("-1"));
@@ -1005,13 +1056,7 @@ mod tests {
             .unwrap();
         let reader = reader(&field, &array);
         assert!(
-            matches!(
-                reader,
-                ColumnReader::Fixed {
-                    values: IntColumn::Decimal(_),
-                    ..
-                }
-            ),
+            matches!(reader, ColumnReader::Fixed(IntColumn::Decimal(_), _)),
             "Decimal128 FIXED should route to the Fixed arm on a Decimal IntColumn"
         );
         assert_eq!(reader.read(0), str_cell("123.45"));
@@ -1075,7 +1120,7 @@ mod tests {
         );
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::Decfloat { .. }),
+            matches!(reader, ColumnReader::Decfloat(_, _)),
             "DECFLOAT should route to the Decfloat arm"
         );
         assert_eq!(reader.read(0), str_cell("123.456"));
@@ -1178,6 +1223,115 @@ mod tests {
         assert_eq!(
             reader(&field, &array).read(0),
             str_cell("9223372036854775808")
+        );
+    }
+
+    fn tz_2col(scaled_epoch: i64, offset_minutes: i32) -> StructArray {
+        use arrow::array::ArrayRef;
+        use arrow::datatypes::Int32Type;
+        let epoch_col: ArrayRef =
+            Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(scaled_epoch)]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(
+            offset_minutes + sf_types::TZ_OFFSET_BIAS_MINUTES,
+        )]));
+        StructArray::from(vec![
+            (
+                Arc::new(Field::new("epoch", DataType::Int64, false)),
+                epoch_col,
+            ),
+            (
+                Arc::new(Field::new("tz_offset", DataType::Int32, false)),
+                tz_col,
+            ),
+        ])
+    }
+
+    #[test]
+    fn timestamp_tz_reads_parts_and_null() {
+        use arrow::array::ArrayRef;
+        use arrow::datatypes::Int32Type;
+
+        let valid = tz_2col(1_453_386_764, -480);
+        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![
+            Some(1_453_386_764),
+            None,
+        ]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![
+            Some(-480 + sf_types::TZ_OFFSET_BIAS_MINUTES),
+            None,
+        ]));
+        let array = StructArray::new(
+            valid.fields().clone(),
+            vec![epoch_col, tz_col],
+            Some(vec![true, false].into()),
+        );
+        let field = field("TIMESTAMP_TZ", array.data_type().clone(), &[("scale", "0")]);
+        let reader = reader(&field, &array);
+        assert!(
+            matches!(reader, ColumnReader::TimestampTz(_, _)),
+            "TIMESTAMP_TZ should route to the TimestampTz arm"
+        );
+        match reader.read(0) {
+            JsCell::Timestamp {
+                epoch_millis,
+                offset_minutes,
+                nanos,
+            } => {
+                assert_eq!(epoch_millis, 1_453_386_764_000.0);
+                assert_eq!(offset_minutes, Some(-480));
+                assert_eq!(nanos, 0);
+            }
+            other => panic!("expected TimestampTz cell, got {other:?}"),
+        }
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_ltz_reads_int64_parts_and_null() {
+        let field = field("TIMESTAMP_LTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500), None]);
+        let reader = reader(&field, &array);
+        assert!(matches!(reader, ColumnReader::TimestampLtzI64(_, 3)));
+        assert_eq!(
+            reader.read(0),
+            JsCell::Timestamp {
+                epoch_millis: -1_500.0,
+                nanos: 500_000_000,
+                offset_minutes: None,
+            }
+        );
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_ntz_reads_int64_parts_and_null() {
+        let field = field("TIMESTAMP_NTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500), None]);
+        let reader = reader(&field, &array);
+        assert!(matches!(reader, ColumnReader::TimestampNtzI64(_, 3)));
+        assert_eq!(
+            reader.read(0),
+            JsCell::Timestamp {
+                epoch_millis: -1_500.0,
+                nanos: 500_000_000,
+                offset_minutes: None,
+            }
+        );
+        assert_eq!(reader.read(1), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_tz_rejects_flat_int64_physical_type() {
+        let field = field("TIMESTAMP_TZ", DataType::Int64, &[("scale", "9")]);
+        let array = Int64Array::from(vec![Some(0i64)]);
+        let err = expect_err(ColumnReader::for_field(
+            &field,
+            &array,
+            &session_params("HH24:MI:SS"),
+        ));
+        assert!(
+            err.contains("unsupported TIMESTAMP_TZ physical type"),
+            "got: {err}"
         );
     }
 }

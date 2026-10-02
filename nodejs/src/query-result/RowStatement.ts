@@ -5,7 +5,9 @@ import type {
   Column,
   FetchRowsOptions,
   RowOptions,
+  SessionState,
   StatementCallback,
+  StatementStatus,
   StreamOptions,
 } from './types.js';
 import { createRowStream } from './rows.js';
@@ -48,6 +50,10 @@ export class RowStatement {
     return this.#multiSqlTexts ? this.#multiSqlTexts[this.#currentSqlIndex] : this.#sqlText;
   }
 
+  getStatus(): StatementStatus {
+    return this.#core.getStatus();
+  }
+
   getNumRows(): number | undefined {
     return this.#core.getNumRows() ?? undefined;
   }
@@ -62,6 +68,10 @@ export class RowStatement {
 
   getRequestId(): string | undefined {
     return this.#core.getRequestId() ?? undefined;
+  }
+
+  getSessionState(): SessionState | undefined {
+    return this.#core.getSessionState() ?? undefined;
   }
 
   getColumns(): Column[] | undefined {

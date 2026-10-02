@@ -48,6 +48,7 @@ New features:
 Changes:
 
 - Changed FIPS builds to reject PBES2/3DES-encrypted private keys with conversion guidance instead of decrypting them outside AWS-LC. Standard builds retain legacy 3DES support; FIPS builds continue to accept AES-encrypted PKCS#8 keys.
+- Changed verified connection and cloud-storage TLS clients to select the configured crypto module's rustls provider explicitly, including CRL-enabled clients, instead of depending on process-global provider initialization order. Inverted TLS version bounds now fail rather than restoring default protocols. (snowflakedb/drivers#1356)
 - Routed first-party SHA-256 hashing for CRL cache filenames, token-cache keys, S3 credential fingerprints, and certificate-name map keys through AWS-LC. Their stored key formats remain unchanged. (snowflakedb/drivers#1352)
 - Improved GCS PUT throughput by streaming each file in one request instead of sending sequential chunks. (snowflakedb/drivers#2267)
 - Changed `connection_is_usable` to report a connection as terminated once the server has said this session cannot be recovered (GS 390111 gone or 390117 closed, on a query, heartbeat, or token-request RENEW). Other RENEW refusals, and a renewal that fails to reach the server, leave the connection alone. The background heartbeat task stops rather than beating such a session. The error each operation returns is unchanged. (snowflakedb/drivers#2149)
@@ -95,6 +96,7 @@ Bug fixes:
 
 Internal improvements:
 
+- Added warehouse, database, schema, and role names from each query response onto `ResultSetDescriptor`, so a wrapper can read that statement's session snapshot instead of only the connection cache. (snowflakedb/drivers#2352)
 - Replaced the boolean-token matches that already agreed with three named parsers in `sf_core::utils`, one per accepted token set. `SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS` now uses the shared `env_flag` parser (`true`/`1`), the same as the other process env flags. (snowflakedb/drivers#2178)
 - Added a `stage_binding_disabled` telemetry event recorded once per connection, the first time `CREATE STAGE` fails for the session-scoped array-bind stage. Previously ODBC alone reported a similar event on every statement that subsequently retried with inline JSON bindings. (snowflakedb/drivers#2205)
 - Fixed `statement_execute_async` missing a session-tagged tracing span, which silently dropped telemetry (including `stage_binding_disabled`) emitted on the JDBC async-execute and Python `execute_async()` path. (snowflakedb/drivers#2231)

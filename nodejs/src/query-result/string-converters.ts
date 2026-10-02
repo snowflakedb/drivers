@@ -1,5 +1,10 @@
 import type { CellConverter, ConverterFactory } from './types.js';
-import { CoreDateFormatter } from '../core/index.js';
+import {
+  dateConverter,
+  timestampLtzConverter,
+  timestampNtzConverter,
+  timestampTzConverter,
+} from './value-converters.js';
 
 // TODO: measure building these strings in the bridge instead of here
 
@@ -33,10 +38,17 @@ export const realAsStringConverter: CellConverter = (value) => {
 export const binaryAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : (value as Buffer).toString('hex').toUpperCase();
 
-export const createDateAsStringConverter: ConverterFactory = (_column, { dateOutputFormat }) => {
-  const formatter = new CoreDateFormatter(dateOutputFormat);
-  return (value) => (value === null ? NULL_AS_STRING : formatter.format(value as Date));
-};
-
 export const vectorAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : JSON.stringify(value);
+
+const temporalAsStringConverter =
+  (toDate: ConverterFactory): ConverterFactory =>
+  (column, params) => {
+    const convert = toDate(column, params);
+    return (value) => (value === null ? NULL_AS_STRING : (convert(value) as Date).toJSON());
+  };
+
+export const dateAsStringConverter = temporalAsStringConverter(dateConverter);
+export const timestampTzAsStringConverter = temporalAsStringConverter(timestampTzConverter);
+export const timestampLtzAsStringConverter = temporalAsStringConverter(timestampLtzConverter);
+export const timestampNtzAsStringConverter = temporalAsStringConverter(timestampNtzConverter);

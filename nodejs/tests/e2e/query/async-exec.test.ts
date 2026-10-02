@@ -59,11 +59,13 @@ describe('Async Query Execution', () => {
       expect(statement.getColumns()).toBeUndefined();
       expect(statement.getColumn(0)).toBeUndefined();
       expect(statement.getColumn('N')).toBeUndefined();
+      expect(statement.getSessionState()).toBeUndefined();
     } else {
       expect(() => statement.getNumRows()).toThrow(TypeError);
       expect(() => statement.getColumns()).toThrow(TypeError);
       expect(() => statement.getColumn(0)).toThrow(TypeError);
       expect(() => statement.getColumn('N')).toThrow(TypeError);
+      expect(() => statement.getSessionState()).toThrow(TypeError);
     }
   });
 

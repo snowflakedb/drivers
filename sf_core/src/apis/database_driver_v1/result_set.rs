@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::connection::{Connection, RefreshContext};
+use super::connection::{Connection, FinalSessionNames, RefreshContext};
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor, WrapperPresets};
 use super::query::{
@@ -56,6 +56,7 @@ pub struct ResultSetDescriptor {
     pub number_of_binds: i32,
     pub array_bind_supported: bool,
     pub binds: Vec<ColumnMetadata>,
+    pub final_session_names: FinalSessionNames,
 }
 
 /// A result set handle paired with its descriptor.
@@ -346,6 +347,7 @@ pub(super) fn response_to_descriptor(
         number_of_binds: data.number_of_binds.unwrap_or(0),
         array_bind_supported: data.array_bind_supported.unwrap_or(false),
         binds,
+        final_session_names: FinalSessionNames::from(data),
     }
 }
 
@@ -747,6 +749,7 @@ impl DatabaseDriverV1 {
             number_of_binds: 0,
             array_bind_supported: false,
             binds: Vec::new(),
+            final_session_names: FinalSessionNames::default(),
         };
 
         let reader_ctx = ReaderContext {
@@ -1043,6 +1046,7 @@ mod tests {
             number_of_binds: 0,
             array_bind_supported: false,
             binds: Vec::new(),
+            final_session_names: FinalSessionNames::default(),
         }
     }
 
@@ -1250,6 +1254,39 @@ mod tests {
         let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
         let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
         assert_eq!(descriptor.query_result_format, None);
+    }
+
+    #[test]
+    fn response_to_descriptor_copies_final_session_names() {
+        let json = r#"{
+            "queryResultFormat": "json",
+            "finalDatabaseName": "MY_DB",
+            "finalSchemaName": "PUBLIC",
+            "finalWarehouseName": "COMPUTE_WH",
+            "finalRoleName": "SYSADMIN",
+            "rowset": [["1"]],
+            "rowtype": [
+                {"name": "ID", "type": "FIXED", "nullable": false, "precision": 38, "scale": 0}
+            ]
+        }"#;
+        let data: Data = serde_json::from_str(json).expect("fixture must deserialize");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        assert_eq!(
+            descriptor.final_session_names.database.as_deref(),
+            Some("MY_DB")
+        );
+        assert_eq!(
+            descriptor.final_session_names.schema.as_deref(),
+            Some("PUBLIC")
+        );
+        assert_eq!(
+            descriptor.final_session_names.warehouse.as_deref(),
+            Some("COMPUTE_WH")
+        );
+        assert_eq!(
+            descriptor.final_session_names.role.as_deref(),
+            Some("SYSADMIN")
+        );
     }
 
     /// COPY status rowset: two files loading 2 and 3 rows; `total` is the file

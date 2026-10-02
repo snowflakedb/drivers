@@ -9,6 +9,8 @@ import type {
   RowMode,
   RowOptions,
   QueryStatus,
+  SessionState,
+  StatementStatus,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
 import { serializeTokenInfo } from './connection-serialization.js';
@@ -61,6 +63,8 @@ export {
   type ConfigureOptions,
   type QueryStatus,
   SnowflakeDate,
+  type SessionState,
+  type StatementStatus,
 };
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
@@ -100,6 +104,12 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default User's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
    */
   arrayBindingThreshold?: number;
+  /**
+   * Optional string that can be used to tag queries and other SQL statements executed within a
+   * connection. The tags are displayed in the output of the QUERY_HISTORY, QUERY_HISTORY_BY_*
+   * functions.
+   */
+  queryTag?: string;
   /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
@@ -166,6 +176,10 @@ export interface StatementOption {
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   requestId?: string;
+  /**
+   * When `true`, the query is submitted for column metadata only.
+   */
+  describeOnly?: boolean;
 }
 
 export interface FetchResultOptions {
@@ -276,6 +290,7 @@ export class Connection {
         parameters: parameters ?? undefined,
         asyncExec: options.asyncExec,
         requestId: options.requestId,
+        describeOnly: options.describeOnly,
       }),
       {
         complete: options.complete,

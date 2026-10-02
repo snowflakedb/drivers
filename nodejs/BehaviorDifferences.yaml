@@ -61,6 +61,10 @@ behavior_differences:
       difference. Tracked inline via index.ts's pre-existing "TODO: implement ConnectionOptions
       like in old driver" comment.
 
+      Following properties are support by connection config but were never types:
+      * protocol
+      * port
+
   3:
     name: 'fetchResult now inherits the connection-level rowMode default'
     status: allowed
@@ -988,13 +992,14 @@ behavior_differences:
       execute({ asyncExec: true, complete }) invokes complete(null, stmt, { queryId }).
       The third argument is overloaded: a row array for normal execute, or { queryId } for
       asyncExec. queryId is also available on stmt.getQueryId(). After complete,
-      stmt.getNumRows(), stmt.getColumns(), and stmt.getColumn(...) throw TypeError instead
-      of returning undefined.
+      stmt.getNumRows(), stmt.getColumns(), stmt.getColumn(...), and stmt.getSessionState()
+      throw TypeError instead of returning undefined.
     new_driver_behavior: |
       execute({ asyncExec: true, complete }) invokes complete(undefined, stmt, undefined).
       Callers read queryId from stmt.getQueryId() only. The third argument is a row array
-      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(), and
-      stmt.getColumn(...) return undefined because the statement has no result set.
+      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(),
+      stmt.getColumn(...), and stmt.getSessionState() return undefined because the statement
+      has no result set.
     status_rationale: |
       The old driver's third-argument is typed as row array or undefined (not { queryId }),
       and callers can already obtain queryId from stmt.getQueryId(). The new driver keeps
@@ -1098,3 +1103,258 @@ behavior_differences:
     new_driver_behavior: |
       The same calls reject with the error `connectAsync()` rejected with, including vendor
       code and SQLSTATE when the driver supplies them.
+
+  56:
+    name: 'describeOnly multi-statement throws instead of returning the wrapper result'
+    status: unknown
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      execute({ describeOnly: true }) on a multi-statement query succeeds. complete receives
+      empty rows and a parent wrapper column named `multiple statement execution`. GS does
+      not return child resultIds, so hasNext is absent (ordinary RowStatement).
+    new_driver_behavior: |
+      The same request is classified as ExecuteQueryResult::Multi. With no child query IDs,
+      the bridge throws GenericFailure "multi-statement result contained no child query IDs".
+      The statement object in the error still has hasNext/NextResult (BD#50).
+    description: |
+      Closing this difference requires a core change. Core classifies the parent execute
+      response as Multi and drops the wrapper rowset before the bridge sees it, so the
+      bridge cannot reconstruct the old driver's wrapper result from empty child query IDs.
+    status_rationale: |
+      describeOnly on a multi-statement query does not work: the server does not return child
+      query IDs, so there is no per-statement metadata to describe anyway.
+
+  57:
+    name: 'getSessionState returns a typed SessionState'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      RowStatement.getSessionState() is typed as object | undefined. At runtime it is still an
+      object of getters (getCurrentDatabase, getCurrentSchema, getCurrentWarehouse,
+      getCurrentRole, and getCurrentDatabaseProvider) after a successful complete.
+    new_driver_behavior: |
+      RowStatement.getSessionState() is typed as SessionState | undefined. SessionState is a
+      class that provides the same getters as the old driver.
+    status_rationale: |
+      Runtime for the session-name getters is the same. SessionState is the honest
+      TypeScript type; object was not.
+
+  58:
+    name: 'SessionState has no getCurrentDatabaseProvider'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SessionState.getCurrentDatabaseProvider() returns the query JSON databaseProvider
+      value, which is always null.
+    new_driver_behavior: |
+      SessionState has no getCurrentDatabaseProvider method.
+    status_rationale: |
+      The Snowflake server marks databaseProvider as deprecated and always returns null.
+
+  59:
+    name: 'browserActionTimeout still accepted (ms) but bounds core authentication_timeout'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      browserActionTimeout is milliseconds (default 120000). It bounds only the local
+      MFA/SSO / OAuth-authorization-code loopback wait, and for EXTERNALBROWSER the
+      clock starts when the SSO URL is handed to the browser, so the
+      authenticator-request round trip before it is not charged to the budget. Native
+      Okta and the OAuth token exchange after the redirect are not this clock. login
+      HTTP retries are sfRetryMaxLoginRetries / retryTimeout. Exhausting the wait
+      rejects with "Error while getting SAML token: Browser action timed out after <n> ms."
+    new_driver_behavior: |
+      The same key and unit are accepted. The value is converted with floor(ms/1000)
+      and stored as authentication_timeout (seconds). That budget also covers native
+      Okta and the OAuth authorization-code flow end-to-end (loopback + token request
+      + refresh share one deadline). For EXTERNALBROWSER the clock starts before the
+      authenticator-request, so a slow SSO round trip leaves that much less for the
+      browser callback and a callback the old driver would still accept can arrive
+      after the budget is gone. Exhausting it rejects with "Failed to login:
+      External browser SSO failed: Authentication timeout exceeded (budget <n>s)"
+      and no `error.code`. Values below 1000 ms become 0
+      seconds. login_timeout / sfRetryMaxLoginRetries are separate and still not this
+      option. Non-positive or non-finite values throw a plain Error (no `error.code`);
+      the old driver used ErrorCode 404040.
+
+  61:
+    name: 'execute() after a connect that never reached the server reports a terminated connection, not a never-established one'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    description: |
+      This entry covers only connects that failed WITHOUT a session-rejecting response
+      from Snowflake, e.g. EXTERNALBROWSER browser timeout, no browser callback, or a
+      client-side configuration failure. When the server did reject the login (e.g.
+      unknown user, invalid token, IdP username mismatch), both drivers already report
+      407002 with the same message, so that case is not a difference.
+    old_driver_behavior: |
+      connection.execute() after such a connect rejects with code 407001 and message
+      "Unable to perform operation because a connection was never established."
+    new_driver_behavior: |
+      The same call rejects with code 407002 and message
+      "Unable to perform operation using terminated connection."
+
+  62:
+    name: 'destroy() after a connect that never reached the server reports already disconnected, not nothing to destroy'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    description: |
+      Same kind of connects as BD#61: the login failed without a session-rejecting
+      response from Snowflake. After a login the server rejected, both drivers report
+      406502 with the same message. Cleanup paths treat 406501 and 406502 alike, so
+      this changes the error a caller sees, not whether teardown succeeds.
+    old_driver_behavior: |
+      connection.destroy() after such a connect rejects with code 406501 and message
+      "Not connected, so nothing to destroy."
+    new_driver_behavior: |
+      The same call rejects with code 406502 and message "Already disconnected."
+
+  63:
+    name: 'disableConsoleLogin is not supported'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection accepts disableConsoleLogin (boolean; default true).
+    new_driver_behavior: |
+      disableConsoleLogin is rejected as an unknown connection option. The key is
+      not going to be added.
+
+  64:
+    name: 'EXTERNALBROWSER authenticator-request uses connection protocol and port'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection accepts protocol (default https) and port and uses them only
+      to build accessUrl. EXTERNALBROWSER getSSOURL posts to
+      rest.HTTPS_PROTOCOL + '://' + host + '/session/authenticator-request'
+      (defaults https, host as given, no port unless the caller stuffed it into
+      host). Connection protocol, port, and accessUrl are ignored for that request.
+    new_driver_behavior: |
+      protocol and port are allow-listed connection options and feed sf_core
+      server_url. EXTERNALBROWSER authenticator-request uses that URL
+      (http(s)://host:port/session/authenticator-request). Omitting protocol
+      still defaults to https.
+
+  65:
+    name: 'EXTERNALBROWSER authenticator-request HTTP failure is a plain Error whose message includes status and body'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      getSSOURL's HTTP client rejects a non-2xx authenticator-request as an
+      AxiosError. error.name is "AxiosError" and the message is
+      "Request failed with status code <status>". The response body stays on
+      the axios error and is not part of the message.
+    new_driver_behavior: |
+      The same failure rejects as a plain Error. error.name is "Error" and the
+      message is
+      "Failed to login: External browser SSO failed: HTTP <status> <reason> from Snowflake during Snowflake authenticator-request: <body>".
+      For the shared 403 stub that is
+      'Failed to login: External browser SSO failed: HTTP 403 Forbidden from Snowflake during Snowflake authenticator-request: {"success":false,"message":"Forbidden"}'.
+
+  66:
+    name: 'A codeless error still has an own code property set to undefined'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A plain Error thrown for a failure that has no Snowflake code, such as an
+      EXTERNALBROWSER authenticator-request logical failure or browser timeout,
+      has no own `code` property. Reading `error.code` is `undefined` because
+      the property is absent. `'code' in error` is false.
+    new_driver_behavior: |
+      The bridge always creates an own `code` property. When the failure has no
+      driver or server code, that property is present and its value is
+      `undefined`. Reading `error.code` is still `undefined`, but
+      `'code' in error` is true.
+
+  67:
+    name: 'EXTERNALBROWSER connect failures reject with the full new-driver message'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A failed EXTERNALBROWSER connect rejects with the legacy client's own text.
+      An authenticator-request logical failure is
+      "Authentication failed. Error code: <code>, message: <server message>".
+      When the JSON body has no code, that template interpolates "undefined".
+      A login-request failure's message is the server sentence alone, with the GS
+      code on error.code. A thrown openExternalBrowserCallback rejects with that
+      error's own message.
+    new_driver_behavior: |
+      The same failures reject with the wrapped driver message. An
+      authenticator-request logical failure is "Failed to login: External browser
+      SSO failed: Snowflake authenticator-request (logical failure): <server
+      message>, code: <code>". A body with no code uses -1. A login-request
+      failure is "Failed to login: Login error: <server message>, code: <code>",
+      and error.code is the GS code. A thrown openExternalBrowserCallback is
+      "Failed to login: External browser SSO failed: " plus the thrown error's
+      string, including its stack. HTTP 403 is BD#65. The browser timeout is BD#59.
+      A codeless error.code is BD#66.
+
+  68:
+    name: 'a statement QUERY_TAG overrides the connection queryTag'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      execute({ parameters: { QUERY_TAG: 'stmt' } }) on a connection with queryTag 'conn'
+      makes SELECT CURRENT_QUERY_TAG() return 'conn'. The connection tag overwrites the
+      statement parameter.
+    new_driver_behavior: |
+      The same call returns 'stmt'. The session tag stays 'conn' for a later execute with
+      no parameters. A plain execute with only the connection queryTag returns 'conn' on
+      both drivers.
+    status_rationale: |
+      Python, JDBC, and core do the same: a statement QUERY_TAG overrides the connection
+      tag for that query. The statement is the more specific level, so its value wins.
+
+  69:
+    name: 'a queryTag is validated by the server, not by the client'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection throws InvalidParameterError 404063 when queryTag is longer than
+      2000 characters.
+    new_driver_behavior: |
+      createConnection accepts the string. connect fails with server error 001008.
+    status_rationale: |
+      Login rejects a SESSION_PARAMETERS.QUERY_TAG string longer than 2000 characters with
+      001008 (invalid value for parameter 'QUERY_TAG'). The new driver does not repeat that
+      check. QUERY_TAG on a statement is not checked by the old driver either.
+      The query request keeps a long string and cuts the job tag at 2000.

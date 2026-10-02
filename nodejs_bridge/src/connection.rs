@@ -52,6 +52,7 @@ pub struct ExecuteParams {
     pub parameters: Option<HashMap<String, String>>,
     pub async_exec: Option<bool>,
     pub request_id: Option<String>,
+    pub describe_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -191,6 +192,7 @@ impl Connection {
             parameters,
             async_exec,
             request_id,
+            describe_only,
         } = params;
         let request_id = resolve_execute_request_id(request_id, uuid::Uuid::new_v4)
             .map_err(|error| error.to_js_error(*env))?;
@@ -212,6 +214,7 @@ impl Connection {
                                     stmt,
                                     binds,
                                     Some(request_id),
+                                    describe_only,
                                 )
                                 .await
                                 .map_err(BridgeError::from)
@@ -239,6 +242,7 @@ impl Connection {
                                     binds,
                                     None,
                                     Some(request_id),
+                                    describe_only,
                                 )
                                 .await
                                 .map_err(BridgeError::from)

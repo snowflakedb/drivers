@@ -11,7 +11,7 @@ import { setSessionParameterForTest } from '../../utils/query.js';
 import { createTestTzDate, expectSnowflakeDate } from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_TZ data type', () => {
+describe('TIMESTAMP_TZ data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {
@@ -549,7 +549,9 @@ describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_TZ data type', () => {
         await selectTz('2024-01-15 10:30:00 +05:00', { parameters, fetchAsString: ['Date'] }),
       ).toBe('2024-01-15 10:30:00.000 +0500');
 
-      const date = (await selectTz('2024-01-15 10:30:00 +05:00', { parameters })) as SnowflakeDate;
+      const date = (await selectTz('2024-01-15 10:30:00 +05:00', {
+        parameters,
+      })) as SnowflakeDate;
       expect(date.toJSON()).toBe('2024-01-15 10:30:00.000 +0500');
       expect(date.getFormat()).toBe('YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM');
     });

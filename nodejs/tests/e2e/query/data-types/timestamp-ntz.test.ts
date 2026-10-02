@@ -15,7 +15,7 @@ import {
 } from '../../utils/snowflake-date.js';
 import { createLiveNullPreservingConnection } from '../utils.js';
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_NTZ data type', () => {
+describe('TIMESTAMP_NTZ data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {

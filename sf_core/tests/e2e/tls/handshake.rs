@@ -354,3 +354,53 @@ async fn should_skip_hostname_verification_when_disabled() {
         "verify_hostname=true should reject hostname mismatch"
     );
 }
+
+#[tokio::test]
+async fn insecure_client_still_accepts_untrusted_host_mismatch() {
+    let (addr, _pem_file) = spawn_tls_proxy().await;
+    // When certificate verification is disabled and the request targets 127.0.0.1
+    // (the certificate says localhost and is signed by an untrusted CA)
+    let client = sf_core::tls::create_tls_client_with_proxy(
+        TlsConfig {
+            verify_certificates: false,
+            ..Default::default()
+        },
+        Some(&sf_core::tls::config::ProxyConfig::default()),
+        sf_core::crl::CrlWorker::shared_lazy(),
+    )
+    .expect("insecure client must still build with the guarded global provider");
+
+    // Then the handshake succeeds
+    let response = client
+        .get(format!("https://127.0.0.1:{}", addr.port()))
+        .send()
+        .await
+        .expect("disabled verification must allow an untrusted CA and wrong hostname");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn disabled_hostname_check_still_rejects_untrusted_chain() {
+    let (addr, _pem_file) = spawn_tls_proxy().await;
+    // When hostname verification is disabled, certificate verification stays on,
+    // and the request targets 127.0.0.1 with an untrusted CA
+    let client = sf_core::tls::create_tls_client_with_proxy(
+        TlsConfig {
+            verify_hostname: false,
+            ..Default::default()
+        },
+        Some(&sf_core::tls::config::ProxyConfig::default()),
+        sf_core::crl::CrlWorker::shared_lazy(),
+    )
+    .expect("build client with hostname verification disabled");
+
+    // Then the handshake fails
+    let response = client
+        .get(format!("https://127.0.0.1:{}", addr.port()))
+        .send()
+        .await;
+    assert!(
+        response.is_err(),
+        "ignoring the hostname must never bypass CA chain verification"
+    );
+}

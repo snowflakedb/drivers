@@ -83,6 +83,15 @@ export function createTestConnection(overrides: Partial<ConnectionOptions> = {})
   });
 }
 
+/**
+ * Connects and rejects on every connect error, on both drivers (BD#11).
+ *
+ * - Old driver: `connectAsync` sends some errors only to its callback (the promise still
+ *   resolves) and throws others, so awaiting it misses errors. `.connect()` delivers both kinds.
+ * - New driver: `connectAsync()` rejects on every error.
+ *
+ * Use this only for tests that assert a connect error.
+ */
 export async function connectAsyncWithErrorBD(connection: Connection): Promise<void> {
   if (isRunningNewDriverWithBD('BD#11')) {
     await connection.connectAsync();
@@ -147,6 +156,12 @@ export function sendExecute(
   return { statement, completion };
 }
 
+export function cancelStatementAsync(statement: RowStatement): Promise<void> {
+  return new Promise((resolve, reject) => {
+    statement.cancel((err) => (err ? reject(err) : resolve()));
+  });
+}
+
 export function executeAsync(
   connection: Connection,
   sqlText: string,
@@ -156,6 +171,29 @@ export function executeAsync(
   rows: Record<string, unknown>[];
 }> {
   return sendExecute(connection, sqlText, additionalParameters).completion;
+}
+
+export function fetchResultAsync(
+  connection: Connection,
+  options: Omit<FetchResultOptions, 'complete'>,
+): {
+  statement: RowStatement;
+  completion: Promise<{ statement: RowStatement }>;
+} {
+  let statement!: RowStatement;
+  const completion = new Promise<{ statement: RowStatement }>((resolve, reject) => {
+    statement = connection.fetchResult({
+      ...options,
+      complete: (error, completedStatement) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve({ statement: completedStatement });
+        }
+      },
+    });
+  });
+  return { statement, completion };
 }
 
 export function getResultFromQueryIdForTest(

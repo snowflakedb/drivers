@@ -13,7 +13,7 @@ import { createLiveNullPreservingConnection } from '../utils.js';
 
 const SESSION_TIMEZONE = 'America/New_York';
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('TIMESTAMP_LTZ data type', () => {
+describe('TIMESTAMP_LTZ data type', () => {
   let connection: Connection;
 
   beforeAll(async () => {

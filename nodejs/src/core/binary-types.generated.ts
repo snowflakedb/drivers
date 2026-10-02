@@ -49,7 +49,14 @@ export declare class Connection {
 
 export declare class DateFormatter {
   constructor(format: string)
-  format(date: Date): string
+  format(epochMillis: number, nanos: number, scale: number, timezone: string | number): string
+}
+
+export declare class SessionState {
+  getCurrentRole(): string | null
+  getCurrentWarehouse(): string | null
+  getCurrentDatabase(): string | null
+  getCurrentSchema(): string | null
 }
 
 export declare class Statement {
@@ -67,9 +74,11 @@ export declare class Statement {
    */
   getNextRow(): unknown[] | null
   getRequestId(): string | null
+  getStatus(): StatementStatus
   getQueryId(): string | null
   getNumRows(): number | null
   getNumUpdatedRows(): number | null
+  getSessionState(): SessionState | null
   /**
    * Not part of the driver's public API. Callers are suposed toinvoke this only after the
    * statement has finished, so a result that is not yet ready is a programming error
@@ -97,6 +106,7 @@ export interface ExecuteParams {
   parameters?: Record<string, string>
   asyncExec?: boolean
   requestId?: string
+  describeOnly?: boolean
 }
 
 export declare function isAnError(status: QueryStatus): boolean
@@ -138,6 +148,10 @@ export interface KnownSessionParameters {
   timeOutputFormat: string
   jsTreatIntegerAsBigInt: boolean
   clientStageArrayBindingThreshold: number
+  timestampTzOutputFormat: string
+  timestampLtzOutputFormat: string
+  timestampNtzOutputFormat: string
+  timezone: string
 }
 
 export declare enum QueryBindingFormat {
@@ -167,3 +181,6 @@ export type QueryStatus =  'RUNNING'|
 'RESTARTED'|
 'BLOCKED'|
 'NO_DATA';
+
+export type StatementStatus =  'fetching'|
+'complete';

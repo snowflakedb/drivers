@@ -20,5 +20,6 @@ export type Binds = newSnowflakeSdk.Binds | oldSnowflakeSdk.Binds;
 export type RowMode = newSnowflakeSdk.RowMode | oldSnowflakeSdk.RowMode;
 export type QueryStatus = newSnowflakeSdk.QueryStatus | oldSnowflakeSdk.QueryStatus;
 
+export type SessionState = newSnowflakeSdk.SessionState;
 export type Pool<T> = newSnowflakeSdk.Pool<T> | oldSnowflakeSdk.Pool<T>;
 export type FileAndStageBindStatement = oldSnowflakeSdk.FileAndStageBindStatement;

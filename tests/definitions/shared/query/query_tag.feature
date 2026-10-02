@@ -1,4 +1,4 @@
-@core @python @jdbc @odbc
+@core @python @jdbc @odbc @nodejs
 Feature: Query tag
 
   QUERY_TAG labels queries in Snowflake QUERY_HISTORY. It can be set at the
@@ -6,7 +6,7 @@ Feature: Query tag
   query in the session) or per-statement (tagging only that query without
   mutating session state).
 
-  @core_e2e @python_e2e @jdbc_e2e @odbc_e2e
+  @core_e2e @python_e2e @jdbc_e2e @odbc_e2e @nodejs_e2e
   Scenario: should tag queries when QUERY_TAG is set at connection level
     Given Snowflake client is logged in with connection option QUERY_TAG set to "conn_tag_e2e"
     When Query "SELECT CURRENT_QUERY_TAG()" is executed
@@ -14,7 +14,7 @@ Feature: Query tag
 
   # ODBC forwards QUERY_TAG only as a connection-string session parameter at
   # login. There is no per-statement QUERY_TAG attribute.
-  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e
   Scenario: should tag a single query via statement-level query tag
     Given Snowflake client is logged in
     When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt_tag_e2e"
@@ -22,9 +22,17 @@ Feature: Query tag
 
   # ODBC has no per-statement QUERY_TAG, so there is no statement tag that
   # could leak into session state.
-  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e
   Scenario: should not leak statement-level query tag into session state
     Given Snowflake client is logged in
     When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt_tag_e2e"
     And Query "SELECT CURRENT_QUERY_TAG()" is executed without a statement-level tag
     Then the last result should contain empty value
+
+  # ODBC has no per-statement QUERY_TAG, so a statement tag cannot override
+  # the connection tag.
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e
+  Scenario: should let a statement QUERY_TAG override the connection QUERY_TAG
+    Given Snowflake client is logged in with connection option QUERY_TAG set to "conn"
+    When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt"
+    Then the result should contain value "stmt"

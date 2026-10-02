@@ -1,5 +1,20 @@
 This document outlines API behavior changes that should be reviewed or addressed in the new driver.
 
+### Browser authentication coordination
+
+TODO: To be verified.
+
+Old Node (`lib/authentication/auth_coordinator.ts`) keeps one in-flight external-browser or authorization-code login per `host:username:authenticator`. Concurrent connects, including a pool acquire, share that flow's token or error and each still creates its own session. This runs with temporary-credential storage on or off.
+
+Core's prompt lock runs when temporary-credential storage is on (the default) and `disable_parallel_user_prompt` is true (the default). One connect opens the browser and stores the token; the others wait and reuse it. A successful login therefore opens one browser on both drivers.
+
+They differ in two cases:
+
+- **Temporary-credential storage off.** Core takes no lock. Each concurrent connect sends its own authenticator-request and opens its own browser. Old Node still shares one browser flow.
+- **The first login fails or times out, storage on.** Core stores nothing, releases the lock, and each waiting connect opens its own browser. Old Node gives every waiting connect that same error, so the failed flow is not tried again.
+
+Decide whether those two cases should keep core's separate retry or share one token or error the way old Node does.
+
 ### API Argument Validation
 
 In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.
@@ -72,3 +87,6 @@ These are potential improvements to consider after the UD release:
 - `getResultsFromQueryId` should drop `complete`, settle the returned Promise when fetch is finished, and always treat `streamResult` as true. Taking a callback and returning a Promise is a mixed pattern; see the typing section above.
 - Make a decision whether statement getter (`getNumRows()`, `getColumn()`, `getColumns()`, etc...) should return undefined on in-progress/failed statement (old driver behavior) or throw the error. Many of these methods are typed NOT to return undefined in old driver (see BD#13).
 - Snowflake server can return status 400 for invalid parameters but it does not return descriptive messages. Snowflake server should fix it and drivers should not validate query_id or request_id themselves.
+- `complete`'s third argument is inconsistent when no rows are collected: `streamResult: true` passes `undefined`, while `describeOnly: true` (without `streamResult`) passes `[]`. Both should be `undefined`.
+- `describeOnly` doesn't work for multistatements in snowflake server. The Server does not return child queries ids in the response if `describeOnly` is present so it's not possbile to fetch results.
+- `RowStatement.getSessionState()` is a snapshot of warehouse, database, schema, and role from that statement's query response. There is no connection-level getter today for the live session identity the connection cache already keeps (the view Python, JDBC, and ODBC expose). A later `Connection.getSessionState()` that reads that cache would give callers current session names without keeping a statement around, and would not replace the statement snapshot.

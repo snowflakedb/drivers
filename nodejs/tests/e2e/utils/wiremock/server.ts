@@ -1,24 +1,20 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
-import type { ConnectionOptions } from '../../../types/sdk-types.js';
 import type { StubMapping } from './stubs.js';
+import { ConnectionOptions } from '../../../types/sdk-types.js';
 import { findFreePort, sleepAsync } from '../index.js';
 
 const WIREMOCK_VERSION = '3.13.2';
+const WIREMOCK_ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..', 'tests', 'wiremock');
 const WIREMOCK_JAR = join(
-  import.meta.dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  '..',
-  'tests',
-  'wiremock',
+  WIREMOCK_ROOT,
   'wiremock_standalone',
   `wiremock-standalone-${WIREMOCK_VERSION}.jar`,
 );
+const WIREMOCK_MAPPINGS = join(WIREMOCK_ROOT, 'mappings');
 
 interface LoggedRequest {
   url: string;
@@ -44,7 +40,7 @@ export class WiremockServer {
   get connectionOptions(): ConnectionOptions {
     return {
       host: this.#host,
-      port: String(this.#requirePort()),
+      port: this.#requirePort(),
       protocol: 'http',
     };
   }
@@ -56,10 +52,18 @@ export class WiremockServer {
       }
       return;
     }
-    const { status, text } = await this.#admin('POST', '/__admin/mappings', mapping);
-    if (status !== 200 && status !== 201) {
-      throw new Error(`Failed to register WireMock stub: ${status} ${text}`);
+    await this.#postMapping(mapping);
+  }
+
+  async stubFromFile(relativePath: string): Promise<void> {
+    const mappingPath = join(WIREMOCK_MAPPINGS, relativePath);
+    let content: string;
+    try {
+      content = await readFile(mappingPath, 'utf8');
+    } catch (error) {
+      throw new Error(`Mapping file not found: ${mappingPath}`, { cause: error });
     }
+    await this.#postMapping(JSON.parse(content) as unknown);
   }
 
   async reset(): Promise<void> {
@@ -147,6 +151,13 @@ export class WiremockServer {
       throw new Error('WiremockServer is not started; use WiremockServer.start()');
     }
     return this.#port;
+  }
+
+  async #postMapping(mapping: unknown): Promise<void> {
+    const { status, text } = await this.#admin('POST', '/__admin/mappings', mapping);
+    if (status !== 200 && status !== 201) {
+      throw new Error(`Failed to register WireMock stub: ${status} ${text}`);
+    }
   }
 
   #admin(method: string, path: string, body?: unknown): Promise<{ status: number; text: string }> {

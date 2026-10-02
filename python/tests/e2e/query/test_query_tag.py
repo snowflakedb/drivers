@@ -43,3 +43,18 @@ class TestQueryTagViaStatementParameters:
             row = cursor.fetchone()
             # Then the last result should contain empty value
             assert row[0] == ""
+
+    def test_should_let_a_statement_query_tag_override_the_connection_query_tag(self, connection_factory):
+        # Given Snowflake client is logged in with connection option QUERY_TAG set to "conn"
+        with (
+            connection_factory(session_parameters={"QUERY_TAG": "conn"}) as conn,
+            conn.cursor() as cursor,
+        ):
+            # When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt"
+            cursor.execute(
+                "SELECT CURRENT_QUERY_TAG()",
+                _statement_params={"QUERY_TAG": "stmt"},
+            )
+            row = cursor.fetchone()
+            # Then the result should contain value "stmt"
+            assert row[0] == "stmt"

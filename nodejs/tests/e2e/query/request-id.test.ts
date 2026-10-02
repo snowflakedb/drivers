@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Connection, RowStatement, SnowflakeError } from '../../types/sdk-types.js';
+import type { Connection, SnowflakeError } from '../../types/sdk-types.js';
 import { createLiveConnection, createTable, createTemporaryTable } from '../utils/fixtures.js';
 import {
   destroyConnectionAsync,
   executeAsync,
+  fetchResultAsync,
   isRunningNewDriverWithBD,
   sendExecute,
 } from '../utils/index.js';
@@ -72,18 +73,8 @@ describe('requestId', () => {
       const queryId = executedStatement.getQueryId();
       expect(queryId).toBeDefined();
 
-      let fetchedStatement!: RowStatement;
-      const completion = new Promise<RowStatement>((resolve, reject) => {
-        fetchedStatement = connection.fetchResult({
-          queryId: queryId!,
-          complete: (error, completedStatement) => {
-            if (error) {
-              reject(error);
-            } else {
-              resolve(completedStatement);
-            }
-          },
-        });
+      const { statement: fetchedStatement, completion } = fetchResultAsync(connection, {
+        queryId: queryId!,
       });
 
       expect(fetchedStatement.getRequestId()).toBeUndefined();

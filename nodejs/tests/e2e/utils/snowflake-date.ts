@@ -1,5 +1,6 @@
 import { SnowflakeDate } from 'snowflake-sdk';
 import { expect } from 'vitest';
+import { CoreDateFormatter } from '../../../src/core/index.js';
 
 const DEFAULT_TIMESTAMP_SCALE = 9;
 
@@ -31,6 +32,7 @@ export function createTestDate(value: string | number): SnowflakeDate {
     scale: 0,
     timezone: 'UTC',
     format: 'YYYY-MM-DD',
+    formatter: new CoreDateFormatter('YYYY-MM-DD'),
   });
 }
 
@@ -48,6 +50,7 @@ export function createTestLtzDate(
     scale: options.scale ?? DEFAULT_TIMESTAMP_SCALE,
     timezone: options.timezone ?? 'UTC',
     format: '',
+    formatter: new CoreDateFormatter(''),
   });
 }
 
@@ -65,6 +68,7 @@ export function createTestTzDate(
     scale: options.scale ?? DEFAULT_TIMESTAMP_SCALE,
     timezone: options.offsetMinutes ?? 0,
     format: '',
+    formatter: new CoreDateFormatter(''),
   });
 }
 

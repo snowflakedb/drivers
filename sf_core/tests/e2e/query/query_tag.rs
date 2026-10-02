@@ -65,3 +65,23 @@ fn should_not_leak_statement_level_query_tag_into_session_state() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], "");
 }
+
+#[test]
+fn should_let_a_statement_query_tag_override_the_connection_query_tag() {
+    // Given Snowflake client is logged in with connection option QUERY_TAG set to "conn"
+    let client = SnowflakeTestClient::with_default_jwt_auth_params();
+    client.set_connection_option("QUERY_TAG", "conn");
+    client.connect().unwrap();
+
+    // When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt"
+    let result = client.execute_query_with_statement_params(
+        "SELECT CURRENT_QUERY_TAG()",
+        &[("QUERY_TAG", "stmt")],
+    );
+
+    // Then the result should contain value "stmt"
+    let mut helper = ArrowResultHelper::from_result(result);
+    let rows = helper.transform_into_array::<String>().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], "stmt");
+}

@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   createTestConnection,
   destroyConnectionAsync,
-  executeAsync,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
@@ -87,20 +86,5 @@ describe('Connection', () => {
       await destroyConnectionAsync(connection);
       await expect(connection.isValidAsync()).resolves.toBe(false);
     });
-  });
-
-  it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('attaches a query tag from the connection', async () => {
-    const expectedQueryTag = 'test_query_tag';
-    const connection = createTestConnection({ queryTag: expectedQueryTag });
-    try {
-      await connection.connectAsync();
-      const { rows } = await executeAsync(
-        connection,
-        'SELECT QUERY_TAG FROM table(information_schema.query_history_by_session());',
-      );
-      expect((rows![0] as Record<string, string>)['QUERY_TAG']).toBe(expectedQueryTag);
-    } finally {
-      await destroyConnectionAsync(connection);
-    }
   });
 });
