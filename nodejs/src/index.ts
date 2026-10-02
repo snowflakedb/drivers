@@ -105,6 +105,12 @@ export type ConnectionOptions = Record<string, unknown> & {
    */
   arrayBindingThreshold?: number;
   /**
+   * Optional string that can be used to tag queries and other SQL statements executed within a
+   * connection. The tags are displayed in the output of the QUERY_HISTORY, QUERY_HISTORY_BY_*
+   * functions.
+   */
+  queryTag?: string;
+  /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
    * listener and waits for the IdP redirect; this function only receives

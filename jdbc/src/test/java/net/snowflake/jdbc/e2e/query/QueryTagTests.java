@@ -74,4 +74,22 @@ class QueryTagTests {
       }
     }
   }
+
+  @Test
+  void shouldLetAStatementQueryTagOverrideTheConnectionQueryTag() throws Exception {
+    // Given Snowflake client is logged in with connection option QUERY_TAG set to "conn"
+    Properties props = withDefaultAuth(loadDefaultConnectionProperties());
+    props.setProperty("QUERY_TAG", "conn");
+    String url = buildJdbcUrl(props);
+    try (Connection conn = DriverManager.getConnection(url, props);
+        Statement stmt = conn.createStatement()) {
+      // When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt"
+      stmt.unwrap(SnowflakeStatement.class).setParameter("QUERY_TAG", "stmt");
+      try (ResultSet rs = stmt.executeQuery("SELECT CURRENT_QUERY_TAG()")) {
+        // Then the result should contain value "stmt"
+        assertTrue(rs.next(), "Expected one row");
+        assertEquals("stmt", rs.getString(1));
+      }
+    }
+  }
 }

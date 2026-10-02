@@ -1321,3 +1321,40 @@ behavior_differences:
       "Failed to login: External browser SSO failed: " plus the thrown error's
       string, including its stack. HTTP 403 is BD#65. The browser timeout is BD#59.
       A codeless error.code is BD#66.
+
+  68:
+    name: 'a statement QUERY_TAG overrides the connection queryTag'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      execute({ parameters: { QUERY_TAG: 'stmt' } }) on a connection with queryTag 'conn'
+      makes SELECT CURRENT_QUERY_TAG() return 'conn'. The connection tag overwrites the
+      statement parameter.
+    new_driver_behavior: |
+      The same call returns 'stmt'. The session tag stays 'conn' for a later execute with
+      no parameters. A plain execute with only the connection queryTag returns 'conn' on
+      both drivers.
+    status_rationale: |
+      Python, JDBC, and core do the same: a statement QUERY_TAG overrides the connection
+      tag for that query. The statement is the more specific level, so its value wins.
+
+  69:
+    name: 'a queryTag is validated by the server, not by the client'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection throws InvalidParameterError 404063 when queryTag is longer than
+      2000 characters.
+    new_driver_behavior: |
+      createConnection accepts the string. connect fails with server error 001008.
+    status_rationale: |
+      Login rejects a SESSION_PARAMETERS.QUERY_TAG string longer than 2000 characters with
+      001008 (invalid value for parameter 'QUERY_TAG'). The new driver does not repeat that
+      check. QUERY_TAG on a statement is not checked by the old driver either.
+      The query request keeps a long string and cuts the job tag at 2000.
