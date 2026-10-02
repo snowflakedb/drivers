@@ -1,0 +1,25 @@
+name: Run semgrep checks
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.title, 'PR Canary') }}
+
+    env:
+      SEMGREP_APP_URL: https://snowflake.semgrep.dev
+      PUBLISH_DEPLOYMENT: 1
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+    container:
+      image: returntocorp/semgrep:latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - run: semgrep ci
