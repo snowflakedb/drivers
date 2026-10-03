@@ -47,6 +47,7 @@ New features:
 
 Changes:
 
+- Changed FIPS builds to reject PBES2/3DES-encrypted private keys with conversion guidance instead of decrypting them outside AWS-LC. Standard builds retain legacy 3DES support; FIPS builds continue to accept AES-encrypted PKCS#8 keys.
 - Changed verified connection and cloud-storage TLS clients to select the configured crypto module's rustls provider explicitly, including CRL-enabled clients, instead of depending on process-global provider initialization order. Inverted TLS version bounds now fail rather than restoring default protocols. (snowflakedb/drivers#1356)
 - Routed first-party SHA-256 hashing for CRL cache filenames, token-cache keys, S3 credential fingerprints, and certificate-name map keys through AWS-LC. Their stored key formats remain unchanged. (snowflakedb/drivers#1352)
 - Improved GCS PUT throughput by streaming each file in one request instead of sending sequential chunks. (snowflakedb/drivers#2267)

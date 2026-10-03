@@ -16,64 +16,18 @@
 //!   compliance boundary turns on who does it.
 //! - **Key derivation** (PBKDF2) and **AES-CBC decryption** run in AWS-LC.
 //!   These are approved operations and they belong inside the module.
-//! - **3DES-CBC decryption** runs in the `des` crate, outside the module. This
-//!   is the one exception, and it is exact rather than grudging: 3DES is not an
-//!   approved algorithm in *any* validated module, so routing it through AWS-LC
-//!   would not make it approved. Outside is where it honestly belongs.
+//! - **3DES-CBC decryption** runs in the `des` crate only in standard builds.
+//!   FIPS builds reject PBES2/3DES keys before deriving a key or decrypting.
 //!
-//! # Why 3DES has to be supported at all
+//! Snowflake's documented `openssl pkcs8 -topk8 -v2 des3` command produces
+//! PBES2/3DES keys. Standard builds continue to read existing keys for
+//! compatibility; FIPS builds require an AES-encrypted PKCS#8 key instead.
+//! The key-generation guidance should use `-v2 aes-256-cbc`: SP 800-131A
+//! permits legacy TDEA decryption but disallows new TDEA key wrapping.
 //!
-//! Snowflake's own key-pair documentation gives exactly one command for
-//! generating an encrypted private key:
-//!
-//! ```text
-//! openssl genrsa 2048 | openssl pkcs8 -topk8 -v2 des3 -inform PEM -out rsa_key.p8
-//! ```
-//!
-//! `-v2 des3` is PBES2 + 3DES, so essentially every encrypted key in the field
-//! is 3DES-wrapped. Rejecting them would break the documented happy path, and
-//! encrypted keys are table-stakes parity (JDBC, ODBC, Node.js, .NET and Python
-//! all support them).
-//!
-//! **That documentation should be changed to `-v2 aes-256-cbc`.** Under NIST
-//! SP 800-131A Rev. 2, three-key TDEA *encryption* and *key wrapping* have been
-//! **disallowed since 2023-12-31**, so the documented command has users apply a
-//! disallowed algorithm to protect their key. That is a problem with the
-//! key-generation step, not with this code: what we do here is *unwrapping*,
-//! and the same publication states plainly that "Decryption using three-key
-//! TDEA is allowed for legacy use" and "Key unwrapping using three-key TDEA is
-//! allowed for legacy use". So reading these keys stays permissible
-//! indefinitely, while creating new ones is not.
-//!
-//! Legacy use is not free, though: SP 800-131A also says that it "require[s]
-//! that the user accept some risk that increases over time", and that judgement
-//! belongs to the organisation. That acceptance needs to be recorded in the
-//! compliance exception list rather than implied by this module existing.
-//!
-//! 3DES behaves identically with and without `fips-tls`. There is deliberately
-//! no feature gate that rejects it in FIPS builds: NIST permits the unwrap, so
-//! a gate would break documented, supported keys for no regulatory reason.
-//! (One format *does* differ by build -- see the next section -- so this is a
-//! statement about 3DES, not about the module.)
-//!
-//! # The one place builds differ: traditional encrypted PEM
-//!
-//! `-----BEGIN RSA PRIVATE KEY-----` with `Proc-Type: 4,ENCRYPTED` -- what
-//! `openssl rsa -aes256` and `openssl genrsa -aes256` emit -- is read in
-//! standard builds and refused in `fips-tls` builds. See [`legacy_pem`].
-//!
-//! The gate is on the KDF, not the cipher. The format derives its key with
-//! OpenSSL's `EVP_BytesToKey`, which is MD5-based, and MD5 is definitional to
-//! the format rather than a parameter of it: there is no version of this that
-//! runs inside AWS-LC, which exposes no MD5 at all. So unlike 3DES -- where
-//! SP 800-131A permits the unwrap and the KDF is already approved PBKDF2 --
-//! there is no reading of the rules under which a FIPS build may do this.
-//!
-//! Refusing it *everywhere* was the earlier behaviour and was the wrong trade:
-//! it dropped a working format from every shipped artifact in order to protect
-//! a claim only the FIPS artifact makes. A standard build asserts no FIPS
-//! compliance, so nothing about it is compromised by using MD5 to open a key
-//! its owner already has. Recorded as F16 in the compliance plan.
+//! Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) is also limited to
+//! standard builds. Its `EVP_BytesToKey` derivation uses MD5 regardless of
+//! the cipher named by `DEK-Info`; FIPS builds reject the whole format.
 
 use aws_lc_rs::cipher::{
     AES_128, AES_192, AES_256, DecryptionContext, PaddedBlockDecryptingKey, UnboundCipherKey,
@@ -117,9 +71,8 @@ pub(crate) fn load_rsa_key(
 /// Traditional encrypted PEM: decrypt with the `DEK-Info` parameters, then
 /// parse the plaintext as whatever the label says it is.
 ///
-/// Split by build, and this is the only place in the module where that changes
-/// which keys load rather than only which module does the work. See
-/// [`legacy_pem`] for why MD5 makes that unavoidable.
+/// Like PBES2/3DES keys, this format loads only in standard builds, but its
+/// `EVP_BytesToKey` KDF requires MD5 regardless of the chosen cipher.
 #[cfg(not(feature = "fips-tls"))]
 fn from_legacy_pem(
     label: &str,
@@ -224,6 +177,16 @@ fn decrypt_pkcs8(der: &[u8], passphrase: &str) -> Result<Sensitive<Vec<u8>>, Pri
         _ => return UnsupportedPbes1Snafu.fail(),
     };
 
+    // Refuse 3DES before PBKDF2: the FIPS build must not process this key
+    // through an out-of-module cipher, even when its passphrase is wrong.
+    #[cfg(feature = "fips-tls")]
+    if matches!(
+        &params.encryption,
+        pbes2::EncryptionScheme::DesEde3Cbc { .. }
+    ) {
+        return DesEde3RejectedSnafu.fail();
+    }
+
     let key = derive_key(&params.kdf, passphrase, params.encryption.key_size())?;
     decrypt_payload(&params.encryption, key.reveal(), info.encrypted_data)
 }
@@ -283,7 +246,10 @@ fn decrypt_payload(
         pbes2::EncryptionScheme::Aes128Cbc { iv } => aes_cbc_decrypt(&AES_128, key, iv, ciphertext),
         pbes2::EncryptionScheme::Aes192Cbc { iv } => aes_cbc_decrypt(&AES_192, key, iv, ciphertext),
         pbes2::EncryptionScheme::Aes256Cbc { iv } => aes_cbc_decrypt(&AES_256, key, iv, ciphertext),
+        #[cfg(not(feature = "fips-tls"))]
         pbes2::EncryptionScheme::DesEde3Cbc { iv } => des_ede3_cbc_decrypt(key, iv, ciphertext),
+        #[cfg(feature = "fips-tls")]
+        pbes2::EncryptionScheme::DesEde3Cbc { .. } => DesEde3RejectedSnafu.fail(),
         // Single-DES has no arm because its `pkcs5` variant is behind the
         // `des-insecure` feature we deliberately leave off: a 56-bit key is
         // brute-forceable, so such a key falls through to the catch-all and is
@@ -325,9 +291,8 @@ fn aes_cbc_decrypt(
     Ok(buf.into())
 }
 
-/// 3DES-CBC/PKCS#7, outside the validated module. See the module docs: this is
-/// legacy-use decryption of a non-approved algorithm, which no module would
-/// perform as an approved service anyway.
+/// 3DES-CBC/PKCS#7 for standard-build legacy private keys only.
+#[cfg(not(feature = "fips-tls"))]
 fn des_ede3_cbc_decrypt(
     key: &[u8],
     iv: &[u8; 8],
@@ -503,15 +468,8 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, PrivateKeyError> {
 /// standard build makes no FIPS claim and keeps the compatibility the OpenSSL
 /// loader had.
 ///
-/// This is the one place where build flags change which *keys load*, rather
-/// than only which module does the work. It is a deliberate exception,
-/// recorded as F16 in the compliance plan: the alternative was dropping a
-/// working format from every shipped artifact to protect a claim only one of
-/// them makes.
-///
-/// Note what is *not* gated: the bulk decryption still runs in AWS-LC for AES
-/// (and in `des` for 3DES, as everywhere else in this module). Only the key
-/// derivation is MD5.
+/// Standard builds retain this legacy format; FIPS builds reject it because
+/// its MD5-based KDF cannot be replaced without changing the input format.
 #[cfg(not(feature = "fips-tls"))]
 mod legacy_pem {
     use super::{
@@ -682,6 +640,18 @@ pub enum PrivateKeyError {
         location: Location,
     },
 
+    #[cfg(feature = "fips-tls")]
+    #[snafu(display(
+        "This private key uses PBES2/3DES-CBC, which is not supported in FIPS \
+         builds. Standard builds can read this key. To use a FIPS build, convert \
+         it with: openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8. \
+         For DER input, add -inform DER before -in <key>."
+    ))]
+    DesEde3Rejected {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display(
         "This private key uses PBES1, which is obsolete. Convert it with: \
          openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8"
@@ -832,10 +802,8 @@ mod tests {
         }
     }
 
-    /// 3DES is what `openssl pkcs8 -topk8 -v2 des3` produces -- the command
-    /// Snowflake documents -- so this is the format most encrypted keys in the
-    /// field actually use. Unwrapping it is NIST-permitted legacy use; see the
-    /// module docs.
+    /// Preserve existing 3DES-encrypted key support in standard builds.
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn des_ede3_encrypted_pkcs8_round_trips() {
         let key = openssl_key();
@@ -852,18 +820,30 @@ mod tests {
         assert_recovers(&loaded, &key);
     }
 
-    /// Behaviour must not differ between FIPS and non-FIPS builds: there is no
-    /// feature gate rejecting 3DES, because NIST permits the unwrap.
+    #[cfg(feature = "fips-tls")]
     #[test]
-    fn des_ede3_is_accepted_regardless_of_fips_feature() {
+    fn des_ede3_encrypted_pkcs8_is_rejected_in_fips_builds() {
         let key = openssl_key();
         let pem = key
             .private_key_to_pem_pkcs8_passphrase(Cipher::des_ede3_cbc(), PASSPHRASE.as_bytes())
             .expect("encrypted pkcs8 pem");
-        assert!(
-            load_rsa_key(&pem, Some(PASSPHRASE)).is_ok(),
-            "3DES unwrapping is permitted legacy use and must work in every build"
-        );
+        let der = key
+            .private_key_to_pkcs8_passphrase(Cipher::des_ede3_cbc(), PASSPHRASE.as_bytes())
+            .expect("encrypted pkcs8 der");
+
+        for encrypted_key in [&pem[..], &der[..]] {
+            for passphrase in [PASSPHRASE, "wrong passphrase"] {
+                let error = load_rsa_key(encrypted_key, Some(passphrase))
+                    .expect_err("FIPS builds must reject PBES2/3DES private keys");
+                assert!(matches!(error, PrivateKeyError::DesEde3Rejected { .. }));
+                let message = error.to_string();
+                assert!(
+                    message.contains("openssl pkcs8 -topk8 -v2 aes-256-cbc"),
+                    "{message}"
+                );
+                assert!(message.contains("-inform DER"), "{message}");
+            }
+        }
     }
 
     #[test]

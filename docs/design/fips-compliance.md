@@ -17,7 +17,7 @@ Status at a glance:
 | Validated module + certificate number | **Open.** The locked `aws-lc-fips-sys 0.13.17` vendors AWS-LC FIPS 3.6.0; certificate #5314 identifies the static 3.1.0 module, not this build. The exact validated module, Security Policy, and supported environment still need evidence. |
 | Phases 1–2 | Done and verified. |
 | Phase 3 | Partly landed. Verified connection and storage clients use the module provider. `verify_certificates=false` and HTTPS CRL downloads still use the process-global provider. |
-| Phases 4–6 | Most direct OpenSSL ports landed. AWS SDK SigV4, WIF signing, 3DES legacy key unwrap, raw AES-ECB key transport, attestation and release work remain. The shipped-dependency deny gate covers only one part of Phase 5. |
+| Phases 4–6 | Most direct OpenSSL ports and local WIF signing landed. AWS SDK SigV4, raw AES-ECB key transport, attestation and release work remain. FIPS builds reject PBES2/3DES private keys; standard builds retain legacy unwrapping outside the module, and `des` remains transitively in the dependency graph. The shipped-dependency deny gate covers only one part of Phase 5. |
 
 ## Bottom line
 
@@ -26,11 +26,12 @@ AWS-LC FIPS for rustls and the driver's AWS-LC calls, including JWT signing,
 AES stage encryption, DPoP, and approved-key decryption. Clients with
 `verify_certificates=false`, and HTTPS CRL downloads, can still use the
 process-global provider (F14).
-AWS SDK SigV4 signing and WIF attestation use RustCrypto HMAC/SHA-256, 3DES
-legacy private-key unwrapping uses `des` outside AWS-LC, and the stage key-wrap
-format uses raw AES-ECB (F4). Selecting FIPS mode does not establish that the
-vendored module is covered by a validation certificate or that an artifact
-satisfies a Security Policy.
+AWS SDK SigV4 signing still uses RustCrypto HMAC/SHA-256, and the stage
+key-wrap format uses raw AES-ECB (F4). FIPS builds reject
+PBES2/3DES private keys before derivation or decryption; standard builds
+retain legacy `des` unwrapping outside AWS-LC. Selecting FIPS mode does not
+establish that the vendored module is covered by a validation certificate or
+that an artifact satisfies a Security Policy.
 
 The **target** remains one source tree, one cryptographic module, and one flag:
 
@@ -97,7 +98,7 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | --- | --- | --- | --- |
 | F1 | Blocker | The original `fips` feature was unreachable from shipped binding artifacts | Binding manifests — fixed in Phase 1 |
 | F2 | **Resolved** (was Blocker) | Shipped artifacts could statically link unvalidated OpenSSL 3.6.2 (`openssl-src 300.6.0+3.6.2`). `openssl` is now a `sf_core` dev-dependency, `vendored-openssl` is deleted from all four manifests, and no release workflow passes it. Verified 2026-09-18: `openssl-src` is absent from both `Cargo.lock` and `python/Cargo.lock.sdist`, and `cargo tree -e normal` finds no OpenSSL in `sf_core`, `odbc`, `jdbc_bridge`, `python_bridge` or `nodejs_bridge` | Resolved by removing OpenSSL outright, not by guarding the combination |
-| F3 | Blocker | Direct JWT, private-key AES/PBKDF2, stage AES, and DPoP operations were ported off OpenSSL; AWS SDK SigV4 and WIF attestation still sign with RustCrypto outside the selected module, and legacy 3DES unwrapping is outside it. See the inventory below. | `sf_core` and `aws-sigv4` |
+| F3 | Blocker | Direct JWT, private-key AES/PBKDF2, stage AES, DPoP and local WIF signing were ported off OpenSSL/RustCrypto; AWS SDK SigV4 still signs with RustCrypto outside the selected module. FIPS builds reject PBES2/3DES before derivation or decryption; standard builds retain legacy 3DES unwrapping outside the module. See the inventory below. | `sf_core` and `aws-sigv4` |
 | F4 | High | Per-file keys are wrapped with raw AES-ECB, not an approved key-transport construction such as AES-KW/KWP. AWS-LC *can* perform ECB (`aws-lc-rs` exposes `OperatingMode::ECB`), so this is not an implementation blocker — it is a wire-format problem: running an unapproved construction inside a validated module does not make it approved. Shared Snowflake stage format; not unilaterally fixable here | `file_manager/encryption.rs` |
 | F5 | High | A transitive reqwest feature can re-enable ring and its implicit provider fallback through feature unification | TLS dependency graph — fixed in Phase 2 |
 | F6 | High | AWS Workload Identity previously bypassed shared TLS, proxy, root and CRL policy | `workload_identity/aws.rs` — fixed in Phase 2 |
@@ -110,7 +111,7 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | F13 | Low | JDBC retains key bytes in a Java `String`; Python may load a second unvalidated OpenSSL | JDBC and Python wrappers |
 | F14 | Blocker, still open for the insecure client and HTTPS CRL downloads | Verified connection and cloud-storage clients now pass reqwest a config built with the module's provider on the CRL-disabled, enabled, and advisory paths. CRL-disabled default trust is native ∪ webpki roots; custom roots replace that set and extra roots extend it. CRL-enabled and advisory defaults use the native store only; extra roots there are native ∪ extra, not the webpki union. `verify_certificates=false` keeps reqwest's insecure verifier and the process-global provider; that opt-out stays, and FIPS deployments do not use it. Snowflake `/telemetry/send` uses the verified connection client. IMDS and the local OpenTelemetry exporter are plain HTTP. An HTTPS CRL distribution point still uses a separate reqwest client and `ensure_crypto_provider()`, which yields to a host-installed provider and can run before a gated connection. | `tls/client.rs`, `crl/cache.rs` |
 | F15 | Low (build/inventory only) | With `rustls/fips`, Cargo resolves **both** `aws-lc-fips-sys` and `aws-lc-sys` (`0.13.17` and `0.38.0` in the current lockfile). A 2026-09-15 build of older versions showed only FIPS symbols linked; graph presence is not proof that either module is in a given release binary. Re-run link and SBOM analysis for each exact artifact. | `rustls` feature wiring and release provenance |
-| F16 | Format decision, not a general MD5 exemption | Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) requires an MD5-based `EVP_BytesToKey` KDF: standard builds accept it for compatibility, `fips-tls` builds explicitly reject it. This differs from `md-5` use for nonsecurity upload checksums and from PBES2's PBKDF2 + 3DES legacy unwrap. Record the latter's out-of-module implementation as a separate exception; permission for legacy unwrapping does not validate a RustCrypto implementation. | `crypto/private_key.rs::legacy_pem` and `des_ede3_cbc_decrypt` |
+| F16 | Format decision, not a general MD5 exemption | Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) requires an MD5-based `EVP_BytesToKey` KDF: standard builds accept it for compatibility, `fips-tls` builds explicitly reject it. This differs from `md-5` use for nonsecurity upload checksums and from PBES2's PBKDF2 + 3DES legacy unwrap: FIPS builds reject PBES2/3DES before deriving a key or decrypting, while standard builds retain it outside the module. Neither standard-build compatibility path validates a RustCrypto implementation for FIPS use. | `crypto/private_key.rs::legacy_pem` and `des_ede3_cbc_decrypt` |
 
 ## Shipped Rust crypto inventory and dependency policy
 
@@ -146,12 +147,12 @@ package; compare those with the release artifact separately.
 | --- | --- | --- |
 | `aws-lc-rs`, `rustls`, `aws-lc-fips-sys` / `aws-lc-sys` | TLS and direct driver signing, RNG, hashing, AES and PBKDF2 are **security-sensitive**; the feature selects the module. The lockfile currently resolves `aws-lc-rs 1.16.1`, FIPS sys `0.13.17` and non-FIPS sys `0.38.0` when both feature paths are considered. | Allowed, but crate versions and `try_fips_mode()` prove neither the linked binary's module identity nor CMVP applicability. F14 and F15 remain open as described above. |
 | `hmac`, `sha2` through `aws-sigv4` and `aws-sdk-s3` | **Security-sensitive:** plain SigV4 HMAC/SHA-256 signs ordinary S3 requests regardless of `sigv4a`; the SDK owns this signer. | Allowed as an explicit external blocker, **not** an approved AWS-LC operation. A local WIF fix alone cannot close it. Do not blanket-ban SDK-required `hmac` or `sha2`. |
-| `hmac`, `sha2` in `rest/snowflake/workload_identity/aws.rs` | **Security-sensitive:** the locally constructed AWS attestation signs with RustCrypto. | Open at this baseline; migrate the call site to the selected module separately from SDK request signing. |
-| `sha2` in `crl/cache.rs`, `token_cache/mod.rs`, `file_manager/s3_transfer.rs` | **Identifiers, not message signatures:** CRL cache filenames, token-cache keys and S3 credential cache fingerprints. `tls/x509_utils.rs` additionally hashes issuer/subject DER for **revocation matching**; this is policy-sensitive selection, not a substitute signature verifier. | Allowed with these explicit call-site classifications; new authentication/signature use is not covered by this allowance. |
+| `rest/snowflake/workload_identity/aws.rs` | **Security-sensitive:** the locally constructed AWS attestation hashes and signs via `aws_lc_rs::digest` and `aws_lc_rs::hmac`, not RustCrypto. | Local signer migrated to the selected module; SDK-managed SigV4 remains a separate blocker. |
+| `crl/cache.rs`, `token_cache/mod.rs`, `file_manager/s3_transfer.rs` | **Identifiers, not message signatures:** CRL cache filenames, token-cache keys and S3 credential cache fingerprints use `aws_lc_rs::digest` for SHA-256. `tls/x509_utils.rs` also hashes issuer/subject DER via AWS-LC for **revocation matching**; this is policy-sensitive selection, not a substitute signature verifier. | First-party hashes run in the selected module; their non-signature classification does not exempt new authentication/signature call sites from review. |
 | `md-5`, `sha1`, `crc32fast` in checksum paths | **Non-authentication integrity checks:** Azure Content-MD5 is computed in `file_manager/encryption.rs`; `aws-smithy-checksums` brings MD5 and SHA-1 for S3 checksums, while `crc32fast` also enters via SDK event-stream framing and `flate2` compression. SDK checksums are distinct from its HMAC request signer. | Allowed for wire-compatible checksums. A normal dependency's presence does not certify that every invocation is nonsecurity; changes to call sites require review. |
 | `md-5` in `crypto/private_key.rs::legacy_pem` | **Security-sensitive KDF:** MD5-based `EVP_BytesToKey` decrypts traditional encrypted PEM only under `cfg(not(feature = "fips-tls"))`; the FIPS build rejects it with a specific error. | Standard-build compatibility exception, **not** a blanket FIPS MD5 exemption. A crate-wide ban would also break the unrelated Azure and SDK checksum paths. |
 | `pkcs8`, `pkcs5`, `x509-parser`, `x509-cert`, `der-parser` | **Parsing:** DER, X.509 and PBES2 envelope/algorithm identifiers are decoded and checked, not signed/decrypted by these parsers in driver code. The `pkcs8/3des` feature transitively adds RustCrypto `aes`, `pbkdf2`, `scrypt`, `sha2` and `des` to the graph even though this driver calls AWS-LC for AES/PBKDF2 and rejects scrypt envelopes. | Allowed as parsing dependencies; graph/SBOM membership must be explained, not misreported as executed approved crypto. Review upstream feature/code changes before revising that classification. |
-| `des`, `cbc` in `crypto/private_key.rs` | **Security-sensitive legacy key unwrap:** PBES2-derived keys come from AWS-LC PBKDF2, but 3DES-CBC decrypt runs in RustCrypto for documented older keys, including in `fips-tls` builds. | SP 800-131A permits three-key TDEA *legacy decryption/unwrapping*, not new encryption/wrapping. This does **not** establish that an out-of-module RustCrypto implementation is a validated service; resolve and document the exception before a whole-artifact claim. |
+| `des`, `cbc` in `crypto/private_key.rs` | **Security-sensitive legacy key unwrap in standard builds only:** PBES2-derived keys come from AWS-LC PBKDF2, then 3DES-CBC decrypt runs in RustCrypto for documented older keys. `fips-tls` builds reject PBES2/3DES before derivation or decryption; `pkcs8/3des` still brings `des` into the dependency graph. | Standard-build compatibility is not a validated FIPS service. SP 800-131A's allowance for three-key TDEA *legacy decryption/unwrapping* does not authorize out-of-module decryption in this FIPS build. Explain transitive `des` in artifact inventories and retain whole-artifact validation requirements. |
 
 F4 is separate from this crate policy: stage file-key transport still uses raw
 AES-ECB, and executing it inside AWS-LC does not turn the wire construction
@@ -208,7 +209,7 @@ provider. It is selected entirely at compile time, holds its own rustls
 
 The direct AWS-LC calls for RNG, hashing, RSA/EC signing, AES and PBKDF2 are
 selected by Cargo features, but do not go through this TLS accessor. SDK SigV4
-and WIF attestation signing remain outside the module at this baseline.
+remains outside the module; local WIF attestation signing uses AWS-LC.
 
 It deliberately exposes no constructor taking an arbitrary provider. Which
 module is in use is a compile-time fact; a runtime setter would reintroduce the
@@ -228,7 +229,7 @@ sites have been replaced:
 
 | File | Ported operations | Remaining boundary |
 | --- | --- | --- |
-| `auth.rs`, `crypto/private_key.rs` | JWT RSA-SHA256 signing, PEM/DER key loading, AWS-LC PBKDF2 and AES decryption | Legacy 3DES unwrapping is RustCrypto; traditional encrypted PEM with an MD5 KDF loads only without `fips-tls`. |
+| `auth.rs`, `crypto/private_key.rs` | JWT RSA-SHA256 signing, PEM/DER key loading, AWS-LC PBKDF2 and AES decryption | Standard builds retain RustCrypto 3DES legacy unwrap; `fips-tls` builds reject PBES2/3DES before derivation or decryption. Traditional encrypted PEM with an MD5 KDF also loads only without `fips-tls`. |
 | `config/private_key.rs` | Private-key DER/PEM decoding using the shared key loader | Parsing is not a cryptographic module service. |
 | `file_manager/encryption.rs` | AWS-LC AES-CBC stage encryption, digest, RNG, and AES-ECB file-key transport | F4: raw AES-ECB is not an approved key-wrap construction despite executing inside AWS-LC. |
 | `rest/snowflake/oauth/dpop.rs` | AWS-LC P-256 key generation, ECDSA and SHA-256 | SDK SigV4 and WIF attestation are separate signer paths. |
@@ -366,21 +367,22 @@ local OpenTelemetry exporter (`http://localhost:8318`) are plain HTTP.
 
 ### Phase 4 — Port crypto off OpenSSL (partly done)
 
-- Port the four direct production files above to AWS-LC. **Done**, with the
-  documented 3DES and MD5 PEM compatibility exceptions.
+- Port the four direct production files above to AWS-LC. **Done** for supported
+  FIPS operations; standard builds retain 3DES and MD5 PEM compatibility paths,
+  while FIPS builds reject those legacy key formats.
 - Move CRL signature verification behind the module interface; enforce exact
   RSA-PSS parameters and the approved algorithm set.
 - Remove ring from the shipped Rust graph. **Done:** SDK legacy `rustls`,
   `sigv4a` and `sso` are off; test-only `rcgen` still depends on ring.
-- Move locally constructed WIF attestation HMAC/SHA-256 to AWS-LC; independently
-  resolve plain SigV4 HMAC/SHA-256 inside `aws-sigv4` with the SDK owner (F7).
+- Locally constructed WIF attestation HMAC/SHA-256 moved to AWS-LC (done);
+  plain SigV4 HMAC/SHA-256 inside `aws-sigv4` remains with the SDK owner (F7).
   The latter signs S3 requests and is not removed by disabling `sigv4a`.
 - OAuth CSRF and PKCE randomness onto the module's DRBG (F8). **Done**, and the
   PKCE challenge digest moved to AWS-LC with it.
 - Drop production `openssl`, then delete `vendored-openssl` (F2). **Done.**
 - Rename `fips-tls` to `fips` only after the boundary and evidence are complete.
-- Keep RustCrypto `sha2`/`hmac` usage explicitly classified: identifiers and
-  checksums differ from WIF/SigV4 signing; no crate-wide ban can express it.
+- Keep transitive RustCrypto `sha2`/`hmac` usage explicitly classified: SDK
+  SigV4 signing differs from checksums; no crate-wide ban can express it.
 
 F4 remains a protocol finding: executing raw AES-ECB inside a validated module
 does not make it an approved key-transport construction.
@@ -507,10 +509,14 @@ flag makes unnecessary.
 5. If a customer mandates their OS vendor's OpenSSL module specifically, what is
    the answer? The rejection above assumes that case is rare enough to decline;
    confirm with the FedRAMP/gov account owners before it is load-bearing.
-6. What exception and migration plan cover 3DES-CBC legacy private-key
-   unwrapping implemented outside the module, including users following the
-   documented `openssl pkcs8 -v2 des3` key-generation command? Legacy use
-   allowance is not evidence that this RustCrypto service is validated.
+6. What migration plan covers users of PBES2/3DES private keys, including users
+   following the documented `openssl pkcs8 -v2 des3` key-generation command?
+   FIPS builds reject these keys before derivation or decryption; convert them
+   with `openssl pkcs8 -topk8 -v2 aes-256-cbc -in <key> -out <key>.p8`.
+   For bare DER input, add `-inform DER` before `-in <key>`:
+   `openssl pkcs8 -topk8 -v2 aes-256-cbc -inform DER -in <key> -out <key>.p8`.
+   Standard builds retain legacy unwrapping outside the module, while transitive
+   `des` still requires explanation in whole-artifact dependency inventories.
 7. `aws-sigv4` computes plain SigV4 HMAC-SHA256 via RustCrypto on S3 requests.
    The local WIF `GetCallerIdentity` signer is AWS-LC and is not part of this
    question. Who owns moving the SDK signer to the selected module or

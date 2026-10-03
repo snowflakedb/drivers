@@ -379,8 +379,8 @@ mod tests {
         );
     }
 
-    /// An encrypted key in the format Snowflake documents (`-v2 des3`) must
-    /// produce the same JWT as its unencrypted equivalent.
+    /// An AES-encrypted PKCS#8 key must produce the same JWT issuer as its
+    /// unencrypted equivalent in both standard and FIPS builds.
     #[test]
     fn encrypted_key_produces_the_same_issuer_as_unencrypted() {
         let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
@@ -388,7 +388,7 @@ mod tests {
         let plain = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
         let encrypted = String::from_utf8(
             pkey.private_key_to_pem_pkcs8_passphrase(
-                openssl::symm::Cipher::des_ede3_cbc(),
+                openssl::symm::Cipher::aes_256_cbc(),
                 PASSPHRASE.as_bytes(),
             )
             .unwrap(),
