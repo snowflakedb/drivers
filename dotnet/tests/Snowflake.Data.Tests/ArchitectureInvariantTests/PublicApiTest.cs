@@ -19,6 +19,7 @@ public sealed class PublicApiTest
         var allowedPublicTypes = new HashSet<string>
         {
             typeof(SnowflakeDbConnection).FullName!,
+            typeof(SnowflakeDbDriver).FullName!,
             typeof(SnowflakeDbCommand).FullName!,
             typeof(SnowflakeDbCommandBuilder).FullName!,
             typeof(SnowflakeDbDataAdapter).FullName!,
@@ -28,6 +29,7 @@ public sealed class PublicApiTest
             typeof(SnowflakeDbParameterCollection).FullName!,
             typeof(SnowflakeDbSessionPool).FullName!,
             typeof(SnowflakeDbTransaction).FullName!,
+            typeof(SnowflakeTlsStatus).FullName!,
             typeof(SnowflakeActivityStarter).FullName!,
             typeof(ChangedSessionBehavior).FullName!,
             typeof(ISnowflakeCredentialManager).FullName!,
@@ -58,6 +60,18 @@ public sealed class PublicApiTest
 
         violations.ShouldBeEmpty($"New public members found on {type.Name} not in allow-list");
     }
+
+    private static readonly HashSet<string> SnowflakeDbDriverPublicApi =
+    [
+        "C:()",
+        $"M:{nameof(SnowflakeDbDriver.GetTlsStatus)}()",
+    ];
+
+    private static readonly HashSet<string> SnowflakeTlsStatusPublicApi =
+    [
+        $"P:get_{nameof(SnowflakeTlsStatus.TlsProviderIsFips)}()",
+        $"P:get_{nameof(SnowflakeTlsStatus.FipsTlsBuildEnabled)}()",
+    ];
 
     private static readonly HashSet<string> SnowflakeDbConnectionPublicApi =
     [
@@ -253,6 +267,7 @@ public sealed class PublicApiTest
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
     {
         [typeof(SnowflakeDbConnection)] = SnowflakeDbConnectionPublicApi,
+        [typeof(SnowflakeDbDriver)] = SnowflakeDbDriverPublicApi,
         [typeof(SnowflakeDbCommand)] = SnowflakeDbCommandPublicApi,
         [typeof(SnowflakeDbCommandBuilder)] = SnowflakeDbCommandBuilderPublicApi,
         [typeof(SnowflakeDbDataAdapter)] = SnowflakeDbDataAdapterPublicApi,
@@ -262,6 +277,7 @@ public sealed class PublicApiTest
         [typeof(SnowflakeDbParameterCollection)] = SnowflakeDbParameterCollectionPublicApi,
         [typeof(SnowflakeDbSessionPool)] = SnowflakeDbSessionPoolPublicApi,
         [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi,
+        [typeof(SnowflakeTlsStatus)] = SnowflakeTlsStatusPublicApi,
         [typeof(SnowflakeActivityStarter)] = SnowflakeActivityStarterPublicApi,
         [typeof(ChangedSessionBehavior)] = ChangedSessionBehaviorPublicApi,
         [typeof(ISnowflakeCredentialManager)] = ISnowflakeCredentialManagerPublicApi,

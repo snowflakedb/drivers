@@ -1,5 +1,5 @@
 ; ODBC Driver Export Definition File
-; Only export the ODBC API functions, not internal symbols
+; Only export ODBC API and Snowflake extension entry points, not internal symbols
 ; ANSI (non-W) variants of functions with Unicode duplicates are excluded here;
 ; they are only compiled on non-Windows platforms.
 LIBRARY sfodbc
@@ -68,6 +68,7 @@ EXPORTS
     SQLColumnPrivilegesW
     SQLTablePrivilegesW
     SQLStatisticsW
+    SFGetTlsStatus
     ConfigDSN
     ConfigDSNW
     ConfigDriver

@@ -1015,6 +1015,17 @@ message ConfigGetPathsResponse {
   string connections_file = 2;
 }
 
+// Reports this build's linked TLS provider only. These fields do not establish
+// that every operation or the complete driver artifact is FIPS compliant.
+message DriverGetTlsStatusRequest {}
+
+message DriverGetTlsStatusResponse {
+  // Rustls's FIPS verdict for the linked TLS crypto provider.
+  bool tls_provider_is_fips = 1;
+  // Whether sf_core was compiled with the fips-tls feature.
+  bool fips_tls_build_enabled = 2;
+}
+
 // =============================================================================
 // WORKLOAD IDENTITY FEDERATION (WIF) - standalone attestation
 // =============================================================================
@@ -1081,6 +1092,9 @@ message TelemetrySendLogRequest {
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
+  // Available without a database or connection handle, even in standard builds.
+  rpc DriverGetTlsStatus(DriverGetTlsStatusRequest) returns (DriverGetTlsStatusResponse);
+
   // Database operations
   rpc DatabaseNew(DatabaseNewRequest) returns (DatabaseNewResponse);
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
