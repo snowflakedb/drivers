@@ -117,6 +117,7 @@ src/snowflake/connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.cpp
 
 # Driver core
 src/snowflake/connector/_core/**
+fips-candidate/candidate-native/
 
 # Hatch
 .hatch/

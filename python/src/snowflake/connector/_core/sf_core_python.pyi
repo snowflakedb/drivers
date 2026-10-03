@@ -65,3 +65,7 @@ def native_arrow_enabled() -> bool:
     """
     ...
 
+
+def fips_tls_enabled() -> bool:
+    """Whether the ``fips-tls`` Cargo feature was compiled in; not proof of FIPS validation."""
+    ...

@@ -18,6 +18,9 @@ from typing import Any
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
+CYTHON_IMPORT_ERROR: ImportError | None = None
+
+
 # Graceful fallback if Cython or setuptools are not available
 try:
     from Cython.Build import cythonize
@@ -25,8 +28,9 @@ try:
     from setuptools.command.build_ext import build_ext
 
     CYTHON_AVAILABLE = True
-except ImportError:
+except ImportError as error:
     CYTHON_AVAILABLE = False
+    CYTHON_IMPORT_ERROR = error
     cythonize = None  # type: ignore[assignment,misc]
     Distribution = None  # type: ignore[assignment,misc]
     Extension = None  # type: ignore[assignment,misc]
@@ -37,6 +41,11 @@ class BuildHook(BuildHookInterface):
     """Build hook for compiling Cython extensions and generating protobuf code."""
 
     PLUGIN_NAME = "nanoarrow"
+    CORE_BUILD_FEATURES: tuple[str, ...] = ()
+    CORE_OUTPUT_DIR = Path("src/snowflake/connector/_core")
+    CYTHON_BUILD_DIR: Path | None = None
+    EXTENSION_OUTPUT_DIR: Path | None = None
+
 
     # Relative paths from src/
     SRC_DIR = Path("src")
@@ -128,7 +137,7 @@ class BuildHook(BuildHookInterface):
     def _select_core_extension(self, build_data: dict[str, Any]) -> None:
         """Force-include only the sf_core_python binary matching this interpreter."""
         ext_name = f"sf_core_python{sysconfig.get_config_var('EXT_SUFFIX')}"
-        core_ext = Path(self.root) / "src" / "snowflake" / "connector" / "_core" / ext_name
+        core_ext = Path(self.root) / self.CORE_OUTPUT_DIR / ext_name
         if not core_ext.is_file():
             return
         build_data.setdefault("force_include", {})[str(core_ext)] = (
@@ -265,7 +274,11 @@ class BuildHook(BuildHookInterface):
         saved_cwd = os.getcwd()
         os.chdir(self.root)
         try:
-            extensions = cythonize([ext])
+            extensions = (
+                cythonize([ext], build_dir=str(self.CYTHON_BUILD_DIR))
+                if self.CYTHON_BUILD_DIR is not None
+                else cythonize([ext])
+            )
             self._run_build(extensions, src_root)
         finally:
             os.chdir(saved_cwd)
@@ -334,8 +347,12 @@ class BuildHook(BuildHookInterface):
 
         cmd = CustomBuildExt(dist)
         cmd.ensure_finalized()
-        cmd.build_lib = str(src_root)
-        cmd.inplace = True
+        cmd.build_lib = str(
+            Path(self.root) / self.EXTENSION_OUTPUT_DIR
+            if self.EXTENSION_OUTPUT_DIR is not None
+            else src_root
+        )
+        cmd.inplace = self.EXTENSION_OUTPUT_DIR is None
         cmd.run()
 
     def _build_core(self) -> None:
@@ -344,14 +361,13 @@ class BuildHook(BuildHookInterface):
         Produces a version-tagged ``sf_core_python.<EXT_SUFFIX>`` native
         extension (e.g. ``.cpython-313-darwin.so`` / ``.cp313-win_amd64.pyd``).
         """
-
         if os.environ.get("SKIP_CORE_BUILD", "").lower() in self.POSITIVE_VALUES:
             return
 
         # Get paths relative to the Python wrapper directory
         # Uses symlinked Cargo.toml in dev (points to ../Cargo.toml) or actual file in sdist
-        python_dir = Path(__file__).parent
-        target_dir = python_dir / "src" / "snowflake" / "connector" / "_core"
+        python_dir = Path(self.root)
+        target_dir = python_dir / self.CORE_OUTPUT_DIR
         cargo_manifest = python_dir / "Cargo.toml"
 
         if not cargo_manifest.exists():
@@ -383,6 +399,8 @@ class BuildHook(BuildHookInterface):
         # Opt-in PyO3-based nanoarrow replacement.
         if os.environ.get("SF_NATIVE_ARROW", "").lower() in ("1", "true"):
             extra_cargo_args.extend(["--features", "native-arrow"])
+        if self.CORE_BUILD_FEATURES:
+            extra_cargo_args.extend(["--features", ",".join(self.CORE_BUILD_FEATURES)])
 
         # Use a stable target dir when CORE_CARGO_TARGET_DIR is set (enables
         # incremental Rust compilation and CI caching). Otherwise fall back to a

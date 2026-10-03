@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling", "editables", "Cython", "setuptools", "mypy-protobuf~=5.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "snowflake-connector-python-fips-candidate"
+dynamic = ["version"]
+description = "Snowflake Connector for Python FIPS-TLS candidate (not FIPS validated)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "protobuf>=6.32.1,<7",
+    "pytz",
+    "tomlkit>=0.13",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/snowflakedb/drivers"
+"Bug Reports" = "https://github.com/snowflakedb/drivers/issues"
+"Source" = "https://github.com/snowflakedb/drivers"
+
+[project.optional-dependencies]
+pyarrow = ["pyarrow>=14.0.1"]
+pandas = [
+    "pyarrow>=14.0.1",
+    "pandas>=1.0.0,<3.0.0; python_version < '3.13'",
+    "pandas>=2.1.2; python_version >= '3.13'",
+]
+
+[tool.hatch.version]
+path = "src/snowflake/connector/version.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "hatch_build.py",
+    "fips_profile.py",
+    "Cargo.toml",
+    "sf_core/",
+    "python_bridge/",
+    "sf_params_spec/",
+    "sf_types/",
+    "proto_utils/",
+    "proto_generator/",
+    "protobuf/",
+    "error_trace/",
+    "error_trace_derive/",
+]
+exclude = [
+    "__pycache__",
+    "candidate-native/",
+    "src/snowflake/connector/_internal/_distribution_profile.py",
+    "src/snowflake/connector/_core/*.so",
+    "src/snowflake/connector/_core/*.pyd",
+    "src/snowflake/connector/_internal/*.so",
+    "src/snowflake/connector/_internal/*.pyd",
+    "src/snowflake/connector/_internal/nanoarrow_cpp/scripts",
+    "sf_core/target/",
+    "python_bridge/target/",
+    "sf_params_spec/target/",
+    "sf_types/target/",
+    "proto_utils/target/",
+    "sf_core/tests/e2e/",
+    "sf_core/tests/integration/",
+    "sf_core/tests/*.rs",
+]
+
+# Individual symlinked files are not dereferenced by Hatch's sdist builder.
+[tool.hatch.build.targets.sdist.force-include]
+"../Cargo.lock.sdist" = "Cargo.lock"
+"../hatch_build.py" = "hatch_ordinary.py"
+"../../LICENSE" = "LICENSE"
+"../../build_common.rs" = "build_common.rs"
+"../src/snowflake/connector/_core/sf_core_python.pyi" = "src/snowflake/connector/_core/sf_core_python.pyi"
+"../src/snowflake/connector/_core/__init__.py" = "src/snowflake/connector/_core/__init__.py"
+# A second source keeps fips_profile.py in the sdist for wheel builds from it:
+# Hatch consumes a force-included source instead of archiving it twice.
+"fips_sdist_profile.py" = "src/snowflake/connector/_internal/_distribution_profile.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snowflake"]
+# Never inherit ordinary native extensions or the ordinary package's profile
+# from the shared checkout. The hook force-includes both freshly built binaries.
+exclude = [
+    "src/snowflake/connector/_internal/_distribution_profile.py",
+    "src/snowflake/connector/_core/*.so",
+    "src/snowflake/connector/_core/*.pyd",
+    "src/snowflake/connector/_internal/*.so",
+    "src/snowflake/connector/_internal/*.pyd",
+]
+artifacts = ["src/snowflake/connector/_core/sf_core_python.pyi"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"fips_profile.py" = "snowflake/connector/_internal/_distribution_profile.py"
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
