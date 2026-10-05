@@ -1,7 +1,5 @@
 import { SnowflakeDate } from 'snowflake-sdk';
 import { expect } from 'vitest';
-import { CoreDateFormatter } from '../../../src/core/index.js';
-
 const DEFAULT_TIMESTAMP_SCALE = 9;
 
 function dateTimeToMillis(when: string | number): number {
@@ -26,14 +24,13 @@ export function expectSnowflakeDate(values: unknown[], expected: (SnowflakeDate 
 }
 
 export function createTestDate(value: string | number): SnowflakeDate {
-  return new SnowflakeDate({
-    value: typeof value === 'number' ? value : new Date(`${value}T00:00:00.000Z`).getTime(),
-    nanoSeconds: 0,
-    scale: 0,
-    timezone: 'UTC',
-    format: 'YYYY-MM-DD',
-    formatter: new CoreDateFormatter('YYYY-MM-DD'),
-  });
+  return new SnowflakeDate(
+    typeof value === 'number' ? value : new Date(`${value}T00:00:00.000Z`).getTime(),
+    0,
+    0,
+    'UTC',
+    'YYYY-MM-DD',
+  );
 }
 
 export function createTestLtzDate(
@@ -44,14 +41,13 @@ export function createTestLtzDate(
     timezone?: string;
   } = {},
 ): SnowflakeDate {
-  return new SnowflakeDate({
-    value: dateTimeToMillis(value),
-    nanoSeconds: options.nanoSeconds ?? 0,
-    scale: options.scale ?? DEFAULT_TIMESTAMP_SCALE,
-    timezone: options.timezone ?? 'UTC',
-    format: '',
-    formatter: new CoreDateFormatter(''),
-  });
+  return new SnowflakeDate(
+    dateTimeToMillis(value),
+    options.nanoSeconds ?? 0,
+    options.scale ?? DEFAULT_TIMESTAMP_SCALE,
+    options.timezone ?? 'UTC',
+    '',
+  );
 }
 
 export function createTestTzDate(
@@ -62,14 +58,13 @@ export function createTestTzDate(
     scale?: number;
   } = {},
 ): SnowflakeDate {
-  return new SnowflakeDate({
-    value: dateTimeToMillis(value),
-    nanoSeconds: options.nanoSeconds ?? 0,
-    scale: options.scale ?? DEFAULT_TIMESTAMP_SCALE,
-    timezone: options.offsetMinutes ?? 0,
-    format: '',
-    formatter: new CoreDateFormatter(''),
-  });
+  return new SnowflakeDate(
+    dateTimeToMillis(value),
+    options.nanoSeconds ?? 0,
+    options.scale ?? DEFAULT_TIMESTAMP_SCALE,
+    options.offsetMinutes ?? 0,
+    '',
+  );
 }
 
 export function createTestNtzDate(

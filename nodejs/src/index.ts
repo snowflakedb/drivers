@@ -20,6 +20,7 @@ import {
   CoreConnection,
   coreIsAnError,
   coreIsStillRunning,
+  initTypeConstructors,
   type CoreConnectionInstance,
   type CoreStatementInstance,
 } from './core/index.js';
@@ -40,6 +41,8 @@ import {
 import { collectRows } from './query-result/rows.js';
 import { RowStatement } from './query-result/RowStatement.js';
 import { SnowflakeDate } from './query-result/SnowflakeDate.js';
+
+initTypeConstructors({ SnowflakeDate });
 
 export { createPool };
 export type { Pool, PoolOptions } from './create-pool.js';

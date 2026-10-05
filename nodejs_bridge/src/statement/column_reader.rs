@@ -3,18 +3,19 @@ use arrow::array::{
     Float64Array, PrimitiveArray, StringArray, StructArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type};
-use chrono::{DateTime, NaiveTime};
+use chrono::{DateTime, NaiveDateTime, NaiveTime};
 
 use super::column_reader_util::{
     IntColumn, decimal_string, downcast_array, read_cell, scale_from_metadata, usize_from_metadata,
 };
 use super::decfloat::format_decfloat;
-use super::js_cell::JsCell;
+use super::js_cell::{DateTimezone, JsCell};
+use crate::date_format::compiled_format;
 use crate::session_params::KnownSessionParameters;
 use sf_output_format::datetime::{DateTimeFormat, DateTimeValue, Zone};
 use sf_types::{
     ReadArrowError, ReadArrowType, SnowflakeTimestampLtz, SnowflakeTimestampNtz,
-    SnowflakeTimestampTz,
+    SnowflakeTimestampTz, SnowflakeType,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -24,10 +25,23 @@ use std::sync::Arc;
 /// encoding (see [`validate_time_range`]).
 const SECONDS_PER_DAY: i64 = 86_400;
 
-/// Arrow scale and a compiled session `TIME_OUTPUT_FORMAT` for one TIME column.
-pub(crate) struct TimeMeta {
+pub(crate) struct TemporalMeta {
     scale: u32,
-    format: DateTimeFormat,
+    format: String,
+    compiled_format: Arc<DateTimeFormat>,
+    // `timezone` is `None` for TIME, and for TIMESTAMP_TZ, whose offset comes from each cell
+    timezone: Option<String>,
+}
+
+impl TemporalMeta {
+    fn new(scale: u32, format: &str, timezone: Option<String>) -> Self {
+        Self {
+            scale,
+            format: format.to_owned(),
+            compiled_format: compiled_format(format),
+            timezone,
+        }
+    }
 }
 
 /// Decodes one Arrow column into [`JsCell`]s, one cell at a time.
@@ -42,14 +56,14 @@ pub(crate) struct TimeMeta {
 pub(crate) enum ColumnReader {
     Boolean(BooleanArray),
     Binary(BinaryArray),
-    Date(PrimitiveArray<Date32Type>),
-    TimeI32(PrimitiveArray<Int32Type>, TimeMeta),
-    TimeI64(PrimitiveArray<Int64Type>, TimeMeta),
-    TimestampTz(StructArray, u32),
-    TimestampLtzStruct(StructArray, u32),
-    TimestampLtzI64(PrimitiveArray<Int64Type>, u32),
-    TimestampNtzStruct(StructArray, u32),
-    TimestampNtzI64(PrimitiveArray<Int64Type>, u32),
+    Date(PrimitiveArray<Date32Type>, TemporalMeta),
+    TimeI32(PrimitiveArray<Int32Type>, TemporalMeta),
+    TimeI64(PrimitiveArray<Int64Type>, TemporalMeta),
+    TimestampTz(StructArray, TemporalMeta),
+    TimestampLtzStruct(StructArray, TemporalMeta),
+    TimestampLtzI64(PrimitiveArray<Int64Type>, TemporalMeta),
+    TimestampNtzStruct(StructArray, TemporalMeta),
+    TimestampNtzI64(PrimitiveArray<Int64Type>, TemporalMeta),
     Variant(StringArray),
     Text(StringArray),
     Fixed(IntColumn, u32),
@@ -114,14 +128,18 @@ impl ColumnReader {
                     .ok_or_else(|| {
                         "Arrow column could not be downcast to Date32 array".to_string()
                     })?;
-                Ok(Self::Date(array))
+                Ok(Self::Date(
+                    array,
+                    TemporalMeta::new(
+                        0,
+                        &session_params.date_output_format,
+                        Some("UTC".to_string()),
+                    ),
+                ))
             }
             Some("TIME") => {
                 let scale = scale_from_metadata(field)?;
-                let meta = TimeMeta {
-                    scale,
-                    format: DateTimeFormat::compile(&session_params.time_output_format),
-                };
+                let meta = TemporalMeta::new(scale, &session_params.time_output_format, None);
                 match column.data_type() {
                     DataType::Int32 => {
                         let array = column
@@ -217,6 +235,8 @@ impl ColumnReader {
             )?)),
             Some("TIMESTAMP_TZ") => {
                 let scale = scale_from_metadata(field)?;
+                let meta =
+                    TemporalMeta::new(scale, &session_params.timestamp_tz_output_format, None);
                 match column.data_type() {
                     DataType::Struct(_) => {
                         let array = column
@@ -227,7 +247,7 @@ impl ColumnReader {
                                 "Arrow column could not be downcast to StructArray for TIMESTAMP_TZ"
                                     .to_string()
                             })?;
-                        Ok(Self::TimestampTz(array, scale))
+                        Ok(Self::TimestampTz(array, meta))
                     }
                     other => Err(format!(
                         "column {:?} has unsupported TIMESTAMP_TZ physical type {other:?}",
@@ -237,14 +257,19 @@ impl ColumnReader {
             }
             Some("TIMESTAMP_LTZ") => {
                 let scale = scale_from_metadata(field)?;
+                let meta = TemporalMeta::new(
+                    scale,
+                    &session_params.timestamp_ltz_output_format,
+                    Some(session_params.timezone.clone()),
+                );
                 match column.data_type() {
                     DataType::Struct(_) => Ok(Self::TimestampLtzStruct(
                         downcast_array(column, "StructArray")?,
-                        scale,
+                        meta,
                     )),
                     DataType::Int64 => Ok(Self::TimestampLtzI64(
                         downcast_array(column, "Int64Array")?,
-                        scale,
+                        meta,
                     )),
                     other => Err(format!(
                         "column {:?} has unsupported TIMESTAMP_LTZ physical type {other:?}",
@@ -254,14 +279,19 @@ impl ColumnReader {
             }
             Some("TIMESTAMP_NTZ") => {
                 let scale = scale_from_metadata(field)?;
+                let meta = TemporalMeta::new(
+                    scale,
+                    &session_params.timestamp_ntz_output_format,
+                    Some("UTC".to_string()),
+                );
                 match column.data_type() {
                     DataType::Struct(_) => Ok(Self::TimestampNtzStruct(
                         downcast_array(column, "StructArray")?,
-                        scale,
+                        meta,
                     )),
                     DataType::Int64 => Ok(Self::TimestampNtzI64(
                         downcast_array(column, "Int64Array")?,
-                        scale,
+                        meta,
                     )),
                     other => Err(format!(
                         "column {:?} has unsupported TIMESTAMP_NTZ physical type {other:?}",
@@ -300,19 +330,19 @@ impl ColumnReader {
             Self::Fixed(values, scale) => read_int(values, row_index, |mantissa| {
                 decimal_string(mantissa, *scale)
             }),
-            Self::Date(array) => read_cell(array, row_index, || {
-                // The Arrow `Date32` → `NaiveDate` decode is shared with the
-                // ODBC and Python front ends via `sf_types`; only the
-                // JS-specific mapping to a midnight `NaiveDateTime` (what napi
-                // renders as a JavaScript `Date`) stays here. `read_cell`
-                // already excluded NULL, and a non-null `Date32` cell always
-                // decodes, so the reader cannot error on this path.
+            Self::Date(array, meta) => read_cell(array, row_index, || {
                 let date = sf_types::SnowflakeDate
                     .read_arrow_type(array, row_index)
                     .unwrap_or_else(|_| {
                         unreachable!("non-null Date32 cell always decodes to a NaiveDate")
                     });
-                JsCell::Date(date.and_time(NaiveTime::MIN))
+                JsCell::SnowflakeDate {
+                    epoch_millis: date.and_time(NaiveTime::MIN).and_utc().timestamp_millis() as f64,
+                    nanos: 0,
+                    scale: meta.scale,
+                    timezone: DateTimezone::Named(meta.timezone.as_deref().unwrap_or_default()),
+                    format: &meta.format,
+                }
             }),
             Self::TimeI32(array, meta) => read_cell(array, row_index, || {
                 JsCell::Str(Cow::Owned(render_time(array, row_index, meta)))
@@ -367,59 +397,70 @@ impl ColumnReader {
             }),
             Self::IntervalYearMonth(values) => read_int(values, row_index, |v| v.to_string()),
             Self::IntervalDayTime(values) => read_int(values, row_index, |v| v.to_string()),
-            Self::TimestampTz(array, scale) => read_cell(array, row_index, || {
-                let instant = SnowflakeTimestampTz { scale: *scale }
+            Self::TimestampTz(array, meta) => read_cell(array, row_index, || {
+                let instant = SnowflakeTimestampTz { scale: meta.scale }
                     .read_arrow_type(array, row_index)
                     .unwrap_or_else(|_| {
                         unreachable!("non-null TIMESTAMP_TZ row {row_index} must decode")
                     });
                 let utc = instant.utc.and_utc();
-                JsCell::Timestamp {
+                JsCell::SnowflakeDate {
                     epoch_millis: utc.timestamp_millis() as f64,
                     nanos: utc.timestamp_subsec_nanos(),
-                    offset_minutes: Some(instant.offset_minutes),
+                    scale: meta.scale,
+                    timezone: DateTimezone::Offset(instant.offset_minutes),
+                    format: &meta.format,
                 }
             }),
-            Self::TimestampLtzStruct(array, scale) => read_timestamp_ltz(array, row_index, *scale),
-            Self::TimestampLtzI64(array, scale) => read_timestamp_ltz(array, row_index, *scale),
-            Self::TimestampNtzStruct(array, scale) => read_timestamp_ntz(array, row_index, *scale),
-            Self::TimestampNtzI64(array, scale) => read_timestamp_ntz(array, row_index, *scale),
+            Self::TimestampLtzStruct(array, meta) => read_timestamp(
+                array,
+                row_index,
+                meta,
+                SnowflakeTimestampLtz { scale: meta.scale },
+            ),
+            Self::TimestampLtzI64(array, meta) => read_timestamp(
+                array,
+                row_index,
+                meta,
+                SnowflakeTimestampLtz { scale: meta.scale },
+            ),
+            Self::TimestampNtzStruct(array, meta) => read_timestamp(
+                array,
+                row_index,
+                meta,
+                SnowflakeTimestampNtz { scale: meta.scale },
+            ),
+            Self::TimestampNtzI64(array, meta) => read_timestamp(
+                array,
+                row_index,
+                meta,
+                SnowflakeTimestampNtz { scale: meta.scale },
+            ),
         }
     }
 }
 
-fn read_timestamp_ltz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
+fn read_timestamp<'a, A, T>(
+    array: &'a A,
+    row_index: usize,
+    meta: &'a TemporalMeta,
+    decoder: T,
+) -> JsCell<'a>
 where
     A: Array,
-    SnowflakeTimestampLtz: ReadArrowType<A>,
+    T: ReadArrowType<A> + for<'r> SnowflakeType<Representation<'r> = NaiveDateTime>,
 {
     read_cell(array, row_index, || {
-        let utc = SnowflakeTimestampLtz { scale }
+        let utc = decoder
             .read_arrow_type(array, row_index)
-            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_LTZ row {row_index} must decode"))
+            .unwrap_or_else(|_| unreachable!("non-null timestamp row {row_index} must decode"))
             .and_utc();
-        JsCell::Timestamp {
+        JsCell::SnowflakeDate {
             epoch_millis: utc.timestamp_millis() as f64,
             nanos: utc.timestamp_subsec_nanos(),
-            offset_minutes: None,
-        }
-    })
-}
-
-fn read_timestamp_ntz<A>(array: &A, row_index: usize, scale: u32) -> JsCell<'_>
-where
-    A: Array,
-    SnowflakeTimestampNtz: ReadArrowType<A>,
-{
-    read_cell(array, row_index, || {
-        let utc = SnowflakeTimestampNtz { scale }
-            .read_arrow_type(array, row_index)
-            .unwrap_or_else(|_| unreachable!("non-null TIMESTAMP_NTZ row {row_index} must decode"))
-            .and_utc();
-        JsCell::Timestamp {
-            epoch_millis: utc.timestamp_millis() as f64,
-            nanos: utc.timestamp_subsec_nanos(),
-            offset_minutes: None,
+            scale: meta.scale,
+            timezone: DateTimezone::Named(meta.timezone.as_deref().unwrap_or_default()),
+            format: &meta.format,
         }
     })
 }
@@ -518,7 +559,7 @@ fn read_decfloat(array: &StructArray, row_index: usize, precision: usize) -> JsC
     })
 }
 
-fn render_time<T>(array: &PrimitiveArray<T>, row_index: usize, meta: &TimeMeta) -> String
+fn render_time<T>(array: &PrimitiveArray<T>, row_index: usize, meta: &TemporalMeta) -> String
 where
     T: ArrowNumericType,
     T::Native: Into<i64>,
@@ -532,7 +573,7 @@ where
     // reading `secs_since_midnight` as an instant, which lands on the Unix
     // epoch at UTC, so date elements in a TIME format render 1970-01-01 and
     // timezone elements render a zero offset.
-    meta.format.format(&DateTimeValue {
+    meta.compiled_format.format(&DateTimeValue {
         local: DateTime::UNIX_EPOCH.naive_utc().date().and_time(time),
         offset_minutes: 0,
         scale: meta.scale,
@@ -577,6 +618,17 @@ mod tests {
 
     fn reader(field: &Field, column: &dyn Array) -> ColumnReader {
         reader_with_format(field, column, "HH24:MI:SS")
+    }
+
+    fn date_value(date: NaiveDate) -> JsCell<'static> {
+        let midnight = date.and_time(NaiveTime::MIN).and_utc();
+        JsCell::SnowflakeDate {
+            epoch_millis: midnight.timestamp_millis() as f64,
+            nanos: 0,
+            scale: 0,
+            timezone: DateTimezone::Named("UTC"),
+            format: "YYYY-MM-DD",
+        }
     }
 
     // `ColumnReader` has no `Debug` impl (deliberately — see
@@ -628,10 +680,10 @@ mod tests {
             PrimitiveArray::<Date32Type>::from(vec![Some(Date32Type::from_naive_date(date)), None]);
         let reader = reader(&field, &array);
         assert!(
-            matches!(reader, ColumnReader::Date(_)),
+            matches!(reader, ColumnReader::Date(_, _)),
             "DATE should route to the Date arm"
         );
-        assert_eq!(reader.read(0), JsCell::Date(date.and_time(NaiveTime::MIN)));
+        assert_eq!(reader.read(0), date_value(date));
         assert_eq!(reader.read(1), JsCell::Null);
     }
 
@@ -653,10 +705,7 @@ mod tests {
         );
         let reader = reader(&field, &array);
         for (row, date) in dates.iter().enumerate() {
-            assert_eq!(
-                reader.read(row),
-                JsCell::Date(date.and_time(NaiveTime::MIN))
-            );
+            assert_eq!(reader.read(row), date_value(*date));
         }
     }
 
@@ -1271,18 +1320,16 @@ mod tests {
             matches!(reader, ColumnReader::TimestampTz(_, _)),
             "TIMESTAMP_TZ should route to the TimestampTz arm"
         );
-        match reader.read(0) {
-            JsCell::Timestamp {
-                epoch_millis,
-                offset_minutes,
-                nanos,
-            } => {
-                assert_eq!(epoch_millis, 1_453_386_764_000.0);
-                assert_eq!(offset_minutes, Some(-480));
-                assert_eq!(nanos, 0);
+        assert_eq!(
+            reader.read(0),
+            JsCell::SnowflakeDate {
+                epoch_millis: 1_453_386_764_000.0,
+                nanos: 0,
+                scale: 0,
+                timezone: DateTimezone::Offset(-480),
+                format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
             }
-            other => panic!("expected TimestampTz cell, got {other:?}"),
-        }
+        );
         assert_eq!(reader.read(1), JsCell::Null);
     }
 
@@ -1291,13 +1338,18 @@ mod tests {
         let field = field("TIMESTAMP_LTZ", DataType::Int64, &[("scale", "3")]);
         let array = Int64Array::from(vec![Some(-1_500), None]);
         let reader = reader(&field, &array);
-        assert!(matches!(reader, ColumnReader::TimestampLtzI64(_, 3)));
+        assert!(matches!(
+            reader,
+            ColumnReader::TimestampLtzI64(_, TemporalMeta { scale: 3, .. })
+        ));
         assert_eq!(
             reader.read(0),
-            JsCell::Timestamp {
+            JsCell::SnowflakeDate {
                 epoch_millis: -1_500.0,
                 nanos: 500_000_000,
-                offset_minutes: None,
+                scale: 3,
+                timezone: DateTimezone::Named("America/Los_Angeles"),
+                format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
             }
         );
         assert_eq!(reader.read(1), JsCell::Null);
@@ -1308,13 +1360,18 @@ mod tests {
         let field = field("TIMESTAMP_NTZ", DataType::Int64, &[("scale", "3")]);
         let array = Int64Array::from(vec![Some(-1_500), None]);
         let reader = reader(&field, &array);
-        assert!(matches!(reader, ColumnReader::TimestampNtzI64(_, 3)));
+        assert!(matches!(
+            reader,
+            ColumnReader::TimestampNtzI64(_, TemporalMeta { scale: 3, .. })
+        ));
         assert_eq!(
             reader.read(0),
-            JsCell::Timestamp {
+            JsCell::SnowflakeDate {
                 epoch_millis: -1_500.0,
                 nanos: 500_000_000,
-                offset_minutes: None,
+                scale: 3,
+                timezone: DateTimezone::Named("UTC"),
+                format: "YYYY-MM-DD HH24:MI:SS.FF3",
             }
         );
         assert_eq!(reader.read(1), JsCell::Null);

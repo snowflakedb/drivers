@@ -47,11 +47,6 @@ export declare class Connection {
   destroy(): Promise<undefined>
 }
 
-export declare class DateFormatter {
-  constructor(format: string)
-  format(epochMillis: number, nanos: number, scale: number, timezone: string | number): string
-}
-
 export declare class SessionState {
   getCurrentRole(): string | null
   getCurrentWarehouse(): string | null
@@ -108,6 +103,10 @@ export interface ExecuteParams {
   requestId?: string
   describeOnly?: boolean
 }
+
+export declare function formatSnowflakeDate(format: string, epochMillis: number, nanos: number, scale: number, timezone: string | number): string
+
+export declare function initTypeConstructors(ctors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }): void
 
 export declare function isAnError(status: QueryStatus): boolean
 

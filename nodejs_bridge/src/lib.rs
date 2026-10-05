@@ -22,10 +22,11 @@ mod session;
 mod session_params;
 mod session_state;
 mod statement;
+mod type_constructors;
 mod validation_utils;
 
 pub use connection::Connection;
-pub use date_format::DateFormatter;
+pub use date_format::format_snowflake_date;
 pub use session_params::KnownSessionParameters;
 pub use session_state::SessionState;
 pub use statement::{Column, Statement};

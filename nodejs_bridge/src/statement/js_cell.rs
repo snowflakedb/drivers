@@ -1,7 +1,14 @@
-use chrono::NaiveDateTime;
-use napi::bindgen_prelude::{Buffer, Null, Object, ToNapiValue};
+use napi::bindgen_prelude::{Buffer, Either, Null, ToNapiValue};
 use napi::{Env, Result, sys};
 use std::borrow::Cow;
+
+use crate::type_constructors::TypeConstructors;
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum DateTimezone<'a> {
+    Named(&'a str),
+    Offset(i32),
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum JsCell<'a> {
@@ -11,11 +18,12 @@ pub(crate) enum JsCell<'a> {
     Number(f64),
     NumberArray(Vec<f64>),
     Buffer(&'a [u8]),
-    Date(NaiveDateTime),
-    Timestamp {
+    SnowflakeDate {
         epoch_millis: f64,
         nanos: u32,
-        offset_minutes: Option<i32>,
+        scale: u32,
+        timezone: DateTimezone<'a>,
+        format: &'a str,
     },
 }
 
@@ -28,19 +36,25 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::Number(val) => unsafe { f64::to_napi_value(env, val) },
             JsCell::NumberArray(vals) => unsafe { Vec::<f64>::to_napi_value(env, vals) },
             JsCell::Buffer(bytes) => unsafe { Buffer::to_napi_value(env, bytes.to_vec().into()) },
-            JsCell::Date(date) => unsafe { NaiveDateTime::to_napi_value(env, date) },
-            JsCell::Timestamp {
+            JsCell::SnowflakeDate {
                 epoch_millis,
                 nanos,
-                offset_minutes,
+                scale,
+                timezone,
+                format,
             } => {
-                let mut obj = Object::new(&Env::from(env))?;
-                obj.set("epochMillis", epoch_millis)?;
-                obj.set("nanos", nanos)?;
-                if let Some(offset_minutes) = offset_minutes {
-                    obj.set("offsetMinutes", offset_minutes)?;
+                let env = Env::from_raw(env);
+                let timezone = match timezone {
+                    DateTimezone::Named(name) => Either::A(name.to_owned()),
+                    DateTimezone::Offset(minutes) => Either::B(minutes),
                 };
-                unsafe { ToNapiValue::to_napi_value(env, obj) }
+                let date = TypeConstructors::get(&env)?
+                    .snowflake_date
+                    .borrow_back(&env)?
+                    .new_instance(
+                        (epoch_millis, nanos, scale, timezone, format.to_owned()).into(),
+                    )?;
+                unsafe { ToNapiValue::to_napi_value(env.raw(), date) }
             }
         }
     }

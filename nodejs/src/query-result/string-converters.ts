@@ -1,10 +1,4 @@
-import type { CellConverter, ConverterFactory } from './types.js';
-import {
-  dateConverter,
-  timestampLtzConverter,
-  timestampNtzConverter,
-  timestampTzConverter,
-} from './value-converters.js';
+import type { CellConverter } from './types.js';
 
 // TODO: measure building these strings in the bridge instead of here
 
@@ -41,14 +35,8 @@ export const binaryAsStringConverter: CellConverter = (value) =>
 export const vectorAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : JSON.stringify(value);
 
-const temporalAsStringConverter =
-  (toDate: ConverterFactory): ConverterFactory =>
-  (column, params) => {
-    const convert = toDate(column, params);
-    return (value) => (value === null ? NULL_AS_STRING : (convert(value) as Date).toJSON());
-  };
-
-export const dateAsStringConverter = temporalAsStringConverter(dateConverter);
-export const timestampTzAsStringConverter = temporalAsStringConverter(timestampTzConverter);
-export const timestampLtzAsStringConverter = temporalAsStringConverter(timestampLtzConverter);
-export const timestampNtzAsStringConverter = temporalAsStringConverter(timestampNtzConverter);
+// TODO: when DATE or timestamp columns are fetched as strings, format them in the bridge
+//  instead of building a SnowflakeDate there only for this converter to call toJSON().
+//  It also applies to other types, as they can be converted to string in the bridge as well.
+export const temporalAsStringConverter: CellConverter = (value) =>
+  value === null ? NULL_AS_STRING : (value as Date).toJSON();

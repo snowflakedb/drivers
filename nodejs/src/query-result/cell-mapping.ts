@@ -4,22 +4,12 @@ import { resolveColumnNames } from './column-names.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
-  dateAsStringConverter,
   realAsStringConverter,
+  temporalAsStringConverter,
   textAsStringConverter,
-  timestampLtzAsStringConverter,
-  timestampNtzAsStringConverter,
-  timestampTzAsStringConverter,
   vectorAsStringConverter,
 } from './string-converters.js';
-import {
-  dateConverter,
-  createFixedConverter,
-  timestampLtzConverter,
-  timestampNtzConverter,
-  timestampTzConverter,
-  variantConverter,
-} from './value-converters.js';
+import { createFixedConverter, variantConverter } from './value-converters.js';
 
 const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   string,
@@ -37,10 +27,10 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   interval_day_time: { asValue: null, asString: () => textAsStringConverter },
   boolean: { asValue: null, asString: () => booleanAsStringConverter },
   binary: { asValue: null, asString: () => binaryAsStringConverter },
-  date: { asValue: dateConverter, asString: dateAsStringConverter },
-  timestamp_tz: { asValue: timestampTzConverter, asString: timestampTzAsStringConverter },
-  timestamp_ltz: { asValue: timestampLtzConverter, asString: timestampLtzAsStringConverter },
-  timestamp_ntz: { asValue: timestampNtzConverter, asString: timestampNtzAsStringConverter },
+  date: { asValue: null, asString: () => temporalAsStringConverter },
+  timestamp_tz: { asValue: null, asString: () => temporalAsStringConverter },
+  timestamp_ltz: { asValue: null, asString: () => temporalAsStringConverter },
+  timestamp_ntz: { asValue: null, asString: () => temporalAsStringConverter },
   variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
   object: { asValue: () => variantConverter, asString: null },
   array: { asValue: () => variantConverter, asString: null },
