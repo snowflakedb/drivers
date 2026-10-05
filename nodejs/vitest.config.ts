@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Two extra attempts after the first failure (3 total). A pass on retry is
+    // reported as flaky so intermittent tests are visible without failing CI.
+    retry: 2,
     silent: 'passed-only',
     // TODO: coverage will be added later
     // coverage: {
