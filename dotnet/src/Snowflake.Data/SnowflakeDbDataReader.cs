@@ -170,6 +170,11 @@ public sealed class SnowflakeDbDataReader : DbDataReader
 
         // Fallback: convert value to string.
         var value = ExtractValue(column, _rowIndexInBatch);
+
+        // nanoseconds
+        if (value is long l)
+            return new DateTime(1970, 1, 1) + TimeSpan.FromMilliseconds(l / 1_000_000);
+
         return (DateTime)value;
     }
 
