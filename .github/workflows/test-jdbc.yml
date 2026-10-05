@@ -176,8 +176,8 @@ jobs:
           fi
         env:
           CLOUD_PROVIDER: ${{ matrix.cloud }}
-          # One retry on PRs (flaky reliability); two in merge queue.
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
+          # Two retries after the first failure (3 total attempts).
+          GRADLE_TEST_RETRY_COUNT: '2'
 
       - name: Upload NEW driver test results
         if: always() && matrix.result_format == 'default'
@@ -333,7 +333,7 @@ jobs:
         env:
           CLOUD_PROVIDER: aws
           GRADLE_MAX_PARALLEL_FORKS: '6'
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
+          GRADLE_TEST_RETRY_COUNT: '2'
 
       - name: Upload NEW driver test artifacts
         if: always()
@@ -456,7 +456,7 @@ jobs:
           bash ./ci/gradlew_with_resolve_retry.sh test
         env:
           CLOUD_PROVIDER: aws
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
+          GRADLE_TEST_RETRY_COUNT: '2'
 
       - name: Upload NEW driver test artifacts
         if: always()
@@ -577,7 +577,7 @@ jobs:
           bash ./ci/gradlew_with_resolve_retry.sh referenceTest jacocoReferenceReport
         env:
           CLOUD_PROVIDER: ${{ matrix.cloud }}
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
+          GRADLE_TEST_RETRY_COUNT: '2'
 
       - name: Upload OLD reference artifacts
         if: always()
@@ -692,7 +692,7 @@ jobs:
           cd jdbc
           bash ./ci/gradlew_with_resolve_retry.sh parityTest
         env:
-          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '1' }}
+          GRADLE_TEST_RETRY_COUNT: '2'
 
       - name: Upload parity test artifacts
         if: always()
