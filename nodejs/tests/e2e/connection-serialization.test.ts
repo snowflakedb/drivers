@@ -7,7 +7,7 @@ import {
   destroyConnectionAsync,
   executeAsync,
   snowflake,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
+  isRunningNewDriverWithBD,
 } from './utils/index.js';
 
 const PAYLOAD_WITHOUT_TOKENS = JSON.stringify({ services: { sf: { tokenInfo: {} } } });
@@ -30,7 +30,6 @@ async function sessionIdOf(connection: Connection): Promise<unknown> {
 }
 
 function deserializeConnection(serialized: string): Connection {
-  // @ts-ignore NOT_IMPLEMENTED_IN_NEW_DRIVER
   return snowflake.deserializeConnection(
     { account: baseConnectionOptions.account, host: baseConnectionOptions.host },
     serialized,
@@ -74,7 +73,21 @@ describe('Connection Serialization & Deserialization', () => {
     });
   });
 
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('snowflake.deserializeConnection()', () => {
+  describe('snowflake.deserializeConnection()', () => {
+    it('should return the same payload before the deserialized connection is used', async () => {
+      const connection = await createLiveConnection();
+      const serialized = connection.serialize();
+      const deserialized = deserializeConnection(serialized);
+
+      expect(deserialized.serialize()).toBe(serialized);
+      expect(serializeConnection(deserialized)).toBe(serialized);
+
+      await sessionIdOf(deserialized);
+      expect(tokenInfoOf(deserialized.serialize()).sessionToken).toBe(
+        tokenInfoOf(serialized).sessionToken,
+      );
+    });
+
     it('should deserialize into the originating session and leave it usable', async () => {
       const connection = await createLiveConnection();
       const originalSessionId = await sessionIdOf(connection);
@@ -113,15 +126,25 @@ describe('Connection Serialization & Deserialization', () => {
       const serialized = connection.serialize();
       await destroyConnectionAsync(connection);
       const deserialized = deserializeConnection(serialized);
-      await expect(executeAsync(deserialized, SESSION_QUERY)).rejects.toMatchObject({
-        error: {
-          name: 'ClientError',
-          code: 407002,
-          sqlState: '08003',
-          message: 'Unable to perform operation using terminated connection.',
-          isFatal: true,
-        },
-      });
+      await expect(executeAsync(deserialized, SESSION_QUERY)).rejects.toMatchObject(
+        isRunningNewDriverWithBD('BD#72')
+          ? {
+              error: {
+                name: 'OperationFailedError',
+                code: '390111',
+                message: expect.stringContaining('Session no longer exists'),
+              },
+            }
+          : {
+              error: {
+                name: 'ClientError',
+                code: 407002,
+                sqlState: '08003',
+                message: 'Unable to perform operation using terminated connection.',
+                isFatal: true,
+              },
+            },
+      );
     });
 
     it.each([
@@ -136,6 +159,25 @@ describe('Connection Serialization & Deserialization', () => {
           message:
             "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
         }),
+      );
+    });
+
+    it('should reject an empty JSON object', () => {
+      expect(() => deserializeConnection('{}')).toThrow(
+        expect.objectContaining(
+          isRunningNewDriverWithBD('BD#71')
+            ? {
+                name: 'InvalidParameterError',
+                code: 408003,
+                message:
+                  "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
+              }
+            : {
+                name: 'InternalAssertError',
+                code: 400001,
+                message: 'An internal error has occurred. Please contact Snowflake support.',
+              },
+        ),
       );
     });
   });

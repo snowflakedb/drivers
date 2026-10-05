@@ -33,7 +33,7 @@ export declare class Column {
 }
 
 export declare class Connection {
-  constructor(options: Record<string, string>, sessionParameters: Record<string, string>, openExternalBrowserCallback?: ((arg: string) => void) | undefined | null)
+  constructor(options: Record<string, string>, sessionParameters: Record<string, string>, openExternalBrowserCallback?: ((arg: string) => void) | undefined | null, deferredInit?: boolean | undefined | null)
   connect(): Promise<undefined>
   isUp(): boolean
   isValidAsync(): Promise<boolean>

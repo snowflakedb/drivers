@@ -35,6 +35,7 @@ pub(crate) struct Session {
     handles: Arc<Handles>,
     login_in_flight: Arc<Mutex<bool>>,
     login_finished: Arc<Notify>,
+    deferred_init: Arc<AtomicBool>,
 }
 
 pub(crate) struct Ready(Arc<Handles>);
@@ -46,7 +47,7 @@ impl Ready {
 }
 
 impl Session {
-    pub(crate) fn new(connection: Handle, database: Handle) -> Self {
+    pub(crate) fn new(connection: Handle, database: Handle, deferred_init: bool) -> Self {
         Self {
             handles: Arc::new(Handles {
                 connection,
@@ -55,10 +56,14 @@ impl Session {
             }),
             login_in_flight: Arc::new(Mutex::new(false)),
             login_finished: Arc::new(Notify::new()),
+            deferred_init: Arc::new(AtomicBool::new(deferred_init)),
         }
     }
 
     pub(crate) async fn connect(&self) -> Result<(), BridgeError> {
+        if self.deferred_init.load(Ordering::Acquire) {
+            return Err(BridgeError::AlreadyConnected);
+        }
         {
             let mut login_in_flight = self.login_in_flight.lock().await;
             if *login_in_flight {
@@ -79,6 +84,7 @@ impl Session {
     }
 
     pub(crate) async fn ready(&self) -> Result<Ready, BridgeError> {
+        self.settle().await?;
         match self.unusable().await {
             Some(unusable) => Err(BridgeError::UnusableConnection(
                 ConnectionOperation::Request,
@@ -89,6 +95,9 @@ impl Session {
     }
 
     pub(crate) async fn is_up(&self) -> bool {
+        if self.deferred_init.load(Ordering::Acquire) {
+            return !matches!(self.unusable().await, Some(UnusableConnection::Terminated));
+        }
         self.unusable().await.is_none()
     }
 
@@ -105,6 +114,7 @@ impl Session {
     pub(crate) async fn known_session_parameters(
         &self,
     ) -> Result<KnownSessionParameters, BridgeError> {
+        self.settle().await?;
         if self.unusable().await.is_some() {
             return Ok(KnownSessionParameters::defaults());
         }
@@ -122,6 +132,7 @@ impl Session {
     }
 
     pub(crate) async fn close(&self) -> Result<(), BridgeError> {
+        self.settle().await?;
         let _login = self.wait_for_login_to_finish().await;
         self.close_connection().await
     }
@@ -153,6 +164,23 @@ impl Session {
         close.map_err(BridgeError::from)
     }
 
+    async fn settle(&self) -> Result<(), BridgeError> {
+        if !self.deferred_init.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut login_in_flight = self.wait_for_login_to_finish().await;
+        if !self.deferred_init.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        *login_in_flight = true;
+        drop(login_in_flight);
+        let result = self.init().await.map_err(BridgeError::from);
+        self.deferred_init.store(false, Ordering::Release);
+        *self.login_in_flight.lock().await = false;
+        self.login_finished.notify_waiters();
+        result
+    }
+
     async fn init(&self) -> Result<(), ApiError> {
         let result = DRIVER
             .connection_init(None, self.handles.connection, self.handles.database)
@@ -177,7 +205,11 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::new(DRIVER.connection_new(), DRIVER.database_new())
+        Session::new(DRIVER.connection_new(), DRIVER.database_new(), false)
+    }
+
+    fn deferred_session() -> Session {
+        Session::new(DRIVER.connection_new(), DRIVER.database_new(), true)
     }
 
     #[tokio::test]
@@ -294,5 +326,82 @@ mod tests {
 
         assert!(never_established.is_none());
         assert!(released.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_deferred_session_is_up_before_init() {
+        let session = deferred_session();
+
+        assert!(session.is_up().await);
+        assert!(matches!(
+            session.unusable().await,
+            Some(UnusableConnection::NeverEstablished)
+        ));
+    }
+
+    #[tokio::test]
+    async fn connecting_a_deferred_session_is_refused() {
+        let session = deferred_session();
+
+        assert!(matches!(
+            session.connect().await,
+            Err(BridgeError::AlreadyConnected)
+        ));
+        assert!(session.is_up().await);
+    }
+
+    #[tokio::test]
+    async fn settle_waits_for_an_init_already_in_flight_instead_of_starting_another() {
+        let session = deferred_session();
+        *session.login_in_flight.lock().await = true;
+        let finish_other_init = async {
+            tokio::task::yield_now().await;
+            session.deferred_init.store(false, Ordering::Release);
+            *session.login_in_flight.lock().await = false;
+            session.login_finished.notify_waiters();
+        };
+
+        let (settled, ()) = tokio::join!(session.settle(), finish_other_init);
+
+        settled.unwrap();
+        assert!(matches!(
+            session.unusable().await,
+            Some(UnusableConnection::NeverEstablished)
+        ));
+        assert!(!*session.login_in_flight.lock().await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_deferred_init_leaves_every_concurrent_request_with_an_error() {
+        let session = deferred_session();
+
+        let (first, second) = tokio::join!(session.ready(), session.ready());
+
+        assert!(matches!(first, Err(BridgeError::Core(_))));
+        assert!(matches!(
+            second,
+            Err(BridgeError::UnusableConnection(
+                ConnectionOperation::Request,
+                UnusableConnection::Terminated
+            ))
+        ));
+        assert!(!session.is_up().await);
+        assert!(matches!(
+            session.connect().await,
+            Err(BridgeError::ConnectionTerminated)
+        ));
+    }
+
+    #[tokio::test]
+    async fn settle_on_an_ordinary_session_does_not_initialize() {
+        let session = session();
+
+        session.settle().await.unwrap();
+
+        assert!(matches!(
+            session.unusable().await,
+            Some(UnusableConnection::NeverEstablished)
+        ));
+        assert!(!session.is_up().await);
     }
 }

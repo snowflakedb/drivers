@@ -72,6 +72,7 @@ impl Connection {
         env: &Env,
         session_parameters: HashMap<String, String>,
         open_external_browser_callback: Option<Function<String, ()>>,
+        deferred_init: Option<bool>,
     ) -> Result<Self> {
         let database_handle = DRIVER.database_new();
         DRIVER.database_init(database_handle).map_err(|e| {
@@ -139,7 +140,7 @@ impl Connection {
         })?;
 
         Ok(Self {
-            session: Session::new(conn_handle, database_handle),
+            session: Session::new(conn_handle, database_handle, deferred_init.unwrap_or(false)),
         })
     }
 

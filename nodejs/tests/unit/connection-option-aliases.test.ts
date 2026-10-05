@@ -72,4 +72,16 @@ describe('normalizeConnectionOptions', () => {
   it('returns an empty object for empty input', () => {
     expect(normalizeConnectionOptions({})).toEqual({});
   });
+
+  it('should map sessionToken and masterToken onto the core session-token keys', () => {
+    expect(
+      normalizeConnectionOptions({
+        sessionToken: 'session',
+        masterToken: 'master',
+      }),
+    ).toEqual({
+      session_token: 'session',
+      master_token: 'master',
+    });
+  });
 });

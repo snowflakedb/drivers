@@ -1375,3 +1375,33 @@ behavior_differences:
       driver in the background and each session reports the result as an in-band
       `platform_detection_status` telemetry log when it closes, provided detection has
       finished by then. Connect never waits for detection.
+
+  71:
+    name: 'deserializeConnection rejects an empty JSON object with 408003'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      deserializeConnection(options, '{}') parses as an object, then throws
+      InternalAssertError 400001. That code is not a deserialize validation code.
+    new_driver_behavior: |
+      The same payload is 408003 InvalidParameterError, the same family as a missing
+      tokenInfo object or a JSON array. An empty tokenInfo (`{services:{sf:{tokenInfo:{}}}}`)
+      still deserializes to a disconnected connection.
+
+  72:
+    name: 'First use of a logged-out serialized session returns GS 390111'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      deserializeConnection still constructs. The first request finds the session gone, moves
+      the connection to disconnected, and answers ClientError 407002 / SQLSTATE 08003 /
+      isFatal.
+    new_driver_behavior: |
+      The first request returns OperationFailedError with the server's GS 390111
+      (Session no longer exists). The driver does not rewrite that into 407002.

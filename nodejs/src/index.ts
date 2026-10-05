@@ -13,7 +13,7 @@ import type {
   StatementStatus,
 } from './query-result/types.js';
 import { normalizeConnectionOptions } from './connection-option-aliases.js';
-import { serializeTokenInfo } from './connection-serialization.js';
+import { serializeTokenInfo, deserializeTokenInfo } from './connection-serialization.js';
 import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
@@ -129,6 +129,10 @@ export type ConnectionOptions = Record<string, unknown> & {
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
+// Not exported, so only deserializeConnection can create a connection with deferred init.
+const DESERIALIZED_PAYLOAD = Symbol('deserializedPayload');
+type DeserializedConnectionOptions = ConnectionOptions & { [DESERIALIZED_PAYLOAD]?: string };
+
 // This should be called StatementOptions or ExecuteStatementOptions but we keep the name
 // for backwards compatibility
 export interface StatementOption {
@@ -199,6 +203,9 @@ export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
   #id: string;
+  // Original deserialize payload. Core has no tokens until connection_init, so
+  // serialize() before the first use reads this instead of an empty tokenInfo.
+  #serializedBeforeInit?: string;
 
   constructor(options: ConnectionOptions) {
     const {
@@ -208,8 +215,9 @@ export class Connection {
       representNullAsStringNull,
       arrayBindingThreshold,
       openExternalBrowserCallback,
+      [DESERIALIZED_PAYLOAD]: serializedBeforeInit,
       ...coreOptions
-    } = options;
+    } = options as DeserializedConnectionOptions;
     this.#id = randomUUID();
 
     this.#defaultRowOptions = {
@@ -233,7 +241,9 @@ export class Connection {
       }),
       sessionParameters,
       openExternalBrowserCallback,
+      serializedBeforeInit !== undefined,
     );
+    this.#serializedBeforeInit = serializedBeforeInit;
   }
 
   connect(callback?: ConnectionCallback) {
@@ -252,7 +262,14 @@ export class Connection {
 
   serialize(): string {
     const info = this.#core.getTokenInfo();
-    return serializeTokenInfo(info.sessionToken ? info : {});
+    if (info.sessionToken) {
+      this.#serializedBeforeInit = undefined;
+      return serializeTokenInfo(info);
+    }
+    if (this.#serializedBeforeInit && this.isUp()) {
+      return this.#serializedBeforeInit;
+    }
+    return serializeTokenInfo({});
   }
 
   isUp(): boolean {
@@ -388,10 +405,31 @@ export class Connection {
 export const configure = (options: ConfigureOptions) => updateGlobalConfig(options);
 export const createConnection = (options: ConnectionOptions) => new Connection(options);
 export const serializeConnection = (connection: Connection): string => connection.serialize();
-// TODO: document that a deserialized connection shares the originating session,
-// so destroying it logs out a session its originator still owns.
-export const deserializeConnection = () => {
-  throw new Error('Not implemented');
+/**
+ * Rebuilds a connection from a string produced by {@link Connection.serialize}.
+ * A payload that contains tokens addresses the same server session as the
+ * connection that produced the string. `destroy()` on either connection logs
+ * that session out.
+ */
+export const deserializeConnection = (
+  options: ConnectionOptions,
+  serializedConnection?: unknown,
+): Connection => {
+  const tokenInfo = deserializeTokenInfo(serializedConnection);
+  if (
+    !tokenInfo.sessionToken ||
+    !tokenInfo.masterToken ||
+    typeof serializedConnection !== 'string'
+  ) {
+    return new Connection(options);
+  }
+  const deserializedOptions: DeserializedConnectionOptions = {
+    ...options,
+    sessionToken: tokenInfo.sessionToken,
+    masterToken: tokenInfo.masterToken,
+    [DESERIALIZED_PAYLOAD]: serializedConnection,
+  };
+  return new Connection(deserializedOptions);
 };
 
 export default {

@@ -14,6 +14,8 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   privateKeyPass: 'private_key_password',
   workloadIdentityProvider: 'workload_identity_provider',
   clientStoreTemporaryCredential: 'client_store_temporary_credential',
+  sessionToken: 'session_token',
+  masterToken: 'master_token',
   database: 'database',
   schema: 'schema',
   warehouse: 'warehouse',
