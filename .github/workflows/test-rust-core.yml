@@ -306,6 +306,48 @@ jobs:
       - name: Run FIPS smoke tests
         run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf tls::fips_tests
 
+      - name: Decode cloud parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/decode_secrets.sh aws parameters_aws.json
+          ./scripts/decode_secrets.sh azure parameters_azure.json
+          ./scripts/decode_secrets.sh gcp parameters_gcp.json
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+
+      - name: Run FIPS connectivity smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Git Bash prepends its usr/bin, whose link.exe is GNU coreutils.
+          # cargo looks up link.exe for the MSVC target, so the directory
+          # vcvarsall added has to come first or the e2e binary does not link.
+          if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+            if [[ -z "${VCToolsInstallDir:-}" || -z "${VSCMD_ARG_HOST_ARCH:-}" || -z "${VSCMD_ARG_TGT_ARCH:-}" ]]; then
+              echo "MSVC environment is not configured" >&2
+              exit 1
+            fi
+            tools_dir="${VCToolsInstallDir%\\}"
+            tools_dir="${tools_dir%/}"
+            msvc_bin="$(cygpath -u "${tools_dir}/bin/Host${VSCMD_ARG_HOST_ARCH}/${VSCMD_ARG_TGT_ARCH}")"
+            if [[ ! -x "${msvc_bin}/link.exe" ]]; then
+              echo "MSVC link.exe is not at ${msvc_bin}" >&2
+              exit 1
+            fi
+            export PATH="${msvc_bin}:${PATH}"
+          fi
+          for cloud in aws azure gcp; do
+            echo "FIPS connectivity smoke: ${cloud}"
+            export PARAMETER_PATH="$(pwd)/parameters_${cloud}.json"
+            cargo test --locked --test e2e_tests --package sf_core \
+              --no-default-features --features fips-tls,protobuf \
+              on_a_fips_build
+          done
+
       - name: Clean up python_bridge artifacts from target
         if: always()
         shell: bash
@@ -606,14 +648,14 @@ jobs:
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # The FIPS smoke matrix excludes Windows ARM because it is not a supported
   # FIPS release target.
-  # Coverage note: the only tests gated behind cfg(feature = "fips-tls") are the
-  # tls::fips_tests assertions, which verify FIPS-ness end to end: the linked
-  # aws-lc module reports FIPS mode, and the installed rustls provider /
-  # ClientConfig are FIPS (approved cipher suites only). All of that is
-  # meaningless on this non-FIPS lane by construction, so
-  # skipping them here loses no coverage. Every other test runs identically with
-  # and without fips-tls; only the linked TLS crypto backend differs
-  # (aws-lc-sys vs aws-lc-fips-sys).
+  # Coverage note: tests gated behind cfg(feature = "fips-tls") are
+  # tls::fips_tests and the e2e connectivity smoke in fips_connectivity:
+  # SELECT 1 with CRL off, SELECT 1 with CRL enabled, and a small PUT and GET.
+  # The unit tests verify the linked aws-lc module reports FIPS mode and the
+  # installed rustls provider / ClientConfig are FIPS. Those checks require a
+  # FIPS build, so this non-FIPS lane does not run them. Every other test runs
+  # identically with and without fips-tls; only the linked TLS crypto
+  # backend differs (aws-lc-sys vs aws-lc-fips-sys).
   test_windows_arm64_nonfips:
     needs: load-core-matrix
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
