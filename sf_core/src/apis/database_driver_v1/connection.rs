@@ -916,7 +916,10 @@ impl DatabaseDriverV1 {
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
         match self.connections.delete_handle(conn_handle) {
-            true => Ok(()),
+            true => {
+                self.reap_connection_streams(conn_handle);
+                Ok(())
+            }
             false => InvalidArgumentSnafu {
                 argument: "Failed to release connection handle".to_string(),
             }
@@ -3179,11 +3182,11 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
     // Upload/download stream sessions are reaped in connection_close, before
-    // logout I/O, via DatabaseDriverV1::reap_connection_streams — not here.
-    // TODO(SNOW-3704961): a session that outlives its connection because the
-    // wrapper never calls connection_close (process crash, or a stream begun
-    // and simply abandoned) still leaks until process exit; there is no
-    // idle-timeout reaper for abandoned upload/download stream sessions yet.
+    // logout I/O, and in connection_release, via
+    // DatabaseDriverV1::reap_connection_streams — not here.
+    // TODO(SNOW-3704961): a stream begun and abandoned on a connection that
+    // stays open leaks until that connection is closed or released; there is
+    // no idle-timeout reaper for abandoned upload/download stream sessions yet.
 
     Ok(())
 }

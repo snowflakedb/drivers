@@ -25,9 +25,9 @@
 //! Session lifetime & cleanup: an `UploadStreamSession` is freed by
 //! `connection_upload_stream_finish`/`_abort`; a download session by
 //! `download_stream_close`. `reap_connection_streams` also frees both kinds
-//! on `connection_close`, dropping an upload's temp file and aborting a
-//! download's tasks. Only the graceful-close path is covered — a session on
-//! a connection that's never closed leaks until process exit; see
+//! on `connection_close` and `connection_release`, dropping an upload's temp
+//! file and aborting a download's tasks. A session abandoned on a connection
+//! that stays open leaks until that connection is closed or released; see
 //! `TODO(SNOW-3704961)` in `connection::cleanup_connection`.
 //!
 //! Download contract (chunked, `download_stream_{begin,chunk,close}`):
@@ -978,6 +978,26 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn connection_release_reaps_only_that_connections_upload_sessions() {
+        let driver = DatabaseDriverV1::new();
+        let released_conn = register_bare_connection(&driver);
+        let other_conn = register_bare_connection(&driver);
+        let released_upload = driver
+            .connection_upload_stream_begin(released_conn, "PUT file://x @s".into())
+            .await
+            .unwrap();
+        let other_upload = driver
+            .connection_upload_stream_begin(other_conn, "PUT file://x @s".into())
+            .await
+            .unwrap();
+
+        driver.connection_release(released_conn).unwrap();
+
+        assert!(driver.upload_streams.get_obj(released_upload).is_none());
+        assert!(driver.upload_streams.get_obj(other_upload).is_some());
     }
 
     #[tokio::test]
