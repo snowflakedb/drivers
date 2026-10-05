@@ -1234,7 +1234,6 @@ fn stub_ctx() -> StageInfoRefreshContext {
                 crl_config: CrlConfig::default(),
                 tls_config: TlsConfig::default(),
                 proxy_config: Default::default(),
-                platforms: Vec::new(),
                 os_details: None,
             },
             log_max_query_length: 100,

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::Mutex;
 
@@ -17,7 +16,8 @@ use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
 use crate::rest::snowflake::prompt_lock::PromptLockMap;
-use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
+use crate::telemetry::platform_detection::{DetectionConfig, PlatformDetector};
+use crate::telemetry::session_telemetry::SessionTelemetry;
 use crate::telemetry::snowflake_exporter::SessionRegistry;
 use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
@@ -223,7 +223,7 @@ pub struct DatabaseDriverV1 {
     pub(super) download_streams: HandleManager<DownloadStream>,
     token_cache: once_cell::sync::OnceCell<Arc<dyn TokenCache>>,
     fs: Arc<dyn FsAdapter>,
-    platforms: tokio::sync::OnceCell<Vec<String>>,
+    pub(super) platform_detector: PlatformDetector,
     log_manager: Option<LogManager>,
     pub(super) wrapper_presets: WrapperPresets,
     /// Process-global per-[`crate::token_cache::CacheKey`] prompt locks
@@ -270,7 +270,7 @@ impl DatabaseDriverV1 {
                 .map(once_cell::sync::OnceCell::from)
                 .unwrap_or_default(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
-            platforms: tokio::sync::OnceCell::const_new(),
+            platform_detector: PlatformDetector::new(DetectionConfig::default()),
             log_manager: providers.log_manager,
             wrapper_presets: providers.wrapper_presets,
             prompt_locks: providers
@@ -299,6 +299,16 @@ impl DatabaseDriverV1 {
     /// Returns the session registry if telemetry was configured via `DriverProviders`.
     pub(super) fn telemetry_sessions(&self) -> Option<&SessionRegistry> {
         self.log_manager.as_ref().map(|lm| lm.telemetry_sessions())
+    }
+
+    pub(super) fn session_telemetry(&self) -> Option<&SessionTelemetry> {
+        self.log_manager.as_ref().map(|lm| lm.telemetry())
+    }
+
+    pub(super) fn start_platform_detection(&self) {
+        if self.log_manager.is_some() {
+            self.platform_detector.start();
+        }
     }
 
     /// Resolve the Snowflake session id for a connection handle by reading
@@ -369,24 +379,6 @@ impl DatabaseDriverV1 {
         self.fs.clone()
     }
 
-    /// Detection runs once per driver, on the first connect, and every later
-    /// connect reads the cached result. A `timeout` that differs from the first
-    /// connect's is therefore ignored, `Duration::ZERO` included. That is
-    /// deliberate: varying the platform-detection timeout between connections
-    /// in one process is not a supported use case, and one `OnceCell` is
-    /// simpler than a cache keyed by duration.
-    pub async fn platforms(&self, timeout: Duration) -> &Vec<String> {
-        self.platforms
-            .get_or_init(|| async move {
-                detect_platforms(&DetectionConfig {
-                    timeout,
-                    ..DetectionConfig::default()
-                })
-                .await
-            })
-            .await
-    }
-
     pub fn os_details(&self) -> Option<&HashMap<String, String>> {
         self.log_manager
             .as_ref()
@@ -432,36 +424,13 @@ mod tests {
     use crate::xp_backend::TestBackend;
 
     #[tokio::test]
-    async fn platforms_zero_timeout_on_later_call_reuses_first_connect_cache() {
-        use crate::env_vars;
-        use crate::telemetry::platform_detection::platform_detection_env_vars;
-
+    async fn platform_detection_stays_idle_without_a_log_manager() {
         let driver = DatabaseDriverV1::new();
-        temp_env::async_with_vars(
-            platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
-            async {
-                assert_eq!(
-                    driver.platforms(Duration::ZERO).await.as_slice(),
-                    ["is_aws_lambda"]
-                );
-            },
-        )
-        .await;
-
-        temp_env::async_with_vars(
-            platform_detection_env_vars(&[(
-                env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
-                "true",
-            )]),
-            async {
-                assert_eq!(
-                    driver.platforms(Duration::ZERO).await.as_slice(),
-                    ["is_aws_lambda"],
-                    "a later zero-timeout call must reuse the first connect's cache, not re-run detectors"
-                );
-            },
-        )
-        .await;
+        driver.start_platform_detection();
+        assert!(
+            !driver.platform_detector.has_started(),
+            "detection starts only when a LogManager can receive the result"
+        );
     }
 
     #[test]

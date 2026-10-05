@@ -132,7 +132,6 @@ pub struct ClientInfo {
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
     pub proxy_config: ProxyConfig,
-    pub platforms: Vec<String>,
     pub os_details: Option<HashMap<String, String>>,
 }
 
@@ -178,7 +177,6 @@ impl ClientInfo {
             crl_config,
             tls_config,
             proxy_config,
-            platforms: Vec::new(),
             os_details: None,
         };
         Ok(client_info)
@@ -233,7 +231,6 @@ pub mod test_fixtures {
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
-            platforms: Vec::new(),
             os_details: None,
         }
     }

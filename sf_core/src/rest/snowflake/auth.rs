@@ -45,8 +45,6 @@ pub struct AuthRequestClientEnvironment {
     pub ocsp_mode: Option<String>,
     #[serde(rename = "CERT_REVOCATION_CHECK_MODE")]
     pub cert_revocation_check_mode: String,
-    #[serde(rename = "PLATFORM")]
-    pub platforms: Vec<String>,
     #[serde(rename = "RUNTIME_VERSION", skip_serializing_if = "Option::is_none")]
     pub runtime_version: Option<String>,
     #[serde(rename = "RUNTIME_NAME", skip_serializing_if = "Option::is_none")]
@@ -273,6 +271,10 @@ mod tests {
         assert!(
             json.get("OCSP_MODE").is_none(),
             "None OCSP_MODE should be skipped"
+        );
+        assert!(
+            json.get("PLATFORM").is_none(),
+            "login environment does not include PLATFORM"
         );
     }
 

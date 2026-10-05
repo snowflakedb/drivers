@@ -495,14 +495,13 @@ tests:
     ud_tests:
       - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
       - python/tests/unit/test_connection.py::TestTimeoutPropertiesUnit::test_platform_detection_timeout_seconds_read_from_config
-      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
-    notes: "UD accepts the parameter, forwards it to core, and exposes it as Connection.platform_detection_timeout_seconds."
+    notes: "Partial. UD accepts the parameter and exposes it as Connection.platform_detection_timeout_seconds, but core ignores it; every platform check uses a fixed 2-second limit."
   - test_name: test_platform_detection_zero_timeout
     ud_tests:
       - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_on_cloud
       - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_out_of_cloud
       - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
-    notes: "UD asserts the skip in core with mock servers whose stubs expect zero requests, rather than patching the six Python detector functions."
+    notes: "Partial. Core skips the endpoint detectors for a zero detection timeout, asserted with mock servers whose stubs expect zero requests. UD ignores platform_detection_timeout_seconds, so passing 0 from Python does not reach that path."
   - test_name: test_privatelink
     ud_tests: []
   - test_name: test_privatelink_ocsp_url_concurrent
@@ -1684,14 +1683,13 @@ tests:
     ud_tests:
       - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
       - python/tests/unit/test_connection.py::TestTimeoutPropertiesUnit::test_platform_detection_timeout_seconds_read_from_config
-      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
-    notes: "UD accepts the parameter, forwards it to core, and exposes it as Connection.platform_detection_timeout_seconds."
+    notes: "Partial. UD accepts the parameter and exposes it as Connection.platform_detection_timeout_seconds, but core ignores it; every platform check uses a fixed 2-second limit."
   - test_name: test_platform_detection_zero_timeout
     ud_tests:
       - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_on_cloud
       - sf_core/src/telemetry/platform_detection/tests.rs::zero_timeout_skips_endpoint_detectors_out_of_cloud
       - python/tests/unit/test_connection_config.py::TestFromKwargs::test_platform_detection_timeout_seconds_is_a_known_field
-    notes: "UD asserts the skip in core with mock servers whose stubs expect zero requests, rather than patching the six Python detector functions."
+    notes: "Partial. Core skips the endpoint detectors for a zero detection timeout, asserted with mock servers whose stubs expect zero requests. UD ignores platform_detection_timeout_seconds, so passing 0 from Python does not reach that path."
   - test_name: test_privatelink
     ud_tests: []
   - test_name: test_privatelink_ocsp_url_creation
@@ -3802,9 +3800,8 @@ tests:
       - sf_core/src/telemetry/platform_detection/tests.rs::drops_detectors_when_timeout_reached
     notes: "UD asserts the per-detector timeout deterministically with a paused tokio clock instead of bounding wall-clock elapsed time."
   - test_name: test_platform_detection_default_timeout_is_200ms
-    ud_tests:
-      - sf_core/src/telemetry/platform_detection/tests.rs::timeout_from_seconds_maps_absent_and_invalid_values
-    notes: "UD asserts that an absent parameter resolves to the 200ms DETECTION_TIMEOUT constant."
+    ud_tests: []
+    notes: "Not covered. UD has no 200ms default; every platform check uses a fixed 2-second limit that platform_detection_timeout_seconds does not change."
   - test_name: test_platform_detection_disable_env_var_values
     ud_tests:
       - sf_core/src/telemetry/platform_detection/tests.rs::disabled_flag_accepts_truthy_values

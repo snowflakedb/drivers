@@ -1,10 +1,13 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use tracing::instrument::WithSubscriber;
 
 use crate::env_vars;
+use crate::telemetry::session_telemetry::SessionTelemetry;
 
 use self::aws::{CallerIdentityProvider, StsCallerIdentityProvider};
 
@@ -15,7 +18,7 @@ mod gcp;
 #[cfg(test)]
 mod tests;
 
-const DETECTION_TIMEOUT: Duration = Duration::from_millis(200);
+const DETECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct DetectionConfig {
@@ -40,14 +43,6 @@ impl Default for DetectionConfig {
     }
 }
 
-pub(crate) fn timeout_from_seconds(seconds: Option<f64>) -> Duration {
-    match seconds {
-        None => DETECTION_TIMEOUT,
-        Some(0.0) => Duration::ZERO,
-        Some(secs) => Duration::try_from_secs_f64(secs).unwrap_or(DETECTION_TIMEOUT),
-    }
-}
-
 /// Run all detectors concurrently with a per-detector `DetectionConfig::timeout`.
 ///
 /// A zero timeout runs only the environment-variable detectors; the ones that
@@ -55,17 +50,7 @@ pub(crate) fn timeout_from_seconds(seconds: Option<f64>) -> Duration {
 /// Returns the names of only those detectors that succeeded. Order matches
 /// the detector list below so the serialized array is stable across runs.
 pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
-    // Platform detection is temporarily opt-in: it adds up to ~200ms
-    // (DETECTION_TIMEOUT) to every integration/e2e test, and we are in the
-    // process of moving this feature from the login-request payload to
-    // inband telemetry. Until that migration lands, detection only runs
-    // when SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION is truthy.
-    // SNOWFLAKE_DISABLE_PLATFORM_DETECTION remains as an explicit kill-switch
-    // and wins over the enable flag.
-    let disabled = crate::utils::env_flag(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION);
-    let temporary_opt_in_enabled =
-        crate::utils::env_flag(env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION);
-    if disabled || !temporary_opt_in_enabled {
+    if crate::utils::env_flag(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION) {
         return vec!["disabled".to_string()];
     }
 
@@ -179,7 +164,6 @@ pub(super) fn is_github_action() -> bool {
 #[cfg(any(test, feature = "test-utils"))]
 const PLATFORM_DETECTION_ENV_KEYS: &[&str] = &[
     env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
-    env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
     "LAMBDA_TASK_ROOT",
     "FUNCTIONS_WORKER_RUNTIME",
     "FUNCTIONS_EXTENSION_VERSION",
@@ -195,12 +179,9 @@ const PLATFORM_DETECTION_ENV_KEYS: &[&str] = &[
 
 /// Builds the `(key, Option<value>)` list to hand to `temp_env::with_vars`
 /// or `temp_env::async_with_vars`. Every key in [`PLATFORM_DETECTION_ENV_KEYS`]
-/// defaults to `None` (cleared), except
-/// `SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION` which defaults to
-/// `Some("true")` so tests that use this helper get detection running
-/// without having to opt in everywhere. Callers can still override any key
-/// via `overrides` (e.g. setting `SNOWFLAKE_DISABLE_PLATFORM_DETECTION=true`
-/// to exercise the kill-switch path).
+/// defaults to `None` (cleared). Callers override any key via `overrides`
+/// (e.g. setting `SNOWFLAKE_DISABLE_PLATFORM_DETECTION=true` to exercise
+/// the kill-switch path).
 ///
 /// CI runners sometimes export keys like `GITHUB_ACTIONS=true`; passing the
 /// returned vec to `temp_env` guarantees those leaks do not affect detector
@@ -211,17 +192,7 @@ pub fn platform_detection_env_vars(
 ) -> Vec<(&'static str, Option<&'static str>)> {
     let mut env_vars: Vec<(&'static str, Option<&'static str>)> = PLATFORM_DETECTION_ENV_KEYS
         .iter()
-        .map(|key| {
-            // Detection is opt-in in production, but tests that use this helper
-            // universally want it enabled; the explicit DISABLE flag still wins
-            // when a caller sets it via `overrides`.
-            let default = if *key == env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION {
-                Some("true")
-            } else {
-                None
-            };
-            (*key, default)
-        })
+        .map(|key| (*key, None))
         .collect();
 
     for (key, value) in overrides {
@@ -233,4 +204,61 @@ pub fn platform_detection_env_vars(
     }
 
     env_vars
+}
+
+pub(crate) struct PlatformDetector {
+    config: DetectionConfig,
+    started: AtomicBool,
+    platforms: Arc<OnceLock<Vec<String>>>,
+}
+
+impl PlatformDetector {
+    pub(crate) fn new(config: DetectionConfig) -> Self {
+        Self {
+            config,
+            started: AtomicBool::new(false),
+            platforms: Arc::default(),
+        }
+    }
+
+    pub(crate) fn start(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        if self.started.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let config = self.config.clone();
+        let platforms = Arc::clone(&self.platforms);
+        runtime.spawn(
+            async move {
+                let _ = platforms.set(detect_platforms(&config).await);
+            }
+            .with_current_subscriber(),
+        );
+    }
+
+    pub(crate) fn platforms(&self) -> Option<&[String]> {
+        self.platforms.get().map(Vec::as_slice)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_started(&self) -> bool {
+        self.started.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn report(&self, telemetry: &SessionTelemetry, session_id: i64) {
+        let Some(platforms) = self.platforms() else {
+            return;
+        };
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let message = serde_json::json!({
+            "type": "platform_detection_status",
+            "value": platforms,
+        });
+        telemetry.add_log(session_id, message.to_string(), timestamp_ms);
+    }
 }

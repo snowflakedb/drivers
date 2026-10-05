@@ -1932,9 +1932,8 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description(
-            "Python-only. Seconds to wait for each cloud-metadata platform check \
-             (absent = 0.2). 0 skips HTTP/STS endpoint checks; env-only detectors \
-             still run.",
+            "Python-only. Accepted for compatibility and ignored; each \
+             cloud-metadata platform check is limited to 2 seconds.",
         )
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)

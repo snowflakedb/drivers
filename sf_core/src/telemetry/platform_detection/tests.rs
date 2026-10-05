@@ -24,23 +24,6 @@ fn test_detection_config() -> DetectionConfig {
 }
 
 #[tokio::test]
-async fn returns_disabled_when_opt_in_flag_not_set() {
-    temp_env::async_with_vars(
-        [(
-            env_vars::SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION,
-            None::<&str>,
-        )],
-        async {
-            assert_eq!(
-                detect_platforms(&test_detection_config()).await,
-                vec!["disabled"]
-            );
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn returns_disabled_when_env_flag_true() {
     temp_env::async_with_vars(
         platform_detection_env_vars(&[(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION, "true")]),
@@ -531,17 +514,6 @@ async fn detects_has_gcp_identity_via_metadata_service() {
     .await;
 }
 
-#[test]
-fn timeout_from_seconds_maps_absent_and_invalid_values() {
-    assert_eq!(timeout_from_seconds(None), DETECTION_TIMEOUT);
-    assert_eq!(timeout_from_seconds(Some(0.0)), Duration::ZERO);
-    assert_eq!(timeout_from_seconds(Some(-0.1)), DETECTION_TIMEOUT);
-    assert_eq!(timeout_from_seconds(Some(f64::NAN)), DETECTION_TIMEOUT);
-    assert_eq!(timeout_from_seconds(Some(f64::INFINITY)), DETECTION_TIMEOUT);
-    assert_eq!(timeout_from_seconds(Some(0.2)), DETECTION_TIMEOUT);
-    assert_eq!(timeout_from_seconds(Some(2.5)), Duration::from_millis(2500));
-}
-
 #[tokio::test]
 async fn zero_timeout_skips_endpoint_detectors_on_cloud() {
     let server = MockServer::start().await;
@@ -604,4 +576,37 @@ async fn zero_timeout_skips_endpoint_detectors_out_of_cloud() {
         );
     })
     .await;
+}
+
+async fn wait_for_platforms(detector: &PlatformDetector) -> Vec<String> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(platforms) = detector.platforms() {
+                return platforms.to_vec();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("background detection should finish")
+}
+
+#[test]
+fn start_outside_a_runtime_leaves_detection_to_a_later_start() {
+    let mut cfg = test_detection_config();
+    cfg.timeout = Duration::ZERO;
+    let detector = PlatformDetector::new(cfg);
+    detector.start();
+    assert!(!detector.has_started());
+
+    let runtime = tokio::runtime::Runtime::new().expect("test runtime");
+    temp_env::with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        || {
+            runtime.block_on(async {
+                detector.start();
+                assert_eq!(wait_for_platforms(&detector).await, vec!["is_aws_lambda"]);
+            });
+        },
+    );
 }

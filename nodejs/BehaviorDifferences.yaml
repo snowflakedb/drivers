@@ -1358,3 +1358,20 @@ behavior_differences:
       001008 (invalid value for parameter 'QUERY_TAG'). The new driver does not repeat that
       check. QUERY_TAG on a statement is not checked by the old driver either.
       The query request keeps a long string and cuts the job tag at 2000.
+
+  70:
+    name: 'Login request omits CLIENT_ENVIRONMENT.PLATFORM'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Platform detection runs before login and the detected platforms are sent as the
+      `CLIENT_ENVIRONMENT.PLATFORM` array in the login request body (e.g. `is_aws_lambda`
+      when `LAMBDA_TASK_ROOT` is set).
+    new_driver_behavior: |
+      The login request has no `CLIENT_ENVIRONMENT.PLATFORM` field. Detection runs once per
+      driver in the background and each session reports the result as an in-band
+      `platform_detection_status` telemetry log when it closes, provided detection has
+      finished by then. Connect never waits for detection.

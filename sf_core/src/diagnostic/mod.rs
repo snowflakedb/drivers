@@ -262,6 +262,15 @@ impl DiagnosticRunner {
         }
     }
 
+    pub fn record_platforms(&mut self, platforms: Option<&[String]>) {
+        let line = match platforms {
+            None => "Detected platforms: (not finished)".to_string(),
+            Some([]) => "Detected platforms: (none)".to_string(),
+            Some(platforms) => format!("Detected platforms: {}", platforms.join(", ")),
+        };
+        append(&mut self.results, "INITIAL", &line);
+    }
+
     /// Assemble and write the report.  Also emits the full report at DEBUG via
     /// `tracing::debug!` so the Python `caplog` fixture can capture it.
     pub fn write_report(&self) {
@@ -1178,12 +1187,6 @@ fn collect_environment_info(info: &ClientInfo) -> Vec<String> {
         crate::crl::config::CertRevocationCheckMode::Advisory => "ADVISORY",
     };
     lines.push(format!("Cert revocation check mode: {mode_str}"));
-
-    if info.platforms.is_empty() {
-        lines.push("Detected platforms: (none)".to_string());
-    } else {
-        lines.push(format!("Detected platforms: {}", info.platforms.join(", ")));
-    }
 
     if let Some(name) = &info.runtime_name {
         lines.push(format!("Runtime: {name}"));

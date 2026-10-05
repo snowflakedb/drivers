@@ -99,6 +99,8 @@ describe('/login-request body', () => {
       }
     });
 
+    // The universal driver omits CLIENT_ENVIRONMENT.PLATFORM on the login request
+    // (BD#70 in nodejs/BehaviorDifferences.yaml).
     it('contains PLATFORM field with mocked lambda env', async () => {
       sinon.stub(process, 'env').value({ ...process.env, LAMBDA_TASK_ROOT: '/var/task' });
       delete require.cache[require.resolve('../../lib/telemetry/platform_detection')];

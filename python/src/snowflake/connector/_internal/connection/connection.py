@@ -357,7 +357,7 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     @property
     @api_telemetry
     def platform_detection_timeout_seconds(self) -> float | None:
-        """Seconds to wait for each cloud-metadata platform check, or ``None`` for the default."""
+        """The configured value, which the driver ignores; each platform check is limited to 2 seconds."""
         return self.config.platform_detection_timeout_seconds
 
     @property

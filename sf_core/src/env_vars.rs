@@ -43,11 +43,6 @@ pub const HOME: &str = "HOME";
 /// Disable automatic platform / cloud-provider detection.
 pub const SNOWFLAKE_DISABLE_PLATFORM_DETECTION: &str = "SNOWFLAKE_DISABLE_PLATFORM_DETECTION";
 
-/// Opt into experimental platform detection (takes effect only when the
-/// stable detection is also disabled).
-pub const SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION: &str =
-    "SNOWFLAKE_EXPERIMENTAL_ENABLE_PLATFORM_DETECTION";
-
 /// Test-only override for the browser opener used during external-browser auth.
 /// Set to `"noop"` to suppress actual browser launches in tests.
 pub const SF_TEST_BROWSER_OPENER: &str = "SF_TEST_BROWSER_OPENER";

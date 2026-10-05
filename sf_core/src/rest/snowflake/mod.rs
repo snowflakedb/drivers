@@ -491,7 +491,6 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
                 CertRevocationCheckMode::Advisory => "ADVISORY",
             }
             .to_string(),
-            platforms: login_parameters.client_info.platforms.clone(),
             runtime_version: login_parameters.client_info.runtime_version.clone(),
             runtime_name: login_parameters.client_info.runtime_name.clone(),
             compiler: login_parameters.client_info.compiler.clone(),

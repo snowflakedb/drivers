@@ -878,6 +878,17 @@ impl SnowflakeTestClient {
         }
     }
 
+    pub fn open_another_connection(&mut self) {
+        let conn_response = self
+            .client
+            .connection_new_blocking(ConnectionNewRequest {})
+            .expect("connection_new");
+        self.conn_handle = conn_response
+            .conn_handle
+            .expect("connection_new returns a handle");
+        self.set_options_from_parameters();
+    }
+
     pub fn set_connection_option(&self, option_name: &str, option_value: &str) {
         self.set_connection_config_setting(option_name, option_value.to_string().into());
     }

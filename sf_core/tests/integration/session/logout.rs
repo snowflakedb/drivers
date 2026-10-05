@@ -1941,7 +1941,6 @@ fn test_client_info() -> ClientInfo {
         crl_config: Default::default(),
         tls_config: Default::default(),
         proxy_config: Default::default(),
-        platforms: vec![],
         os_details: None,
         compiler: None,
         runtime_name: None,

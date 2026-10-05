@@ -39,7 +39,6 @@ use crate::rest::snowflake::{
 };
 use crate::sensitive::SensitiveString;
 use crate::stage_binding::{AtomicStageState, StageState};
-use crate::telemetry::platform_detection::timeout_from_seconds;
 use crate::tls::config::ProxyConfig;
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
 use std::time::Duration;
@@ -274,6 +273,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         db_handle: Handle,
     ) -> Result<(), ApiError> {
+        self.start_platform_detection();
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let database_seed = self.database_settings(db_handle).await?;
@@ -309,12 +309,6 @@ impl DatabaseDriverV1 {
                     let port = resolved.get_int(param_names::PORT);
                     let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
-                    client_info.platforms = self
-                        .platforms(timeout_from_seconds(
-                            resolved.get_double(param_names::PLATFORM_DETECTION_TIMEOUT_SECONDS),
-                        ))
-                        .await
-                        .clone();
                     client_info.os_details = self.os_details().cloned();
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
@@ -451,6 +445,7 @@ impl DatabaseDriverV1 {
                         let host_str = host.clone().unwrap_or_default();
                         let diag_proxy = config.proxy.clone();
                         let diag_client_info = login_parameters.client_info.clone();
+                        self.platform_detector.start();
                         tokio::task::spawn_blocking(move || {
                             let mut runner = DiagnosticRunner::new(
                                 &account,
@@ -538,12 +533,18 @@ impl DatabaseDriverV1 {
 
                 // ---- Diagnostics: post-connect ----------------------------------
                 if let Some(mut runner) = diag_runner.take() {
-                    tokio::task::spawn_blocking(move || {
+                    let runner = tokio::task::spawn_blocking(move || {
                         runner.run_post_connect(None);
-                        runner.write_report();
+                        runner
                     })
                     .await
                     .ok();
+                    if let Some(mut runner) = runner {
+                        runner.record_platforms(self.platform_detector.platforms());
+                        tokio::task::spawn_blocking(move || runner.write_report())
+                            .await
+                            .ok();
+                    }
                 }
 
                 let login_result = login_result.context(LoginSnafu)?;
@@ -727,6 +728,9 @@ impl DatabaseDriverV1 {
         let session_id = self.session_id_for_conn(conn_handle).await;
 
         if let Some(id) = session_id {
+            if let Some(telemetry) = self.session_telemetry() {
+                self.platform_detector.report(telemetry, id);
+            }
             self.flush_telemetry_session(id).await;
 
             if let Some(sessions) = self.telemetry_sessions() {
