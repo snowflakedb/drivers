@@ -59,6 +59,8 @@ pub struct AuthRequestClientEnvironment {
     pub isa: String,
     #[serde(rename = "CORE_VERSION")]
     pub core_version: String,
+    #[serde(rename = "IS_FIPS")]
+    pub is_fips: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]
@@ -343,6 +345,29 @@ mod tests {
         let json = serde_json::to_value(&env).unwrap();
         assert_eq!(json["ISA"], "x86_64");
         assert_eq!(json["CORE_VERSION"], "1.2.3");
+    }
+
+    #[test]
+    fn test_client_environment_serializes_is_fips() {
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            is_fips: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["IS_FIPS"], true);
+
+        let env = AuthRequestClientEnvironment {
+            application: "ODBC".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.10".to_string(),
+            is_fips: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json["IS_FIPS"], false);
     }
 
     #[test]

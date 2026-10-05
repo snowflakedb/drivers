@@ -498,6 +498,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             release_type: login_parameters.client_info.release_type.clone(),
             isa: std::env::consts::ARCH.to_string(),
             core_version: env!("CARGO_PKG_VERSION").to_string(),
+            is_fips: crate::tls::tls_provider_is_fips(),
         },
         spcs_token: login_parameters.spcs_token.clone(),
         ..Default::default()
@@ -4195,13 +4196,35 @@ mod tests {
     }
 
     #[test]
-    fn base_auth_request_data_includes_isa_and_core_version() {
+    fn base_auth_request_data_includes_core_environment() {
         let login_params = test_login_params();
         let data = base_auth_request_data(&login_params);
         let isa = &data.client_environment.isa;
         let core_version = &data.client_environment.core_version;
         assert!(!isa.is_empty(), "ISA must be non-empty");
         assert!(!core_version.is_empty(), "CORE_VERSION must be non-empty");
+        assert_eq!(
+            data.client_environment.is_fips,
+            crate::tls::tls_provider_is_fips()
+        );
+    }
+
+    #[cfg(not(feature = "fips-tls"))]
+    #[test]
+    fn base_auth_request_data_reports_is_fips_false_without_fips_tls() {
+        let data = base_auth_request_data(&test_login_params());
+        assert!(!data.client_environment.is_fips);
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["CLIENT_ENVIRONMENT"]["IS_FIPS"], false);
+    }
+
+    #[cfg(feature = "fips-tls")]
+    #[test]
+    fn base_auth_request_data_reports_is_fips_true_with_fips_tls() {
+        let data = base_auth_request_data(&test_login_params());
+        assert!(data.client_environment.is_fips);
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["CLIENT_ENVIRONMENT"]["IS_FIPS"], true);
     }
 
     #[test]
