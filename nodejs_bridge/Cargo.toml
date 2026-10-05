@@ -33,6 +33,7 @@ uuid = { version = "1.18", features = ["v4"] }
 chrono-tz = "0.10.4"
 
 [dev-dependencies]
+reqwest = { version = "0.12.23", default-features = false }
 tokio = { version = "1.50.0", features = ["macros", "rt"] }
 
 [build-dependencies]

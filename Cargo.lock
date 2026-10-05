@@ -3053,6 +3053,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "reqwest",
  "sf_core",
  "sf_output_format",
  "sf_types",

@@ -243,7 +243,7 @@ impl Statement {
     #[napi]
     pub fn close(&self) -> Result<()> {
         if let Some(Ok(outcome)) = self.result.get()
-            && let Some(data) = outcome.rows()
+            && let Some(mut data) = outcome.rows()
         {
             data.close();
         }

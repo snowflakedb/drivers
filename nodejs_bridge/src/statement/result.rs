@@ -31,7 +31,7 @@ impl StatementOutcome {
 }
 
 pub(crate) struct ResultData {
-    pub(crate) result_set_handle: Handle,
+    result_set_handle: Option<Handle>,
     pub(crate) result_set_descriptor: ResultSetDescriptor,
     pub(crate) session_params: Arc<KnownSessionParameters>,
     pub(crate) stream_state: Arc<StreamState>,
@@ -71,8 +71,10 @@ impl ResultData {
         self.multi.is_some()
     }
 
-    pub(crate) fn close(&self) {
-        let _ = DRIVER.result_set_release(self.result_set_handle);
+    pub(crate) fn close(&mut self) {
+        if let Some(handle) = self.result_set_handle.take() {
+            let _ = DRIVER.result_set_release(handle);
+        }
     }
 
     pub(crate) async fn next_result(&mut self) -> Result<bool, BridgeError> {
@@ -81,7 +83,7 @@ impl ResultData {
         };
         let info = result_set_info(self.conn_handle, &query_id).await?;
         self.close();
-        self.result_set_handle = info.handle;
+        self.result_set_handle = Some(info.handle);
         self.result_set_descriptor = info.descriptor;
         self.stream_state = Arc::new(StreamState::new(
             DRIVER.result_set_get_async_stream(info.handle).await?,
@@ -93,7 +95,6 @@ impl ResultData {
         result: ExecuteQueryResult,
         conn_handle: Handle,
     ) -> Result<Self, BridgeError> {
-        let session_params = Arc::new(KnownSessionParameters::from_connection(conn_handle).await?);
         let (info, multi) = match result {
             ExecuteQueryResult::Single { info, .. } => (info, None),
             ExecuteQueryResult::Multi { query_ids, .. } => {
@@ -111,16 +112,29 @@ impl ResultData {
                 )
             }
         };
+        let (session_params, stream) = async {
+            let session_params = KnownSessionParameters::from_connection(conn_handle).await?;
+            let stream = DRIVER.result_set_get_async_stream(info.handle).await?;
+            Ok::<_, BridgeError>((session_params, stream))
+        }
+        .await
+        .inspect_err(|_| {
+            let _ = DRIVER.result_set_release(info.handle);
+        })?;
         Ok(Self {
-            stream_state: Arc::new(StreamState::new(
-                DRIVER.result_set_get_async_stream(info.handle).await?,
-            )),
-            result_set_handle: info.handle,
+            session_params: Arc::new(session_params),
+            stream_state: Arc::new(StreamState::new(stream)),
+            result_set_handle: Some(info.handle),
             result_set_descriptor: info.descriptor,
-            session_params,
             multi,
             conn_handle,
         })
+    }
+}
+
+impl Drop for ResultData {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -185,5 +199,94 @@ impl StatementResult {
         self.cell
             .get()
             .map(|result| result.as_ref().map_err(BridgeError::clone))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{Int32Array, RecordBatch};
+    use arrow::datatypes::{DataType, Field, Schema};
+
+    fn result_set() -> ResultSetInfo {
+        let schema = Arc::new(Schema::new(vec![Field::new("N", DataType::Int32, false)]));
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
+        DRIVER
+            .register_arrow_batch_as_result_set(&batch, reqwest::Client::new())
+            .unwrap()
+    }
+
+    fn single(info: ResultSetInfo) -> ExecuteQueryResult {
+        ExecuteQueryResult::Single {
+            info,
+            request_id: None,
+        }
+    }
+
+    fn is_released(handle: Handle) -> bool {
+        DRIVER.result_set_release(handle).is_err()
+    }
+
+    async fn result_data(conn: Handle) -> (ResultData, Handle) {
+        let info = result_set();
+        let handle = info.handle;
+        let Ok(data) = ResultData::from_execute_result(single(info), conn).await else {
+            panic!("result data should open");
+        };
+        (data, handle)
+    }
+
+    #[tokio::test]
+    async fn drop_releases_the_result_set() {
+        let conn = DRIVER.connection_new();
+        let (data, handle) = result_data(conn).await;
+
+        drop(data);
+
+        assert!(is_released(handle));
+        DRIVER.connection_release(conn).unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_releases_the_result_set() {
+        let conn = DRIVER.connection_new();
+        let (mut data, handle) = result_data(conn).await;
+
+        data.close();
+
+        assert!(is_released(handle));
+        DRIVER.connection_release(conn).unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_twice_then_drop_is_a_no_op() {
+        let conn = DRIVER.connection_new();
+        let (mut data, handle) = result_data(conn).await;
+        data.close();
+        let unrelated = result_set();
+
+        data.close();
+        drop(data);
+
+        assert!(is_released(handle));
+        assert!(!is_released(unrelated.handle));
+        DRIVER.connection_release(conn).unwrap();
+    }
+
+    #[tokio::test]
+    async fn open_failure_releases_the_result_set() {
+        let conn = DRIVER.connection_new();
+        DRIVER.connection_release(conn).unwrap();
+        let info = result_set();
+        let handle = info.handle;
+
+        assert!(
+            ResultData::from_execute_result(single(info), conn)
+                .await
+                .is_err()
+        );
+
+        assert!(is_released(handle));
     }
 }
