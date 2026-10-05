@@ -576,10 +576,10 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version < '3.13'" },
-    { name = "python-dateutil", marker = "python_full_version < '3.13'" },
-    { name = "pytz", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "python_full_version < '3.13'" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "pytz" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz", hash = "sha256:e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b", size = 4495223, upload-time = "2025-09-29T23:34:51.853Z" }
 wheels = [
@@ -638,9 +638,9 @@ resolution-markers = [
     "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", marker = "python_full_version >= '3.13'" },
-    { name = "python-dateutil", marker = "python_full_version >= '3.13'" },
-    { name = "tzdata", marker = "(python_full_version >= '3.13' and sys_platform == 'emscripten') or (python_full_version >= '3.13' and sys_platform == 'win32')" },
+    { name = "numpy" },
+    { name = "python-dateutil" },
+    { name = "tzdata", marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/0c/b28ed414f080ee0ad153f848586d61d1878f91689950f037f976ce15f6c8/pandas-3.0.1.tar.gz", hash = "sha256:4186a699674af418f655dbd420ed87f50d56b4cd6603784279d9eef6627823c8", size = 4641901, upload-time = "2026-02-17T22:20:16.434Z" }
 wheels = [
@@ -861,6 +861,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-rerunfailures"
+version = "16.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/b0/6b5337f9d59b26b0069ea3d5e863c31dc04b69e51bbfb1cf2ea6328fba87/pytest_rerunfailures-16.7.tar.gz", hash = "sha256:6956ddfb65ca1d07e7e3d99e2c5359d82300f4cb062e6049563bd2c106f72d5c", size = 59666, upload-time = "2026-09-17T07:08:48.871Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/d3/07ea35102cf2020ddaaac368d2a6f0bcc63d6523fb8918805bac3eb8b98f/pytest_rerunfailures-16.7-py3-none-any.whl", hash = "sha256:edf1886209c2b7dafe35b5bf1708d6ec40ccf6c6b357f0f02807efcec0204c99", size = 23952, upload-time = "2026-09-17T07:08:47.635Z" },
+]
+
+[[package]]
 name = "pytest-split"
 version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1003,6 +1016,7 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-json-report" },
     { name = "pytest-randomly" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-split" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
@@ -1032,6 +1046,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-json-report", marker = "extra == 'test'" },
     { name = "pytest-randomly", marker = "extra == 'test'" },
+    { name = "pytest-rerunfailures", marker = "extra == 'test'" },
     { name = "pytest-split", marker = "extra == 'test'" },
     { name = "pytest-timeout", marker = "extra == 'test'" },
     { name = "pytest-xdist", marker = "extra == 'test'" },

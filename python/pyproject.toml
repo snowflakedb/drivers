@@ -57,6 +57,7 @@ test = [
     "pytest-xdist",
     "pytest-randomly",
     "pytest-timeout",
+    "pytest-rerunfailures",
     "hypothesis",
     "requests",
     "brotli",
@@ -147,6 +148,8 @@ addopts = [
     # minimum 8 workers configured via pytest_xdist_auto_num_workers in conftest.py
     "-n", "auto",
     "--max-worker-restart=4",
+    # Two extra attempts after the first failure (3 total).
+    "--reruns", "2",
     # Flaky tests are excluded by default; the python_flaky_tests CI job
     # overrides this with `-m flaky` to run them in isolation.
     "-m", "not flaky and not requires_no_mfa",
@@ -296,10 +299,9 @@ SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 python = ["3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.dev.scripts]
-# Unit / integ: on failure, once-rerun last-failed tests (cap at 5 failures)
-# via pytest cache --lf / --maxfail. https://docs.pytest.org/en/stable/how-to/cache.html
-unit = "pytest tests/unit {args} || pytest tests/unit --lf --maxfail=5 {args}"
-integ = "pytest tests/integ {args} || pytest tests/integ --lf --maxfail=5 {args}"
+# Per-test retries come from addopts --reruns 2 (not a second whole-suite run).
+unit = "pytest tests/unit {args}"
+integ = "pytest tests/integ {args}"
 # End-to-end tests
 e2e = "pytest tests/e2e {args}"
 # All tests
@@ -322,9 +324,8 @@ python = ["3.11", "3.12", "3.13", "3.14"]
 [tool.hatch.envs.test.scripts]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
-# Split suites used by CI (no auto --lf; merge-group last-failed is a separate step).
-# Override the `dev` template scripts: those `|| pytest --lf` wrappers hide
-# failures from GitHub Actions, and `dev:e2e` does not ignore pandas.
+# Split suites used by CI. Override the `dev` template so `dev:e2e` does not
+# ignore pandas. Per-test retries come from addopts --reruns 2.
 unit = "pytest tests/unit {args}"
 integ = "pytest tests/integ {args}"
 e2e = "pytest tests/e2e --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy {args}"

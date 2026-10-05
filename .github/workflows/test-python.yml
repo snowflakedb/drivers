@@ -537,7 +537,6 @@ jobs:
       - name: Run unit tests with coverage
         if: matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow'
         id: run_python_unit
-        continue-on-error: true
         working-directory: python
         shell: bash
         run: |
@@ -552,19 +551,9 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed unit tests
-        if: steps.run_python_unit.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:unit --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
       - name: Run integration tests with coverage
         if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
         id: run_python_integ
-        continue-on-error: true
         working-directory: python
         shell: bash
         run: |
@@ -579,19 +568,9 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
-      - name: Rerun failed integration tests
-        if: steps.run_python_integ.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:integ --last-failed
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
       - name: Run e2e tests with coverage
         if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
         id: run_python_e2e
-        continue-on-error: true
         working-directory: python
         shell: bash
         run: |
@@ -602,15 +581,6 @@ jobs:
             --cov=src/snowflake --cov-append \
             --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed e2e tests
-        if: steps.run_python_e2e.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:e2e --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
@@ -639,7 +609,6 @@ jobs:
       - name: Run curated hatch :cov suite
         if: matrix.hatch_env == 'test-pandas' || matrix.hatch_env == 'test-native-arrow'
         id: run_python_cov
-        continue-on-error: true
         working-directory: python
         shell: bash
         run: |
@@ -649,15 +618,6 @@ jobs:
             --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml \
             --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
-
-      - name: Rerun failed curated hatch :cov tests
-        if: steps.run_python_cov.outcome == 'failure'
-        working-directory: python
-        shell: bash
-        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
