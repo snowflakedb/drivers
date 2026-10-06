@@ -18,11 +18,13 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
+  coreGetTlsStatus,
   coreIsAnError,
   coreIsStillRunning,
   initTypeConstructors,
   type CoreConnectionInstance,
   type CoreStatementInstance,
+  type CoreTlsStatus,
 } from './core/index.js';
 import { createPool } from './create-pool.js';
 import {
@@ -69,6 +71,9 @@ export {
   type SessionState,
   type StatementStatus,
 };
+
+/** Describes the linked Rustls TLS provider and build flag, not artifact compliance. */
+export type TlsStatus = CoreTlsStatus;
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
 export type ConnectionOptions = Record<string, unknown> & {
@@ -398,6 +403,9 @@ export class Connection {
   }
 }
 
+/** Reports linked Rustls TLS provider status without creating a connection. */
+export const getTlsStatus: () => TlsStatus = coreGetTlsStatus;
+
 // TODO:
 // - JSDoc needed
 // - Map to similar shape as old driver where we have core object that has bunch of methods and
@@ -434,6 +442,7 @@ export const deserializeConnection = (
 
 export default {
   configure,
+  getTlsStatus,
   createConnection,
   createPool,
   serializeConnection,

@@ -18,6 +18,8 @@ import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMa
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.ProtobufApis;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetTlsStatusResponse;
 import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
 
 /**
@@ -64,6 +66,18 @@ public class SnowflakeDriver implements Driver {
 
   public static String getDriverVersion() {
     return DRIVER_VERSION;
+  }
+
+  /**
+   * Reports this driver's linked TLS provider verdict and build setting without opening a
+   * connection. Neither field establishes FIPS compliance for the entire driver artifact.
+   */
+  public TlsStatus getTlsStatus() throws SQLException {
+    return SqlExceptionMapper.call(
+        () -> {
+          DriverGetTlsStatusResponse response = ProtobufApis.coreDriverApi.driverGetTlsStatus();
+          return new TlsStatus(response.getTlsProviderIsFips(), response.getFipsTlsBuildEnabled());
+        });
   }
 
   public static void empty() {}

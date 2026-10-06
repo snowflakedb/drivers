@@ -58,6 +58,7 @@ export const CoreSessionState = core.SessionState;
 export const CoreQueryBindingFormat = core.QueryBindingFormat;
 export const coreIsAnError = core.isAnError;
 export const coreIsStillRunning = core.isStillRunning;
+export const coreGetTlsStatus = core.getTlsStatus;
 
 export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
 export type CoreStatementInstance = InstanceType<typeof CoreStatement>;
@@ -67,4 +68,5 @@ export type CoreQueryBindings = CoreBinary.QueryBindings;
 export type CoreKnownSessionParameters = CoreBinary.KnownSessionParameters;
 export type QueryStatus = CoreBinary.QueryStatus;
 export type ConnectionTokenInfo = CoreBinary.ConnectionTokenInfo;
+export type CoreTlsStatus = CoreBinary.TlsStatus;
 export type StatementStatus = CoreBinary.StatementStatus;

@@ -4,6 +4,7 @@
 
 New features:
 
+- Added a connection-free TLS status API and protobuf RPC that report whether the linked rustls TLS provider is in FIPS mode and whether this build enabled `fips-tls`. Neither field claims validated-module or whole-driver FIPS compliance. (snowflakedb/drivers#1355)
 - Added Duo push continuation for username/password MFA so a pending Duo challenge can wait for device approval and then finish login. (snowflakedb/drivers#2021)
 - Added a Python `platform_detection_timeout_seconds` connection parameter that limits each cloud-metadata platform check. Setting it to `0` skips those HTTP and STS queries and keeps only environment-based detection, matching the legacy Python connector. (snowflakedb/drivers#2186)
 - Added Azure blob Content-MD5 on PUT (single Put Blob and Put Block List), hashed in the same streaming pass as SHA-256 and over ciphertext when client-side encryption is on. (snowflakedb/drivers#2232)
