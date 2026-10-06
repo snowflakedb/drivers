@@ -64,6 +64,16 @@ class SnowflakeColumnTypesTest {
   }
 
   @Test
+  void shouldMapGeographyInternalTypeToVarcharWhenUdtOutputIsObject() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType(
+            "GEOGRAPHY", "GEOGRAPHY", "object", Types.NUMERIC, false, false);
+    assertEquals(Types.VARCHAR, info.getColumnType());
+    assertEquals("GEOGRAPHY", info.getExtColTypeName());
+    assertEquals(SnowflakeType.GEOGRAPHY, info.getSnowflakeType());
+  }
+
+  @Test
   void shouldMapGeometryInternalTypeToVarcharWhenUdtOutputIsText() {
     ColumnTypeInfo info =
         SnowflakeColumnTypes.getSnowflakeType(

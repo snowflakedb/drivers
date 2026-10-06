@@ -89,6 +89,46 @@ class ProxyOptionsResolverTest {
   }
 
   @Test
+  void shouldInferJvmHttpsProxyWhenOnlyHttpsSystemPropertiesAreSet() {
+    Properties properties = new Properties();
+    properties.setProperty("useProxy", "false");
+    Map<String, String> systemProperties = new HashMap<>();
+    systemProperties.put("http.useProxy", "true");
+    systemProperties.put("https.proxyHost", "secure-proxy.example.com");
+    systemProperties.put("https.proxyPort", "9443");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            properties, new MapEnvironment(systemProperties, Collections.emptyMap()));
+
+    assertAll(
+        () -> assertEquals("secure-proxy.example.com", resolved.getProperty("proxy_host")),
+        () -> assertEquals(9443, resolved.get("proxy_port")),
+        () -> assertEquals("https", resolved.getProperty("proxy_scheme")));
+  }
+
+  @Test
+  void shouldPreferJvmHttpProxyWhenProtocolIsUnsetAndHttpHostIsPresent() {
+    Properties properties = new Properties();
+    properties.setProperty("useProxy", "false");
+    Map<String, String> systemProperties = new HashMap<>();
+    systemProperties.put("http.useProxy", "true");
+    systemProperties.put("http.proxyHost", "proxy.example.com");
+    systemProperties.put("http.proxyPort", "8080");
+    systemProperties.put("https.proxyHost", "secure-proxy.example.com");
+    systemProperties.put("https.proxyPort", "9443");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            properties, new MapEnvironment(systemProperties, Collections.emptyMap()));
+
+    assertAll(
+        () -> assertEquals("proxy.example.com", resolved.getProperty("proxy_host")),
+        () -> assertEquals(8080, resolved.get("proxy_port")),
+        () -> assertFalse(resolved.containsKey("proxy_scheme")));
+  }
+
+  @Test
   void shouldUseJvmHttpProxyWhenConnectionProxyIsNotEnabled() {
     Properties properties = new Properties();
     properties.setProperty("useProxy", "false");

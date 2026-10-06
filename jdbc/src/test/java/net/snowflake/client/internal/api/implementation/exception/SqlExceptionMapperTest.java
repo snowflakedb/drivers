@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.api.implementation.exception;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -101,6 +102,21 @@ public class SqlExceptionMapperTest {
                       throw new NotImplementedException("no such feature");
                     }));
     assertEquals("no such feature", thrown.getMessage());
+  }
+
+  @Test
+  public void shouldPreserveSuppressedFailuresWhenWrappingArbitraryRuntimeException() {
+    IllegalStateException primary = new IllegalStateException("batch failed");
+    IOException cleanupFailure = new IOException("close failed");
+    primary.addSuppressed(cleanupFailure);
+
+    SQLException translated = SqlExceptionMapper.translate(primary);
+
+    assertInstanceOf(SnowflakeSQLException.class, translated);
+    assertEquals("batch failed", translated.getMessage());
+    assertSame(primary, translated.getCause());
+    assertEquals(1, translated.getSuppressed().length);
+    assertSame(cleanupFailure, translated.getSuppressed()[0]);
   }
 
   @Test

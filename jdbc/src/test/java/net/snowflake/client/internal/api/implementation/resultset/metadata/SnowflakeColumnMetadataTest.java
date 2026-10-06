@@ -71,6 +71,21 @@ class SnowflakeColumnMetadataTest {
   }
 
   @Test
+  void shouldKeepJsonCatalogObjectWireTypeOnVarcharWhenGeometryExtRequestsBinaryOutput() {
+    ObjectNode col = JsonTestUtils.objectNode();
+    col.put("name", "geom_col");
+    col.put("type", "object");
+    col.put("extTypeName", "GEOMETRY");
+    col.put("outputType", "binary");
+
+    SnowflakeColumnMetadata meta = new SnowflakeColumnMetadata(col, false);
+
+    assertEquals("GEOMETRY", meta.getTypeName());
+    assertEquals(Types.VARCHAR, meta.getType());
+    assertEquals(SnowflakeType.OBJECT, meta.getBase());
+  }
+
+  @Test
   void shouldKeepJsonCatalogWireTypeSeparateFromGeometryExtTypeName() {
     ObjectNode col = JsonTestUtils.objectNode();
     col.put("name", "geom_col");
