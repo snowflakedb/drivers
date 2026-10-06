@@ -35,9 +35,8 @@ pub(crate) enum VectorElementType {
 /// Copied from `odbc/src/conversion/mod.rs` (`SnowflakeFieldType`). Variants
 /// hold the same data the ODBC `Snowflake*` types store; `BOOLEAN` is a ZST
 /// there (`SnowflakeBoolean`) so it is a unit variant here until that reader
-/// lands. `OBJECT` / `ARRAY` / `VARIANT` / `MAP` are `Varchar` with
-/// `is_semi_structured: true`. The server sends those as Utf8 JSON today,
-/// including structured `ARRAY(T)`, `OBJECT(...)`, and `MAP(K, V)`.
+/// lands. `OBJECT` / `ARRAY` / `VARIANT` and a flat `MAP` are `Varchar` with
+/// `is_semi_structured: true`. A physical Arrow `Map` is [`Self::ArrowMap`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SnowflakeFieldType {
     Varchar {
@@ -75,6 +74,7 @@ pub(crate) enum SnowflakeFieldType {
         scale: u32,
     },
     IntervalDayTime,
+    ArrowMap,
 }
 
 impl SnowflakeFieldType {
@@ -102,6 +102,7 @@ impl SnowflakeFieldType {
             Self::Vector { .. } => "VECTOR",
             Self::IntervalYearMonth { .. } => "INTERVAL_YEAR_MONTH",
             Self::IntervalDayTime => "INTERVAL_DAY_TIME",
+            Self::ArrowMap => "MAP",
         }
     }
 
@@ -163,20 +164,18 @@ impl SnowflakeFieldType {
             }
             "REAL" => Ok(Self::Real),
             "DECFLOAT" => Ok(Self::Decfloat),
-            // The server sends these as Utf8 JSON today, including structured
-            // ARRAY(T), OBJECT(...), and MAP(K, V). They share the TEXT path.
-            "OBJECT" | "ARRAY" | "VARIANT" | "MAP" => {
+            // Utf8 JSON stays semi-structured text. A physical Arrow Map is ArrowMap.
+            "OBJECT" | "ARRAY" | "VARIANT" => {
                 reject_nested_arrow_type(logical_type, field.data_type())?;
-                let len = match get_field_metadata(field, "charLength") {
-                    Ok(len) => len,
-                    Err(PlanError::MissingMetadata { .. }) => SF_DEFAULT_VARCHAR_MAX_LEN,
-                    Err(e) => return Err(e),
-                };
-                Ok(Self::Varchar {
-                    len,
-                    is_semi_structured: true,
-                })
+                semi_structured_varchar(field)
             }
+            "MAP" => match field.data_type() {
+                DataType::Map(_, _) => Ok(Self::ArrowMap),
+                _ => {
+                    reject_nested_arrow_type("MAP", field.data_type())?;
+                    semi_structured_varchar(field)
+                }
+            },
             "INTERVAL_YEAR_MONTH" => Ok(Self::IntervalYearMonth {
                 scale: match get_field_metadata(field, "scale") {
                     Ok(scale) => scale,
@@ -265,6 +264,18 @@ pub(crate) fn reject_nested_arrow_type(
     } else {
         Ok(())
     }
+}
+
+fn semi_structured_varchar(field: &Field) -> Result<SnowflakeFieldType, PlanError> {
+    let len = match get_field_metadata(field, "charLength") {
+        Ok(len) => len,
+        Err(PlanError::MissingMetadata { .. }) => SF_DEFAULT_VARCHAR_MAX_LEN,
+        Err(e) => return Err(e),
+    };
+    Ok(SnowflakeFieldType::Varchar {
+        len,
+        is_semi_structured: true,
+    })
 }
 
 /// Copied from `odbc/src/conversion/mod.rs` (`get_field_metadata`).
@@ -382,6 +393,44 @@ mod tests {
                 SnowflakeFieldType::TimestampNtz { scale: 6 },
             ]
         );
+    }
+
+    #[test]
+    fn from_schema_plans_arrow_map() {
+        let entries = Field::new(
+            "entries",
+            DataType::Struct(
+                vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Decimal128(38, 0), true),
+                ]
+                .into(),
+            ),
+            false,
+        );
+        let schema = Schema::new(vec![field_with_metadata(
+            "m",
+            DataType::Map(std::sync::Arc::new(entries), false),
+            logical_meta("MAP", &[]),
+        )]);
+        let plan = LogicalPlan::from_schema(&schema).unwrap();
+        assert_eq!(plan.field_types, vec![SnowflakeFieldType::ArrowMap]);
+    }
+
+    #[test]
+    fn from_schema_errors_on_map_that_is_not_an_arrow_map() {
+        let schema = Schema::new(vec![field_with_metadata(
+            "m",
+            DataType::Struct(vec![Field::new("n", DataType::Int64, true)].into()),
+            logical_meta("MAP", &[]),
+        )]);
+        let err = LogicalPlan::from_schema(&schema).unwrap_err();
+        match err {
+            PlanError::NestedArrowType { logical_type, .. } => {
+                assert_eq!(logical_type, "MAP");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

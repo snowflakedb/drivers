@@ -5,6 +5,7 @@ mod date;
 mod decfloat;
 mod decode;
 mod interval;
+mod map;
 mod number;
 mod numpy;
 mod real;
@@ -42,6 +43,7 @@ use self::interval::{
     IntervalNumpyColumn, IntervalYearMonthColumn, IntervalYearMonthNumpyMMaterializer,
     IntervalYearMonthNumpyYMaterializer,
 };
+use self::map::MapColumn;
 use self::number::{
     NumberColumn, NumberMaterializer, NumberNumpyFloatMaterializer, NumberNumpyIntMaterializer,
 };
@@ -80,6 +82,7 @@ pub(crate) enum Column {
     IntervalDayTimeNumpyNs(IntervalNumpyColumn<IntervalDayTimeNumpyNsMaterializer>),
     IntervalDayTimeNumpyMs(IntervalNumpyColumn<IntervalDayTimeNumpyMsMaterializer>),
     Vector(TypedColumn<FixedSizeListArray, SnowflakeVector, VectorMaterializer>),
+    Map(MapColumn),
 }
 
 impl Column {
@@ -109,6 +112,7 @@ impl Column {
             Self::IntervalDayTimeNumpyNs(column) => column.to_py(py, row),
             Self::IntervalDayTimeNumpyMs(column) => column.to_py(py, row),
             Self::Vector(column) => column.to_py(py, row),
+            Self::Map(column) => column.to_py(py, row),
         }
     }
 }

@@ -137,6 +137,15 @@ pub(crate) enum PlanError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display(
+        "[Snowflake Exception] invalid arrow schema for map key/value: expected 2 entries, got {count}"
+    ))]
+    InvalidMapSchema {
+        count: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 impl From<StreamError> for PyErr {

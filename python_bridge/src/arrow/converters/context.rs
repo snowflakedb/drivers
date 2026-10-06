@@ -14,6 +14,7 @@ use super::boolean;
 use super::date;
 use super::decfloat;
 use super::interval;
+use super::map;
 use super::number;
 use super::numpy::NumpyProvider;
 use super::real;
@@ -167,6 +168,7 @@ impl ConversionContext {
                 self.use_numpy,
             ),
             SnowflakeFieldType::Vector { .. } => vector::from_column(array, field_type),
+            SnowflakeFieldType::ArrowMap => map::from_column(self, array),
         }
     }
 }
