@@ -119,6 +119,25 @@ export type ConnectionOptions = Record<string, unknown> & {
    */
   queryTag?: string;
   /**
+   * By default, client connections typically time out approximately 3-4 hours after the most recent query was executed.
+   *
+   * @default false
+   */
+  clientSessionKeepAlive?: boolean;
+  /**
+   * Sets the frequency (interval in seconds) between heartbeat messages.
+   */
+  clientSessionKeepAliveHeartbeatFrequency?: number;
+  /**
+   * When true, the session is not destroyed on the server side when the connection
+   * is closed. This allows async queries to continue running after disconnect.
+   * Any unfinished queries will continue to live in Snowflake and consume credits
+   * until they finish.
+   *
+   * @default false
+   */
+  serverSessionKeepAlive?: boolean;
+  /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
    * listener and waits for the IdP redirect; this function only receives

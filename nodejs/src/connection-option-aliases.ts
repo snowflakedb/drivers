@@ -24,6 +24,9 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   port: 'port',
   protocol: 'protocol',
   queryTag: 'query_tag',
+  clientSessionKeepAlive: 'CLIENT_SESSION_KEEP_ALIVE',
+  clientSessionKeepAliveHeartbeatFrequency: 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY',
+  serverSessionKeepAlive: 'server_session_keep_alive',
 };
 
 export function normalizeConnectionOptions(
