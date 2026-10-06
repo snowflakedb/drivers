@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed @odbc
+@python @jdbc @nodejs @core_not_needed @odbc
 Feature: TIMESTAMP_TZ type support
   # ODBC does not assert "Values should have timezone info" on the fetched
   # value: SQL_TIMESTAMP_STRUCT cannot carry timezone.
@@ -7,7 +7,7 @@ Feature: TIMESTAMP_TZ type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should cast timestamp_tz values to appropriate type
     # Python: Values should be cast to 'datetime' type with tzinfo set
     Given Snowflake client is logged in
@@ -19,7 +19,7 @@ Feature: TIMESTAMP_TZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select timestamp_tz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -32,6 +32,7 @@ Feature: TIMESTAMP_TZ type support
       | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_TZ                                                       | 1970-01-01 00:00:00 +00:00                              |
       | microseconds | '2024-01-15 10:30:00.123456 +05:00'::TIMESTAMP_TZ                                                | 2024-01-15 10:30:00.123456 +05:00                       |
 
+  @nodejs_e2e
   Scenario Outline: should handle timestamp_tz precision <scale>
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00.123456789 +05:00'::TIMESTAMP_TZ(<scale>)" is executed
@@ -43,7 +44,7 @@ Feature: TIMESTAMP_TZ type support
       | 0     | 2024-01-15 10:30:00 +05:00     |
       | 3     | 2024-01-15 10:30:00.123 +05:00 |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select sub-second timestamp_tz values before epoch
     Given Snowflake client is logged in
     When Sub-second timestamp_tz values before the epoch are selected
@@ -51,7 +52,7 @@ Feature: TIMESTAMP_TZ type support
 
   # ODBC SQL_TIMESTAMP_STRUCT has no offset field, so the fetched value cannot
   # include the original TIMESTAMP_TZ offset.
-  @python_e2e @jdbc_e2e @odbc_not_needed
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_not_needed
   Scenario: should preserve timezone offset for timestamp_tz
     # TIMESTAMP_TZ preserves the original offset — unlike LTZ which converts to session TZ
     # Includes fractional offsets (+05:30, +04:30, -02:30) found in real-world timezones
@@ -59,7 +60,7 @@ Feature: TIMESTAMP_TZ type support
     When Query "SELECT '2024-01-15 10:30:00 +05:30'::TIMESTAMP_TZ, '2024-01-15 10:30:00 -08:00'::TIMESTAMP_TZ, '2024-01-15 10:30:00 +00:00'::TIMESTAMP_TZ, '2024-01-15 10:30:00 +04:30'::TIMESTAMP_TZ, '2024-01-15 10:30:00 -02:30'::TIMESTAMP_TZ" is executed
     Then Result should preserve offsets [+05:30, -08:00, +00:00, +04:30, -02:30]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select edge date timestamp_tz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -72,7 +73,7 @@ Feature: TIMESTAMP_TZ type support
       | year 1900  | '1900-01-01 00:00:00 +00:00'::TIMESTAMP_TZ                    | 1900-01-01 00:00:00 +00:00      |
       | pre-epoch  | '1960-06-15 12:00:00 +05:00'::TIMESTAMP_TZ                    | 1960-06-15 12:00:00 +05:00      |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should handle NULL values for timestamp_tz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00 +05:00'::TIMESTAMP_TZ, NULL::TIMESTAMP_TZ" is executed
@@ -88,7 +89,7 @@ Feature: TIMESTAMP_TZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select <values> from table for timestamp_tz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ column exists with values <insert_values>
@@ -114,20 +115,20 @@ Feature: TIMESTAMP_TZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select timestamp_tz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_TZ, ?::TIMESTAMP_TZ" is executed with bound timestamp values
     Then Result should contain the bound timestamps
     And Values should have timezone info
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select null timestamp_tz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_TZ" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should insert timestamp_tz using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ column exists
@@ -135,6 +136,7 @@ Feature: TIMESTAMP_TZ type support
     And Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
     Then SELECT should return the same values in any order
 
+  @nodejs_e2e
   Scenario: should handle timestamp_tz precision when inserting using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_TZ columns of precision 0 and 3 exists
@@ -147,6 +149,7 @@ Feature: TIMESTAMP_TZ type support
   #                             TIMEZONE Parameter                              #
   # =========================================================================== #
 
+  @nodejs_e2e
   Scenario: should apply the session TIMEZONE to a timestamp_tz literal without an explicit offset
     Given Snowflake client is logged in
     And Session TIMEZONE is set to Europe/Warsaw
@@ -154,6 +157,7 @@ Feature: TIMESTAMP_TZ type support
     Then Result should contain timestamps 2024-01-15 10:30:00 +01:00
     And Values should have timezone info
 
+  @nodejs_e2e
   Scenario: should keep the explicit offset of a timestamp_tz literal regardless of the session TIMEZONE
     Given Snowflake client is logged in
     And Session TIMEZONE is set to Europe/Warsaw
@@ -161,6 +165,7 @@ Feature: TIMESTAMP_TZ type support
     Then Result should contain timestamps 2024-01-15 10:30:00 +05:00
     And Values should have timezone info
 
+  @nodejs_e2e
   Scenario: should let a statement-level TIMEZONE override the session for a timestamp_tz literal without an explicit offset
     Given Snowflake client is logged in
     And Session TIMEZONE is set to Europe/Warsaw

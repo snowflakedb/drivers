@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed @odbc
+@python @jdbc @nodejs @core_not_needed @odbc
 Feature: TIMESTAMP_LTZ type support
   # ODBC does not assert "Values should have timezone info" on the fetched
   # value: SQL_TIMESTAMP_STRUCT cannot carry timezone.
@@ -7,7 +7,7 @@ Feature: TIMESTAMP_LTZ type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should cast timestamp_ltz values to appropriate type
     # Python: Values should be cast to 'datetime' type with tzinfo set
     Given Snowflake client is logged in
@@ -19,7 +19,7 @@ Feature: TIMESTAMP_LTZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select timestamp_ltz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -31,6 +31,7 @@ Feature: TIMESTAMP_LTZ type support
       | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ                                               | 1970-01-01 00:00:00 UTC                           |
       | microseconds | '2024-01-15 10:30:00.123456 +00:00'::TIMESTAMP_LTZ                                        | 2024-01-15 10:30:00.123456 UTC                    |
 
+  @nodejs_e2e
   Scenario Outline: should handle timestamp_ltz precision <scale>
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00.123456789 +00:00'::TIMESTAMP_LTZ(<scale>)" is executed
@@ -41,13 +42,13 @@ Feature: TIMESTAMP_LTZ type support
       | 0     | 2024-01-15 10:30:00 UTC     |
       | 3     | 2024-01-15 10:30:00.123 UTC |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select sub-second timestamp_ltz values before epoch
     Given Snowflake client is logged in
     When Sub-second timestamp_ltz values before the epoch are selected
     Then Result should contain the expected sub-second values before the epoch
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should handle NULL values for timestamp_ltz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ" is executed
@@ -63,7 +64,7 @@ Feature: TIMESTAMP_LTZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select <values> from table for timestamp_ltz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists with values <insert_values>
@@ -87,19 +88,19 @@ Feature: TIMESTAMP_LTZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
     Then Result should contain the bound timestamps
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select null timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should insert timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists
@@ -107,6 +108,7 @@ Feature: TIMESTAMP_LTZ type support
     And Query "SELECT * FROM <table> ORDER BY col" is executed
     Then SELECT should return the same values in any order
 
+  @nodejs_e2e
   Scenario: should handle timestamp_ltz precision when inserting using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ columns of precision 0 and 3 exists

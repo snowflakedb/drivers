@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed @odbc
+@python @jdbc @nodejs @core_not_needed @odbc
 Feature: TIMESTAMP_NTZ type support
   # ODBC asserts "Values should [not] have timezone info" only for TIMESTAMP and
   # DATETIME aliases, via SYSTEM$TYPEOF of the alias on the same statement.
@@ -9,7 +9,7 @@ Feature: TIMESTAMP_NTZ type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should cast timestamp_ntz values to appropriate type
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ" is executed
@@ -20,7 +20,7 @@ Feature: TIMESTAMP_NTZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select timestamp_ntz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -33,6 +33,7 @@ Feature: TIMESTAMP_NTZ type support
       | epoch        | '1970-01-01 00:00:00'::TIMESTAMP_NTZ                                              | 1970-01-01 00:00:00                         |
       | microseconds | '2024-01-15 10:30:00.123456'::TIMESTAMP_NTZ                                       | 2024-01-15 10:30:00.123456                  |
 
+  @nodejs_e2e
   Scenario Outline: should handle timestamp_ntz precision <scale>
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(<scale>)" is executed
@@ -44,13 +45,13 @@ Feature: TIMESTAMP_NTZ type support
       | 0     | 2024-01-15 10:30:00     |
       | 3     | 2024-01-15 10:30:00.123 |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select sub-second timestamp_ntz values before epoch
     Given Snowflake client is logged in
     When Sub-second timestamp_ntz values before the epoch are selected
     Then Result should contain the expected sub-second values before the epoch
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should handle NULL values for timestamp_ntz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ" is executed
@@ -66,7 +67,7 @@ Feature: TIMESTAMP_NTZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should select <values> from table for timestamp_ntz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_NTZ column exists with values <insert_values>
@@ -92,14 +93,14 @@ Feature: TIMESTAMP_NTZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should select timestamp_ntz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ" is executed with bound timestamp values
     Then Result should contain [2024-01-15 10:30:00, 2024-06-20 14:45:30]
     And Values should not have timezone info
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should return NULL when selecting timestamp_ntz using parameter binding with NULL value
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound NULL value
@@ -120,7 +121,7 @@ Feature: TIMESTAMP_NTZ type support
       | 2024-01-15 12:30:00+02:00 | 2024-01-15 10:30:00   |
       | 2024-01-15 10:30:00-05:00 | 2024-01-15 15:30:00   |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should insert timestamp_ntz using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_NTZ column exists
@@ -128,6 +129,7 @@ Feature: TIMESTAMP_NTZ type support
     And Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
     Then SELECT should return the inserted values in ascending order
 
+  @nodejs_e2e
   Scenario: should handle timestamp_ntz precision when inserting using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_NTZ columns of precision 0 and 3 exists
@@ -140,7 +142,7 @@ Feature: TIMESTAMP_NTZ type support
   #                            Type mapping aliases                             #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario Outline: should return naive datetime for <type_name> alias when session mapping is TIMESTAMP_NTZ
     Given Snowflake client is logged in
     And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_NTZ
@@ -153,7 +155,7 @@ Feature: TIMESTAMP_NTZ type support
       | TIMESTAMP |
       | DATETIME  |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
   Scenario: should return aware datetime for TIMESTAMP alias when session mapping is TIMESTAMP_LTZ
     Given Snowflake client is logged in
     And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_LTZ

@@ -35,7 +35,7 @@ static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
 /// sanctioned disposition for a scenario broken in both drivers, so it must resolve like a
 /// plain `it('…')`.
 const JS_TEST_MODIFIERS: &str =
-    r"(?:\.(?:skip|only|todo|concurrent|fails|sequential)|\.(?:each|skipIf|runIf)\s*\([\s\S]*?\))*";
+    r"(?:\.(?:skip|only|todo|concurrent|fails|sequential)|\.(?:each|skipIf|runIf)(?:\s*<[^>]*>)?\s*\([\s\S]*?\))*";
 
 /// Matches an `it`/`test` declaration and captures its title. The title is the call's first
 /// argument, so only whitespace precedes it (`\(\s*['"]…`): a greedy gap there lets one `it`

@@ -232,6 +232,29 @@ describe('TIMESTAMP_NTZ data type', () => {
         expectSnowflakeDate(Object.values(rows[0]), [null]);
       });
 
+      it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER).each<{ input: string; expected: string }>([
+        { input: '2024-01-15T10:30:00+00:00', expected: '2024-01-15T10:30:00' },
+        { input: '2024-01-15T12:30:00+02:00', expected: '2024-01-15T10:30:00' },
+        { input: '2024-01-15T10:30:00-05:00', expected: '2024-01-15T15:30:00' },
+      ])(
+        'should store UTC equivalent when binding timezone-aware datetime to timestamp_ntz',
+        async ({ input, expected }) => {
+          // Given Snowflake client is logged in
+          void connection;
+
+          // When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
+          const { rows } = await executeAsync(connection, `SELECT ?::TIMESTAMP_NTZ`, {
+            binds: [new Date(input) as never],
+          });
+
+          // Then Result should contain [<expected>]
+          void 0;
+
+          // And Values should not have timezone info
+          expectSnowflakeDate(Object.values(rows[0]), [createTestNtzDate(expected)]);
+        },
+      );
+
       it('should insert timestamp_ntz using parameter binding', async () => {
         // Given Snowflake client is logged in
         void connection;
