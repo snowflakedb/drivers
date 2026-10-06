@@ -112,7 +112,7 @@ fn azure_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: Some("testaccount".to_string()),
         tls_config,
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config,
     }
 }
@@ -134,7 +134,7 @@ fn gcs_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: None,
         tls_config,
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config,
     }
 }
@@ -160,7 +160,7 @@ fn s3_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: None,
         tls_config,
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config,
     }
 }

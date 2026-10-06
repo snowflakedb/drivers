@@ -1,3 +1,4 @@
+use crate::crl::CrlManager;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::validator::CrlValidator;
 use crate::crl::worker::SharedCrlWorker;
@@ -28,6 +29,7 @@ pub(crate) struct CrlServerCertVerifier {
     root_store: Arc<RootCertStore>,
     supported_algs: WebPkiSupportedAlgorithms,
     crl_worker: SharedCrlWorker,
+    _crl_manager: CrlManager,
 }
 
 impl CrlServerCertVerifier {
@@ -35,7 +37,7 @@ impl CrlServerCertVerifier {
         crl_config: CrlConfig,
         root_store_override: Option<rustls::RootCertStore>,
         verify_hostname: bool,
-        crl_worker: SharedCrlWorker,
+        crl: CrlManager,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let root_store = match root_store_override {
             Some(store) => store,
@@ -49,10 +51,13 @@ impl CrlServerCertVerifier {
             crate::tls::crypto_module::CryptoModule::get().provider(),
         )
         .build()?;
+        let crl_worker = crl.worker();
+        let cache = crl.cache(crl_config.clone())?;
         let crl_validator = Arc::new(CrlValidator::new_with_root_store(
             crl_config.clone(),
             Some(root_store.clone()),
-        )?);
+            cache,
+        ));
         Ok(Self {
             webpki_verifier,
             crl_validator,
@@ -61,6 +66,7 @@ impl CrlServerCertVerifier {
             root_store,
             supported_algs,
             crl_worker,
+            _crl_manager: crl,
         })
     }
 }
@@ -191,15 +197,47 @@ impl ServerCertVerifier for CrlServerCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl::CrlManager;
     use crate::crl::cache::CrlCache;
-    use crate::crl::worker::CrlWorker;
     use crate::tls::revocation::RevocationOutcome;
     use crate::tls::test_helpers::x509 as th;
     use crate::tls::test_helpers::x509::make_root_store;
     use chrono::Utc;
 
-    fn test_crl_worker() -> SharedCrlWorker {
-        CrlWorker::new_lazy()
+    fn test_crl() -> CrlManager {
+        CrlManager::new()
+    }
+
+    fn memory_cache(crl: &CrlManager) -> Arc<CrlCache> {
+        crl.cache(crate::crl::config::CrlConfig {
+            enable_memory_caching: true,
+            ..Default::default()
+        })
+        .expect("crl cache")
+    }
+
+    #[test]
+    fn verifier_holds_the_manager_until_the_verifier_drops() {
+        th::test_setup();
+        let root_key = th::gen_key();
+        let root_name = th::make_name("Test Root");
+        let root_req = th::gen_req("Test Root", &root_key);
+        let root_cert = th::sign_cert(&root_req, &root_name, &root_key, true);
+        let root_store = make_root_store(&root_cert.to_der().unwrap());
+        let crl_config = crate::crl::config::CrlConfig {
+            enable_memory_caching: true,
+            enable_disk_caching: false,
+            ..Default::default()
+        };
+        let crl = test_crl();
+        let cache = crl.cache(crl_config.clone()).expect("cache");
+        cache.wait_for_scheduler(true);
+        let verifier =
+            CrlServerCertVerifier::new_with_root_store(crl_config, Some(root_store), true, crl)
+                .expect("verifier");
+        assert!(cache.scheduler_is_published());
+        drop(verifier);
+        cache.wait_for_scheduler(false);
     }
 
     #[test]
@@ -220,22 +258,16 @@ mod tests {
         // Root store
         let root_store = make_root_store(&root_cert.to_der().unwrap());
 
-        // Seed outcome cache with EE serial using our parser's canonical encoding
-        th::clear_all_crl_caches();
-        th::seed_revoked(&ee_cert, &inter_cert, 5);
+        let crl = test_crl();
+        th::seed_revoked(&memory_cache(&crl), &ee_cert, &inter_cert, 5);
 
         // Verifier
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true, crl)
+            .unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
         let inter_der = rustls::pki_types::CertificateDer::from(inter_cert.to_der().unwrap());
@@ -281,8 +313,8 @@ mod tests {
         let ee_req = th::gen_req("E2", &ee_key);
         let ee_cert = th::sign_cert(&ee_req, inter_cert.subject_name(), &inter_key, false);
         let root_store = th::make_root_store(&root_cert.to_der().unwrap());
-        th::clear_all_crl_caches();
-        th::seed_not_determined(&ee_cert, &inter_cert, 5);
+        let crl = test_crl();
+        th::seed_not_determined(&memory_cache(&crl), &ee_cert, &inter_cert, 5);
         // Advisory allows
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
@@ -293,7 +325,7 @@ mod tests {
             crl_cfg,
             Some(root_store.clone()),
             true,
-            test_crl_worker(),
+            crl.clone(),
         )
         .unwrap();
         let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
@@ -313,13 +345,9 @@ mod tests {
             allow_certificates_without_crl_url: false,
             ..Default::default()
         };
-        let ver2 = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg2,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver2 =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store), true, crl)
+                .unwrap();
         let res2 = ver2.verify_server_cert(
             &ee_der,
             std::slice::from_ref(&inter_der),
@@ -371,8 +399,12 @@ mod tests {
             false,
         );
 
-        // Seed NotDetermined outcomes for the clean anchored chain (no CRL URLs)
-        th::seed_chain_not_determined(&[ee.clone(), inter_b.clone(), inter_a_via_a.clone()], 5);
+        let crl = test_crl();
+        th::seed_chain_not_determined(
+            &memory_cache(&crl),
+            &[ee.clone(), inter_b.clone(), inter_a_via_a.clone()],
+            5,
+        );
 
         // Trust store only contains RootA
         let root_store = make_root_store(&root_a.to_der().unwrap());
@@ -381,13 +413,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true, crl)
+            .unwrap();
 
         // Presented intermediates include both InterA variants
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
@@ -433,20 +460,16 @@ mod tests {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
+        let crl = test_crl();
         let ver = CrlServerCertVerifier::new_with_root_store(
             crl_cfg,
             Some(root_store.clone()),
             true,
-            test_crl_worker(),
+            crl.clone(),
         )
         .unwrap();
 
-        // Seed outcome: Inter revoked under Root
-        let cfg = crate::crl::config::CrlConfig {
-            enable_memory_caching: true,
-            ..Default::default()
-        };
-        let cache = CrlCache::global(cfg).expect("global CRL cache");
+        let cache = memory_cache(&crl);
         cache.clear_caches_for_tests();
         let future = Utc::now() + chrono::Duration::days(5);
         let inter_serial =
@@ -482,13 +505,9 @@ mod tests {
             check_mode: crate::crl::config::CertRevocationCheckMode::Enabled,
             ..Default::default()
         };
-        let ver2 = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg2,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver2 =
+            CrlServerCertVerifier::new_with_root_store(crl_cfg2, Some(root_store), true, crl)
+                .unwrap();
         let res2 = ver2.verify_server_cert(
             &ee_der,
             std::slice::from_ref(&inter_der),
@@ -505,9 +524,8 @@ mod tests {
     #[test]
     fn cross_signed_chain_anchors_correctly() {
         th::test_setup();
-        CrlCache::global(Default::default())
-            .expect("global CRL cache")
-            .clear_caches_for_tests();
+        let crl = test_crl();
+        let cache = memory_cache(&crl);
         // Cross-sign scenario: InterA has two variants (via RootA trusted, via RootB untrusted)
         // Verifier should anchor the chain through RootA and succeed
         let root_a_key = th::gen_key();
@@ -545,9 +563,9 @@ mod tests {
         );
 
         // Seed NotDetermined for both alternative parentings of InterB
-        th::seed_not_determined(&ee, &inter_b, 5);
-        th::seed_not_determined(&inter_b, &inter_a_via_a, 5);
-        th::seed_not_determined(&inter_b, &inter_a_via_b, 5);
+        th::seed_not_determined(&cache, &ee, &inter_b, 5);
+        th::seed_not_determined(&cache, &inter_b, &inter_a_via_a, 5);
+        th::seed_not_determined(&cache, &inter_b, &inter_a_via_b, 5);
 
         // Trust store only contains RootA
         let root_store = th::make_root_store(&root_a.to_der().unwrap());
@@ -556,13 +574,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true, crl)
+            .unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
         let inters = vec![
@@ -620,11 +633,8 @@ mod tests {
         );
 
         // Seed outcomes: InterB is revoked only under InterA_via_B; clean under InterA_via_A
-        let cfg = crate::crl::config::CrlConfig {
-            enable_memory_caching: true,
-            ..Default::default()
-        };
-        let cache = CrlCache::global(cfg).expect("global CRL cache");
+        let crl = test_crl();
+        let cache = memory_cache(&crl);
         let future = Utc::now() + chrono::Duration::days(5);
         let inter_b_serial = crate::crl::certificate_parser::get_certificate_serial_number(
             &inter_b.to_der().unwrap(),
@@ -654,13 +664,8 @@ mod tests {
             allow_certificates_without_crl_url: true,
             ..Default::default()
         };
-        let ver = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true, crl)
+            .unwrap();
 
         let ee_der = rustls::pki_types::CertificateDer::from(ee.to_der().unwrap());
         let inters = vec![
@@ -679,7 +684,8 @@ mod tests {
     #[test]
     fn hostname_bypass_allows_mismatched_server_name_in_advisory() {
         th::test_setup();
-        th::clear_all_crl_caches();
+        let crl = test_crl();
+        let cache = memory_cache(&crl);
         let root_key = th::gen_key();
         let root_cert = th::sign_cert(
             &th::gen_req("R", &root_key),
@@ -702,7 +708,7 @@ mod tests {
             false,
         );
         let root_store = th::make_root_store(&root_cert.to_der().unwrap());
-        th::seed_not_determined(&ee_cert, &inter_cert, 5);
+        th::seed_not_determined(&cache, &ee_cert, &inter_cert, 5);
 
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
@@ -715,7 +721,7 @@ mod tests {
             crl_cfg.clone(),
             Some(root_store.clone()),
             false,
-            test_crl_worker(),
+            crl.clone(),
         )
         .unwrap();
         let ee_der = rustls::pki_types::CertificateDer::from(ee_cert.to_der().unwrap());
@@ -734,13 +740,8 @@ mod tests {
         );
 
         // verify_hostname=true should fail with the same mismatched server_name
-        let ver2 = CrlServerCertVerifier::new_with_root_store(
-            crl_cfg,
-            Some(root_store),
-            true,
-            test_crl_worker(),
-        )
-        .unwrap();
+        let ver2 = CrlServerCertVerifier::new_with_root_store(crl_cfg, Some(root_store), true, crl)
+            .unwrap();
         let res2 = ver2.verify_server_cert(
             &ee_der,
             std::slice::from_ref(&inter_der),

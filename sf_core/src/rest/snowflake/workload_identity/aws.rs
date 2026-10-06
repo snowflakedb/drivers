@@ -652,7 +652,7 @@ mod tests {
         let sdk_http = AwsSdkReqwestClient::build(
             &crate::tls::TlsConfig::default(),
             Some(&proxy),
-            crate::crl::CrlWorker::shared_lazy(),
+            crate::crl::CrlManager::new(),
         )
         .expect("SDK HTTP client must build");
         let credentials = Credentials::new("test-key", "test-secret", None, None, "test");

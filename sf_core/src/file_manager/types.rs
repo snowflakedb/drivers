@@ -313,9 +313,9 @@ pub struct StageInfo {
     /// the transfer call chain. Always set by `StageTransport` — see that
     /// type's doc comment for how the wire-decode converters enforce this.
     pub tls_config: TlsConfig,
-    /// Driver-owned lazy CRL worker for storage TLS clients. Always set by
+    /// Driver-owned CRL manager for storage TLS clients. Always set by
     /// `StageTransport` alongside `tls_config`.
-    pub crl_worker: crate::crl::worker::SharedCrlWorker,
+    pub crl_manager: crate::crl::CrlManager,
     /// Explicit proxy config for the storage HTTP clients (S3/GCS/Azure).
     /// Always set by `StageTransport` alongside `tls_config`.
     pub proxy_config: crate::tls::config::ProxyConfig,
@@ -338,7 +338,7 @@ impl StageInfo {
 
 /// Bundles the three storage-transport settings that a GS PUT/GET response
 /// knows nothing about: TLS configuration, proxy configuration, and the CRL
-/// worker. `StageInfo` needs all three, but the wire-decoded response (parsed
+/// manager. `StageInfo` needs all three, but the wire-decoded response (parsed
 /// in `rest::snowflake::query_response`) only ever carries bucket/creds/region
 /// — the transport settings live on the connection, one layer up.
 ///
@@ -354,7 +354,7 @@ impl StageInfo {
 pub struct StageTransport {
     pub tls_config: TlsConfig,
     pub proxy_config: crate::tls::config::ProxyConfig,
-    pub crl_worker: crate::crl::worker::SharedCrlWorker,
+    pub crl_manager: crate::crl::CrlManager,
 }
 
 impl StageTransport {
@@ -367,7 +367,7 @@ impl StageTransport {
         Self {
             tls_config: TlsConfig::default(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
         }
     }
 
@@ -377,7 +377,7 @@ impl StageTransport {
     pub(crate) fn apply_to(&self, stage_info: &mut StageInfo) {
         stage_info.tls_config = self.tls_config.clone();
         stage_info.proxy_config = self.proxy_config.clone();
-        stage_info.crl_worker = self.crl_worker.clone();
+        stage_info.crl_manager = self.crl_manager.clone();
     }
 }
 

@@ -183,7 +183,9 @@ mod disk_crl_tests {
             ..Default::default()
         };
 
-        let validator = CrlValidator::new(cfg).unwrap();
+        let crl = crate::crl::CrlManager::new();
+        let cache = crl.cache(cfg.clone()).expect("crl cache");
+        let validator = CrlValidator::new(cfg, cache);
 
         // Should not panic even with invalid cached bytes; will attempt network if needed
         let _ = validator.fetch_crl_with_cache(url).await;

@@ -117,6 +117,10 @@ Internal improvements:
 - Improved on-disk CRL cache file handling: cache files are written with owner-only permissions and each cache entry is read through a single file handle. (snowflakedb/drivers#1056)
 - Changed `SessionTokens.session_id` to `Option<i64>` so a token pair the server has not yet reported a session id for is no longer carried as `0`. A connection without a session id is left out of the telemetry registry instead of being filed under a placeholder id. (snowflakedb/drivers#2041)
 
+Internal changes:
+
+- Moved CRL cache and background refresh onto the driver so the last driver drop cancels and joins the `crl-refresh` thread. (snowflakedb/drivers#2429)
+
 Test improvements:
 
 - `SnowflakeTestClient` now automatically releases statement handles and result set handles via Drop, eliminating manual `release_statement()` and `result_set_release()` calls in tests and preventing resource leaks when tests panic.

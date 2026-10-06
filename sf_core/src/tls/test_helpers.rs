@@ -11,13 +11,12 @@ pub mod x509 {
 
     // Test-wide setup helpers -------------------------------------------------
 
-    /// Install the rustls CryptoProvider once and clear CRL caches for tests.
+    /// Install the rustls CryptoProvider once.
     pub fn test_setup() {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
-        clear_all_crl_caches();
     }
 
     pub fn make_name(cn: &str) -> X509Name {
@@ -128,21 +127,14 @@ pub mod x509 {
 
     // CRL outcome and cache helpers ------------------------------------------
 
-    /// Clear all in-memory CRL caches used in tests.
-    pub fn clear_all_crl_caches() {
-        let cache =
-            crate::crl::cache::CrlCache::global(Default::default()).expect("global CRL cache");
-        cache.clear_caches_for_tests();
-    }
-
     /// Seed a Revoked outcome for (subject, issuer) with a short TTL.
-    pub fn seed_revoked(subject: &X509, issuer: &X509, ttl_days: i64) {
+    pub fn seed_revoked(
+        cache: &crate::crl::cache::CrlCache,
+        subject: &X509,
+        issuer: &X509,
+        ttl_days: i64,
+    ) {
         use crate::tls::revocation::RevocationOutcome;
-        let cache = crate::crl::cache::CrlCache::global(crate::crl::config::CrlConfig {
-            enable_memory_caching: true,
-            ..Default::default()
-        })
-        .expect("global CRL cache");
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(
@@ -157,13 +149,13 @@ pub mod x509 {
     }
 
     /// Seed a NotDetermined outcome for (subject, issuer) with a short TTL.
-    pub fn seed_not_determined(subject: &X509, issuer: &X509, ttl_days: i64) {
+    pub fn seed_not_determined(
+        cache: &crate::crl::cache::CrlCache,
+        subject: &X509,
+        issuer: &X509,
+        ttl_days: i64,
+    ) {
         use crate::tls::revocation::RevocationOutcome;
-        let cache = crate::crl::cache::CrlCache::global(crate::crl::config::CrlConfig {
-            enable_memory_caching: true,
-            ..Default::default()
-        })
-        .expect("global CRL cache");
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(
@@ -175,11 +167,15 @@ pub mod x509 {
     }
 
     /// Seed NotDetermined for each adjacent pair in a chain ordered as [EE, Inter1, ..., Top].
-    pub fn seed_chain_not_determined(chain: &[X509], ttl_days: i64) {
+    pub fn seed_chain_not_determined(
+        cache: &crate::crl::cache::CrlCache,
+        chain: &[X509],
+        ttl_days: i64,
+    ) {
         for win in chain.windows(2) {
             let subj = &win[0];
             let iss = &win[1];
-            seed_not_determined(subj, iss, ttl_days);
+            seed_not_determined(cache, subj, iss, ttl_days);
         }
     }
 }

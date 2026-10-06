@@ -8,8 +8,8 @@ use chrono::NaiveDate;
 use sf_core::config::rest_parameters::{
     ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, LoginMethod, LoginParameters, QueryParameters,
 };
+use sf_core::crl::CrlManager;
 use sf_core::crl::config::CrlConfig;
-use sf_core::crl::{CrlWorker, SharedCrlWorker};
 use sf_core::rest::snowflake::{
     QueryInput, QueryOptions, RestError, snowflake_login, snowflake_query,
 };
@@ -738,14 +738,14 @@ async fn run_sql(
     query_params: QueryParameters,
     session_token: &str,
     sql: String,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<sf_core::rest::snowflake::query_response::Data, String> {
     match snowflake_query(
         query_params,
         session_token,
         QueryInput::new(sql),
         QueryOptions::default(),
-        crl_worker,
+        crl_manager,
     )
     .await
     {
@@ -781,11 +781,11 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("parameters.json"));
     let params = load_parameters(&parameter_path);
-    let crl_worker = CrlWorker::shared_lazy();
+    let crl_manager = CrlManager::new();
     let client_info = default_client_info();
     let server_url = params.server_url();
     let login_params = build_login_params(&params, client_info.clone(), server_url.clone());
-    let login_result = snowflake_login(&login_params, None, crl_worker.clone())
+    let login_result = snowflake_login(&login_params, None, crl_manager.clone())
         .await
         .unwrap();
     let query_params = QueryParameters {
@@ -803,7 +803,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
         &session_token,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = 'JSON', TIMEZONE = 'UTC'"
             .to_string(),
-        crl_worker.clone(),
+        crl_manager.clone(),
     )
     .await
     .unwrap();
@@ -817,7 +817,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
             query_params.clone(),
             &session_token,
             set_output_formats_sql(fmt),
-            crl_worker.clone(),
+            crl_manager.clone(),
         )
         .await
         {
@@ -828,7 +828,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
             query_params.clone(),
             &session_token,
             select_sql.clone(),
-            crl_worker.clone(),
+            crl_manager.clone(),
         )
         .await
         {
@@ -860,7 +860,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
             query_params.clone(),
             &session_token,
             set_output_formats_sql(fmt),
-            crl_worker.clone(),
+            crl_manager.clone(),
         )
         .await
         {
@@ -875,7 +875,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
                     "SELECT {}::VARCHAR",
                     date_sql(case.year, case.month, case.day)
                 ),
-                crl_worker.clone(),
+                crl_manager.clone(),
             )
             .await
             .unwrap();

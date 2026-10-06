@@ -48,7 +48,7 @@ fn azure_stage(mock_uri: &str, sas: &str) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
         tls_config: Default::default(),
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config: Default::default(),
     }
 }

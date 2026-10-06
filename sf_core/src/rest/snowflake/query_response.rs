@@ -1308,7 +1308,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             storage_account,
             tls_config: crate::tls::config::TlsConfig::default(),
             // Overwritten from the driver in `perform_put_get_transfer` before TLS use.
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             // Overwritten from the driver's `ProxyConfig` in
             // `perform_put_get_transfer` before any storage client is built.
             proxy_config: crate::tls::config::ProxyConfig::default(),

@@ -68,17 +68,8 @@ impl CrlWorker {
         }
     }
 
-    /// Returns a lazy [`SharedCrlWorker`] for standalone TLS clients (dev binaries,
-    /// integration tests). Production wrappers should use
-    /// [`DatabaseDriverV1::crl_worker`](crate::apis::database_driver_v1::DatabaseDriverV1::crl_worker).
-    pub fn shared_lazy() -> SharedCrlWorker {
-        Arc::new(LazyLock::new(Self::spawn))
-    }
-
-    /// Same as [`shared_lazy`](Self::shared_lazy); used when constructing
-    /// [`DatabaseDriverV1`](crate::apis::database_driver_v1::DatabaseDriverV1).
     pub(crate) fn new_lazy() -> SharedCrlWorker {
-        Self::shared_lazy()
+        Arc::new(LazyLock::new(Self::spawn))
     }
 
     pub fn validate(

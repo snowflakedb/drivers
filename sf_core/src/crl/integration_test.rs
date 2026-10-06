@@ -95,7 +95,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_tls_client_creation_with_different_modes() {
         let driver = DatabaseDriverV1::new();
-        let crl_worker = driver.crl_worker.clone();
+        let crl_manager = driver.crl_manager.clone();
 
         // Test disabled mode
         let config = CrlConfig {
@@ -107,7 +107,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_worker.clone(),
+            crl_manager.clone(),
         )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
@@ -122,7 +122,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_worker.clone(),
+            crl_manager.clone(),
         )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
@@ -137,7 +137,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_worker,
+            crl_manager,
         )
         .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());

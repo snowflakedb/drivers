@@ -11,7 +11,7 @@ use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
 use crate::config::param_registry::Wrapper;
-use crate::crl::worker::{CrlWorker, SharedCrlWorker};
+use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::LogManager;
@@ -190,10 +190,10 @@ pub struct DriverProviders {
     /// interactive-auth prompts against the same lock entries.  Production code
     /// always uses `..Default::default()` and gets a fresh map.
     pub prompt_locks: Option<Arc<PromptLockMap>>,
-    /// Inject a shared lazy CRL worker so that multiple `DatabaseDriverV1`
-    /// instances reuse the same background thread. Production code always uses
-    /// `..Default::default()` and gets a fresh lazy handle.
-    pub crl_worker: Option<SharedCrlWorker>,
+    /// Inject a shared CRL manager so that multiple `DatabaseDriverV1`
+    /// instances reuse the same worker and refresher. Production code always uses
+    /// `..Default::default()` and gets a fresh manager.
+    pub crl_manager: Option<CrlManager>,
     /// Host-owned query/login transport. Production XP hosts register after
     /// construction via [`DatabaseDriverV1::register_xp_backend`].
     pub xp_backend: Option<Arc<dyn SnowflakeBackend>>,
@@ -230,8 +230,8 @@ pub struct DatabaseDriverV1 {
     /// (scoped by idp, snowflake, username, role, and token_type).
     /// Shared across all connections on this driver instance.
     pub(crate) prompt_locks: Arc<PromptLockMap>,
-    /// Lazy CRL worker shared across all connections on this driver instance.
-    pub(crate) crl_worker: SharedCrlWorker,
+    /// CRL manager shared across all connections on this driver instance.
+    pub(crate) crl_manager: CrlManager,
     pub(crate) xp_slot: Arc<XpSlot>,
 }
 
@@ -276,7 +276,7 @@ impl DatabaseDriverV1 {
             prompt_locks: providers
                 .prompt_locks
                 .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
-            crl_worker: providers.crl_worker.unwrap_or_else(CrlWorker::new_lazy),
+            crl_manager: providers.crl_manager.unwrap_or_default(),
             xp_slot,
         }
     }
@@ -538,21 +538,79 @@ mod tests {
     }
 
     #[test]
-    fn crl_worker_lazy_init_succeeds() {
+    fn crl_manager_lazy_init_succeeds() {
         let driver = DatabaseDriverV1::new();
-        let worker = driver.crl_worker.clone();
+        let worker = driver.crl_manager.worker();
         assert!(Arc::strong_count(&worker) >= 1);
     }
 
     #[test]
-    fn crl_worker_returns_same_instance() {
+    fn crl_manager_returns_same_instance() {
         let driver = DatabaseDriverV1::new();
-        let first = driver.crl_worker.clone();
-        let second = driver.crl_worker.clone();
+        let first = driver.crl_manager.worker();
+        let second = driver.crl_manager.worker();
         assert!(
             Arc::ptr_eq(&first, &second),
-            "crl_worker field should return the same Arc on repeated clones"
+            "worker() on one manager returns the same handle"
         );
+    }
+
+    #[test]
+    fn drivers_share_a_crl_manager_only_when_one_is_injected() {
+        let left = DatabaseDriverV1::new();
+        let right = DatabaseDriverV1::new();
+        assert!(
+            !Arc::ptr_eq(&left.crl_manager.worker(), &right.crl_manager.worker()),
+            "two drivers must not share a CRL worker"
+        );
+
+        let owned = DatabaseDriverV1::new();
+        let cache = owned.crl_manager.cache(memory_crl_config()).expect("cache");
+        cache.wait_for_scheduler(true);
+        drop(owned);
+        cache.wait_for_scheduler(false);
+
+        let shared = CrlManager::new();
+        let injected_left = DatabaseDriverV1::with_providers(DriverProviders {
+            crl_manager: Some(shared.clone()),
+            ..Default::default()
+        });
+        let injected_right = DatabaseDriverV1::with_providers(DriverProviders {
+            crl_manager: Some(shared.clone()),
+            ..Default::default()
+        });
+        assert!(
+            Arc::ptr_eq(
+                &injected_left.crl_manager.worker(),
+                &injected_right.crl_manager.worker()
+            ),
+            "drivers given the same manager must share one CRL worker"
+        );
+        let shared_cache = injected_left
+            .crl_manager
+            .cache(memory_crl_config())
+            .expect("shared cache");
+        shared_cache.wait_for_scheduler(true);
+        drop(injected_left);
+        assert!(
+            shared_cache.scheduler_is_published(),
+            "a remaining driver must keep crl-refresh running"
+        );
+        drop(injected_right);
+        assert!(
+            shared_cache.scheduler_is_published(),
+            "the injected manager must keep crl-refresh running after both drivers drop"
+        );
+        drop(shared);
+        shared_cache.wait_for_scheduler(false);
+    }
+
+    fn memory_crl_config() -> crate::crl::config::CrlConfig {
+        crate::crl::config::CrlConfig {
+            enable_memory_caching: true,
+            enable_disk_caching: false,
+            ..crate::crl::config::CrlConfig::default()
+        }
     }
 
     #[test]

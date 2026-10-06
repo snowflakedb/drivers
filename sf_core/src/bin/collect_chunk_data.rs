@@ -5,7 +5,7 @@ use sf_core::chunks::get_chunk_data;
 use sf_core::config::rest_parameters::{
     ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, LoginMethod, LoginParameters, QueryParameters,
 };
-use sf_core::crl::CrlWorker;
+use sf_core::crl::CrlManager;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::query_response::Data;
 use sf_core::rest::snowflake::{QueryInput, QueryOptions, snowflake_login, snowflake_query};
@@ -353,7 +353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let params = load_parameters(&cli.parameter_path)?;
 
-    let crl_worker = CrlWorker::shared_lazy();
+    let crl_manager = CrlManager::new();
 
     let client_info = default_client_info();
     let server_url = params
@@ -363,7 +363,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let login_params = build_login_params(&params, client_info.clone(), server_url.clone())?;
 
     println!("Logging in to Snowflake...");
-    let login_result = snowflake_login(&login_params, None, crl_worker.clone()).await?;
+    let login_result = snowflake_login(&login_params, None, crl_manager.clone()).await?;
     println!(
         "Login successful (session_id={:?})",
         login_result.tokens.session_id
@@ -389,7 +389,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &session_token,
         QueryInput::new(alter_sql),
         QueryOptions::default(),
-        crl_worker.clone(),
+        crl_manager.clone(),
     )
     .await?;
 
@@ -404,7 +404,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &session_token,
         QueryInput::new(cli.sql.clone()),
         QueryOptions::default(),
-        crl_worker.clone(),
+        crl_manager.clone(),
     )
     .await?;
 
@@ -418,7 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::fs::create_dir_all(&cli.output_dir).await?;
 
-    let tls_client = create_tls_client_with_config(TlsConfig::default(), crl_worker)?;
+    let tls_client = create_tls_client_with_config(TlsConfig::default(), crl_manager)?;
 
     let format_label = match cli.format {
         ResultFormat::Arrow => "arrow",

@@ -31,7 +31,7 @@ use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 #[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
 #[cfg(target_os = "linux")]
-use sf_core::crl::CrlWorker;
+use sf_core::crl::CrlManager;
 #[cfg(target_os = "linux")]
 use sf_core::rest::snowflake::{
     AbortOutcome, QueryInput, QueryOptions, RestError, get_query_status, snowflake_abort_query,
@@ -205,7 +205,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         &Default::default(),
         None,
         xp_backend,
-        CrlWorker::shared_lazy(),
+        CrlManager::new(),
         None,
     )
     .await

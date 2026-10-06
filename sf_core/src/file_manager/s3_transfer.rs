@@ -1995,7 +1995,7 @@ async fn create_s3_client(
         crate::tls::aws_http_client::AwsSdkReqwestClient::build(
             &stage_info.tls_config,
             Some(&stage_info.proxy_config),
-            stage_info.crl_worker.clone(),
+            stage_info.crl_manager.clone(),
         )
         .map(crate::tls::aws_http_client::AwsSdkReqwestClient::into_shared)
     })
@@ -2490,7 +2490,7 @@ mod tests {
             use_s3_regional_url,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }
@@ -2866,7 +2866,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
@@ -2953,7 +2953,7 @@ mod tests {
             use_s3_regional_url: false,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
         };
 
@@ -3056,7 +3056,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: None,
         };
@@ -3709,7 +3709,7 @@ mod tests {
             use_s3_regional_url: false,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_worker: crate::crl::worker::CrlWorker::new_lazy(),
+            crl_manager: crate::crl::CrlManager::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
         }
     }

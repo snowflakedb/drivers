@@ -52,7 +52,7 @@ pub(super) fn build_azure_client(stage_info: &StageInfo) -> Result<reqwest::Clie
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
         Some(&stage_info.proxy_config),
-        stage_info.crl_worker.clone(),
+        stage_info.crl_manager.clone(),
     )?
     .http1_only()
     .build()
@@ -64,7 +64,7 @@ pub(super) fn build_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client
         reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
         &stage_info.tls_config,
         Some(&stage_info.proxy_config),
-        stage_info.crl_worker.clone(),
+        stage_info.crl_manager.clone(),
     )?
     .http1_only()
     .build()
@@ -101,7 +101,7 @@ impl StorageHttp {
                 crate::tls::aws_http_client::AwsSdkReqwestClient::build(
                     &stage_info.tls_config,
                     Some(&stage_info.proxy_config),
-                    stage_info.crl_worker.clone(),
+                    stage_info.crl_manager.clone(),
                 )?
                 .into_shared(),
             ),

@@ -303,7 +303,7 @@ impl DatabaseDriverV1 {
                     file_manager::StageTransport {
                         tls_config: conn.tls_config(),
                         proxy_config: conn.proxy_config(),
-                        crl_worker: self.crl_worker.clone(),
+                        crl_manager: self.crl_manager.clone(),
                     },
                 )
             };
@@ -399,7 +399,7 @@ impl DatabaseDriverV1 {
                     file_manager::StageTransport {
                         tls_config: conn.tls_config(),
                         proxy_config: conn.proxy_config(),
-                        crl_worker: self.crl_worker.clone(),
+                        crl_manager: self.crl_manager.clone(),
                     },
                 )
             };
@@ -655,7 +655,7 @@ fn resolve_download_target(
     // Both download entry points build `StageInfo` outside
     // `perform_put_get_transfer`, so the connection's TLS, proxy, and CRL
     // settings are threaded here via `StageTransport` — one place covers
-    // every caller. `crl_worker` is threaded for parity with the
+    // every caller. The CRL manager is threaded for parity with the
     // non-streaming PUT/GET path; the hermetic/live proxy tests disable CRL
     // checking, so it isn't exercised.
     let download_data = gs_data

@@ -9,7 +9,6 @@ use crate::utils::sync::MutexRecoverExt;
 use aws_lc_rs::digest;
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
-use once_cell::sync::OnceCell;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 use reqwest::Method;
@@ -73,18 +72,20 @@ pub struct CrlCache {
     metrics: CrlMetrics,
 }
 
-/// The process-wide cache. Stays alive for the life of the process; only its
-/// background refresher is started and stopped (see [`REFRESHER`]).
-static INSTANCE: OnceCell<Arc<CrlCache>> = OnceCell::new();
-
-/// The running `"crl-refresh"` thread, if any. [`CrlCache::global`] starts it
-/// and [`CrlCache::shutdown_background_refresher`] stops it, so a host that
-/// unloads this library can make sure the thread is gone first.
-static REFRESHER: Mutex<Option<BackgroundRefresher>> = Mutex::new(None);
-
-struct BackgroundRefresher {
+pub(crate) struct BackgroundRefresher {
     cancel: tokio_util::sync::CancellationToken,
-    thread: std::thread::JoinHandle<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for BackgroundRefresher {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        if let Some(thread) = self.thread.take()
+            && thread.thread().id() != std::thread::current().id()
+        {
+            let _ = thread.join();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -412,7 +413,7 @@ impl CrlCache {
     }
     // Spawn a singleton scheduler using DelayQueue keyed to CRL half-life deadlines,
     // plus jittered orphan-temp sweeps when disk caching is enabled.
-    fn spawn_background_refresher(this: Arc<Self>) -> Option<BackgroundRefresher> {
+    pub(crate) fn spawn_background_refresher(this: Arc<Self>) -> Option<BackgroundRefresher> {
         use tokio_util::time::DelayQueue;
 
         let disk_cache_dir = if this.config.enable_disk_caching {
@@ -561,42 +562,24 @@ impl CrlCache {
                 *cache.scheduler_tx.lock_recover() = None;
             })
             .ok()?;
-        Some(BackgroundRefresher { cancel, thread })
+        Some(BackgroundRefresher {
+            cancel,
+            thread: Some(thread),
+        })
     }
 
-    /// Stops the `"crl-refresh"` thread and waits for it to exit. The cache
-    /// itself survives, and the next [`CrlCache::global`] call starts a new
-    /// refresher.
-    ///
-    /// Call this before the library can be unloaded. On Windows the ODBC
-    /// Driver Manager unloads the driver DLL right after the last environment
-    /// is freed; a refresher still parked on a timer at that point faults as
-    /// soon as it wakes, because its code is no longer mapped.
-    pub fn shutdown_background_refresher() {
-        Self::shutdown_refresher_in(&REFRESHER);
-    }
-
-    fn start_refresher_if_stopped(
-        cache: &Arc<CrlCache>,
-        slot: &Mutex<Option<BackgroundRefresher>>,
-    ) {
-        let mut refresher = slot.lock_recover();
-        if refresher.is_none() {
-            *refresher = CrlCache::spawn_background_refresher(cache.clone());
-        }
-    }
-
-    fn shutdown_refresher_in(slot: &Mutex<Option<BackgroundRefresher>>) {
-        // Hold the slot through the join so a concurrent start cannot publish a
-        // new scheduler channel that this exiting thread would then clear.
-        let mut slot = slot.lock_recover();
-        let Some(refresher) = slot.take() else {
-            return;
+    pub(crate) fn open_cache(config: CrlConfig) -> Result<Arc<CrlCache>, CrlError> {
+        let cache = match CrlCache::new(config) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(target: "sf_core::crl", "Failed to initialize CRL cache: {e}. Falling back to default config");
+                CrlCache::new(CrlConfig::default()).map_err(|e2| {
+                    tracing::error!(target: "sf_core::crl", "Failed to initialize fallback CRL cache: {e2}");
+                    e2
+                })?
+            }
         };
-        refresher.cancel.cancel();
-        if refresher.thread.thread().id() != std::thread::current().id() {
-            let _ = refresher.thread.join();
-        }
+        Ok(Arc::new(cache))
     }
 
     // Decide if a CRL with the given IDP scope applies to the target certificate and URL
@@ -912,22 +895,21 @@ impl CrlCache {
         })
     }
 
-    pub fn global(config: CrlConfig) -> Result<&'static Arc<CrlCache>, CrlError> {
-        let instance = INSTANCE.get_or_try_init(|| {
-            let cache = match CrlCache::new(config) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!(target: "sf_core::crl", "Failed to initialize CRL cache: {e}. Falling back to default config");
-                    CrlCache::new(CrlConfig::default()).map_err(|e2| {
-                        tracing::error!(target: "sf_core::crl", "Failed to initialize fallback CRL cache: {e2}");
-                        e2
-                    })?
-                }
-            };
-            Ok::<_, CrlError>(Arc::new(cache))
-        })?;
-        Self::start_refresher_if_stopped(instance, &REFRESHER);
-        Ok(instance)
+    #[cfg(test)]
+    pub(crate) fn scheduler_is_published(&self) -> bool {
+        self.scheduler_tx.lock_recover().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_scheduler(&self, published: bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while self.scheduler_is_published() != published {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for crl-refresh scheduler published={published}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     pub fn url_digest(url: &str) -> String {
@@ -1459,28 +1441,6 @@ mod tests {
         }
     }
 
-    fn wait_for_scheduler(cache: &CrlCache) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while cache.scheduler_tx.lock_recover().is_none() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "refresher never published its scheduler channel"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
-    fn wait_for_scheduler_cleared(cache: &CrlCache) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while cache.scheduler_tx.lock_recover().is_some() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "refresher did not clear its scheduler channel"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-    }
-
     #[test]
     fn is_orphan_temp_name_matches_crl_temp_pattern_only() {
         assert!(is_orphan_temp_name(&format!(
@@ -1733,54 +1693,52 @@ mod tests {
         let cache = Arc::new(CrlCache::new(test_config()).expect("cache"));
         let refresher =
             CrlCache::spawn_background_refresher(cache.clone()).expect("refresher thread");
-        wait_for_scheduler(&cache);
+        cache.wait_for_scheduler(true);
 
-        refresher.cancel.cancel();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = done_tx.send(refresher.thread.join().is_ok());
+            drop(refresher);
+            let _ = done_tx.send(());
         });
-        let joined = done_rx
+        done_rx
             .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("cancelled refresher thread should exit promptly");
-        assert!(joined, "refresher thread panicked");
+            .expect("dropping the refresher should return once its thread has exited");
         assert!(cache.scheduler_tx.lock_recover().is_none());
     }
 
     #[test]
-    fn shutdown_then_start_publishes_a_new_scheduler_channel() {
-        let cache = Arc::new(CrlCache::new(test_config()).expect("cache"));
-        let slot = Mutex::new(None);
-        CrlCache::start_refresher_if_stopped(&cache, &slot);
-        wait_for_scheduler(&cache);
-        let first_tx = cache
+    fn a_new_manager_publishes_a_new_scheduler_channel() {
+        let first = crate::crl::CrlManager::new();
+        let first_cache = first.cache(test_config()).expect("first cache");
+        first_cache.wait_for_scheduler(true);
+        let first_tx = first_cache
             .scheduler_tx
             .lock_recover()
             .clone()
             .expect("first scheduler");
-
-        CrlCache::shutdown_refresher_in(&slot);
-        wait_for_scheduler_cleared(&cache);
+        drop(first);
+        first_cache.wait_for_scheduler(false);
         assert!(
             first_tx
                 .try_send(SchedulerMsg::Schedule("stale".into()))
                 .is_err(),
-            "shutdown must drop the previous scheduler receiver"
+            "dropping the manager must drop the previous scheduler receiver"
         );
 
-        CrlCache::start_refresher_if_stopped(&cache, &slot);
-        wait_for_scheduler(&cache);
-        let second_tx = cache
+        let second = crate::crl::CrlManager::new();
+        let second_cache = second.cache(test_config()).expect("second cache");
+        second_cache.wait_for_scheduler(true);
+        let second_tx = second_cache
             .scheduler_tx
             .lock_recover()
             .clone()
-            .expect("restarted scheduler");
+            .expect("second scheduler");
         assert!(
             second_tx
                 .try_send(SchedulerMsg::Schedule("restarted".into()))
                 .is_ok()
         );
-        CrlCache::shutdown_refresher_in(&slot);
+        drop(second);
     }
 
     #[test]

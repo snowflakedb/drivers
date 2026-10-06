@@ -230,6 +230,10 @@ Bug fixes:
 - Fixed `FLOAT`/`REAL` to single-field interval fetch with a nonzero fractional part to return `SQL_SUCCESS_WITH_INFO` (`01S07`).
 - Fixed numeric-to-interval conversion so a value that truncates to zero always yields `+0` (no negative-zero interval sign).
 
+Internal changes:
+
+- Changed ODBC teardown so the last environment free joins `crl-refresh` by dropping the driver. A later environment starts a new in-memory CRL cache; a warm disk entry is still a hit. (snowflakedb/drivers#2429)
+
 ## v4.0.0-rc4
 
 Breaking changes:

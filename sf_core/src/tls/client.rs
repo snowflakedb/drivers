@@ -1,5 +1,5 @@
+use crate::crl::CrlManager;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-use crate::crl::worker::SharedCrlWorker;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{
@@ -24,9 +24,9 @@ enum RootCertificates {
 /// Handles all TLS configuration including CRL validation, custom root stores, etc.
 pub fn create_tls_client_with_config(
     tls_config: TlsConfig,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<Client, TlsError> {
-    create_tls_client_with_proxy(tls_config, None, crl_worker)
+    create_tls_client_with_proxy(tls_config, None, crl_manager)
 }
 
 /// Create a reqwest Client with TLS configuration and an optional explicit proxy.
@@ -39,9 +39,9 @@ pub fn create_tls_client_with_config(
 pub fn create_tls_client_with_proxy(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<Client, TlsError> {
-    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, None, false).map(|(c, _)| c)
+    build_tls_client_and_rustls_config(&tls_config, proxy, crl_manager, None, false).map(|(c, _)| c)
 }
 
 /// Build a reqwest [`Client`] and, only when `need_diag_config` is set, its
@@ -54,7 +54,7 @@ pub fn create_tls_client_with_proxy(
 pub(crate) fn build_tls_client_and_rustls_config(
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
@@ -134,7 +134,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
                 tls_config.verify_hostname,
                 &protocol_versions,
                 ClientAlpn::Default,
-                crl_worker,
+                crl_manager,
             )?;
             let mut client_builder = configure_http_client(Client::builder(), proxy)?
                 .use_preconfigured_tls(reqwest_rustls_cfg);
@@ -163,10 +163,10 @@ pub(crate) fn build_tls_client_and_rustls_config(
 pub fn create_tls_client_with_proxy_and_timeouts(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
     connect_timeout: Option<Duration>,
 ) -> Result<Client, TlsError> {
-    build_tls_client_and_rustls_config(&tls_config, proxy, crl_worker, connect_timeout, false)
+    build_tls_client_and_rustls_config(&tls_config, proxy, crl_manager, connect_timeout, false)
         .map(|(c, _)| c)
 }
 
@@ -192,13 +192,13 @@ pub(crate) fn configure_http1_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<ClientBuilder, TlsError> {
     configure_tls_builder(
         builder.http1_only(),
         tls_config,
         proxy,
-        crl_worker,
+        crl_manager,
         ClientAlpn::Http1Only,
     )
 }
@@ -226,7 +226,7 @@ fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
     alpn: ClientAlpn,
 ) -> Result<ClientBuilder, TlsError> {
     // The returned builder is built by the caller. Its insecure path still
@@ -264,7 +264,7 @@ fn configure_tls_builder(
                 tls_config.verify_hostname,
                 &protocol_versions,
                 alpn,
-                crl_worker,
+                crl_manager,
             )?;
             Ok(builder.use_preconfigured_tls(rustls_cfg))
         }
@@ -289,13 +289,13 @@ pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<ClientBuilder, TlsError> {
     configure_tls_builder(
         builder,
         tls_config,
         proxy,
-        crl_worker,
+        crl_manager,
         ClientAlpn::Http1Only,
     )
     .map(ClientBuilder::no_gzip)
@@ -310,7 +310,7 @@ fn build_crl_rustls_config(
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     alpn: ClientAlpn,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<rustls::ClientConfig, TlsError> {
     if !verify_hostname {
         tracing::warn!("Hostname verification disabled (CRL path)");
@@ -326,7 +326,7 @@ fn build_crl_rustls_config(
         crl_config,
         root_store_override,
         verify_hostname,
-        crl_worker,
+        crl_manager,
     )
     .context(VerifierBuildSnafu)?;
 
@@ -855,7 +855,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            crate::crl::CrlWorker::shared_lazy(),
+            crate::crl::CrlManager::new(),
         );
 
         assert!(matches!(result, Err(TlsError::PemParse { .. })));
@@ -934,7 +934,7 @@ mod tests {
             let result = create_tls_client_with_proxy(
                 config,
                 Some(&ProxyConfig::default()),
-                crate::crl::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             );
             assert!(
                 matches!(&result, Err(TlsError::RustlsConfig { .. })),
@@ -1126,7 +1126,7 @@ mod tests {
         let (_, without_diag) = build_tls_client_and_rustls_config(
             &config,
             None,
-            crate::crl::CrlWorker::shared_lazy(),
+            crate::crl::CrlManager::new(),
             None,
             false,
         )
@@ -1136,7 +1136,7 @@ mod tests {
         let (_, with_diag) = build_tls_client_and_rustls_config(
             &config,
             None,
-            crate::crl::CrlWorker::shared_lazy(),
+            crate::crl::CrlManager::new(),
             None,
             true,
         )

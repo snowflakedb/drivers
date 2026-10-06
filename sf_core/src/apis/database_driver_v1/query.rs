@@ -88,7 +88,7 @@ pub(super) async fn perform_put_get_transfer(
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
     proxy_config: crate::tls::config::ProxyConfig,
-    crl_worker: crate::crl::worker::SharedCrlWorker,
+    crl_manager: crate::crl::CrlManager,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -112,7 +112,7 @@ pub(super) async fn perform_put_get_transfer(
     let transport = file_manager::StageTransport {
         tls_config,
         proxy_config,
-        crl_worker,
+        crl_manager,
     };
 
     match command {
@@ -192,8 +192,8 @@ pub(super) async fn build_and_upload_stream(
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Streaming PUT builds `StageInfo` outside `perform_put_get_transfer`, so
     // the connection's TLS, proxy, and CRL settings are threaded here via the
-    // same `StageTransport` bundle that function's UPLOAD arm uses. `crl_worker`
-    // is threaded for parity with the non-streaming PUT/GET path; the
+    // same `StageTransport` bundle that function's UPLOAD arm uses. The CRL
+    // manager is threaded for parity with the non-streaming PUT/GET path; the
     // hermetic/live proxy tests disable CRL checking, so it isn't exercised.
     let upload_data = data
         .to_file_upload_data(

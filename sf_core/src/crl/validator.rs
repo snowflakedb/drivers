@@ -12,25 +12,24 @@ pub struct CrlValidator {
 }
 
 impl CrlValidator {
-    pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
-        let cache = CrlCache::global(config.clone())?.clone();
-        Ok(Self {
+    pub fn new(config: CrlConfig, cache: Arc<CrlCache>) -> Self {
+        Self {
             config,
             cache,
             root_store: None,
-        })
+        }
     }
 
     pub fn new_with_root_store(
         config: CrlConfig,
         root_store: Option<Arc<rustls::RootCertStore>>,
-    ) -> Result<Self, CrlError> {
-        let cache = CrlCache::global(config.clone())?.clone();
-        Ok(Self {
+        cache: Arc<CrlCache>,
+    ) -> Self {
+        Self {
             config,
             cache,
             root_store,
-        })
+        }
     }
 
     /// Returns true if chain is unrevoked and without errors; errors mark chain invalid

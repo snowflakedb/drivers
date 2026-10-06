@@ -36,8 +36,8 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::config::settings::Setting;
+use crate::crl::CrlManager;
 use crate::crl::config::CertRevocationCheckMode;
-use crate::crl::worker::SharedCrlWorker;
 use crate::http::retry::{
     HttpContext, HttpError, LastStatus, RetryState, TransportSnafu, execute_with_retry,
     execute_with_retry_state,
@@ -800,7 +800,7 @@ pub async fn auth_request_data(
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
     prebuilt_credentials: Option<Credentials>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
 
@@ -955,7 +955,7 @@ pub async fn auth_request_data(
                     crate::tls::aws_http_client::AwsSdkReqwestClient::build(
                         &tls_config,
                         Some(&login_parameters.client_info.proxy_config),
-                        crl_worker,
+                        crl_manager,
                     )
                     .context(WifSdkHttpClientSnafu)?,
                 )
@@ -1310,15 +1310,15 @@ struct DPoPSigner {
 }
 
 #[tracing::instrument(
-    skip(login_parameters, session_parameters, crl_worker),
+    skip(login_parameters, session_parameters, crl_manager),
     fields(account_name, login_name)
 )]
 pub async fn snowflake_login(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<LoginResult, RestError> {
-    let client = build_tls_http_client(&login_parameters.client_info, crl_worker.clone())?;
+    let client = build_tls_http_client(&login_parameters.client_info, crl_manager.clone())?;
     let policy = RetryPolicy::default();
     snowflake_login_with_client(
         &client,
@@ -1329,7 +1329,7 @@ pub async fn snowflake_login(
         &policy,
         None,
         None,
-        crl_worker,
+        crl_manager,
         None,
     )
     .await
@@ -1344,7 +1344,7 @@ pub async fn snowflake_login(
         retry_policy,
         prebuilt_credentials,
         xp_backend,
-        crl_worker,
+        crl_manager,
         login_deadline
     ),
     fields(account_name, login_name)
@@ -1359,7 +1359,7 @@ pub async fn snowflake_login_with_client(
     retry_policy: &RetryPolicy,
     prebuilt_credentials: Option<Credentials>,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
     login_deadline: Option<Instant>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
@@ -1499,7 +1499,7 @@ pub async fn snowflake_login_with_client(
         prompt_locks,
         retry_policy,
         prebuilt_credentials,
-        crl_worker.clone(),
+        crl_manager.clone(),
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -1572,7 +1572,7 @@ pub async fn snowflake_login_with_client(
                     prompt_locks,
                     retry_policy,
                     None,
-                    crl_worker.clone(),
+                    crl_manager.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest {
@@ -1647,7 +1647,7 @@ pub async fn snowflake_login_with_client(
                     prompt_locks,
                     retry_policy,
                     None,
-                    crl_worker.clone(),
+                    crl_manager.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest {
@@ -2043,7 +2043,7 @@ pub async fn token_request(
 }
 
 #[tracing::instrument(
-    skip(query_parameters, session_token, query_input, crl_worker),
+    skip(query_parameters, session_token, query_input, crl_manager),
     fields(sql)
 )]
 pub async fn snowflake_query<'a>(
@@ -2051,9 +2051,9 @@ pub async fn snowflake_query<'a>(
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
     options: QueryOptions,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<query_response::Response, RestError> {
-    let client = build_tls_http_client(&query_parameters.client_info, crl_worker)?;
+    let client = build_tls_http_client(&query_parameters.client_info, crl_manager)?;
     snowflake_query_with_client(
         &client,
         query_parameters,
@@ -2903,12 +2903,12 @@ where
 #[track_caller]
 fn build_tls_http_client(
     client_info: &ClientInfo,
-    crl_worker: SharedCrlWorker,
+    crl_manager: CrlManager,
 ) -> Result<reqwest::Client, RestError> {
     create_tls_client_with_proxy(
         client_info.tls_config.clone(),
         Some(&client_info.proxy_config),
-        crl_worker,
+        crl_manager,
     )
     .context(CrlValidationSnafu)
 }
@@ -3632,7 +3632,7 @@ mod tests {
             &RetryPolicy::default(),
             None,
             Some(&backend),
-            crate::crl::worker::CrlWorker::shared_lazy(),
+            crate::crl::CrlManager::new(),
             None,
         )
         .await;
@@ -4143,7 +4143,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4178,7 +4178,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4301,7 +4301,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4330,7 +4330,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4357,7 +4357,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4389,7 +4389,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4431,7 +4431,7 @@ mod tests {
                     None,
                     &RetryPolicy::default(),
                     None,
-                    crate::crl::worker::CrlWorker::shared_lazy(),
+                    crate::crl::CrlManager::new(),
                 ))
                 .unwrap();
             assert_eq!(
@@ -4456,7 +4456,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4480,7 +4480,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             ))
             .unwrap();
 
@@ -4835,7 +4835,7 @@ mod tests {
                 &RetryPolicy::default(),
                 None,
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
                 None,
             )
             .await
@@ -5137,7 +5137,7 @@ mod tests {
                 &RetryPolicy::default(),
                 None,
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
                 None,
             )
             .await
@@ -5181,7 +5181,7 @@ mod tests {
                 &RetryPolicy::default(),
                 None,
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
                 None,
             )
             .await
@@ -6022,7 +6022,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             )
             .await
             .expect_err("disallowed WIF host must fail closed");
@@ -6057,7 +6057,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::worker::CrlWorker::shared_lazy(),
+                crate::crl::CrlManager::new(),
             )
             .await
             .expect_err("missing OIDC token must fail");

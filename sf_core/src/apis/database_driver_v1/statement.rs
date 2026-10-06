@@ -403,7 +403,7 @@ impl DatabaseDriverV1 {
             use_s3_regional_url_session_param,
             &session_parameters,
             &self.wrapper_presets,
-            self.crl_worker.clone(),
+            self.crl_manager.clone(),
             operation_ctx.map(OperationCtx::cleanup_scope),
             xp_backend,
         )
@@ -644,7 +644,7 @@ impl DatabaseDriverV1 {
                     unsafe_file_write,
                     tls_config,
                     proxy_config,
-                    self.crl_worker.clone(),
+                    self.crl_manager.clone(),
                 )
                 .await
                 .context(QueryResponseProcessSnafu)

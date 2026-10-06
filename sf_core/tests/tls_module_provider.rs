@@ -82,7 +82,7 @@ async fn default_verified_client_uses_linked_module_not_process_default() {
     let client = create_tls_client_with_proxy(
         config,
         Some(&ProxyConfig::default()),
-        sf_core::crl::CrlWorker::shared_lazy(),
+        sf_core::crl::CrlManager::new(),
     )
     .expect("the module must build a TLS 1.3 client despite the TLS 1.2 global provider");
     let response = client

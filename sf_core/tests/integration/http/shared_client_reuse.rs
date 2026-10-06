@@ -52,7 +52,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),
         storage_account: None,
     }
@@ -76,7 +76,7 @@ fn s3_stage_with_creds(endpoint: &str) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: None,
         tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }
 }
@@ -97,7 +97,7 @@ fn azure_stage_with_sas(endpoint: &str) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
         tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_worker: sf_core::crl::CrlWorker::shared_lazy(),
+        crl_manager: sf_core::crl::CrlManager::new(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }
 }

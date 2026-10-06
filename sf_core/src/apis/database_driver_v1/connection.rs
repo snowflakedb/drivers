@@ -433,7 +433,7 @@ impl DatabaseDriverV1 {
                     crate::tls::client::build_tls_client_and_rustls_config(
                         &config.tls,
                         Some(&config.proxy),
-                        self.crl_worker.clone(),
+                        self.crl_manager.clone(),
                         timeout_config.connect_timeout,
                         effective_diag.is_some(),
                     )
@@ -511,7 +511,7 @@ impl DatabaseDriverV1 {
                     &retry_policy,
                     prebuilt_credentials,
                     xp_backend.as_deref(),
-                    self.crl_worker.clone(),
+                    self.crl_manager.clone(),
                     timeout_config
                         .login_timeout
                         .map(|budget| std::time::Instant::now() + budget),

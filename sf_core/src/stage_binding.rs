@@ -129,9 +129,9 @@ pub struct StageBindingContext<'a> {
     /// When true the bind stage is created `SCOPED TEMPORARY`, so the server
     /// drops it at transaction end and every upload must recreate it.
     pub use_scoped_stage: bool,
-    /// Driver-owned CRL worker for the storage TLS client, threaded through so
+    /// Driver-owned CRL manager for the storage TLS client, threaded through so
     /// the bind-stage upload honours CRL like the file-path PUT/GET does.
-    pub crl_worker: crate::crl::worker::SharedCrlWorker,
+    pub crl_manager: crate::crl::CrlManager,
     /// Where the upload registers cancellation cleanup. Matters only for a CSV
     /// payload at or above the multipart threshold, which has an abort to register;
     /// a single PUT is discarded by the cloud when the connection is torn down.
@@ -150,7 +150,7 @@ impl<'a> StageBindingContext<'a> {
         use_s3_regional_url_session_param: bool,
         session_parameters: &AsyncRwLock<HashMap<String, Setting>>,
         wrapper_presets: &WrapperPresets,
-        crl_worker: crate::crl::worker::SharedCrlWorker,
+        crl_manager: crate::crl::CrlManager,
         cleanup: Option<&'a CleanupScope>,
         xp_backend: Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
     ) -> Self {
@@ -164,7 +164,7 @@ impl<'a> StageBindingContext<'a> {
             put_get_policy,
             use_s3_regional_url_session_param,
             use_scoped_stage,
-            crl_worker,
+            crl_manager,
             cleanup,
             xp_backend,
         }
@@ -305,7 +305,7 @@ async fn upload_blob(
             .client_info
             .proxy_config
             .clone(),
-        crl_worker: stage_binding_ctx.crl_worker.clone(),
+        crl_manager: stage_binding_ctx.crl_manager.clone(),
     };
     let single = data
         .to_bind_stage_upload_data(

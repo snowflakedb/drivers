@@ -150,7 +150,7 @@ async fn should_complete_handshake_with_default_roots() {
 
     // When GET request is sent to the server URL
     let client =
-        create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlWorker::shared_lazy())
+        create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlManager::new())
             .expect("client");
     let resp = get_public_server(&client, &server_url).await;
 
@@ -170,8 +170,8 @@ async fn should_complete_handshake_with_custom_pem_roots() {
             custom_root_store_path: Some(pem_path.into()),
             ..Default::default()
         };
-        let client = create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy())
-            .expect("client");
+        let client =
+            create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
         let server_url =
             std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
 
@@ -194,7 +194,7 @@ async fn should_trust_custom_root_store_when_crl_disabled() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
     let resp = client.get(format!("https://localhost:{port}")).send().await;
 
     // Then the handshake succeeds because the custom root store is applied
@@ -210,7 +210,7 @@ async fn should_replace_default_roots_with_custom_root_store() {
     let server_url =
         std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
     let default_client =
-        create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlWorker::shared_lazy())
+        create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlManager::new())
             .expect("default client");
     let default_response = get_public_server(&default_client, &server_url).await;
     assert!(
@@ -224,7 +224,7 @@ async fn should_replace_default_roots_with_custom_root_store() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
 
     let response = client.get(server_url).send().await;
 
@@ -244,7 +244,7 @@ async fn should_trust_extra_root_store_when_crl_disabled() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
 
     // When a request is sent to a server signed by the extra root
     let response = client
@@ -268,7 +268,7 @@ async fn should_keep_default_roots_when_extra_root_store_is_configured() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
     let server_url =
         std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
 
@@ -297,7 +297,7 @@ async fn should_trust_extra_root_store_when_crl_enabled() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
 
     // When a CRL-enabled request is sent to a server signed by the extra root
     let response = client
@@ -326,7 +326,7 @@ async fn should_skip_hostname_verification_when_disabled() {
         ..Default::default()
     };
     let client =
-        create_tls_client_with_config(cfg, sf_core::crl::CrlWorker::shared_lazy()).expect("client");
+        create_tls_client_with_config(cfg, sf_core::crl::CrlManager::new()).expect("client");
     let resp = client.get(format!("https://127.0.0.1:{port}")).send().await;
 
     // Then the handshake succeeds despite hostname mismatch
@@ -342,8 +342,7 @@ async fn should_skip_hostname_verification_when_disabled() {
         ..Default::default()
     };
     let client_strict =
-        create_tls_client_with_config(cfg_strict, sf_core::crl::CrlWorker::shared_lazy())
-            .expect("client");
+        create_tls_client_with_config(cfg_strict, sf_core::crl::CrlManager::new()).expect("client");
     let resp_strict = client_strict
         .get(format!("https://127.0.0.1:{port}"))
         .send()
@@ -366,7 +365,7 @@ async fn insecure_client_still_accepts_untrusted_host_mismatch() {
             ..Default::default()
         },
         Some(&sf_core::tls::config::ProxyConfig::default()),
-        sf_core::crl::CrlWorker::shared_lazy(),
+        sf_core::crl::CrlManager::new(),
     )
     .expect("insecure client must still build with the guarded global provider");
 
@@ -390,7 +389,7 @@ async fn disabled_hostname_check_still_rejects_untrusted_chain() {
             ..Default::default()
         },
         Some(&sf_core::tls::config::ProxyConfig::default()),
-        sf_core::crl::CrlWorker::shared_lazy(),
+        sf_core::crl::CrlManager::new(),
     )
     .expect("build client with hostname verification disabled");
 

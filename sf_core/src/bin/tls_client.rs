@@ -179,8 +179,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result_file = matches.get_one::<String>("result-file").cloned();
 
-    let crl_worker = sf_core::crl::CrlWorker::shared_lazy();
-    let client = create_tls_client_with_config(tls_config, crl_worker)
+    let crl_manager = sf_core::crl::CrlManager::new();
+    let client = create_tls_client_with_config(tls_config, crl_manager.clone())
         .map_err(|e| format!("Failed to build TLS client: {:?}", e))?;
 
     let method = matches.get_one::<String>("method").unwrap();
