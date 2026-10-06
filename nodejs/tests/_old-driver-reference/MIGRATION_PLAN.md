@@ -227,8 +227,9 @@ called out explicitly.
   park until after the beta release. `sf_core` + the new Node driver will surface a different set
   of errors when `.createConnection` fails, so this needs a re-review against the new error
   taxonomy rather than a line-by-line migration.
-- [`unit/connection/normalize_connection_options_test.ts`](./unit/connection/normalize_connection_options_test.ts) —
-  migrate once `normalizeConnectionOptions` is implemented in the new driver.
+- `unit/connection/normalize_connection_options_test.ts` — migrated and deleted. Its cases live in
+  `nodejs/tests/unit/normalize-connection-options.test.ts`, with
+  `nodejs/tests/e2e/normalize-connection-options.test.ts` connecting through the normalized options.
 - [`unit/connection/statement_test.js`](./unit/connection/statement_test.js) — covers error paths
   in the query-execution API. The new driver exposes a smaller set of error codes, so review
   after beta against the final error taxonomy.

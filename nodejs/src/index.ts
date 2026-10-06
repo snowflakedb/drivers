@@ -12,7 +12,7 @@ import type {
   SessionState,
   StatementStatus,
 } from './query-result/types.js';
-import { normalizeConnectionOptions } from './connection-option-aliases.js';
+import { toCoreConnectionOptions } from './connection-option-aliases.js';
 import { serializeTokenInfo, deserializeTokenInfo } from './connection-serialization.js';
 import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
@@ -34,6 +34,7 @@ import {
   type CustomParser,
   type XMlParserConfigOption,
 } from './global-config.js';
+import { normalizeConnectionOptions } from './normalize-connection-options.js';
 import {
   type Binds,
   type InsertBinds,
@@ -46,7 +47,7 @@ import { SnowflakeDate } from './query-result/SnowflakeDate.js';
 
 initTypeConstructors({ SnowflakeDate });
 
-export { createPool };
+export { createPool, normalizeConnectionOptions };
 export type { Pool, PoolOptions } from './create-pool.js';
 
 // TODO:
@@ -259,7 +260,7 @@ export class Connection {
     }
 
     this.#core = new CoreConnection(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         ...coreOptions,
         useEnvProxy: GlobalConfig.useEnvProxy,
       }),
@@ -466,6 +467,7 @@ export default {
   createPool,
   serializeConnection,
   deserializeConnection,
+  normalizeConnectionOptions,
   ErrorCode,
   ocspModes,
 };

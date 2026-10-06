@@ -11,6 +11,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   authenticator: 'authenticator',
   token: 'token',
   privateKey: 'private_key',
+  privateKeyPath: 'private_key_file',
   privateKeyPass: 'private_key_password',
   workloadIdentityProvider: 'workload_identity_provider',
   clientStoreTemporaryCredential: 'client_store_temporary_credential',
@@ -29,9 +30,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   serverSessionKeepAlive: 'server_session_keep_alive',
 };
 
-export function normalizeConnectionOptions(
-  options: Record<string, unknown>,
-): Record<string, string> {
+export function toCoreConnectionOptions(options: Record<string, unknown>): Record<string, string> {
   const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined) {

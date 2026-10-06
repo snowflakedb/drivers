@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeConnectionOptions } from '../../src/connection-option-aliases.js';
+import { toCoreConnectionOptions } from '../../src/connection-option-aliases.js';
 
-describe('normalizeConnectionOptions', () => {
+describe('toCoreConnectionOptions', () => {
   it('maps camelCase driver options onto their sf_core snake_case keys', () => {
     expect(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         account: 'sfctest0',
         username: 'alice',
         privateKey: '-----BEGIN PRIVATE KEY-----',
@@ -18,11 +18,17 @@ describe('normalizeConnectionOptions', () => {
     });
   });
 
+  it('should map privateKeyPath onto private_key_file', () => {
+    expect(toCoreConnectionOptions({ privateKeyPath: '/key.p8' })).toEqual({
+      private_key_file: '/key.p8',
+    });
+  });
+
   // TODO(SNOW-3996212): drop these two cases once OAuth and WIF e2e replace them.
   // Kept until then so a map typo on the new aliases fails in unit, not only in Jenkins.
   it('should map the access token used by legacy OAUTH and WORKLOAD_IDENTITY with an OIDC provider', () => {
     expect(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         authenticator: 'OAUTH',
         token: 'an.access.token',
       }),
@@ -34,7 +40,7 @@ describe('normalizeConnectionOptions', () => {
 
   it('should map the workload identity provider', () => {
     expect(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         authenticator: 'WORKLOAD_IDENTITY',
         workloadIdentityProvider: 'AWS',
       }),
@@ -46,7 +52,7 @@ describe('normalizeConnectionOptions', () => {
 
   it('should convert browserActionTimeout milliseconds to authentication_timeout seconds', () => {
     expect(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         browserActionTimeout: 120000,
       }),
     ).toEqual({
@@ -55,14 +61,14 @@ describe('normalizeConnectionOptions', () => {
   });
 
   it('should reject a non-positive browserActionTimeout', () => {
-    expect(() => normalizeConnectionOptions({ browserActionTimeout: -1 })).toThrow(
+    expect(() => toCoreConnectionOptions({ browserActionTimeout: -1 })).toThrow(
       'browserActionTimeout must be a positive number',
     );
   });
 
   it('throws on a key that is not in the alias map', () => {
     expect(() =>
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         account: 'sfctest0',
         notARealOption: 'x',
       }),
@@ -70,12 +76,12 @@ describe('normalizeConnectionOptions', () => {
   });
 
   it('returns an empty object for empty input', () => {
-    expect(normalizeConnectionOptions({})).toEqual({});
+    expect(toCoreConnectionOptions({})).toEqual({});
   });
 
   it('should map sessionToken and masterToken onto the core session-token keys', () => {
     expect(
-      normalizeConnectionOptions({
+      toCoreConnectionOptions({
         sessionToken: 'session',
         masterToken: 'master',
       }),
