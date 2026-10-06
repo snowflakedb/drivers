@@ -511,9 +511,9 @@ jobs:
       # test failures are still readable in cargo's own output.
       #
       # The generated lcov.info is intentionally not uploaded from GHA; coverage
-      # reporting is owned by the dedicated Jenkins coverage pipeline
-      # (ci/Jenkinsfile.coverage), which surfaces results as Jenkins build status
-      # + archived artifacts — no external upload.
+      # reporting is owned by the dedicated internal Jenkins coverage pipeline,
+      # which surfaces results as Jenkins build status + archived artifacts —
+      # no external upload.
       - name: Run tests with coverage
         id: run_rust_tests
         continue-on-error: ${{ github.event_name == 'merge_group' }}
