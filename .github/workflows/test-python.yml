@@ -476,7 +476,22 @@ jobs:
           arch: x86_64
 
       - name: Install Hatch
-        run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
+        shell: bash
+        # uv's default 30s HTTP timeout flakes on the virtualenv wheel
+        # download (SNOW-4223758); raise it and retry on transient failures.
+        run: &setup_env |
+          export UV_HTTP_TIMEOUT=120
+          for attempt in 1 2 3; do
+            if uv tool install hatch --with "virtualenv<21.0.0"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "uv tool install hatch exhausted 3 attempts" >&2
+              exit 1
+            fi
+            echo "uv tool install hatch failed (attempt ${attempt}/3); retrying..." >&2
+            sleep $((15 * attempt))
+          done
 
       - name: Install snowflake ud driver from wheel (Linux/macOS)
         if: runner.os != 'Windows' && matrix.wheel_artifact
@@ -785,6 +800,7 @@ jobs:
         shell: bash
 
       - name: Install Hatch
+        shell: bash
         run: *setup_env
 
       - name: Run reference integration tests
@@ -971,6 +987,7 @@ jobs:
           path: ${{ github.workspace }}/reference-results
 
       - name: Install Hatch
+        shell: bash
         run: *setup_env
 
       - name: Compare integration test results
