@@ -3,6 +3,9 @@
 
 #include <picojson.h>
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <optional>
@@ -92,10 +95,8 @@ class WiremockClient {
   }
 
   void add_catch_all() {
-    auto tmp = tmp_file("catch_all");
-    {
-      std::ofstream f(tmp);
-      f << R"({
+    post_admin_ok("/__admin/mappings",
+                  R"({
         "request": {"method": "ANY", "urlPattern": ".*"},
         "response": {
           "status": 200,
@@ -103,37 +104,17 @@ class WiremockClient {
           "jsonBody": {"success": true, "data": {}}
         },
         "priority": 999
-      })";
-    }
-    std::string cmd = curl_post("/__admin/mappings", tmp) + platform::null_redirect();
-    if (std::system(cmd.c_str()) != 0) {
-      std::filesystem::remove(tmp);
-      throw std::runtime_error("Failed to add WireMock catch-all mapping");
-    }
-    std::filesystem::remove(tmp);
+      })",
+                  "catch_all", "Failed to add WireMock catch-all mapping");
   }
 
   int get_request_count(const std::string& method, const std::string& url_path) const {
     std::string body = R"({"method":")" + method + R"(","urlPath":")" + url_path + R"("})";
-
-    auto tmp = tmp_file("request_count");
-    {
-      std::ofstream f(tmp);
-      f << body;
-    }
-    std::string cmd = curl_post("/__admin/requests/count", tmp);
-    std::string response = platform::exec_command(cmd);
-    std::filesystem::remove(tmp);
-
-    picojson::value json;
-    std::string err = picojson::parse(json, response);
-    if (!err.empty() || !json.is<picojson::object>()) {
-      throw std::runtime_error("WireMock count response parse error: " + err + " | body: " + response);
-    }
+    picojson::value json = post_admin_json("/__admin/requests/count", body, "request_count");
     const auto& obj = json.get<picojson::object>();
     auto it = obj.find("count");
     if (it == obj.end() || !it->second.is<double>()) {
-      throw std::runtime_error("WireMock count response missing 'count' field: " + response);
+      throw std::runtime_error("WireMock count response missing 'count' field");
     }
     return static_cast<int>(it->second.get<double>());
   }
@@ -141,21 +122,7 @@ class WiremockClient {
   /// Find requests matching a URL path pattern and return their bodies as parsed JSON.
   std::vector<picojson::value> find_requests(const std::string& url_path_pattern) const {
     std::string body = R"({"urlPathPattern":")" + url_path_pattern + R"("})";
-
-    auto tmp = tmp_file("find_requests");
-    {
-      std::ofstream f(tmp);
-      f << body;
-    }
-    std::string cmd = curl_post("/__admin/requests/find", tmp);
-    std::string response = platform::exec_command(cmd);
-    std::filesystem::remove(tmp);
-
-    picojson::value json;
-    std::string err = picojson::parse(json, response);
-    if (!err.empty() || !json.is<picojson::object>()) {
-      throw std::runtime_error("WireMock find_requests parse error: " + err + " | body: " + response);
-    }
+    picojson::value json = post_admin_json("/__admin/requests/find", body, "find_requests");
 
     std::vector<picojson::value> results;
     const auto& obj = json.get<picojson::object>();
@@ -204,28 +171,77 @@ class WiremockClient {
   std::string admin_url(const std::string& path) const { return "http://localhost:" + std::to_string(port_) + path; }
 
   std::filesystem::path tmp_file(const std::string& label) const {
-    return std::filesystem::temp_directory_path() / ("wm_" + label + "_" + std::to_string(port_) + ".json");
+    static std::atomic<uint64_t> seq{0};
+    return std::filesystem::temp_directory_path() /
+           ("wm_" + label + "_" + std::to_string(port_) + "_" +
+            std::to_string(seq.fetch_add(1, std::memory_order_relaxed)) + ".json");
   }
 
   std::string curl_post(const std::string& endpoint, const std::filesystem::path& data_file) const {
-    return "curl -s -X POST " + admin_url(endpoint) +
+    return "curl -s --max-time 5 -X POST " + admin_url(endpoint) +
            " -H \"Content-Type: application/json\""
            " --data-binary \"@" +
            data_file.string() + "\"";
   }
 
+  /// POST JSON to a WireMock admin endpoint and parse the object response.
+  /// `curl -s` can return an empty body under `ctest -j` (connection reset while
+  /// many WireMock JVMs are running); retry that the same way `init()` retries
+  /// port races. Unique `tmp_file` names keep concurrent `find_requests` from
+  /// clobbering one another.
+  picojson::value post_admin_json(const std::string& endpoint, const std::string& body,
+                                  const std::string& label) const {
+    constexpr int kMaxAttempts = 5;
+    std::string last_err;
+    std::string last_response;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+      auto tmp = tmp_file(label);
+      {
+        std::ofstream f(tmp);
+        f << body;
+      }
+      std::string response = platform::exec_command(curl_post(endpoint, tmp));
+      std::filesystem::remove(tmp);
+
+      picojson::value json;
+      std::string err = picojson::parse(json, response);
+      if (err.empty() && json.is<picojson::object>()) {
+        return json;
+      }
+      last_err = err;
+      last_response = response;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50 * attempt));
+    }
+    throw std::runtime_error("WireMock " + label + " parse error: " + last_err + " | body: " + last_response);
+  }
+
+  /// POST JSON to a WireMock admin endpoint and require curl success.
+  /// Mapping uploads ignore the response body, so they cannot use
+  /// `post_admin_json`; they still hit the same empty/reset failures under
+  /// `ctest -j`, and `--max-time 5` turns a hung admin POST into a non-zero
+  /// curl exit. Retry those the same way `init()` retries port races.
+  void post_admin_ok(const std::string& endpoint, const std::string& body, const std::string& label,
+                     const std::string& error_msg) const {
+    constexpr int kMaxAttempts = 5;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+      auto tmp = tmp_file(label);
+      {
+        std::ofstream f(tmp);
+        f << body;
+      }
+      std::string cmd = curl_post(endpoint, tmp) + platform::null_redirect();
+      int rc = std::system(cmd.c_str());
+      std::filesystem::remove(tmp);
+      if (rc == 0) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50 * attempt));
+    }
+    throw std::runtime_error(error_msg);
+  }
+
   void post_mapping(const std::string& body, const std::string& source_name) {
-    auto tmp = tmp_file("mapping");
-    {
-      std::ofstream f(tmp);
-      f << body;
-    }
-    std::string cmd = curl_post("/__admin/mappings", tmp) + platform::null_redirect();
-    int rc = std::system(cmd.c_str());
-    std::filesystem::remove(tmp);
-    if (rc != 0) {
-      throw std::runtime_error("Failed to add WireMock mapping: " + source_name);
-    }
+    post_admin_ok("/__admin/mappings", body, "mapping", "Failed to add WireMock mapping: " + source_name);
   }
 
   static std::filesystem::path wiremock_mappings_dir() {

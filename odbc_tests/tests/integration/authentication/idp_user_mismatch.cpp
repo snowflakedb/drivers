@@ -2,7 +2,6 @@
 #include <sqlext.h>
 
 #include <string>
-#include <thread>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
@@ -44,14 +43,12 @@ TEST_CASE("should reject external browser login when the IdP user differs from t
   auto conn_str = external_browser_test::get_external_browser_connection_string(wm, "connection_user");
   std::string token = "browser_sso_token_mismatched_user";
 
-  std::thread callback_thread([&wm, &token]() { external_browser_test::simulate_browser_callback(wm, token); });
-
   auto env = Connection::initEnv();
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
-                                   SQL_DRIVER_NOPROMPT);
-
-  callback_thread.join();
+  SQLRETURN ret = external_browser_test::connect_with_browser_callback(wm, token, [&] {
+    return SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                            SQL_DRIVER_NOPROMPT);
+  });
 
   // Then the connection is rejected under the GS code for the mismatch
   REQUIRE(ret == SQL_ERROR);

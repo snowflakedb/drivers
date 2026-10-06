@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
-#include <thread>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
@@ -22,8 +21,8 @@
 #include "test_setup.hpp"
 
 using Catch::Matchers::ContainsSubstring;
+using external_browser_test::connect_with_browser_callback;
 using external_browser_test::get_external_browser_connection_string;
-using external_browser_test::simulate_browser_callback;
 
 // =============================================================================
 // Happy Path
@@ -47,14 +46,12 @@ TEST_CASE("should login with external browser using simulated callback", "[exter
   std::string token = "browser_sso_token_12345";
   auto conn_str = get_external_browser_connection_string(wm);
 
-  std::thread callback_thread([&wm, &token]() { simulate_browser_callback(wm, token); });
-
   auto env = Connection::initEnv();
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
-                                   SQL_DRIVER_NOPROMPT);
-
-  callback_thread.join();
+  SQLRETURN ret = connect_with_browser_callback(wm, token, [&] {
+    return SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                            SQL_DRIVER_NOPROMPT);
+  });
 
   // Then Login is successful
   REQUIRE_ODBC(ret, dbc);
@@ -217,14 +214,12 @@ TEST_CASE("should fail when login request is rejected after browser callback", "
   std::string token = "browser_sso_token_rejected";
   auto conn_str = get_external_browser_connection_string(wm);
 
-  std::thread callback_thread([&wm, &token]() { simulate_browser_callback(wm, token); });
-
   auto env = Connection::initEnv();
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
-                                   SQL_DRIVER_NOPROMPT);
-
-  callback_thread.join();
+  SQLRETURN ret = connect_with_browser_callback(wm, token, [&] {
+    return SQLDriverConnect(dbc.getHandle(), nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                            SQL_DRIVER_NOPROMPT);
+  });
 
   // Then Connection fails with login error
   REQUIRE(ret == SQL_ERROR);

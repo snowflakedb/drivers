@@ -85,11 +85,17 @@ static void simulate_browser_callback_nth(const WiremockClient& wm, const std::s
   auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (std::chrono::steady_clock::now() < deadline) {
     std::vector<picojson::value> requests;
-    if (wm_mutex) {
-      std::lock_guard<std::mutex> lock(*wm_mutex);
-      requests = wm.find_requests("/session/authenticator-request.*");
-    } else {
-      requests = wm.find_requests("/session/authenticator-request.*");
+    try {
+      if (wm_mutex) {
+        std::lock_guard<std::mutex> lock(*wm_mutex);
+        requests = wm.find_requests("/session/authenticator-request.*");
+      } else {
+        requests = wm.find_requests("/session/authenticator-request.*");
+      }
+    } catch (const std::runtime_error&) {
+      // Transient empty WireMock admin body under ctest -j. Keep polling.
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
     }
     if (requests.size() > n) {
       const auto& req_obj = requests[n].get<picojson::object>();

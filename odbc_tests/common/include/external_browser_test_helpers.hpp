@@ -15,10 +15,13 @@
 
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "WiremockClient.hpp"
 #include "test_setup.hpp"
@@ -72,7 +75,14 @@ inline std::string get_external_browser_connection_string(const WiremockClient& 
 inline void simulate_browser_callback(const WiremockClient& wm, const std::string& token, int timeout_ms = 10000) {
   auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (std::chrono::steady_clock::now() < deadline) {
-    auto requests = wm.find_requests("/session/authenticator-request.*");
+    std::vector<picojson::value> requests;
+    try {
+      requests = wm.find_requests("/session/authenticator-request.*");
+    } catch (const std::runtime_error&) {
+      // Transient empty WireMock admin body under ctest -j. Keep polling.
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      continue;
+    }
     if (!requests.empty()) {
       const auto& req_obj = requests[0].get<picojson::object>();
       auto body_it = req_obj.find("body");
@@ -125,6 +135,34 @@ inline void simulate_browser_callback(const WiremockClient& wm, const std::strin
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
   throw std::runtime_error("authenticator-request never arrived at WireMock");
+}
+
+/// Run `simulate_browser_callback` on a thread, then `connect` on this one.
+/// Join is built into the helper so a callback failure is always rethrown as a
+/// Catch2 error instead of `std::terminate` (SIGABRT) from an uncaught
+/// exception on `std::thread`, without a throwing destructor or a join() that
+/// callers can forget.
+template <typename ConnectFn>
+auto connect_with_browser_callback(const WiremockClient& wm, const std::string& token, ConnectFn&& connect) {
+  std::exception_ptr callback_ex;
+  std::thread callback_thread([&wm, token, &callback_ex]() {
+    try {
+      simulate_browser_callback(wm, token);
+    } catch (...) {
+      callback_ex = std::current_exception();
+    }
+  });
+  struct JoinGuard {
+    std::thread& thread;
+    ~JoinGuard() {
+      if (thread.joinable()) thread.join();
+    }
+  } join_guard{callback_thread};
+
+  auto ret = std::forward<ConnectFn>(connect)();
+  callback_thread.join();
+  if (callback_ex) std::rethrow_exception(callback_ex);
+  return ret;
 }
 
 }  // namespace external_browser_test
