@@ -379,13 +379,13 @@ mod tests {
         );
     }
 
-    /// An encrypted key in the format Snowflake documents (`-v2 des3`) must
-    /// produce the same JWT as its unencrypted equivalent.
+    /// PBES2 3DES (`openssl pkcs8 -topk8 -v2 des3`) unwraps to the same key as
+    /// the unencrypted PKCS#8 on a standard build. A `fips-tls` build rejects
+    /// that cipher before signing.
     #[test]
     fn encrypted_key_produces_the_same_issuer_as_unencrypted() {
         let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
         let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
-        let plain = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
         let encrypted = String::from_utf8(
             pkey.private_key_to_pem_pkcs8_passphrase(
                 openssl::symm::Cipher::des_ede3_cbc(),
@@ -395,22 +395,42 @@ mod tests {
         )
         .unwrap();
 
-        let iss_of = |pem: &str, pass: Option<&str>| -> String {
-            let token = generate_jwt_token("acct", "user", pem, pass).unwrap();
-            let claims: serde_json::Value = serde_json::from_slice(
-                &URL_SAFE_NO_PAD
-                    .decode(token.split('.').nth(1).unwrap())
-                    .unwrap(),
-            )
-            .unwrap();
-            claims["iss"].as_str().unwrap().to_string()
-        };
-
-        assert_eq!(
-            iss_of(&plain, None),
-            iss_of(&encrypted, Some(PASSPHRASE)),
-            "unwrapping must recover the identical key"
-        );
+        #[cfg(not(feature = "fips-tls"))]
+        {
+            let plain = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
+            let iss_of = |pem: &str, pass: Option<&str>| -> String {
+                let token = generate_jwt_token("acct", "user", pem, pass).unwrap();
+                let claims: serde_json::Value = serde_json::from_slice(
+                    &URL_SAFE_NO_PAD
+                        .decode(token.split('.').nth(1).unwrap())
+                        .unwrap(),
+                )
+                .unwrap();
+                claims["iss"].as_str().unwrap().to_string()
+            };
+            assert_eq!(
+                iss_of(&plain, None),
+                iss_of(&encrypted, Some(PASSPHRASE)),
+                "unwrapping must recover the identical key"
+            );
+        }
+        #[cfg(feature = "fips-tls")]
+        {
+            let err = generate_jwt_token("acct", "user", &encrypted, Some(PASSPHRASE))
+                .expect_err("fips-tls refuses 3DES");
+            match err {
+                AuthError::InvalidPrivateKeyFormat { source, .. } => {
+                    assert!(
+                        matches!(
+                            source,
+                            crate::crypto::private_key::PrivateKeyError::TripleDesEncrypted { .. }
+                        ),
+                        "got: {source}"
+                    );
+                }
+                other => panic!("expected invalid private key, got: {other:?}"),
+            }
+        }
     }
 
     #[test]

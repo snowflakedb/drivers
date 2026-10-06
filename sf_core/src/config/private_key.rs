@@ -325,7 +325,7 @@ mod tests {
         const PASS: &str = "correct horse battery staple";
         let pkey = PKey::from_rsa(Rsa::generate(2048).expect("rsa")).expect("pkey");
         let der = pkey
-            .private_key_to_pkcs8_passphrase(openssl::symm::Cipher::des_ede3_cbc(), PASS.as_bytes())
+            .private_key_to_pkcs8_passphrase(openssl::symm::Cipher::aes_256_cbc(), PASS.as_bytes())
             .expect("encrypted der");
 
         let settings = settings_with(&[("private_key", Setting::Bytes(der))]);
