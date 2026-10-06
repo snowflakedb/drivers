@@ -32,7 +32,9 @@ import java.sql.Statement;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -237,6 +239,32 @@ class SnowflakeConnectionImplTest {
       conn.close();
 
       verify(mockCoreApi, never()).statementRelease(any());
+    }
+
+    @Test
+    void shouldReleaseDroppedStatementWhileConnectionStaysOpen() throws Exception {
+      StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
+      when(mockCoreApi.statementNew(any()))
+          .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
+      CountDownLatch released = new CountDownLatch(1);
+      when(mockCoreApi.statementRelease(stmtHandle))
+          .thenAnswer(
+              invocation -> {
+                released.countDown();
+                return StatementReleaseResponse.getDefaultInstance();
+              });
+
+      try (Connection conn = createConnection()) {
+        conn.createStatement();
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (released.getCount() > 0 && System.nanoTime() < deadline) {
+          System.gc();
+          released.await(100, TimeUnit.MILLISECONDS);
+        }
+        assertEquals(0, released.getCount());
+        assertFalse(conn.isClosed());
+      }
     }
   }
 

@@ -30,10 +30,13 @@ import java.sql.SQLXML;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -103,7 +106,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private static final int STREAM_CHUNK_SIZE = 8 * 1024 * 1024;
 
   private final AtomicBoolean closed = new AtomicBoolean(false);
-  private final Set<Statement> openStatements = ConcurrentHashMap.newKeySet();
+  private final Set<Statement> openStatements =
+      Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
   private final Set<ChunkedDownloadInputStream> openDownloadStreams = ConcurrentHashMap.newKeySet();
   private final CoreDriverApi coreDriverApi;
   private final DatabaseHandle databaseHandle;
@@ -365,7 +369,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   }
 
   private void closeOpenStatements() {
-    for (Statement stmt : openStatements) {
+    // Snapshot: statement.close() removes itself from openStatements during the loop.
+    for (Statement stmt : new ArrayList<>(openStatements)) {
       try {
         if (!stmt.isClosed()) {
           stmt.close();

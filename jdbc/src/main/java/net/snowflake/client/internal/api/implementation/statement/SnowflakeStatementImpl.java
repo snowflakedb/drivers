@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -62,7 +62,8 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
 
   protected long currentUpdateCount = NO_UPDATE_COUNT;
   protected String queryId;
-  protected final Set<InternalResultSet> openResultSets = ConcurrentHashMap.newKeySet();
+  protected final Set<InternalResultSet> openResultSets =
+      Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
   private final StatementBatch batch = new StatementBatch();
   /** Per-batch-entry query IDs collected during {@link #executeBatch()}. */
   private final List<String> batchQueryIds = new ArrayList<>();
@@ -309,7 +310,8 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
 
   private void clearExecutionState() {
     closeCurrentResultSet();
-    for (InternalResultSet resultSet : openResultSets) {
+    // Snapshot: resultSet.close() removes itself from openResultSets during the loop.
+    for (InternalResultSet resultSet : new ArrayList<>(openResultSets)) {
       closeResultSet(resultSet);
     }
     openResultSets.clear();
@@ -602,7 +604,8 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
       closeCurrentResultSet();
     }
     if (current == Statement.CLOSE_ALL_RESULTS) {
-      for (InternalResultSet resultSet : openResultSets) {
+      // Snapshot: resultSet.close() removes itself from openResultSets during the loop.
+      for (InternalResultSet resultSet : new ArrayList<>(openResultSets)) {
         closeResultSet(resultSet);
       }
       openResultSets.clear();

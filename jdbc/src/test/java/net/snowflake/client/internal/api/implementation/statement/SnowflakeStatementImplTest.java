@@ -3,6 +3,8 @@ package net.snowflake.client.internal.api.implementation.statement;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,15 +16,20 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.lang.ref.WeakReference;
 import java.sql.BatchUpdateException;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
+import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -132,6 +139,28 @@ public class SnowflakeStatementImplTest {
       released.await(100, TimeUnit.MILLISECONDS);
     }
     assertEquals(0, released.getCount());
+  }
+
+  @Test
+  void shouldNotRetainPreviousResultSetDroppedByCallerWhileStatementStaysOpen() throws Exception {
+    when(mockCoreApi.statementExecuteQuery(any(), isNull())).thenReturn(insertResponse(1L));
+    SnowflakeResultSetMetaDataImpl metaData = mock(SnowflakeResultSetMetaDataImpl.class);
+    when(metaData.getColumnNames()).thenReturn(Collections.emptyList());
+    SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi);
+
+    WeakReference<InternalResultSet> previous = installCurrentResultSet(stmt, metaData);
+    stmt.executeUpdate("INSERT INTO t VALUES (1)");
+    WeakReference<InternalResultSet> current = installCurrentResultSet(stmt, metaData);
+
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (previous.get() != null && System.nanoTime() < deadline) {
+      System.gc();
+      Thread.sleep(100);
+    }
+
+    assertNull(previous.get(), "a result set held only by openResultSets must be collectable");
+    assertNotNull(current.get(), "the current result set must stay reachable");
+    assertFalse(stmt.isClosed());
   }
 
   @Test
@@ -302,6 +331,13 @@ public class SnowflakeStatementImplTest {
     DriverException error =
         DriverException.newBuilder().setMessage("server-side failure").setQueryId(queryId).build();
     return new CoreException(error, null);
+  }
+
+  private static WeakReference<InternalResultSet> installCurrentResultSet(
+      SnowflakeStatementImpl stmt, SnowflakeResultSetMetaDataImpl metaData) {
+    InternalResultSet resultSet = ResultSetFactory.createEmpty(stmt, metaData, false);
+    stmt.setCurrentResultSet(resultSet);
+    return new WeakReference<>(resultSet);
   }
 
   private static ExecuteQueryResponse insertResponse(long rowsAffected) {
