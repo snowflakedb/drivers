@@ -2,7 +2,7 @@ package net.snowflake.client.internal.api.implementation.connection;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.internal.api.implementation.exception.DriverRuntimeException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
@@ -23,22 +23,24 @@ class ChunkedDownloadInputStream extends InputStream {
   private final CoreDriverApi coreDriverApi;
   private final DownloadStreamHandle downloadHandle;
   private final int streamChunkSize;
-  private final Set<ChunkedDownloadInputStream> openDownloadStreams;
+  // Keeps the connection reachable while the stream is open: collecting the connection releases
+  // its core handle, and core then aborts this download. Cleared on close.
+  private SnowflakeConnectionImpl connection;
 
   private byte[] buffer = new byte[0];
   private int bufferPos;
   private boolean eof;
-  private boolean closed;
+  private final AtomicBoolean closed = new AtomicBoolean(false);
 
   ChunkedDownloadInputStream(
       CoreDriverApi coreDriverApi,
       DownloadStreamHandle downloadHandle,
       int streamChunkSize,
-      Set<ChunkedDownloadInputStream> openDownloadStreams) {
+      SnowflakeConnectionImpl connection) {
     this.coreDriverApi = coreDriverApi;
     this.downloadHandle = downloadHandle;
     this.streamChunkSize = streamChunkSize;
-    this.openDownloadStreams = openDownloadStreams;
+    this.connection = connection;
   }
 
   @Override
@@ -80,7 +82,7 @@ class ChunkedDownloadInputStream extends InputStream {
   @Override
   public void close() throws IOException {
     logger.info("downloadStream: close entry");
-    if (closed) {
+    if (!closed.compareAndSet(false, true)) {
       return;
     }
     try {
@@ -88,8 +90,9 @@ class ChunkedDownloadInputStream extends InputStream {
     } catch (DriverRuntimeException e) {
       throw new IOException("Failed to close download stream: " + e.getMessage(), e);
     } finally {
-      closed = true;
-      openDownloadStreams.remove(this);
+      SnowflakeConnectionImpl owner = connection;
+      connection = null;
+      owner.removeDownloadStream(this);
       logger.info("downloadStream: close exit");
     }
   }

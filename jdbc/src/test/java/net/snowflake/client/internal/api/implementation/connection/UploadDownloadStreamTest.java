@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,9 +25,12 @@ import com.google.protobuf.ByteString;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.connection.DownloadStreamConfig;
 import net.snowflake.client.api.connection.SnowflakeConnection;
 import net.snowflake.client.api.connection.UploadStreamConfig;
@@ -41,6 +45,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamAbortResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionUploadStreamBeginResponse;
@@ -370,6 +375,55 @@ class UploadDownloadStreamTest {
         .connectionDownloadStreamBegin(
             eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(true));
     verify(mockCoreApi).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
+  }
+
+  @Test
+  void shouldKeepConnectionCoreHandleWhileDownloadStreamIsOpenAfterConnectionIsDropped()
+      throws Exception {
+    CountDownLatch released = new CountDownLatch(1);
+    when(mockCoreApi.connectionRelease(CONN_HANDLE))
+        .thenAnswer(
+            invocation -> {
+              released.countDown();
+              return ConnectionReleaseResponse.getDefaultInstance();
+            });
+    byte[] expected = "downloaded content".getBytes();
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenReturn(
+            ConnectionDownloadStreamChunkResponse.newBuilder()
+                .setData(ByteString.copyFrom(expected))
+                .setEof(true)
+                .build());
+    InputStream stream = connection.downloadStream("@my_stage", "data.csv.gz");
+    connection = null;
+    WeakReference<Object> unreachable = new WeakReference<>(new Object());
+
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (unreachable.get() != null && System.nanoTime() < deadline) {
+      System.gc();
+      Thread.sleep(100);
+    }
+
+    assertNull(unreachable.get(), "GC must have run");
+    assertFalse(
+        released.await(500, TimeUnit.MILLISECONDS),
+        "an open download stream must keep the connection");
+    assertArrayEquals(expected, readAllBytes(stream));
+    stream.close();
+    stream = null;
+
+    gcUntilReleasedOrTimeout(released, 10);
+
+    assertEquals(0, released.getCount(), "the connection must be released once nothing holds it");
+  }
+
+  private static void gcUntilReleasedOrTimeout(CountDownLatch released, long seconds)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
+    while (released.getCount() > 0 && System.nanoTime() < deadline) {
+      System.gc();
+      released.await(100, TimeUnit.MILLISECONDS);
+    }
   }
 
   @Test

@@ -107,6 +107,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private final CoreDriverApi coreDriverApi;
   private final DatabaseHandle databaseHandle;
   private final ConnectionHandle connectionHandle;
+  private final CoreHandleCleaner.Cleanable handleCleaner;
   private final ParametersRegistry parametersRegistry;
   private final Telemetry telemetry;
 
@@ -171,6 +172,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.sqlWarnings = sqlWarnings;
       this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
+      this.handleCleaner =
+          CoreHandleCleaner.register(this, handleReleaser(coreDriverApi, connHandle, dbHandle));
     } catch (RuntimeException e) {
       releaseHandlesQuietly(coreDriverApi, connHandle, dbHandle);
       throw e;
@@ -347,13 +350,17 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       logger.debug("Connection close error details", e);
       throw e;
     } finally {
-      releaseHandlesQuietly(coreDriverApi, connectionHandle, databaseHandle);
+      handleCleaner.clean();
     }
   }
 
   @Override
   public void removeStatement(Statement stmt) {
     openStatements.remove(stmt);
+  }
+
+  void removeDownloadStream(ChunkedDownloadInputStream stream) {
+    openDownloadStreams.remove(stream);
   }
 
   private void closeOpenStatements() {
@@ -378,6 +385,11 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       }
     }
     openDownloadStreams.clear();
+  }
+
+  private static Runnable handleReleaser(
+      CoreDriverApi driver, ConnectionHandle connHandle, DatabaseHandle dbHandle) {
+    return () -> releaseHandlesQuietly(driver, connHandle, dbHandle);
   }
 
   private static void releaseHandlesQuietly(
@@ -847,8 +859,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
         throw remapMissingRemoteFile(e, sourceFileName);
       }
       ChunkedDownloadInputStream stream =
-          new ChunkedDownloadInputStream(
-              coreDriverApi, downloadHandle, STREAM_CHUNK_SIZE, openDownloadStreams);
+          new ChunkedDownloadInputStream(coreDriverApi, downloadHandle, STREAM_CHUNK_SIZE, this);
       openDownloadStreams.add(stream);
       return stream;
     } finally {
