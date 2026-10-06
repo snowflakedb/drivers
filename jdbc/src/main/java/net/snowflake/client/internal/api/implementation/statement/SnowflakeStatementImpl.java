@@ -26,6 +26,7 @@ import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.CoreHandleCleaner;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
@@ -50,6 +51,7 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   protected int queryTimeout = 0;
   protected int fetchSize = 0;
   protected StatementHandle statementHandle;
+  private final CoreHandleCleaner.Cleanable handleCleaner;
   protected InternalResultSet currentResultSet;
   /**
    * Cached decorated view of {@link #currentResultSet}, so {@code executeQuery()} and a later
@@ -72,6 +74,18 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
     this.connection = connection;
     this.coreDriverApi = coreDriverApi;
     this.statementHandle = coreDriverApi.statementNew(connection.getHandle()).getStmtHandle();
+    this.handleCleaner =
+        CoreHandleCleaner.register(this, handleReleaser(coreDriverApi, statementHandle));
+  }
+
+  private static Runnable handleReleaser(CoreDriverApi driver, StatementHandle handle) {
+    return () -> {
+      try {
+        driver.statementRelease(handle);
+      } catch (CoreException e) {
+        logger.debug("Error releasing statement handle", e);
+      }
+    };
   }
 
   @Override
@@ -343,11 +357,7 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
       return;
     }
     clearExecutionState();
-    try {
-      coreDriverApi.statementRelease(statementHandle);
-    } catch (CoreException e) {
-      logger.debug("Error releasing statement handle", e);
-    }
+    handleCleaner.clean();
     connection.removeStatement(this);
   }
 
