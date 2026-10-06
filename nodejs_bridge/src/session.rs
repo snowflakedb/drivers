@@ -1,4 +1,4 @@
-use crate::DRIVER;
+use crate::BRIDGE;
 use crate::error::{BridgeError, ConnectionOperation, UnusableConnection};
 use crate::session_params::KnownSessionParameters;
 use sf_core::apis::database_driver_v1::{ApiError, ConnectionInfo, ConnectionUsability};
@@ -19,8 +19,8 @@ impl Handles {
         if self.released.swap(true, Ordering::AcqRel) {
             return;
         }
-        let _ = DRIVER.connection_release(self.connection);
-        let _ = DRIVER.database_release(self.database);
+        let _ = BRIDGE.driver.connection_release(self.connection);
+        let _ = BRIDGE.driver.database_release(self.database);
     }
 }
 
@@ -69,7 +69,11 @@ impl Session {
             if *login_in_flight {
                 return Err(BridgeError::AlreadyConnecting);
             }
-            match DRIVER.connection_is_usable(self.handles.connection).await {
+            match BRIDGE
+                .driver
+                .connection_is_usable(self.handles.connection)
+                .await
+            {
                 Ok(ConnectionUsability::Usable) => return Err(BridgeError::AlreadyConnected),
                 Ok(ConnectionUsability::Terminated) | Err(_) => {
                     return Err(BridgeError::ConnectionTerminated);
@@ -103,7 +107,8 @@ impl Session {
 
     pub(crate) async fn is_valid(&self) -> bool {
         match self.ready().await {
-            Ok(ready) => DRIVER
+            Ok(ready) => BRIDGE
+                .driver
                 .connection_heartbeat(ready.connection())
                 .await
                 .unwrap_or(false),
@@ -125,7 +130,8 @@ impl Session {
         if self.unusable().await.is_some() {
             return Ok(None);
         }
-        DRIVER
+        BRIDGE
+            .driver
             .connection_get_info(self.handles.connection)
             .await
             .map(Some)
@@ -157,7 +163,10 @@ impl Session {
                 unusable,
             ));
         }
-        let close = DRIVER.connection_close(self.handles.connection).await;
+        let close = BRIDGE
+            .driver
+            .connection_close(self.handles.connection)
+            .await;
         if close.is_ok() {
             self.handles.release();
         }
@@ -182,17 +191,25 @@ impl Session {
     }
 
     async fn init(&self) -> Result<(), ApiError> {
-        let result = DRIVER
+        let result = BRIDGE
+            .driver
             .connection_init(None, self.handles.connection, self.handles.database)
             .await;
         if result.is_err() {
-            let _ = DRIVER.connection_close(self.handles.connection).await;
+            let _ = BRIDGE
+                .driver
+                .connection_close(self.handles.connection)
+                .await;
         }
         result
     }
 
     async fn unusable(&self) -> Option<UnusableConnection> {
-        match DRIVER.connection_is_usable(self.handles.connection).await {
+        match BRIDGE
+            .driver
+            .connection_is_usable(self.handles.connection)
+            .await
+        {
             Ok(ConnectionUsability::Usable) => None,
             Ok(ConnectionUsability::NeverEstablished) => Some(UnusableConnection::NeverEstablished),
             Ok(ConnectionUsability::Terminated) | Err(_) => Some(UnusableConnection::Terminated),
@@ -205,11 +222,19 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        Session::new(DRIVER.connection_new(), DRIVER.database_new(), false)
+        Session::new(
+            BRIDGE.driver.connection_new(),
+            BRIDGE.driver.database_new(),
+            false,
+        )
     }
 
     fn deferred_session() -> Session {
-        Session::new(DRIVER.connection_new(), DRIVER.database_new(), true)
+        Session::new(
+            BRIDGE.driver.connection_new(),
+            BRIDGE.driver.database_new(),
+            true,
+        )
     }
 
     #[tokio::test]
@@ -225,7 +250,8 @@ mod tests {
     #[tokio::test]
     async fn a_closed_connection_is_terminated() {
         let session = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_close(session.handles.connection)
             .await
             .unwrap();
@@ -239,7 +265,8 @@ mod tests {
     #[tokio::test]
     async fn a_released_handle_is_terminated() {
         let session = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_release(session.handles.connection)
             .unwrap();
 
@@ -263,7 +290,8 @@ mod tests {
     #[tokio::test]
     async fn connecting_a_closed_connection_is_refused() {
         let session = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_close(session.handles.connection)
             .await
             .unwrap();
@@ -277,7 +305,8 @@ mod tests {
     #[tokio::test]
     async fn connecting_after_the_handle_is_gone_does_not_call_init() {
         let session = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_release(session.handles.connection)
             .unwrap();
 
@@ -291,7 +320,8 @@ mod tests {
     async fn an_unusable_session_answers_session_parameters_with_client_defaults() {
         let never_established = session();
         let released = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_release(released.handles.connection)
             .unwrap();
 
@@ -313,7 +343,8 @@ mod tests {
     async fn an_unusable_session_answers_token_info_with_none() {
         let never_established = session();
         let released = session();
-        DRIVER
+        BRIDGE
+            .driver
             .connection_release(released.handles.connection)
             .unwrap();
 

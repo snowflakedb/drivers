@@ -1,5 +1,5 @@
 use super::stream_state::StreamState;
-use crate::DRIVER;
+use crate::BRIDGE;
 use crate::error::BridgeError;
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::spawn;
@@ -73,7 +73,7 @@ impl ResultData {
 
     pub(crate) fn close(&mut self) {
         if let Some(handle) = self.result_set_handle.take() {
-            let _ = DRIVER.result_set_release(handle);
+            let _ = BRIDGE.driver.result_set_release(handle);
         }
     }
 
@@ -86,7 +86,10 @@ impl ResultData {
         self.result_set_handle = Some(info.handle);
         self.result_set_descriptor = info.descriptor;
         self.stream_state = Arc::new(StreamState::new(
-            DRIVER.result_set_get_async_stream(info.handle).await?,
+            BRIDGE
+                .driver
+                .result_set_get_async_stream(info.handle)
+                .await?,
         ));
         Ok(true)
     }
@@ -114,12 +117,15 @@ impl ResultData {
         };
         let (session_params, stream) = async {
             let session_params = KnownSessionParameters::from_connection(conn_handle).await?;
-            let stream = DRIVER.result_set_get_async_stream(info.handle).await?;
+            let stream = BRIDGE
+                .driver
+                .result_set_get_async_stream(info.handle)
+                .await?;
             Ok::<_, BridgeError>((session_params, stream))
         }
         .await
         .inspect_err(|_| {
-            let _ = DRIVER.result_set_release(info.handle);
+            let _ = BRIDGE.driver.result_set_release(info.handle);
         })?;
         Ok(Self {
             session_params: Arc::new(session_params),
@@ -142,7 +148,8 @@ async fn result_set_info(
     conn_handle: Handle,
     query_id: &str,
 ) -> Result<ResultSetInfo, BridgeError> {
-    match DRIVER
+    match BRIDGE
+        .driver
         .connection_get_query_result(None, conn_handle, query_id.to_owned())
         .await?
     {
@@ -212,7 +219,8 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("N", DataType::Int32, false)]));
         let batch =
             RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
-        DRIVER
+        BRIDGE
+            .driver
             .register_arrow_batch_as_result_set(&batch, reqwest::Client::new())
             .unwrap()
     }
@@ -225,7 +233,7 @@ mod tests {
     }
 
     fn is_released(handle: Handle) -> bool {
-        DRIVER.result_set_release(handle).is_err()
+        BRIDGE.driver.result_set_release(handle).is_err()
     }
 
     async fn result_data(conn: Handle) -> (ResultData, Handle) {
@@ -239,29 +247,29 @@ mod tests {
 
     #[tokio::test]
     async fn drop_releases_the_result_set() {
-        let conn = DRIVER.connection_new();
+        let conn = BRIDGE.driver.connection_new();
         let (data, handle) = result_data(conn).await;
 
         drop(data);
 
         assert!(is_released(handle));
-        DRIVER.connection_release(conn).unwrap();
+        BRIDGE.driver.connection_release(conn).unwrap();
     }
 
     #[tokio::test]
     async fn close_releases_the_result_set() {
-        let conn = DRIVER.connection_new();
+        let conn = BRIDGE.driver.connection_new();
         let (mut data, handle) = result_data(conn).await;
 
         data.close();
 
         assert!(is_released(handle));
-        DRIVER.connection_release(conn).unwrap();
+        BRIDGE.driver.connection_release(conn).unwrap();
     }
 
     #[tokio::test]
     async fn close_twice_then_drop_is_a_no_op() {
-        let conn = DRIVER.connection_new();
+        let conn = BRIDGE.driver.connection_new();
         let (mut data, handle) = result_data(conn).await;
         data.close();
         let unrelated = result_set();
@@ -271,13 +279,13 @@ mod tests {
 
         assert!(is_released(handle));
         assert!(!is_released(unrelated.handle));
-        DRIVER.connection_release(conn).unwrap();
+        BRIDGE.driver.connection_release(conn).unwrap();
     }
 
     #[tokio::test]
     async fn open_failure_releases_the_result_set() {
-        let conn = DRIVER.connection_new();
-        DRIVER.connection_release(conn).unwrap();
+        let conn = BRIDGE.driver.connection_new();
+        BRIDGE.driver.connection_release(conn).unwrap();
         let info = result_set();
         let handle = info.handle;
 

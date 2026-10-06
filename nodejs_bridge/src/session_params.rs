@@ -1,4 +1,4 @@
-use crate::DRIVER;
+use crate::BRIDGE;
 use crate::error::BridgeError;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::Setting;
@@ -48,7 +48,10 @@ pub struct KnownSessionParameters {
 
 impl KnownSessionParameters {
     pub(crate) async fn from_connection(conn_handle: Handle) -> Result<Self, BridgeError> {
-        let params = DRIVER.connection_get_all_parameters(conn_handle).await?;
+        let params = BRIDGE
+            .driver
+            .connection_get_all_parameters(conn_handle)
+            .await?;
         Ok(Self::from_parameters(&params))
     }
 
@@ -129,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_connection_without_session_parameters_answers_with_the_client_defaults() {
-        let handle = DRIVER.connection_new();
+        let handle = BRIDGE.driver.connection_new();
 
         let Ok(params) = KnownSessionParameters::from_connection(handle).await else {
             panic!("fresh connection has a parameter map");
@@ -140,13 +143,14 @@ mod tests {
         assert!(!params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 100_000);
 
-        DRIVER.connection_release(handle).unwrap();
+        BRIDGE.driver.connection_release(handle).unwrap();
     }
 
     #[tokio::test]
     async fn a_value_core_knows_wins_over_the_client_default() {
-        let handle = DRIVER.connection_new();
-        DRIVER
+        let handle = BRIDGE.driver.connection_new();
+        BRIDGE
+            .driver
             .connection_set_options(
                 handle,
                 HashMap::from([
@@ -182,13 +186,13 @@ mod tests {
         assert!(params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 64);
 
-        DRIVER.connection_release(handle).unwrap();
+        BRIDGE.driver.connection_release(handle).unwrap();
     }
 
     #[tokio::test]
     async fn a_read_for_a_handle_core_no_longer_knows_fails() {
-        let handle = DRIVER.connection_new();
-        DRIVER.connection_release(handle).unwrap();
+        let handle = BRIDGE.driver.connection_new();
+        BRIDGE.driver.connection_release(handle).unwrap();
 
         assert!(
             KnownSessionParameters::from_connection(handle)

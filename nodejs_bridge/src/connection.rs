@@ -1,4 +1,4 @@
-use crate::DRIVER;
+use crate::BRIDGE;
 use crate::error::{BridgeError, ToJsError, async_to_js};
 use crate::query::QueryStatus;
 use crate::session::Session;
@@ -74,13 +74,13 @@ impl Connection {
         open_external_browser_callback: Option<Function<String, ()>>,
         deferred_init: Option<bool>,
     ) -> Result<Self> {
-        let database_handle = DRIVER.database_new();
-        DRIVER.database_init(database_handle).map_err(|e| {
-            let _ = DRIVER.database_release(database_handle);
+        let database_handle = BRIDGE.driver.database_new();
+        BRIDGE.driver.database_init(database_handle).map_err(|e| {
+            let _ = BRIDGE.driver.database_release(database_handle);
             e.to_js_error(*env)
         })?;
 
-        let conn_handle = DRIVER.connection_new();
+        let conn_handle = BRIDGE.driver.connection_new();
 
         // TODO: temporary conversion, proper options mapping will be done later
         let mut converted_options: HashMap<String, Setting> = options
@@ -104,20 +104,24 @@ impl Connection {
             .transpose()?;
 
         block_on(async {
-            DRIVER
+            BRIDGE
+                .driver
                 .connection_set_options(conn_handle, converted_options, false, None)
                 .await?;
             if !session_parameters.is_empty() {
-                DRIVER
+                BRIDGE
+                    .driver
                     .connection_set_session_parameters(conn_handle, session_parameters)
                     .await?;
             }
             if let Some(opener) = browser_opener {
-                DRIVER
+                BRIDGE
+                    .driver
                     .connection_set_browser_opener(conn_handle, opener)
                     .await?;
             }
-            DRIVER
+            BRIDGE
+                .driver
                 .set_wrapper_identity(
                     conn_handle,
                     WrapperIdentity {
@@ -134,8 +138,8 @@ impl Connection {
             Ok::<_, ApiError>(())
         })
         .map_err(|e| {
-            let _ = DRIVER.connection_release(conn_handle);
-            let _ = DRIVER.database_release(database_handle);
+            let _ = BRIDGE.driver.connection_release(conn_handle);
+            let _ = BRIDGE.driver.database_release(database_handle);
             e.to_js_error(*env)
         })?;
 
@@ -209,7 +213,8 @@ impl Connection {
                         bindings,
                         parameters,
                         async move |stmt, binds| {
-                            DRIVER
+                            BRIDGE
+                                .driver
                                 .statement_execute_async(
                                     Some(&operation_ctx),
                                     stmt,
@@ -236,7 +241,8 @@ impl Connection {
                         bindings,
                         parameters,
                         async move |stmt, binds| {
-                            DRIVER
+                            BRIDGE
+                                .driver
                                 .statement_execute_query(
                                     Some(&operation_ctx),
                                     stmt,
@@ -326,7 +332,8 @@ impl Connection {
         Statement::from_query_result(Some(operation_ctx.clone()), None, async move {
             require_valid_query_id(&query_id)?;
             let ready = session.ready().await?;
-            DRIVER
+            BRIDGE
+                .driver
                 .connection_get_query_result(Some(&operation_ctx), ready.connection(), query_id)
                 .await
                 .map(|result| (ready, result))
@@ -389,16 +396,22 @@ async fn run_new_statement<T>(
         Option<BindingType<'a>>,
     ) -> std::result::Result<T, BridgeError>,
 ) -> std::result::Result<T, BridgeError> {
-    let stmt_handle = DRIVER.statement_new(connection)?;
+    let stmt_handle = BRIDGE.driver.statement_new(connection)?;
     let binding_bytes = bindings.map(|b| (b.format, b.data.into_bytes()));
     let result = async {
-        DRIVER.statement_set_sql_query(stmt_handle, query).await?;
+        BRIDGE
+            .driver
+            .statement_set_sql_query(stmt_handle, query)
+            .await?;
         if let Some(parameters) = parameters {
             let options = parameters
                 .into_iter()
                 .map(|(k, v)| (k, Setting::String(v)))
                 .collect();
-            DRIVER.statement_set_options(stmt_handle, options).await?;
+            BRIDGE
+                .driver
+                .statement_set_options(stmt_handle, options)
+                .await?;
         }
         let bindings = binding_bytes.as_ref().map(|(format, bytes)| {
             let ptr = DataPtr::new(bytes.as_ptr(), bytes.len() as i64);
@@ -410,7 +423,7 @@ async fn run_new_statement<T>(
         run(stmt_handle, bindings).await
     }
     .await;
-    let _ = DRIVER.statement_release(stmt_handle);
+    let _ = BRIDGE.driver.statement_release(stmt_handle);
     result
 }
 
@@ -421,7 +434,8 @@ async fn get_query_status_result(
     require_valid_query_id(query_id)?;
     let ready = session.ready().await?;
     let operation_ctx = OperationCtx::with_own_token();
-    DRIVER
+    BRIDGE
+        .driver
         .connection_get_query_status(Some(&operation_ctx), ready.connection(), query_id)
         .await
         .map_err(BridgeError::from)

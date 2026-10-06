@@ -35,6 +35,29 @@ use napi_derive::napi;
 use sf_core::apis::database_driver_v1::{DatabaseDriverV1, DriverProviders, WrapperPresets};
 use std::sync::LazyLock;
 
+static BRIDGE: LazyLock<Bridge> = LazyLock::new(Bridge::new);
+
+struct Bridge {
+    driver: DatabaseDriverV1,
+}
+
+impl Bridge {
+    fn new() -> Self {
+        // TODO:
+        // Implement proper bidirectional logger with configurable level, as is done by other driver wrappers.
+        let _ = tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+        Self {
+            driver: DatabaseDriverV1::with_providers(DriverProviders {
+                wrapper_presets: WrapperPresets::nodejs(),
+                ..Default::default()
+            }),
+        }
+    }
+}
+
 /// Status of the linked Rustls TLS provider and build flag, not artifact compliance.
 #[napi(object)]
 pub struct TlsStatus {
@@ -50,16 +73,3 @@ pub fn get_tls_status() -> TlsStatus {
         fips_tls_build_enabled: status.fips_tls_build_enabled,
     }
 }
-
-pub(crate) static DRIVER: LazyLock<DatabaseDriverV1> = LazyLock::new(|| {
-    // TODO:
-    // Implement proper bidirectional logger with configurable level,  as is done by other driver wrappers.
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_max_level(tracing::Level::DEBUG)
-        .try_init();
-    DatabaseDriverV1::with_providers(DriverProviders {
-        wrapper_presets: WrapperPresets::nodejs(),
-        ..Default::default()
-    })
-});
