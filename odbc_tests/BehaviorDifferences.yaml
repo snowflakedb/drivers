@@ -3592,3 +3592,31 @@ behavior_differences:
     description: |
       Both drivers reject default parameter values during direct execution, but
       the new driver uses the specific invalid-use-of-default SQLSTATE.
+
+  168:
+    name: "Unbindable published vendor types are refused at bind instead of at execute"
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      SQLBindParameter accepts ParameterType 2003 (SQL_SF_ARRAY), 2004
+      (SQL_SF_OBJECT), and 2005 (SQL_SF_VARIANT) and returns SQL_SUCCESS. The
+      execute-time bind dispatch has no arm for those codes, so SQLExecute
+      returns SQL_ERROR with SQLSTATE HY000 and native error 18 ("Unsupported
+      data type for bind variable"). ParameterType SQL_SF_VECTOR (2006) is not among
+      the custom bind types 3.x accepts, so SQLBindParameter returns SQL_ERROR
+      with SQLSTATE HY004.
+    new_driver_behavior: |
+      SQLBindParameter returns SQL_ERROR with SQLSTATE HYC00 (optional feature
+      not implemented) for 2003, 2004, 2005, and 2006. A code that no
+      SQLGetTypeInfo row reports still returns HY004.
+    description: |
+      Neither driver can bind a value of these types: the bind protocol has no
+      logical type for the semi-structured types or for VECTOR, and the
+      supported route is a SQL_VARCHAR bind with the coercion in the SQL
+      (PARSE_JSON(?), TO_ARRAY(?), TO_OBJECT(?)). The difference is where the
+      attempt fails and what it reports. The new driver fails at bind rather
+      than at execute, and distinguishes a type it publishes but cannot bind
+      (HYC00) from a type it does not recognise at all (HY004).

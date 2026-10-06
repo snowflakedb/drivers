@@ -11,6 +11,10 @@
 - Added the Snowflake vendor SQL data type macros (`SQL_SF_TIMESTAMP_LTZ`, `SQL_SF_TIMESTAMP_TZ`, `SQL_SF_TIMESTAMP_NTZ`, `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`) to the public `sf_odbc.h`, so applications written against the 3.x header compile without redefining them. (snowflakedb/drivers#2366)
 - Added `SQL_SF_VECTOR` (2006) to the public `sf_odbc.h` so applications can name the VECTOR type that `SQLGetTypeInfo` already reports. Binding VECTOR remains unsupported. (snowflakedb/drivers#2400)
 
+Bug fixes:
+
+- Fixed `SQLBindParameter` and IPD `SQLSetDescRec` to return SQLSTATE `HYC00` (optional feature not implemented) for the Snowflake vendor type codes that `SQLGetTypeInfo` reports but the driver cannot bind: `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`, and `SQL_SF_VECTOR`. `SQLBindParameter` previously returned `HY004`; IPD `SQLSetDescRec` previously returned `HY021`. Bind semi-structured values as `SQL_VARCHAR` and coerce in the SQL with `PARSE_JSON(?)`, `TO_ARRAY(?)`, or `TO_OBJECT(?)`. A type code the catalog does not report still returns `HY004` from `SQLBindParameter`. (snowflakedb/drivers#2369)
+
 ## v4.0.0
 
 Breaking changes:

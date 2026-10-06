@@ -155,6 +155,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("SQL data type {value} is not supported as a parameter type"))]
+    UnsupportedSqlDataType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
         number: sql::SmallInt,
@@ -735,6 +742,7 @@ impl OdbcError {
             OdbcError::InvalidApplicationBufferType { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidParameterType { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidSqlDataType { .. } => ErrorSource::ApiMisuse,
+            OdbcError::UnsupportedSqlDataType { .. } => ErrorSource::Unsupported,
             OdbcError::InvalidRecordNumber { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidDescriptorIndex { .. } => ErrorSource::ApiMisuse,
             OdbcError::InvalidPrecisionOrScale { .. } => ErrorSource::ApiMisuse,
@@ -981,6 +989,7 @@ impl OdbcError {
             OdbcError::ShowKeysInvalidKeySeq { .. } => SqlState::GeneralError,
             OdbcError::ProcedureMetadataParse { .. } => SqlState::GeneralError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::UnsupportedSqlDataType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::GeneralError,

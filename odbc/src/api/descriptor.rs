@@ -1696,12 +1696,18 @@ fn set_ipd_rec(
         return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
-    crate::api::SqlType::try_from(type_).map_err(|_| {
-        crate::api::error::InconsistentDescriptorInfoSnafu {
-            reason: format!("invalid SQL data type {type_}"),
-        }
-        .build()
-    })?;
+    if let Err(error) = crate::api::SqlType::try_from(type_) {
+        return match error {
+            crate::api::OdbcError::UnsupportedSqlDataType { .. } => Err(error),
+            crate::api::OdbcError::InvalidSqlDataType { .. } => {
+                crate::api::error::InconsistentDescriptorInfoSnafu {
+                    reason: format!("invalid SQL data type {type_}"),
+                }
+                .fail()
+            }
+            other => Err(other),
+        };
+    }
 
     let param_number = rec_number as u16;
     let record = desc.records.entry(param_number).or_default();
@@ -1903,5 +1909,43 @@ impl crate::api::ApdDescriptor {
             bind_offset_ptr: self.bind_offset_ptr,
             array_status_ptr: self.array_status_ptr,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_ipd_rec;
+    use crate::api::{IpdDescriptor, OdbcError, SqlState};
+
+    #[test]
+    fn ipd_set_desc_rec_returns_hyc00_for_published_unbindable_types() {
+        for type_ in [2003_i16, 2004, 2005, 2006] {
+            let mut ipd = IpdDescriptor::new();
+            let error = set_ipd_rec(&mut ipd, 1, type_, 0, 0).expect_err("must not set");
+            assert!(
+                matches!(error, OdbcError::UnsupportedSqlDataType { value, .. } if value == type_),
+                "type = {type_}, error = {error:?}"
+            );
+            assert_eq!(
+                error.to_sql_state(),
+                SqlState::OptionalFeatureNotImplemented
+            );
+            assert!(ipd.records.is_empty());
+        }
+    }
+
+    #[test]
+    fn ipd_set_desc_rec_keeps_hy021_for_unrecognised_type() {
+        let mut ipd = IpdDescriptor::new();
+        let error = set_ipd_rec(&mut ipd, 1, 2007, 0, 0).expect_err("must not set");
+        assert!(matches!(
+            error,
+            OdbcError::InconsistentDescriptorInfo { .. }
+        ));
+        assert_eq!(
+            error.to_sql_state(),
+            SqlState::InconsistentDescriptorInformation
+        );
+        assert!(ipd.records.is_empty());
     }
 }

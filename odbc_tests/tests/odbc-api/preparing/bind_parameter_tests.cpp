@@ -13,6 +13,7 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
+#include "sf_odbc.h"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -270,6 +271,87 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid Par
   SQLRETURN ret =
       SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, 8888, 0, 0, &param_value, 0, &indicator);
   REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HYC00 for published but unbindable vendor types",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
+  char param_value[] = "{\"a\":1}";
+  SQLLEN indicator = SQL_NTS;
+  const SQLSMALLINT parameter_types[] = {SQL_SF_ARRAY, SQL_SF_OBJECT, SQL_SF_VARIANT};
+  for (SQLSMALLINT parameter_type : parameter_types) {
+    INFO("ParameterType = " << parameter_type);
+    // When SQLBindParameter is called with a vendor ParameterType that SQLGetTypeInfo publishes
+    SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, parameter_type, 0, 0, param_value,
+                                     0, &indicator);
+    NEW_DRIVER_ONLY("BD#168") {
+      // Then the new driver reports HYC00
+      REQUIRE_EXPECTED_ERROR(ret, "HYC00", stmt_handle(), SQL_HANDLE_STMT);
+    }
+    OLD_DRIVER_ONLY("BD#168") {
+      // Then the old driver accepts the bind and fails at execute with HY000
+      REQUIRE(ret == SQL_SUCCESS);
+      ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+      REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+      ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+      REQUIRE(ret == SQL_SUCCESS);
+    }
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HYC00 for SQL_SF_VECTOR",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
+  char param_value[] = "[1,2,3]";
+  SQLLEN indicator = SQL_NTS;
+  // When SQLBindParameter is called with SQL_SF_VECTOR
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_SF_VECTOR, 0, 0, param_value, 0, &indicator);
+  NEW_DRIVER_ONLY("BD#168") {
+    // Then the new driver reports HYC00 because SQLGetTypeInfo publishes SQL_SF_VECTOR
+    REQUIRE_EXPECTED_ERROR(ret, "HYC00", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  OLD_DRIVER_ONLY("BD#168") {
+    // Then the old driver rejects SQL_SF_VECTOR at bind; it is not a custom bind type
+    REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT);
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for unpublished vendor-adjacent ParameterType",
+                 "[odbc-api][bindparameter][preparing][error]") {
+  // Given an active statement on the default DSN
+  SQLINTEGER param_value = 1;
+  SQLLEN indicator = 0;
+  // When SQLBindParameter is called with ParameterType 2007
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, 2007, 0, 0, &param_value, 0, &indicator);
+  // Then HY004 still marks a type the catalog does not report
+  REQUIRE_EXPECTED_ERROR(ret, "HY004", stmt_handle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Semi-structured values bind as SQL_VARCHAR",
+                 "[odbc-api][bindparameter][preparing]") {
+  // Given a JSON string bound as SQL_VARCHAR
+  char param_value[] = "{\"a\":1}";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(param_value), 0,
+                                   param_value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When PARSE_JSON coerces the bound text to VARIANT
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT TO_JSON(PARSE_JSON(?))"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char result[64] = {};
+  SQLLEN result_indicator = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, result, sizeof(result), &result_indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result_indicator != SQL_NULL_DATA);
+  REQUIRE(result_indicator == 7);
+  // Then the value round-trips as JSON
+  REQUIRE(std::string(result) == "{\"a\":1}");
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: TIME WITH TIMEZONE is accepted at bind by the new driver",

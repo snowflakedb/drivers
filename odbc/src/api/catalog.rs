@@ -4073,6 +4073,11 @@ struct TypeInfoRow {
     user_data_type: i16,
 }
 
+#[cfg(test)]
+pub(crate) fn published_sql_data_types() -> Vec<i16> {
+    ALL_SF_TYPE_INFO.iter().map(|row| row.data_type).collect()
+}
+
 /// Hard-coded Snowflake type table, in the legacy insertion order.
 ///
 /// The ordering matches `ApiCatchTest.cpp`'s expected sequence for

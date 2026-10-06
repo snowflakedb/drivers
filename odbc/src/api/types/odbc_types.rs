@@ -1356,6 +1356,13 @@ impl TryFrom<sql::SmallInt> for SqlType {
             2000 => Ok(SqlType::SqlSfTimestampLtz),
             2001 => Ok(SqlType::SqlSfTimestampTz),
             2002 => Ok(SqlType::SqlSfTimestampNtz),
+            2003..=2006 => {
+                tracing::error!("Unsupported SQL data type for a parameter: {value}");
+                Err(OdbcError::UnsupportedSqlDataType {
+                    value,
+                    location: snafu::location!(),
+                })
+            }
             _ => {
                 tracing::error!("Invalid SQL data type: {value}");
                 Err(OdbcError::InvalidSqlDataType {
@@ -2616,6 +2623,51 @@ pub fn desc_from_handle(desc_handle: sql::Handle) -> OdbcResult<DescriptorAccess
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::SqlState;
+
+    #[test]
+    fn unbindable_vendor_codes_are_unsupported_not_invalid() {
+        for value in [2003, 2004, 2005, 2006] {
+            let error = SqlType::try_from(value).expect_err("must not bind");
+            assert!(
+                matches!(error, OdbcError::UnsupportedSqlDataType { value: v, .. } if v == value),
+                "value = {value}, error = {error:?}"
+            );
+            assert_eq!(
+                error.to_sql_state(),
+                SqlState::OptionalFeatureNotImplemented
+            );
+        }
+    }
+
+    #[test]
+    fn every_published_data_type_is_recognised_at_bind() {
+        let published = crate::api::catalog::published_sql_data_types();
+        assert!(
+            published.len() > 20,
+            "catalog table looks empty: {published:?}"
+        );
+        for value in published {
+            match SqlType::try_from(value) {
+                Ok(_) | Err(OdbcError::UnsupportedSqlDataType { .. }) => {}
+                Err(other) => {
+                    panic!("SQLGetTypeInfo publishes {value}, bind rejects it: {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unpublished_sql_data_types_are_invalid() {
+        for value in [1999, 2007, 8888] {
+            let error = SqlType::try_from(value).expect_err("must not bind");
+            assert!(
+                matches!(error, OdbcError::InvalidSqlDataType { value: v, .. } if v == value),
+                "value = {value}, error = {error:?}"
+            );
+            assert_eq!(error.to_sql_state(), SqlState::InvalidSqlDataType);
+        }
+    }
 
     #[test]
     fn from_parameter_type_recognises_vendor_codes() {
