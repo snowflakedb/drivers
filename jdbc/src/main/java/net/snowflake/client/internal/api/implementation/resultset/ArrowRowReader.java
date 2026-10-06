@@ -16,6 +16,7 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
+import net.snowflake.client.internal.unicore.CoreHandleCleaner;
 
 class ArrowRowReader implements RowReader {
 
@@ -24,6 +25,7 @@ class ArrowRowReader implements RowReader {
   private final SchemaState schema;
   private final ArrowBatchManager batchManager;
   private final long totalRowCount;
+  private final CoreHandleCleaner.Cleanable resourcesCleaner;
   private volatile boolean closed = false;
 
   // Construction runs before any decorator boundary, so it declares the checked SQLException from
@@ -31,6 +33,7 @@ class ArrowRowReader implements RowReader {
   ArrowRowReader(
       ArrowResources resources, DataConversionContext conversionContext, long totalRowCount) {
     this.resources = resources;
+    this.resourcesCleaner = CoreHandleCleaner.register(this, resources::closeAll);
     this.cursor = new CursorState();
     this.schema = new SchemaState(resources.getActiveRoot(), conversionContext);
     this.batchManager = new ArrowBatchManager(cursor, resources, schema);
@@ -57,7 +60,7 @@ class ArrowRowReader implements RowReader {
       return;
     }
     closed = true;
-    resources.closeAll();
+    resourcesCleaner.clean();
     resources.reset();
     schema.reset();
     cursor.reset();

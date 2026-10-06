@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
@@ -101,6 +102,24 @@ class ArrowRowReaderTest {
         assertFalse(reader.next());
         assertTrue(reader.isAfterLast());
       }
+    }
+  }
+
+  @Test
+  void shouldCloseArrowResourcesWhenUnclosedReaderIsGarbageCollected() throws Exception {
+    try (BufferAllocator root = new RootAllocator(Long.MAX_VALUE)) {
+      BufferAllocator child = root.newChildAllocator("result-set", 0, Long.MAX_VALUE);
+      new ArrowRowReader(
+          buildResources(child, new int[][] {{1}}, new String[][] {{"a"}}),
+          new DataContextStub(),
+          UNKNOWN_ROW_COUNT);
+
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (!root.getChildAllocators().isEmpty() && System.nanoTime() < deadline) {
+        System.gc();
+        Thread.sleep(100);
+      }
+      assertTrue(root.getChildAllocators().isEmpty());
     }
   }
 
