@@ -10,12 +10,13 @@ pub fn to_pascal_case(s: &str) -> String {
     s.to_case(Case::Pascal)
 }
 
-/// Strip common test-method prefixes (`test_`, `vpn_`, `flaky_`) so the bare name
-/// can be compared against the Gherkin scenario name.
+/// Strip common test-method prefixes (`test_`, `vpn_`, `flaky_`) and the C# `Async`
+/// suffix so the bare name can be compared against the Gherkin scenario name.
 pub fn clean_method_name(name: &str) -> &str {
     name.trim_start_matches("test_")
         .trim_start_matches("vpn_")
         .trim_start_matches("flaky_")
+        .trim_end_matches("Async")
 }
 
 /// Normalize a string for matching: lowercase, strip whitespace, underscores,
@@ -173,6 +174,22 @@ mod tests {
     #[test]
     fn test_clean_method_name_no_prefix() {
         assert_eq!(clean_method_name("should_work"), "should_work");
+    }
+
+    #[test]
+    fn test_clean_method_name_strips_async_suffix() {
+        assert_eq!(
+            clean_method_name("ShouldNegotiateTlsAsync"),
+            "ShouldNegotiateTls"
+        );
+    }
+
+    #[test]
+    fn test_clean_method_name_strips_both_prefix_and_async_suffix() {
+        assert_eq!(
+            clean_method_name("test_should_connect_async"),
+            "should_connect_async" // only strips PascalCase "Async", not lowercase
+        );
     }
 
     #[test]

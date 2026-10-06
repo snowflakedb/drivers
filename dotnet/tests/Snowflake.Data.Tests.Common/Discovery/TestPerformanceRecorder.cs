@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Snowflake.Data.Tests.Compatibility;
 
 namespace Snowflake.Data.Tests.Discovery;
 
@@ -71,15 +72,7 @@ public sealed class TestPerformanceRecorder : IDisposable
 
         var lines = entries.Select(x => $"{x.TestName};{x.TestDuration}");
         var text = string.Join("\n", lines);
-
-#if NETFRAMEWORK
-        var sw = File.AppendText(FilePath);
-        sw.Write(text);
-        sw.Flush();
-        sw.Close();
-#else
-        File.AppendAllText(FilePath, text);
-#endif
+        FileShims.AppendAllText(FilePath, text);
     }
 
     private static string GetOs()

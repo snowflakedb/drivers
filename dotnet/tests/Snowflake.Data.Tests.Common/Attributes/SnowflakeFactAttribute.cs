@@ -10,6 +10,7 @@ public sealed class SnowflakeFactAttribute : FactAttribute
 
     public SnowflakeFactAttribute(
         SkipCondition skip = SkipCondition.None,
+        string skipMessage = "",
         RetriesCount retriesCount = RetriesCount.Once,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
@@ -19,7 +20,7 @@ public sealed class SnowflakeFactAttribute : FactAttribute
         var skipEvaluationResult = SkipConditionEvaluator.Evaluate(skip);
 
         if (skipEvaluationResult.ShouldSkip)
-            Skip = skipEvaluationResult.SkipMessage;
+            Skip = skipEvaluationResult.SkipMessage + skipMessage;
     }
 }
 

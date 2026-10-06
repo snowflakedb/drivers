@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Dummies;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
+using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.Discovery;
 using Snowflake.Data.Tests.Utilities;
 using AssemblyMetadata = Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata.AssemblyMetadata;
@@ -121,6 +122,7 @@ public sealed class AsyncMethodInvariantsTest
                 "Discovery/SnowflakeTestCaseRunner.cs", // cover old xunit and the new one
                 "Discovery/SnowflakeTestCaseDiscoverer", // cover old xunit and the new one
                 $"Discovery/{nameof(SnowflakeTestCase)}.cs",
+                $"Compatibility/{nameof(FileShims)}"
             ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exceptions);

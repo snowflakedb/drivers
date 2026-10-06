@@ -23,6 +23,12 @@ static JAVA_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+static DOTNET_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:public|protected|private)?\s*(?:static\s+)?(?:(?:virtual|override)\s+)?(?:async\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+    )
+    .unwrap()
+});
 /// Rust test attributes like `#[test]`, `#[tokio::test]`, `#[tokio::test(...)]`
 static RUST_TEST_ATTR_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$").unwrap());
@@ -52,7 +58,7 @@ static JS_PENDING_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
 fn is_dotnet_test_attribute(s: &str) -> bool {
-    matches!(s, "[SnowflakeFact]" | "[SnowflakeTheory]")
+    s.starts_with("[SnowflakeFact") || s.starts_with("[SnowflakeTheory")
 }
 
 /// Configuration for language-specific step finding
@@ -186,6 +192,7 @@ impl MethodBoundaryFinder {
         let catch2_regex = &CATCH2_TEST_CASE_REGEX;
         let fn_regex = &RUST_FN_REGEX;
         let method_regex = &JAVA_METHOD_DECL_REGEX;
+        let dotnet_method_regex = &DOTNET_METHOD_DECL_REGEX;
         let rust_test_attr_regex = &RUST_TEST_ATTR_REGEX;
 
         for (i, line) in lines.iter().enumerate() {
@@ -287,7 +294,7 @@ impl MethodBoundaryFinder {
                         // multiple [InlineData]/[MemberData] attributes between the test
                         // attribute and the method signature)
                         for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(20) {
-                            if let Some(captures) = method_regex.captures(method_line.trim()) {
+                            if let Some(captures) = dotnet_method_regex.captures(method_line.trim()) {
                                 let method_name = captures[1].to_string();
                                 methods.push((method_name, j + 1)); // +1 for 1-indexed line numbers
                                 break;
@@ -1186,7 +1193,9 @@ impl StepFinder {
 
         let matching_methods = all_methods
             .into_iter()
-            .filter(|(method_name, _line)| strings_match_normalized(method_name, &pascal_scenario))
+            .filter(|(method_name, _line)| {
+                strings_match_normalized(clean_method_name(method_name), &pascal_scenario)
+            })
             .collect();
 
         Ok(matching_methods)
@@ -1629,6 +1638,123 @@ it.skipIf(false)('conditional scenario', () => {});
                 ("skipped scenario".to_string(), 4),
                 ("conditional scenario".to_string(), 5),
             ]
+        );
+    }
+
+    #[test]
+    fn dotnet_extracts_virtual_and_override_method_names() {
+        let finder = MethodBoundaryFinder::new(LanguageConfig::dotnet());
+        let content = r#"
+using Xunit;
+
+public class TlsVersionTest
+{
+    [SnowflakeFact]
+    public virtual async Task ShouldNegotiateTlsAsync()
+    {
+        // Given a TLS server
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldRejectConfigAsync()
+    {
+        // Given settings
+    }
+
+    [SnowflakeFact]
+    public void ShouldValidateSync()
+    {
+        // Given settings
+    }
+}
+"#;
+
+        let methods = finder
+            .find_all_test_methods_with_lines(content)
+            .expect("Should parse dotnet methods");
+
+        let names: Vec<&str> = methods.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "ShouldNegotiateTlsAsync",
+                "ShouldRejectConfigAsync",
+                "ShouldValidateSync",
+            ]
+        );
+    }
+
+    #[test]
+    fn dotnet_extracts_method_after_parameterized_snowflake_fact() {
+        let finder = MethodBoundaryFinder::new(LanguageConfig::dotnet());
+        let content = r#"
+using Xunit;
+
+public class TlsVersionTest
+{
+    [SnowflakeFact(SkipCondition.SkipOnMacOS, "TLS 1.3 is not supported on macOS due to lack of support from the CoreTLS system library.")]
+    public virtual async Task ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync()
+    {
+        // Given a TLS server that offers only TLS 1.3
+        // When a request is sent to the server
+        // Then the handshake succeeds
+    }
+
+    [SnowflakeFact]
+    public virtual async Task ShouldFailTheHandshakeAsync()
+    {
+        // Given a TLS server
+        // When a request is sent
+        // Then the handshake fails
+    }
+}
+"#;
+
+        let methods = finder
+            .find_all_test_methods_with_lines(content)
+            .expect("Should parse dotnet methods");
+
+        let names: Vec<&str> = methods.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync",
+                "ShouldFailTheHandshakeAsync",
+            ]
+        );
+    }
+
+    #[test]
+    fn dotnet_matches_async_method_to_scenario_after_stripping_suffix() {
+        let finder = StepFinder::new(Language::Dotnet);
+        let content = r#"
+using Xunit;
+
+public class TlsVersionTest
+{
+    [SnowflakeFact]
+    public virtual async Task ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync()
+    {
+        // Given a TLS server that offers only TLS 1.3
+        // When a request is sent to the server
+        // Then the handshake succeeds
+    }
+}
+"#;
+        let temp = tempfile::NamedTempFile::new().expect("temporary file should open");
+        std::fs::write(temp.path(), content).expect("temporary file should be writable");
+
+        let methods = finder
+            .find_test_methods_with_lines(
+                temp.path(),
+                "should negotiate TLS when the server offers a version inside the window",
+            )
+            .expect("Should find matching methods");
+
+        assert_eq!(methods.len(), 1, "Async-suffixed virtual method should match scenario");
+        assert_eq!(
+            methods[0].0,
+            "ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync"
         );
     }
 
