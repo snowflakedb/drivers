@@ -16,6 +16,7 @@ pub struct ArrowStreamIterator {
     stream: Mutex<RowStream>,
     context: ConversionContext,
     converter: BatchConverter,
+    debug_enabled: bool,
 }
 
 #[pymethods]
@@ -61,7 +62,14 @@ impl ArrowStreamIterator {
         use_dict_result: bool,
         use_numpy: bool,
     ) -> PyResult<Self> {
+        let debug_enabled = iterator_debug_enabled(py);
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
+        if debug_enabled {
+            log_iterator_debug(&format!(
+                "CArrowStreamIterator initialized with {} columns",
+                stream.schema().fields().len()
+            ));
+        }
         let context = ConversionContext::from_flags(
             py,
             stream.schema().as_ref(),
@@ -73,6 +81,7 @@ impl ArrowStreamIterator {
             stream: Mutex::new(stream),
             context,
             converter: BatchConverter::exhausted(),
+            debug_enabled,
         };
         if let Some(converter) = this.load_next_batch_converter(py)? {
             this.converter = converter;
@@ -136,10 +145,57 @@ impl ArrowStreamIterator {
         let batch = py.detach(|| self.stream.lock_recover().load_next_batch())?;
 
         match batch {
-            Some(batch) => Ok(Some(self.context.batch_converter(batch)?)),
-            None => Ok(None),
+            Some(batch) => {
+                let rows = batch.num_rows();
+                let columns = batch.num_columns();
+                let converter = self.context.batch_converter(batch)?;
+                if self.debug_enabled {
+                    log_iterator_debug(&format!("Loaded batch with {rows} rows"));
+                    log_iterator_debug(&format!("Initialized {columns} column converters"));
+                }
+                Ok(Some(converter))
+            }
+            None => {
+                if self.debug_enabled {
+                    log_iterator_debug("Stream exhausted");
+                }
+                Ok(None)
+            }
         }
     }
+}
+
+const ITERATOR_LOGGER: &str = "snowflake.connector.CArrowStreamIterator";
+
+fn iterator_debug_enabled(py: Python<'_>) -> bool {
+    let Ok(logging) = py.import("logging") else {
+        return false;
+    };
+    let Ok(level) = logging.getattr("DEBUG") else {
+        return false;
+    };
+    let Ok(logger) = logging.call_method1("getLogger", (ITERATOR_LOGGER,)) else {
+        return false;
+    };
+    let Ok(enabled) = logger.call_method1("isEnabledFor", (level,)) else {
+        return false;
+    };
+    enabled.is_truthy().unwrap_or(false)
+}
+
+fn log_iterator_debug(message: &str) {
+    let Some(bridge) = crate::initialized_bridge() else {
+        return;
+    };
+    let _guard = tracing::dispatcher::set_default(&bridge.dispatch);
+    sf_core::wrapper_event!(
+        3u32,
+        message = message,
+        file = file!(),
+        function = "CArrowStreamIterator",
+        line = line!(),
+        logger_name = ITERATOR_LOGGER,
+    );
 }
 
 #[cfg(test)]
