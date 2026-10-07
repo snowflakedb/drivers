@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.stream.Stream;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.telemetry.ErrorSource;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,10 @@ public class CoreExceptionErrorKindMappingTest {
     assertEquals(expected.getMessageCode(), thrown.getErrorCode());
     assertEquals(expected.getSqlState(), thrown.getSQLState());
     assertSame(carrier, thrown.getCause());
+    assertEquals(
+        ErrorSource.of(SFSQLException.fromErrorCode(expected)),
+        ErrorSource.of(carrier),
+        kind.name());
   }
 
   @Test

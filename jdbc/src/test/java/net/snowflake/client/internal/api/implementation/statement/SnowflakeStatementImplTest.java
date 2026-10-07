@@ -23,6 +23,7 @@ import java.sql.Statement;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
@@ -186,6 +187,19 @@ public class SnowflakeStatementImplTest {
     Statement decorated = new DecoratedSnowflakeStatementImpl(stmt, Telemetry.NOOP);
     SQLException ex = assertThrows(SQLException.class, decorated::getConnection);
     assertEquals("Statement is closed", ex.getMessage());
+  }
+
+  @Test
+  void shouldReportConnectionClosedWhenBothConnectionAndStatementAreClosed() throws Exception {
+    when(mockConnection.isClosed()).thenReturn(true);
+    Statement stmt = createDecoratedStatement();
+    stmt.close();
+
+    SQLException ex = assertThrows(SQLException.class, () -> stmt.execute("SELECT 1"));
+
+    assertEquals("Connection is closed", ex.getMessage());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
   }
 
   @Test
