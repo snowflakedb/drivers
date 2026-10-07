@@ -45,7 +45,8 @@ use self::interval::{
 };
 use self::map::MapColumn;
 use self::number::{
-    NumberColumn, NumberMaterializer, NumberNumpyFloatMaterializer, NumberNumpyIntMaterializer,
+    NumberColumn, NumberI64Column, NumberMaterializer, NumberNumpyFloatMaterializer,
+    NumberNumpyIntMaterializer,
 };
 use self::real::{RealMaterializer, RealNumpyMaterializer};
 use self::text::TextMaterializer;
@@ -60,6 +61,7 @@ pub(crate) use context::{ConversionContext, RowShape};
 pub(crate) enum Column {
     Bool(TypedColumn<BooleanArray, SnowflakeBoolean, BoolMaterializer>),
     Number(NumberColumn<NumberMaterializer>),
+    NumberI64(NumberI64Column),
     NumberNumpyInt(NumberColumn<NumberNumpyIntMaterializer>),
     NumberNumpyFloat(NumberColumn<NumberNumpyFloatMaterializer>),
     Real(TypedColumn<Float64Array, SnowflakeReal, RealMaterializer>),
@@ -90,6 +92,7 @@ impl Column {
         match self {
             Self::Bool(column) => column.to_py(py, row),
             Self::Number(column) => column.to_py(py, row),
+            Self::NumberI64(column) => column.to_py(py, row),
             Self::NumberNumpyInt(column) => column.to_py(py, row),
             Self::NumberNumpyFloat(column) => column.to_py(py, row),
             Self::Real(column) => column.to_py(py, row),

@@ -1,5 +1,6 @@
 use arrow::array::{
-    Array, ArrayRef, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array, StructArray,
+    Array, ArrayRef, ArrowPrimitiveType, Decimal128Array, Int8Array, Int16Array, Int32Array,
+    Int64Array, PrimitiveArray, StructArray,
 };
 use arrow::datatypes::DataType;
 use chrono::NaiveDateTime;
@@ -8,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyNone, PyTuple};
 use sf_types::{
-    ReadArrowError, ReadArrowType, SnowflakeFixed, read_scaled_timestamp,
+    NullValueSnafu, ReadArrowError, ReadArrowType, SnowflakeFixed, read_scaled_timestamp,
     read_scaled_timestamp_nanos, read_struct_timestamp, read_struct_timestamp_nanos,
 };
 
@@ -61,6 +62,45 @@ impl IntColumn {
             Self::Decimal128(array) => SnowflakeFixed.read_arrow_type(array, row),
         }
     }
+}
+
+pub(super) enum IntColumn64 {
+    I8(Int8Array),
+    I16(Int16Array),
+    I32(Int32Array),
+    I64(Int64Array),
+}
+
+impl IntColumn64 {
+    pub(super) fn from_fixed(array: &ArrayRef, field_type: &SnowflakeFieldType) -> PyResult<Self> {
+        Ok(match array.data_type() {
+            DataType::Int8 => Self::I8(downcast_column(array, field_type)?),
+            DataType::Int16 => Self::I16(downcast_column(array, field_type)?),
+            DataType::Int32 => Self::I32(downcast_column(array, field_type)?),
+            DataType::Int64 => Self::I64(downcast_column(array, field_type)?),
+            other => return Err(logical_mismatch_err(field_type, other)),
+        })
+    }
+
+    pub(super) fn get(&self, row: usize) -> Result<i64, ReadArrowError> {
+        match self {
+            Self::I8(array) => read_widened_i64(array, row),
+            Self::I16(array) => read_widened_i64(array, row),
+            Self::I32(array) => read_widened_i64(array, row),
+            Self::I64(array) => read_widened_i64(array, row),
+        }
+    }
+}
+
+fn read_widened_i64<T>(array: &PrimitiveArray<T>, row: usize) -> Result<i64, ReadArrowError>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Into<i64>,
+{
+    if array.is_null(row) {
+        return Err(NullValueSnafu.build());
+    }
+    Ok(array.value(row).into())
 }
 
 pub(super) enum TimestampColumn {
@@ -133,11 +173,12 @@ fn decimal_type(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::array::{ArrayRef, Int32Array, Int64Array};
+    use arrow::array::{ArrayRef, Int8Array, Int32Array, Int64Array};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use sf_types::ReadArrowError;
 
-    use super::downcast_column;
+    use super::{IntColumn64, downcast_column};
     use crate::arrow::plan::SnowflakeFieldType;
 
     #[test]
@@ -174,5 +215,21 @@ mod tests {
                 "got {text}"
             );
         });
+    }
+
+    #[test]
+    fn int_column64_widens_to_i64_and_reports_null() {
+        let field_type = SnowflakeFieldType::Number {
+            scale: 0,
+            precision: 38,
+        };
+        let array: ArrayRef = Arc::new(Int8Array::from(vec![Some(i8::MIN), None, Some(i8::MAX)]));
+        let column = IntColumn64::from_fixed(&array, &field_type).unwrap();
+        assert_eq!(column.get(0).unwrap(), i64::from(i8::MIN));
+        assert!(matches!(
+            column.get(1),
+            Err(ReadArrowError::NullValue { .. })
+        ));
+        assert_eq!(column.get(2).unwrap(), i64::from(i8::MAX));
     }
 }

@@ -1,14 +1,18 @@
 use std::sync::Arc;
 
+use std::ffi::c_longlong;
+
 use arrow::array::ArrayRef;
+use arrow::datatypes::DataType;
 use pyo3::exceptions::PyValueError;
+use pyo3::ffi::PyLong_FromLongLong;
 use pyo3::prelude::*;
 use sf_types::{ReadArrowError, SnowflakeFixed};
 
 use super::Column;
 use super::decode::PyMaterializer;
 use super::numpy::NumpyProvider;
-use crate::arrow::converters::util::{IntColumn, py_decimal_from_coeff_exp, py_none};
+use crate::arrow::converters::util::{IntColumn, IntColumn64, py_decimal_from_coeff_exp, py_none};
 use crate::arrow::plan::SnowflakeFieldType;
 use crate::arrow::scaled_f64::scaled_f64;
 
@@ -27,6 +31,26 @@ impl<M: PyMaterializer<SnowflakeFixed>> NumberColumn<M> {
     }
 }
 
+pub(crate) struct NumberI64Column {
+    values: IntColumn64,
+}
+
+impl NumberI64Column {
+    pub(crate) fn to_py<'py>(&self, py: Python<'py>, row: usize) -> PyResult<Bound<'py, PyAny>> {
+        match self.values.get(row) {
+            Ok(value) => py_long_from_i64(py, value),
+            Err(ReadArrowError::NullValue { .. }) => Ok(py_none(py)),
+            Err(err) => Err(PyValueError::new_err(err.to_string())),
+        }
+    }
+}
+
+fn py_long_from_i64<'py>(py: Python<'py>, value: i64) -> PyResult<Bound<'py, PyAny>> {
+    // SAFETY: `PyLong_FromLongLong` returns a new reference, or NULL when allocation fails.
+    // `from_owned_ptr_or_err` takes that reference and turns NULL into the current Python error.
+    unsafe { Bound::from_owned_ptr_or_err(py, PyLong_FromLongLong(value as c_longlong)) }
+}
+
 pub(super) fn from_column(
     array: &ArrayRef,
     field_type: &SnowflakeFieldType,
@@ -34,6 +58,11 @@ pub(super) fn from_column(
     numpy: Arc<NumpyProvider>,
     use_numpy: bool,
 ) -> PyResult<Column> {
+    if scale == 0 && !use_numpy && is_i64_width(array) {
+        return Ok(Column::NumberI64(NumberI64Column {
+            values: IntColumn64::from_fixed(array, field_type)?,
+        }));
+    }
     let values = IntColumn::from_fixed(array, field_type)?;
     // Numpy FIXED uses the same scale split as Python FIXED, but only on
     // integer physical widths: scale 0 is numpy.int64, scale > 0 is
@@ -55,6 +84,13 @@ pub(super) fn from_column(
         values,
         materializer: NumberMaterializer { scale },
     }))
+}
+
+fn is_i64_width(array: &ArrayRef) -> bool {
+    matches!(
+        array.data_type(),
+        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64
+    )
 }
 
 pub(crate) struct NumberMaterializer {
