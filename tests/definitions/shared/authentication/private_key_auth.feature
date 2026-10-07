@@ -1,25 +1,25 @@
-@core @odbc @python @jdbc
+@core @odbc @python @jdbc @nodejs
 Feature: Private Key Authentication
 
-  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should authenticate using private file with password
     Given Authentication is set to JWT and private file with password is provided
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should authenticate using unencrypted private key file
     Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should fail JWT authentication when invalid private key provided
     Given Authentication is set to JWT and invalid private key file is provided
     When Trying to Connect
     Then There is error returned
 
-  @core_int @odbc_int @python_int @jdbc_e2e
+  @core_int @odbc_int @python_int @jdbc_e2e @nodejs_int
   Scenario: should fail JWT authentication when no private file provided
     Given Authentication is set to JWT
     When Trying to Connect with no private file provided
@@ -37,7 +37,7 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e @python_e2e @jdbc_e2e
+  @core_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: should authenticate using private_key as pem string
     Given Authentication is set to JWT and private key is provided as plaintext PEM
     When Trying to Connect
@@ -73,3 +73,20 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then the raw GS code surfaces in the error
 
+  @nodejs_int
+  Scenario: should fail JWT authentication when private_key is not PEM or base64
+    Given Authentication is set to JWT and private_key is not PEM or base64
+    When Trying to Connect
+    Then There is error returned
+
+  @nodejs_e2e
+  Scenario: should fail JWT authentication when private key password is wrong
+    Given Authentication is set to JWT and an encrypted private key file is provided with the wrong password
+    When Trying to Connect
+    Then There is error returned
+
+  @core_e2e @nodejs_e2e
+  Scenario: should fail JWT authentication when invalid private_key PEM string provided
+    Given Authentication is set to JWT and invalid private_key PEM string is provided
+    When Trying to Connect
+    Then There is error returned

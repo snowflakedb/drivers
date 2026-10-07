@@ -180,6 +180,24 @@ fn should_authenticate_using_unencrypted_private_key_file() {
     client.verify_simple_query(result);
 }
 
+#[test]
+fn should_fail_jwt_authentication_when_invalid_private_key_pem_string_provided() {
+    //Given Authentication is set to JWT and invalid private_key PEM string is provided
+    let mut client = SnowflakeTestClient::with_default_params();
+    client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+    let temp_key_file = private_key_helper::get_test_private_key_file()
+        .expect("Failed to create test private key file");
+    let invalid_pem = fs::read_to_string(temp_key_file.path()).expect("Failed to read invalid key");
+    client.set_connection_option("private_key", &invalid_pem);
+    client.set_temp_key_file(temp_key_file);
+
+    //When Trying to Connect
+    let result = client.connect();
+
+    //Then There is error returned
+    client.assert_login_error(result);
+}
+
 fn set_invalid_private_key_file(client: &mut SnowflakeTestClient) {
     let temp_key_file = private_key_helper::get_test_private_key_file()
         .expect("Failed to create test private key file");

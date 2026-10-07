@@ -1,14 +1,10 @@
 const assert = require('assert');
 const net = require('net');
-const crypto = require('crypto');
-const jsonwebtoken = require('jsonwebtoken');
-const fs = require('fs');
 const sinon = require('sinon');
 
 const authenticator = require('./../../../lib/authentication/authentication');
 const AuthDefault = require('./../../../lib/authentication/auth_default');
 const AuthWeb = require('./../../../lib/authentication/auth_web');
-const AuthKeypair = require('./../../../lib/authentication/auth_keypair');
 const AuthOauth = require('./../../../lib/authentication/auth_oauth');
 const AuthOkta = require('./../../../lib/authentication/auth_okta');
 const AuthIDToken = require('./../../../lib/authentication/auth_idtoken');
@@ -21,7 +17,6 @@ const connectionOptions = mockConnectionOptions.default;
 const connectionOptionsDefault = mockConnectionOptions.authDefault;
 const connectionOptionsExternalBrowser = mockConnectionOptions.authExternalBrowser;
 const connectionOptionsKeyPair = mockConnectionOptions.authKeyPair;
-const connectionOptionsKeyPairPath = mockConnectionOptions.authKeyPairPath;
 const connectionOptionsOauth = mockConnectionOptions.authOauth;
 const connectionOptionsOkta = mockConnectionOptions.authOkta;
 const connectionOptionsIdToken = mockConnectionOptions.authIdToken;
@@ -272,130 +267,9 @@ describe('external browser authentication', function () {
   });
 });
 
-describe('key-pair authentication', function () {
-  let sinonSandbox;
-
-  const mockToken = 'mockToken';
-  const mockPrivateKeyFile = 'mockPrivateKeyFile';
-  const mockPublicKeyObj = 'mockPublicKeyObj';
-
-  before(function () {
-    sinonSandbox = sinon.createSandbox();
-    sinonSandbox.stub(crypto, 'createPrivateKey').callsFake((options) => {
-      assert.strictEqual(options.key, mockPrivateKeyFile);
-      if (options.passphrase) {
-        assert.strictEqual(options.passphrase, connectionOptionsKeyPairPath.getPrivateKeyPass());
-      }
-      return {
-        export: () => connectionOptionsKeyPair.getPrivateKey(),
-      };
-    });
-    sinonSandbox.stub(crypto, 'createPublicKey').callsFake((options) => {
-      assert.strictEqual(options.key, connectionOptionsKeyPair.getPrivateKey());
-      return {
-        export: () => mockPublicKeyObj,
-      };
-    });
-    sinonSandbox.stub(crypto, 'createHash').returns({
-      update: (publicKeyObj) => {
-        assert.strictEqual(publicKeyObj, mockPublicKeyObj);
-        return { digest: () => {} };
-      },
-    });
-    sinonSandbox.stub(jsonwebtoken, 'sign').returns(mockToken);
-    sinonSandbox.stub(fs, 'readFileSync').returns(mockPrivateKeyFile);
-  });
-
-  after(() => {
-    sinonSandbox.restore();
-  });
-
-  it('key-pair - authenticate method is thenable', (done) => {
-    const auth = new AuthKeypair(connectionOptionsKeyPair);
-    auth
-      .authenticate(
-        connectionOptionsKeyPair.authenticator,
-        '',
-        connectionOptionsKeyPair.account,
-        connectionOptionsKeyPair.username,
-      )
-      .then(done)
-      .catch(done);
-  });
-
-  it('key-pair - get token with private key', function () {
-    const auth = new AuthKeypair(connectionOptionsKeyPair);
-    auth.authenticate(
-      connectionOptionsKeyPair.authenticator,
-      '',
-      connectionOptionsKeyPair.account,
-      connectionOptionsKeyPair.username,
-    );
-
-    const body = { data: {} };
-    auth.updateBody(body);
-
-    assert.strictEqual(body['data']['TOKEN'], mockToken, 'Token should be equal');
-  });
-
-  it('key-pair - get token with private key by reauthentication', async function () {
-    const auth = new AuthKeypair(connectionOptionsKeyPair);
-
-    const body = { data: { TOKEN: 'wrongToken' } };
-    await auth.reauthenticate(body);
-
-    assert.strictEqual(body['data']['TOKEN'], mockToken, 'Token should be equal');
-  });
-
-  it('key-pair - get token with private key path with passphrase', function () {
-    const auth = new AuthKeypair(connectionOptionsKeyPairPath);
-
-    auth.authenticate(
-      connectionOptionsKeyPairPath.authenticator,
-      '',
-      connectionOptionsKeyPairPath.account,
-      connectionOptionsKeyPairPath.username,
-    );
-
-    const body = { data: {} };
-    auth.updateBody(body);
-
-    assert.strictEqual(body['data']['TOKEN'], mockToken, 'Token should be equal');
-  });
-
-  it('key-pair - get token with private key path without passphrase', function () {
-    const auth = new AuthKeypair(connectionOptionsKeyPairPath);
-
-    auth.authenticate(
-      connectionOptionsKeyPairPath.authenticator,
-      '',
-      connectionOptionsKeyPairPath.account,
-      connectionOptionsKeyPairPath.username,
-    );
-
-    const body = { data: {} };
-    auth.updateBody(body);
-
-    assert.strictEqual(body['data']['TOKEN'], mockToken, 'Token should be equal');
-  });
-
-  it('key-pair - check authenticator', function () {
-    const body = authenticator.formAuthJSON(
-      connectionOptionsKeyPair.authenticator,
-      connectionOptionsKeyPair.account,
-      connectionOptionsKeyPair.username,
-      {},
-      {},
-      {},
-    );
-
-    assert.strictEqual(
-      body['data']['AUTHENTICATOR'],
-      AuthenticationTypes.KEY_PAIR_AUTHENTICATOR,
-      'Authenticator should be SNOWFLAKE_JWT',
-    );
-  });
-});
+// The "key-pair authentication" describe block that used to live here was
+// mapped to sf_core private-key JWT coverage and
+// nodejs/tests/e2e/authentication/private-key-auth.test.ts, then removed.
 
 describe('oauth authentication', function () {
   it('oauth - authenticate method is thenable', (done) => {

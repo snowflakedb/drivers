@@ -29,6 +29,9 @@ Deferred work — covered **last**, only once the corresponding feature support 
 - Everything under [`authentication/`](./authentication/) — migrate **one file at a time**, each
   one only when support for the corresponding auth provider (Key Pair, MFA, OAuth, Okta, PAT,
   session-token renewal) lands in the new driver.
+  - [`authentication/testKeyPair.js`](./authentication/testKeyPair.js) — migrated and deleted.
+    Public JWT/key-pair coverage lives in
+    `nodejs/tests/e2e/authentication/private-key-auth.test.ts`.
   - [`authentication/testExternalBrowser.js`](./authentication/testExternalBrowser.js) —
     Honest counterparts in `nodejs/tests/e2e/authentication/external-browser.test.ts`:
     `Successful connection` → `should authenticate with external browser via Okta IdP`;
@@ -227,9 +230,15 @@ called out explicitly.
   park until after the beta release. `sf_core` + the new Node driver will surface a different set
   of errors when `.createConnection` fails, so this needs a re-review against the new error
   taxonomy rather than a line-by-line migration.
+  - JWT-named negatives (`missing/invalid username with SNOWFLAKE_JWT`, `invalid private key` /
+    `privateKeyPath` / `privateKeyPass`) assert `ERR_CONN_CREATE_*` on `new ConnectionConfig`.
+    Revisit when the new Errors hierarchy lands.
 - `unit/connection/normalize_connection_options_test.ts` — migrated and deleted. Its cases live in
   `nodejs/tests/unit/normalize-connection-options.test.ts`, with
   `nodejs/tests/e2e/normalize-connection-options.test.ts` connecting through the normalized options.
+  - `private_key_file` → `privateKeyPath` (and camel / `private_key_pass`) mapping is covered by
+    public `createConnection` in `nodejs/tests/e2e/authentication/private-key-auth.test.ts`.
+    Keep the production `privateKeyPath` alias; do not add a normalizer-only test for it.
 - [`unit/connection/statement_test.js`](./unit/connection/statement_test.js) — covers error paths
   in the query-execution API. The new driver exposes a smaller set of error codes, so review
   after beta against the final error taxonomy.
@@ -275,6 +284,12 @@ called out explicitly.
 - [`unit/authentication/`](./unit/authentication/) — defer until after the beta release and
   revisit when implementing each auth provider, the same way the integration `authentication/`
   folder is handled.
+  - The `key-pair authentication` describe in
+    [`unit/authentication/authentication_test.js`](./unit/authentication/authentication_test.js)
+    was removed. JWT token assembly is `sf_core` (`generate_jwt_token`, private-key e2e, login
+    `AUTHENTICATOR=SNOWFLAKE_JWT`). Public Node options live in
+    `nodejs/tests/e2e/authentication/private-key-auth.test.ts`. Thenable
+    `AuthKeypair.authenticate` / `reauthenticate` overwriting `TOKEN` are not ported.
 
 ### Agent (CRL / OCSP)
 

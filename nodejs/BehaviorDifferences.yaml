@@ -1405,3 +1405,66 @@ behavior_differences:
     new_driver_behavior: |
       The first request returns OperationFailedError with the server's GS 390111
       (Session no longer exists). The driver does not rewrite that into 407002.
+
+  73:
+    name: 'non-PEM privateKey is rejected with a core base64-decode error instead of the old PKCS8 PEM message'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection({ privateKey: 'invalidKey' }) throws
+      `Invalid private key. The specified value must be a PEM-formatted private key.`
+      before any Snowflake login.
+    new_driver_behavior: |
+      The same options throw at connect with
+      "Configuration error: Invalid value '(redacted)' for parameter 'private_key' - Could not decode base64 private key: Invalid padding".
+      A non-PEM string is forwarded to sf_core as base64-encoded key material.
+      After the failed connect the connection is not up; a follow-up `SELECT 1`
+      fails as a terminated connection.
+
+  74:
+    name: 'wrong private-key passphrase error message'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createPrivateKey throws
+      `error:1C800064:Provider routines::bad decrypt`.
+    new_driver_behavior: |
+      connect rejects with `Failed to login: Authentication failed`. The
+      passphrase detail stays on an intermediate error the Node binding does
+      not put on Error.message.
+
+  75:
+    name: 'JWT login rejection message includes the GS code'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A GS login rejection is surfaced as
+      "JWT token is invalid.  [<request id>]".
+      error.code is "390144".
+    new_driver_behavior: |
+      The same rejection is
+      "Failed to login: Login error: JWT token is invalid.  [<request id>], code: 390144".
+      error.code is "390144". The request id changes on every login.
+
+  76:
+    name: 'JWT without privateKey or privateKeyPath reports a named missing-parameter error'
+    status: unknown
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection({ authenticator: 'SNOWFLAKE_JWT' }) without a private key
+      succeeds. connect then fails with `secretOrPrivateKey must have a value`.
+    new_driver_behavior: |
+      connect fails with
+      "Configuration error: Configuration validation failed (1 issue(s)): private_key: Missing required parameter: 'private_key' or 'private_key_file'".

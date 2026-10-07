@@ -8,12 +8,14 @@ describe('toCoreConnectionOptions', () => {
         account: 'sfctest0',
         username: 'alice',
         privateKey: '-----BEGIN PRIVATE KEY-----',
+        privateKeyPath: '/tmp/key.p8',
         privateKeyPass: 'secret',
       }),
     ).toEqual({
       account: 'sfctest0',
       user: 'alice',
       private_key: '-----BEGIN PRIVATE KEY-----',
+      private_key_file: '/tmp/key.p8',
       private_key_password: 'secret',
     });
   });
