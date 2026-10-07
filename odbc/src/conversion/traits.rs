@@ -384,9 +384,24 @@ impl Binding {
     pub fn write_binary(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
         let offset = get_data_offset.unwrap_or(0);
         let remaining = &src[offset..];
+
+        if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
+            let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
+            if remaining.is_empty() {
+                *get_data_offset = None;
+                return vec![];
+            }
+            *get_data_offset = Some(offset);
+            return vec![Warning::StringDataTruncated];
+        }
+
         let buffer_length = self.buffer_length as usize;
         let copy_len = std::cmp::min(remaining.len(), buffer_length);
 
+        // SAFETY: the guard above ensures `target_value_ptr` is non-null and
+        // `buffer_length` is positive; `copy_len <= buffer_length`, so the write
+        // stays inside the bind buffer. The address may be unaligned under a
+        // row-wise `SQL_ATTR_ROW_BIND_TYPE` stride, which a byte copy tolerates.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 remaining.as_ptr(),
@@ -1170,5 +1185,69 @@ mod binding_strides_tests {
             assert!(cur.indicator_ptr.is_null(), "indicator stays null row {i}");
             cur = cur.stepped(vs, is);
         }
+    }
+
+    #[test]
+    fn write_binary_copies_and_truncates_within_buffer() {
+        let mut target = [0u8; 4];
+        let mut indicator = [0 as sql::Len; 1];
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: target.as_mut_ptr() as sql::Pointer,
+            buffer_length: 4,
+            octet_length_ptr: indicator.as_mut_ptr(),
+            indicator_ptr: indicator.as_mut_ptr(),
+            ..Default::default()
+        };
+        let src = [9u8, 8, 7, 6, 5, 4];
+        let mut offset = None;
+        let warnings = binding.write_binary(&src, &mut offset);
+        assert_eq!(target, [9, 8, 7, 6]);
+        assert_eq!(indicator[0], src.len() as sql::Len);
+        assert_eq!(warnings, vec![Warning::StringDataTruncated]);
+        assert_eq!(offset, Some(4));
+    }
+
+    #[test]
+    fn write_binary_null_target_is_length_only_probe() {
+        let mut indicator = [0 as sql::Len; 1];
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: std::ptr::null_mut(),
+            buffer_length: 0,
+            octet_length_ptr: indicator.as_mut_ptr(),
+            indicator_ptr: indicator.as_mut_ptr(),
+            ..Default::default()
+        };
+        let src = [1u8, 2, 3, 4];
+        let mut offset = None;
+        let warnings = binding.write_binary(&src, &mut offset);
+        assert_eq!(indicator[0], src.len() as sql::Len);
+        assert_eq!(warnings, vec![Warning::StringDataTruncated]);
+        assert_eq!(offset, Some(0));
+    }
+
+    #[test]
+    fn write_binary_negative_buffer_length_does_not_write() {
+        let mut target = [0u8; 8];
+        let mut indicator = [0 as sql::Len; 1];
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: target.as_mut_ptr() as sql::Pointer,
+            buffer_length: -1,
+            octet_length_ptr: indicator.as_mut_ptr(),
+            indicator_ptr: indicator.as_mut_ptr(),
+            ..Default::default()
+        };
+        let src = [1u8, 2, 3, 4];
+        let mut offset = None;
+        let warnings = binding.write_binary(&src, &mut offset);
+        assert_eq!(
+            target, [0u8; 8],
+            "negative buffer_length must not copy into the buffer"
+        );
+        assert_eq!(indicator[0], src.len() as sql::Len);
+        assert_eq!(warnings, vec![Warning::StringDataTruncated]);
+        assert_eq!(offset, Some(0));
     }
 }

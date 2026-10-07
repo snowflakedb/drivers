@@ -451,7 +451,7 @@ impl WriteODBCType for SnowflakeReal {
             }
             CDataType::Binary => {
                 let ieee_len = std::mem::size_of::<f64>();
-                if (binding.buffer_length as usize) < ieee_len {
+                if binding.buffer_length < ieee_len as sql::Len {
                     return NumericValueOutOfRangeSnafu {
                         reason: format!(
                             "Buffer size {} is too small for SQL_C_BINARY (need {ieee_len} bytes)",

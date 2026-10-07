@@ -81,7 +81,7 @@ pub fn write_numeric_as_binary(
     binding: &Binding,
 ) -> Result<(), WriteOdbcError> {
     let numeric_size = std::mem::size_of::<sql::Numeric>();
-    if (binding.buffer_length as usize) < numeric_size {
+    if binding.buffer_length < numeric_size as sql::Len {
         return NumericValueOutOfRangeSnafu {
             reason: format!(
                 "Buffer size {} is too small for SQL_C_BINARY (need {numeric_size} bytes)",
@@ -90,15 +90,20 @@ pub fn write_numeric_as_binary(
         }
         .fail();
     }
-    let numeric_bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(numeric as *const sql::Numeric as *const u8, numeric_size)
-    };
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            numeric_bytes.as_ptr(),
-            binding.target_value_ptr as *mut u8,
-            numeric_size,
-        );
+    if !binding.target_value_ptr.is_null() {
+        let numeric_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(numeric as *const sql::Numeric as *const u8, numeric_size)
+        };
+        // SAFETY: `buffer_length` is at least `numeric_size` and the pointer is
+        // non-null; the write of exactly `numeric_size` bytes stays inside the
+        // bind buffer. The address may be unaligned, which a byte copy tolerates.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                numeric_bytes.as_ptr(),
+                binding.target_value_ptr as *mut u8,
+                numeric_size,
+            );
+        }
     }
     let _ = binding.write_length_or_null(crate::conversion::traits::LengthOrNull::Length(
         numeric_size as sql::Len,
@@ -365,4 +370,75 @@ pub fn reject_multi_field_interval(target_type: CDataType) -> Result<Warnings, W
         ),
     }
     .fail()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_numeric() -> sql::Numeric {
+        sql::Numeric {
+            precision: 3,
+            scale: 0,
+            sign: 1,
+            val: 123u128.to_le_bytes(),
+        }
+    }
+
+    #[test]
+    fn write_numeric_as_binary_copies_full_struct() {
+        let numeric = sample_numeric();
+        let size = std::mem::size_of::<sql::Numeric>();
+        let mut target = vec![0u8; size];
+        let mut indicator = [0 as sql::Len; 1];
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: target.as_mut_ptr() as sql::Pointer,
+            buffer_length: size as sql::Len,
+            octet_length_ptr: indicator.as_mut_ptr(),
+            indicator_ptr: indicator.as_mut_ptr(),
+            ..Default::default()
+        };
+        write_numeric_as_binary(&numeric, &binding).expect("write must succeed");
+        // SAFETY: `numeric` is a live, fully-initialized `sql::Numeric`; reading
+        // its `size` bytes as a slice is in-bounds.
+        let expected = unsafe {
+            std::slice::from_raw_parts(&numeric as *const sql::Numeric as *const u8, size)
+        };
+        assert_eq!(target.as_slice(), expected);
+        assert_eq!(indicator[0], size as sql::Len);
+    }
+
+    #[test]
+    fn write_numeric_as_binary_null_target_skips_copy() {
+        let numeric = sample_numeric();
+        let size = std::mem::size_of::<sql::Numeric>();
+        let mut indicator = [0 as sql::Len; 1];
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: std::ptr::null_mut(),
+            buffer_length: size as sql::Len,
+            octet_length_ptr: indicator.as_mut_ptr(),
+            indicator_ptr: indicator.as_mut_ptr(),
+            ..Default::default()
+        };
+        write_numeric_as_binary(&numeric, &binding).expect("null target must not error");
+        assert_eq!(indicator[0], size as sql::Len);
+    }
+
+    #[test]
+    fn write_numeric_as_binary_negative_buffer_length_rejected() {
+        let numeric = sample_numeric();
+        let mut target = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let before = target.clone();
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: target.as_mut_ptr() as sql::Pointer,
+            buffer_length: -1,
+            ..Default::default()
+        };
+        let result = write_numeric_as_binary(&numeric, &binding);
+        assert!(result.is_err(), "negative buffer_length must be rejected");
+        assert_eq!(target, before, "rejected write must not touch the buffer");
+    }
 }

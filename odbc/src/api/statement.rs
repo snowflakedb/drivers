@@ -59,7 +59,10 @@ fn find_dae_params(apd: &crate::api::ApdDescriptor, param_limit: Option<u16>) ->
             continue;
         }
         if !record.str_len_or_ind_ptr.is_null() {
-            let ind = unsafe { *record.str_len_or_ind_ptr };
+            // SAFETY: the guard above ensures the pointer is non-null; a row-wise
+            // `SQL_ATTR_ROW_BIND_TYPE` stride can leave the address unaligned, which
+            // `read_unaligned` tolerates where a plain dereference would be UB.
+            let ind = unsafe { std::ptr::read_unaligned(record.str_len_or_ind_ptr) };
             // SQL_DATA_AT_EXEC (-2): simple DAE flag.
             // SQL_LEN_DATA_AT_EXEC(len) = (-len - 100): DAE with size hint, always <= -100.
             if ind == sql::DATA_AT_EXEC || ind <= -100 {

@@ -987,6 +987,23 @@ mod tests {
     }
 
     #[test]
+    fn real_binary_negative_buffer_length_returns_error() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; 8];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: -1,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+
+        assert!(sr.write_odbc_type(42.0, &binding, &mut None).is_err());
+    }
+
+    #[test]
     fn real_binary_exact_size_succeeds() {
         let sr = make_real();
         let mut buffer = vec![0u8; 8];

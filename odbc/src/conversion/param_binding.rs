@@ -505,7 +505,7 @@ pub(crate) fn odbc_bindings_to_json_into(
     let bind_offset = if apd.bind_offset_ptr.is_null() {
         0
     } else {
-        unsafe { *apd.bind_offset_ptr }
+        unsafe { std::ptr::read_unaligned(apd.bind_offset_ptr) }
     };
     let mut json_bindings = Map::new();
 
@@ -600,7 +600,7 @@ pub(crate) fn odbc_bindings_to_csv_into(
     let bind_offset = if apd.bind_offset_ptr.is_null() {
         0
     } else {
-        unsafe { *apd.bind_offset_ptr }
+        unsafe { std::ptr::read_unaligned(apd.bind_offset_ptr) }
     };
     let mut output = String::new();
 
@@ -664,7 +664,7 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
     // Safety: the application owns an array of at least `apd.array_size`
     // `SQLUSMALLINT`s when it sets SQL_ATTR_PARAM_OPERATION_PTR; `row_idx` is
     // always < array_size at every call site.
-    unsafe { *apd.array_status_ptr.add(row_idx) == SQL_PARAM_IGNORE }
+    unsafe { std::ptr::read_unaligned(apd.array_status_ptr.add(row_idx)) == SQL_PARAM_IGNORE }
 }
 
 fn default_bind_c_type(sql_type: sql::SqlDataType) -> CDataType {
@@ -813,12 +813,12 @@ const SQL_DEFAULT_PARAM: sql::Len = -5;
 
 fn is_null_indicator(binding: &ParameterBinding) -> bool {
     !binding.str_len_or_ind_ptr.is_null()
-        && unsafe { *binding.str_len_or_ind_ptr == sql::NULL_DATA }
+        && unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) == sql::NULL_DATA }
 }
 
 fn is_default_param_indicator(binding: &ParameterBinding) -> bool {
     !binding.str_len_or_ind_ptr.is_null()
-        && unsafe { *binding.str_len_or_ind_ptr == SQL_DEFAULT_PARAM }
+        && unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) == SQL_DEFAULT_PARAM }
 }
 
 /// Read a fixed-size value using `read_unaligned` for ODBC pointer safety.
@@ -926,7 +926,7 @@ pub(crate) fn buffer_data_len(binding: &ParameterBinding) -> usize {
     };
 
     if !binding.str_len_or_ind_ptr.is_null() {
-        let indicated_len = unsafe { *binding.str_len_or_ind_ptr };
+        let indicated_len = unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) };
         if indicated_len >= 0 {
             let indicated = indicated_len as usize;
             return if max_len > 0 {
@@ -1035,8 +1035,8 @@ use super::error::AcpConversionSnafu;
 /// NULL, character data is null-terminated. Otherwise we use the indicated
 /// length (clamped to buffer_length).
 pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, BindingError> {
-    let null_terminated =
-        binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+    let null_terminated = binding.str_len_or_ind_ptr.is_null()
+        || unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) } == sql::NTS;
 
     let bytes = if null_terminated {
         unsafe { CStr::from_ptr(binding.parameter_value_ptr as *const c_char).to_bytes() }
@@ -1056,8 +1056,8 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, Bindin
 /// treated as null-terminated (scans for the first null DM-side unit,
 /// bounded by `buffer_length`). Otherwise the indicated byte length is used.
 pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, BindingError> {
-    let null_terminated =
-        binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+    let null_terminated = binding.str_len_or_ind_ptr.is_null()
+        || unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) } == sql::NTS;
     let unit_size = wchar_byte_size();
     let ptr = binding.parameter_value_ptr as *const WideChar;
 
@@ -1241,6 +1241,56 @@ mod tests {
         let converter = make_converter(binding)?;
         let (sf_type, text, _) = converter.convert(binding)?;
         Ok((sf_type, text))
+    }
+
+    #[test]
+    fn unaligned_app_pointers_read_through_read_unaligned() {
+        let data = *b"abcdefgh";
+
+        let mut ind_buf = [0u8; 1 + mem::size_of::<sql::Len>()];
+        let indicated: sql::Len = 3;
+        ind_buf[1..].copy_from_slice(&indicated.to_ne_bytes());
+        // SAFETY: `ind_buf` holds a full `sql::Len` starting at byte offset 1, so
+        // the pointer is in bounds; it is deliberately unaligned to exercise the
+        // `read_unaligned` reads of `str_len_or_ind_ptr`.
+        let ind_ptr = unsafe { ind_buf.as_mut_ptr().add(1).cast::<sql::Len>() };
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            data.len() as sql::Len,
+            ind_ptr,
+        );
+        assert_eq!(buffer_data_len(&binding), 3);
+        assert!(!is_null_indicator(&binding));
+
+        let mut status_buf = [0u8; 1 + mem::size_of::<u16>()];
+        status_buf[1..].copy_from_slice(&SQL_PARAM_IGNORE.to_ne_bytes());
+        let mut apd_status = ApdDescriptor::new();
+        // SAFETY: `status_buf` holds a full `u16` starting at byte offset 1, so the
+        // pointer is in bounds; it is deliberately unaligned to exercise the
+        // `read_unaligned` read of `array_status_ptr`.
+        apd_status.array_status_ptr = unsafe { status_buf.as_mut_ptr().add(1).cast::<u16>() };
+        assert!(param_set_ignored(&apd_status, 0));
+
+        let values: [i32; 2] = [111, 222];
+        let mut offset_buf = [0u8; 1 + mem::size_of::<sql::Len>()];
+        let bind_offset: sql::Len = mem::size_of::<i32>() as sql::Len;
+        offset_buf[1..].copy_from_slice(&bind_offset.to_ne_bytes());
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::SLong,
+            sql::SqlDataType::INTEGER,
+            values.as_ptr() as sql::Pointer,
+            mem::size_of::<i32>() as sql::Len,
+            std::ptr::null_mut(),
+        )]);
+        // SAFETY: `offset_buf` holds a full `sql::Len` starting at byte offset 1, so
+        // the pointer is in bounds; it is deliberately unaligned to exercise the
+        // `read_unaligned` read of `bind_offset_ptr`.
+        apd.bind_offset_ptr = unsafe { offset_buf.as_mut_ptr().add(1).cast::<sql::Len>() };
+        let json = odbc_bindings_to_json(&apd, &ipd, 1).expect("binding to json");
+        assert!(json.contains("222"), "bind_offset not applied: {json}");
     }
 
     // -- read_wchar_str tests -------------------------------------------------
