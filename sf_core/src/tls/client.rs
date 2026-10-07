@@ -377,9 +377,16 @@ fn build_plain_rustls_client_config(
         .with_no_client_auth())
 }
 
-/// CRL downloads need ordinary HTTPS verification but must never perform their
-/// own CRL checks, which would recurse into the downloader.
-pub(crate) fn build_crl_download_rustls_config() -> Result<rustls::ClientConfig, TlsError> {
+/// Module-backed config with reqwest's default trust (native ∪ webpki roots)
+/// and no CRL checking, for auxiliary HTTPS clients that have no connection
+/// `TlsConfig`: CRL downloads (where CRL checks would recurse), platform
+/// detection probes and WIF attestation.
+pub(crate) fn default_verified_client_builder() -> Result<ClientBuilder, TlsError> {
+    Ok(apply_http_pool_settings(Client::builder())
+        .use_preconfigured_tls(build_default_verified_rustls_config()?))
+}
+
+fn build_default_verified_rustls_config() -> Result<rustls::ClientConfig, TlsError> {
     build_verified_rustls_config(
         build_plain_root_store(&RootCertificates::Default)?,
         rustls::DEFAULT_VERSIONS,
@@ -817,8 +824,9 @@ mod tests {
     }
 
     #[test]
-    fn crl_download_config_uses_the_module_provider() {
-        let config = build_crl_download_rustls_config().expect("CRL download rustls config");
+    fn default_verified_config_uses_the_module_provider() {
+        let config =
+            build_default_verified_rustls_config().expect("default verified rustls config");
         assert!(Arc::ptr_eq(
             config.crypto_provider(),
             &crate::tls::crypto_module::CryptoModule::get().provider()

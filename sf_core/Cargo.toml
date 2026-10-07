@@ -274,7 +274,7 @@ libc = "0.2"
 [dev-dependencies]
 sf_core = { path = ".", default-features = false, features = ["test-utils"] }
 sha2 = "0.10"
-tokio = { version = "1.47.1", features = ["fs", "test-util"] }
+tokio = { version = "1.47.1", features = ["fs", "process", "test-util"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"

@@ -20,11 +20,10 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// Guarantees a rustls default provider is in place, installing aws-lc-rs if
 /// nothing has claimed the slot yet.
 ///
-/// Connection, storage and CRL-download clients carry an explicit linked-module
-/// rustls config. Plain-HTTP clients, platform-detection probes and the
-/// standard-build `verify_certificates=false` path still need this default
-/// installed to prevent reqwest's no-provider panic. FIPS builds reject that
-/// insecure opt-out, and platform probes call [`require_fips_provider`].
+/// Every HTTPS client the driver builds carries an explicit linked-module
+/// rustls config. Plain-HTTP clients and the standard-build
+/// `verify_certificates=false` path still need this default installed to
+/// prevent reqwest's no-provider panic; FIPS builds reject that opt-out.
 ///
 /// `install_default` is already one-shot inside rustls: a later call returns
 /// `Err` with the provider that won. This function has no crate-local `Once`,
@@ -116,22 +115,18 @@ pub fn tls_status() -> TlsStatus {
 ///
 /// `ensure_crypto_provider` only logs a mismatch because it has no error
 /// channel and can run beneath an FFI boundary where unwinding is undefined.
-/// Connection/storage builders and platform-detection probes use this gate.
-/// CRL downloads instead use an explicit module-backed config, independent of
-/// the process default.
+/// Connection/storage builders, platform-detection probes and WIF attestation
+/// use this gate.
 ///
 /// Compiles to `Ok(())` without the feature.
 ///
 /// # Why the global provider is checked too
 ///
-/// Connection, storage and CRL-download clients use preconfigured rustls
-/// configs with the linked module's provider. Their handshakes do not depend on
-/// who installed the process default. The insecure reqwest path is compiled
-/// only in standard builds.
-///
-/// Platform-detection probes still use the process default and call this gate
-/// before building their clients. Retaining the global check also preserves
-/// the connection/storage builders' existing fail-closed startup policy.
+/// All HTTPS clients use preconfigured rustls configs with the linked module's
+/// provider, so their handshakes do not depend on who installed the process
+/// default, and the insecure reqwest path is compiled only in standard builds.
+/// The global check keeps the existing fail-closed startup policy: a `fips`
+/// process whose default provider is non-FIPS is misconfigured.
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     #[cfg(feature = "fips")]
     {
@@ -175,8 +170,7 @@ mod fips_tests {
         );
     }
 
-    /// Platform-detection probes still require a FIPS-approved process default;
-    /// connection, storage and CRL-download clients use the module explicitly.
+    /// `require_fips_provider` expects a FIPS-approved process default.
     #[test]
     fn installed_rustls_provider_is_fips() {
         super::ensure_crypto_provider();
@@ -192,9 +186,8 @@ mod fips_tests {
         );
     }
 
-    /// The process-global builder must still use approved algorithms for
-    /// platform-detection probes. Module-backed configs have separate
-    /// provider-ownership tests in `tls::client`.
+    /// The process-global builder must still use approved algorithms.
+    /// Module-backed configs have provider-ownership tests in `tls::client`.
     #[test]
     fn client_config_is_fips() {
         super::ensure_crypto_provider();

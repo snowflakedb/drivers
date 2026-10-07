@@ -63,17 +63,12 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
     } else {
         crate::tls::ensure_crypto_provider();
 
-        // Detection reaches cloud metadata and IdP endpoints over a reqwest
-        // client, which resolves the process-global provider rather than a config
-        // built from the linked module. `detect_platforms` returns `Vec<String>`
-        // and so has no error channel, which is why the TLS factories' fail-closed
-        // gate could not simply be called here -- but "no error channel" is not a
-        // reason to emit non-approved traffic from a `fips` build, so the gate
-        // runs and its failure is folded into the existing `disabled` result.
-        //
-        // Nothing is lost by that: every connection this driver would go on to make
-        // fails the same gate, so the probes could only have contributed telemetry
-        // to a session that cannot be established.
+        // The probe client's HTTPS uses the linked module explicitly. The gate
+        // still runs so a `fips` build with a non-FIPS process provider skips
+        // detection: every connection this driver would go on to make fails the
+        // same gate, so the probes could only report on a session that cannot be
+        // established. `detect_platforms` has no error channel, so the failure
+        // folds into the existing `disabled` result.
         #[cfg(feature = "fips")]
         if let Err(e) = crate::tls::require_fips_provider() {
             tracing::error!(
@@ -83,11 +78,13 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
             return vec!["disabled".to_string()];
         }
 
-        match crate::tls::client::apply_http_pool_settings(reqwest::Client::builder()).build() {
+        let client = crate::tls::client::default_verified_client_builder()
+            .map_err(|e| e.to_string())
+            .and_then(|builder| builder.build().map_err(|e| e.to_string()));
+        match client {
             Ok(c) => Some(c),
             Err(e) => {
                 tracing::warn!(
-                    error_type = std::any::type_name_of_val(&e),
                     "failed to build platform detection HTTP client; skipping detection"
                 );
                 tracing::debug!("failed to build platform detection HTTP client: {e}");

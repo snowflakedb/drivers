@@ -350,12 +350,7 @@ impl CrlMetrics {
 }
 
 fn crl_http_client_builder() -> Result<reqwest::ClientBuilder, CrlError> {
-    let tls_config = crate::tls::client::build_crl_download_rustls_config()
-        .context(TlsConfigBuildFailedSnafu)?;
-    Ok(
-        crate::tls::client::apply_http_pool_settings(reqwest::Client::builder())
-            .use_preconfigured_tls(tls_config),
-    )
+    crate::tls::client::default_verified_client_builder().context(TlsConfigBuildFailedSnafu)
 }
 
 impl CrlCache {
