@@ -1388,10 +1388,12 @@ class TestAsyncCreateRowIteratorNativeArrow:
         conn = MagicMock()
         conn.is_closed.return_value = False
         conn.config.numpy = True
+        conn.config.use_core_arrow = False
         conn._session_parameters = {"TIMEZONE": "UTC"}
         return conn
 
     def test_uses_result_set_factory_when_native_arrow_enabled(self, mock_connection):
+        mock_connection.config.use_core_arrow = True
         cursor = AsyncSnowflakeCursor(mock_connection)
         handle = ResultSetHandle(id=7, magic=11)
         cursor._result_set = MagicMock()
@@ -1434,6 +1436,37 @@ class TestAsyncCreateRowIteratorNativeArrow:
             result = asyncio.run(cursor._create_row_iterator())
 
         assert result is iterator
+        mock_create.assert_called_once_with(
+            42,
+            context=ANY,
+            use_dict_result=False,
+            use_numpy=True,
+        )
+
+    @pytest.mark.parametrize("flag", [False, None])
+    def test_uses_stream_ptr_when_compiled_in_but_parameter_off(self, mock_connection, flag):
+        mock_connection.config.use_core_arrow = flag
+        cursor = AsyncSnowflakeCursor(mock_connection)
+        cursor._result_set = MagicMock()
+        cursor._result_set.get_arrow_stream_ptr = AsyncMock(return_value=42)
+        iterator = MagicMock(name="thread_async_iterator")
+
+        with (
+            patch("snowflake.connector.aio.cursor._base.sf_core_python") as mock_core,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_result_set",
+                new=AsyncMock(),
+            ) as mock_native,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_stream_ptr",
+                return_value=iterator,
+            ) as mock_create,
+        ):
+            mock_core.native_arrow_enabled.return_value = True
+            result = asyncio.run(cursor._create_row_iterator())
+
+        assert result is iterator
+        mock_native.assert_not_awaited()
         mock_create.assert_called_once_with(
             42,
             context=ANY,

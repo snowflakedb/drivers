@@ -1117,9 +1117,8 @@ class PythonMatrixTests(unittest.TestCase):
         self.assertTrue(ubuntu_mq[0].get("merge_queue_cell"))
 
     def test_native_arrow_is_one_linux_cell(self) -> None:
-        # test-native-arrow rebuilds python_bridge with a compile-time Cargo
-        # feature. Pin one ubuntu/x64/aws/py3.13 cell; do not cartesian-product
-        # it across nightly (and skip Windows — Cython↔native diverges there).
+        # One ubuntu/x64/aws/py3.13 cell runs the full suite with
+        # use_core_arrow. Do not cartesian-product it across nightly.
         native = [r for r in self.gha if r["hatch_env"] == "test-native-arrow"]
         self.assertTrue(native, "expected a test-native-arrow cell in the python matrix")
         for r in native:
