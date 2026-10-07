@@ -1543,3 +1543,40 @@ behavior_differences:
       Re-sending a query after a failed renewal is a core retry policy rather than an
       error-mapping detail. The difference shows only when a renewal coincides with a network
       failure; during a longer outage both drivers end with NetworkError.
+
+  81:
+    name: 'Login request CLIENT_ENVIRONMENT.ISA uses Rust architecture names'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `CLIENT_ENVIRONMENT.ISA` in the login request body is the Node.js `process.arch` value,
+      e.g. `arm64` or `x64`.
+    new_driver_behavior: |
+      `CLIENT_ENVIRONMENT.ISA` is the Rust target architecture name, e.g. `aarch64` or
+      `x86_64`. This is the same value every other new driver sends.
+    status_rationale: |
+      Not a user-facing change. The value only goes to the server in the login request for
+      telemetry purposes, and no driver API returns it.
+
+  82:
+    name: 'The application connection option is not checked for format'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      createConnection throws InvalidParameterError 404031 when `application` is not a string
+      that matches `^[A-Za-z][A-Za-z0-9.\-_]{1,50}$`, e.g. `123Test` or a value longer than
+      51 characters.
+    new_driver_behavior: |
+      createConnection accepts any string for `application` and sends it as
+      `CLIENT_ENVIRONMENT.APPLICATION` in the login request. The option is typed as a string in
+      `ConnectionOptions`.
+    status_rationale: |
+      The server does not check the format or length of `CLIENT_ENVIRONMENT.APPLICATION` today,
+      so a check in the driver protects nothing. The core driver also sends the value without
+      checks.

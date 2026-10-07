@@ -147,8 +147,12 @@ sanity-check test that validates CRL works (and ideally one that validates CRL t
 
 ### Login / proxy / request plumbing
 
-- `integration/testLoginRequestBody.ts` — most of this is `sf_core`-specific. We only need a test
-  that verifies `APPLICATION_PATH` is correctly passed through. Park until after the beta release.
+- `integration/testLoginRequestBody.ts` — migrated to `nodejs/tests/e2e/login-request-body.test.ts`;
+  the runnable cases are replaced by a comment in the source file. `APPLICATION` and OS_DETAILS on Linux run on both drivers, and ISA runs
+  on both with BD#81. Skipped for the new driver as not implemented: `APPLICATION_PATH`,
+  `LIBC_FAMILY` / `LIBC_VERSION`, and `OS_DETAILS: null` on non-Linux platforms. `PLATFORM` (BD#70) is not ported;
+  `sf_core` covers it in `src/telemetry/platform_detection/tests.rs` and
+  `tests/integration/telemetry/platform_detection.rs`.
 - `integration/testProxyExecute.js` — proxy logic should be covered in `sf_core`. All we care
   about in the driver tests is that when we pass a proxy config to a connection, `sf_core` accepts
   it. Park until after the beta release.

@@ -82,6 +82,7 @@ export type ConnectionOptions = Record<string, unknown> & {
   rowMode?: RowMode;
   fetchAsString?: DataType[];
   jsTreatIntegerAsBigInt?: boolean;
+
   /**
    * Controls how a SQL NULL is rendered for columns that {@link fetchAsString}
    * returns as strings. A column returned as its native JavaScript type is
@@ -97,6 +98,7 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default true
    */
   representNullAsStringNull?: boolean;
+
   /**
    * Decides when large bulk {@link StatementOption.binds} are uploaded to a temporary stage instead
    * of being sent with the request.
@@ -113,22 +115,31 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default User's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
    */
   arrayBindingThreshold?: number;
+
   /**
    * Optional string that can be used to tag queries and other SQL statements executed within a
    * connection. The tags are displayed in the output of the QUERY_HISTORY, QUERY_HISTORY_BY_*
    * functions.
    */
   queryTag?: string;
+
+  /**
+   * Name of the application that uses the driver. It is sent to Snowflake at login.
+   */
+  application?: string;
+
   /**
    * By default, client connections typically time out approximately 3-4 hours after the most recent query was executed.
    *
    * @default false
    */
   clientSessionKeepAlive?: boolean;
+
   /**
    * Sets the frequency (interval in seconds) between heartbeat messages.
    */
   clientSessionKeepAliveHeartbeatFrequency?: number;
+
   /**
    * When true, the session is not destroyed on the server side when the connection
    * is closed. This allows async queries to continue running after disconnect.
@@ -138,6 +149,7 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default false
    */
   serverSessionKeepAlive?: boolean;
+
   /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
@@ -165,14 +177,18 @@ export interface StatementOption {
   complete?: StatementCallback;
   asyncExec?: boolean;
   streamResult?: boolean;
+
   /**
    * Parameters scoped to this single statement, sent with the execute request
    * rather than applied to the whole session. Keys are Snowflake statement-level
    * parameter names (e.g. `TIME_OUTPUT_FORMAT`);
    */
   parameters?: Record<string, unknown>;
+
   rowMode?: RowMode;
+
   fetchAsString?: DataType[];
+
   /**
    * Values for the placeholders in {@link StatementOption.sqlText}. Write `?` (or
    * `:1`, `:2`, ...) in the SQL, and list the values here in the same order. The
@@ -197,17 +213,20 @@ export interface StatementOption {
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   binds?: Binds;
+
   /**
    * Current working directory to use for GET/PUT execution using relative paths from a client location
    * that is different from the connector directory.
    */
   cwd?: string;
+
   /**
    * UUID used to resubmit a request. When omitted, the driver creates one.
    *
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   requestId?: string;
+
   /**
    * When `true`, the query is submitted for column metadata only.
    */
