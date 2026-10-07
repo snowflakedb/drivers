@@ -741,6 +741,11 @@ def configureCommonTestTask = { t ->
         }
     }
 
+    // Default false lists each attempt as a sibling <testcase>. Merge into
+    // one case with Surefire <flakyFailure> / <rerunFailure> so ingest can
+    // tell fail-then-pass from a clean pass.
+    t.reports.junitXml.mergeReruns = true
+
     // Collect failed tests and reprint them at the end of the run so they're
     // not buried in 500+ lines of pass output. test-logger has no end-of-run
     // failure block; this hooks Gradle's TestListener directly.
