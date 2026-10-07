@@ -605,6 +605,11 @@ class TestToOptions:
         assert "interpolate_empty_sequences" not in opts
         assert "reuse_results" not in opts
 
+    def test_use_core_arrow_is_forwarded(self):
+        assert ConnectionConfig(user="u", use_core_arrow=True).to_options()["use_core_arrow"] is True
+        assert ConnectionConfig(user="u", use_core_arrow=False).to_options()["use_core_arrow"] is False
+        assert "use_core_arrow" not in ConnectionConfig(user="u").to_options()
+
     def test_maps_python_to_rust_name(self):
         config = ConnectionConfig(passcode_in_password=True)
         opts = config.to_options()
@@ -788,7 +793,7 @@ class TestClassVariables:
 
     def test_python_only_fields(self):
         assert "numpy" in ConnectionConfig._PYTHON_ONLY
-        assert "use_core_arrow" in ConnectionConfig._PYTHON_ONLY
+        assert "use_core_arrow" not in ConnectionConfig._PYTHON_ONLY
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY

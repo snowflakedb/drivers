@@ -152,7 +152,6 @@ class ConnectionConfigMixin:
         {
             "session_parameters",
             "numpy",
-            "use_core_arrow",
             "arrow_number_to_decimal",
             "paramstyle",
             "autocommit",
