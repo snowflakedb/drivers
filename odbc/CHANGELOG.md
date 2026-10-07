@@ -234,6 +234,7 @@ Bug fixes:
 - Fixed `FLOAT`/`REAL` to single-field interval fetch with a nonzero fractional part to return `SQL_SUCCESS_WITH_INFO` (`01S07`).
 - Fixed numeric-to-interval conversion so a value that truncates to zero always yields `+0` (no negative-zero interval sign).
 - Fixed binary fetches so a negative buffer length or a null output pointer leaves the application buffer unchanged. (snowflakedb/drivers#2415)
+- Fixed SQL_NTS character parameter binds so a value with no null terminator inside the buffer is read only up to its buffer length instead of past the end. (snowflakedb/drivers#2416)
 
 Internal changes:
 

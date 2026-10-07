@@ -1032,14 +1032,37 @@ use super::error::AcpConversionSnafu;
 /// Read a SQL_C_CHAR value, converting from the system ANSI code page to UTF-8.
 ///
 /// Per ODBC spec: when the indicator is SQL_NTS or the indicator pointer is
-/// NULL, character data is null-terminated. Otherwise we use the indicated
-/// length (clamped to buffer_length).
+/// NULL, character data is null-terminated. The null-terminator scan is
+/// bounded by `buffer_length`; a non-positive `buffer_length` falls back to an
+/// unbounded scan that relies on the application-supplied terminator.
+/// Otherwise we use the indicated length (clamped to buffer_length).
 pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, BindingError> {
     let null_terminated = binding.str_len_or_ind_ptr.is_null()
         || unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) } == sql::NTS;
 
     let bytes = if null_terminated {
-        unsafe { CStr::from_ptr(binding.parameter_value_ptr as *const c_char).to_bytes() }
+        if binding.buffer_length > 0 {
+            let max_len = binding.buffer_length as usize;
+            // SAFETY: ODBC requires the application to NUL-terminate SQL_C_CHAR
+            // values bound with SQL_NTS; the scan reads at most `buffer_length`
+            // bytes and stops at the first NUL, staying inside the bind buffer.
+            let buf =
+                unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, max_len) };
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(max_len);
+            &buf[..len]
+        } else {
+            tracing::warn!(
+                buffer_length = binding.buffer_length,
+                "SQL_NTS character parameter bound with non-positive buffer_length; \
+                 falling back to an unbounded scan that relies on the \
+                 application-supplied NUL terminator"
+            );
+            // SAFETY: with no usable `buffer_length` bound, the ODBC SQL_NTS
+            // contract that the application NUL-terminates the buffer is the
+            // only available stopping point. The `tracing::warn!` above
+            // surfaces the misuse case where that contract is broken.
+            unsafe { CStr::from_ptr(binding.parameter_value_ptr as *const c_char).to_bytes() }
+        }
     } else {
         let len = buffer_data_len(binding);
         unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) }
@@ -1351,6 +1374,97 @@ mod tests {
             &mut ind,
         );
         assert_eq!(read_wchar_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    // -- read_char_str tests --------------------------------------------------
+
+    #[test]
+    fn read_char_str_with_explicit_length() -> TestResult {
+        let data = b"hi!\0";
+        let mut ind: sql::Len = 3;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            data.len() as sql::Len,
+            &mut ind,
+        );
+        assert_eq!(read_char_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_char_str_with_sql_nts() -> TestResult {
+        let data = b"hi!\0";
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            data.len() as sql::Len,
+            &mut ind,
+        );
+        assert_eq!(read_char_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_char_str_with_null_indicator() -> TestResult {
+        let data = b"hi!\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            data.len() as sql::Len,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(read_char_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_char_str_sql_nts_stops_at_nul_within_buffer() -> TestResult {
+        let data = b"hi!\0junk-past-the-terminator";
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            data.len() as sql::Len,
+            &mut ind,
+        );
+        assert_eq!(read_char_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_char_str_sql_nts_bounded_by_buffer_length_without_nul() -> TestResult {
+        let data = b"abcdefwould-overrun";
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            6,
+            &mut ind,
+        );
+        assert_eq!(read_char_str(&binding)?, "abcdef");
+        Ok(())
+    }
+
+    #[test]
+    fn read_char_str_sql_nts_zero_buffer_length() -> TestResult {
+        let data = b"hi!\0";
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            0,
+            &mut ind,
+        );
+        assert_eq!(read_char_str(&binding)?, "hi!");
         Ok(())
     }
 
