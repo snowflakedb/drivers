@@ -14,7 +14,14 @@ import org.junit.jupiter.params.provider.CsvSource;
 class SnowflakeColumnTypesTest {
 
   @ParameterizedTest
-  @CsvSource({"INTEGER, INTEGER", "timestamp_ntz, TIMESTAMP_NTZ", "unknown_type, ", "'', "})
+  @CsvSource({
+    "INTEGER, INTEGER",
+    "timestamp_ntz, TIMESTAMP_NTZ",
+    "TIMESTAMP_NTZ, TIMESTAMP_NTZ",
+    "fixed, FIXED",
+    "unknown_type, ",
+    "'', "
+  })
   void shouldParseInternalTypeName(String name, String expectedEnumName) {
     SnowflakeType parsed = SnowflakeColumnTypes.fromStringOrNull(name);
     if (expectedEnumName == null || expectedEnumName.isEmpty()) {
@@ -91,5 +98,32 @@ class SnowflakeColumnTypesTest {
     assertEquals(Types.OTHER, info.getColumnType());
     assertEquals("CUSTOM_EXT", info.getExtColTypeName());
     assertEquals(SnowflakeType.ANY, info.getSnowflakeType());
+  }
+
+  @Test
+  void shouldMapGeographyUdtObjectOutputToVarchar() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType(
+            "GEOGRAPHY", "GEOGRAPHY", "object", Types.NUMERIC, false, false);
+    assertEquals(Types.VARCHAR, info.getColumnType());
+    assertEquals("GEOGRAPHY", info.getExtColTypeName());
+    assertEquals(SnowflakeType.GEOGRAPHY, info.getSnowflakeType());
+  }
+
+  @Test
+  void shouldMapVectorInternalTypeToExtraTypesVector() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType("VECTOR", null, null, Types.NUMERIC, false, false);
+    assertEquals(SnowflakeType.EXTRA_TYPES_VECTOR, info.getColumnType());
+    assertEquals("VECTOR", info.getExtColTypeName());
+    assertEquals(SnowflakeType.VECTOR, info.getSnowflakeType());
+  }
+
+  @Test
+  void shouldMapFixedColumnOnVectorWireTypeToInteger() {
+    ColumnTypeInfo info =
+        SnowflakeColumnTypes.getSnowflakeType("fixed", null, null, Types.DECIMAL, false, true);
+    assertEquals(Types.INTEGER, info.getColumnType());
+    assertEquals(SnowflakeType.FIXED, info.getSnowflakeType());
   }
 }
