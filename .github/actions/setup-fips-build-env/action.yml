@@ -1,0 +1,137 @@
+name: Setup FIPS build environment
+description: Install and verify the native toolchain used by FIPS smoke and artifact builds.
+
+inputs:
+  msvc-arch:
+    description: Architecture passed to the MSVC environment setup on Windows.
+    required: false
+    default: x64
+
+runs:
+  using: composite
+  steps:
+    - name: Install Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.25.x'
+        cache: false
+
+    - name: Install CMake 3
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
+        python3 -m venv "$CMAKE_VENV"
+        "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
+        "$CMAKE_VENV/bin/pip" install 'cmake>=3,<4'
+        cmake_bin="$CMAKE_VENV/bin/cmake"
+        "$cmake_bin" --version | grep '^cmake version 3\.'
+        echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
+        echo "CMAKE=$cmake_bin" >> "$GITHUB_ENV"
+
+    - name: Install GCC 13
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes gcc-13 g++-13
+        echo "CC=gcc-13" >> "$GITHUB_ENV"
+        echo "CXX=g++-13" >> "$GITHUB_ENV"
+        gcc-13 --version
+        g++-13 --version
+
+    - name: Select Apple Clang
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        clang --version | grep 'Apple clang'
+        clang++ --version | grep 'Apple clang'
+        echo "CC=clang" >> "$GITHUB_ENV"
+        echo "CXX=clang++" >> "$GITHUB_ENV"
+
+    - name: Configure Windows FIPS tools
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        python -m pip install "cmake>=3,<4"
+        $cmakeDir = python -c "import cmake; print(cmake.CMAKE_BIN_DIR)"
+        $cmakeExe = Join-Path $cmakeDir "cmake.exe"
+        if (-not (Test-Path $cmakeExe)) {
+          throw "CMake executable not found at $cmakeExe"
+        }
+        "CMAKE=$cmakeExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        $env:CMAKE = $cmakeExe
+
+        $paths = $env:PATH -split ';' | Where-Object {
+          $_ -and $_ -notmatch '\\Strawberry\\c\\bin\\?$'
+        }
+        if (Test-Path "C:\Strawberry\perl\bin") {
+          $paths = @("C:\Strawberry\perl\bin") + $paths
+        }
+        if (-not (Get-Command nasm.exe -ErrorAction SilentlyContinue)) {
+          choco install nasm --yes --no-progress
+          $nasmDir = "C:\Program Files\NASM"
+          if (Test-Path (Join-Path $nasmDir "nasm.exe")) {
+            $paths = @($nasmDir) + $paths
+          }
+        }
+        $env:PATH = $paths -join ';'
+
+        $libclang = Get-ChildItem "C:\Program Files\LLVM\bin\libclang.dll" -ErrorAction SilentlyContinue |
+          Select-Object -First 1
+        if (-not $libclang) {
+          throw "libclang.dll not found under C:\Program Files\LLVM\bin"
+        }
+        $libclangPath = $libclang.DirectoryName
+        $env:PATH = "$libclangPath;$env:PATH"
+        "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "LIBCLANG_PATH=$libclangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        $env:LIBCLANG_PATH = $libclangPath
+
+        foreach ($tool in @('perl.exe', 'nasm.exe', 'clang.exe')) {
+          if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+            throw "$tool is required for the Windows FIPS build"
+          }
+        }
+        perl --version
+        nasm -version
+        clang --version
+
+    - name: Setup MSVC environment
+      if: runner.os == 'Windows'
+      uses: ./.github/actions/setup-msvc
+      with:
+        arch: ${{ inputs.msvc-arch }}
+
+    - name: Setup OpenSSL (Windows x64)
+      if: runner.os == 'Windows'
+      uses: ./.github/actions/setup-windows-openssl
+      with:
+        arch: x86_64
+        linkage: dynamic
+
+    - name: Verify Windows build tools
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        foreach ($tool in @('ninja.exe', 'go.exe', 'cl.exe', 'perl.exe', 'nasm.exe', 'clang.exe')) {
+          if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+            throw "$tool is required for the Windows FIPS build"
+          }
+        }
+        if (-not (Test-Path (Join-Path $env:LIBCLANG_PATH "libclang.dll"))) {
+          throw "libclang.dll is missing from LIBCLANG_PATH"
+        }
+        $cmakeVersion = & $env:CMAKE --version
+        if ($cmakeVersion[0] -notmatch '^cmake version 3\.') {
+          throw "Expected CMake 3.x, got: $($cmakeVersion[0])"
+        }
+        $cmakeVersion
+        ninja --version
+        go version
+        cl

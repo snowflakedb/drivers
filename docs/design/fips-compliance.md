@@ -140,11 +140,11 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | F8 | **Resolved** (was Medium) | CSRF `state` and the PKCE code verifier now come from AWS-LC's DRBG via `oauth::random::token_b64url`, and the PKCE challenge digest from AWS-LC rather than RustCrypto. `oauth2` will only build a `PkceCodeChallenge` around a digest it computed itself, so the flow appends `code_challenge`/`code_challenge_method` directly — the same two parameters `set_pkce_challenge` emits. An end-to-end test asserts the challenge is the S256 digest of the verifier presented at the token endpoint, so the bypass cannot drift silently. A DRBG failure fails the login (`OAuthError::RandomGeneration`) rather than falling back. `rand` remains in the graph for retry/refresh jitter and a non-secret FFI handle tag — no security-relevant use | OAuth authorization-code flow |
 | F9 | Classified, not eliminated | `md-5` computes Azure Content-MD5 and is also present in the SDK checksum graph; `sha1` is present in `aws-smithy-checksums`. These are checksum paths, not the driver-controlled authentication signer. Separately, `md-5` derives keys for legacy encrypted PEM in **standard builds only**; FIPS builds reject that format (F16). New MD5/SHA-1 usages still require call-site review, not a blanket crate ban. | Azure upload, S3 checksum dependencies, private-key loading |
 | F10 | Low | A dead ring-only `rustls-webpki 0.102` dependency was present | Removed in Phase 1 |
-| F11 | Partially addressed | `CryptoModule` logs the selected module name, runtime FIPS module version, and provider FIPS state; a FIPS smoke assertion verifies AWS-LC FIPS 3.6.0 against the exact sys-crate pin. The shipped-dependency deny gate rejects ring and OpenSSL crypto libraries. Certificate applicability, an SBOM for each artifact, and an attested release policy remain open. ASN.1 certificate and PKCS#8 parsing is not itself a cryptographic module operation (see inventory). | Repository-wide; release evidence remains open |
+| F11 | Partially addressed | `CryptoModule` logs the selected module name, runtime FIPS module version, and provider FIPS state; a FIPS smoke assertion verifies AWS-LC FIPS 3.6.0 against the exact sys-crate pin. The shipped-dependency deny gate rejects ring and OpenSSL crypto libraries. The FIPS artifact lane checks native linkage and TLS status through release-built ODBC and Node.js bindings. Certificate applicability, an SBOM for each artifact, and an attested release policy remain open. ASN.1 certificate and PKCS#8 parsing is not itself a cryptographic module operation (see inventory). | Repository-wide; release evidence remains open |
 | F12 | Medium | AWS-LC FIPS has platform/toolchain limits (including previously observed GCC 15 and clang 20 failures with `aws-lc-fips-sys 0.13.12` and Windows ARM64 limitations). Revalidate build support and Security Policy scope for the exact locked `0.13.17` module; no alternate crypto backend covers an unsupported platform. | FIPS build infrastructure |
 | F13 | Low | JDBC retains key bytes in a Java `String`; Python may load a second unvalidated OpenSSL | JDBC and Python wrappers |
 | F14 | **Resolved** (was Blocker) | Verified connection and cloud-storage clients pass reqwest a config built with the module's provider on the CRL-disabled, enabled, and advisory paths. CRL-disabled default trust is native ∪ webpki roots; custom roots replace that set and extra roots extend it. CRL-enabled and advisory defaults use the native store only; extra roots there are native ∪ extra. HTTPS CRL downloads now use a module-backed config with native ∪ webpki roots, hostname verification and default protocols, without CRL checking to prevent recursion. FIPS builds reject `verify_certificates=false` and `tls_skip_verify=true` during settings parsing and reject hand-built insecure configs at the TLS builders; the reqwest insecure path is compiled only in standard builds. Snowflake `/telemetry/send` uses the verified connection client. IMDS and the local OpenTelemetry exporter are plain HTTP; platform-detection probes retain their fail-closed provider gate. | `tls/client.rs`, `tls/config.rs`, `crl/cache.rs` |
-| F15 | Low (build/inventory only) | With `rustls/fips`, Cargo resolves **both** `aws-lc-fips-sys` and `aws-lc-sys` (`0.13.17` and `0.38.0` in the current lockfile). A 2026-09-15 build of older versions showed only FIPS symbols linked; graph presence is not proof that either module is in a given release binary. Re-run link and SBOM analysis for each exact artifact. | `rustls` feature wiring and release provenance |
+| F15 | Artifact gate added; graph/SBOM caveat remains | With `rustls/fips`, Cargo still resolves and compiles **both** `aws-lc-fips-sys` and `aws-lc-sys` (`0.13.17` and `0.38.0` in the current lockfile). `ci/fips/check_linked_crypto.py` checks that release ODBC and Node.js artifacts link the locked FIPS module, not non-FIPS AWS-LC, ring or unprefixed OpenSSL. Graph presence is not linked-module evidence; the shared FIPS CI matrix now checks artifacts, while per-release SBOMs remain open. | `rustls` feature wiring and release provenance; see Phase 5 |
 | F16 | Format decision, not a general MD5 exemption | Two customer-supplied key formats load on a standard build and are rejected on a `fips-tls` build. Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) requires an MD5-based `EVP_BytesToKey` KDF. PBES2 3DES-CBC is unwrapped with RustCrypto `des` on a standard build and rejected, with a conversion error, on a `fips-tls` build. This differs from `md-5` use for nonsecurity upload checksums. The `des` crate stays in the graph for the standard build and for `pkcs8`'s `3des` parse feature. | `crypto/private_key.rs` |
 
 ## Shipped Rust crypto inventory and dependency policy
@@ -435,9 +435,37 @@ Never use a mixed `--all-features` build as whole-artifact FIPS evidence.
   another provider was installed process-wide first;
 - selected TLS versions, suites, groups and signature algorithms match the
   approved set;
-- native artifact inspection confirms that a release binary links no OpenSSL
-  or ring cryptographic backend, beyond the Cargo graph gate;
-- all wrappers build and report the same module status.
+- native artifact inspection checks release ODBC and Node.js binaries for the
+  locked FIPS AWS-LC prefix and rejects non-FIPS AWS-LC, ring, unprefixed public
+  OpenSSL API entry points and OpenSSL shared libraries, beyond the Cargo graph gate;
+- ODBC `SFGetTlsStatus` (loaded via Python `ctypes`) and Node.js `getTlsStatus()`
+  both report the FIPS provider and build flag through the inspected artifacts.
+  Python/JDBC wrapper artifact work remains with their owning teams.
+
+The `fips_artifacts` job uses the same Linux x64/ARM64, macOS x64/ARM64 and
+Windows x64 matrix and shared toolchain action as `fips_smoke`. It builds with
+`CARGO_PROFILE_RELEASE_STRIP=false`, retaining the release profile's thin LTO
+and single codegen unit. Disabling final stripping preserves the shipped
+linker's object selection while making Unix symbols available to `nm`.
+OpenSSL detection uses explicit public API names rather than broad namespace
+prefixes, which would misclassify AWS-LC's private static/inline helpers.
+`readelf -d` on Linux and `otool -L` on macOS also reject `libssl`/`libcrypto`
+dependencies. On Windows, `dumpbin /dependents` must name the locked FIPS
+crypto DLL and no OpenSSL DLL, and `cargo rustc` emits a separate `/MAP` for
+each final crate to check statically linked symbols too. Unique map paths
+force fresh final links rather than reusing stale cached map evidence. The checker derives
+the expected FIPS prefix from `Cargo.lock` and accepts arbitrary native
+artifact paths, not only the two bindings in this job. Node's build script
+opts into release with `SF_CORE_RELEASE=1`; its default stays debug.
+
+F15's graph fact cannot be removed by disabling rustls defaults: the cached
+`rustls 0.23.32` and `0.23.43` manifests both wire `fips` to `aws_lc_rs`,
+which enables `aws-lc-rs/aws-lc-sys`, as well as enabling `aws-lc-rs?/fips`.
+`0.23.43` is the newest compatible release under our `aws-lc-rs <1.18`
+bound; the `0.23.44` manifest requires `aws-lc-rs 1.18`. Keeping the graph
+entry is therefore intentional. The artifact check does not inventory all
+RustCrypto operations or establish CMVP validation; final-artifact SBOMs and
+release attestations are still required.
 
 CRL matrix, for both builds: valid leaf succeeds; revoked leaf fails in
 `Enabled` and `Advisory`; revoked intermediate fails; unavailable CRL differs
