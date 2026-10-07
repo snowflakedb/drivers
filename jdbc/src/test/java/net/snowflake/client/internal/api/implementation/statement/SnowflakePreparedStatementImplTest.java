@@ -18,16 +18,22 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.sql.BatchUpdateException;
 import java.sql.Clob;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
@@ -37,6 +43,7 @@ import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -50,6 +57,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
+import org.apache.arrow.memory.util.MemoryUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -468,6 +476,16 @@ public class SnowflakePreparedStatementImplTest {
   }
 
   @Test
+  void shouldBindBareTimestampWhenSessionMappingUsesLowercaseWireName() throws Exception {
+    assertBareTimestampBindType("timestamp_ntz", "TIMESTAMP_NTZ");
+  }
+
+  @Test
+  void shouldDefaultBareTimestampToLtzWhenSessionMappingIsUnrecognized() throws Exception {
+    assertBareTimestampBindType("timestamp_unknown", "TIMESTAMP_LTZ");
+  }
+
+  @Test
   void shouldInvokeStatementExecuteQueryWhenClobIsBound() throws Exception {
     try (SnowflakePreparedStatementImpl ps =
         spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
@@ -488,6 +506,43 @@ public class SnowflakePreparedStatementImplTest {
         Collections.singletonMap(
             Parameter.CLIENT_STAGE_ARRAY_BINDING_THRESHOLD.getKey(),
             ConfigSettingFactory.from(threshold));
+    when(mockConnection.getParameters()).thenReturn(new FrozenParametersRegistry(parameters));
+  }
+
+  private void assertBareTimestampBindType(String mapping, String expectedType) throws Exception {
+    forceClientTimestampTypeMapping(mapping);
+    AtomicReference<String> json = new AtomicReference<>();
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenAnswer(
+            invocation -> {
+              json.set(utf8Json(invocation.getArgument(1)));
+              return insertResponse(1L);
+            });
+
+    try (SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)")) {
+      ps.setTimestamp(1, Timestamp.from(Instant.parse("2024-01-15T12:34:56Z")));
+      assertEquals(1, ps.executeUpdate());
+    }
+
+    assertTrue(
+        json.get().contains("\"type\":\"" + expectedType + "\""),
+        "bind JSON should declare " + expectedType + " but was " + json.get());
+  }
+
+  private static String utf8Json(QueryBindings bindings) {
+    BinaryDataPtr json = bindings.getJson();
+    long address =
+        ByteBuffer.wrap(json.getValue().toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
+    ByteBuffer bytes = MemoryUtil.directBuffer(address, (int) json.getLength());
+    byte[] copy = new byte[bytes.remaining()];
+    bytes.get(copy);
+    return new String(copy, StandardCharsets.UTF_8);
+  }
+
+  private void forceClientTimestampTypeMapping(String mapping) {
+    Map<String, ConfigSetting> parameters =
+        Collections.singletonMap(
+            Parameter.CLIENT_TIMESTAMP_TYPE_MAPPING.getKey(), ConfigSettingFactory.from(mapping));
     when(mockConnection.getParameters()).thenReturn(new FrozenParametersRegistry(parameters));
   }
 
