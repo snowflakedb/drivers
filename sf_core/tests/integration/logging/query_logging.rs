@@ -48,6 +48,7 @@ fn query_params(
         log_query_text,
         log_query_parameters,
         include_retry_reason,
+        external_session_id: None,
     }
 }
 

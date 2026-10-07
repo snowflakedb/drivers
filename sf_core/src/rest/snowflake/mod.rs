@@ -209,7 +209,11 @@ impl TokenExpiry {
 pub struct SessionTokens {
     /// Token used to authenticate API requests
     pub session_token: SensitiveString,
-    /// Token used to refresh an expired session token
+    /// Token used to refresh an expired session token.
+    ///
+    /// Empty when login produced no master token (`PAT_WITH_EXTERNAL_SESSION`).
+    /// Renewal authentication and callers that surface the token use
+    /// [`Self::master_token_for_renewal`], which returns `None` for that empty value.
     pub master_token: SensitiveString,
     /// Server-assigned session ID. `None` when the server has not reported one
     /// for these tokens, which is the state the session-token bypass holds them
@@ -271,6 +275,15 @@ impl SessionTokens {
 
     pub fn master_expires_at_epoch_ms(&self) -> Option<i64> {
         self.master_expires_at.map(|exp| exp.epoch_ms)
+    }
+
+    /// Master token used to renew this session, if login produced one.
+    pub fn master_token_for_renewal(&self) -> Option<&SensitiveString> {
+        if self.master_token.reveal().is_empty() {
+            None
+        } else {
+            Some(&self.master_token)
+        }
     }
 }
 
@@ -552,6 +565,7 @@ fn driver_can_reacquire_credential(m: &LoginMethod) -> bool {
         | LoginMethod::NativeOkta(_)
         | LoginMethod::PrivateKey { .. }
         | LoginMethod::Pat { .. }
+        | LoginMethod::PatWithExternalSession { .. }
         | LoginMethod::UserPasswordMfa { .. }
         | LoginMethod::OAuthAccessToken { .. }
         | LoginMethod::SessionToken { .. }
@@ -1430,6 +1444,25 @@ pub async fn snowflake_login_with_client(
         });
     }
 
+    if let LoginMethod::PatWithExternalSession { token, .. } = &login_parameters.login_method {
+        return Ok(LoginResult {
+            tokens: SessionTokens {
+                session_token: token.clone(),
+                master_token: SensitiveString::from(""),
+                session_id: None,
+                session_expires_at: None,
+                master_expires_at: None,
+                master_validity: None,
+            },
+            session_parameters: None,
+            database_name: login_parameters.database.clone(),
+            schema_name: login_parameters.schema.clone(),
+            warehouse_name: login_parameters.warehouse.clone(),
+            role_name: login_parameters.role.clone(),
+            server_version: None,
+        });
+    }
+
     // For interactive auth methods (external browser and MFA) that write a
     // token to the cache, acquire a per-<user, host> prompt-lock so that only
     // one connection in a pool drives the interactive step.  Waiters block
@@ -1838,10 +1871,20 @@ pub async fn snowflake_login_with_client(
     })
 }
 
+fn master_token_for_authenticated_request<'a>(
+    tokens: &'a SessionTokens,
+    operation: &'static str,
+) -> Result<&'a SensitiveString, RestError> {
+    tokens
+        .master_token_for_renewal()
+        .context(MissingMasterTokenSnafu { operation })
+}
+
 /// Refresh an expired session token using the master token.
 ///
 /// When a session token expires (indicated by HTTP 401), this function can be called
-/// to obtain new tokens without requiring a full re-authentication.
+/// to obtain new tokens without requiring a full re-authentication. A session with no
+/// master token returns [`RestError::MissingMasterToken`] before any request is built.
 #[tracing::instrument(skip(client, client_info, tokens))]
 pub async fn refresh_session(
     client: &reqwest::Client,
@@ -1849,6 +1892,7 @@ pub async fn refresh_session(
     client_info: &ClientInfo,
     tokens: &SessionTokens,
 ) -> Result<SessionTokens, RestError> {
+    let master_token = master_token_for_authenticated_request(tokens, "session refresh")?;
     tracing::info!(session_id = tokens.session_id, "Refreshing session token");
 
     let refresh_url = Url::parse(server_url)
@@ -1872,7 +1916,7 @@ pub async fn refresh_session(
         // Authenticate with master token, not session token
         .header(
             header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
+            format!("Snowflake Token=\"{}\"", master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))
@@ -1962,6 +2006,8 @@ impl std::fmt::Debug for TokenRequestResult {
 ///
 /// This reuses the same endpoint and authentication as `refresh_session`
 /// but allows specifying the request type and returns minimal structured data.
+/// A session with no master token returns [`RestError::MissingMasterToken`]
+/// before any request is built.
 pub async fn token_request(
     client: &reqwest::Client,
     server_url: &str,
@@ -1969,6 +2015,7 @@ pub async fn token_request(
     tokens: &SessionTokens,
     request_type: &str,
 ) -> Result<TokenRequestResult, RestError> {
+    let master_token = master_token_for_authenticated_request(tokens, "token request")?;
     let token_url = Url::parse(server_url)
         .and_then(|base| base.join(TOKEN_REQUEST_PATH))
         .context(UrlJoinSnafu {
@@ -1988,7 +2035,7 @@ pub async fn token_request(
         ])
         .header(
             header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
+            format!("Snowflake Token=\"{}\"", master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))
@@ -2302,6 +2349,8 @@ async fn execute_sync_query<'a>(
     ];
 
     let send_start = Instant::now();
+    let external_session_header =
+        parse_external_session_header(query_parameters.external_session_id_str())?;
     let build_request = |state: &RetryState| {
         let mut params = base_query_params.clone();
         let mut retry_params = get_retry_params(state, query_parameters);
@@ -2310,6 +2359,7 @@ async fn execute_sync_query<'a>(
             client.post(query_url.clone()),
             &query_parameters.client_info,
             session_token,
+            external_session_header.as_ref(),
         ))
         .query(&params)
         .json(&query_request)
@@ -2418,7 +2468,7 @@ pub async fn snowflake_get_query_result(
     };
     let query_response = async_exec::poll_query_status(
         client,
-        &query_parameters.client_info,
+        query_parameters,
         session_token,
         &result_url,
         retry_policy,
@@ -2451,11 +2501,10 @@ pub struct QueryStatusResult {
 const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
 
 /// Check the status of a query by its ID via the `/monitoring/queries/{query_id}` endpoint.
-#[tracing::instrument(skip(client, client_info, session_token, xp_backend))]
+#[tracing::instrument(skip(client, query_parameters, session_token, xp_backend))]
 pub async fn get_query_status(
     client: &reqwest::Client,
-    server_url: &str,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &SensitiveString,
     query_id: &str,
     retry_policy: &RetryPolicy,
@@ -2482,7 +2531,7 @@ pub async fn get_query_status(
         return query_status_from_monitoring_body(parsed, &ids);
     }
 
-    let mut url = Url::parse(server_url)
+    let mut url = Url::parse(&query_parameters.server_url)
         .and_then(|base| base.join(MONITORING_QUERIES_PATH))
         .context(UrlJoinSnafu {
             path: MONITORING_QUERIES_PATH,
@@ -2496,8 +2545,16 @@ pub async fn get_query_status(
     }
 
     let token_str = session_token.reveal();
+    let external_session_header =
+        parse_external_session_header(query_parameters.external_session_id_str())?;
     let build_request = || {
-        apply_query_headers(client.get(url.clone()), client_info, token_str.as_ref()).query(&[
+        apply_query_headers(
+            client.get(url.clone()),
+            &query_parameters.client_info,
+            token_str.as_ref(),
+            external_session_header.as_ref(),
+        )
+        .query(&[
             ("requestId", uuid::Uuid::new_v4().to_string()),
             ("request_guid", uuid::Uuid::new_v4().to_string()),
         ])
@@ -2695,11 +2752,11 @@ pub async fn snowflake_abort_query(
         query_parameters.server_url, query_id
     );
 
-    let request = apply_json_content_type(apply_query_headers(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(&abort_url),
-        &query_parameters.client_info,
+        query_parameters,
         session_token,
-    ))
+    )?)
     .json(&serde_json::json!({}))
     .build()
     .context(RequestConstructionSnafu {
@@ -2775,11 +2832,11 @@ pub async fn snowflake_cancel_query(
         .map(|d| d.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_owned());
 
-    let request = apply_json_content_type(apply_query_headers(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(abort_url),
-        &query_parameters.client_info,
+        query_parameters,
         session_token,
-    ))
+    )?)
     .query(&[
         ("requestId", uuid::Uuid::new_v4().to_string()),
         ("request_guid", uuid::Uuid::new_v4().to_string()),
@@ -2920,8 +2977,12 @@ fn aws_wif_tls_config(tls_config: &crate::tls::TlsConfig) -> crate::tls::TlsConf
     tls_config
 }
 
-pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {
-    let value = format!("Snowflake Token=\"{session_token}\"");
+pub(crate) fn authorization_header(session_token: &str, use_bearer: bool) -> header::HeaderValue {
+    let value = if use_bearer {
+        format!("Bearer {session_token}")
+    } else {
+        format!("Snowflake Token=\"{session_token}\"")
+    };
     header::HeaderValue::from_str(&value).expect("authorization header construction must succeed")
 }
 
@@ -2929,15 +2990,52 @@ pub(crate) fn json_header_value() -> header::HeaderValue {
     header::HeaderValue::from_static("application/json")
 }
 
+const EXTERNAL_SESSION_ID_HEADER: &str = "X-Snowflake-External-Session-ID";
+
+pub(crate) fn parse_external_session_header(
+    external_session_id: Option<&str>,
+) -> Result<Option<header::HeaderValue>, RestError> {
+    external_session_id
+        .map(|id| {
+            header::HeaderValue::from_str(id).context(InvalidHeaderValueSnafu {
+                name: EXTERNAL_SESSION_ID_HEADER,
+            })
+        })
+        .transpose()
+}
+
 pub(crate) fn apply_query_headers(
     builder: reqwest::RequestBuilder,
     client_info: &ClientInfo,
     session_token: &str,
+    external_session_header: Option<&header::HeaderValue>,
 ) -> reqwest::RequestBuilder {
-    builder
-        .header(header::AUTHORIZATION, authorization_header(session_token))
+    let builder = builder
+        .header(
+            header::AUTHORIZATION,
+            authorization_header(session_token, external_session_header.is_some()),
+        )
         .header(header::ACCEPT, json_header_value())
-        .header("User-Agent", user_agent(client_info))
+        .header("User-Agent", user_agent(client_info));
+    match external_session_header {
+        Some(value) => builder.header(EXTERNAL_SESSION_ID_HEADER, value.clone()),
+        None => builder,
+    }
+}
+
+pub(crate) fn apply_query_auth(
+    builder: reqwest::RequestBuilder,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+) -> Result<reqwest::RequestBuilder, RestError> {
+    let external_session_header =
+        parse_external_session_header(query_parameters.external_session_id_str())?;
+    Ok(apply_query_headers(
+        builder,
+        &query_parameters.client_info,
+        session_token,
+        external_session_header.as_ref(),
+    ))
 }
 
 pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -3026,6 +3124,13 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Invalid HTTP header value for {name}"))]
+    InvalidHeaderValue {
+        name: &'static str,
+        source: header::InvalidHeaderValue,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("TLS client creation failed"))]
     CrlValidation {
         source: TlsError,
@@ -3059,6 +3164,12 @@ pub enum RestError {
     UrlJoin {
         path: &'static str,
         source: url::ParseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("This session has no master token, so {operation} cannot be performed"))]
+    MissingMasterToken {
+        operation: &'static str,
         #[snafu(implicit)]
         location: Location,
     },
@@ -3291,6 +3402,72 @@ mod tests {
         let first = tokens.session_expires_at_epoch_ms();
         std::thread::sleep(Duration::from_millis(5));
         assert_eq!(first, tokens.session_expires_at_epoch_ms());
+    }
+
+    fn session_without_master_token() -> SessionTokens {
+        SessionTokens {
+            session_token: "session-token".into(),
+            master_token: SensitiveString::from(""),
+            session_id: None,
+            session_expires_at: None,
+            master_expires_at: None,
+            master_validity: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_session_rejects_absent_master_token_before_http() {
+        let err = refresh_session(
+            &reqwest::Client::new(),
+            "http://127.0.0.1:1",
+            &test_client_info(),
+            &session_without_master_token(),
+        )
+        .await
+        .expect_err("a session with no master token cannot be refreshed");
+
+        assert!(
+            matches!(
+                err,
+                RestError::MissingMasterToken {
+                    operation: "session refresh",
+                    ..
+                }
+            ),
+            "expected MissingMasterToken, got {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "This session has no master token, so session refresh cannot be performed"
+        );
+    }
+
+    #[tokio::test]
+    async fn token_request_rejects_absent_master_token_before_http() {
+        let err = token_request(
+            &reqwest::Client::new(),
+            "http://127.0.0.1:1",
+            &test_client_info(),
+            &session_without_master_token(),
+            "RENEW",
+        )
+        .await
+        .expect_err("a session with no master token cannot issue a token request");
+
+        assert!(
+            matches!(
+                err,
+                RestError::MissingMasterToken {
+                    operation: "token request",
+                    ..
+                }
+            ),
+            "expected MissingMasterToken, got {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "This session has no master token, so token request cannot be performed"
+        );
     }
 
     #[test]
@@ -3550,6 +3727,7 @@ mod tests {
             log_query_text: false,
             log_query_parameters: false,
             include_retry_reason: false,
+            external_session_id: None,
         }
     }
 
@@ -3699,8 +3877,7 @@ mod tests {
         let params = test_query_params();
         let result = get_query_status(
             &reqwest::Client::new(),
-            &params.server_url,
-            &params.client_info,
+            &params,
             &SensitiveString::from("token"),
             "query-id",
             &RetryPolicy::default(),
@@ -4367,6 +4544,64 @@ mod tests {
             data.authenticator.as_deref(),
             Some("PROGRAMMATIC_ACCESS_TOKEN")
         );
+    }
+
+    #[test]
+    fn parse_external_session_header_rejects_control_characters() {
+        let err = parse_external_session_header(Some("ext\nid")).unwrap_err();
+        assert!(
+            matches!(err, RestError::InvalidHeaderValue { name, .. } if name == EXTERNAL_SESSION_ID_HEADER)
+        );
+        assert!(
+            parse_external_session_header(Some("ext-session-1"))
+                .unwrap()
+                .is_some()
+        );
+        assert!(parse_external_session_header(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn pat_with_external_session_skips_login_and_uses_caller_session_names() {
+        let login_params = LoginParameters {
+            login_method: LoginMethod::PatWithExternalSession {
+                username: String::new(),
+                token: "pat_secret".into(),
+                external_session_id: "ext-session-1".into(),
+            },
+            database: Some("db1".into()),
+            schema: Some("sch1".into()),
+            warehouse: Some("wh1".into()),
+            role: Some("role1".into()),
+            server_url: "http://127.0.0.1:1".into(),
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let result = rt
+            .block_on(snowflake_login_with_client(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                None,
+                crate::crl::CrlManager::new(),
+                None,
+            ))
+            .unwrap();
+
+        assert_eq!(result.tokens.session_token.reveal(), "pat_secret");
+        assert_eq!(result.tokens.master_token.reveal(), "");
+        assert!(result.tokens.master_token_for_renewal().is_none());
+        assert_eq!(result.tokens.session_id, None);
+        assert_eq!(result.database_name.as_deref(), Some("db1"));
+        assert_eq!(result.schema_name.as_deref(), Some("sch1"));
+        assert_eq!(result.warehouse_name.as_deref(), Some("wh1"));
+        assert_eq!(result.role_name.as_deref(), Some("role1"));
+        assert!(result.session_parameters.is_none());
+        assert!(result.server_version.is_none());
     }
 
     #[test]
@@ -5254,6 +5489,7 @@ mod tests {
                 log_query_text: false,
                 log_query_parameters: false,
                 include_retry_reason: true,
+                external_session_id: None,
             }
         }
 
@@ -5392,6 +5628,7 @@ mod tests {
                 log_query_text: false,
                 log_query_parameters: false,
                 include_retry_reason: false,
+                external_session_id: None,
             }
         }
 
@@ -5589,6 +5826,7 @@ mod tests {
                 log_query_text: false,
                 log_query_parameters: false,
                 include_retry_reason,
+                external_session_id: None,
             }
         }
 
@@ -5649,6 +5887,7 @@ mod tests {
                 log_query_text: text,
                 log_query_parameters: params,
                 include_retry_reason: retry_reason,
+                external_session_id: None,
             }
         }
 
@@ -5786,6 +6025,7 @@ mod tests {
                 log_query_text: false,
                 log_query_parameters: false,
                 include_retry_reason: false,
+                external_session_id: None,
             };
             let query_input = QueryInput::new("SELECT 1");
 

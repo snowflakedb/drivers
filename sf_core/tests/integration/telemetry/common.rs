@@ -27,6 +27,7 @@ pub fn test_query_parameters(server_url: &str) -> QueryParameters {
         log_query_text: false,
         log_query_parameters: false,
         include_retry_reason: false,
+        external_session_id: None,
     }
 }
 

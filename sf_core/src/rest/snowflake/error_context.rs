@@ -144,9 +144,11 @@ impl RestError {
             | RestError::InvalidSnowflakeResponse { .. }
             | RestError::Communication { .. }
             | RestError::RequestConstruction { .. }
+            | RestError::InvalidHeaderValue { .. }
             | RestError::CrlValidation { .. }
             | RestError::WifSdkHttpClient { .. }
             | RestError::UrlJoin { .. }
+            | RestError::MissingMasterToken { .. }
             | RestError::SessionRefresh { .. }
             | RestError::TokenRequestHttp { .. }
             | RestError::Heartbeat { .. }

@@ -49,6 +49,7 @@ OAUTH_AUTHORIZATION_CODE = backward_compatibility(AuthenticatorType.OAUTH_AUTHOR
 OAUTH_CLIENT_CREDENTIALS = backward_compatibility(AuthenticatorType.OAUTH_CLIENT_CREDENTIALS.value)
 USR_PWD_MFA_AUTHENTICATOR = backward_compatibility(AuthenticatorType.USERNAME_PASSWORD_MFA.value)
 PROGRAMMATIC_ACCESS_TOKEN = backward_compatibility(AuthenticatorType.PROGRAMMATIC_ACCESS_TOKEN.value)
+PAT_WITH_EXTERNAL_SESSION = backward_compatibility(AuthenticatorType.PAT_WITH_EXTERNAL_SESSION.value)
 WORKLOAD_IDENTITY_AUTHENTICATOR = backward_compatibility(AuthenticatorType.WORKLOAD_IDENTITY.value)
 
 __all__ = [
@@ -61,6 +62,7 @@ __all__ = [
     "OAUTH_CLIENT_CREDENTIALS",
     "USR_PWD_MFA_AUTHENTICATOR",
     "PROGRAMMATIC_ACCESS_TOKEN",
+    "PAT_WITH_EXTERNAL_SESSION",
     "WORKLOAD_IDENTITY_AUTHENTICATOR",
     "ReauthenticationRequest",
 ]

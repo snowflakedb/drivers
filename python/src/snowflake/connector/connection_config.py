@@ -143,6 +143,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     enable_server_session_keep_alive_auto_detection: bool | None = None
     """Enable auto-detection of async queries before logout (SNOW-2314152)"""
 
+    external_session_id: str | None = None
+    """External session identifier used with authenticator=PAT_WITH_EXTERNAL_SESSION. Sent as
+    X-Snowflake-External-Session-ID on every request; the server keys the session by (PAT, external_session_id).
+
+    Required when authenticator=PAT_WITH_EXTERNAL_SESSION
+    """
+
     host: str | None = None
     """Snowflake server hostname"""
 
@@ -462,6 +469,7 @@ class ConnectionConfig(ConnectionConfigMixin):
 
     _SENSITIVE_PARAMS: ClassVar[frozenset[str]] = frozenset(
         {
+            "external_session_id",
             "master_token",
             "oauth_client_secret",
             "passcode",

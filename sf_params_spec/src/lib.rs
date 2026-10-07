@@ -96,6 +96,7 @@ pub mod param_names {
     pub const PRIVATE_KEY_PASSWORD: ParamKey = ParamKey("private_key_password");
     pub const TOKEN: ParamKey = ParamKey("token");
     pub const TOKEN_FILE_PATH: ParamKey = ParamKey("token_file_path");
+    pub const EXTERNAL_SESSION_ID: ParamKey = ParamKey("external_session_id");
     pub const PASSCODE: ParamKey = ParamKey("passcode");
     pub const PASSCODE_IN_PASSWORD: ParamKey = ParamKey("passcodeInPassword");
     pub const CLIENT_STORE_TEMPORARY_CREDENTIAL: ParamKey =
@@ -1036,6 +1037,17 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(true)
         .description("Path to a file containing a pre-acquired bearer token (PAT, legacy OAUTH, or OIDC WIF). If both token and token_file_path are set, the file contents are used")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::EXTERNAL_SESSION_ID.as_str())
+        .value_type(ValueType::String)
+        .required(Required::WhenAuthMethod("PAT_WITH_EXTERNAL_SESSION"))
+        .sensitive(true)
+        .auth(true)
+        .description("External session identifier used with authenticator=PAT_WITH_EXTERNAL_SESSION. Sent as X-Snowflake-External-Session-ID on every request; the server keys the session by (PAT, external_session_id)")
         .scopes(&[ParamScope::Connection])
         .used_at_connect(true)
         .mutable_after_connect(false)
@@ -3359,6 +3371,7 @@ mod tests {
                 || name == "passcode"
                 || name == "proxy"
                 || name == "password"
+                || name == "external_session_id"
                 || name.ends_with("_password")
                 || name.ends_with("_secret")
         }

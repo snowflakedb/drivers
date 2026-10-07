@@ -136,6 +136,7 @@ fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
         RestError::Backend { source, .. } => kind_from_backend_error(source),
         RestError::OperationTimeout { .. } => ErrorKind::Timeout,
         RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
+        RestError::InvalidHeaderValue { .. } => ErrorKind::InvalidArgument,
         RestError::Authentication { .. }
         | RestError::NativeOkta { .. }
         | RestError::ExternalBrowser { .. }
@@ -147,6 +148,7 @@ fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
         | RestError::SessionRefreshFailed { .. }
         | RestError::SessionExpired { .. }
         | RestError::MasterTokenTerminal { .. }
+        | RestError::MissingMasterToken { .. }
         | RestError::TokenRequestHttp { .. }
         | RestError::TokenRequestFailed { .. } => ErrorKind::AuthenticationError,
         RestError::InvalidSnowflakeResponse { .. }
@@ -390,6 +392,19 @@ mod tests {
     fn query_session_expired_projects_authentication_kind() {
         let err = query(RestError::SessionExpired { location: loc() });
         assert_eq!(err.kind(), ErrorKind::AuthenticationError);
+    }
+
+    #[test]
+    fn missing_master_token_projects_authentication_kind() {
+        let err = query(RestError::MissingMasterToken {
+            operation: "token request",
+            location: loc(),
+        });
+        assert_eq!(err.kind(), ErrorKind::AuthenticationError);
+        assert_eq!(
+            err.root_cause().as_deref(),
+            Some("This session has no master token, so token request cannot be performed")
+        );
     }
 
     #[test]

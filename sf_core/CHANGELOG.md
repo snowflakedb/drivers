@@ -4,6 +4,7 @@
 
 New features:
 
+- Added PAT-with-external-session authentication (`authenticator=PAT_WITH_EXTERNAL_SESSION`) so a programmatic access token plus `external_session_id` can reuse a server-side session without a login request, sending `Authorization: Bearer` and `X-Snowflake-External-Session-ID` on subsequent requests. (snowflakedb/drivers#1996)
 - Added a connection-free TLS status API and protobuf RPC that report whether the linked rustls TLS provider is in FIPS mode and whether this build enabled `fips-tls`. Neither field claims validated-module or whole-driver FIPS compliance. (snowflakedb/drivers#1355)
 - Added Duo push continuation for username/password MFA so a pending Duo challenge can wait for device approval and then finish login. (snowflakedb/drivers#2021)
 - Added a Python `platform_detection_timeout_seconds` connection parameter that limits each cloud-metadata platform check. Setting it to `0` skips those HTTP and STS queries and keeps only environment-based detection, matching the legacy Python connector. (snowflakedb/drivers#2186)
@@ -63,6 +64,7 @@ Changes:
 
 Bug fixes:
 
+- Improved configuration errors for PAT with external session so an invalid `external_session_id` is reported without echoing the supplied identifier. (snowflakedb/drivers#1996)
 - Fixed Python `cursor.description` reporting GEOGRAPHY and GEOMETRY columns as OBJECT when the server sent those names in a separate extended type field. (snowflakedb/drivers#2326)
 - Fixed statement prepare failing with server error `000007` (statement not preparable) for statements the server only accepts for direct execution, such as `ALTER SESSION` and `COMMIT`; prepare now returns empty metadata and the statement runs on execute. (snowflakedb/drivers#2320)
 - Fixed Python `ALTER SESSION SET` cache updates panicking or skipping the assignment when non-ASCII text appeared before the keyword. (snowflakedb/drivers#2209)

@@ -27,7 +27,7 @@ pub mod toml_loader;
 use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
 
-pub(crate) const AUTHENTICATOR_ALLOWED_VALUES: &str = "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, externalbrowser, oauth, oauth_client_credentials, oauth_authorization_code, workload_identity or an https:// URL for native Okta SSO (case-insensitive)";
+pub(crate) const AUTHENTICATOR_ALLOWED_VALUES: &str = "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, pat_with_external_session, username_password_mfa, externalbrowser, oauth, oauth_client_credentials, oauth_authorization_code, workload_identity or an https:// URL for native Okta SSO (case-insensitive)";
 
 #[derive(Debug, Snafu, ErrorTrace)]
 pub enum ConfigError {

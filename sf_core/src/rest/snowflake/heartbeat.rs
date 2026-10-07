@@ -42,7 +42,7 @@ pub async fn send_heartbeat_with_timeout(
         path: HEARTBEAT_PATH,
     })?;
 
-    let request = apply_query_headers(client.post(url), client_info, session_token)
+    let request = apply_query_headers(client.post(url), client_info, session_token, None)
         .timeout(timeout.unwrap_or(DEFAULT_HEARTBEAT_TIMEOUT))
         .build()
         .context(crate::rest::snowflake::RequestConstructionSnafu {

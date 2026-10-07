@@ -780,6 +780,7 @@ class TestClassVariables:
         assert "password" in ConnectionConfig._SENSITIVE_PARAMS
         assert "private_key" in ConnectionConfig._SENSITIVE_PARAMS
         assert "token" in ConnectionConfig._SENSITIVE_PARAMS
+        assert "external_session_id" in ConnectionConfig._SENSITIVE_PARAMS
         # Both proxy_password (separate field) and proxy (URL may embed creds)
         # must be redacted.
         assert "proxy_password" in ConnectionConfig._SENSITIVE_PARAMS

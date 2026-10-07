@@ -361,6 +361,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("Cannot determine server URL: set SNOWFLAKE_TEST_HOST or SNOWFLAKE_TEST_SERVER_URL in parameters")?;
 
     let login_params = build_login_params(&params, client_info.clone(), server_url.clone())?;
+    let external_session_id = match &login_params.login_method {
+        LoginMethod::PatWithExternalSession {
+            external_session_id,
+            ..
+        } => Some(external_session_id.clone()),
+        _ => None,
+    };
 
     println!("Logging in to Snowflake...");
     let login_result = snowflake_login(&login_params, None, crl_manager.clone()).await?;
@@ -376,6 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_query_text: false,
         log_query_parameters: false,
         include_retry_reason: false,
+        external_session_id,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 

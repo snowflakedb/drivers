@@ -1,12 +1,12 @@
-use crate::config::rest_parameters::{ClientInfo, QueryParameters};
+use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, RetryState, execute_with_retry, execute_with_retry_state};
 use crate::rest::snowflake::{
     AsyncPollResultNotFoundSnafu, HttpRetrySnafu, InvalidUrlSnafu, MissingQueryIdSnafu,
     MissingResultUrlSnafu, OperationTimeoutSnafu, QUERY_REQUEST_PATH, QueryIds, QueryInput,
     RestError, UrlJoinSnafu, apply_json_content_type, apply_query_headers, get_retry_params,
-    into_query_result, query_failed_from_response, query_log_fields, query_request, query_response,
-    read_response_json, try_parse_gs_code,
+    into_query_result, parse_external_session_header, query_failed_from_response, query_log_fields,
+    query_request, query_response, read_response_json, try_parse_gs_code,
 };
 use reqwest::Method;
 use snafu::{OptionExt, ResultExt};
@@ -126,27 +126,6 @@ fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request:
     }
 }
 
-fn build_submit_request(
-    client: &reqwest::Client,
-    endpoint: &str,
-    query_parameters: &QueryParameters,
-    session_token: &str,
-    request_id: uuid::Uuid,
-    retry_state: &RetryState,
-    payload: &query_request::Request,
-) -> reqwest::RequestBuilder {
-    let builder = client.post(endpoint);
-    let mut query_string_params = get_retry_params(retry_state, query_parameters);
-    query_string_params.push(("requestId", request_id.to_string()));
-    apply_json_content_type(apply_query_headers(
-        builder,
-        &query_parameters.client_info,
-        session_token,
-    ))
-    .query(query_string_params.as_slice())
-    .json(payload)
-}
-
 async fn parse_submit_response(
     server_url: &str,
     response: reqwest::Response,
@@ -213,16 +192,18 @@ pub async fn submit_statement_async<'a>(
         "Executing async query"
     );
     let request_body = build_async_query_request(query_input);
+    let external_session_header = parse_external_session_header(params.external_session_id_str())?;
     let submit_request = |r: &RetryState| {
-        build_submit_request(
-            client,
-            &endpoint,
-            params,
+        let mut query_string_params = get_retry_params(r, params);
+        query_string_params.push(("requestId", request_id.to_string()));
+        apply_json_content_type(apply_query_headers(
+            client.post(&endpoint),
+            &params.client_info,
             session_token,
-            request_id,
-            r,
-            &request_body,
-        )
+            external_session_header.as_ref(),
+        ))
+        .query(query_string_params.as_slice())
+        .json(&request_body)
     };
 
     let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
@@ -242,15 +223,23 @@ pub async fn submit_statement_async<'a>(
 
 pub(super) async fn poll_query_status(
     client: &reqwest::Client,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     get_result_url: &str,
     policy: &RetryPolicy,
     ids: &QueryIds,
 ) -> Result<query_response::Response, RestError> {
     let result_url = get_result_url.to_string();
-    let poll_request =
-        move || apply_query_headers(client.get(result_url.clone()), client_info, session_token);
+    let external_session_header =
+        parse_external_session_header(query_parameters.external_session_id_str())?;
+    let poll_request = move || {
+        apply_query_headers(
+            client.get(result_url.clone()),
+            &query_parameters.client_info,
+            session_token,
+            external_session_header.as_ref(),
+        )
+    };
     let http_ctx = HttpContext::new(Method::GET, get_result_url.to_string());
     let response = execute_with_retry(poll_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
@@ -292,7 +281,6 @@ pub(super) async fn execute_blocking_with_async<'a>(
         bindings = bindings,
         "Executing sync query"
     );
-    let client_info = &params.client_info;
     let mut metrics = AsyncExecutionMetrics::default();
     let submit_start = Instant::now();
     let submitted = submit_statement_async(
@@ -325,7 +313,7 @@ pub(super) async fn execute_blocking_with_async<'a>(
 
         response = poll_for_result(
             client,
-            client_info,
+            params,
             session_token,
             result_url,
             policy,
@@ -393,14 +381,21 @@ fn response_has_tabular_data(resp: &query_response::Response) -> bool {
 
 async fn inline_poll_for_completion(
     client: &reqwest::Client,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
     ids: &QueryIds,
 ) -> Result<Option<query_response::Response>, RestError> {
-    let response =
-        poll_query_status(client, client_info, session_token, result_url, policy, ids).await?;
+    let response = poll_query_status(
+        client,
+        query_parameters,
+        session_token,
+        result_url,
+        policy,
+        ids,
+    )
+    .await?;
     handle_poll_response(response, true, ids) // First poll
 }
 
@@ -414,7 +409,7 @@ async fn inline_poll_for_completion(
 /// internal retry budget — it does NOT cap total query wall-clock time.
 async fn wait_for_completion(
     client: &reqwest::Client,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
@@ -459,8 +454,15 @@ async fn wait_for_completion(
             tokio::time::sleep(delay).await;
         }
 
-        let response =
-            poll_query_status(client, client_info, session_token, result_url, policy, ids).await?;
+        let response = poll_query_status(
+            client,
+            query_parameters,
+            session_token,
+            result_url,
+            policy,
+            ids,
+        )
+        .await?;
         polls += 1;
 
         if let Some(done) = handle_poll_response(response, false, ids)? {
@@ -476,7 +478,7 @@ async fn wait_for_completion(
 /// detached query path (after sync submit returned an "in progress" code).
 async fn poll_for_result(
     client: &reqwest::Client,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
@@ -484,9 +486,15 @@ async fn poll_for_result(
     metrics: &mut AsyncExecutionMetrics,
 ) -> Result<query_response::Response, RestError> {
     let inline_start = Instant::now();
-    let inline_result =
-        inline_poll_for_completion(client, client_info, session_token, result_url, policy, ids)
-            .await?;
+    let inline_result = inline_poll_for_completion(
+        client,
+        query_parameters,
+        session_token,
+        result_url,
+        policy,
+        ids,
+    )
+    .await?;
 
     match inline_result {
         Some(response) => {
@@ -496,9 +504,15 @@ async fn poll_for_result(
         None => {
             metrics.record_inline(inline_start.elapsed(), false);
             let wait_start = Instant::now();
-            let (response, polls) =
-                wait_for_completion(client, client_info, session_token, result_url, policy, ids)
-                    .await?;
+            let (response, polls) = wait_for_completion(
+                client,
+                query_parameters,
+                session_token,
+                result_url,
+                policy,
+                ids,
+            )
+            .await?;
             metrics.record_wait(wait_start.elapsed(), polls);
             Ok(response)
         }
@@ -522,7 +536,7 @@ pub(super) async fn poll_detached_query(
     let mut metrics = AsyncExecutionMetrics::default();
     let result = poll_for_result(
         client,
-        &query_parameters.client_info,
+        query_parameters,
         session_token,
         &result_url,
         policy,

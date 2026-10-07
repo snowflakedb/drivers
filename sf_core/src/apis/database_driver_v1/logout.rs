@@ -169,6 +169,11 @@ pub(super) fn prepare_logout_from_conn(
 
     tracing::info!("Closing connection");
 
+    if conn.external_session_id.is_some() {
+        tracing::info!("Skipping logout: PAT_WITH_EXTERNAL_SESSION has no GS session token");
+        return Ok(None);
+    }
+
     // Check if logout should be sent based on configuration and state
     match should_send_logout(config, Some(&conn.async_query_registry)) {
         LogoutDecision::Skip { reason } => {

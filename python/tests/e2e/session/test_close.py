@@ -437,14 +437,18 @@ _SIGSEGV = -11
 def _stderr_shows_py_finalize_teardown_race(stderr: str) -> bool:
     """CPython can abort during Py_Finalize after atexit handlers finish (SNOW-3416420).
 
-    Seen on Windows with 3.14+ as a fatal ``PyGILState_Release`` error while extension
-    destructors run after the main thread has torn down interpreter state.
+    Seen on Windows with 3.14+ while extension destructors run after the main
+    thread has torn down interpreter state. The abort shows up as
+    ``PyGILState_Release``, or as ``PyInterpreterState_Delete: remaining threads``
+    with runtime state ``finalizing``.
     """
     if not stderr:
         return False
-    if "PyGILState_Release" not in stderr:
-        return False
-    return "interpreter finalization" in stderr or "Fatal Python error" in stderr
+    gil_release = "PyGILState_Release" in stderr and (
+        "interpreter finalization" in stderr or "Fatal Python error" in stderr
+    )
+    remaining_threads = "PyInterpreterState_Delete: remaining threads" in stderr and "finalizing" in stderr
+    return gil_release or remaining_threads
 
 
 def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
@@ -455,8 +459,9 @@ def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
     work — behavioral assertions (stdout markers, wiremock counts) after this call
     still validate correctness.
 
-    A non-zero exit with ``PyGILState_Release`` during finalization is treated the
-    same way: wiremock/stdout assertions after this call remain authoritative.
+    A non-zero exit with ``PyGILState_Release`` or
+    ``PyInterpreterState_Delete: remaining threads`` during finalization is treated
+    the same way: wiremock/stdout assertions after this call remain authoritative.
     """
     if result.returncode == 0:
         return

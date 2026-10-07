@@ -49,6 +49,21 @@ pub(super) fn read_required_bearer_token(
     })
 }
 
+pub(super) fn read_required_header_bearer_token(
+    settings: &dyn Settings,
+) -> Result<SensitiveString, ConfigError> {
+    let token = read_required_bearer_token(settings)?;
+    if reqwest::header::HeaderValue::try_from(token.reveal().as_str()).is_err() {
+        return InvalidParameterValueSnafu {
+            parameter: TOKEN.to_string(),
+            value: "****".to_string(),
+            explanation: "must be a valid HTTP header value".to_string(),
+        }
+        .fail();
+    }
+    Ok(token)
+}
+
 fn read_token_file(
     token_file_path: &str,
     settings: &dyn Settings,
@@ -228,5 +243,20 @@ mod tests {
             err.to_string(),
             "Missing required parameter: token or token_file_path"
         );
+    }
+
+    #[test]
+    fn read_required_header_token_rejects_control_characters_without_exposing_token() {
+        let settings = settings_with(&[("token", Setting::String("secret\nvalue".into()))]);
+        let err = read_required_header_bearer_token(&settings).unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::InvalidParameterValue {
+                ref parameter,
+                ref value,
+                ..
+            } if parameter == TOKEN.as_str() && value == "****"
+        ));
+        assert!(!err.to_string().contains("secret"));
     }
 }

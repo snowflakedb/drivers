@@ -27,8 +27,6 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use sf_core::apis::database_driver_v1::{DatabaseDriverV1, ExecuteQueryResult};
 #[cfg(target_os = "linux")]
-use sf_core::config::rest_parameters::test_fixtures::test_client_info;
-#[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
 #[cfg(target_os = "linux")]
 use sf_core::crl::CrlManager;
@@ -55,7 +53,7 @@ use fake_host::{HostState, callbacks_for};
 #[cfg(target_os = "linux")]
 use fixtures::{
     MONITORING_RUNNING_RESPONSE, SECRET_PASSWORD, SELECT_ONE_RESPONSE, SESSION_INFO,
-    UNREACHABLE_SERVER_URL, login_parameters, query_parameters, set_running_inside_xp,
+    login_parameters, query_parameters, set_running_inside_xp,
 };
 
 #[cfg(target_os = "linux")]
@@ -262,8 +260,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
     host.set_json_payload(MONITORING_RUNNING_RESPONSE);
     let status = get_query_status(
         &client,
-        UNREACHABLE_SERVER_URL,
-        &test_client_info(),
+        &query_parameters(),
         &SensitiveString::from("unused-session-token".to_string()),
         "01b2c3d4-0000-0000-0000-000000000001",
         &Default::default(),

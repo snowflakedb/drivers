@@ -5,7 +5,9 @@ use std::sync::Arc;
 use url::Url;
 
 use super::private_key::{has_private_key_params, read_private_key};
-use super::token::{read_optional_bearer_token, read_required_bearer_token};
+use super::token::{
+    read_optional_bearer_token, read_required_bearer_token, read_required_header_bearer_token,
+};
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
 use crate::config::param_registry::param_names;
@@ -81,6 +83,9 @@ pub struct QueryParameters {
     /// When true, retried query requests include `retryReason=<status_code>` in
     /// addition to `retryCount=N`. Defaults to `true`.
     pub include_retry_reason: bool,
+    /// When set, query requests use Bearer PAT auth plus
+    /// `X-Snowflake-External-Session-ID` instead of a Snowflake session token.
+    pub external_session_id: Option<SensitiveString>,
 }
 
 impl QueryParameters {
@@ -96,7 +101,14 @@ impl QueryParameters {
             log_query_text: resolve_log_query_text(settings),
             log_query_parameters: resolve_log_query_parameters(settings),
             include_retry_reason: resolve_include_retry_reason(settings),
+            external_session_id: None,
         })
+    }
+
+    pub(crate) fn external_session_id_str(&self) -> Option<&str> {
+        self.external_session_id
+            .as_ref()
+            .map(|id| id.reveal().as_str())
     }
 }
 #[derive(Clone, Debug)]
@@ -602,6 +614,14 @@ pub enum LoginMethod {
         username: String,
         token: SensitiveString,
     },
+    /// PAT plus an external session id. Skips `/session/v1/login-request`;
+    /// subsequent requests authenticate with Bearer PAT and
+    /// `X-Snowflake-External-Session-ID`.
+    PatWithExternalSession {
+        username: String,
+        token: SensitiveString,
+        external_session_id: SensitiveString,
+    },
     UserPasswordMfa {
         username: String,
         password: SensitiveString,
@@ -641,6 +661,21 @@ pub enum LoginMethod {
 
 pub(crate) fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
     settings.get_string(key).filter(|s| !s.is_empty())
+}
+
+pub(crate) fn require_http_header_value(
+    parameter: &str,
+    value: String,
+) -> Result<String, ConfigError> {
+    if reqwest::header::HeaderValue::from_str(&value).is_err() {
+        return InvalidParameterValueSnafu {
+            parameter: parameter.to_string(),
+            value: "****".to_string(),
+            explanation: "must be a valid HTTP header value".to_string(),
+        }
+        .fail();
+    }
+    Ok(value)
 }
 
 /// Prefix for the default OAuth scope derived from the session role.
@@ -927,6 +962,18 @@ impl LoginMethod {
                 // ACCESS TOKEN`). Empty ⇒ omit `LOGIN_NAME` on the wire.
                 username: non_empty_string(settings, "user").unwrap_or_default(),
                 token: read_required_bearer_token(settings)?,
+            }),
+            "PAT_WITH_EXTERNAL_SESSION" => Ok(Self::PatWithExternalSession {
+                username: non_empty_string(settings, "user").unwrap_or_default(),
+                token: read_required_header_bearer_token(settings)?,
+                external_session_id: SensitiveString::from(require_http_header_value(
+                    "external_session_id",
+                    non_empty_string(settings, "external_session_id").context(
+                        MissingParameterSnafu {
+                            parameter: "external_session_id",
+                        },
+                    )?,
+                )?),
             }),
             _ if auth_upper.starts_with("HTTPS://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
@@ -1263,6 +1310,78 @@ mod tests {
             }
             other => panic!("Expected Pat login method, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_pat_with_external_session_resolves() {
+        let settings = create_test_settings(vec![
+            ("token", Setting::String("test_token".to_string())),
+            (
+                "authenticator",
+                Setting::String("pat_with_external_session".to_string()),
+            ),
+            ("external_session_id", Setting::String("ext-id".to_string())),
+        ]);
+
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::PatWithExternalSession {
+                username,
+                token,
+                external_session_id,
+            } => {
+                assert!(username.is_empty());
+                assert_eq!(token.reveal(), "test_token");
+                assert_eq!(external_session_id.reveal(), "ext-id");
+            }
+            other => panic!("Expected PatWithExternalSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pat_with_external_session_missing_id() {
+        let settings = create_test_settings(vec![
+            ("token", Setting::String("test_token".to_string())),
+            (
+                "authenticator",
+                Setting::String("PAT_WITH_EXTERNAL_SESSION".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        match err {
+            ConfigError::MissingParameter { parameter, .. } => {
+                assert_eq!(parameter, "external_session_id");
+            }
+            other => panic!("Expected MissingParameter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pat_with_external_session_rejects_header_unsafe_id() {
+        let settings = create_test_settings(vec![
+            ("token", Setting::String("test_token".to_string())),
+            (
+                "authenticator",
+                Setting::String("PAT_WITH_EXTERNAL_SESSION".to_string()),
+            ),
+            (
+                "external_session_id",
+                Setting::String("ext\nid".to_string()),
+            ),
+        ]);
+        let err = LoginMethod::from_settings(&settings).unwrap_err();
+        match &err {
+            ConfigError::InvalidParameterValue {
+                parameter, value, ..
+            } => {
+                assert_eq!(parameter, "external_session_id");
+                assert_eq!(value, "****");
+            }
+            other => panic!("Expected InvalidParameterValue, got {other:?}"),
+        }
+        assert!(
+            !err.to_string().contains("ext\nid"),
+            "invalid external_session_id must be redacted, got {err}"
+        );
     }
 
     #[test]
