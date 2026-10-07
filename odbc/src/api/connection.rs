@@ -138,7 +138,7 @@ fn resolve_put_get_max_attempts_value(params: &HashMap<String, String>) -> Optio
         return Some(value.to_string());
     }
 
-    alias_values.sort_by(|(left, _), (right, _)| left.cmp(right));
+    alias_values.sort_by_key(|(left, _)| *left);
     alias_values.first().map(|(_, value)| (*value).to_owned())
 }
 
