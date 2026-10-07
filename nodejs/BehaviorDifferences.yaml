@@ -1498,3 +1498,48 @@ behavior_differences:
     new_driver_behavior: |
       The same options set AUTHENTICATOR to SNOWFLAKE_JWT. Login succeeds when
       the key is valid.
+
+  79:
+    name: 'NetworkError message is the catalog text and the transport detail is on cause'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createNetworkError passes the axios or Node error as `cause` and no message, so
+      createError copies `cause.message` into `message` (for a refused port,
+      `connect ECONNREFUSED 127.0.0.1:<port>`). The catalog text 'Network error. Could not
+      reach Snowflake.' is only the fallback for a cause without a message.
+    new_driver_behavior: |
+      NetworkError 401001 always has the catalog message 'Network error. Could not reach
+      Snowflake.'. The root cause from the Rust HTTP stack is on `cause`. Name and code match
+      the old driver.
+    description: |
+      The transport runs in Rust, not in Node, so the old message text (Node's ECONNREFUSED
+      wording) cannot be reproduced. A fixed message gives callers stable text; the detail
+      stays available on `cause`.
+
+  80:
+    name: 'A query fails with NetworkError when the session renewal it triggered cannot reach Snowflake'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When a query gets GS 390112 (session token expired), the driver queues it and renews the
+      token. If the renewal request fails with a NetworkError, the driver goes back to the
+      connected state and re-sends the queued query with the old token
+      (StateRenewing.enter -> transitionToConnected, drainOperationQueue). The renewal error never
+      reaches the caller; the query fails only if its own re-send fails, and after a short
+      network blip it usually succeeds on a later renewal. Nothing caps the cycle: if queries
+      reach the server and renewals do not, it renews and re-sends indefinitely.
+    new_driver_behavior: |
+      The query rejects with NetworkError 401001, the root cause on `cause`. The core makes one
+      renewal request without retrying it and does not re-send the query. The connection stays
+      up (isUp() is true, see BD#20), so the next query renews again.
+    description: |
+      Re-sending a query after a failed renewal is a core retry policy rather than an
+      error-mapping detail. The difference shows only when a renewal coincides with a network
+      failure; during a longer outage both drivers end with NetworkError.
