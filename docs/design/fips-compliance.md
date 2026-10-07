@@ -467,6 +467,18 @@ entry is therefore intentional. The artifact check does not inventory all
 RustCrypto operations or establish CMVP validation; final-artifact SBOMs and
 release attestations are still required.
 
+The `fips_smoke` CI lane runs offline TLS, crypto, authentication, OAuth
+(DPoP, PKCE and DRBG), stage-encryption, CRL, AWS WIF and private-key unit
+tests with `fips-tls`, excluding three CRL unit tests that fetch public URLs.
+Its AWS, Azure and GCP connectivity smoke checks the
+TLS status API and a certificate-verified TLS 1.2/1.3 handshake with a FIPS
+cipher suite; JWT login with an in-test AES-256-CBC PBES2-encrypted copy of the
+account key; rejection of 3DES PKCS#8 and traditional encrypted PEM with
+conversion guidance; and all 500,000 rows of a result with remote storage
+chunks. The existing CRL-enabled SELECT and PUT/GET round-trip remain.
+These checks establish selected-path coverage, not module validation or a
+whole-artifact FIPS claim.
+
 CRL matrix, for both builds: valid leaf succeeds; revoked leaf fails in
 `Enabled` and `Advisory`; revoked intermediate fails; unavailable CRL differs
 correctly between modes; invalid CRL signature fails; issuer and AKID/SKID

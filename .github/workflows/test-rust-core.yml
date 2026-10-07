@@ -183,7 +183,14 @@ jobs:
             ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
 
       - name: Run FIPS smoke tests
-        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf tls::fips_tests
+        # Exclude CRL tests that fetch public URLs; local CRL fixtures remain covered.
+        run: >-
+          cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf --
+          tls:: crypto:: auth:: rest::snowflake::oauth:: file_manager::encryption crl::
+          rest::snowflake::workload_identity::aws config::private_key
+          --skip crl::disk_tests::disk_crl_tests::test_crl_parsing_performance
+          --skip crl::disk_tests::disk_crl_tests::test_disk_cache_read_and_half_life_refresh
+          --skip crl::cache::tests::should_warn_when_file_permission_check_is_disabled
 
       - name: Decode cloud parameters
         shell: bash
@@ -717,14 +724,13 @@ jobs:
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # The FIPS smoke matrix excludes Windows ARM because it is not a supported
   # FIPS release target.
-  # Coverage note: tests gated behind cfg(feature = "fips-tls") are
-  # tls::fips_tests and the e2e connectivity smoke in fips_connectivity:
-  # SELECT 1 with CRL off, SELECT 1 with CRL enabled, and a small PUT and GET.
-  # The unit tests verify the linked aws-lc module reports FIPS mode and the
-  # installed rustls provider / ClientConfig are FIPS. Those checks require a
-  # FIPS build, so this non-FIPS lane does not run them. Every other test runs
-  # identically with and without fips-tls; only the linked TLS crypto
-  # backend differs (aws-lc-sys vs aws-lc-fips-sys).
+  # Coverage note: fips_smoke runs the TLS, crypto, auth, OAuth, stage-encryption,
+  # CRL, AWS WIF and private-key unit paths with fips-tls enabled. Its cloud e2e
+  # smoke also checks TLS status and a negotiated FIPS suite, AES-encrypted JWT
+  # login, 3DES/legacy PEM rejection, multi-chunk results, CRL-enabled SELECT 1
+  # and a small PUT/GET round-trip. Those e2e checks and FIPS-only unit assertions
+  # require a FIPS build; this non-FIPS lane instead exercises the standard
+  # backend, including its support for the legacy private-key formats.
   test_windows_arm64_nonfips:
     needs: load-core-matrix
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
