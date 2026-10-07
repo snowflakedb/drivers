@@ -53,14 +53,15 @@ def create_row_iterator(
     context: ArrowConverterContext,
     use_dict_result: bool = False,
     use_numpy: bool = False,
+    use_core_arrow: bool = False,
 ) -> ArrowRowIterator:
     """Build a sync row iterator that yields one row at a time.
 
-    When ``sf_core_python`` is built with the ``native-arrow`` feature, returns
-    the PyO3 ``ArrowStreamIterator`` directly. Otherwise uses the Cython
-    nanoarrow iterator.
+    When ``use_core_arrow`` is true and ``sf_core_python`` is built with the
+    ``native-arrow`` feature, returns the PyO3 ``ArrowStreamIterator`` directly.
+    Otherwise uses the Cython nanoarrow iterator.
     """
-    if sf_core_python.native_arrow_enabled():
+    if use_core_arrow and sf_core_python.native_arrow_enabled():
         # Class is only exported when built with ``native-arrow``; stub_gen
         # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
         iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
@@ -90,14 +91,15 @@ def create_table_iterator(
     context: ArrowConverterContext,
     number_to_decimal: bool = False,
     force_microsecond_precision: bool = False,
+    use_core_arrow: bool = False,
 ) -> ArrowTableIterator:
     """Build a table iterator that yields one RecordBatch at a time.
 
-    When ``sf_core_python`` is built with the ``native-arrow`` feature, returns
-    the PyO3 ``ArrowStreamTableIterator``. Otherwise uses the Cython
-    nanoarrow iterator.
+    When ``use_core_arrow`` is true and ``sf_core_python`` is built with the
+    ``native-arrow`` feature, returns the PyO3 ``ArrowStreamTableIterator``.
+    Otherwise uses the Cython nanoarrow iterator.
     """
-    if sf_core_python.native_arrow_enabled():
+    if use_core_arrow and sf_core_python.native_arrow_enabled():
         # Class is only exported when built with ``native-arrow``; stub_gen
         # emits ``#[pyfunction]``s only, so do not attribute-access it on the stub.
         iterator_cls = getattr(sf_core_python, "ArrowStreamTableIterator", None)

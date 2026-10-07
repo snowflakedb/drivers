@@ -23,9 +23,7 @@ from ..._internal.arrow_stream_async import (
     create_async_row_iterator_from_stream_ptr,
     to_pandas_async,
 )
-from ..._internal.arrow_stream_utils import (
-    create_table_iterator,
-)
+from ..._internal.arrow_stream_utils import create_table_iterator
 from ..._internal.binding_converters import ParamStyle
 from ..._internal.cursor import (
     AsyncQueryResultWaiter,
@@ -589,7 +587,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     async def _create_row_iterator(self) -> AsyncArrowRowIterator:
         context = ArrowConverterContext.create(self._connection)
         use_numpy = bool(self._connection.config.numpy)
-        if sf_core_python.native_arrow_enabled():
+        if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
             return await create_async_row_iterator_from_result_set(
                 self._result_set._require_handle(),
                 context=context,
@@ -755,6 +753,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 context=ArrowConverterContext.create(self._connection),
                 number_to_decimal=self._connection.arrow_number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
+                use_core_arrow=bool(self._connection.config.use_core_arrow),
             )
         )
         async for batch in iterator:
@@ -776,6 +775,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
+            use_core_arrow=bool(self._connection.config.use_core_arrow),
         )
         return await collect_arrow_table_async(
             iterator,

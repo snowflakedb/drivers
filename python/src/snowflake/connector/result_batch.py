@@ -162,6 +162,7 @@ class ResultBatch(ResultBatchMixin):
             context=self._arrow_context,
             use_dict_result=use_dict_result,
             use_numpy=self._numpy,
+            use_core_arrow=self._use_core_arrow,
         )
 
     @requires_dependency(pyarrow)
@@ -179,6 +180,7 @@ class ResultBatch(ResultBatchMixin):
                 context=self._arrow_context,
                 number_to_decimal=number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
+                use_core_arrow=self._use_core_arrow,
             ),
             self._description,
         )

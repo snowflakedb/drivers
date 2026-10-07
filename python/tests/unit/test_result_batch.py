@@ -38,6 +38,7 @@ def _make_batch(connection=None, description=None) -> ResultBatch:
         session_parameters._cache = parameters
         connection._session_parameters = session_parameters
         connection.config.numpy = False
+        connection.config.use_core_arrow = False
     return ResultBatch(
         chunk=ResultChunk(),
         description=description or _make_description("ID"),
@@ -286,7 +287,13 @@ class TestCreateIterDispatch:
             mock_iter.return_value = iter([(1,), (2,)])
             rows = list(batch.create_iter(iter_unit=IterUnit.ROW_UNIT))
         assert rows == [(1,), (2,)]
-        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=False, use_numpy=False)
+        mock_iter.assert_called_once_with(
+            0,
+            context=batch._arrow_context,
+            use_dict_result=False,
+            use_numpy=False,
+            use_core_arrow=False,
+        )
 
     def test_row_unit_with_dict_result(self):
         mock_connection = MagicMock()
@@ -297,7 +304,13 @@ class TestCreateIterDispatch:
         ):
             mock_iter.return_value = iter([{"id": 1}])
             batch.create_iter(iter_unit=IterUnit.ROW_UNIT, use_dict_result=True)
-        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=True, use_numpy=False)
+        mock_iter.assert_called_once_with(
+            0,
+            context=batch._arrow_context,
+            use_dict_result=True,
+            use_numpy=False,
+            use_core_arrow=False,
+        )
 
     def test_table_unit_pandas_calls_to_pandas(self):
         batch = _make_batch(connection=MagicMock())
@@ -372,7 +385,11 @@ class TestToArrowConnection:
         ):
             batch.to_arrow(number_to_decimal=True, force_microsecond_precision=True)
         mock_table_iter.assert_called_once_with(
-            0, context=batch._arrow_context, number_to_decimal=True, force_microsecond_precision=True
+            0,
+            context=batch._arrow_context,
+            number_to_decimal=True,
+            force_microsecond_precision=True,
+            use_core_arrow=False,
         )
 
 
@@ -465,4 +482,10 @@ class TestErrorhandlerRouting:
         ):
             mock_iter.return_value = iter([])
             list(batch.create_iter())
-        mock_iter.assert_called_once_with(0, context=batch._arrow_context, use_dict_result=False, use_numpy=False)
+        mock_iter.assert_called_once_with(
+            0,
+            context=batch._arrow_context,
+            use_dict_result=False,
+            use_numpy=False,
+            use_core_arrow=False,
+        )

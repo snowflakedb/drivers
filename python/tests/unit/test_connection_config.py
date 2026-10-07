@@ -34,6 +34,7 @@ class TestConnectionConfigDefaults:
         assert config.warehouse is None
         assert config.role is None
         assert config.numpy is None
+        assert config.use_core_arrow is None
         assert config.arrow_number_to_decimal is None
         # enable_connection_diag must default to None (not False) so that a
         # connections.toml profile setting `enable_connection_diag = true` is
@@ -786,6 +787,7 @@ class TestClassVariables:
 
     def test_python_only_fields(self):
         assert "numpy" in ConnectionConfig._PYTHON_ONLY
+        assert "use_core_arrow" in ConnectionConfig._PYTHON_ONLY
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY

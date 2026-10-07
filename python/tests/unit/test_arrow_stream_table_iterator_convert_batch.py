@@ -57,6 +57,7 @@ def _iterate_batches(
         stream_ptr,
         context=ArrowConverterContext(timezone="UTC"),
         force_microsecond_precision=force_microsecond_precision,
+        use_core_arrow=native_arrow_enabled(),
     )
     return list(iterator)
 
