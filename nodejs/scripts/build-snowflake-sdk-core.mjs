@@ -14,8 +14,8 @@ import {
 
 const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
 const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
-const fipsTlsBuild = process.env.SF_CORE_FIPS_TLS?.toLowerCase();
-const buildWithFipsTls = fipsTlsBuild === '1' || fipsTlsBuild === 'true';
+const fipsBuild = process.env.SF_CORE_FIPS?.toLowerCase();
+const buildWithFips = fipsBuild === '1' || fipsBuild === 'true';
 // Release builds are opt-in; local development and existing test jobs stay debug.
 const releaseBuild = process.env.SF_CORE_RELEASE?.toLowerCase();
 const buildRelease = releaseBuild === '1' || releaseBuild === 'true';
@@ -24,7 +24,7 @@ if (linkerMap && (process.platform !== 'win32' || !buildRelease)) {
   throw new Error('SF_CORE_LINKER_MAP requires Windows and SF_CORE_RELEASE=1');
 }
 const manifestPath = path.join(ROOT_DIR, '..', 'nodejs_bridge', 'Cargo.toml');
-const cargoOptions = buildWithFipsTls ? ['--locked', '--features', 'fips-tls'] : ['--locked'];
+const cargoOptions = buildWithFips ? ['--locked', '--features', 'fips'] : ['--locked'];
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
 // package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),

@@ -74,7 +74,7 @@ pub enum AttestationError {
         #[snafu(implicit)]
         location: Location,
     },
-    /// Raised before any provider is dispatched, in `fips-tls` builds whose
+    /// Raised before any provider is dispatched, in `fips` builds whose
     /// process-global rustls provider is not FIPS. The AWS, Azure and GCP
     /// providers exchange authentication material over the caller-supplied
     /// clients, so the same fail-closed gate the TLS factories apply belongs

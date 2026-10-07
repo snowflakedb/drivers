@@ -6,11 +6,11 @@ package net.snowflake.client.api.driver;
  */
 public final class TlsStatus {
   private final boolean tlsProviderIsFips;
-  private final boolean fipsTlsBuildEnabled;
+  private final boolean fipsBuildEnabled;
 
-  TlsStatus(boolean tlsProviderIsFips, boolean fipsTlsBuildEnabled) {
+  TlsStatus(boolean tlsProviderIsFips, boolean fipsBuildEnabled) {
     this.tlsProviderIsFips = tlsProviderIsFips;
-    this.fipsTlsBuildEnabled = fipsTlsBuildEnabled;
+    this.fipsBuildEnabled = fipsBuildEnabled;
   }
 
   /** Whether Rustls reports the linked TLS crypto provider as FIPS. */
@@ -18,8 +18,8 @@ public final class TlsStatus {
     return tlsProviderIsFips;
   }
 
-  /** Whether sf_core was built with its fips-tls feature enabled. */
-  public boolean isFipsTlsBuildEnabled() {
-    return fipsTlsBuildEnabled;
+  /** Whether sf_core was built with its fips feature enabled. */
+  public boolean isFipsBuildEnabled() {
+    return fipsBuildEnabled;
   }
 }

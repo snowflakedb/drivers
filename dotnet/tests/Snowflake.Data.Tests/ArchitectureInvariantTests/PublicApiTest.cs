@@ -70,7 +70,7 @@ public sealed class PublicApiTest
     private static readonly HashSet<string> SnowflakeTlsStatusPublicApi =
     [
         $"P:get_{nameof(SnowflakeTlsStatus.TlsProviderIsFips)}()",
-        $"P:get_{nameof(SnowflakeTlsStatus.FipsTlsBuildEnabled)}()",
+        $"P:get_{nameof(SnowflakeTlsStatus.FipsBuildEnabled)}()",
     ];
 
     private static readonly HashSet<string> SnowflakeDbConnectionPublicApi =

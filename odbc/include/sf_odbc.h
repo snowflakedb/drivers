@@ -65,11 +65,11 @@
 
 /* TLS provider status of the loaded driver library. Fields are 0 or 1.
  * tls_provider_is_fips describes the linked rustls provider, not a process-
- * global provider; fips_tls_build_enabled describes this build's feature.
+ * global provider; fips_build_enabled describes this build's feature.
  * Neither certifies a validated crypto module or the entire driver artifact. */
 typedef struct SFTlsStatus {
   uint32_t tls_provider_is_fips;
-  uint32_t fips_tls_build_enabled;
+  uint32_t fips_build_enabled;
 } SFTlsStatus;
 
 #ifdef __cplusplus

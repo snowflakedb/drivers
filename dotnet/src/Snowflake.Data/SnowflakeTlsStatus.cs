@@ -5,15 +5,15 @@ namespace Snowflake.Data;
 /// </summary>
 public readonly struct SnowflakeTlsStatus
 {
-    internal SnowflakeTlsStatus(bool tlsProviderIsFips, bool fipsTlsBuildEnabled)
+    internal SnowflakeTlsStatus(bool tlsProviderIsFips, bool fipsBuildEnabled)
     {
         TlsProviderIsFips = tlsProviderIsFips;
-        FipsTlsBuildEnabled = fipsTlsBuildEnabled;
+        FipsBuildEnabled = fipsBuildEnabled;
     }
 
     /// <summary>Whether Rustls reports the linked TLS crypto provider as FIPS.</summary>
     public bool TlsProviderIsFips { get; }
 
-    /// <summary>Whether sf_core was built with the fips-tls feature.</summary>
-    public bool FipsTlsBuildEnabled { get; }
+    /// <summary>Whether sf_core was built with the fips feature.</summary>
+    public bool FipsBuildEnabled { get; }
 }

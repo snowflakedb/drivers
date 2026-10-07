@@ -21,7 +21,7 @@ sonic-json = ["sonic-rs"]
 # declaration, not by accident of the resolver happening to unify rustls's
 # transitive activation into the same crate.
 #
-# The name stays because the *claim* is not yet complete:
+# The feature name selects the crypto build, not a validation claim:
 #   - SDK SigV4 request signing computes HMAC-SHA256 outside the module:
 #     `aws-sigv4` uses RustCrypto unconditionally, on every S3 stage
 #     transfer; see F7. The driver's own WIF `GetCallerIdentity` signer
@@ -34,9 +34,9 @@ sonic-json = ["sonic-rs"]
 #
 # Azure Content-MD5 uses RustCrypto `md-5` as a non-security upload integrity
 # checksum; it is not part of the FIPS security claim.
-# So an artifact built with this feature is not yet a validated FIPS artifact,
-# and `fips` stays unclaimed for the complete thing.
-fips-tls = ["rustls/fips", "aws-lc-rs/fips", "dep:aws-lc-fips-sys"]
+# An artifact built with this feature is not thereby a validated FIPS artifact
+# or a claim of whole-driver FIPS compliance.
+fips = ["rustls/fips", "aws-lc-rs/fips", "dep:aws-lc-fips-sys"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
@@ -85,7 +85,7 @@ bytes = "1"
 # and -- more importantly -- makes reqwest silently fall back to
 # `rustls::crypto::ring::default_provider()` for any client built before a
 # process default is installed. `ring` is not a FIPS-validated module, so that
-# fallback would quietly defeat `--features fips-tls`. Without it reqwest instead
+# fallback would quietly defeat `--features fips`. Without it reqwest instead
 # panics ("No provider set"), which is why every client construction path calls
 # `tls::ensure_crypto_provider()` first.
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
@@ -227,7 +227,7 @@ time = "0.3"
 # and it was weighed against the correctness risk of hand-rolled ASN.1 in a
 # private-key path.
 pkcs8 = { version = "0.10", features = ["3des"] }
-# 3DES-CBC unwrap for a standard build. A `fips-tls` build does not call these
+# 3DES-CBC unwrap for a standard build. A `fips` build does not call these
 # crates: it rejects a PBES2 key whose cipher is DES-EDE3-CBC. They stay
 # because the standard build uses them, and `pkcs8`'s `3des` feature is what
 # lets the parser name that cipher on both builds. AWS-LC's cipher API is
@@ -238,7 +238,7 @@ cbc = "0.1"
 # Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
 # OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
 # format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
-# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# needs this. The code that calls it is `#[cfg(not(feature = "fips"))]`, so
 # a FIPS build never derives a key with MD5; see `crypto::private_key`.
 #
 # Azure Content-MD5 is also an upload integrity checksum, not a security
@@ -321,7 +321,7 @@ scopeguard = "1.2"
 # tests/common/crypto_provider.rs, which integration_tests picks up through
 # tests/common/mod.rs and logging_query_tests includes directly.
 #
-# Ordering note for the `fips-tls` lane: aws-lc-fips runs its power-on self-test
+# Ordering note for the `fips` lane: aws-lc-fips runs its power-on self-test
 # from its own library constructor, and these initializers add a second one.
 # Ordering between translation units is unspecified, so the two are only safe
 # together because `install_default` just stores an `Arc` and touches no

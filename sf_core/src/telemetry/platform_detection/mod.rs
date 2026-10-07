@@ -68,17 +68,17 @@ pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
         // built from the linked module. `detect_platforms` returns `Vec<String>`
         // and so has no error channel, which is why the TLS factories' fail-closed
         // gate could not simply be called here -- but "no error channel" is not a
-        // reason to emit non-approved traffic from a `fips-tls` build, so the gate
+        // reason to emit non-approved traffic from a `fips` build, so the gate
         // runs and its failure is folded into the existing `disabled` result.
         //
         // Nothing is lost by that: every connection this driver would go on to make
         // fails the same gate, so the probes could only have contributed telemetry
         // to a session that cannot be established.
-        #[cfg(feature = "fips-tls")]
+        #[cfg(feature = "fips")]
         if let Err(e) = crate::tls::require_fips_provider() {
             tracing::error!(
                 error = %e,
-                "skipping platform detection: crypto provider is not FIPS in a `fips-tls` build"
+                "skipping platform detection: crypto provider is not FIPS in a `fips` build"
             );
             return vec!["disabled".to_string()];
         }

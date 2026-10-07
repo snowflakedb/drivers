@@ -36,8 +36,8 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// an embedding application has already installed its own provider, and
 /// stomping on that would be worse than honouring it.
 ///
-/// The `fips-tls` check below asks about the *linked module*, not whichever
-/// provider won that race: it catches a build that claims `fips-tls` without
+/// The `fips` check below asks about the *linked module*, not whichever
+/// provider won that race: it catches a build that claims `fips` without
 /// having linked a FIPS-capable aws-lc. Whether the process-global slot is
 /// also FIPS is a separate question, and one with somewhere to fail into, so
 /// [`require_fips_provider`] covers it. Here a mismatch is only logged --
@@ -53,10 +53,10 @@ pub(crate) fn ensure_crypto_provider() {
         );
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     if !tls_provider_is_fips() {
         tracing::error!(
-            "driver was built with the `fips-tls` feature but the linked module's \
+            "driver was built with the `fips` feature but the linked module's \
              TLS provider is not FIPS-approved; TLS is NOT FIPS compliant"
         );
     }
@@ -96,22 +96,22 @@ pub fn tls_provider_is_fips() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TlsStatus {
     pub tls_provider_is_fips: bool,
-    pub fips_tls_build_enabled: bool,
+    pub fips_build_enabled: bool,
 }
 
 /// Reports the linked rustls TLS provider's FIPS verdict and this build's
-/// `fips-tls` feature, without initializing a connection or making network calls.
+/// `fips` feature, without initializing a connection or making network calls.
 ///
 /// This does not attest to an installed process-global provider, other driver
 /// cryptography, a validated module version, or the complete artifact.
 pub fn tls_status() -> TlsStatus {
     TlsStatus {
         tls_provider_is_fips: tls_provider_is_fips(),
-        fips_tls_build_enabled: cfg!(feature = "fips-tls"),
+        fips_build_enabled: cfg!(feature = "fips"),
     }
 }
 
-/// Fails closed in `fips-tls` builds unless *both* the linked crypto module and
+/// Fails closed in `fips` builds unless *both* the linked crypto module and
 /// the process-global provider are in FIPS mode.
 ///
 /// `ensure_crypto_provider` only logs a mismatch because it has no error
@@ -133,7 +133,7 @@ pub fn tls_status() -> TlsStatus {
 /// before building their clients. Retaining the global check also preserves
 /// the connection/storage builders' existing fail-closed startup policy.
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     {
         if !tls_provider_is_fips() {
             return Err(error::FipsModeUnavailableSnafu.build());
@@ -148,13 +148,13 @@ pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     Ok(())
 }
 
-/// Proves the `fips-tls` feature actually puts the linked crypto module into FIPS
+/// Proves the `fips` feature actually puts the linked crypto module into FIPS
 /// mode, rather than merely pulling `aws-lc-fips-sys` into the link.
 ///
 /// This is the check that distinguishes "we depend on a FIPS-capable crate"
 /// from "we are running approved algorithms in an approved mode" -- the former
 /// is a build-graph property, the latter is what an auditor asks about.
-#[cfg(all(test, feature = "fips-tls"))]
+#[cfg(all(test, feature = "fips"))]
 mod fips_tests {
     // Update together with the exact aws-lc-fips-sys pin in sf_core/Cargo.toml.
     const EXPECTED_FIPS_MODULE_VERSION: &str = "AWS-LC FIPS 3.6.0";
@@ -216,7 +216,7 @@ mod fips_tests {
             .driver_get_tls_status_blocking(DriverGetTlsStatusRequest {})
             .expect("no-connection status RPC must succeed");
         assert!(status.tls_provider_is_fips);
-        assert!(status.fips_tls_build_enabled);
+        assert!(status.fips_build_enabled);
     }
 }
 
@@ -225,7 +225,7 @@ mod status_tests {
     #[test]
     fn status_describes_linked_tls_provider_in_both_builds() {
         let status = super::tls_status();
-        assert_eq!(status.fips_tls_build_enabled, cfg!(feature = "fips-tls"));
-        assert_eq!(status.tls_provider_is_fips, cfg!(feature = "fips-tls"));
+        assert_eq!(status.fips_build_enabled, cfg!(feature = "fips"));
+        assert_eq!(status.tls_provider_is_fips, cfg!(feature = "fips"));
     }
 }

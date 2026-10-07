@@ -4,14 +4,28 @@
 management, query execution, authentication, and data processing for Snowflake
 drivers that share that library.
 
+## FIPS build
+
+Enable the `fips` Cargo feature to select AWS-LC-FIPS for rustls and application
+cryptography that uses AWS-LC:
+
+```bash
+cargo build --package sf_core --features fips
+```
+
+This feature is not a validation or whole-driver FIPS compliance claim.
+SDK-managed SigV4 signing still uses RustCrypto outside the module, and
+certificate and Security Policy applicability for the pinned AWS-LC FIPS
+version still require compliance confirmation.
+
 ## TLS status
 
 `sf_core::tls::tls_status()` and the handle-free `DriverGetTlsStatus`
-protobuf RPC are available in both standard and `fips-tls` builds. They report
+protobuf RPC are available in both standard and `fips` builds. They report
 two different facts: `tls_provider_is_fips` is rustls's FIPS verdict for the
-linked TLS provider, and `fips_tls_build_enabled` says whether this build
+linked TLS provider, and `fips_build_enabled` says whether this build
 enabled the Cargo feature. A standard build normally returns `false` for
-both; a correctly configured `fips-tls` build returns `true` for both. A
+both; a correctly configured `fips` build returns `true` for both. A
 disagreement indicates that the build flag and provider runtime state differ.
 
 These fields are **not** a claim that every TLS client in the process uses that

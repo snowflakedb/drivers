@@ -933,7 +933,7 @@ class CoreCiFeaturesTests(unittest.TestCase):
     def test_ci_all_non_fips_contains_every_non_fips_feature(self) -> None:
         features = tomllib.loads(SF_CORE_CARGO_TOML.read_text())["features"]
         actual = set(features["ci-all-non-fips"])
-        expected = set(features) - {"default", "fips-tls", "ci-all-non-fips"}
+        expected = set(features) - {"default", "fips", "ci-all-non-fips"}
         self.assertEqual(actual, expected)
 
 

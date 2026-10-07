@@ -43,7 +43,7 @@ impl TlsVersion {
         }
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     pub(crate) fn to_reqwest(self) -> reqwest::tls::Version {
         match self {
             Self::Tls12 => reqwest::tls::Version::TLS_1_2,
@@ -351,7 +351,7 @@ impl TlsConfig {
             !skip_tls_verify && settings.get_bool_or(VERIFY_HOSTNAME.as_str(), true);
         let verify_certificates =
             !skip_tls_verify && settings.get_bool_or(VERIFY_CERTIFICATES.as_str(), true);
-        #[cfg(feature = "fips-tls")]
+        #[cfg(feature = "fips")]
         if !verify_certificates {
             let (parameter, value) = if skip_tls_verify {
                 (TLS_SKIP_VERIFY.as_str(), "true")
@@ -418,7 +418,7 @@ mod tests {
     use crate::config::settings::Setting;
     use std::collections::HashMap;
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn fips_rejects_disabled_certificate_verification() {
         for verify in [Setting::Bool(false), Setting::String("false".into())] {
@@ -434,7 +434,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn fips_rejects_skip_verify_even_when_verification_is_explicitly_enabled() {
         for skip in [Setting::Bool(true), Setting::String("true".into())] {
@@ -464,7 +464,7 @@ mod tests {
         assert!(config.verify_certificates);
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn from_settings_allows_disabled_certificate_verification() {
         let settings = HashMap::from([("verify_certificates".into(), Setting::Bool(false))]);
@@ -475,7 +475,7 @@ mod tests {
         assert!(config.verify_hostname);
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn from_settings_skip_disables_both_for_bool_and_string() {
         for skip in [Setting::Bool(true), Setting::String("true".into())] {

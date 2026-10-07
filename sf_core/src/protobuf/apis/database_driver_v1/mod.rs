@@ -98,7 +98,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let status = crate::tls::tls_status();
         Ok(DriverGetTlsStatusResponse {
             tls_provider_is_fips: status.tls_provider_is_fips,
-            fips_tls_build_enabled: status.fips_tls_build_enabled,
+            fips_build_enabled: status.fips_build_enabled,
         })
     }
 
@@ -1295,7 +1295,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         //
         // This client is deliberately plain, so its handshake runs on whatever
         // provider won the process-global slot rather than on a config built
-        // from the linked module. In a `fips-tls` build that is safe only
+        // from the linked module. In a `fips` build that is safe only
         // because `create_attestation` re-checks *both* at its entry and fails
         // closed if either is non-FIPS -- see `tls::require_fips_provider`. It
         // is the gate, not this client's construction, that keeps attestation

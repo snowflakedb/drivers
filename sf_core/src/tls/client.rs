@@ -58,7 +58,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     if !tls_config.verify_certificates {
         return crate::tls::error::InsecureTlsRejectedSnafu.fail();
     }
@@ -69,7 +69,7 @@ pub(crate) fn build_tls_client_and_rustls_config(
     super::ensure_crypto_provider();
     super::require_fips_provider()?;
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         let builder = apply_reqwest_tls_versions(
@@ -171,7 +171,7 @@ pub fn create_tls_client_with_proxy_and_timeouts(
         .map(|(c, _)| c)
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 pub(crate) fn apply_reqwest_tls_versions(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
@@ -179,7 +179,7 @@ pub(crate) fn apply_reqwest_tls_versions(
     apply_reqwest_tls_versions_window(builder, tls_config.versions)
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 pub(crate) fn apply_reqwest_tls_versions_window(
     builder: ClientBuilder,
     versions: crate::tls::config::TlsVersions,
@@ -232,7 +232,7 @@ fn configure_tls_builder(
     crl_manager: CrlManager,
     alpn: ClientAlpn,
 ) -> Result<ClientBuilder, TlsError> {
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     if !tls_config.verify_certificates {
         return crate::tls::error::InsecureTlsRejectedSnafu.fail();
     }
@@ -242,7 +242,7 @@ fn configure_tls_builder(
     super::ensure_crypto_provider();
     super::require_fips_provider()?;
     let builder = apply_proxy_to_builder(builder, proxy)?;
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         return Ok(apply_reqwest_tls_versions(builder, tls_config)
@@ -340,7 +340,7 @@ fn build_crl_rustls_config(
 
     // Explicit provider rather than `ClientConfig::builder()`: the latter reads
     // the process-global default, so the module verifying this connection's
-    // chain would be whichever one won a startup race. Under `fips-tls` that
+    // chain would be whichever one won a startup race. Under `fips` that
     // race is the compliance claim.
     let mut config = version_builder
         .dangerous()
@@ -472,7 +472,7 @@ impl rustls::client::danger::ServerCertVerifier for IgnoreHostnameCertVerifier {
     }
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 /// rustls [`ClientConfig`] that skips all certificate verification.
 ///
 /// Returned by [`build_tls_client_and_rustls_config`] for the `verify_certificates=false`
@@ -493,7 +493,7 @@ pub(crate) fn build_insecure_rustls_config() -> Result<Arc<rustls::ClientConfig>
     ))
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 /// A diagnostic [`ServerCertVerifier`] that accepts any certificate chain.
 ///
 /// Unlike reqwest's built-in `NoVerifier`, this diagnostic still verifies TLS
@@ -509,7 +509,7 @@ struct NoVerifyCertVerifier {
     supported_algs: rustls::crypto::WebPkiSupportedAlgorithms,
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 impl NoVerifyCertVerifier {
     fn new() -> Self {
         Self {
@@ -519,7 +519,7 @@ impl NoVerifyCertVerifier {
     }
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 impl rustls::client::danger::ServerCertVerifier for NoVerifyCertVerifier {
     fn verify_server_cert(
         &self,
@@ -825,7 +825,7 @@ mod tests {
         ));
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     /// The standard-build diagnostic must not inherit a host-installed provider.
     #[test]
     fn insecure_config_uses_the_module_provider() {
@@ -1150,7 +1150,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn fips_rejects_insecure_connection_clients() {
         for config in [
@@ -1174,7 +1174,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn fips_rejects_insecure_storage_clients() {
         let config = TlsConfig {
@@ -1192,7 +1192,7 @@ mod tests {
         ));
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn non_fips_builders_accept_insecure_clients() {
         let config = TlsConfig::insecure();

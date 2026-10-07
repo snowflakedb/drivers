@@ -537,7 +537,7 @@ fn sts_hostname(region: &str) -> String {
     }
 }
 
-// Keep local WIF signing on AWS-LC so fips-tls uses its FIPS module for both
+// Keep local WIF signing on AWS-LC so fips uses its FIPS module for both
 // the canonical request hash and HMAC; SDK-managed SigV4 is a separate path.
 fn sha256_hex(data: &[u8]) -> String {
     hex::encode(digest::digest(&digest::SHA256, data).as_ref())

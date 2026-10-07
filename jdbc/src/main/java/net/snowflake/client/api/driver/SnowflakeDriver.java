@@ -76,7 +76,7 @@ public class SnowflakeDriver implements Driver {
     return SqlExceptionMapper.call(
         () -> {
           DriverGetTlsStatusResponse response = ProtobufApis.coreDriverApi.driverGetTlsStatus();
-          return new TlsStatus(response.getTlsProviderIsFips(), response.getFipsTlsBuildEnabled());
+          return new TlsStatus(response.getTlsProviderIsFips(), response.getFipsBuildEnabled());
         });
   }
 

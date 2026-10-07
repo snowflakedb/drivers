@@ -21,6 +21,6 @@ public sealed class SnowflakeDbDriver
     public SnowflakeTlsStatus GetTlsStatus()
     {
         var response = _driver.DriverGetTlsStatus(new DriverGetTlsStatusRequest());
-        return new SnowflakeTlsStatus(response.TlsProviderIsFips, response.FipsTlsBuildEnabled);
+        return new SnowflakeTlsStatus(response.TlsProviderIsFips, response.FipsBuildEnabled);
     }
 }

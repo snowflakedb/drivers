@@ -18,10 +18,10 @@ public class SnowflakeDriverTlsStatusTest {
         corePath != null && new File(corePath).exists(),
         "jdbc_bridge native library not built; skipping JNI TLS status probe");
 
-    boolean expectedFipsBuild = Boolean.parseBoolean(System.getenv("JDBC_EXPECT_FIPS_TLS_BUILD"));
+    boolean expectedFipsBuild = Boolean.parseBoolean(System.getenv("JDBC_EXPECT_FIPS_BUILD"));
     TlsStatus status = new SnowflakeDriver().getTlsStatus();
 
-    assertEquals(expectedFipsBuild, status.isFipsTlsBuildEnabled());
+    assertEquals(expectedFipsBuild, status.isFipsBuildEnabled());
     assertEquals(expectedFipsBuild, status.isTlsProviderFips());
   }
 }

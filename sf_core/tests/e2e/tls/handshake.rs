@@ -354,7 +354,7 @@ async fn should_skip_hostname_verification_when_disabled() {
     );
 }
 
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 #[tokio::test]
 async fn insecure_client_still_accepts_untrusted_host_mismatch() {
     let (addr, _pem_file) = spawn_tls_proxy().await;

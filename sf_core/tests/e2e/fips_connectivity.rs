@@ -73,11 +73,11 @@ fn should_put_and_get_on_a_fips_build() {
 }
 
 #[test]
-fn should_negotiate_fips_tls_on_a_fips_build() {
+fn should_negotiate_tls_with_fips_on_a_fips_build() {
     // Given both the linked provider and the build report FIPS TLS
     let status = sf_core::tls::tls_status();
     assert!(status.tls_provider_is_fips);
-    assert!(status.fips_tls_build_enabled);
+    assert!(status.fips_build_enabled);
     // And the driver has resolved the account's effective endpoint
     let client = SnowflakeTestClient::connect_with_default_auth();
     let server_url = client

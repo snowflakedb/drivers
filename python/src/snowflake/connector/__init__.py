@@ -58,7 +58,7 @@ class TlsStatus(NamedTuple):
     """
 
     tls_provider_is_fips: bool
-    fips_tls_build_enabled: bool
+    fips_build_enabled: bool
 
 
 # Sentinel to distinguish "not provided" from explicit values. Forwarding ``None``
@@ -103,7 +103,7 @@ def get_tls_status() -> TlsStatus:
     response = core_driver.driver_get_tls_status()
     return TlsStatus(
         tls_provider_is_fips=response.tls_provider_is_fips,
-        fips_tls_build_enabled=response.fips_tls_build_enabled,
+        fips_build_enabled=response.fips_build_enabled,
     )
 
 

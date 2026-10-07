@@ -49,7 +49,7 @@ pub enum TlsError {
     },
 
     #[snafu(display(
-        "driver was built with the `fips-tls` feature but the linked module's TLS provider \
+        "driver was built with the `fips` feature but the linked module's TLS provider \
          is not FIPS-approved; refusing to create a TLS client"
     ))]
     FipsModeUnavailable {
@@ -64,7 +64,7 @@ pub enum TlsError {
     /// versus fix the host application's startup order -- and the error text is
     /// the only thing a customer will see.
     #[snafu(display(
-        "driver was built with the `fips-tls` feature but the process-global rustls crypto \
+        "driver was built with the `fips` feature but the process-global rustls crypto \
          provider is not in FIPS mode (an embedding application installed its own provider \
          first); refusing to create a TLS client"
     ))]

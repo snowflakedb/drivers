@@ -158,11 +158,11 @@ jobs:
           mode: restore
           shared-key: ${{ matrix.cache_key }}
 
-      - name: Build sf_core with FIPS TLS
-        run: cargo build --locked --package sf_core --no-default-features --features fips-tls,protobuf
+      - name: Build sf_core with FIPS
+        run: cargo build --locked --package sf_core --no-default-features --features fips,protobuf
 
       - name: Compile FIPS smoke tests
-        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls,protobuf
+        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips,protobuf
 
       - name: Expose Windows FIPS DLLs
         if: runner.os == 'Windows'
@@ -185,7 +185,7 @@ jobs:
       - name: Run FIPS smoke tests
         # Exclude CRL tests that fetch public URLs; local CRL fixtures remain covered.
         run: >-
-          cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf --
+          cargo test --locked --lib --package sf_core --no-default-features --features fips,protobuf --
           tls:: crypto:: auth:: rest::snowflake::oauth:: file_manager::encryption crl::
           rest::snowflake::workload_identity::aws config::private_key
           --skip crl::disk_tests::disk_crl_tests::test_crl_parsing_performance
@@ -230,7 +230,7 @@ jobs:
             echo "FIPS connectivity smoke: ${cloud}"
             export PARAMETER_PATH="$(pwd)/parameters_${cloud}.json"
             cargo test --locked --test e2e_tests --package sf_core \
-              --no-default-features --features fips-tls,protobuf \
+              --no-default-features --features fips,protobuf \
               on_a_fips_build
           done
 
@@ -266,9 +266,9 @@ jobs:
       CARGO_PROFILE_RELEASE_STRIP: 'false'
       # Set before any Cargo invocation, including napi's metadata/build calls.
       RUSTFLAGS: ${{ startsWith(matrix.os, 'ubuntu') && '-C link-arg=-Wl,--undefined-version' || '' }}
-      SF_CORE_FIPS_TLS: '1'
+      SF_CORE_FIPS: '1'
       SF_CORE_RELEASE: '1'
-      SF_CORE_EXPECT_FIPS_TLS: '1'
+      SF_CORE_EXPECT_FIPS: '1'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -352,12 +352,12 @@ jobs:
 
       - name: Build release FIPS ODBC library
         if: runner.os != 'Windows'
-        run: cargo build --locked --release --lib --package odbc --features fips-tls
+        run: cargo build --locked --release --lib --package odbc --features fips
 
       - name: Build release FIPS ODBC library with linker map
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cargo rustc --locked --release --lib --package odbc --features fips-tls -- -C "link-arg=/MAP:$env:ODBC_LINKER_MAP"
+        run: cargo rustc --locked --release --lib --package odbc --features fips -- -C "link-arg=/MAP:$env:ODBC_LINKER_MAP"
 
       # ODBC and Node use the same target/profile/FIPS dependency, so these
       # DLLs are available before unit globalSetup builds the Node addon.
@@ -715,17 +715,17 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # Non-FIPS ARM64 build and test.
-  # On windows-11-arm, fips-tls fails for aarch64-pc-windows-msvc with:
+  # On windows-11-arm, fips fails for aarch64-pc-windows-msvc with:
   #   library machine type 'x64' conflicts with target machine type 'ARM64'
   # Evidence points to aws-lc-fips-sys Windows build env setup:
   # builder/printenv.bat calls vcvarsall.bat x64, overriding ARM64 toolchain env.
-  # This lane keeps fips-tls disabled.
+  # This lane keeps fips disabled.
   # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # The FIPS smoke matrix excludes Windows ARM because it is not a supported
   # FIPS release target.
   # Coverage note: fips_smoke runs the TLS, crypto, auth, OAuth, stage-encryption,
-  # CRL, AWS WIF and private-key unit paths with fips-tls enabled. Its cloud e2e
+  # CRL, AWS WIF and private-key unit paths with fips enabled. Its cloud e2e
   # smoke also checks TLS status and a negotiated FIPS suite, AES-encrypted JWT
   # login, 3DES/legacy PEM rejection, multi-chunk results, CRL-enabled SELECT 1
   # and a small PUT/GET round-trip. Those e2e checks and FIPS-only unit assertions

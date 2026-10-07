@@ -31,7 +31,7 @@ impl CallerIdentityProvider for StsCallerIdentityProvider {
                         // `warn`, not `debug`: the probe reports absence of an
                         // AWS identity, so a transport failure here is recorded
                         // as "not running on AWS". That is a wrong answer rather
-                        // than a missing one, and in a `fips-tls` build the
+                        // than a missing one, and in a `fips` build the
                         // likeliest cause is a refused crypto provider, which
                         // says nothing about the platform.
                         tracing::warn!(
