@@ -167,6 +167,15 @@ pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
 /// is a build-graph property, the latter is what an auditor asks about.
 #[cfg(all(test, feature = "fips-tls"))]
 mod fips_tests {
+    // Update together with the exact aws-lc-fips-sys pin in sf_core/Cargo.toml.
+    const EXPECTED_FIPS_MODULE_VERSION: &str = "AWS-LC FIPS 3.6.0";
+
+    #[test]
+    fn linked_module_version_matches_pin() {
+        let version = super::crypto_module::CryptoModule::get().version();
+        assert_eq!(version.to_str(), Ok(EXPECTED_FIPS_MODULE_VERSION));
+    }
+
     /// The aws-lc module reports FIPS mode at runtime. Fails if the build
     /// silently linked non-FIPS aws-lc-sys instead of aws-lc-fips-sys.
     #[test]

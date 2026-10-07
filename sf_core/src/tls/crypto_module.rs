@@ -56,11 +56,16 @@ static MODULE: LazyLock<CryptoModule> = LazyLock::new(|| {
     let module = CryptoModule {
         provider: Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
     };
+    #[cfg(feature = "fips-tls")]
+    let version = tracing::field::debug(module.version());
+    #[cfg(not(feature = "fips-tls"))]
+    let version = tracing::field::Empty;
     // Module identity, recorded once. A `fips-tls` build whose module did not
     // enter FIPS mode is the case worth seeing in a log: the two fields
     // disagree, and the build is not making the claim its name implies.
     tracing::debug!(
         linked = module.name(),
+        version,
         provider_is_fips = module.provider_is_fips(),
         "crypto module initialised"
     );
@@ -106,6 +111,12 @@ impl CryptoModule {
     /// `aws_lc_reports_fips_mode` lib test.
     pub(crate) fn provider_is_fips(&self) -> bool {
         self.provider.fips()
+    }
+
+    #[cfg(feature = "fips-tls")]
+    pub(crate) fn version(&self) -> &'static std::ffi::CStr {
+        // SAFETY: AWS-LC returns a static, non-null, NUL-terminated version string.
+        unsafe { std::ffi::CStr::from_ptr(aws_lc_fips_sys::awslc_version_string()) }
     }
 
     /// Which aws-lc build was linked, for diagnostics and wrapper-facing

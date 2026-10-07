@@ -14,10 +14,44 @@ Status at a glance:
 | Crypto selection | **Target: one backend, one flag.** `fips-tls` selects the AWS-LC FIPS build; security-sensitive operations outside it are inventoried below. The eventual `fips` name requires full coverage. |
 | OpenSSL | **Removed from production Rust crypto.** `openssl` remains a dev-dependency for independent fixture/reference tests; `openssl-probe` discovers CA locations without linking OpenSSL. |
 | Distribution model | Snowflake-built and consumer-built native artifacts both supported. Snowflake can claim compliance only for artifacts and environments it attests; consumer builds are a supported escape hatch with consumer-owned provenance. |
-| Validated module + certificate number | **Open.** The locked `aws-lc-fips-sys 0.13.17` vendors AWS-LC FIPS 3.6.0; certificate #5314 identifies the static 3.1.0 module, not this build. The exact validated module, Security Policy, and supported environment still need evidence. |
+| Validated module + certificate number | **Module decided: AWS-LC FIPS 3.6.0**, exactly pinned via `aws-lc-fips-sys = "=0.13.17"` and asserted at runtime in the FIPS smoke tests. Certificate / Security Policy applicability and supported deployment environments remain pending compliance confirmation; no public validated claim is established. |
 | Phases 1–2 | Done and verified. |
 | Phase 3 | Partly landed. Verified connection and storage clients use the module provider. `verify_certificates=false` and HTTPS CRL downloads still use the process-global provider. |
 | Phases 4–6 | Most direct OpenSSL ports landed. AWS SDK SigV4, WIF signing, raw AES-ECB key transport, attestation and release work remain. A `fips-tls` build rejects 3DES private-key unwrap; a standard build still performs it outside the module. The shipped-dependency deny gate covers only one part of Phase 5. |
+
+## Module version decision
+
+Ship **AWS-LC FIPS 3.6.0**, not 3.1.0. The optional direct
+`aws-lc-fips-sys = "=0.13.17"` dependency is enabled by `fips-tls`, so a
+Cargo update cannot change the module without a manifest edit.
+`tls::fips_tests::linked_module_version_matches_pin` checks the linked
+module's `awslc_version_string()` against `EXPECTED_FIPS_MODULE_VERSION`
+(`AWS-LC FIPS 3.6.0`); update that constant together with the manifest pin.
+The existing `tls::fips_tests` CI filter runs the assertion, and
+`CryptoModule` records the runtime version in its one-time identity log.
+The `aws-lc-rs <1.18` bound excludes the AWS-LC FIPS 4.x transition and also
+holds back rustls 0.23.44+, which requires aws-lc-rs 1.18.
+
+The [3.1.0 dependency route](https://github.com/aws/aws-lc-rs/releases/tag/v1.15.3)
+uses `aws-lc-fips-sys 0.13.11`, predating fixes for
+[RUSTSEC-2026-0042](https://rustsec.org/advisories/RUSTSEC-2026-0042.html)
+(conditional CRL-check bypass) and
+[RUSTSEC-2026-0043](https://rustsec.org/advisories/RUSTSEC-2026-0043.html)
+(AES-CCM timing). Version 0.13.17 includes those fixes. This is a security
+maintenance decision, not proof that either advisory is reachable through
+the driver or that the driver is vulnerability-free.
+
+[Certificate #5314](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5314)
+and its [Security Policy](https://csrc.nist.gov/CSRC/media/projects/cryptographic-module-validation-program/documents/security-policies/140sp5314.pdf)
+name the static 3.1.0 module and specific Amazon Linux 2023 tested environments.
+They do not by themselves establish applicability to 3.6.0 or to Ubuntu,
+macOS, or Windows packages. Certificate / Security Policy applicability for
+3.6.0 remains pending compliance confirmation before any public "validated"
+claim. Neither downgrading nor locally patching 3.1.0 automatically establishes
+coverage. Module identity and FIPS-mode checks also do not close the separate
+SigV4, key-transport, auxiliary TLS, wrapper-crypto, or release-provenance gaps.
+FIPS builds already reject 3DES-encrypted and traditional encrypted PEM keys;
+standard builds retain legacy support.
 
 ## Bottom line
 
@@ -106,7 +140,7 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | F8 | **Resolved** (was Medium) | CSRF `state` and the PKCE code verifier now come from AWS-LC's DRBG via `oauth::random::token_b64url`, and the PKCE challenge digest from AWS-LC rather than RustCrypto. `oauth2` will only build a `PkceCodeChallenge` around a digest it computed itself, so the flow appends `code_challenge`/`code_challenge_method` directly — the same two parameters `set_pkce_challenge` emits. An end-to-end test asserts the challenge is the S256 digest of the verifier presented at the token endpoint, so the bypass cannot drift silently. A DRBG failure fails the login (`OAuthError::RandomGeneration`) rather than falling back. `rand` remains in the graph for retry/refresh jitter and a non-secret FFI handle tag — no security-relevant use | OAuth authorization-code flow |
 | F9 | Classified, not eliminated | `md-5` computes Azure Content-MD5 and is also present in the SDK checksum graph; `sha1` is present in `aws-smithy-checksums`. These are checksum paths, not the driver-controlled authentication signer. Separately, `md-5` derives keys for legacy encrypted PEM in **standard builds only**; FIPS builds reject that format (F16). New MD5/SHA-1 usages still require call-site review, not a blanket crate ban. | Azure upload, S3 checksum dependencies, private-key loading |
 | F10 | Low | A dead ring-only `rustls-webpki 0.102` dependency was present | Removed in Phase 1 |
-| F11 | Partially addressed | `CryptoModule` logs the selected module name and provider FIPS state; the shipped-dependency deny gate below now rejects ring and OpenSSL crypto libraries. Neither supplies exact module version/certificate evidence, an SBOM for each artifact, or an attested release policy. ASN.1 certificate and PKCS#8 parsing is not itself a cryptographic module operation (see inventory). | Repository-wide; release evidence remains open |
+| F11 | Partially addressed | `CryptoModule` logs the selected module name, runtime FIPS module version, and provider FIPS state; a FIPS smoke assertion verifies AWS-LC FIPS 3.6.0 against the exact sys-crate pin. The shipped-dependency deny gate rejects ring and OpenSSL crypto libraries. Certificate applicability, an SBOM for each artifact, and an attested release policy remain open. ASN.1 certificate and PKCS#8 parsing is not itself a cryptographic module operation (see inventory). | Repository-wide; release evidence remains open |
 | F12 | Medium | AWS-LC FIPS has platform/toolchain limits (including previously observed GCC 15 and clang 20 failures with `aws-lc-fips-sys 0.13.12` and Windows ARM64 limitations). Revalidate build support and Security Policy scope for the exact locked `0.13.17` module; no alternate crypto backend covers an unsupported platform. | FIPS build infrastructure |
 | F13 | Low | JDBC retains key bytes in a Java `String`; Python may load a second unvalidated OpenSSL | JDBC and Python wrappers |
 | F14 | Blocker, still open for the insecure client and HTTPS CRL downloads | Verified connection and cloud-storage clients now pass reqwest a config built with the module's provider on the CRL-disabled, enabled, and advisory paths. CRL-disabled default trust is native ∪ webpki roots; custom roots replace that set and extra roots extend it. CRL-enabled and advisory defaults use the native store only; extra roots there are native ∪ extra, not the webpki union. `verify_certificates=false` keeps reqwest's insecure verifier and the process-global provider; that opt-out stays, and FIPS deployments do not use it. Snowflake `/telemetry/send` uses the verified connection client. IMDS and the local OpenTelemetry exporter are plain HTTP. An HTTPS CRL distribution point still uses a separate reqwest client and `ensure_crypto_provider()`, which yields to a host-installed provider and can run before a gated connection. | `tls/client.rs`, `crl/cache.rs` |
@@ -164,9 +198,9 @@ identify the static AWS-LC FIPS **3.1.0** module and prescribe installation
 and tested environments. No certificate for the exact linked version, tested
 platform, installation procedure, approved-service mapping or final-artifact
 inventory is established here. F11 is only partly addressed:
-`CryptoModule` logs a module **name** and TLS-provider status, and this gate
-prevents named crypto regressions; versioned diagnostics, release SBOMs and
-artifact provenance remain required.
+`CryptoModule` logs the runtime FIPS module version as well as the module name
+and TLS-provider status, and this gate prevents named crypto regressions;
+release SBOMs, artifact provenance and compliance confirmation remain required.
 
 ## The feature contract
 

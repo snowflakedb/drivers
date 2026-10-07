@@ -28,17 +28,15 @@ sonic-json = ["sonic-rs"]
 #     uses `aws_lc_rs`. `ring` itself is no longer linked --
 #     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
 #     block below) -- so this bullet is now about RustCrypto alone.
-#   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
-#     does not establish CMVP validation. Certificate #5314 identifies
-#     the static AWS-LC FIPS 3.1.0 module; later 3.x point releases need
-#     their own validation basis. The built and deployed module must meet
-#     the policy's version, tested environment, and installation requirements.
+#   - AWS-LC FIPS 3.6.0 is exactly pinned below. Certificate and Security
+#     Policy applicability for that version still require compliance
+#     confirmation before any public "validated" claim.
 #
 # Azure Content-MD5 uses RustCrypto `md-5` as a non-security upload integrity
 # checksum; it is not part of the FIPS security claim.
 # So an artifact built with this feature is not yet a validated FIPS artifact,
 # and `fips` stays unclaimed for the complete thing.
-fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
+fips-tls = ["rustls/fips", "aws-lc-rs/fips", "dep:aws-lc-fips-sys"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
@@ -193,26 +191,14 @@ rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 webpki-roots = "1.0.2"
 thiserror = "1.0.69"
-# Upper bound is load-bearing: `aws-lc-rs` <1.18 selects `aws-lc-fips-sys`
-# 0.13.x (AWS-LC FIPS 3.x), while >=1.18 selects 0.14.x (AWS-LC FIPS 4.x).
-# That bounds the module *family*, not its exact version or validation status:
-# certificate #5314 names the static AWS-LC FIPS 3.1.0 module, while
-# `aws-lc-fips-sys` 0.13.12 vendors 3.2.0 and 0.13.17 vendors 3.6.0.
-# Neither is named by that certificate.
-#
-# A `cargo update` within 0.13.x can change the linked module version without
-# crossing this bound. `try_fips_mode()` confirms FIPS mode, not CMVP validation;
-# tests cannot establish certificate scope. Review the exact vendored version
-# and the policy's tested environments and installation/configuration rules
-# (sections 6 and 11.1) before a validated claim.
-# The resolved crate version belongs in the dependency-policy checks
-# (cargo-deny, Phase 5), and the SBOM must record the module identity too.
-#
-# Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
-# the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
-#
-# Revisit the bound and build toolchain together when updating the module.
-# `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
+# Keep AWS-LC FIPS 3.6.0: 3.1.0's sys crate (0.13.11) predates the fixes for
+# RUSTSEC-2026-0042 (conditional CRL-check bypass) and RUSTSEC-2026-0043
+# (AES-CCM timing). The exact pin must be updated together with
+# EXPECTED_FIPS_MODULE_VERSION in tls::fips_tests.
+# Certificate / Security Policy applicability remains pending compliance review.
+aws-lc-fips-sys = { version = "=0.13.17", optional = true }
+# >=1.18 selects AWS-LC FIPS 4.x. This bound also holds back rustls >=0.23.44,
+# which requires aws-lc-rs 1.18; revisit both when deliberately changing modules.
 aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
 der-parser = "9.0"
