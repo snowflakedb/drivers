@@ -89,15 +89,6 @@ pub(crate) enum PlanError {
     },
 
     #[snafu(display(
-        "INTERVAL_DAY_TIME nanosecond value {value} does not fit in an Arrow duration"
-    ))]
-    IntervalOverflow {
-        value: i128,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display(
         "The total number of nanoseconds {epoch}{frac:09} overflows int64 range. If you use a timestamp with the nanosecond part over 6-digits in the Snowflake database, the timestamp must be between '1677-09-21 00:12:43.145224192' and '2262-04-11 23:47:16.854775807' to not overflow. Pass force_microsecond_precision=True to truncate to microseconds instead."
     ))]
     TimestampOverflow {

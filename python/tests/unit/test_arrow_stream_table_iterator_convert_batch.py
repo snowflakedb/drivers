@@ -313,16 +313,10 @@ def test_should_handle_extreme_interval_day_time_decimal128(nanos: int):
     columns = [_interval_day_time_decimal_column("iv", nanos)]
 
     # When convertBatch rewrites the column to Arrow duration[ns]
-    if native_arrow_enabled():
-        # Then the native path rejects the value instead of wrapping
-        with pytest.raises(InterfaceError, match="does not fit in an Arrow duration"):
-            _iterate_batches(columns)
-        return
-
     batches = _iterate_batches(columns)
 
-    # Then Cython succeeds and the duration value is the low 64 bits of the
-    # nanosecond count, not the original magnitude
+    # Then the duration value is the low 64 bits of the nanosecond count,
+    # not the original magnitude
     duration_type = batches[0].schema.field("iv").type
     assert pa.types.is_duration(duration_type)
     assert duration_type.unit == "ns"

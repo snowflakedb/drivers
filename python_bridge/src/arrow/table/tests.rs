@@ -374,24 +374,26 @@ fn convert_batch_interval_day_time_int64_to_duration_ns() {
 }
 
 #[test]
-fn convert_batch_interval_day_time_rejects_decimal128_outside_i64() {
+fn convert_batch_interval_day_time_wraps_decimal128_outside_i64() {
     let beyond = i64::MAX as i128 + 1;
-    let err = converter()
-        .convert_batch(interval_batch(Decimal128Array::from(vec![Some(beyond)])))
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        PlanError::IntervalOverflow { value, .. } if value == beyond
-    ));
-
     let below = i64::MIN as i128 - 1;
-    let err = converter()
-        .convert_batch(interval_batch(Decimal128Array::from(vec![Some(below)])))
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        PlanError::IntervalOverflow { value, .. } if value == below
-    ));
+    let converted = converter()
+        .convert_batch(interval_batch(Decimal128Array::from(vec![
+            Some(beyond),
+            Some(below),
+        ])))
+        .unwrap();
+    let values = converted
+        .column(0)
+        .as_any()
+        .downcast_ref::<DurationNanosecondArray>()
+        .unwrap();
+    assert_eq!(
+        values,
+        &DurationNanosecondArray::from(vec![Some(beyond as i64), Some(below as i64)])
+    );
+    assert_ne!(beyond, i128::from(beyond as i64));
+    assert_ne!(below, i128::from(below as i64));
 }
 
 const EPOCH_2024: i64 = 1_705_314_600;
