@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg(
             Arg::new("no-verify-certs")
                 .long("no-verify-certs")
-                .help("Disable certificate verification (INSECURE)")
+                .help("Disable certificate verification (INSECURE; unavailable in FIPS builds)")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let crl_manager = sf_core::crl::CrlManager::new();
     let client = create_tls_client_with_config(tls_config, crl_manager.clone())
-        .map_err(|e| format!("Failed to build TLS client: {:?}", e))?;
+        .map_err(|e| format!("Failed to build TLS client: {e} ({e:?})"))?;
 
     let method = matches.get_one::<String>("method").unwrap();
     let mut request_builder = match method.as_str() {

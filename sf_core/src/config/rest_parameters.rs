@@ -213,9 +213,9 @@ pub mod test_fixtures {
     use crate::crl::config::CrlConfig;
     use crate::tls::config::TlsConfig;
 
-    /// Minimal [`ClientInfo`] for tests. Uses [`TlsConfig::insecure`] so it works
-    /// with plain-HTTP mock servers. Override specific fields with struct-update
-    /// syntax: `ClientInfo { application: "foo".into(), ..test_client_info() }`.
+    /// Minimal [`ClientInfo`] for tests, including plain-HTTP mock servers.
+    /// Override specific fields with struct-update syntax:
+    /// `ClientInfo { application: "foo".into(), ..test_client_info() }`.
     pub fn test_client_info() -> ClientInfo {
         ClientInfo {
             client_app_id: "sf_core_test".to_string(),
@@ -229,7 +229,7 @@ pub mod test_fixtures {
             compiler: None,
             release_type: None,
             crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::insecure(),
+            tls_config: TlsConfig::default(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
             os_details: None,
         }

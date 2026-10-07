@@ -1631,6 +1631,7 @@ mod tests {
         assert_eq!(config.session.role.as_deref(), Some("myrole"));
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn build_tls_booleans_from_bool_setting() {
         let mut settings = minimal_password_settings();
@@ -1653,6 +1654,7 @@ mod tests {
         assert!(config.tls.verify_certificates);
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn tls_skip_verify_disables_both_checks() {
         let mut settings = minimal_password_settings();
@@ -1663,6 +1665,7 @@ mod tests {
         assert!(!config.tls.verify_certificates);
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn tls_skip_verify_overrides_individual_verify_flags() {
         let mut settings = minimal_password_settings();
@@ -1675,6 +1678,7 @@ mod tests {
         assert!(!config.tls.verify_certificates);
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn tls_skip_verify_canonicalizes_from_any_case_and_disables_verification() {
         use crate::config::param_registry::registry;
@@ -1701,6 +1705,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn tls_skip_verify_bypasses_crl_even_when_crl_check_mode_enabled() {
         // Locks the registry description's CRL claim against drift: tls_skip_verify forces

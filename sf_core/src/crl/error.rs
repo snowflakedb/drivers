@@ -114,6 +114,13 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to build TLS configuration for CRL downloads"))]
+    TlsConfigBuildFailed {
+        #[snafu(source(from(crate::tls::error::TlsError, Box::new)))]
+        source: Box<crate::tls::error::TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to parse CRL using x509-cert"))]
     CrlListParse {
         source: x509_cert::der::Error,

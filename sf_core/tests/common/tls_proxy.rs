@@ -228,6 +228,10 @@ impl MockServerWithTls {
         self.tls_proxy.url()
     }
 
+    pub fn cert_pem(&self) -> &str {
+        self.tls_proxy.cert_pem()
+    }
+
     /// Mount a mock on the server (blocking).
     pub fn mount(&self, mock: wiremock::Mock) {
         self.runtime.block_on(mock.mount(&self.server));

@@ -2,7 +2,7 @@ use crate::config::retry::RetryPolicy;
 use crate::crl::config::CrlConfig;
 use crate::crl::error::{
     CrlDistributionPointSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
-    MutexPoisonedSnafu, VerificationTaskSnafu,
+    MutexPoisonedSnafu, TlsConfigBuildFailedSnafu, VerificationTaskSnafu,
 };
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
 use crate::utils::sync::MutexRecoverExt;
@@ -349,8 +349,13 @@ impl CrlMetrics {
     }
 }
 
-fn crl_http_client_builder() -> reqwest::ClientBuilder {
-    crate::tls::client::apply_http_pool_settings(reqwest::Client::builder())
+fn crl_http_client_builder() -> Result<reqwest::ClientBuilder, CrlError> {
+    let tls_config = crate::tls::client::build_crl_download_rustls_config()
+        .context(TlsConfigBuildFailedSnafu)?;
+    Ok(
+        crate::tls::client::apply_http_pool_settings(reqwest::Client::builder())
+            .use_preconfigured_tls(tls_config),
+    )
 }
 
 impl CrlCache {
@@ -860,15 +865,12 @@ impl CrlCache {
     }
 
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
-        // CRL fetching can be the first HTTP the process does; pin the crypto
-        // provider before reqwest resolves one at build time.
-        crate::tls::ensure_crypto_provider();
         let memory_cache = if config.enable_memory_caching {
             Some(Arc::new(Mutex::new(HashMap::new())))
         } else {
             None
         };
-        let http_client = crl_http_client_builder()
+        let http_client = crl_http_client_builder()?
             .timeout(std::time::Duration::from_secs(
                 config.http_timeout.num_seconds() as u64,
             ))

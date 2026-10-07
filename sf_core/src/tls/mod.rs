@@ -20,11 +20,11 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// Guarantees a rustls default provider is in place, installing aws-lc-rs if
 /// nothing has claimed the slot yet.
 ///
-/// The verified clients built through `tls::client` carry an explicit
-/// linked-module rustls config, but raw auxiliary reqwest clients and the
-/// `verify_certificates=false` path still use the process default. Installing
-/// it prevents the no-provider panic. Only construction paths that separately
-/// call [`require_fips_provider`] can fail closed on a non-FIPS global.
+/// Connection, storage and CRL-download clients carry an explicit linked-module
+/// rustls config. Plain-HTTP clients, platform-detection probes and the
+/// standard-build `verify_certificates=false` path still need this default
+/// installed to prevent reqwest's no-provider panic. FIPS builds reject that
+/// insecure opt-out, and platform probes call [`require_fips_provider`].
 ///
 /// `install_default` is already one-shot inside rustls: a later call returns
 /// `Err` with the provider that won. This function has no crate-local `Once`,
@@ -78,15 +78,15 @@ pub(crate) fn ensure_crypto_provider() {
 /// This function remains available in both builds for Rust consumers. For a
 /// no-connection status report in any wrapper, use [`tls_status`].
 ///
-/// This reports the linked module rather than the process default: the
-/// verified connection/storage clients use its provider for their handshakes,
-/// whereas the global provider may belong to an embedding application.
+/// This reports the linked module rather than the process default: connection,
+/// storage and HTTPS CRL clients use its provider for their handshakes, whereas
+/// the global provider may belong to an embedding application. FIPS builds
+/// reject disabled certificate verification; standard builds retain reqwest's
+/// insecure global-provider path.
 ///
-/// Necessary but not sufficient for a driver-wide compliance claim: verified
-/// connection/storage clients now use this provider explicitly, while auxiliary
-/// raw clients and the intentionally unchanged insecure path still resolve the
-/// process-global provider. [`require_fips_provider`] checks both providers
-/// in FIPS builds; it does not attest the entire driver or deployment.
+/// Necessary but not sufficient for a driver-wide compliance claim:
+/// [`require_fips_provider`] also checks the global provider used by platform
+/// probes in FIPS builds. Neither check attests the entire driver or deployment.
 pub fn tls_provider_is_fips() -> bool {
     crypto_module::CryptoModule::get().provider_is_fips()
 }
@@ -116,33 +116,22 @@ pub fn tls_status() -> TlsStatus {
 ///
 /// `ensure_crypto_provider` only logs a mismatch because it has no error
 /// channel and can run beneath an FFI boundary where unwinding is undefined.
-/// The connection/storage builders (and callers explicitly using this gate)
-/// can return a `TlsError` instead of silently constructing a client against
-/// an unapproved global provider. Raw auxiliary clients without this check
-/// are not covered by that guarantee.
+/// Connection/storage builders and platform-detection probes use this gate.
+/// CRL downloads instead use an explicit module-backed config, independent of
+/// the process default.
 ///
 /// Compiles to `Ok(())` without the feature.
 ///
 /// # Why the global provider is checked too
 ///
-/// Verified CRL-disabled clients now use a preconfigured rustls config with
-/// the linked module's provider and reqwest's native ∪ bundled webpki trust
-/// roots. Custom roots still replace that union; extra roots extend it. Their
-/// crypto provider no longer depends on who installed the process default.
+/// Connection, storage and CRL-download clients use preconfigured rustls
+/// configs with the linked module's provider. Their handshakes do not depend on
+/// who installed the process default. The insecure reqwest path is compiled
+/// only in standard builds.
 ///
-/// The `verify_certificates=false` path is deliberately different: reqwest's
-/// built-in `NoVerifier` accepts handshake signatures without verification,
-/// whereas the diagnostic's `NoVerifyCertVerifier` still checks signatures.
-/// Swapping the traffic client to the diagnostic config would change behavior.
-/// That path keeps reqwest's verifier and process-global provider.
-///
-/// Raw auxiliary clients (telemetry, CRL fetch, IMDS) also resolve the global
-/// provider. An embedding application may have installed a different provider
-/// first. Requiring *both* providers to be FIPS fails closed for builders that
-/// call this function, including module-backed and insecure connection/storage
-/// clients; it does not make their providers identical. Raw auxiliary
-/// constructors that call only `ensure_crypto_provider` retain a potential
-/// non-FIPS global-provider path until separately gated or module-backed.
+/// Platform-detection probes still use the process default and call this gate
+/// before building their clients. Retaining the global check also preserves
+/// the connection/storage builders' existing fail-closed startup policy.
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     #[cfg(feature = "fips-tls")]
     {
@@ -186,9 +175,8 @@ mod fips_tests {
         );
     }
 
-    /// The process default installed by `ensure_crypto_provider` must remain
-    /// FIPS-approved for auxiliary raw reqwest clients and the insecure path,
-    /// even though verified connection/storage clients now use the module.
+    /// Platform-detection probes still require a FIPS-approved process default;
+    /// connection, storage and CRL-download clients use the module explicitly.
     #[test]
     fn installed_rustls_provider_is_fips() {
         super::ensure_crypto_provider();
@@ -204,9 +192,9 @@ mod fips_tests {
         );
     }
 
-    /// The process-global builder must still use approved algorithms where
-    /// raw or insecure clients rely on it. Module-backed client configs are
-    /// checked separately by the provider-ownership tests in `tls::client`.
+    /// The process-global builder must still use approved algorithms for
+    /// platform-detection probes. Module-backed configs have separate
+    /// provider-ownership tests in `tls::client`.
     #[test]
     fn client_config_is_fips() {
         super::ensure_crypto_provider();

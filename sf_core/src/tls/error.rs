@@ -73,6 +73,15 @@ pub enum TlsError {
         location: Location,
     },
 
+    #[snafu(display(
+        "FIPS builds require TLS certificate verification; set verify_certificates=true \
+         and tls_skip_verify=false, and do not use --no-verify-certs or --insecure"
+    ))]
+    InsecureTlsRejected {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to build rustls client configuration for the linked crypto module"))]
     RustlsConfig {
         source: rustls::Error,

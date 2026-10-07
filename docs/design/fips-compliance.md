@@ -16,7 +16,7 @@ Status at a glance:
 | Distribution model | Snowflake-built and consumer-built native artifacts both supported. Snowflake can claim compliance only for artifacts and environments it attests; consumer builds are a supported escape hatch with consumer-owned provenance. |
 | Validated module + certificate number | **Module decided: AWS-LC FIPS 3.6.0**, exactly pinned via `aws-lc-fips-sys = "=0.13.17"` and asserted at runtime in the FIPS smoke tests. Certificate / Security Policy applicability and supported deployment environments remain pending compliance confirmation; no public validated claim is established. |
 | Phases 1–2 | Done and verified. |
-| Phase 3 | Partly landed. Verified connection and storage clients use the module provider. `verify_certificates=false` and HTTPS CRL downloads still use the process-global provider. |
+| Phase 3 | F14 closed. Connection, storage and HTTPS CRL clients use the module provider. FIPS builds reject disabled certificate verification; the standard-build opt-out is unchanged. |
 | Phases 4–6 | Most direct OpenSSL ports landed. AWS SDK SigV4, WIF signing, raw AES-ECB key transport, attestation and release work remain. A `fips-tls` build rejects 3DES private-key unwrap; a standard build still performs it outside the module. The shipped-dependency deny gate covers only one part of Phase 5. |
 
 ## Module version decision
@@ -57,9 +57,9 @@ standard builds retain legacy support.
 
 **No shipped artifact has a complete FIPS claim today.** `fips-tls` selects
 AWS-LC FIPS for rustls and the driver's AWS-LC calls, including JWT signing,
-AES stage encryption, DPoP, and approved-key decryption. Clients with
-`verify_certificates=false`, and HTTPS CRL downloads, can still use the
-process-global provider (F14).
+AES stage encryption, DPoP, and approved-key decryption. HTTPS CRL downloads
+now use the linked module, and FIPS builds reject `verify_certificates=false`
+and `tls_skip_verify=true` (F14).
 AWS SDK SigV4 signing and WIF attestation use RustCrypto HMAC/SHA-256. A
 standard build unwraps 3DES private keys with `des` outside AWS-LC; a
 `fips-tls` build rejects those keys. The stage key-wrap format uses raw
@@ -143,7 +143,7 @@ Severity reflects impact on a credible FIPS claim, not exploitability.
 | F11 | Partially addressed | `CryptoModule` logs the selected module name, runtime FIPS module version, and provider FIPS state; a FIPS smoke assertion verifies AWS-LC FIPS 3.6.0 against the exact sys-crate pin. The shipped-dependency deny gate rejects ring and OpenSSL crypto libraries. Certificate applicability, an SBOM for each artifact, and an attested release policy remain open. ASN.1 certificate and PKCS#8 parsing is not itself a cryptographic module operation (see inventory). | Repository-wide; release evidence remains open |
 | F12 | Medium | AWS-LC FIPS has platform/toolchain limits (including previously observed GCC 15 and clang 20 failures with `aws-lc-fips-sys 0.13.12` and Windows ARM64 limitations). Revalidate build support and Security Policy scope for the exact locked `0.13.17` module; no alternate crypto backend covers an unsupported platform. | FIPS build infrastructure |
 | F13 | Low | JDBC retains key bytes in a Java `String`; Python may load a second unvalidated OpenSSL | JDBC and Python wrappers |
-| F14 | Blocker, still open for the insecure client and HTTPS CRL downloads | Verified connection and cloud-storage clients now pass reqwest a config built with the module's provider on the CRL-disabled, enabled, and advisory paths. CRL-disabled default trust is native ∪ webpki roots; custom roots replace that set and extra roots extend it. CRL-enabled and advisory defaults use the native store only; extra roots there are native ∪ extra, not the webpki union. `verify_certificates=false` keeps reqwest's insecure verifier and the process-global provider; that opt-out stays, and FIPS deployments do not use it. Snowflake `/telemetry/send` uses the verified connection client. IMDS and the local OpenTelemetry exporter are plain HTTP. An HTTPS CRL distribution point still uses a separate reqwest client and `ensure_crypto_provider()`, which yields to a host-installed provider and can run before a gated connection. | `tls/client.rs`, `crl/cache.rs` |
+| F14 | **Resolved** (was Blocker) | Verified connection and cloud-storage clients pass reqwest a config built with the module's provider on the CRL-disabled, enabled, and advisory paths. CRL-disabled default trust is native ∪ webpki roots; custom roots replace that set and extra roots extend it. CRL-enabled and advisory defaults use the native store only; extra roots there are native ∪ extra. HTTPS CRL downloads now use a module-backed config with native ∪ webpki roots, hostname verification and default protocols, without CRL checking to prevent recursion. FIPS builds reject `verify_certificates=false` and `tls_skip_verify=true` during settings parsing and reject hand-built insecure configs at the TLS builders; the reqwest insecure path is compiled only in standard builds. Snowflake `/telemetry/send` uses the verified connection client. IMDS and the local OpenTelemetry exporter are plain HTTP; platform-detection probes retain their fail-closed provider gate. | `tls/client.rs`, `tls/config.rs`, `crl/cache.rs` |
 | F15 | Low (build/inventory only) | With `rustls/fips`, Cargo resolves **both** `aws-lc-fips-sys` and `aws-lc-sys` (`0.13.17` and `0.38.0` in the current lockfile). A 2026-09-15 build of older versions showed only FIPS symbols linked; graph presence is not proof that either module is in a given release binary. Re-run link and SBOM analysis for each exact artifact. | `rustls` feature wiring and release provenance |
 | F16 | Format decision, not a general MD5 exemption | Two customer-supplied key formats load on a standard build and are rejected on a `fips-tls` build. Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) requires an MD5-based `EVP_BytesToKey` KDF. PBES2 3DES-CBC is unwrapped with RustCrypto `des` on a standard build and rejected, with a conversion error, on a `fips-tls` build. This differs from `md-5` use for nonsecurity upload checksums. The `des` crate stays in the graph for the standard build and for `pkcs8`'s `3des` parse feature. | `crypto/private_key.rs` |
 
@@ -179,7 +179,7 @@ package; compare those with the release artifact separately.
 
 | Crate / boundary | Shipped use and classification | Current disposition |
 | --- | --- | --- |
-| `aws-lc-rs`, `rustls`, `aws-lc-fips-sys` / `aws-lc-sys` | TLS and direct driver signing, RNG, hashing, AES and PBKDF2 are **security-sensitive**; the feature selects the module. The lockfile currently resolves `aws-lc-rs 1.16.1`, FIPS sys `0.13.17` and non-FIPS sys `0.38.0` when both feature paths are considered. | Allowed, but crate versions and `try_fips_mode()` prove neither the linked binary's module identity nor CMVP applicability. F14 and F15 remain open as described above. |
+| `aws-lc-rs`, `rustls`, `aws-lc-fips-sys` / `aws-lc-sys` | TLS and direct driver signing, RNG, hashing, AES and PBKDF2 are **security-sensitive**; the feature selects the module. The lockfile currently resolves `aws-lc-rs 1.16.1`, FIPS sys `0.13.17` and non-FIPS sys `0.38.0` when both feature paths are considered. | Allowed, but crate versions and `try_fips_mode()` prove neither the linked binary's module identity nor CMVP applicability. F14 is closed; F15 remains open as described above. |
 | `hmac`, `sha2` through `aws-sigv4` and `aws-sdk-s3` | **Security-sensitive:** plain SigV4 HMAC/SHA-256 signs ordinary S3 requests regardless of `sigv4a`; the SDK owns this signer. | Allowed as an explicit external blocker, **not** an approved AWS-LC operation. A local WIF fix alone cannot close it. Do not blanket-ban SDK-required `hmac` or `sha2`. |
 | `hmac`, `sha2` in `rest/snowflake/workload_identity/aws.rs` | **Security-sensitive:** the locally constructed AWS attestation signs with RustCrypto. | Open at this baseline; migrate the call site to the selected module separately from SDK request signing. |
 | `sha2` in `crl/cache.rs`, `token_cache/mod.rs`, `file_manager/s3_transfer.rs` | **Identifiers, not message signatures:** CRL cache filenames, token-cache keys and S3 credential cache fingerprints. `tls/x509_utils.rs` additionally hashes issuer/subject DER for **revocation matching**; this is policy-sensitive selection, not a substitute signature verifier. | Allowed with these explicit call-site classifications; new authentication/signature use is not covered by this allowance. |
@@ -308,11 +308,10 @@ Only the cryptographic boundaries come from the module:
 1. TLS handshake and certificate-chain signatures use the module's
    `WebPkiSupportedAlgorithms`.
 2. Downloaded CRL signatures use the module's certificate-signature verifier.
-3. An HTTPS CRL download uses a separate reqwest client that resolves the
-   process-global provider. Plain `http://` distribution points perform no
-   TLS. The recorded follow-up gives the HTTPS client a module-backed config
-   and leaves CRL checks off, so the download cannot recurse into CRL
-   validation.
+3. An HTTPS CRL download uses a separate reqwest client with the module's
+   provider, native ∪ webpki roots, hostname verification and default rustls
+   protocols. CRL checks stay off on this client to prevent recursive
+   validation. Plain `http://` distribution points perform no TLS.
 
 The signature verifier must accept the CRL signature `AlgorithmIdentifier`,
 issuer SPKI, exact DER-encoded `tbsCertList`, and signature bytes. It must:
@@ -372,6 +371,12 @@ Landed:
   CRL-disabled default trust is native ∪ webpki roots, with custom-root
   replacement and extra-root additions preserved. CRL-enabled and advisory
   defaults stay on the native store; extra roots there are native ∪ extra.
+- HTTPS CRL downloads use a module-backed config with native ∪ webpki roots
+  and no CRL checking, so they neither recurse nor depend on a host-installed
+  provider, even before the first connection.
+- FIPS settings and TLS builders reject disabled certificate verification.
+  The insecure reqwest and diagnostic paths remain available only in standard
+  builds; hostname-only opt-outs still use the module in both builds.
 - `tls_provider_is_fips()` reports on the linked module's provider rather than
   the global slot. Named for the TLS provider deliberately: it is rustls's
   per-provider flag, not the artifact-level answer. `try_fips_mode()`, asserted
@@ -385,18 +390,10 @@ Remaining:
 Snowflake `/telemetry/send` uses the verified connection client. IMDS and the
 local OpenTelemetry exporter (`http://localhost:8318`) are plain HTTP.
 
-- Give an HTTPS CRL download a module-backed rustls config, and leave CRL
-  checks off on that client. The downloader accepts `http://` and `https://`
-  distribution points. An HTTPS URL still uses a separate reqwest client and
-  `ensure_crypto_provider()`, which yields to a host-installed provider and
-  can run before a gated connection.
-- Keep `verify_certificates=false` as an explicit opt-out. That path uses
-  reqwest's insecure verifier and the process-global provider. Replacing it
-  with `NoVerifyCertVerifier` would start checking signatures. FIPS
-  deployments do not use this opt-out.
-- Optionally reject `fips-tls` startup when the process-global provider is
-  non-FIPS, so an HTTPS CRL download cannot run on a host provider before
-  the first gated connection.
+F14 has no remaining insecure-client or HTTPS-CRL path. The best-effort global
+install remains for the standard-build insecure client, plain-HTTP clients,
+and platform-detection probes, whose FIPS provider gate is unchanged.
+
 - Keep feature selection a separate axis from functional features.
 
 ### Phase 4 — Port crypto off OpenSSL (partly done)

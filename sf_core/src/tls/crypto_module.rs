@@ -22,11 +22,11 @@
 //!
 //! So this holds its own [`CryptoProvider`] and hands it explicitly to
 //! `ClientConfig::builder_with_provider` and
-//! `WebPkiServerVerifier::builder_with_provider`. Whoever won the global slot,
-//! a `fips-tls` build verifies certificates and negotiates TLS with the module
-//! this build linked. The global install stays for now because reqwest clients
-//! built without `use_preconfigured_tls` still resolve through it; retiring it
-//! is the remaining step of this phase.
+//! `WebPkiServerVerifier::builder_with_provider`. Connection, storage and HTTPS
+//! CRL clients use this explicit provider, and FIPS builds reject disabled
+//! certificate verification. The global install remains for standard-build
+//! insecure clients, plain-HTTP clients and fail-closed platform-detection
+//! probes; it no longer selects the CRL downloader's TLS provider.
 //!
 //! # Why one process-wide instance
 //!

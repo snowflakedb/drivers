@@ -43,6 +43,7 @@ impl TlsVersion {
         }
     }
 
+    #[cfg(not(feature = "fips-tls"))]
     pub(crate) fn to_reqwest(self) -> reqwest::tls::Version {
         match self {
             Self::Tls12 => reqwest::tls::Version::TLS_1_2,
@@ -328,6 +329,7 @@ fn parse_legacy_proxy_url(raw: &str) -> Option<ParsedProxyUrl> {
 }
 
 impl TlsConfig {
+    /// Certificate-verification opt-out, rejected by TLS builders in FIPS builds.
     pub fn insecure() -> Self {
         Self {
             crl_config: CrlConfig::default(),
@@ -345,15 +347,31 @@ impl TlsConfig {
             optional_path_setting(settings, CUSTOM_ROOT_STORE_PATH.as_str());
         let extra_root_store_path = optional_path_setting(settings, EXTRA_ROOT_STORE_PATH.as_str());
         let skip_tls_verify = settings.get_bool_or(TLS_SKIP_VERIFY.as_str(), false);
+        let verify_hostname =
+            !skip_tls_verify && settings.get_bool_or(VERIFY_HOSTNAME.as_str(), true);
+        let verify_certificates =
+            !skip_tls_verify && settings.get_bool_or(VERIFY_CERTIFICATES.as_str(), true);
+        #[cfg(feature = "fips-tls")]
+        if !verify_certificates {
+            let (parameter, value) = if skip_tls_verify {
+                (TLS_SKIP_VERIFY.as_str(), "true")
+            } else {
+                (VERIFY_CERTIFICATES.as_str(), "false")
+            };
+            return InvalidParameterValueSnafu {
+                parameter,
+                value,
+                explanation: "FIPS builds require TLS certificate verification; set \
+                    verify_certificates=true and tls_skip_verify=false"
+                    .to_string(),
+            }
+            .fail();
+        }
         if skip_tls_verify {
             tracing::warn!(
                 "TLS verification disabled via tls_skip_verify: certificate, hostname, and CRL revocation checks are all bypassed. Do not use in production."
             );
         }
-        let verify_hostname =
-            !skip_tls_verify && settings.get_bool_or(VERIFY_HOSTNAME.as_str(), true);
-        let verify_certificates =
-            !skip_tls_verify && settings.get_bool_or(VERIFY_CERTIFICATES.as_str(), true);
 
         // The optional [min, max] TLS version window. Defaults match rustls'
         // effective default (1.2..=1.3), so behaviour is unchanged unless the
@@ -400,6 +418,64 @@ mod tests {
     use crate::config::settings::Setting;
     use std::collections::HashMap;
 
+    #[cfg(feature = "fips-tls")]
+    #[test]
+    fn fips_rejects_disabled_certificate_verification() {
+        for verify in [Setting::Bool(false), Setting::String("false".into())] {
+            let settings = HashMap::from([("verify_certificates".into(), verify)]);
+
+            let result = TlsConfig::from_settings(&settings);
+
+            assert!(matches!(
+                result,
+                Err(ConfigError::InvalidParameterValue { parameter, .. })
+                    if parameter == "verify_certificates"
+            ));
+        }
+    }
+
+    #[cfg(feature = "fips-tls")]
+    #[test]
+    fn fips_rejects_skip_verify_even_when_verification_is_explicitly_enabled() {
+        for skip in [Setting::Bool(true), Setting::String("true".into())] {
+            let settings = HashMap::from([
+                ("tls_skip_verify".into(), skip),
+                ("verify_certificates".into(), Setting::Bool(true)),
+                ("verify_hostname".into(), Setting::Bool(true)),
+            ]);
+
+            let result = TlsConfig::from_settings(&settings);
+
+            assert!(matches!(
+                result,
+                Err(ConfigError::InvalidParameterValue { parameter, .. })
+                    if parameter == "tls_skip_verify"
+            ));
+        }
+    }
+
+    #[test]
+    fn from_settings_allows_disabled_hostname_verification() {
+        let settings = HashMap::from([("verify_hostname".into(), Setting::Bool(false))]);
+
+        let config = TlsConfig::from_settings(&settings).expect("hostname-only bypass is allowed");
+
+        assert!(!config.verify_hostname);
+        assert!(config.verify_certificates);
+    }
+
+    #[cfg(not(feature = "fips-tls"))]
+    #[test]
+    fn from_settings_allows_disabled_certificate_verification() {
+        let settings = HashMap::from([("verify_certificates".into(), Setting::Bool(false))]);
+
+        let config = TlsConfig::from_settings(&settings).expect("non-FIPS insecure config");
+
+        assert!(!config.verify_certificates);
+        assert!(config.verify_hostname);
+    }
+
+    #[cfg(not(feature = "fips-tls"))]
     #[test]
     fn from_settings_skip_disables_both_for_bool_and_string() {
         for skip in [Setting::Bool(true), Setting::String("true".into())] {
