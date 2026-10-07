@@ -51,7 +51,7 @@ function getCore(): typeof CoreBinary {
 const core = getCore();
 export const CoreConnection = core.Connection;
 export const CoreStatement = core.Statement;
-export const initTypeConstructors = core.initTypeConstructors;
+export const registerClassConstructors = core.registerClassConstructors;
 export const CoreColumn = core.Column;
 export const coreFormatSnowflakeDate = core.formatSnowflakeDate;
 export const CoreSessionState = core.SessionState;

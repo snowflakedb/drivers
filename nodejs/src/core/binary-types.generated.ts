@@ -109,8 +109,6 @@ export declare function formatSnowflakeDate(format: string, epochMillis: number,
 
 export declare function getTlsStatus(): TlsStatus
 
-export declare function initTypeConstructors(ctors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }): void
-
 export declare function isAnError(status: QueryStatus): boolean
 
 export declare function isStillRunning(status: QueryStatus): boolean
@@ -171,6 +169,15 @@ export interface QueryBindings {
 }
 
 export type QueryStatus = 'RUNNING' | 'ABORTING' | 'SUCCESS' | 'FAILED_WITH_ERROR' | 'ABORTED' | 'QUEUED' | 'FAILED_WITH_INCIDENT' | 'DISCONNECTED' | 'RESUMING_WAREHOUSE' | 'QUEUED_REPARING_WAREHOUSE' | 'RESTARTED' | 'BLOCKED' | 'NO_DATA'
+
+/**
+ * Gives the bridge the constructors to JS classes it needs to create.
+ *
+ * Reasoning: `SnowflakeDate` has to extend `Date`, and napi classes can't extend
+ * built-in JS classes, so it lives in TypeScript and the bridge calls its constructor.
+ * The constructors are stored per JS env, because napi references don't work across envs.
+ */
+export declare function registerClassConstructors(constructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }): void
 
 export type StatementStatus = 'fetching' | 'complete'
 

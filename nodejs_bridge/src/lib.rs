@@ -14,6 +14,7 @@
 // Reproduce with `CARGO_INCREMENTAL=0` against a cleaned crate.
 #![recursion_limit = "256"]
 
+mod class_constructors;
 mod connection;
 mod date_format;
 mod error;
@@ -22,7 +23,6 @@ mod session;
 mod session_params;
 mod session_state;
 mod statement;
-mod type_constructors;
 mod validation_utils;
 
 pub use connection::Connection;

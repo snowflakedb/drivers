@@ -976,10 +976,11 @@ behavior_differences:
     new_driver_behavior: |
       The same value shape is returned, and its class SnowflakeDate is exported from
       the package, so callers can import the type and use the extra methods without a
-      hand-written declaration.
+      hand-written declaration. SnowflakeDate extends Date, so `value instanceof
+      SnowflakeDate` and `value instanceof Date` both hold.
     status_rationale: |
-      Purely additive: the runtime value is unchanged from the old driver, this only
-      publishes the type that was already being returned, so no existing caller breaks.
+      Purely additive: values are still Date instances with the same methods, so no
+      existing caller breaks.
 
   49:
     name: 'asyncExec complete callback does not pass { queryId } as the rows argument'

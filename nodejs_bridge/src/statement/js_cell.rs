@@ -2,7 +2,7 @@ use napi::bindgen_prelude::{Buffer, Either, Null, ToNapiValue};
 use napi::{Env, Result, sys};
 use std::borrow::Cow;
 
-use crate::type_constructors::TypeConstructors;
+use crate::class_constructors::ClassConstructors;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum DateTimezone<'a> {
@@ -48,7 +48,7 @@ impl<'a> ToNapiValue for JsCell<'a> {
                     DateTimezone::Named(name) => Either::A(name.to_owned()),
                     DateTimezone::Offset(minutes) => Either::B(minutes),
                 };
-                let date = TypeConstructors::get(&env)?
+                let date = ClassConstructors::get(&env)?
                     .snowflake_date
                     .borrow_back(&env)?
                     .new_instance(

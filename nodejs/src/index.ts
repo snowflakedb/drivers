@@ -21,7 +21,7 @@ import {
   coreGetTlsStatus,
   coreIsAnError,
   coreIsStillRunning,
-  initTypeConstructors,
+  registerClassConstructors,
   type CoreConnectionInstance,
   type CoreStatementInstance,
   type CoreTlsStatus,
@@ -45,7 +45,7 @@ import { collectRows } from './query-result/rows.js';
 import { RowStatement } from './query-result/RowStatement.js';
 import { SnowflakeDate } from './query-result/SnowflakeDate.js';
 
-initTypeConstructors({ SnowflakeDate });
+registerClassConstructors({ SnowflakeDate });
 
 export { createPool, normalizeConnectionOptions };
 export type { Pool, PoolOptions } from './create-pool.js';
