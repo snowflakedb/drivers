@@ -1,7 +1,7 @@
 import { createPrivateKey } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Connection } from '../../types/sdk-types.js';
 import { createTempDir } from '../utils/fixtures.js';
 import getTestParameter from '../utils/getTestParameter.js';
@@ -12,6 +12,7 @@ import {
   snowflake,
 } from '../utils/index.js';
 import { verifySimpleQuery } from '../utils/query.js';
+import { loginSuccess, logoutSuccess, WiremockServer } from '../utils/wiremock/index.js';
 import {
   destroyConnectionAfterTest,
   expectConnectionNotUp,
@@ -23,10 +24,13 @@ function createTempKeyFile(contents: string): string {
   return createTempDir({ prefix: 'ud-jwt-key' }).writeFile('key.p8', contents);
 }
 
-function createJwtConnection(overrides: Record<string, unknown>): Connection {
+function createJwtConnection(
+  overrides: Record<string, unknown>,
+  options: { includeAuthenticator?: boolean } = {},
+): Connection {
   return snowflake.createConnection({
     ...baseConnectionOptions,
-    authenticator: 'SNOWFLAKE_JWT',
+    ...(options.includeAuthenticator === false ? {} : { authenticator: 'SNOWFLAKE_JWT' }),
     ...overrides,
   });
 }
@@ -152,6 +156,53 @@ describe('SNOWFLAKE_JWT authentication', () => {
         await verifySimpleQuery(connection);
       });
 
+      it('should authenticate using private_key as base64 string', async () => {
+        // Given Authentication is set to JWT and private key is provided as base64-encoded string
+        const privateKey = createPrivateKey({
+          key: UNENCRYPTED_PRIVATE_KEY_CONTENTS,
+          format: 'pem',
+        })
+          .export({ type: 'pkcs8', format: 'der' })
+          .toString('base64');
+
+        // When Trying to Connect
+        if (isRunningNewDriverWithBD('BD#77')) {
+          const connection = createJwtConnection({ privateKey });
+          await connection.connectAsync();
+          destroyConnectionAfterTest(connection);
+
+          // Then Login is successful and simple query can be executed
+          expect(connection.isUp()).toBe(true);
+          await verifySimpleQuery(connection);
+        } else {
+          expect(() => createJwtConnection({ privateKey })).toThrow(
+            'Invalid private key. The specified value must be a PEM-formatted private key.',
+          );
+        }
+      });
+
+      it('should automatically update authenticator to JWT if key pair params present', async () => {
+        // Given private key or private key file is provided and authenticator is not explicitly set
+        const options = {
+          privateKey: UNENCRYPTED_PRIVATE_KEY_CONTENTS,
+        };
+
+        // When Trying to Connect
+        if (isRunningNewDriverWithBD('BD#78')) {
+          const connection = createJwtConnection(options, { includeAuthenticator: false });
+          await connection.connectAsync();
+          destroyConnectionAfterTest(connection);
+
+          // Then Connector changes authenticator to JWT and login is successful and simple query can be executed
+          expect(connection.isUp()).toBe(true);
+          await verifySimpleQuery(connection);
+        } else {
+          expect(() => createJwtConnection(options, { includeAuthenticator: false })).toThrow(
+            'A password must be specified.',
+          );
+        }
+      });
+
       it('should fail JWT authentication when private_key is not PEM or base64', async () => {
         // Given Authentication is set to JWT and private_key is not PEM or base64
         const options = {
@@ -219,6 +270,48 @@ describe('SNOWFLAKE_JWT authentication', () => {
           connection,
           isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
         );
+      });
+    });
+
+    describe('WireMock-based JWT tests', () => {
+      let wiremock: WiremockServer;
+
+      beforeAll(async () => {
+        wiremock = await WiremockServer.spawn();
+      });
+
+      beforeEach(async () => {
+        await wiremock.reset();
+        await wiremock.stub([loginSuccess(), logoutSuccess()]);
+      });
+
+      afterAll(async () => {
+        await wiremock.destroy();
+      });
+
+      it('should send AUTHENTICATOR=SNOWFLAKE_JWT when authenticator is omitted', async () => {
+        const options = {
+          account: 'testaccount',
+          username: 'alice',
+          privateKey: UNENCRYPTED_PRIVATE_KEY_CONTENTS,
+          ...wiremock.connectionOptions,
+        };
+
+        if (isRunningNewDriverWithBD('BD#78')) {
+          const connection = createJwtConnection(options, { includeAuthenticator: false });
+          await connection.connectAsync();
+          destroyConnectionAfterTest(connection);
+
+          const [loginRequest] = await wiremock.findRequests('/session/v1/login-request.*');
+          const { data } = JSON.parse(loginRequest.body) as {
+            data: { AUTHENTICATOR?: string };
+          };
+          expect(data.AUTHENTICATOR).toBe('SNOWFLAKE_JWT');
+        } else {
+          expect(() => createJwtConnection(options, { includeAuthenticator: false })).toThrow(
+            'A password must be specified.',
+          );
+        }
       });
     });
 

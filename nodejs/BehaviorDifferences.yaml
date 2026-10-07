@@ -1469,3 +1469,32 @@ behavior_differences:
     new_driver_behavior: |
       connect fails with
       "Configuration error: Configuration validation failed (1 issue(s)): private_key: Missing required parameter: 'private_key' or 'private_key_file'".
+
+  77:
+    name: 'privateKey accepts standard-base64 unencrypted PKCS8 DER in addition to PEM'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      createConnection rejects a non-PEM privateKey string with
+      `Invalid private key. The specified value must be a PEM-formatted private key.`
+    new_driver_behavior: |
+      The same standard-base64 PKCS8 DER string is forwarded to sf_core, which
+      decodes it and completes JWT login. Connect succeeds and SELECT 1 returns 1.
+
+  78:
+    name: 'privateKey or privateKeyPath without authenticator infers SNOWFLAKE_JWT'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Omitting authenticator while supplying privateKey or privateKeyPath still
+      treats the connection as password auth. createConnection throws
+      `A password must be specified.`
+    new_driver_behavior: |
+      The same options set AUTHENTICATOR to SNOWFLAKE_JWT. Login succeeds when
+      the key is valid.
