@@ -17,7 +17,7 @@ Status at a glance:
 | Validated module + certificate number | **Module decided: AWS-LC FIPS 3.6.0**, exactly pinned via `aws-lc-fips-sys = "=0.13.17"` and asserted at runtime in the FIPS smoke tests. Certificate / Security Policy applicability and supported deployment environments remain pending compliance confirmation; no public validated claim is established. |
 | Phases 1–2 | Done and verified. |
 | Phase 3 | F14 closed. Connection, storage and HTTPS CRL clients use the module provider. FIPS builds reject disabled certificate verification; the standard-build opt-out is unchanged. |
-| Phases 4–6 | Most direct OpenSSL ports landed. AWS SDK SigV4, WIF signing, raw AES-ECB key transport, attestation and release work remain. A `fips-tls` build rejects 3DES private-key unwrap; a standard build still performs it outside the module. The shipped-dependency deny gate covers only one part of Phase 5. |
+| Phases 4–6 | Most direct OpenSSL ports landed, including WIF attestation signing. AWS SDK SigV4 (F7), raw AES-ECB key transport (F4), SBOMs and release work remain. A `fips-tls` build rejects 3DES private-key unwrap; a standard build still performs it outside the module. Phase 5 has the shipped-dependency deny gate and a release-artifact linkage check for ODBC and Node.js. |
 
 ## Module version decision
 
