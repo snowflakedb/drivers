@@ -58,7 +58,9 @@ Ensure the public API of the statement returned by `connection.execute` is fully
 
 - `integration/testStatement.js` — partially migrated. Immediate and post-completion
   `getSqlText()` behavior for successful and failed execution now lives in
-  `nodejs/tests/e2e/statement.test.ts`. The remaining statement API is still pending.
+  `nodejs/tests/e2e/statement.test.ts`. `with a valid token` and `with an invalid token` are
+  not ported: they pass `sessionToken` to `createConnection`, which the new driver rejects
+  (BD#83). The remaining statement API is still pending.
 - `integration/testStreamRows.js`
 - `integration/testUpdatedRows.js` — migrated to `nodejs/tests/e2e/query/num-updated-rows.test.ts`.
 

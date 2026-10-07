@@ -56,24 +56,31 @@ pub struct ExecuteParams {
 }
 
 #[napi(object)]
-#[derive(Default)]
 pub struct ConnectionTokenInfo {
-    pub session_token: Option<String>,
-    pub master_token: Option<String>,
+    pub session_token: String,
+    pub master_token: String,
     pub session_token_expires_at_ms: Option<i64>,
     pub master_token_expires_at_ms: Option<i64>,
+}
+
+#[napi(object, object_to_js = false)]
+pub struct ConnectionParams<'a> {
+    pub options: HashMap<String, String>,
+    pub session_parameters: HashMap<String, String>,
+    pub open_external_browser_callback: Option<Function<'a, String, ()>>,
+    pub token_info: Option<ConnectionTokenInfo>,
 }
 
 #[napi]
 impl Connection {
     #[napi(constructor)]
-    pub fn new(
-        options: HashMap<String, String>,
-        env: &Env,
-        session_parameters: HashMap<String, String>,
-        open_external_browser_callback: Option<Function<String, ()>>,
-        deferred_init: Option<bool>,
-    ) -> Result<Self> {
+    pub fn new(env: &Env, params: ConnectionParams) -> Result<Self> {
+        let ConnectionParams {
+            options,
+            session_parameters,
+            open_external_browser_callback,
+            token_info,
+        } = params;
         let database_handle = BRIDGE.driver.database_new();
         BRIDGE.driver.database_init(database_handle).map_err(|e| {
             let _ = BRIDGE.driver.database_release(database_handle);
@@ -98,6 +105,16 @@ impl Connection {
             converted_options
                 .entry(param_names::EXTRA_ROOT_STORE_PATH.as_str().to_string())
                 .or_insert_with(|| Setting::String(ca_path));
+        }
+        if let Some(token_info) = &token_info {
+            converted_options.insert(
+                param_names::SESSION_TOKEN.as_str().to_string(),
+                Setting::String(token_info.session_token.clone()),
+            );
+            converted_options.insert(
+                param_names::MASTER_TOKEN.as_str().to_string(),
+                Setting::String(token_info.master_token.clone()),
+            );
         }
         let browser_opener = open_external_browser_callback
             .map(browser_opener_from_js)
@@ -135,6 +152,18 @@ impl Connection {
                     },
                 )
                 .await?;
+
+            // A connection built from session and master tokens never goes through `connect()`,
+            // so it is initialized here. This is not cheap yet: it runs the full core connection
+            // setup on the JS thread, and on macOS loading the system root certificates alone takes
+            // about 100 ms. SNOW-4249447 and SNOW-4249371 track making it cheap.
+            if token_info.is_some() {
+                BRIDGE
+                    .driver
+                    .connection_init(None, conn_handle, database_handle)
+                    .await?;
+            }
+
             Ok::<_, ApiError>(())
         })
         .map_err(|e| {
@@ -144,7 +173,7 @@ impl Connection {
         })?;
 
         Ok(Self {
-            session: Session::new(conn_handle, database_handle, deferred_init.unwrap_or(false)),
+            session: Session::new(conn_handle, database_handle),
         })
     }
 
@@ -173,18 +202,21 @@ impl Connection {
     }
 
     #[napi]
-    pub fn get_token_info(&self, env: &Env) -> Result<ConnectionTokenInfo> {
-        block_on(self.session.info())
-            .map(|info| match info {
-                Some(info) => ConnectionTokenInfo {
-                    session_token: info.session_token.map(|token| token.reveal().to_string()),
-                    master_token: info.master_token.map(|token| token.reveal().to_string()),
-                    session_token_expires_at_ms: info.session_token_expires_at_ms,
-                    master_token_expires_at_ms: info.master_token_expires_at_ms,
-                },
-                None => ConnectionTokenInfo::default(),
-            })
-            .map_err(|e: ApiError| e.to_js_error(*env))
+    pub fn get_token_info(&self, env: &Env) -> Result<Option<ConnectionTokenInfo>> {
+        let Some(info) = block_on(self.session.token_info()).map_err(|e| e.to_js_error(*env))?
+        else {
+            return Ok(None);
+        };
+        let (Some(session_token), Some(master_token)) = (info.session_token, info.master_token)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ConnectionTokenInfo {
+            session_token: session_token.reveal().to_string(),
+            master_token: master_token.reveal().to_string(),
+            session_token_expires_at_ms: info.session_token_expires_at_ms,
+            master_token_expires_at_ms: info.master_token_expires_at_ms,
+        }))
     }
 
     #[napi]

@@ -25,6 +25,7 @@ import {
   type CoreConnectionInstance,
   type CoreStatementInstance,
   type CoreTlsStatus,
+  type ConnectionTokenInfo,
 } from './core/index.js';
 import { createPool } from './create-pool.js';
 import {
@@ -166,9 +167,11 @@ export type ConnectionOptions = Record<string, unknown> & {
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
-// Not exported, so only deserializeConnection can create a connection with deferred init.
-const DESERIALIZED_PAYLOAD = Symbol('deserializedPayload');
-type DeserializedConnectionOptions = ConnectionOptions & { [DESERIALIZED_PAYLOAD]?: string };
+// Not exported, so session tokens reach the bridge only through deserializeConnection.
+const TOKEN_INFO = Symbol('tokenInfo');
+type InternalConnectionOptions = ConnectionOptions & {
+  [TOKEN_INFO]?: ConnectionTokenInfo;
+};
 
 // This should be called StatementOptions or ExecuteStatementOptions but we keep the name
 // for backwards compatibility
@@ -247,9 +250,6 @@ export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
   #id: string;
-  // Original deserialize payload. Core has no tokens until connection_init, so
-  // serialize() before the first use reads this instead of an empty tokenInfo.
-  #serializedBeforeInit?: string;
 
   constructor(options: ConnectionOptions) {
     const {
@@ -259,9 +259,9 @@ export class Connection {
       representNullAsStringNull,
       arrayBindingThreshold,
       openExternalBrowserCallback,
-      [DESERIALIZED_PAYLOAD]: serializedBeforeInit,
+      [TOKEN_INFO]: tokenInfo,
       ...coreOptions
-    } = options as DeserializedConnectionOptions;
+    } = options as InternalConnectionOptions;
     this.#id = randomUUID();
 
     this.#defaultRowOptions = {
@@ -278,16 +278,15 @@ export class Connection {
       sessionParameters['CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'] = String(arrayBindingThreshold);
     }
 
-    this.#core = new CoreConnection(
-      toCoreConnectionOptions({
+    this.#core = new CoreConnection({
+      options: toCoreConnectionOptions({
         ...coreOptions,
         useEnvProxy: GlobalConfig.useEnvProxy,
       }),
       sessionParameters,
       openExternalBrowserCallback,
-      serializedBeforeInit !== undefined,
-    );
-    this.#serializedBeforeInit = serializedBeforeInit;
+      tokenInfo,
+    });
   }
 
   connect(callback?: ConnectionCallback) {
@@ -305,15 +304,7 @@ export class Connection {
   }
 
   serialize(): string {
-    const info = this.#core.getTokenInfo();
-    if (info.sessionToken) {
-      this.#serializedBeforeInit = undefined;
-      return serializeTokenInfo(info);
-    }
-    if (this.#serializedBeforeInit && this.isUp()) {
-      return this.#serializedBeforeInit;
-    }
-    return serializeTokenInfo({});
+    return serializeTokenInfo(this.#core.getTokenInfo());
   }
 
   isUp(): boolean {
@@ -454,30 +445,18 @@ export const createConnection = (options: ConnectionOptions) => new Connection(o
 export const serializeConnection = (connection: Connection): string => connection.serialize();
 /**
  * Rebuilds a connection from a string produced by {@link Connection.serialize}.
- * A payload that contains tokens addresses the same server session as the
- * connection that produced the string. `destroy()` on either connection logs
- * that session out.
+ * The new connection addresses the same server session as the connection that
+ * produced the string. `destroy()` on either connection logs that session out.
+ * A payload without both tokens throws, because it has no session to restore.
  */
 export const deserializeConnection = (
   options: ConnectionOptions,
-  serializedConnection?: unknown,
-): Connection => {
-  const tokenInfo = deserializeTokenInfo(serializedConnection);
-  if (
-    !tokenInfo.sessionToken ||
-    !tokenInfo.masterToken ||
-    typeof serializedConnection !== 'string'
-  ) {
-    return new Connection(options);
-  }
-  const deserializedOptions: DeserializedConnectionOptions = {
+  serializedConnection: string,
+): Connection =>
+  new Connection({
     ...options,
-    sessionToken: tokenInfo.sessionToken,
-    masterToken: tokenInfo.masterToken,
-    [DESERIALIZED_PAYLOAD]: serializedConnection,
-  };
-  return new Connection(deserializedOptions);
-};
+    [TOKEN_INFO]: deserializeTokenInfo(serializedConnection),
+  });
 
 export default {
   configure,

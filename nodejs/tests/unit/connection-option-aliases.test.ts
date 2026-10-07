@@ -80,16 +80,4 @@ describe('toCoreConnectionOptions', () => {
   it('returns an empty object for empty input', () => {
     expect(toCoreConnectionOptions({})).toEqual({});
   });
-
-  it('should map sessionToken and masterToken onto the core session-token keys', () => {
-    expect(
-      toCoreConnectionOptions({
-        sessionToken: 'session',
-        masterToken: 'master',
-      }),
-    ).toEqual({
-      session_token: 'session',
-      master_token: 'master',
-    });
-  });
 });

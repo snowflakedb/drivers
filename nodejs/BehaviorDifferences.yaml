@@ -1378,19 +1378,46 @@ behavior_differences:
       finished by then. Connect never waits for detection.
 
   71:
-    name: 'deserializeConnection rejects an empty JSON object with 408003'
+    name: 'deserializeConnection either restores the session or throws 408003'
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      deserializeConnection(options, '{}') parses as an object, then throws
-      InternalAssertError 400001. That code is not a deserialize validation code.
+      The error depends on where the payload is wrong:
+      - No payload throws InvalidParameterError 408001. A payload that is not a string throws
+        InvalidParameterError 408002.
+      - A string that is not JSON, or JSON that is not an object, throws
+        InvalidParameterError 408003.
+      - A JSON object without `services.sf`, or with a tokenInfo that is not an object, throws
+        InternalAssertError 400001. `'{}'` is one such payload.
+      The values inside a tokenInfo object are not checked:
+      - When any of `sessionToken`, `masterToken`, `sessionTokenExpirationTime` or
+        `masterTokenExpirationTime` is missing, the connection starts disconnected. This
+        includes the empty tokenInfo that serialize() writes for a connection that never
+        connected or was destroyed.
+      - When all four are present, the connection starts connected, even if the tokens are
+        empty strings or numbers. The first request then fails with a server error.
     new_driver_behavior: |
-      The same payload is 408003 InvalidParameterError, the same family as a missing
-      tokenInfo object or a JSON array. An empty tokenInfo (`{services:{sf:{tokenInfo:{}}}}`)
-      still deserializes to a disconnected connection.
+      Every payload that cannot restore a session throws InvalidParameterError 408003.
+      The payload must have a tokenInfo object with `sessionToken` and `masterToken` as
+      non-empty strings. The expiration times are optional, but must be numbers when present.
+      A payload with both tokens and no expiration times is restored (BD#84 writes such
+      payloads). A value that `JSON.parse` converts to a valid payload string (for example a
+      Buffer with the payload) is accepted.
+    description: |
+      A disconnected connection is not a useful result of deserializeConnection. It has no
+      session, so it is the same as createConnection with the same options. Returning it hides
+      a payload that is broken, or one serialized after the session ended. The error appears
+      at once instead of on the first request.
+
+      The TypeScript signature only accepts a string. The driver does not check the type at
+      runtime and reports every payload it cannot read with one error code.
+
+      We probably want to remove error code completely and throw a plain Error instead.
+
+      InvalidParameterError probably should never have error codes.
 
   72:
     name: 'First use of a logged-out serialized session returns GS 390111'
@@ -1580,3 +1607,68 @@ behavior_differences:
       The server does not check the format or length of `CLIENT_ENVIRONMENT.APPLICATION` today,
       so a check in the driver protects nothing. The core driver also sends the value without
       checks.
+
+  83:
+    name: 'createConnection rejects session and master tokens as connection options'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection accepts `sessionToken`, `masterToken`, `sessionTokenExpirationTime` and
+      `masterTokenExpirationTime`. The connection uses those tokens and does not log in. The
+      options are not part of the typed `ConnectionOptions`.
+    new_driver_behavior: |
+      createConnection throws `Unknown connection option: sessionToken` (or the name of the
+      other option). The only way to reuse an existing session is deserializeConnection with a
+      string returned by serialize().
+    description: |
+      These options were never meant to be public. The old driver does not document them and
+      does not list them in the typed `ConnectionOptions`. The new driver accepts only options
+      that are part of the public API.
+
+  84:
+    name: 'A deserialized connection serializes without token expiration times'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      serialize() always writes `sessionTokenExpirationTime` and `masterTokenExpirationTime`.
+      A connection from deserializeConnection() keeps the times from its payload until the
+      driver renews the session token.
+    new_driver_behavior: |
+      serialize() on a connection from deserializeConnection() writes only `sessionToken` and
+      `masterToken`, starting right after deserializeConnection() returns. The times can come
+      back after the driver renews the session token.
+    description: |
+      deserializeConnection() passes only the two tokens to the core, so the core does not
+      know when they expire.
+
+      The new driver never reads these times. It does not use them to restore the session,
+      and it has no isTokenValid() (BD#51), the old-driver connection method that reads them.
+      So a missing time changes nothing for the driver.
+
+      We should consider removing the expiration times from the payload completely.
+
+  85:
+    name: 'deserializeConnection without account and host throws a plain configuration Error'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      deserializeConnection with neither `account` nor `host` throws MissingParameterError
+      404007 ("An account must be specified.").
+    new_driver_behavior: |
+      The same call throws a plain Error with no `code`. The message lists both missing
+      parameters: "Configuration error: Configuration validation failed (2 issue(s)): account:
+      Missing required parameter 'account'; host: Missing required parameter 'host' (or
+      'server_url')".
+    description: |
+      Both drivers throw before any request is sent. Both drivers accept `host` without
+      `account`, or `account` without `host`, and restore the session.
+      serialize() and deserializeConnection() may later be replaced by the child-session API.

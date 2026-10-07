@@ -1,11 +1,7 @@
 const snowflake = require('./../../lib/snowflake').default;
-const Core = require('./../../lib/core');
 const assert = require('assert');
 const async = require('async');
 const connectionOptions = require('./connectionOptions');
-const Errors = require('./../../lib/errors');
-const ErrorCodes = Errors.codes;
-const Util = require('./../../lib/util');
 const testUtil = require('./testUtil');
 
 describe('Statement Tests', function () {
@@ -16,156 +12,10 @@ describe('Statement Tests', function () {
     connection = snowflake.createConnection(connectionOptions.valid);
   });
 
-  it('with a valid token', function (done) {
-    const coreInst = Core({
-      qaMode: true,
-      httpClientClass: require('./../../lib/http/node').NodeHttpClient,
-      loggerClass: require('./../../lib/logger/node'),
-      client: {
-        version: Util.driverVersion,
-        environment: process.versions,
-      },
-    });
-
-    const tokenConn = coreInst.createConnection(connectionOptions.valid);
-    let goodConnection;
-    let statement;
-    async.series(
-      [
-        function (callback) {
-          tokenConn.connect(function (err) {
-            assert.ok(!err, 'there should be no error');
-            const sessionToken = tokenConn.getTokens().sessionToken;
-            assert.ok(sessionToken);
-            goodConnection = snowflake.createConnection(
-              Object.assign({}, connectionOptions.valid, {
-                username: undefined,
-                password: undefined,
-                sessionToken,
-              }),
-            );
-
-            callback();
-          });
-        },
-        function (callback) {
-          statement = goodConnection.execute({
-            sqlText: sqlText,
-            complete: function (err, stmt) {
-              assert.ok(!err, 'there should be no error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the execute() callback should be invoked with the statement',
-              );
-
-              // we should only have one column c1
-              const columns = statement.getColumns();
-              assert.ok(columns);
-              assert.strictEqual(columns.length, 1);
-              assert.ok(columns[0]);
-              assert.strictEqual(columns[0].getName(), 'c1');
-
-              assert.strictEqual(statement.getNumRows(), 1);
-              assert.ok(statement.getSessionState());
-              assert.ok(statement.getStatementId());
-              assert.ok(statement.getQueryId());
-
-              callback();
-            },
-          });
-
-          // the sql text should be the same as what was passed in
-          assert.strictEqual(statement.getSqlText(), sqlText);
-
-          // the rest of the properties won't be available until the statement is
-          // complete (some of them will only be available if the statement succeeds)
-          assert.strictEqual(statement.getColumns(), undefined);
-          assert.strictEqual(statement.getNumRows(), undefined);
-          assert.strictEqual(statement.getSessionState(), undefined);
-          assert.strictEqual(statement.getStatementId(), undefined);
-          assert.strictEqual(statement.getQueryId(), undefined);
-        },
-        function (callback) {
-          assert.ok(goodConnection.isUp(), 'not active');
-          callback();
-        },
-        function (callback) {
-          const rows = [];
-          statement.fetchRows({
-            each: function (row) {
-              rows.push(row);
-            },
-            end: function (err, stmt) {
-              assert.ok(!err, 'there should be no error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the end() callback should be invoked with the statement',
-              );
-              assert.strictEqual(rows.length, 1, 'there should only be one row');
-              assert.strictEqual(
-                rows[0].getColumnValue('c1'),
-                1,
-                'the row should only have one column c1 and its value ' + 'should be 1',
-              );
-
-              callback();
-            },
-          });
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
-
-  it('with an invalid token', function (done) {
-    const badConnection = snowflake.createConnection(
-      Object.assign({}, connectionOptions.valid, {
-        username: undefined,
-        password: undefined,
-        sessionToken: 'invalid token',
-      }),
-    );
-    let statement;
-    async.series(
-      [
-        function (callback) {
-          statement = badConnection.execute({
-            sqlText: sqlText,
-            complete: function (err) {
-              assert.ok(err !== undefined, 'expect an error');
-              assert.ok(
-                err.code === ErrorCodes.ERR_SF_RESPONSE_INVALID_TOKEN,
-                'Should throw invalid token error',
-              );
-              callback();
-            },
-          });
-
-          // the sql text should be the same as what was passed in
-          assert.strictEqual(statement.getSqlText(), sqlText);
-
-          // the rest of the properties won't be available until the statement is
-          // complete (some of them will only be available if the statement succeeds)
-          assert.strictEqual(statement.getColumns(), undefined);
-          assert.strictEqual(statement.getNumRows(), undefined);
-          assert.strictEqual(statement.getSessionState(), undefined);
-          assert.strictEqual(statement.getStatementId(), undefined);
-          assert.strictEqual(statement.getQueryId(), undefined);
-        },
-        function (callback) {
-          assert.ok(badConnection.isUp(), 'not active');
-          callback();
-        },
-      ],
-      function () {
-        done();
-      },
-    );
-  });
+  // "with a valid token" and "with an invalid token" pass sessionToken to createConnection.
+  // The new driver rejects that option (BD#83 in nodejs/BehaviorDifferences.yaml), so these two
+  // tests are not ported. Session reuse is covered by
+  // nodejs/tests/e2e/connection-serialization.test.ts.
 
   it('statement api', function (done) {
     let statement;

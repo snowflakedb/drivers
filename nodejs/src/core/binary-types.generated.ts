@@ -34,12 +34,12 @@ export declare class Column {
 }
 
 export declare class Connection {
-  constructor(options: Record<string, string>, sessionParameters: Record<string, string>, openExternalBrowserCallback?: ((arg: string) => void) | undefined | null, deferredInit?: boolean | undefined | null)
+  constructor(params: ConnectionParams)
   connect(): Promise<undefined>
   isUp(): boolean
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
-  getTokenInfo(): ConnectionTokenInfo
+  getTokenInfo(): ConnectionTokenInfo | null
   execute(params: ExecuteParams): Statement
   getQueryStatus(queryId: string): Promise<QueryStatus>
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
@@ -89,9 +89,16 @@ export declare class Statement {
   cancel(): Promise<void>
 }
 
+export interface ConnectionParams {
+  options: Record<string, string>
+  sessionParameters: Record<string, string>
+  openExternalBrowserCallback?: (arg: string) => void
+  tokenInfo?: ConnectionTokenInfo
+}
+
 export interface ConnectionTokenInfo {
-  sessionToken?: string
-  masterToken?: string
+  sessionToken: string
+  masterToken: string
   sessionTokenExpiresAtMs?: number
   masterTokenExpiresAtMs?: number
 }
