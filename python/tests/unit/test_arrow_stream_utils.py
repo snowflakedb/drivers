@@ -12,7 +12,7 @@ from snowflake.connector._internal.arrow_stream_utils import (
 from snowflake.connector.errors import InternalError
 
 
-def test_forwards_use_dict_result_on_native_path():
+def test_forwards_use_dict_result_on_native_path() -> None:
     mock_iterator = MagicMock(name="native_iterator")
     mock_class = MagicMock(return_value=mock_iterator)
     mock_core = MagicMock()
@@ -27,6 +27,7 @@ def test_forwards_use_dict_result_on_native_path():
             99,
             context=ArrowConverterContext(timezone="UTC"),
             use_dict_result=True,
+            use_core_arrow=True,
         )
 
     assert result is mock_iterator
@@ -38,7 +39,7 @@ def test_forwards_use_dict_result_on_native_path():
     )
 
 
-def test_forwards_use_numpy_on_native_path():
+def test_forwards_use_numpy_on_native_path() -> None:
     mock_iterator = MagicMock(name="native_iterator")
     mock_class = MagicMock(return_value=mock_iterator)
     mock_core = MagicMock()
@@ -53,6 +54,7 @@ def test_forwards_use_numpy_on_native_path():
             99,
             context=ArrowConverterContext(timezone="UTC"),
             use_numpy=True,
+            use_core_arrow=True,
         )
 
     assert result is mock_iterator
@@ -64,7 +66,7 @@ def test_forwards_use_numpy_on_native_path():
     )
 
 
-def test_create_table_iterator_forwards_knobs_on_native_path():
+def test_create_table_iterator_forwards_knobs_on_native_path() -> None:
     mock_iterator = MagicMock(name="native_table_iterator")
     mock_class = MagicMock(return_value=mock_iterator)
     mock_core = MagicMock()
@@ -81,6 +83,7 @@ def test_create_table_iterator_forwards_knobs_on_native_path():
             context=context,
             number_to_decimal=True,
             force_microsecond_precision=True,
+            use_core_arrow=True,
         )
 
     assert result is mock_iterator
@@ -92,7 +95,7 @@ def test_create_table_iterator_forwards_knobs_on_native_path():
     )
 
 
-def test_create_table_iterator_uses_cython_when_native_arrow_is_off():
+def test_create_table_iterator_uses_cython_when_native_arrow_is_off() -> None:
     mock_cython = MagicMock(name="cython_table_iterator")
     mock_core = MagicMock()
     mock_core.native_arrow_enabled.return_value = False
@@ -113,6 +116,7 @@ def test_create_table_iterator_uses_cython_when_native_arrow_is_off():
             context=context,
             number_to_decimal=True,
             force_microsecond_precision=True,
+            use_core_arrow=True,
         )
 
     assert result is mock_cython
@@ -124,7 +128,8 @@ def test_create_table_iterator_uses_cython_when_native_arrow_is_off():
     )
 
 
-def test_create_table_iterator_releases_stream_when_native_class_is_missing():
+def test_create_table_iterator_releases_stream_when_native_class_is_missing() -> None:
+
     class _CoreWithoutTableIterator:
         def native_arrow_enabled(self) -> bool:
             return True
@@ -141,6 +146,27 @@ def test_create_table_iterator_releases_stream_when_native_class_is_missing():
         ) as release,
         pytest.raises(InternalError, match="ArrowStreamTableIterator"),
     ):
-        create_table_iterator(99, context=context)
+        create_table_iterator(99, context=context, use_core_arrow=True)
 
     release.assert_called_once_with(99)
+
+
+def test_native_flag_off_selects_cython_row_iterator() -> None:
+    mock_core = MagicMock()
+    mock_core.native_arrow_enabled.return_value = True
+    cython_iterator = MagicMock(name="cython_iterator")
+    with (
+        patch("snowflake.connector._internal.arrow_stream_utils.sf_core_python", mock_core),
+        patch(
+            "snowflake.connector._internal.arrow_stream_utils.CythonArrowStreamIterator",
+            return_value=cython_iterator,
+        ) as mock_cython,
+    ):
+        result = create_row_iterator(99, context=ArrowConverterContext(timezone="UTC"))
+
+    assert result is cython_iterator
+    mock_cython.assert_called_once()
+    assert mock_cython.call_args.args[0] == 99
+    assert mock_cython.call_args.args[1].timezone == "UTC"
+    assert mock_cython.call_args.kwargs == {"use_dict_result": False, "use_numpy": False}
+    mock_core.ArrowStreamIterator.assert_not_called()

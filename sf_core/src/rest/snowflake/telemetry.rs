@@ -10,7 +10,7 @@ use url::Url;
 use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::{
     CommunicationSnafu, PayloadEncodeSnafu, RequestConstructionSnafu, RestError, UrlJoinSnafu,
-    apply_json_content_type, apply_query_headers, read_response_json,
+    apply_json_content_type, apply_query_auth, read_response_json,
 };
 
 const TELEMETRY_SEND_PATH: &str = "/telemetry/send";
@@ -58,11 +58,11 @@ pub async fn send_telemetry(
         .build()
     })?;
 
-    let request = apply_json_content_type(apply_query_headers(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(url),
-        &query_parameters.client_info,
+        query_parameters,
         session_token,
-    ))
+    )?)
     .header(header::CONTENT_ENCODING, "gzip")
     .header(header::ACCEPT_ENCODING, "gzip, deflate")
     .header(header::CONNECTION, "keep-alive")
@@ -106,6 +106,7 @@ mod tests {
             log_query_text: false,
             log_query_parameters: false,
             include_retry_reason: false,
+            external_session_id: None,
         }
     }
 

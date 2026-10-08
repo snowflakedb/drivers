@@ -93,6 +93,7 @@ final class SnowflakeConnectionImplTestFixtures {
 
   static void assertConnectionClosedException(SFSQLException ex) {
     assertEquals(ErrorCode.CONNECTION_CLOSED, ex.getErrorCode());
+    assertEquals("Connection is closed", ex.getMessage());
   }
 
   static void assertConnectionClosedClientInfoException(SQLClientInfoException ex) {

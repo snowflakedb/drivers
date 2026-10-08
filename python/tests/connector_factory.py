@@ -125,6 +125,15 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     # Apply overrides
     connection_params.update(override_params)
 
+    core_arrow = os.getenv("SNOWFLAKE_TEST_USE_CORE_ARROW")
+    if (
+        IS_UNIVERSAL_DRIVER
+        and "use_core_arrow" not in override_params
+        and core_arrow is not None
+        and core_arrow.lower() in ("1", "true")
+    ):
+        connection_params["use_core_arrow"] = True
+
     # Read QUERY_RESULT_FORMAT from environment and normalize to uppercase
     result_format = os.getenv("QUERY_RESULT_FORMAT")
     if result_format:

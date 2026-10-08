@@ -115,4 +115,32 @@ CTEST_ARGS=()
 if [[ -n "${CTEST_FILTER:-}" ]]; then
     CTEST_ARGS+=(-R "$CTEST_FILTER")
 fi
+
+JUNIT_FILE=""
+passthrough=("$@")
+for ((i = 0; i < ${#passthrough[@]}; i++)); do
+    case "${passthrough[$i]}" in
+        --output-junit)
+            JUNIT_FILE="${passthrough[$((i + 1))]:-}"
+            ;;
+        --output-junit=*)
+            JUNIT_FILE="${passthrough[$i]#*=}"
+            ;;
+    esac
+done
+CTEST_LOG=""
+if [[ -n "$JUNIT_FILE" ]]; then
+    CTEST_LOG="${JUNIT_FILE%.xml}.ctest.log"
+    CTEST_ARGS+=(--output-log "$CTEST_LOG")
+fi
+
+set +e
 ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure ${CTEST_ARGS[@]+"${CTEST_ARGS[@]}"} "$@"
+ctest_status=$?
+set -e
+
+if [[ -n "$JUNIT_FILE" && -f "$JUNIT_FILE" && -n "$CTEST_LOG" && -f "$CTEST_LOG" ]]; then
+    python3 "$SCRIPT_DIR/annotate_ctest_junit_retries.py" --junit "$JUNIT_FILE" --log "$CTEST_LOG" \
+        || echo "run_tests: warning: failed to annotate JUnit retries in $JUNIT_FILE" >&2
+fi
+exit "$ctest_status"

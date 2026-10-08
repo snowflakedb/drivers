@@ -64,6 +64,9 @@ class ConnectionConfigMixin:
     numpy: bool | None = None
     """Use numpy for result set processing."""
 
+    use_core_arrow: bool | None = None
+    """Use the core Arrow converter for result fetches."""
+
     arrow_number_to_decimal: bool | None = None
     """Convert Arrow NUMBER columns to Python Decimal."""
 

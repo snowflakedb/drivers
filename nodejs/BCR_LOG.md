@@ -15,6 +15,20 @@ They differ in two cases:
 
 Decide whether those two cases should keep core's separate retry or share one token or error the way old Node does.
 
+### Azure WIF client-id end-to-end coverage
+
+`workloadIdentityAzureClientId` maps to `workload_identity_azure_client_id` and
+selects the user-assigned Azure managed identity used for WIF attestation. Local
+sf_core tests verify that it becomes the IMDS `client_id` parameter and overrides
+`MANAGED_IDENTITY_CLIENT_ID`, but neither the Node.js nor sf_core live WIF suite
+sets it.
+
+[SNOW-4232648](https://snowflakecomputing.atlassian.net/browse/SNOW-4232648)
+tracks attaching a user-assigned identity to the Azure WIF test VM, mapping it
+to a dedicated Snowflake user, and adding live sf_core and Node.js tests that
+assert that user. The test should require the preconfigured identity rather
+than create Azure resources during a test run.
+
 ### API Argument Validation
 
 In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.
@@ -70,17 +84,18 @@ of the old Node format converter.
 - Binary data type doesn't honor BINARY_OUTPUT_FORMAT when fetchAsString is used (should behave similar to timestamp output formats)
 - Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The `decfloat.feature` "should select decfloat using parameter binding" scenario specifies `42.0` as the returned value, so both drivers deviate from the shared spec; the tests assert the observed `"42"` and cite this entry.
 - `fetchAsString: ['JSON']` stringifies only `variant`. `object`, `array`, and `map` have no string converter, so the parsed JS value is left in place. FILE, GEOMETRY, and GEOGRAPHY report as `object` and inherit that gap. They should stringify like VARIANT.
+- `serialize()` on a connection that never connected, or that was destroyed, writes `{ tokenInfo: {} }`. That string has no session. `serialize()` should throw a plain error when there are no tokens. The new driver's `deserializeConnection` already rejects this payload (BD#71). The old driver builds a disconnected connection from it.
 
 ## Future Breaking Changes (BCRs)
 
 These are potential improvements to consider after the UD release:
 
-- `snowflake.serializeConnection` should throw or return null when called on a disconnected connection, rather than returning an unusable object.
 - `snowflake.deserializeConnection` should throw an exception when provided an invalid or malformed serialized string, instead of failing in some cases and returning a disconnected connection.
 - Reevaluate the `jsTreatIntegerAsBigInt` parameter; consider either always converting all fixed numeric values to `BigInt`, or using `BigInt` only when the value exceeds the safe integer range (using `Number.isSafeInteger()`), and review approaches for handling floating-point numbers in a similar, consistent manner.
 - Variant JSON/XML parsing is a mess: it is slow, does eval() and adds 6 dependencies (2MB). We should follow other drivers and let user decide how to parse variants. See "parses JSON with undefined, Infinity, NaN as JS types" test
 - `Column` has no `isFloat()` / `isReal()` method for the REAL Snowflake data type; `isNumber()` returns `true` for both FIXED and REAL, so a caller cannot distinguish them without `getType() === 'real'`. To be perfectly correct we should have a dedicated predicate for REAL, matching the pattern of every other `is*()` method.
-- Parameter binding maps every value to a coarse set of logical bind types (`BOOLEAN`, `VARIANT`, `FIXED`, `REAL`, `TEXT`) and relies on the server to recast the stringified value into the column's final type. The Python and JDBC drivers instead bind dedicated types (`DATE`, `TIME`, `TIMESTAMP_LTZ`/`NTZ`/`TZ`, `BINARY`) with epoch-based numeric encodings, which is more efficient and avoids the server-side recast. A JS `Date` currently binds as `VARIANT` with an ISO string (the old driver used `TEXT`); aligning Node.js with the temporal/binary bind types the other drivers use would be the consistent fix. See `nodejs/src/query-result/binds.ts`.
+- Parameter binding maps every value to a coarse set of logical bind types (`BOOLEAN`, `VARIANT`, `FIXED`, `REAL`, `TEXT`) and relies on the server to recast the stringified value into the column's final type. The Python and JDBC drivers instead bind dedicated types (`DATE`, `TIME`, `TIMESTAMP_LTZ`/`NTZ`/`TZ`, `BINARY`) with epoch-based numeric encodings, which is more efficient and avoids the server-side recast. Aligning Node.js with the temporal/binary bind types the other drivers use would be the consistent fix. See `nodejs/src/query-result/binds.ts`.
+- Binding a JS `Date` is not supported. The old driver's `Bind` type (`string | number | boolean | null`) never included `Date`, but its runtime accepted one passed past the type check and bound it as `TEXT` via `Date.toJSON()`. The new driver has no `Date` handling: it binds as `VARIANT`, so casts such as `?::TIMESTAMP_NTZ` fail (BD#86). The server-side recast of a text date goes through the session's `DATE_INPUT_FORMAT` / `TIMESTAMP_INPUT_FORMAT` / `TIME_INPUT_FORMAT`, so a session with a non-default format rejects or misreads the value, and `?::TIME` never accepts the full ISO string. `Date` support should come back only with dedicated temporal bind types (epoch-based `TIMESTAMP_LTZ`/`NTZ`/`TZ`, `DATE`, `TIME`) that do not depend on session formats.
 - Default `rowMode` is `'object'`, which keys each row by column name and silently overwrites duplicates (last value wins). `'object_with_renamed_duplicated_columns'` already exists as an opt-in that keeps every column by renaming the 2nd+ occurrence (`NAME_2`, `NAME_3`, …, skipping names already taken). Consider making that the default instead of `'object'`, so joins and other queries with repeated names do not drop values.
 - `QueryStatus` can be exported enum. `connection.isStillRunning(status)` and `connection.isAnError(status)` could take status as both string or enum (no BCR). `connection.getQueryStatus()` could also return this enum. It would match the python driver (BCR).
 - `connection.isStillRunning(status)` and `connection.isAnError(status)` are instance methods that do not use connection state; classifying a status does not belong on a connection instance. Python defines them as `@staticmethod`s on `Connection`. A later BCR could move them to static methods (or package-level utils) to match.

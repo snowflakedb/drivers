@@ -749,11 +749,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
 
   public void checkClosed() {
     if (isClosed()) {
-      throw SFSQLException.fromErrorCode(
-          CONNECTION_CLOSED,
-          "Connection is closed",
-          CONNECTION_CLOSED.getSqlState(),
-          CONNECTION_CLOSED.getMessageCode());
+      throw new SFSQLException(CONNECTION_CLOSED, "Connection is closed");
     }
   }
 

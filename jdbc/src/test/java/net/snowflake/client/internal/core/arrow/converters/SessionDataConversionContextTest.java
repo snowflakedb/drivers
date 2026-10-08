@@ -209,6 +209,14 @@ public class SessionDataConversionContextTest {
   }
 
   @Test
+  public void shouldExposeLowercaseTimestampMappingWireNameFromSessionParams() throws Exception {
+    Map<String, String> params = new HashMap<>();
+    params.put("CLIENT_TIMESTAMP_TYPE_MAPPING", "timestamp_ntz");
+    DataConversionContext ctx = contextFrom(params);
+    assertEquals("timestamp_ntz", ctx.getTimestampMappedType());
+  }
+
+  @Test
   public void shouldTreatDecimalAsIntByDefault() throws Exception {
     DataConversionContext ctx = contextFrom(Collections.emptyMap());
     assertTrue(ctx.isTreatDecimalAsInt());

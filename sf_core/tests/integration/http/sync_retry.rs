@@ -323,6 +323,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
         log_query_text: false,
         log_query_parameters: false,
         include_retry_reason: true,
+        external_session_id: None,
     }
 }
 

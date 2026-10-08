@@ -34,12 +34,12 @@ export declare class Column {
 }
 
 export declare class Connection {
-  constructor(options: Record<string, string>, sessionParameters: Record<string, string>, openExternalBrowserCallback?: ((arg: string) => void) | undefined | null, deferredInit?: boolean | undefined | null)
+  constructor(params: ConnectionParams)
   connect(): Promise<undefined>
   isUp(): boolean
   isValidAsync(): Promise<boolean>
   getSessionParameters(): KnownSessionParameters
-  getTokenInfo(): ConnectionTokenInfo
+  getTokenInfo(): ConnectionTokenInfo | null
   execute(params: ExecuteParams): Statement
   getQueryStatus(queryId: string): Promise<QueryStatus>
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
@@ -89,9 +89,16 @@ export declare class Statement {
   cancel(): Promise<void>
 }
 
+export interface ConnectionParams {
+  options: Record<string, string>
+  sessionParameters: Record<string, string>
+  openExternalBrowserCallback?: (arg: string) => void
+  tokenInfo?: ConnectionTokenInfo
+}
+
 export interface ConnectionTokenInfo {
-  sessionToken?: string
-  masterToken?: string
+  sessionToken: string
+  masterToken: string
   sessionTokenExpiresAtMs?: number
   masterTokenExpiresAtMs?: number
 }
@@ -107,7 +114,8 @@ export interface ExecuteParams {
 
 export declare function formatSnowflakeDate(format: string, epochMillis: number, nanos: number, scale: number, timezone: string | number): string
 
-export declare function getTlsStatus(): TlsStatus
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export declare function getTlsStatus(): TlsStatus
 
 export declare function isAnError(status: QueryStatus): boolean
 
@@ -173,16 +181,16 @@ export type QueryStatus = 'RUNNING' | 'ABORTING' | 'SUCCESS' | 'FAILED_WITH_ERRO
 /**
  * Gives the bridge the constructors to JS classes it needs to create.
  *
- * `SnowflakeDate` extends `Date`, and napi classes can't extend built-in JS classes,
- * so the class lives in TypeScript and the bridge calls its constructor.
+ * Reasoning: `SnowflakeDate` has to extend `Date`, and napi classes can't extend
+ * built-in JS classes, so it lives in TypeScript and the bridge calls its constructor.
  * The constructors are stored per JS env, because napi references don't work across envs.
  */
 export declare function registerClassConstructors(constructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }): void
 
 export type StatementStatus = 'fetching' | 'complete'
 
-/** Status of the linked Rustls TLS provider and build flag, not artifact compliance. */
-export interface TlsStatus {
-  tlsProviderIsFips: boolean
-  fipsBuildEnabled: boolean
-}
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export interface TlsStatus {
+//   tlsProviderIsFips: boolean
+//   fipsBuildEnabled: boolean
+// }

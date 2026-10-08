@@ -135,9 +135,33 @@ try {
     if ($env:CTEST_FILTER) {
         $ctestArgs += @("-R", $env:CTEST_FILTER)
     }
+    $junitFile = $null
+    $ctestLog = $null
+    $extra = @($RemainingArgs)
+    for ($i = 0; $i -lt $extra.Count; $i++) {
+        if ($extra[$i] -eq "--output-junit" -and ($i + 1) -lt $extra.Count) {
+            $junitFile = $extra[$i + 1]
+        } elseif ($extra[$i] -like "--output-junit=*") {
+            $junitFile = $extra[$i].Substring("--output-junit=".Length)
+        }
+    }
+    if ($junitFile) {
+        $ctestLog = [System.IO.Path]::ChangeExtension($junitFile, ".ctest.log")
+        $ctestArgs += @("--output-log", $ctestLog)
+    }
     $ctestArgs += $RemainingArgs
     ctest @ctestArgs
     $ctestExit = $LASTEXITCODE
+    if ($junitFile -and (Test-Path $junitFile) -and $ctestLog -and (Test-Path $ctestLog)) {
+        $py = Get-Command python3 -ErrorAction SilentlyContinue
+        if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
+        if ($py) {
+            & $py.Source (Join-Path $ScriptDir "annotate_ctest_junit_retries.py") --junit $junitFile --log $ctestLog
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "run_tests: warning: failed to annotate JUnit retries in $junitFile"
+            }
+        }
+    }
 }
 finally {
     if ($env:ODBC_TEST_SCHEMA) {

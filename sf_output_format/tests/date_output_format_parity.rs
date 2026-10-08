@@ -795,6 +795,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
         log_query_text: false,
         log_query_parameters: false,
         include_retry_reason: false,
+        external_session_id: None,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 

@@ -13,6 +13,7 @@
 
 Bug fixes:
 
+- Fixed query-result `SQL_DESC_TYPE_NAME` so `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`, and `TIMESTAMP_TZ` are reported separately. `SQLDescribeCol` stays `SQL_TYPE_TIMESTAMP` (93). (snowflakedb/drivers#2444)
 - Fixed `SQLBindParameter` and IPD `SQLSetDescRec` to return SQLSTATE `HYC00` (optional feature not implemented) for the Snowflake vendor type codes that `SQLGetTypeInfo` reports but the driver cannot bind: `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`, and `SQL_SF_VECTOR`. `SQLBindParameter` previously returned `HY004`; IPD `SQLSetDescRec` previously returned `HY021`. Bind semi-structured values as `SQL_VARCHAR` and coerce in the SQL with `PARSE_JSON(?)`, `TO_ARRAY(?)`, or `TO_OBJECT(?)`. A type code the catalog does not report still returns `HY004` from `SQLBindParameter`. (snowflakedb/drivers#2369)
 
 ## v4.0.0
@@ -234,6 +235,7 @@ Bug fixes:
 - Fixed `FLOAT`/`REAL` to single-field interval fetch with a nonzero fractional part to return `SQL_SUCCESS_WITH_INFO` (`01S07`).
 - Fixed numeric-to-interval conversion so a value that truncates to zero always yields `+0` (no negative-zero interval sign).
 - Fixed binary fetches so a negative buffer length or a null output pointer leaves the application buffer unchanged. (snowflakedb/drivers#2415)
+- Fixed SQL_NTS character parameter binds so a value with no null terminator inside the buffer is read only up to its buffer length instead of past the end. (snowflakedb/drivers#2416)
 
 Internal changes:
 

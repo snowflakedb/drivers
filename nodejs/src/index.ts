@@ -18,13 +18,12 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
-  coreGetTlsStatus,
   coreIsAnError,
   coreIsStillRunning,
   registerClassConstructors,
   type CoreConnectionInstance,
   type CoreStatementInstance,
-  type CoreTlsStatus,
+  type ConnectionTokenInfo,
 } from './core/index.js';
 import { createPool } from './create-pool.js';
 import {
@@ -73,8 +72,8 @@ export {
   type StatementStatus,
 };
 
-/** Describes the linked Rustls TLS provider and build flag, not artifact compliance. */
-export type TlsStatus = CoreTlsStatus;
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export type TlsStatus = CoreTlsStatus;
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
 export type ConnectionOptions = Record<string, unknown> & {
@@ -82,6 +81,7 @@ export type ConnectionOptions = Record<string, unknown> & {
   rowMode?: RowMode;
   fetchAsString?: DataType[];
   jsTreatIntegerAsBigInt?: boolean;
+
   /**
    * Controls how a SQL NULL is rendered for columns that {@link fetchAsString}
    * returns as strings. A column returned as its native JavaScript type is
@@ -97,6 +97,7 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default true
    */
   representNullAsStringNull?: boolean;
+
   /**
    * Decides when large bulk {@link StatementOption.binds} are uploaded to a temporary stage instead
    * of being sent with the request.
@@ -113,22 +114,31 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default User's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
    */
   arrayBindingThreshold?: number;
+
   /**
    * Optional string that can be used to tag queries and other SQL statements executed within a
    * connection. The tags are displayed in the output of the QUERY_HISTORY, QUERY_HISTORY_BY_*
    * functions.
    */
   queryTag?: string;
+
+  /**
+   * Name of the application that uses the driver. It is sent to Snowflake at login.
+   */
+  application?: string;
+
   /**
    * By default, client connections typically time out approximately 3-4 hours after the most recent query was executed.
    *
    * @default false
    */
   clientSessionKeepAlive?: boolean;
+
   /**
    * Sets the frequency (interval in seconds) between heartbeat messages.
    */
   clientSessionKeepAliveHeartbeatFrequency?: number;
+
   /**
    * When true, the session is not destroyed on the server side when the connection
    * is closed. This allows async queries to continue running after disconnect.
@@ -138,6 +148,40 @@ export type ConnectionOptions = Record<string, unknown> & {
    * @default false
    */
   serverSessionKeepAlive?: boolean;
+
+  /**
+   * Enables Certificate Revocation List (CRL) validation.
+   *
+   * When `ENABLED` is set, it fails if the certificate is revoked or if any error occurs (network, parsing, etc.).
+   * When `ADVISORY` is set, it fails only if the certificate is revoked.
+   *
+   * @default "DISABLED"
+   */
+  certRevocationCheckMode?: 'DISABLED' | 'ENABLED' | 'ADVISORY';
+  /**
+   * Allows to connect when certificate doesn't have CRL URLs (cRLDistributionPoints)
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default false
+   */
+  crlAllowCertificatesWithoutCrlURL?: boolean;
+  /**
+   * Enable CRL caching in memory.
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default true
+   */
+  crlInMemoryCache?: boolean;
+  /**
+   * Enable CRL caching on disk. Disk read/write failures are ignored.
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default true
+   */
+  crlOnDiskCache?: boolean;
   /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
@@ -154,9 +198,11 @@ export type ConnectionOptions = Record<string, unknown> & {
 };
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
 
-// Not exported, so only deserializeConnection can create a connection with deferred init.
-const DESERIALIZED_PAYLOAD = Symbol('deserializedPayload');
-type DeserializedConnectionOptions = ConnectionOptions & { [DESERIALIZED_PAYLOAD]?: string };
+// Not exported, so session tokens reach the bridge only through deserializeConnection.
+const TOKEN_INFO = Symbol('tokenInfo');
+type InternalConnectionOptions = ConnectionOptions & {
+  [TOKEN_INFO]?: ConnectionTokenInfo;
+};
 
 // This should be called StatementOptions or ExecuteStatementOptions but we keep the name
 // for backwards compatibility
@@ -165,14 +211,18 @@ export interface StatementOption {
   complete?: StatementCallback;
   asyncExec?: boolean;
   streamResult?: boolean;
+
   /**
    * Parameters scoped to this single statement, sent with the execute request
    * rather than applied to the whole session. Keys are Snowflake statement-level
    * parameter names (e.g. `TIME_OUTPUT_FORMAT`);
    */
   parameters?: Record<string, unknown>;
+
   rowMode?: RowMode;
+
   fetchAsString?: DataType[];
+
   /**
    * Values for the placeholders in {@link StatementOption.sqlText}. Write `?` (or
    * `:1`, `:2`, ...) in the SQL, and list the values here in the same order. The
@@ -197,17 +247,20 @@ export interface StatementOption {
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   binds?: Binds;
+
   /**
    * Current working directory to use for GET/PUT execution using relative paths from a client location
    * that is different from the connector directory.
    */
   cwd?: string;
+
   /**
    * UUID used to resubmit a request. When omitted, the driver creates one.
    *
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
    */
   requestId?: string;
+
   /**
    * When `true`, the query is submitted for column metadata only.
    */
@@ -228,9 +281,6 @@ export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
   #id: string;
-  // Original deserialize payload. Core has no tokens until connection_init, so
-  // serialize() before the first use reads this instead of an empty tokenInfo.
-  #serializedBeforeInit?: string;
 
   constructor(options: ConnectionOptions) {
     const {
@@ -240,9 +290,9 @@ export class Connection {
       representNullAsStringNull,
       arrayBindingThreshold,
       openExternalBrowserCallback,
-      [DESERIALIZED_PAYLOAD]: serializedBeforeInit,
+      [TOKEN_INFO]: tokenInfo,
       ...coreOptions
-    } = options as DeserializedConnectionOptions;
+    } = options as InternalConnectionOptions;
     this.#id = randomUUID();
 
     this.#defaultRowOptions = {
@@ -259,16 +309,15 @@ export class Connection {
       sessionParameters['CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'] = String(arrayBindingThreshold);
     }
 
-    this.#core = new CoreConnection(
-      toCoreConnectionOptions({
+    this.#core = new CoreConnection({
+      options: toCoreConnectionOptions({
         ...coreOptions,
         useEnvProxy: GlobalConfig.useEnvProxy,
       }),
       sessionParameters,
       openExternalBrowserCallback,
-      serializedBeforeInit !== undefined,
-    );
-    this.#serializedBeforeInit = serializedBeforeInit;
+      tokenInfo,
+    });
   }
 
   connect(callback?: ConnectionCallback) {
@@ -286,15 +335,7 @@ export class Connection {
   }
 
   serialize(): string {
-    const info = this.#core.getTokenInfo();
-    if (info.sessionToken) {
-      this.#serializedBeforeInit = undefined;
-      return serializeTokenInfo(info);
-    }
-    if (this.#serializedBeforeInit && this.isUp()) {
-      return this.#serializedBeforeInit;
-    }
-    return serializeTokenInfo({});
+    return serializeTokenInfo(this.#core.getTokenInfo());
   }
 
   isUp(): boolean {
@@ -423,8 +464,8 @@ export class Connection {
   }
 }
 
-/** Reports linked Rustls TLS provider status without creating a connection. */
-export const getTlsStatus: () => TlsStatus = coreGetTlsStatus;
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export const getTlsStatus: () => TlsStatus = coreGetTlsStatus;
 
 // TODO:
 // - JSDoc needed
@@ -435,34 +476,21 @@ export const createConnection = (options: ConnectionOptions) => new Connection(o
 export const serializeConnection = (connection: Connection): string => connection.serialize();
 /**
  * Rebuilds a connection from a string produced by {@link Connection.serialize}.
- * A payload that contains tokens addresses the same server session as the
- * connection that produced the string. `destroy()` on either connection logs
- * that session out.
+ * The new connection addresses the same server session as the connection that
+ * produced the string. `destroy()` on either connection logs that session out.
+ * A payload without both tokens throws, because it has no session to restore.
  */
 export const deserializeConnection = (
   options: ConnectionOptions,
-  serializedConnection?: unknown,
-): Connection => {
-  const tokenInfo = deserializeTokenInfo(serializedConnection);
-  if (
-    !tokenInfo.sessionToken ||
-    !tokenInfo.masterToken ||
-    typeof serializedConnection !== 'string'
-  ) {
-    return new Connection(options);
-  }
-  const deserializedOptions: DeserializedConnectionOptions = {
+  serializedConnection: string,
+): Connection =>
+  new Connection({
     ...options,
-    sessionToken: tokenInfo.sessionToken,
-    masterToken: tokenInfo.masterToken,
-    [DESERIALIZED_PAYLOAD]: serializedConnection,
-  };
-  return new Connection(deserializedOptions);
-};
+    [TOKEN_INFO]: deserializeTokenInfo(serializedConnection),
+  });
 
 export default {
   configure,
-  getTlsStatus,
   createConnection,
   createPool,
   serializeConnection,

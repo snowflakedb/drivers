@@ -1,5 +1,7 @@
 use napi::bindgen_prelude::*;
 use sf_core::apis::database_driver_v1::{ApiError, ErrorKind};
+use sf_core::http::retry::HttpError;
+use sf_core::rest::snowflake::RestError;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -58,6 +60,9 @@ struct ClientError {
 
 impl ClientError {
     fn of(error: &ApiError) -> Self {
+        if is_snowflake_unreachable(error) {
+            return Self::of_network_unreachable(error.root_cause());
+        }
         Self {
             name: error_name(error.kind()),
             message: error.to_string(),
@@ -165,6 +170,17 @@ impl ClientError {
         }
     }
 
+    fn of_network_unreachable(cause: Option<String>) -> Self {
+        Self {
+            name: Some("NetworkError"),
+            message: "Network error. Could not reach Snowflake.".to_string(),
+            code: Some(ErrorCode::Driver(401001)),
+            sql_state: None,
+            cause,
+            is_fatal: false,
+        }
+    }
+
     fn of_query_id_no_data(query_id: &str) -> Self {
         Self {
             name: Some("ClientError"),
@@ -234,6 +250,26 @@ fn error_name(kind: ErrorKind) -> Option<&'static str> {
     match kind {
         ErrorKind::QueryFailed => Some("OperationFailedError"),
         _ => None,
+    }
+}
+
+// ErrorKind::Io also covers file and stage I/O. A dedicated core network kind would let
+// wrappers classify transport failures without inspecting ApiError variants here.
+fn is_snowflake_unreachable(error: &ApiError) -> bool {
+    match error {
+        ApiError::HttpRequest { .. } => true,
+        ApiError::Login { source, .. }
+        | ApiError::Query { source, .. }
+        | ApiError::SessionRefresh { source, .. }
+        | ApiError::TokenRequest { source, .. } => matches!(
+            source.as_ref(),
+            RestError::Communication { .. }
+                | RestError::HttpRetry {
+                    source: HttpError::Transport { .. },
+                    ..
+                }
+        ),
+        _ => false,
     }
 }
 
@@ -446,6 +482,18 @@ mod tests {
         assert_eq!(error.name, Some("OperationFailedError"));
         assert_eq!(code_of(&error), None);
         assert_eq!(error.message, "Query abc failed");
+    }
+
+    #[test]
+    fn a_transport_failure_reaching_snowflake_is_a_network_error() {
+        let error = ClientError::of_network_unreachable(Some("connection refused".to_string()));
+
+        assert_eq!(error.name, Some("NetworkError"));
+        assert_eq!(code_of(&error), Some("401001".to_string()));
+        assert_eq!(error.message, "Network error. Could not reach Snowflake.");
+        assert_eq!(error.sql_state, None);
+        assert_eq!(error.cause.as_deref(), Some("connection refused"));
+        assert!(!error.is_fatal);
     }
 
     #[test]

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
@@ -699,11 +700,11 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   }
 
   protected void checkClosed() {
+    if (connection.isClosed()) {
+      throw new SFSQLException(ErrorCode.CONNECTION_CLOSED, "Connection is closed");
+    }
     if (isClosed()) {
       throw new SFSQLException("Statement is closed");
-    }
-    if (connection.isClosed()) {
-      throw new SFSQLException("Connection is closed");
     }
   }
 

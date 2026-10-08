@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect, onTestFinished } from 'vitest';
 import { Connection } from '../types/sdk-types.js';
 import { createConnection, createLiveConnection } from './utils/fixtures.js';
 import {
@@ -9,6 +9,7 @@ import {
   snowflake,
   isRunningNewDriverWithBD,
 } from './utils/index.js';
+import { logoutSuccess, WiremockServer } from './utils/wiremock/index.js';
 
 const PAYLOAD_WITHOUT_TOKENS = JSON.stringify({ services: { sf: { tokenInfo: {} } } });
 const SESSION_QUERY = 'select current_session() as session';
@@ -74,18 +75,16 @@ describe('Connection Serialization & Deserialization', () => {
   });
 
   describe('snowflake.deserializeConnection()', () => {
-    it('should return the same payload before the deserialized connection is used', async () => {
+    it('should return the same tokens before and after the deserialized connection is used', async () => {
       const connection = await createLiveConnection();
-      const serialized = connection.serialize();
-      const deserialized = deserializeConnection(serialized);
-
-      expect(deserialized.serialize()).toBe(serialized);
-      expect(serializeConnection(deserialized)).toBe(serialized);
-
-      await sessionIdOf(deserialized);
-      expect(tokenInfoOf(deserialized.serialize()).sessionToken).toBe(
-        tokenInfoOf(serialized).sessionToken,
-      );
+      const original = tokenInfoOf(connection.serialize());
+      const expected = isRunningNewDriverWithBD('BD#84')
+        ? { sessionToken: original.sessionToken, masterToken: original.masterToken }
+        : original;
+      const deserialized = deserializeConnection(connection.serialize());
+      expect(tokenInfoOf(deserialized.serialize())).toEqual(expected);
+      await executeAsync(deserialized, 'SELECT 1');
+      expect(tokenInfoOf(deserialized.serialize())).toEqual(expected);
     });
 
     it('should deserialize into the originating session and leave it usable', async () => {
@@ -108,17 +107,28 @@ describe('Connection Serialization & Deserialization', () => {
       });
     });
 
-    it('should deserialize a disconnected connection when the tokens are missing', async () => {
-      const deserialized = deserializeConnection(PAYLOAD_WITHOUT_TOKENS);
-      expect(deserialized.isUp()).toBe(false);
-      await expect(executeAsync(deserialized, SESSION_QUERY)).rejects.toMatchObject({
-        error: {
-          name: 'ClientError',
-          code: 407001,
-          sqlState: '08003',
-          message: 'Unable to perform operation because a connection was never established.',
-        },
-      });
+    it('should not restore a session from a payload without tokens', async () => {
+      if (isRunningNewDriverWithBD('BD#71')) {
+        expect(() => deserializeConnection(PAYLOAD_WITHOUT_TOKENS)).toThrow(
+          expect.objectContaining({
+            name: 'InvalidParameterError',
+            code: 408003,
+            message:
+              "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
+          }),
+        );
+      } else {
+        const deserialized = deserializeConnection(PAYLOAD_WITHOUT_TOKENS);
+        expect(deserialized.isUp()).toBe(false);
+        await expect(executeAsync(deserialized, SESSION_QUERY)).rejects.toMatchObject({
+          error: {
+            name: 'ClientError',
+            code: 407001,
+            sqlState: '08003',
+            message: 'Unable to perform operation because a connection was never established.',
+          },
+        });
+      }
     });
 
     it('should fail on first use when the session has already been logged out', async () => {
@@ -162,6 +172,27 @@ describe('Connection Serialization & Deserialization', () => {
       );
     });
 
+    it('should throw a missing parameter error when neither account nor host is given', () => {
+      const payload = JSON.stringify({
+        services: { sf: { tokenInfo: { sessionToken: 'session', masterToken: 'master' } } },
+      });
+      expect(() => snowflake.deserializeConnection({}, payload)).toThrow(
+        expect.objectContaining(
+          isRunningNewDriverWithBD('BD#85')
+            ? {
+                name: 'Error',
+                message:
+                  "Configuration error: Configuration validation failed (2 issue(s)): account: Missing required parameter 'account'; host: Missing required parameter 'host' (or 'server_url')",
+              }
+            : {
+                name: 'MissingParameterError',
+                code: 404007,
+                message: 'An account must be specified.',
+              },
+        ),
+      );
+    });
+
     it('should reject an empty JSON object', () => {
       expect(() => deserializeConnection('{}')).toThrow(
         expect.objectContaining(
@@ -179,6 +210,44 @@ describe('Connection Serialization & Deserialization', () => {
               },
         ),
       );
+    });
+
+    describe('against WireMock', () => {
+      let wiremock: WiremockServer;
+
+      beforeAll(async () => {
+        wiremock = await WiremockServer.spawn();
+      });
+
+      afterAll(async () => {
+        await wiremock.destroy();
+      });
+
+      it('should restore the session without sending any request', async () => {
+        const expirationTime = Date.now() + 60 * 60 * 1000;
+        const deserialized = snowflake.deserializeConnection(
+          { account: baseConnectionOptions.account, ...wiremock.connectionOptions },
+          JSON.stringify({
+            services: {
+              sf: {
+                tokenInfo: {
+                  sessionToken: 'session',
+                  masterToken: 'master',
+                  sessionTokenExpirationTime: expirationTime,
+                  masterTokenExpirationTime: expirationTime,
+                },
+              },
+            },
+          }),
+        );
+        onTestFinished(async () => {
+          await wiremock.stub(logoutSuccess());
+          await destroyConnectionAsync(deserialized);
+        });
+
+        expect(deserialized.isUp()).toBe(true);
+        expect(await wiremock.findRequests('.*')).toHaveLength(0);
+      });
     });
   });
 });

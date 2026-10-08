@@ -3,65 +3,65 @@ import type { SnowflakeError } from './error.js';
 import ErrorCode from './constants/ErrorCode.js';
 import ErrorMessage from './constants/ErrorMessage.js';
 
-export type DeserializedTokenInfo = {
-  sessionToken?: string;
-  masterToken?: string;
-};
-
-export function serializeTokenInfo(info: ConnectionTokenInfo): string {
+export function serializeTokenInfo(info: ConnectionTokenInfo | null): string {
   return JSON.stringify({
     services: {
       sf: {
-        tokenInfo: {
-          sessionToken: info.sessionToken,
-          masterToken: info.masterToken,
-          sessionTokenExpirationTime: info.sessionTokenExpiresAtMs ?? undefined,
-          masterTokenExpirationTime: info.masterTokenExpiresAtMs ?? undefined,
-        },
+        tokenInfo: info
+          ? {
+              sessionToken: info.sessionToken,
+              masterToken: info.masterToken,
+              sessionTokenExpirationTime: info.sessionTokenExpiresAtMs ?? undefined,
+              masterTokenExpirationTime: info.masterTokenExpiresAtMs ?? undefined,
+            }
+          : {},
       },
     },
   });
 }
 
-export function deserializeTokenInfo(serializedConnection: unknown): DeserializedTokenInfo {
-  if (serializedConnection === undefined || serializedConnection === null) {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_MISSING_CONFIG);
-  }
-  if (typeof serializedConnection !== 'string') {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_TYPE);
-  }
+// TODO: a follow-up PR will remove expiration times from ConnectionTokenInfo
+export function deserializeTokenInfo(serializedConnection: string): ConnectionTokenInfo {
+  let sessionToken: unknown;
+  let masterToken: unknown;
+  let sessionTokenExpirationTime: unknown;
+  let masterTokenExpirationTime: unknown;
 
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(serializedConnection);
+    ({ sessionToken, masterToken, sessionTokenExpirationTime, masterTokenExpirationTime } =
+      JSON.parse(serializedConnection).services.sf.tokenInfo);
   } catch {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM);
+    throwDeserializeError();
   }
 
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM);
+  if (
+    !isNonEmptyString(sessionToken) ||
+    !isNonEmptyString(masterToken) ||
+    !isOptionalNumber(sessionTokenExpirationTime) ||
+    !isOptionalNumber(masterTokenExpirationTime)
+  ) {
+    throwDeserializeError();
   }
 
-  const tokenInfo = (parsed as { services?: { sf?: { tokenInfo?: unknown } } }).services?.sf
-    ?.tokenInfo;
-  if (typeof tokenInfo !== 'object' || tokenInfo === null || Array.isArray(tokenInfo)) {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM);
-  }
-
-  const sessionToken = (tokenInfo as { sessionToken?: unknown }).sessionToken;
-  const masterToken = (tokenInfo as { masterToken?: unknown }).masterToken;
-  const hasSession = typeof sessionToken === 'string' && sessionToken.length > 0;
-  const hasMaster = typeof masterToken === 'string' && masterToken.length > 0;
-  if (hasSession !== hasMaster) {
-    throwDeserializeError(ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM);
-  }
-  if (typeof sessionToken === 'string' && typeof masterToken === 'string' && hasSession) {
-    return { sessionToken, masterToken };
-  }
-  return {};
+  return {
+    sessionToken,
+    masterToken,
+    sessionTokenExpiresAtMs: sessionTokenExpirationTime,
+    masterTokenExpiresAtMs: masterTokenExpirationTime,
+  };
 }
 
-function throwDeserializeError(code: number): never {
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || typeof value === 'number';
+}
+
+function throwDeserializeError(): never {
+  // TODO: We don't want InvalidParameterError to have error codes.
+  const code = ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM;
   const error = new Error(ErrorMessage[code]) as SnowflakeError;
   error.name = 'InvalidParameterError';
   error.code = code;

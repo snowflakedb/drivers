@@ -6,13 +6,15 @@ use snafu::OptionExt;
 use url::Url;
 
 use super::private_key::{has_private_key_params, read_private_key};
-use super::token::{has_bearer_token, read_optional_bearer_token, read_required_bearer_token};
+use super::token::{
+    has_bearer_token, read_required_bearer_token, read_required_header_bearer_token,
+};
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
     BrowserOpenFn, ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
-    WifProvider, WorkloadIdentityConfig,
+    WifProvider, WorkloadIdentityConfig, require_http_header_value,
 };
 use crate::config::settings::Settings;
 use crate::config::{
@@ -82,6 +84,13 @@ pub enum AuthConfig {
     Pat {
         user: String,
         token: SensitiveString,
+    },
+    /// PAT plus an external session id. Skips login; every request carries
+    /// `Authorization: Bearer <PAT>` and `X-Snowflake-External-Session-ID`.
+    PatWithExternalSession {
+        user: String,
+        token: SensitiveString,
+        external_session_id: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
     ExternalBrowser {
@@ -306,6 +315,16 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).unwrap_or_default(),
             token: read_required_bearer_token(settings)?,
         }),
+        "PAT_WITH_EXTERNAL_SESSION" => Ok(AuthConfig::PatWithExternalSession {
+            user: non_empty_string(settings, USER).unwrap_or_default(),
+            token: read_required_header_bearer_token(settings)?,
+            external_session_id: SensitiveString::from(require_http_header_value(
+                EXTERNAL_SESSION_ID.as_str(),
+                non_empty_string(settings, EXTERNAL_SESSION_ID).context(MissingParameterSnafu {
+                    parameter: String::from(EXTERNAL_SESSION_ID),
+                })?,
+            )?),
+        }),
         // ─── OAuth: legacy pre-acquired access token ─────────────────────
         // `AUTHENTICATOR=OAUTH` + raw `token=`. Forwarded unchanged to
         // Snowflake; LOGIN_NAME is always set (cross-driver consensus:
@@ -363,44 +382,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
                 .unwrap_or(true),
         }),
-        "WORKLOAD_IDENTITY" => {
-            let provider_str = settings
-                .get_string(WORKLOAD_IDENTITY_PROVIDER)
-                .filter(|s| !s.is_empty())
-                .context(MissingParameterSnafu {
-                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
-                })?;
-            let provider = WifProvider::parse_str(&provider_str).with_context(|| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
-                    value: provider_str.clone(),
-                    explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
-                }
-            })?;
-            let entra_resource = settings
-                .get_string(WORKLOAD_IDENTITY_ENTRA_RESOURCE)
-                .filter(|s| !s.is_empty());
-            let impersonation_path = settings
-                .get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
-                .filter(|s| !s.is_empty())
-                .map(|s| {
-                    s.split(',')
-                        .map(|p| p.trim().to_string())
-                        .filter(|p| !p.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let oidc_token = read_optional_bearer_token(settings)?;
-            let aws_use_outbound_token =
-                settings.get_bool_or(WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(), false);
-            Ok(AuthConfig::WorkloadIdentity(WorkloadIdentityConfig {
-                provider,
-                entra_resource,
-                impersonation_path,
-                oidc_token,
-                aws_use_outbound_token,
-            }))
-        }
+        "WORKLOAD_IDENTITY" => Ok(AuthConfig::WorkloadIdentity(
+            WorkloadIdentityConfig::from_settings(settings)?,
+        )),
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
@@ -517,6 +501,15 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             username: user.clone(),
             token: token.clone(),
         },
+        AuthConfig::PatWithExternalSession {
+            user,
+            token,
+            external_session_id,
+        } => LoginMethod::PatWithExternalSession {
+            username: user.clone(),
+            token: token.clone(),
+            external_session_id: external_session_id.clone(),
+        },
         AuthConfig::NativeOkta(okta) => LoginMethod::NativeOkta(NativeOktaConfig {
             username: okta.username.clone(),
             okta_username: okta.okta_username.clone(),
@@ -570,6 +563,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             LoginMethod::WorkloadIdentity(WorkloadIdentityConfig {
                 provider: cfg.provider,
                 entra_resource: cfg.entra_resource.clone(),
+                azure_client_id: cfg.azure_client_id.clone(),
                 impersonation_path: cfg.impersonation_path.clone(),
                 oidc_token: cfg.oidc_token.clone(),
                 aws_use_outbound_token: cfg.aws_use_outbound_token,
@@ -701,6 +695,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 | "OAUTH_AUTHORIZATION_CODE"
                 | "OAUTH_CLIENT_CREDENTIALS"
                 | "PROGRAMMATIC_ACCESS_TOKEN"
+                | "PAT_WITH_EXTERNAL_SESSION"
                 | "WORKLOAD_IDENTITY"
         );
     if !user_optional && non_empty_string(settings, USER).is_none() {
@@ -768,6 +763,37 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                     parameter: TOKEN.into(),
                     message: "Missing required parameter 'token' (or 'token_file_path') for PAT \
                               authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+        }
+        "PAT_WITH_EXTERNAL_SESSION" => {
+            if !has_bearer_token(settings) {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: TOKEN.into(),
+                    message: "Missing required parameter 'token' (or 'token_file_path') for \
+                              PAT_WITH_EXTERNAL_SESSION authentication"
+                        .into(),
+                    code: ValidationCode::MissingRequired,
+                });
+            }
+            if let Some(id) = non_empty_string(settings, EXTERNAL_SESSION_ID) {
+                if reqwest::header::HeaderValue::from_str(&id).is_err() {
+                    issues.push(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        parameter: EXTERNAL_SESSION_ID.into(),
+                        message: "external_session_id must be a valid HTTP header value".into(),
+                        code: ValidationCode::InvalidValue,
+                    });
+                }
+            } else {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    parameter: EXTERNAL_SESSION_ID.into(),
+                    message: "Missing required parameter 'external_session_id' for \
+                              PAT_WITH_EXTERNAL_SESSION authentication"
                         .into(),
                     code: ValidationCode::MissingRequired,
                 });
@@ -1093,6 +1119,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         for param in [
             WORKLOAD_IDENTITY_PROVIDER,
             WORKLOAD_IDENTITY_ENTRA_RESOURCE,
+            WORKLOAD_IDENTITY_AZURE_CLIENT_ID,
             WORKLOAD_IDENTITY_IMPERSONATION_PATH,
         ] {
             if non_empty_string(settings, param).is_some() {
@@ -1948,6 +1975,127 @@ mod tests {
             AuthConfig::Pat { .. } => {}
             _ => panic!("Expected Pat auth for mixed-case authenticator"),
         }
+    }
+
+    #[test]
+    fn build_pat_with_external_session_auth() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("token", Setting::String("tok123".into())),
+            (
+                "authenticator",
+                Setting::String("PAT_WITH_EXTERNAL_SESSION".into()),
+            ),
+            (
+                "external_session_id",
+                Setting::String("ext-session-1".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::PatWithExternalSession {
+                user,
+                token,
+                external_session_id,
+            } => {
+                assert!(user.is_empty());
+                assert_eq!(token.reveal(), "tok123");
+                assert_eq!(external_session_id.reveal(), "ext-session-1");
+                let debug = format!("{config:?}");
+                assert!(
+                    !debug.contains("ext-session-1"),
+                    "external_session_id must be redacted in Debug, got {debug}"
+                );
+            }
+            other => panic!("Expected PatWithExternalSession auth, got {other:?}"),
+        }
+        assert_eq!(config.session.database, None);
+    }
+
+    #[test]
+    fn build_pat_with_external_session_lowercase() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("token", Setting::String("tok123".into())),
+            (
+                "authenticator",
+                Setting::String("pat_with_external_session".into()),
+            ),
+            (
+                "external_session_id",
+                Setting::String("ext-session-1".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        assert!(matches!(
+            config.auth,
+            AuthConfig::PatWithExternalSession { .. }
+        ));
+    }
+
+    #[test]
+    fn validate_pat_with_external_session_missing_token_and_id() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            (
+                "authenticator",
+                Setting::String("PAT_WITH_EXTERNAL_SESSION".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| { i.parameter == "token" && i.code == ValidationCode::MissingRequired }),
+            "expected missing token, got {issues:?}"
+        );
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "external_session_id" && i.code == ValidationCode::MissingRequired
+            }),
+            "expected missing external_session_id, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_pat_with_external_session_header_unsafe_id() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("token", Setting::String("tok123".into())),
+            (
+                "authenticator",
+                Setting::String("PAT_WITH_EXTERNAL_SESSION".into()),
+            ),
+            ("external_session_id", Setting::String("ext\nid".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "external_session_id"
+                    && i.code == ValidationCode::InvalidValue
+                    && !i.message.contains("ext\nid")
+            }),
+            "expected invalid external_session_id, got {issues:?}"
+        );
+        let err = build_auth_config(&settings).unwrap_err();
+        match &err {
+            ConfigError::InvalidParameterValue {
+                parameter, value, ..
+            } => {
+                assert_eq!(parameter, "external_session_id");
+                assert_eq!(value, "****");
+            }
+            other => panic!("Expected InvalidParameterValue, got {other:?}"),
+        }
+        assert!(
+            !err.to_string().contains("ext\nid"),
+            "invalid external_session_id must be redacted, got {err}"
+        );
     }
 
     #[test]
@@ -3320,6 +3468,23 @@ mod tests {
     }
 
     #[test]
+    fn build_wif_azure_with_client_id() {
+        let mut pairs = wif_base_settings("AZURE");
+        pairs.push((
+            "workload_identity_azure_client_id",
+            Setting::String("user-assigned-mi".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(cfg.azure_client_id.as_deref(), Some("user-assigned-mi"));
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn validate_azure_impersonation_single_hop_accepted() {
         let mut pairs = wif_base_settings("AZURE");
         pairs.push((
@@ -3414,6 +3579,27 @@ mod tests {
                     && i.code == ValidationCode::ConflictingWifParameters
             }),
             "Expected ConflictingWifParameters for workload_identity_entra_resource, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_azure_client_id_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_azure_client_id",
+                Setting::String("user-assigned-mi".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_azure_client_id"
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters for workload_identity_azure_client_id, got: {issues:?}"
         );
     }
 

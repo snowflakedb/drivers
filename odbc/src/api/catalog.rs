@@ -3211,10 +3211,10 @@ fn rehydrate_field(
 /// driver's `ColumnMetadata::deriveODBCTypeInfo` / `getExtTypeName` (default
 /// ODBC-v3 path, no custom SQL data types).
 ///
-/// This is deliberately **separate** from `SnowflakeFieldType::type_name`
-/// (the `SQLColAttribute(SQL_DESC_TYPE_NAME)` path on query columns), which
-/// returns SDK-style labels (`BIT`, `TYPE_DATE`, `TYPE_TIMESTAMP`, …) and must
-/// not change.
+/// This is separate from `SnowflakeFieldType::type_name` (the
+/// `SQLColAttribute(SQL_DESC_TYPE_NAME)` path on query columns). Catalog rows
+/// collapse the three timestamp variants to `TIMESTAMP`. Query columns report
+/// `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`, or `TIMESTAMP_TZ`.
 fn catalog_type_name_from_logical_type(logical_type: &str) -> String {
     match logical_type {
         "TEXT" => "VARCHAR",
@@ -5449,9 +5449,10 @@ mod procedure_columns_tests {
 
     #[test]
     fn catalog_type_name_maps_logical_types_to_external_names() {
-        // SNOW-3899531: SQLColumns TYPE_NAME must report Snowflake external /
-        // friendly names, matching the reference driver — NOT the SDK labels
-        // (BIT / TYPE_DATE / TYPE_TIMESTAMP) used by SQLColAttribute.
+        // SQLColumns TYPE_NAME reports the Snowflake external name. Query
+        // SQL_DESC_TYPE_NAME reports TIMESTAMP_NTZ, TIMESTAMP_LTZ, or
+        // TIMESTAMP_TZ, and TYPE_DATE, TYPE_TIME, or BIT for DATE, TIME, and
+        // BOOLEAN.
         let cases = [
             ("TEXT", "VARCHAR"),
             ("FIXED", "DECIMAL"),

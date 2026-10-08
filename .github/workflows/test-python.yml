@@ -323,7 +323,6 @@ jobs:
           path: proto-target
           key: ${{ runner.os }}-rust-packaging-proto-target-v2-${{ hashFiles('proto_generator/Cargo.lock', 'proto_generator/src/**') }}
 
-  # Native-arrow overlays python_bridge in install-wheel and runs its :cov suite.
   python_tests:
     needs: [build_wheels, load-python-matrix]
     if: inputs.run_python
@@ -333,7 +332,7 @@ jobs:
         include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
-    timeout-minutes: ${{ matrix.hatch_env == 'test-native-arrow' && 45 || contains(matrix.os, 'windows') && 60 || 30 }}
+    timeout-minutes: ${{ contains(matrix.os, 'windows') && 60 || 30 }}
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}${{ matrix.result_format && format('-{0}', matrix.result_format) || '' }}
       CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
@@ -417,28 +416,6 @@ jobs:
         with:
           mode: restore
           shared-key: sdist-test
-
-      # Native-arrow install-wheel overlays python_bridge (Cargo feature is
-      # compile-time). Isolate the target dir from the sdist cache so the two
-      # cells cannot clobber each other.
-      - name: Set native-arrow cargo target dir
-        if: matrix.hatch_env == 'test-native-arrow'
-        shell: bash
-        run: echo "CORE_CARGO_TARGET_DIR=${{ github.workspace }}/core-target-native-arrow" >> $GITHUB_ENV
-
-      - name: Ensure Rust toolchain (native-arrow)
-        if: matrix.hatch_env == 'test-native-arrow'
-        run: rustup show
-
-      - name: Restore Rust cache (native-arrow)
-        if: matrix.hatch_env == 'test-native-arrow'
-        id: rust-cache-native-arrow
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: native-arrow-bridge
-          target-dir: ${{ github.workspace }}/core-target-native-arrow
 
       - name: Shrink MSVC debug info
         if: runner.os == 'Windows'
@@ -546,11 +523,10 @@ jobs:
         env:
           SKIP_CORE_BUILD: "false"
 
-      # test-pandas and test-native-arrow each collect a curated subset via
-      # hatch :cov (pandas e2e; native-arrow converters as they land). The
-      # unit/integ/e2e split applies only to the `test` env.
+      # test-pandas collects a curated subset via hatch :cov. The
+      # unit/integ/e2e split applies to `test` and `test-native-arrow`.
       - name: Run unit tests with coverage
-        if: matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow'
+        if: matrix.hatch_env != 'test-pandas'
         id: run_python_unit
         working-directory: python
         shell: bash
@@ -567,7 +543,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run integration tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
         id: run_python_integ
         working-directory: python
         shell: bash
@@ -584,7 +560,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run e2e tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
         id: run_python_e2e
         working-directory: python
         shell: bash
@@ -601,7 +577,7 @@ jobs:
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Merge pytest JSON reports
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && matrix.hatch_env != 'test-native-arrow' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
         working-directory: python
         shell: bash
         run: |
@@ -622,7 +598,7 @@ jobs:
           PY
 
       - name: Run curated hatch :cov suite
-        if: matrix.hatch_env == 'test-pandas' || matrix.hatch_env == 'test-native-arrow'
+        if: matrix.hatch_env == 'test-pandas'
         id: run_python_cov
         working-directory: python
         shell: bash
@@ -693,19 +669,6 @@ jobs:
           shared-key: sdist-test
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Save Rust cache (native-arrow)
-        if: always() && matrix.hatch_env == 'test-native-arrow'
-        timeout-minutes: 20
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          slim-mode: aggressive
-          shared-key: native-arrow-bridge
-          target-dir: ${{ github.workspace }}/core-target-native-arrow
-          registry-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache-native-arrow.outputs.target-cache-hit }}
 
   cleanup_python:
     needs: [python_tests, load-python-matrix]

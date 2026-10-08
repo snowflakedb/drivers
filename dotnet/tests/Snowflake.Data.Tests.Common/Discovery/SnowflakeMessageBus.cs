@@ -7,6 +7,8 @@ public sealed class SnowflakeDelayedMessageBus(IMessageBus innerBus) : IMessageB
     private readonly List<IMessageSinkMessage> _messages = [];
     private static readonly TestPerformanceRecorder PerformanceRecorder = new();
 
+    internal IReadOnlyList<IMessageSinkMessage> Messages => _messages;
+
     public bool QueueMessage(IMessageSinkMessage message)
     {
         _messages.Add(message);

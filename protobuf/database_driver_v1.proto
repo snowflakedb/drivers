@@ -37,6 +37,18 @@ enum ErrorKind {
   ERROR_KIND_STAGE_BINDING = 15;
 }
 
+// Distinguishes ERROR_KIND_IO failures that share one kind but different
+// legacy JDBC vendor codes. Unset when kind is not ERROR_KIND_IO, and when
+// an I/O failure has no JDBC vendor code.
+enum IoClass {
+  IO_CLASS_UNSPECIFIED = 0;
+  IO_CLASS_GENERIC = 1;
+  IO_CLASS_NETWORK = 2;
+  IO_CLASS_FILE_UPLOAD = 3;
+  IO_CLASS_FILE_DOWNLOAD = 4;
+  IO_CLASS_NO_SPACE_LEFT = 5;
+}
+
 // Info codes corresponding to Thrift InfoCode enum
 enum InfoCode {
   INFO_CODE_UNSPECIFIED = 0;
@@ -120,6 +132,8 @@ message DriverException {
   // What the abort-request fired on cancellation achieved. Set only when kind is
   // ERROR_KIND_CANCELLED *and* an abort was actually issued; unset otherwise.
   optional CancellationAbortOutcome cancellation_abort_outcome = 13;
+  // Present when kind is ERROR_KIND_IO and the failure has a legacy JDBC vendor code.
+  optional IoClass io_class = 14;
 }
 
 // Column metadata for description

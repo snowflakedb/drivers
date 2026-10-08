@@ -34,6 +34,7 @@ class TestConnectionConfigDefaults:
         assert config.warehouse is None
         assert config.role is None
         assert config.numpy is None
+        assert config.use_core_arrow is None
         assert config.arrow_number_to_decimal is None
         # enable_connection_diag must default to None (not False) so that a
         # connections.toml profile setting `enable_connection_diag = true` is
@@ -604,6 +605,11 @@ class TestToOptions:
         assert "interpolate_empty_sequences" not in opts
         assert "reuse_results" not in opts
 
+    def test_use_core_arrow_is_forwarded(self):
+        assert ConnectionConfig(user="u", use_core_arrow=True).to_options()["use_core_arrow"] is True
+        assert ConnectionConfig(user="u", use_core_arrow=False).to_options()["use_core_arrow"] is False
+        assert "use_core_arrow" not in ConnectionConfig(user="u").to_options()
+
     def test_maps_python_to_rust_name(self):
         config = ConnectionConfig(passcode_in_password=True)
         opts = config.to_options()
@@ -779,6 +785,7 @@ class TestClassVariables:
         assert "password" in ConnectionConfig._SENSITIVE_PARAMS
         assert "private_key" in ConnectionConfig._SENSITIVE_PARAMS
         assert "token" in ConnectionConfig._SENSITIVE_PARAMS
+        assert "external_session_id" in ConnectionConfig._SENSITIVE_PARAMS
         # Both proxy_password (separate field) and proxy (URL may embed creds)
         # must be redacted.
         assert "proxy_password" in ConnectionConfig._SENSITIVE_PARAMS
@@ -786,6 +793,7 @@ class TestClassVariables:
 
     def test_python_only_fields(self):
         assert "numpy" in ConnectionConfig._PYTHON_ONLY
+        assert "use_core_arrow" not in ConnectionConfig._PYTHON_ONLY
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY

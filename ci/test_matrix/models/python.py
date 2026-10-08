@@ -27,10 +27,8 @@ def is_valid(c):
         # runner (no Arrow C++ libs).
         if c["HatchEnv"] == "test-pandas": return False
 
-    # Native-arrow rebuilds python_bridge with a Cargo feature the production
-    # wheel does not ship. One Linux/py3.13/aws cell is enough; other combos
-    # would multiply nightly cost, and the Cython↔native relationship is
-    # untested on Windows (pre-1970 timestamps).
+    # One Linux/py3.13/aws cell runs the full suite with use_core_arrow.
+    # Other combos would multiply nightly cost.
     if c["HatchEnv"] == "test-native-arrow":
         if c["OS"] != "ubuntu":      return False
         if c["Arch"] != "x64":       return False

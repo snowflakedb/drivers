@@ -6,10 +6,12 @@ import java.util.Map;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.IoClass;
 
 /**
  * Maps a core {@link ErrorKind} onto a legacy JDBC {@link ErrorCode} when the payload does not
- * already carry a vendor code or SQLSTATE.
+ * already carry a vendor code or SQLSTATE. {@code ERROR_KIND_IO} uses {@link IoClass}; an I/O
+ * failure with no class stays unmapped.
  */
 final class ErrorKindMapper {
 
@@ -30,7 +32,7 @@ final class ErrorKindMapper {
     if (error.hasVendorCode()) {
       return error.getVendorCode();
     }
-    ErrorCode fallback = toErrorCode(error.getKind());
+    ErrorCode fallback = toErrorCode(error);
     return fallback != null ? fallback.getMessageCode() : 0;
   }
 
@@ -38,11 +40,33 @@ final class ErrorKindMapper {
     if (error.hasSqlState()) {
       return error.getSqlState();
     }
-    ErrorCode fallback = toErrorCode(error.getKind());
+    ErrorCode fallback = toErrorCode(error);
     return fallback != null ? fallback.getSqlState() : null;
   }
 
-  static ErrorCode toErrorCode(ErrorKind kind) {
-    return KIND_TO_ERROR_CODE.get(kind);
+  static ErrorCode toErrorCode(DriverException error) {
+    if (error.getKind() == ErrorKind.ERROR_KIND_IO) {
+      return fromIoClass(error);
+    }
+    return KIND_TO_ERROR_CODE.get(error.getKind());
+  }
+
+  private static ErrorCode fromIoClass(DriverException error) {
+    if (!error.hasIoClass()) {
+      return null;
+    }
+    switch (error.getIoClass()) {
+      case IO_CLASS_FILE_UPLOAD:
+        return ErrorCode.FILE_OPERATION_UPLOAD_ERROR;
+      case IO_CLASS_FILE_DOWNLOAD:
+        return ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR;
+      case IO_CLASS_NETWORK:
+        return ErrorCode.NETWORK_ERROR;
+      case IO_CLASS_NO_SPACE_LEFT:
+      case IO_CLASS_GENERIC:
+        return ErrorCode.IO_ERROR;
+      default:
+        return null;
+    }
   }
 }

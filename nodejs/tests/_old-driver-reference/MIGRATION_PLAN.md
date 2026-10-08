@@ -58,7 +58,9 @@ Ensure the public API of the statement returned by `connection.execute` is fully
 
 - `integration/testStatement.js` — partially migrated. Immediate and post-completion
   `getSqlText()` behavior for successful and failed execution now lives in
-  `nodejs/tests/e2e/statement.test.ts`. The remaining statement API is still pending.
+  `nodejs/tests/e2e/statement.test.ts`. `with a valid token` and `with an invalid token` are
+  not ported: they pass `sessionToken` to `createConnection`, which the new driver rejects
+  (BD#83). The remaining statement API is still pending.
 - `integration/testStreamRows.js`
 - `integration/testUpdatedRows.js` — migrated to `nodejs/tests/e2e/query/num-updated-rows.test.ts`.
 
@@ -147,8 +149,12 @@ sanity-check test that validates CRL works (and ideally one that validates CRL t
 
 ### Login / proxy / request plumbing
 
-- `integration/testLoginRequestBody.ts` — most of this is `sf_core`-specific. We only need a test
-  that verifies `APPLICATION_PATH` is correctly passed through. Park until after the beta release.
+- `integration/testLoginRequestBody.ts` — migrated to `nodejs/tests/e2e/login-request-body.test.ts`;
+  the runnable cases are replaced by a comment in the source file. `APPLICATION` and OS_DETAILS on Linux run on both drivers, and ISA runs
+  on both with BD#81. Skipped for the new driver as not implemented: `APPLICATION_PATH`,
+  `LIBC_FAMILY` / `LIBC_VERSION`, and `OS_DETAILS: null` on non-Linux platforms. `PLATFORM` (BD#70) is not ported;
+  `sf_core` covers it in `src/telemetry/platform_detection/tests.rs` and
+  `tests/integration/telemetry/platform_detection.rs`.
 - `integration/testProxyExecute.js` — proxy logic should be covered in `sf_core`. All we care
   about in the driver tests is that when we pass a proxy config to a connection, `sf_core` accepts
   it. Park until after the beta release.

@@ -555,6 +555,8 @@ describe('ConnectionConfig: basic', function () {
       },
       errorCode: ErrorCodes.ERR_CONN_CREATE_INVALID_VALIDATE_DEFAULT_PARAMETERS,
     },
+    // The new driver does not check the application format (BD#82), so the two
+    // "invalid application" cases below have no equivalent in the new test suite.
     {
       name: 'invalid application name',
       options: {

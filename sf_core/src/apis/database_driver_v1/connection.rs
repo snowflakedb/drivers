@@ -567,6 +567,13 @@ impl DatabaseDriverV1 {
                     role: login_result.role_name,
                 };
                 let login_server_version = login_result.server_version;
+                let external_session_id = match &login_parameters.login_method {
+                    LoginMethod::PatWithExternalSession {
+                        external_session_id,
+                        ..
+                    } => Some(external_session_id.clone()),
+                    _ => None,
+                };
 
                 // `CLIENT_SESSION_KEEP_ALIVE` and
                 // `CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY` are read from
@@ -600,6 +607,7 @@ impl DatabaseDriverV1 {
                         logout_config,
                         timeout_config,
                         self.wrapper_presets.clone(),
+                        external_session_id,
                     )
                     .await;
 
@@ -678,7 +686,10 @@ impl DatabaseDriverV1 {
                         crate::telemetry::record_session_init(&env_info);
                     }
 
-                    if keep_alive && conn.xp_backend_arc().context(LoginSnafu)?.is_none() {
+                    if keep_alive
+                        && conn.xp_backend_arc().context(LoginSnafu)?.is_none()
+                        && conn.external_session_id.is_none()
+                    {
                         let interval = compute_heartbeat_interval(
                             conn.tokens
                                 .read()
@@ -1177,6 +1188,9 @@ pub struct Connection {
     pub(crate) session_id: Option<i64>,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
+    /// Set for `PAT_WITH_EXTERNAL_SESSION`. Query headers use Bearer + this
+    /// id; session refresh, heartbeat, and HTTP logout are skipped.
+    pub(crate) external_session_id: Option<SensitiveString>,
 
     /// Lifecycle state of the per-session `SYSTEM$BIND` stage.
     ///
@@ -1237,6 +1251,7 @@ impl Connection {
             wrapper_identity: None,
             session_id: None,
             heartbeat_handle: None,
+            external_session_id: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
             xp_slot: Arc::new(XpSlot::new(false, None)),
             optimistic_alter_session_param_cache: false,
@@ -1423,6 +1438,7 @@ impl Connection {
             log_query_text: resolve_log_query_text(settings),
             log_query_parameters: resolve_log_query_parameters(settings),
             include_retry_reason: resolve_include_retry_reason(settings),
+            external_session_id: self.external_session_id.clone(),
         })
     }
 
@@ -1486,7 +1502,9 @@ impl Connection {
         logout_config: LogoutConfig,
         timeout_config: crate::config::retry::TimeoutConfig,
         wrapper_presets: WrapperPresets,
+        external_session_id: Option<SensitiveString>,
     ) {
+        self.external_session_id = external_session_id;
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.database_seed = database_seed;
@@ -1670,6 +1688,7 @@ pub struct RefreshContext {
     /// The owning connection's [`Connection::session_terminated`] flag.
     session_terminated: Arc<AtomicBool>,
     xp_backend: Option<Arc<dyn SnowflakeBackend>>,
+    skip_session_refresh: bool,
 }
 
 /// Whether `err` is an ordinary failed query or heartbeat whose GS code means
@@ -1725,6 +1744,7 @@ impl RefreshContext {
             is_master_token_expired,
             session_terminated,
             xp_backend,
+            skip_session_refresh: false,
         }
     }
 
@@ -1752,6 +1772,7 @@ impl RefreshContext {
             is_master_token_expired: conn.is_master_token_expired.clone(),
             session_terminated: conn.session_terminated.clone(),
             xp_backend: conn.xp_backend_arc().context(QuerySnafu)?,
+            skip_session_refresh: conn.external_session_id.is_some(),
         })
     }
 
@@ -1848,7 +1869,10 @@ impl RefreshContext {
                     }
                     .fail()
                 }
-                Some(RestError::SessionExpired { .. }) => {
+                Some(err @ RestError::SessionExpired { .. }) => {
+                    if self.skip_session_refresh {
+                        return Err(err).context(QuerySnafu);
+                    }
                     tracing::info!("Session expired, attempting refresh");
                     let failed_token = failed_token.clone();
                     self.state = RefreshState::Refreshed;
@@ -1976,7 +2000,7 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
         if self.record_session_gone(source.as_ref()) {
             return false;
         }
-        matches!(source.as_ref(), RestError::SessionExpired { .. })
+        matches!(source.as_ref(), RestError::SessionExpired { .. }) && !self.skip_session_refresh
     }
 
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, ApiError>> {
@@ -2211,7 +2235,7 @@ impl DatabaseDriverV1 {
                         Some(tokens) => (
                             Some(tokens.session_token.clone()),
                             tokens.session_id,
-                            Some(tokens.master_token.clone()),
+                            tokens.master_token_for_renewal().cloned(),
                             tokens.session_expires_at_epoch_ms(),
                             tokens.master_expires_at_epoch_ms(),
                         ),
@@ -2321,18 +2345,13 @@ impl DatabaseDriverV1 {
                     })?;
             let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
-            let (http_client, server_url, client_info, retry_policy, xp_backend) = {
+            let (http_client, query_parameters, retry_policy, xp_backend) = {
                 let conn = conn_ptr.lock().await;
                 (
                     conn.http_client
                         .clone()
                         .context(ConnectionNotInitializedSnafu)?,
-                    conn.server_url
-                        .clone()
-                        .context(ConnectionNotInitializedSnafu)?,
-                    conn.client_info
-                        .clone()
-                        .context(ConnectionNotInitializedSnafu)?,
+                    conn.query_transport_parameters()?,
                     conn.retry_policy.clone(),
                     conn.xp_backend_arc().context(QuerySnafu)?,
                 )
@@ -2340,15 +2359,13 @@ impl DatabaseDriverV1 {
 
             with_valid_session(&conn_ptr, |token| {
                 let http_client = &http_client;
-                let server_url = &server_url;
-                let client_info = &client_info;
+                let query_parameters = &query_parameters;
                 let retry_policy = &retry_policy;
                 let xp_backend = xp_backend.clone();
                 async move {
                     snowflake::get_query_status(
                         http_client,
-                        server_url,
-                        client_info,
+                        query_parameters,
                         &token,
                         query_id,
                         retry_policy,
@@ -2552,7 +2569,7 @@ impl DatabaseDriverV1 {
                 })?;
 
             // Extract needed fields under the lock, then release before network I/O
-            let (http_client, server_url, token) = {
+            let (http_client, server_url, token, external_session_id) = {
                 let conn = conn_ptr.lock().await;
 
                 let http_client = conn
@@ -2566,14 +2583,13 @@ impl DatabaseDriverV1 {
                     .context(ConnectionNotInitializedSnafu)?;
 
                 let tokens_guard = conn.tokens.read().await;
-                let token = tokens_guard
+                let tokens = tokens_guard
                     .as_ref()
-                    .context(ConnectionNotInitializedSnafu)?
-                    .session_token
-                    .reveal()
-                    .to_string();
+                    .context(ConnectionNotInitializedSnafu)?;
+                let token = tokens.session_token.reveal().to_string();
+                let external_session_id = conn.external_session_id.clone();
 
-                (http_client, server_url, token)
+                (http_client, server_url, token, external_session_id)
             };
 
             let full_url = reqwest::Url::parse(&server_url)
@@ -2602,18 +2618,23 @@ impl DatabaseDriverV1 {
             };
 
             let auth_value =
-                reqwest::header::HeaderValue::from_str(&format!("Snowflake Token=\"{token}\""))
-                    .map_err(|_| {
-                        InvalidArgumentSnafu {
-                            argument: "Session token contains invalid header characters"
-                                .to_string(),
-                        }
-                        .build()
-                    })?;
+                snowflake::authorization_header(token.as_str(), external_session_id.is_some());
 
             let mut builder = http_client
                 .request(reqwest_method, &full_url)
                 .header(reqwest::header::AUTHORIZATION, auth_value);
+
+            if let Some(id) = external_session_id.as_ref() {
+                let header_value =
+                    reqwest::header::HeaderValue::from_str(id.reveal()).map_err(|_| {
+                        InvalidArgumentSnafu {
+                            argument: "External session id contains invalid header characters"
+                                .to_string(),
+                        }
+                        .build()
+                    })?;
+                builder = builder.header("X-Snowflake-External-Session-ID", header_value);
+            }
 
             for (key, value) in &headers {
                 let header_name =
@@ -4694,6 +4715,61 @@ mod tests {
         assert!(
             err.to_string().contains("must be 'ISSUE' or 'RENEW'"),
             "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn token_request_rejects_pat_external_session_without_http() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        {
+            let conn_ptr = ds.connections.get_obj(handle).expect("new handle");
+            let mut conn = conn_ptr.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.server_url = Some(format!("http://{addr}"));
+            conn.client_info =
+                Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+            conn.external_session_id = Some("ext-session-1".into());
+            *conn.tokens.write().await = Some(SessionTokens {
+                session_token: "pat-token".into(),
+                master_token: SensitiveString::from(""),
+                session_id: None,
+                session_expires_at: None,
+                master_expires_at: None,
+                master_validity: None,
+            });
+        }
+
+        let err = ds
+            .connection_token_request(None, handle, "RENEW".into())
+            .await
+            .expect_err("PAT_WITH_EXTERNAL_SESSION has no master token to renew");
+
+        assert_eq!(
+            err.kind(),
+            crate::apis::database_driver_v1::ErrorKind::AuthenticationError
+        );
+        let ApiError::TokenRequest { source, .. } = &err else {
+            panic!("expected TokenRequest, got {err:?}");
+        };
+        assert!(
+            matches!(
+                source.as_ref(),
+                RestError::MissingMasterToken {
+                    operation: "token request",
+                    ..
+                }
+            ),
+            "expected MissingMasterToken, got {source:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Token request failed: This session has no master token, so token request cannot be performed"
         );
         ds.connection_release(handle).unwrap();
     }

@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createLiveConnection } from './utils/fixtures.js';
-import { executeAsync } from './utils/index.js';
+import { executeAsync, isRunningNewDriverWithBD } from './utils/index.js';
 import {
   loginSuccess,
+  logoutSuccess,
   queryRequestFail,
+  tokenRequestConnectionReset,
   tokenRequestFail,
   WiremockServer,
 } from './utils/wiremock/index.js';
@@ -54,4 +56,27 @@ describe('Session Expiry', () => {
     });
     expect(connection.isUp()).toBe(false);
   });
+
+  // Against a stub that always answers SESSION_TOKEN_EXPIRED the old driver renews and re-sends
+  // the query forever, so there is no old-driver outcome to assert.
+  it.skipIf(!isRunningNewDriverWithBD('BD#80'))(
+    'should report NetworkError when the session renewal cannot reach Snowflake',
+    async () => {
+      await wiremock.stub(loginSuccess());
+      await wiremock.stub(queryRequestFail(SESSION_TOKEN_EXPIRED, 'Session token expired.'));
+      await wiremock.stub(tokenRequestConnectionReset());
+      await wiremock.stub(logoutSuccess());
+
+      const connection = await createLiveConnection(wiremock.connectionOptions);
+
+      await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
+        error: {
+          name: 'NetworkError',
+          code: 401001,
+          message: 'Network error. Could not reach Snowflake.',
+        },
+      });
+      expect(connection.isUp()).toBe(true);
+    },
+  );
 });

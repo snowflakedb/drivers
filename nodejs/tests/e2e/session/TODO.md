@@ -1,0 +1,1 @@
+crlAllowCertificatesWithoutCrlURL, crlInMemoryCache, and crlOnDiskCache are forwarded to sf_core. How to test them is still open: no driver isolates those three. certRevocationCheckMode is only covered by the ENABLED connect test.

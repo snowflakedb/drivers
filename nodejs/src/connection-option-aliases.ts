@@ -14,9 +14,9 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   privateKeyPath: 'private_key_file',
   privateKeyPass: 'private_key_password',
   workloadIdentityProvider: 'workload_identity_provider',
+  workloadIdentityAzureClientId: 'workload_identity_azure_client_id',
+  workloadIdentityAzureEntraIdResource: 'workload_identity_entra_resource',
   clientStoreTemporaryCredential: 'client_store_temporary_credential',
-  sessionToken: 'session_token',
-  masterToken: 'master_token',
   database: 'database',
   schema: 'schema',
   warehouse: 'warehouse',
@@ -25,9 +25,14 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   port: 'port',
   protocol: 'protocol',
   queryTag: 'query_tag',
+  application: 'application',
   clientSessionKeepAlive: 'CLIENT_SESSION_KEEP_ALIVE',
   clientSessionKeepAliveHeartbeatFrequency: 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY',
   serverSessionKeepAlive: 'server_session_keep_alive',
+  certRevocationCheckMode: 'crl_check_mode',
+  crlAllowCertificatesWithoutCrlURL: 'crl_allow_certificates_without_crl_url',
+  crlInMemoryCache: 'crl_enable_memory_caching',
+  crlOnDiskCache: 'crl_enable_disk_caching',
 };
 
 export function toCoreConnectionOptions(options: Record<string, unknown>): Record<string, string> {

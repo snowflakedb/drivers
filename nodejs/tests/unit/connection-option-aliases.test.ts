@@ -52,6 +52,30 @@ describe('toCoreConnectionOptions', () => {
     });
   });
 
+  it('should map certRevocationCheckMode onto crl_check_mode', () => {
+    expect(toCoreConnectionOptions({ certRevocationCheckMode: 'ENABLED' })).toEqual({
+      crl_check_mode: 'ENABLED',
+    });
+  });
+
+  it('should map crlAllowCertificatesWithoutCrlURL onto crl_allow_certificates_without_crl_url', () => {
+    expect(toCoreConnectionOptions({ crlAllowCertificatesWithoutCrlURL: true })).toEqual({
+      crl_allow_certificates_without_crl_url: 'true',
+    });
+  });
+
+  it('should map crlInMemoryCache onto crl_enable_memory_caching', () => {
+    expect(toCoreConnectionOptions({ crlInMemoryCache: false })).toEqual({
+      crl_enable_memory_caching: 'false',
+    });
+  });
+
+  it('should map crlOnDiskCache onto crl_enable_disk_caching', () => {
+    expect(toCoreConnectionOptions({ crlOnDiskCache: true })).toEqual({
+      crl_enable_disk_caching: 'true',
+    });
+  });
+
   it('should convert browserActionTimeout milliseconds to authentication_timeout seconds', () => {
     expect(
       toCoreConnectionOptions({
@@ -79,17 +103,5 @@ describe('toCoreConnectionOptions', () => {
 
   it('returns an empty object for empty input', () => {
     expect(toCoreConnectionOptions({})).toEqual({});
-  });
-
-  it('should map sessionToken and masterToken onto the core session-token keys', () => {
-    expect(
-      toCoreConnectionOptions({
-        sessionToken: 'session',
-        masterToken: 'master',
-      }),
-    ).toEqual({
-      session_token: 'session',
-      master_token: 'master',
-    });
   });
 });

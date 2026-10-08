@@ -145,5 +145,6 @@ def test_create_async_row_iterator_from_stream_ptr_wraps_sync_iterator():
         context=context,
         use_dict_result=True,
         use_numpy=False,
+        use_core_arrow=False,
     )
     mock_wrap.assert_called_once_with(mock_sync)

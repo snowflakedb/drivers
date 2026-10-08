@@ -28,6 +28,11 @@ export interface ResponseDefinition {
   proxyBaseUrl?: string;
   transformers?: string[];
   fixedDelayMilliseconds?: number;
+  fault?:
+    | 'CONNECTION_RESET_BY_PEER'
+    | 'EMPTY_RESPONSE'
+    | 'MALFORMED_RESPONSE_CHUNK'
+    | 'RANDOM_DATA_THEN_CLOSE';
 }
 
 export interface StubMapping {
@@ -130,6 +135,16 @@ export function tokenRequestFail(code: string, message: string): StubMapping {
       urlPath: '/session/token-request',
     },
     response: jsonResponse(200, { success: false, code, message }),
+  };
+}
+
+export function tokenRequestConnectionReset(): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPath: '/session/token-request',
+    },
+    response: { fault: 'CONNECTION_RESET_BY_PEER' },
   };
 }
 

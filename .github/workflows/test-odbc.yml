@@ -59,21 +59,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev
 
+      - name: Install cargo-nextest
+        run: |
+          set -euo pipefail
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$dest"
+          cargo nextest --version
+
       - name: Run ODBC unit tests
         # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292):
         # Rust passes --no-undefined-version to GNU ld with a version script that omits
         # allocator shim symbols, causing sf_core dylib builds to fail.
+        # nextest --profile ci applies retries = 2 from .config/nextest.toml.
         id: run_odbc_unit_tests
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        run: cargo test --locked --package odbc
+        run: cargo nextest run --locked --profile ci --package odbc --no-fail-fast
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
-      - name: Rerun ODBC unit tests
-        if: steps.run_odbc_unit_tests.outcome == 'failure' && github.event_name == 'merge_group'
-        run: cargo test --locked --package odbc
-        env:
-          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+      - name: Upload ODBC rust unit JUnit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          # Not odbc-tests-* — ingest still parses that prefix with the Catch2
+          # CTest reporter. Nextest XML lands here until Tests Health grows a matcher.
+          name: odbc-rust-unit-junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
 
       - name: Save Rust cache
         if: always()

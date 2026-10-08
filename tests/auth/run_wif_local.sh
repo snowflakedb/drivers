@@ -19,6 +19,7 @@
 #   ./tests/auth/run_wif_local.sh nodejs --skip-build --reference             # reference, same build
 #   ./tests/auth/run_wif_local.sh nodejs -t "should authenticate"
 #   ./tests/auth/run_wif_local.sh nodejs --skip-build -t "should authenticate"
+#   ./tests/auth/run_wif_local.sh nodejs --provider AWS                         # that VM only
 #
 # Prerequisites:
 #   * "./scripts/decode_secrets.sh wif" has decoded tests/auth/wif/parameters/

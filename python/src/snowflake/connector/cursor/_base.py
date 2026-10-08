@@ -736,6 +736,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             context=ArrowConverterContext.create(self._connection),
             use_dict_result=self._use_dict_result,
             use_numpy=bool(self._connection.config.numpy),
+            use_core_arrow=bool(self._connection.config.use_core_arrow),
         )
 
     @pep249
@@ -889,6 +890,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
+            use_core_arrow=bool(self._connection.config.use_core_arrow),
         )
         for batch in iterator:
             yield pyarrow.Table.from_batches([batch])
@@ -909,6 +911,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             context=ArrowConverterContext.create(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
+            use_core_arrow=bool(self._connection.config.use_core_arrow),
         )
         return collect_arrow_table(
             table_iterator=iterator,

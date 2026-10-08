@@ -47,36 +47,28 @@ macro_rules! record_err {
     };
 }
 
-/// No-connection status of this build's linked rustls TLS provider.
-///
-/// Each field is 0 or 1. Neither field establishes validated-module or
-/// whole-driver compliance.
-#[repr(C)]
-pub struct SFTlsStatus {
-    pub tls_provider_is_fips: u32,
-    pub fips_build_enabled: u32,
-}
-
-/// Query TLS status directly from the driver, without ODBC handles or a driver manager.
-/// Returns 0 on success and -1 for a null output pointer.
-///
-/// # Safety
-/// A non-null `status` must point to a writable, properly aligned [`SFTlsStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn SFGetTlsStatus(status: *mut SFTlsStatus) -> i32 {
-    if status.is_null() {
-        return -1;
-    }
-
-    let tls_status = sf_core::tls::tls_status();
-    unsafe {
-        status.write(SFTlsStatus {
-            tls_provider_is_fips: u32::from(tls_status.tls_provider_is_fips),
-            fips_build_enabled: u32::from(tls_status.fips_build_enabled),
-        });
-    }
-    0
-}
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// #[repr(C)]
+// pub struct SFTlsStatus {
+//     pub tls_provider_is_fips: u32,
+//     pub fips_build_enabled: u32,
+// }
+//
+// #[unsafe(no_mangle)]
+// pub unsafe extern "C" fn SFGetTlsStatus(status: *mut SFTlsStatus) -> i32 {
+//     if status.is_null() {
+//         return -1;
+//     }
+//
+//     let tls_status = sf_core::tls::tls_status();
+//     unsafe {
+//         status.write(SFTlsStatus {
+//             tls_provider_is_fips: u32::from(tls_status.tls_provider_is_fips),
+//             fips_build_enabled: u32::from(tls_status.fips_build_enabled),
+//         });
+//     }
+//     0
+// }
 
 /// # Safety
 /// This function is called by the ODBC driver manager.

@@ -22,16 +22,28 @@ in [logging-architecture.md](logging-architecture.md).
 
 The driver supports **ERROR**, **WARN**, **INFO**, and **DEBUG**. Rust also emits **TRACE** for wrapper public-API entry/exit; Python/JDBC/Node map that to **DEBUG** (see [logging-architecture.md](logging-architecture.md)).
 
-- **ERROR** - unrecoverable failures and unhandled exceptions.
-- **WARN** - handled but notable failures (e.g. retried errors, degraded behavior).
-- **INFO** - significant operational events that let a user or support engineer understand what the driver did without turning on DEBUG. Examples: HTTP round-trips, connection lifecycle, authentication steps, retries, token refresh, opt-in query text/parameters.
-- **DEBUG** - core API entry/exit, third-party error cause messages, verbose diagnostics.
+The default customer-visible level is **INFO**, so ERROR, WARN, and INFO reach customers and DEBUG does not. A new line uses the event class in this table, not a nearby call's level. A leaf API happy path at INFO (GetCursorName, [drivers#759](https://github.com/snowflakedb/drivers/pull/759)) appears in that stream and belongs at DEBUG. A dangerous opt-out such as the WIF host-suffix environment hatch belongs at WARN, not INFO ([drivers#938](https://github.com/snowflakedb/drivers/pull/938)).
+
+| Event | Level |
+| --- | --- |
+| Unrecovered failure that escapes to the caller | ERROR |
+| Retry decision / recovered failure, fallback, or dangerous opt-out | WARN |
+| Once per connection/request/auth step | INFO |
+| Leaf API happy path, per-row/per-cell, GetInfo/cursor-name | DEBUG |
+| Third-party error message on a handled path | DEBUG (type stays at WARN/ERROR) |
+
+- **ERROR** - unrecovered failures that escape to the caller.
+- **WARN** - retry decisions, recovered failures, fallbacks, and dangerous opt-outs.
+- **INFO** - once-per-connection, once-per-request, or once-per-auth-step operational events. Examples: HTTP round-trips (each attempt, including retries in `retry.rs`), connection lifecycle, authentication steps, token refresh, opt-in query text/parameters.
+- **DEBUG** - leaf API happy path (GetInfo, cursor-name), per-row/per-cell work, core API entry/exit, third-party error cause messages, verbose diagnostics.
 - **TRACE** (Rust) / **DEBUG** (Python, JDBC, Node.js) - wrapper public API entry/exit. These stay off at the default INFO level so high-frequency calls (fetch, getData) do not flood logs. Python and JDBC have no finer level than DEBUG; inbound `tracing::trace!` is delivered as DEBUG (see [logging-architecture.md](logging-architecture.md)).
 
 #### Rules
 
 - `.ai/review/universal-driver-logging-rust.yaml` (`ud-log-core-uses-tracing-not-stdio`) - core emits logs via
   `tracing` (not the `log` crate) and never writes to stdout/stderr (except logging-init failures).
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-level-matches-event-class`) - leaf/per-row/per-cell
+  `info!`/`warn!` (and language equivalents) are DEBUG; recovered failure / dangerous opt-out is WARN, not INFO.
 
 ---
 
@@ -218,6 +230,8 @@ When a URL is part of an error message, apply the same rule as [HTTP traffic](#h
 Every HTTP call made by the driver should be logged on the INFO level.
 Log the URL **host and path**. Strip **query strings and fragments** before logging - they can carry tokens, passcodes, and other identifiers.
 
+A request that already passes through a central logger (`ReqwestConnector` / `ReqwestHttpConnector` in `sf_core/src/tls/aws_http_client.rs`, the retry loop in `sf_core/src/http/retry.rs`, or `sf_core/src/file_manager/cloud_http.rs`) satisfies the request-presence requirement at the call site. The host-and-path-only rule still applies to that central log line.
+
 Every HTTP response code must be logged at the appropriate level, regardless of whether the response is further handled (e.g. retried).
 
 > [TODO(SNOW-3725854)]: To view the HTTP traffic we should expose proper integration with some tools (e.g. mitmproxy).
@@ -225,7 +239,8 @@ Every HTTP response code must be logged at the appropriate level, regardless of 
 ### Rules
 
 - `.ai/review/universal-driver-logging.yaml` (`ud-log-every-http-call-at-info`) - every outbound HTTP call must
-  be logged at INFO (host and path, query strings and fragments stripped); every response code must be logged at the
+  be logged at INFO (host and path, query strings and fragments stripped); a call site that already goes through
+  a central INFO logger is not a missing-log finding; every response code must be logged at the
   appropriate level.
 
 ---

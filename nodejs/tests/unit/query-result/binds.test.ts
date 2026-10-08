@@ -28,10 +28,10 @@ describe('buildBindsMap', () => {
     });
   });
 
-  it('should serialize a Date via toJSON as VARIANT', () => {
+  it('should bind a Date as VARIANT with its JSON-stringified ISO string', () => {
     const binds = [new Date('2021-01-01T00:00:00.000Z')] as unknown as Binds;
     expect(buildBindsMap(binds)).toEqual({
-      '1': { type: 'VARIANT', value: '2021-01-01T00:00:00.000Z' },
+      '1': { type: 'VARIANT', value: '"2021-01-01T00:00:00.000Z"' },
     });
   });
 
@@ -116,9 +116,9 @@ describe('buildBindsCsv', () => {
     expect(buildBindsCsv(binds)).toBe('"a,b","c""d","e\\f","g\nh","i\tj"\n');
   });
 
-  it('should serialize a Date via toJSON and a non-empty object via JSON.stringify', () => {
-    const binds = [[new Date('2021-01-01T00:00:00.000Z'), { a: 1 }]] as unknown as InsertBinds;
-    expect(buildBindsCsv(binds)).toBe('2021-01-01T00:00:00.000Z,"{""a"":1}"\n');
+  it('should serialize a non-empty object via JSON.stringify', () => {
+    const binds = [[{ a: 1 }]] as unknown as InsertBinds;
+    expect(buildBindsCsv(binds)).toBe('"{""a"":1}"\n');
   });
 });
 

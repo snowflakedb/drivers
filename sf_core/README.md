@@ -33,15 +33,8 @@ provider, that non-TLS cryptography or the driver artifact is FIPS compliant,
 or that a particular module version has a validation certificate. They can
 be read before opening a connection and do not make a network request.
 
-Wrappers expose the same two facts without a connection:
-
-| Driver | API |
-| --- | --- |
-| Python | `snowflake.connector.get_tls_status()` |
-| JDBC | `new SnowflakeDriver().getTlsStatus()` |
-| ODBC | `SFGetTlsStatus(&status)` from `sf_odbc.h` (direct library export, not a driver-manager call) |
-| Node.js | `getTlsStatus()` from `snowflake-sdk` |
-| .NET | `new SnowflakeDbDriver().GetTlsStatus()` |
+The wrapper entry points that would expose those two facts are commented out
+and are not part of the shipped contract. Search for `FIPS_TLS_STATUS_WITHHELD`.
 
 ## Testing
 

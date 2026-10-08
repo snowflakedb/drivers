@@ -690,6 +690,44 @@ impl From<CoreErrorKind> for ErrorKind {
     }
 }
 
+fn io_class_of(error: &ApiError) -> Option<i32> {
+    use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+    use crate::rest::snowflake::RestError;
+
+    if error.kind() != CoreErrorKind::Io {
+        return None;
+    }
+    match error {
+        ApiError::FileTransfersDisabled { .. } => None,
+        ApiError::HttpRequest { .. } => Some(IoClass::Network as i32),
+        ApiError::Query { source, .. } => Some(match source.as_ref() {
+            RestError::Communication { .. } | RestError::HttpRetry { .. } => IoClass::Network,
+            _ => IoClass::Generic,
+        } as i32),
+        ApiError::QueryResponseProcess { source, .. } => Some(match source.as_ref() {
+            transfer if is_storage_full(transfer) => IoClass::NoSpaceLeft,
+            QueryResponseProcessingError::FileUpload { .. } => IoClass::FileUpload,
+            QueryResponseProcessingError::FileDownload { .. } => IoClass::FileDownload,
+            _ => IoClass::Generic,
+        } as i32),
+        _ => Some(IoClass::Generic as i32),
+    }
+}
+
+fn is_storage_full(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(cause) = current {
+        if cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::StorageFull)
+        {
+            return true;
+        }
+        current = cause.source();
+    }
+    false
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let error_trace = error
         .error_trace()
@@ -717,6 +755,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         cancellation_abort_outcome: error
             .cancellation_abort_outcome()
             .map(|a| cancel_abort_to_proto(a) as i32),
+        io_class: io_class_of(&error),
     }
 }
 
@@ -1324,6 +1363,7 @@ mod tests {
         };
         let exc = to_driver_exception(err);
         assert_eq!(exc.kind, ErrorKind::Io as i32);
+        assert_eq!(exc.io_class, Some(IoClass::Network as i32));
     }
 
     #[test]
@@ -1471,7 +1511,9 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(to_driver_exception(upload_err).kind, ErrorKind::Io as i32);
+        let upload = to_driver_exception(upload_err);
+        assert_eq!(upload.kind, ErrorKind::Io as i32);
+        assert_eq!(upload.io_class, Some(IoClass::FileUpload as i32));
 
         let download_err = ApiError::QueryResponseProcess {
             location: loc(),
@@ -1483,16 +1525,56 @@ mod tests {
                 location: loc(),
             }),
         };
-        assert_eq!(to_driver_exception(download_err).kind, ErrorKind::Io as i32);
+        let download = to_driver_exception(download_err);
+        assert_eq!(download.kind, ErrorKind::Io as i32);
+        assert_eq!(download.io_class, Some(IoClass::FileDownload as i32));
+    }
+
+    #[test]
+    fn file_transfer_storage_full_maps_to_no_space_left_class() {
+        use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+        use crate::file_manager::FileManagerError;
+
+        let storage_full = || FileManagerError::Io {
+            source: std::io::Error::new(std::io::ErrorKind::StorageFull, "no space"),
+            location: loc(),
+        };
+
+        let upload = to_driver_exception(ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileUpload {
+                source: storage_full(),
+                location: loc(),
+            }),
+        });
+        assert_eq!(upload.kind, ErrorKind::Io as i32);
+        assert_eq!(upload.io_class, Some(IoClass::NoSpaceLeft as i32));
+
+        let download = to_driver_exception(ApiError::QueryResponseProcess {
+            location: loc(),
+            source: Box::new(QueryResponseProcessingError::FileDownload {
+                source: storage_full(),
+                location: loc(),
+            }),
+        });
+        assert_eq!(download.kind, ErrorKind::Io as i32);
+        assert_eq!(download.io_class, Some(IoClass::NoSpaceLeft as i32));
     }
 
     #[test]
     fn connection_lock_maps_to_internal_error() {
         let err = ApiError::ConnectionLock { location: loc() };
-        assert_eq!(
-            to_driver_exception(err).kind,
-            ErrorKind::InternalError as i32
-        );
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::InternalError as i32);
+        assert_eq!(exc.io_class, None);
+    }
+
+    #[test]
+    fn disabled_file_transfer_stays_io_without_a_class() {
+        let err = ApiError::FileTransfersDisabled { location: loc() };
+        let exc = to_driver_exception(err);
+        assert_eq!(exc.kind, ErrorKind::Io as i32);
+        assert_eq!(exc.io_class, None);
     }
 
     #[tokio::test]
@@ -1503,6 +1585,7 @@ mod tests {
         let config = WorkloadIdentityConfig {
             provider: WifProvider::Oidc,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: Vec::new(),
             aws_use_outbound_token: false,
             oidc_token: None,

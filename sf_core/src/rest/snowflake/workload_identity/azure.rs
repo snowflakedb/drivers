@@ -203,7 +203,11 @@ pub(super) async fn get_managed_identity_token(
         AZURE_WIF_FEDERATION_AUDIENCE
     };
 
-    let client_id = std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID).ok();
+    let client_id = config.azure_client_id.clone().or_else(|| {
+        std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID)
+            .ok()
+            .filter(|value| !value.is_empty())
+    });
 
     if let (Ok(endpoint), Ok(header)) = (
         std::env::var(env_vars::IDENTITY_ENDPOINT),
@@ -618,6 +622,7 @@ mod tests {
         WorkloadIdentityConfig {
             provider: WifProvider::Azure,
             entra_resource: entra_resource.map(str::to_string),
+            azure_client_id: None,
             impersonation_path,
             aws_use_outbound_token: false,
             oidc_token: None,
@@ -1109,6 +1114,64 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn get_managed_identity_token_appends_client_id_when_connection_option_set() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .and(query_param("client_id", "option-client-id"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mi-token"}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let mut config = azure_config(None, Vec::new());
+        config.azure_client_id = Some("option-client-id".into());
+        let client = reqwest::Client::new();
+
+        without_azure_functions_env(None, async {
+            get_managed_identity_token(&client, &config, &endpoints)
+                .await
+                .expect("expected managed identity token");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn get_managed_identity_token_prefers_connection_option_over_env_client_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .and(query_param("client_id", "option-client-id"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mi-token"}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let mut config = azure_config(None, Vec::new());
+        config.azure_client_id = Some("option-client-id".into());
+        let client = reqwest::Client::new();
+
+        without_azure_functions_env(Some("env-client-id"), async {
+            get_managed_identity_token(&client, &config, &endpoints)
+                .await
+                .expect("expected managed identity token");
+        })
+        .await;
+    }
+
     /// `MANAGED_IDENTITY_CLIENT_ID`, when unset, is omitted from the IMDS
     /// request entirely (no `client_id=` param at all). Mirrors legacy's
     /// `test_explicit_azure_omits_client_id_if_not_set`.
@@ -1445,6 +1508,7 @@ mod tests {
         let config = WorkloadIdentityConfig {
             provider: WifProvider::Azure,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: Vec::new(),
             aws_use_outbound_token: false,
             oidc_token: None,

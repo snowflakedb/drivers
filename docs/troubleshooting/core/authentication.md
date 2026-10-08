@@ -17,13 +17,16 @@ points here).
 
 ## How login works
 
-A connect issues a single `POST /session/v1/login-request`. The request body is
-assembled from the resolved credential (`sf_core/src/rest/snowflake/auth.rs`);
-the authenticator value chosen by the caller selects which credential fields are
-required and how the token is produced (`sf_core/src/config/rest_parameters.rs`,
-`LoginMethod::from_settings`). A successful response returns a **session token**
-(short-lived, used on every request) and a **master token** (used to renew the
-session token) — see [Session expiry & renewal](#session-expiry--renewal) below.
+A connect issues a single `POST /session/v1/login-request`, except for
+`PAT_WITH_EXTERNAL_SESSION`, which skips login and authenticates later requests
+with a bearer PAT plus `X-Snowflake-External-Session-ID`. For every other
+flow the request body is assembled from the resolved credential
+(`sf_core/src/rest/snowflake/auth.rs`); the authenticator value chosen by the
+caller selects which credential fields are required and how the token is produced
+(`sf_core/src/config/rest_parameters.rs`, `LoginMethod::from_settings`). A
+successful login response returns a **session token** (short-lived, used on
+every request) and a **master token** (used to renew the session token) — see
+[Session expiry & renewal](#session-expiry--renewal) below.
 
 ---
 
@@ -35,8 +38,8 @@ rejects the connection up front with an *invalid parameter value* error listing
 the allowed values:
 
 > Allowed values are `snowflake`, `snowflake_jwt`, `snowflake_password`,
-> `programmatic_access_token`, `username_password_mfa`, `externalbrowser`,
-> `oauth`, `oauth_client_credentials`, `oauth_authorization_code`,
+> `programmatic_access_token`, `pat_with_external_session`, `username_password_mfa`,
+> `externalbrowser`, `oauth`, `oauth_client_credentials`, `oauth_authorization_code`,
 > `workload_identity` — or an `https://` URL for native Okta SSO.
 
 | `authenticator` | Flow | Required (beyond `account`) | Notes |
@@ -44,6 +47,7 @@ the allowed values:
 | `snowflake` / `snowflake_password` / *(omitted)* | Username + password | `user`, `password` | Default when `authenticator` is unset. |
 | `snowflake_jwt` | Key-pair (JWT) | `user`, one of `private_key` / `private_key_file` | Auto-selected when a private-key parameter is present even if `authenticator` is omitted. `private_key_password` decrypts an encrypted PEM. |
 | `programmatic_access_token` | PAT | `token` | `user` optional. |
+| `pat_with_external_session` | PAT + external session | `token` (or `token_file_path`), `external_session_id` | No login request. Later requests send `Authorization: Bearer` and `X-Snowflake-External-Session-ID`. Session refresh is disabled. `user` optional. |
 | `username_password_mfa` | Password + MFA | `user`, `password`, and `passcode` **or** `passcodeInPassword=true` | TOTP passcode; see [MFA](#symptom-mfa-passcode-not-accepted). |
 | `oauth` | Pre-acquired OAuth access token | `token` | `user` optional. Token is a bearer **access** token, not a refresh token. |
 | `oauth_authorization_code` | OAuth authorization-code flow | `oauth_client_id`, `oauth_client_secret`, `oauth_authorization_url`, `oauth_token_request_url` | Opens a browser; driver exchanges the code for a token. `oauth_redirect_uri`, `oauth_scope` optional. |
@@ -253,7 +257,8 @@ convenience, not a way to share credentials between users.
 | `user` / `login_name` | most flows | Optional for PAT / `oauth`. |
 | `password` | `snowflake`, `username_password_mfa` | Raw string, not URL-encoded. |
 | `authenticator` | all | Selects the flow (see table); case-insensitive. |
-| `token` | `oauth`, `programmatic_access_token`, WIF `OIDC` | Access/PAT/OIDC token. |
+| `token` | `oauth`, `programmatic_access_token`, `pat_with_external_session`, WIF `OIDC` | Access/PAT/OIDC token. |
+| `external_session_id` | `pat_with_external_session` | Server-side session key used with the PAT. |
 | `private_key` / `private_key_file` | `snowflake_jwt` | Inline (base64/PEM) or file path. |
 | `private_key_password` | `snowflake_jwt` | Decrypts an encrypted PEM. |
 | `passcode` / `passcodeInPassword` | `username_password_mfa` | TOTP, or fold it into the password. |

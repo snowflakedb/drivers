@@ -9,8 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.stream.Stream;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.telemetry.ErrorSource;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.IoClass;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -28,19 +30,57 @@ public class CoreExceptionErrorKindMappingTest {
             ErrorCode.COMPRESSION_TYPE_NOT_SUPPORTED));
   }
 
+  static Stream<Arguments> ioClassFallbacks() {
+    return Stream.of(
+        Arguments.of(
+            IoClass.IO_CLASS_FILE_UPLOAD, ErrorCode.FILE_OPERATION_UPLOAD_ERROR, 200066, "XX000"),
+        Arguments.of(
+            IoClass.IO_CLASS_FILE_DOWNLOAD,
+            ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR,
+            200067,
+            "XX000"),
+        Arguments.of(IoClass.IO_CLASS_NETWORK, ErrorCode.NETWORK_ERROR, 200015, "58030"),
+        Arguments.of(IoClass.IO_CLASS_NO_SPACE_LEFT, ErrorCode.IO_ERROR, 200016, "58000"),
+        Arguments.of(IoClass.IO_CLASS_GENERIC, ErrorCode.IO_ERROR, 200016, "58000"));
+  }
+
   @ParameterizedTest(name = "shouldMap {0} to {1}")
   @MethodSource("errorKindFallbacks")
   public void shouldMapErrorKindToLegacyErrorCode(ErrorKind kind, ErrorCode expected) {
-    assertEquals(expected, ErrorKindMapper.toErrorCode(kind));
-
     DriverException payload =
         DriverException.newBuilder().setMessage("client-side failure").setKind(kind).build();
+    assertEquals(expected, ErrorKindMapper.toErrorCode(payload));
+
     CoreException carrier = new CoreException(payload, null);
 
     SnowflakeSQLException thrown = surface(carrier);
 
     assertEquals(expected.getMessageCode(), thrown.getErrorCode());
     assertEquals(expected.getSqlState(), thrown.getSQLState());
+    assertSame(carrier, thrown.getCause());
+    assertEquals(
+        ErrorSource.of(SFSQLException.fromErrorCode(expected)),
+        ErrorSource.of(carrier),
+        kind.name());
+  }
+
+  @ParameterizedTest(name = "shouldMap {0} to {1}")
+  @MethodSource("ioClassFallbacks")
+  public void shouldMapIoClassToLegacyErrorCode(
+      IoClass ioClass, ErrorCode expected, int legacyVendorCode, String legacySqlState) {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("client-side failure")
+            .setKind(ErrorKind.ERROR_KIND_IO)
+            .setIoClass(ioClass)
+            .build();
+    assertEquals(expected, ErrorKindMapper.toErrorCode(payload));
+
+    CoreException carrier = new CoreException(payload, null);
+    SnowflakeSQLException thrown = surface(carrier);
+
+    assertEquals(legacyVendorCode, thrown.getErrorCode());
+    assertEquals(legacySqlState, thrown.getSQLState());
     assertSame(carrier, thrown.getCause());
   }
 
@@ -101,7 +141,23 @@ public class CoreExceptionErrorKindMappingTest {
     assertEquals(0, thrown.getErrorCode());
     assertNull(thrown.getSQLState());
     assertSame(carrier, thrown.getCause());
-    assertNull(ErrorKindMapper.toErrorCode(ErrorKind.ERROR_KIND_CANCELLED));
+    assertNull(ErrorKindMapper.toErrorCode(payload));
+  }
+
+  @Test
+  public void shouldLeaveVendorCodeUnsetWhenIoHasNoClass() {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("File transfers have been disabled.")
+            .setKind(ErrorKind.ERROR_KIND_IO)
+            .build();
+    CoreException carrier = new CoreException(payload, null);
+
+    SnowflakeSQLException thrown = surface(carrier);
+
+    assertEquals(0, thrown.getErrorCode());
+    assertNull(thrown.getSQLState());
+    assertNull(ErrorKindMapper.toErrorCode(payload));
   }
 
   private static SnowflakeSQLException surface(CoreException carrier) {

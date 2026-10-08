@@ -98,10 +98,8 @@ impl Default for WrapperPresets {
     ///
     /// `configuration_flavor` is `Wrapper::Python`, so a wrapper resolving aliases
     /// under the Python flavor leaves its own scoped aliases in `sf_params_spec`
-    /// inert. That covers .NET (no constructor yet) and, on purpose,
-    /// [`Self::nodejs`], which has a constructor but keeps `Wrapper::Python`
-    /// because only its PUT/GET result-set flavor differs -- beside
-    /// [`Self::python`], [`Self::odbc`] and [`Self::jdbc`].
+    /// inert. That covers .NET (no constructor yet) and [`Self::python`].
+    /// [`Self::nodejs`], [`Self::odbc`] and [`Self::jdbc`] set their own flavors.
     fn default() -> Self {
         Self {
             configuration_flavor: Wrapper::Python,
@@ -164,6 +162,7 @@ impl WrapperPresets {
     /// Presets for the Node.js bridge.
     pub fn nodejs() -> Self {
         Self {
+            configuration_flavor: Wrapper::NodeJs,
             put_get_resultset_flavor: PutGetResultsetFlavor::NodeJs,
             put_compress_level_default: 6,
             validate_session_token: false,
@@ -653,6 +652,14 @@ mod tests {
         assert_eq!(WrapperPresets::jdbc().put_compress_level_default, 6);
         assert_eq!(WrapperPresets::nodejs().put_compress_level_default, 6);
         assert_eq!(WrapperPresets::default().put_compress_level_default, 9);
+    }
+
+    #[test]
+    fn nodejs_resolves_options_as_nodejs() {
+        assert_eq!(
+            WrapperPresets::nodejs().configuration_flavor,
+            Wrapper::NodeJs
+        );
     }
 
     #[test]

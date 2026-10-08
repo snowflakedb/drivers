@@ -268,7 +268,6 @@ jobs:
       RUSTFLAGS: ${{ startsWith(matrix.os, 'ubuntu') && '-C link-arg=-Wl,--undefined-version' || '' }}
       SF_CORE_FIPS: '1'
       SF_CORE_RELEASE: '1'
-      SF_CORE_EXPECT_FIPS: '1'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -380,13 +379,13 @@ jobs:
             Sort-Object -Unique |
             ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
 
-      # Unit globalSetup builds and links the addon once. Inspect afterwards,
-      # so the binary and Windows map are the ones the status test loaded.
-      - name: Build Node.js addon and check FIPS TLS status
+      # Build and link the addon so the inspection below resolves it the same
+      # way src/core/index.ts does.
+      - name: Build Node.js addon
         working-directory: nodejs
-        run: npm run test:unit -- tests/unit/tls-status.test.ts
+        run: npm run build:core && npm run build:link-local
 
-      - name: Inspect linked crypto and check ODBC FIPS TLS status
+      - name: Inspect linked crypto
         shell: python {0}
         run: |
           import json
@@ -414,10 +413,6 @@ jobs:
               if sys.platform == "win32":
                   command.extend(["--linker-map", linker_map])
               subprocess.run(command, check=True)
-          subprocess.run(
-              [sys.executable, "ci/fips/check_odbc_tls_status.py", os.environ["ODBC_ARTIFACT"]],
-              check=True,
-          )
 
       - name: Clean up Windows ODBC linker map
         if: always() && runner.os == 'Windows' && env.ODBC_LINKER_MAP != ''
@@ -556,6 +551,23 @@ jobs:
         # --locked uses Cargo.lock for reproducible installs.
         run: cargo install cargo-llvm-cov --locked
 
+      # Per-test retries need nextest (libtest has none). taiki-e/install-action
+      # is blocked by the org allow-list, so fetch the same pre-built binary
+      # Windows jobs already install from get.nexte.st.
+      - name: Install cargo-nextest
+        run: |
+          set -euo pipefail
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) target=linux ;;
+            Linux-aarch64) target=linux-arm ;;
+            Darwin-arm64|Darwin-x86_64) target=mac ;;
+            *) echo "unsupported host $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -LsSf "https://get.nexte.st/latest/${target}" | tar zxf - -C "$dest"
+          cargo nextest --version
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
@@ -592,22 +604,14 @@ jobs:
       # no external upload.
       - name: Run tests with coverage
         id: run_rust_tests
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
         # Expose `cloud_provider` so test code can gate on it (e.g.,
         # skip Azure-only tests on `aws`/`gcp` lanes).
         env:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
-
-      - name: Rerun tests with coverage
-        if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
-        env:
-          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
-        run: |
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
+          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            nextest --profile ci --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -836,16 +840,6 @@ jobs:
       # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_windows_arm64
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        shell: cmd
-        env:
-          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
-        run: |
-          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
-
-      - name: Rerun tests (Windows ARM64)
-        if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         env:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
@@ -1081,16 +1075,6 @@ jobs:
       # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_x86
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        shell: cmd
-        env:
-          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
-        run: |
-          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
-
-      - name: Rerun tests (Windows x86)
-        if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         env:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}

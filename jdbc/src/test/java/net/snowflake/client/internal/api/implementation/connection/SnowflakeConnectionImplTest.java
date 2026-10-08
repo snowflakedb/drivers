@@ -208,6 +208,11 @@ class SnowflakeConnectionImplTest {
 
       assertTrue(stmt.isClosed());
       verify(mockCoreApi).statementRelease(any());
+
+      SQLException ex = assertThrows(SQLException.class, () -> stmt.execute("SELECT 1"));
+      assertEquals("Connection is closed", ex.getMessage());
+      assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
+      assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
     }
 
     @Test

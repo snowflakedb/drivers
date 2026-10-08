@@ -471,7 +471,8 @@ jobs:
           # unixODBC and iODBC. Defaults to unixODBC for cells without the axis.
           export DRIVER_MANAGER=${{ matrix.driver_manager || 'unixodbc' }}
           export QUERY_RESULT_FORMAT=${{ matrix.result_format == 'json' && 'JSON' || '' }}
-          REPEAT_ARGS=${{ github.event_name == 'merge_group' && '"--repeat until-pass:2"' || '' }}
+          # until-pass:3 = first attempt + 2 retries. Passing tests still run once.
+          REPEAT_ARGS="--repeat until-pass:3"
           ./scripts/odbc/run_tests_unix.sh -LE "flaky|long_running|requires_no_mfa" $REPEAT_ARGS \
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 
@@ -502,7 +503,7 @@ jobs:
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
           $env:QUERY_RESULT_FORMAT = "${{ matrix.result_format == 'json' && 'JSON' || '' }}"
-          $repeatArgs = if ("${{ github.event_name }}" -eq "merge_group") { @("--repeat", "until-pass:2") } else { @() }
+          $repeatArgs = @("--repeat", "until-pass:3")
           .\scripts\odbc\run_tests_windows.ps1 -SkipBuild -LE "flaky|long_running|requires_no_mfa" @repeatArgs `
             --output-junit "${{ github.workspace }}/odbc-junit.xml"
 

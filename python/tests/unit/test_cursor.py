@@ -1345,6 +1345,7 @@ class TestCreateRowIteratorNumpyFlag:
 
     def test_passes_numpy_true_from_connection(self, mock_connection):
         mock_connection.config.numpy = True
+        mock_connection.config.use_core_arrow = False
         mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
@@ -1358,10 +1359,12 @@ class TestCreateRowIteratorNumpyFlag:
             context=ANY,
             use_dict_result=False,
             use_numpy=True,
+            use_core_arrow=False,
         )
 
     def test_passes_numpy_false_from_connection(self, mock_connection):
         mock_connection.config.numpy = False
+        mock_connection.config.use_core_arrow = False
         mock_connection._session_parameters = {"TIMEZONE": "UTC"}
         cursor = SnowflakeCursor(mock_connection)
         cursor._result_set = MagicMock(get_arrow_stream_ptr=MagicMock(return_value=42))
@@ -1375,6 +1378,7 @@ class TestCreateRowIteratorNumpyFlag:
             context=ANY,
             use_dict_result=False,
             use_numpy=False,
+            use_core_arrow=False,
         )
 
 
@@ -1384,10 +1388,12 @@ class TestAsyncCreateRowIteratorNativeArrow:
         conn = MagicMock()
         conn.is_closed.return_value = False
         conn.config.numpy = True
+        conn.config.use_core_arrow = False
         conn._session_parameters = {"TIMEZONE": "UTC"}
         return conn
 
     def test_uses_result_set_factory_when_native_arrow_enabled(self, mock_connection):
+        mock_connection.config.use_core_arrow = True
         cursor = AsyncSnowflakeCursor(mock_connection)
         handle = ResultSetHandle(id=7, magic=11)
         cursor._result_set = MagicMock()
@@ -1430,6 +1436,37 @@ class TestAsyncCreateRowIteratorNativeArrow:
             result = asyncio.run(cursor._create_row_iterator())
 
         assert result is iterator
+        mock_create.assert_called_once_with(
+            42,
+            context=ANY,
+            use_dict_result=False,
+            use_numpy=True,
+        )
+
+    @pytest.mark.parametrize("flag", [False, None])
+    def test_uses_stream_ptr_when_compiled_in_but_parameter_off(self, mock_connection, flag):
+        mock_connection.config.use_core_arrow = flag
+        cursor = AsyncSnowflakeCursor(mock_connection)
+        cursor._result_set = MagicMock()
+        cursor._result_set.get_arrow_stream_ptr = AsyncMock(return_value=42)
+        iterator = MagicMock(name="thread_async_iterator")
+
+        with (
+            patch("snowflake.connector.aio.cursor._base.sf_core_python") as mock_core,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_result_set",
+                new=AsyncMock(),
+            ) as mock_native,
+            patch(
+                "snowflake.connector.aio.cursor._base.create_async_row_iterator_from_stream_ptr",
+                return_value=iterator,
+            ) as mock_create,
+        ):
+            mock_core.native_arrow_enabled.return_value = True
+            result = asyncio.run(cursor._create_row_iterator())
+
+        assert result is iterator
+        mock_native.assert_not_awaited()
         mock_create.assert_called_once_with(
             42,
             context=ANY,
@@ -1507,6 +1544,7 @@ class TestFetchArrowBatches:
     def mock_connection(self):
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
+        mock_connection.config.use_core_arrow = False
         return mock_connection
 
     @pytest.fixture
@@ -1560,7 +1598,11 @@ class TestFetchArrowBatches:
             list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42,
+            context=ANY,
+            force_microsecond_precision=True,
+            number_to_decimal=ANY,
+            use_core_arrow=False,
         )
 
     def test_rejects_unknown_pandas_kwarg(self, cursor):
@@ -1578,6 +1620,7 @@ class TestFetchArrowAll:
     def mock_connection(self):
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
+        mock_connection.config.use_core_arrow = False
         return mock_connection
 
     @pytest.fixture
@@ -1649,7 +1692,11 @@ class TestFetchArrowAll:
             cursor.fetch_arrow_all(force_microsecond_precision=True)
 
         mock_get.assert_called_once_with(
-            stream_ptr=42, context=ANY, force_microsecond_precision=True, number_to_decimal=ANY
+            stream_ptr=42,
+            context=ANY,
+            force_microsecond_precision=True,
+            number_to_decimal=ANY,
+            use_core_arrow=False,
         )
 
     def test_rejects_unknown_pandas_kwarg(self, cursor):

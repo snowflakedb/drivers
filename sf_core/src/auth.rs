@@ -217,6 +217,10 @@ pub async fn create_credentials(
             username: username.clone(),
             token: token.clone(),
         }),
+        LoginMethod::PatWithExternalSession { .. } => UnsupportedLoginMethodSnafu {
+            method: "PatWithExternalSession",
+        }
+        .fail(),
         LoginMethod::UserPasswordMfa {
             username,
             password,
@@ -309,11 +313,60 @@ pub enum AuthError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
 
     use base64::Engine as _;
     use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 
     const PASSPHRASE: &str = "correct horse battery staple";
+
+    #[tokio::test]
+    async fn pat_with_external_session_create_credentials_returns_unsupported_login_method() {
+        let params = LoginParameters {
+            account_name: "acct".to_string(),
+            login_method: LoginMethod::PatWithExternalSession {
+                username: "user".to_string(),
+                token: "pat-secret".into(),
+                external_session_id: "ext-secret".into(),
+            },
+            server_url: "https://acct.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            secondary_roles: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
+            disable_parallel_user_prompt: false,
+            validate_session_token: true,
+            browser_opener: None,
+        };
+
+        let Err(err) = create_credentials(&params).await else {
+            panic!("PAT_WITH_EXTERNAL_SESSION does not build login credentials");
+        };
+
+        assert!(
+            matches!(
+                err,
+                AuthError::UnsupportedLoginMethod {
+                    method: "PatWithExternalSession",
+                    ..
+                }
+            ),
+            "expected UnsupportedLoginMethod, got {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Login method 'PatWithExternalSession' does not use create_credentials — it has its own auth flow"
+        );
+        let rendered = format!("{err} {err:?}");
+        assert!(
+            !rendered.contains("pat-secret") && !rendered.contains("ext-secret"),
+            "credential material must stay out of the error: {rendered}"
+        );
+    }
 
     /// The `iss` fingerprint must be SHA-256 of the SPKI DER, Base64.
     ///

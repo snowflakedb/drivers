@@ -220,6 +220,7 @@ def create_async_row_iterator_from_stream_ptr(
     context: ArrowConverterContext,
     use_dict_result: bool = False,
     use_numpy: bool = False,
+    use_core_arrow: bool = False,
 ) -> AsyncArrowRowIterator:
     """Wrap the sync iterator in ``asyncio.to_thread``.
 
@@ -232,6 +233,7 @@ def create_async_row_iterator_from_stream_ptr(
             context=context,
             use_dict_result=use_dict_result,
             use_numpy=use_numpy,
+            use_core_arrow=use_core_arrow,
         )
     )
 

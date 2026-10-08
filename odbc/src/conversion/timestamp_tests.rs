@@ -475,10 +475,9 @@ mod tests {
 
     #[test]
     fn sql_type_returns_standard_timestamp_for_all_variants() {
-        // Per the MS ODBC spec, `SQLDescribeCol` reports the standard
-        // `SQL_TYPE_TIMESTAMP` (93) for all three variants (matches legacy
-        // 3.16.0). Applications distinguish NTZ/LTZ/TZ via
-        // `SQLColAttribute(SQL_DESC_TYPE_NAME)`.
+        // `SQLDescribeCol` reports `SQL_TYPE_TIMESTAMP` (93) for all three
+        // variants. `SQL_DESC_TYPE_NAME` is `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`,
+        // or `TIMESTAMP_TZ`.
         assert_eq!(ntz(0).sql_type(), sql::SqlDataType::TIMESTAMP);
         assert_eq!(ltz(3).sql_type(), sql::SqlDataType::TIMESTAMP);
         assert_eq!(tz(9).sql_type(), sql::SqlDataType::TIMESTAMP);

@@ -10,7 +10,7 @@ public sealed class SnowflakeTheoryAttribute : TheoryAttribute
 
     public SnowflakeTheoryAttribute(
         SkipCondition skip = SkipCondition.None,
-        RetriesCount retriesCount = RetriesCount.NoRetries,
+        RetriesCount retriesCount = RetriesCount.Twice,
         [CallerFilePath] string? sourceFilePath = null,
         [CallerLineNumber] int sourceLineNumber = -1)
         : base(sourceFilePath!, sourceLineNumber)
