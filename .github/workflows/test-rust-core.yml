@@ -556,7 +556,10 @@ jobs:
       - name: Install mitmproxy (live-proxy e2e)
         if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
         run: |
-          pipx install 'mitmproxy>=11,<13'
+          # Pin 12.x (still in the previous >=11,<13 window). A floating
+          # range resolved to mitmproxy 11 + urwid 2.6.14–2.6.15, which
+          # failed to build on the runner Python (SNOW-4204475).
+          pipx install 'mitmproxy==12.2.3'
           mitmdump --version
 
       # Long-running tests: real-cloud tests that are too slow for every PR but
