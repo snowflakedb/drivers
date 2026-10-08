@@ -164,6 +164,15 @@ jobs:
         env:
            PARAMETER_PATH: ${{ github.workspace }}/parameters.json
            SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
+           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-${{ matrix.name }}
+          path: dotnet-junit.xml
+          if-no-files-found: warn
 
   dotnet_tests_interop:
     needs: load-dotnet-matrix
@@ -242,7 +251,17 @@ jobs:
       - name: Run interop tests
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
-        
+        env:
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+
+      - name: Upload interop test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-interop-${{ matrix.name }}
+          path: dotnet-junit.xml
+          if-no-files-found: warn
+
   dotnet_tests_reference:
     if: inputs.run_dotnet_reference
     name: dotnet Reference Tests (old driver)
@@ -305,6 +324,15 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+
+      - name: Upload reference test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-reference
+          path: dotnet-junit.xml
+          if-no-files-found: warn
 
       - name: Check formatting
         run: dotnet format Snowflake.Data.sln --verify-no-changes
@@ -401,6 +429,15 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+
+      - name: Upload reference (new driver) test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-reference-new
+          path: dotnet-junit.xml
+          if-no-files-found: warn
 
   dotnet-status:
     needs: [load-dotnet-matrix, dotnet_tests, dotnet_tests_reference, dotnet_tests_interop]
