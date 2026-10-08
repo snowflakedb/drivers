@@ -21,7 +21,7 @@ function isMultiRowBinding(binds: Binds): binds is InsertBinds {
 // FIXED, REAL, TEXT) and leaves the server to recast the stringified value into the
 // column's final type. It matches the old driver, but the Python and JDBC drivers bind
 // dedicated types (DATE, TIME, TIMESTAMP_*, BINARY) with epoch-based encodings, which
-// avoids that server-side recast. A JS Date binds as VARIANT here, not a temporal type.
+// avoids that server-side recast. A JS Date has no special handling and binds as VARIANT.
 // Aligning with the other drivers is tracked as a TODO in BCR_LOG.md.
 function snowflakeTypeOf(value: unknown): SnowflakeBindType {
   if (typeof value === 'boolean') return 'BOOLEAN';
@@ -34,7 +34,6 @@ function bindValueToText(value: unknown): BindText {
   // null stays null so `SET name = :1` binds a SQL NULL, not the literal 'null'.
   if (value === null) return null;
   if (typeof value === 'string') return value;
-  if (value instanceof Date) return value.toJSON();
   return JSON.stringify(value);
 }
 
@@ -73,12 +72,7 @@ function toCsvField(value: unknown): string {
   // form is "" -- also serializes to "", not "[]".
   if (value === null) return '';
   if (String(value) === '') return '""';
-  const text =
-    typeof value === 'string'
-      ? value
-      : value instanceof Date
-        ? value.toJSON()
-        : JSON.stringify(value);
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
   return CSV_CHARS_REQUIRING_QUOTES.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 

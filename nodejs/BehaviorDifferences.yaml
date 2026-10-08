@@ -1672,3 +1672,19 @@ behavior_differences:
       Both drivers throw before any request is sent. Both drivers accept `host` without
       `account`, or `account` without `host`, and restore the session.
       serialize() and deserializeConnection() may later be replaced by the child-session API.
+
+  86:
+    name: 'A bound JavaScript Date binds as VARIANT'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `Bind` in index.d.ts is `string | number | boolean | null`, so `Date` is not part of the API,
+      but the runtime binds one passed past the type check as TEXT via `Date.toJSON()`. The server
+      parses that string with the session's DATE/TIMESTAMP/TIME input format.
+    new_driver_behavior: |
+      A `Date` has no special handling: it binds as VARIANT with the JSON-stringified ISO string,
+      so a cast such as `?::TIMESTAMP_NTZ` fails with "Unsupported data type 'VARIANT'". Proper
+      temporal binds are tracked in BCR_LOG.md.

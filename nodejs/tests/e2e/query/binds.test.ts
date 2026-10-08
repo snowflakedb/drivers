@@ -104,4 +104,21 @@ describe('Query Binds', () => {
       expect(selected).toEqual(['a', 'b', 'c']);
     });
   });
+
+  describe('Date binds', () => {
+    it('should cast a bound Date to TIMESTAMP_NTZ only in the old driver', async () => {
+      const connection = await createLiveConnection();
+      const result = executeAsync(connection, `SELECT ?::TIMESTAMP_NTZ AS NTZ`, {
+        binds: [new Date('2024-01-15T12:30:00+02:00')] as unknown as Binds,
+      });
+      if (isRunningNewDriverWithBD('BD#86')) {
+        await expect(result).rejects.toMatchObject({
+          error: { message: "SQL compilation error:\nUnsupported data type 'VARIANT'." },
+        });
+      } else {
+        const { rows } = await result;
+        expect((rows[0].NTZ as Date).toISOString()).toBe('2024-01-15T10:30:00.000Z');
+      }
+    });
+  });
 });
