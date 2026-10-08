@@ -512,6 +512,12 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
+      - name: Record retry history in JUnit
+        if: always()
+        run: |
+          python3 scripts/nodejs/annotate_vitest_junit_retries.py \
+            nodejs/reports/${{ env.MATRIX_KEY }}.xml
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7

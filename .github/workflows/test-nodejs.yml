@@ -92,6 +92,13 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
+      - name: Record retry history in JUnit
+        if: always()
+        run: |
+          python3 scripts/nodejs/annotate_vitest_junit_retries.py \
+            nodejs/reports/nodejs-unit.xml \
+            nodejs/reports/nodejs-e2e.xml
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7
@@ -158,6 +165,12 @@ jobs:
         working-directory: nodejs
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Record retry history in JUnit
+        if: always()
+        run: |
+          python3 scripts/nodejs/annotate_vitest_junit_retries.py \
+            nodejs/reports/nodejs-e2e-old-driver.xml
 
       - name: Upload reference test results
         if: always()
