@@ -432,6 +432,10 @@ class TestLogoutRetryBehavior:
 
 _SIGABRT = -6
 _SIGSEGV = -11
+# Windows has no POSIX signals; the same Py_Finalize race instead surfaces as
+# one of these NTSTATUS codes (seen on windows-latest/py3.14, SNOW-3416420).
+_STATUS_ACCESS_VIOLATION = 0xC0000005  # SIGSEGV equivalent
+_STATUS_STACK_BUFFER_OVERRUN = 0xC0000409  # fail-fast/abort, SIGABRT equivalent
 
 
 def _stderr_shows_py_finalize_teardown_race(stderr: str) -> bool:
@@ -455,9 +459,11 @@ def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
     """Assert subprocess exited cleanly; xfail on signal death during Py_Finalize (SNOW-3416420).
 
     SIGABRT (-6) and SIGSEGV (-11) happen when Rust's tracing callback fires into
-    a dead Python interpreter during Py_Finalize. The subprocess completed its
-    work — behavioral assertions (stdout markers, wiremock counts) after this call
-    still validate correctness.
+    a dead Python interpreter during Py_Finalize. On Windows the same race surfaces
+    as a crash NTSTATUS exit code (_STATUS_ACCESS_VIOLATION / _STATUS_STACK_BUFFER_OVERRUN)
+    instead of a POSIX signal. The subprocess completed its work — behavioral
+    assertions (stdout markers, wiremock counts) after this call still validate
+    correctness.
 
     A non-zero exit with ``PyGILState_Release`` or
     ``PyInterpreterState_Delete: remaining threads`` during finalization is treated
@@ -474,6 +480,10 @@ def _assert_subprocess_ok(result: subprocess.CompletedProcess) -> None:
             pytest.xfail("SNOW-3416420: Rust log callback SIGABRT during Py_Finalize")
         if result.returncode == _SIGSEGV:
             pytest.xfail("SNOW-3416420: Rust log callback SIGSEGV during Py_Finalize")
+        if result.returncode == _STATUS_ACCESS_VIOLATION:
+            pytest.xfail("SNOW-3416420: Rust log callback STATUS_ACCESS_VIOLATION during Py_Finalize (Windows)")
+        if result.returncode == _STATUS_STACK_BUFFER_OVERRUN:
+            pytest.xfail("SNOW-3416420: Rust log callback STATUS_STACK_BUFFER_OVERRUN during Py_Finalize (Windows)")
         raise
 
 
