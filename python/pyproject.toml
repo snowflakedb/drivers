@@ -140,6 +140,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Dedicated plugin dir only — do not put all of scripts/ on pythonpath (import shadow).
+pythonpath = ["../scripts/pytest_junit_retry_plugin"]
 addopts = [
     "--strict-markers",
     "--strict-config",
@@ -150,6 +152,8 @@ addopts = [
     "--max-worker-restart=4",
     # Two extra attempts after the first failure (3 total).
     "--reruns", "2",
+    # Stock junitxml keeps only the last attempt; this plugin writes flakyFailure.
+    "-p", "pytest_junit_retry_plugin",
     # Flaky tests are excluded by default; the python_flaky_tests CI job
     # overrides this with `-m flaky` to run them in isolation.
     "-m", "not flaky and not requires_no_mfa",
