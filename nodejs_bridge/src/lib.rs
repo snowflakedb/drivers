@@ -58,18 +58,18 @@ impl Bridge {
     }
 }
 
-/// Status of the linked Rustls TLS provider and build flag, not artifact compliance.
-#[napi(object)]
-pub struct TlsStatus {
-    pub tls_provider_is_fips: bool,
-    pub fips_tls_build_enabled: bool,
-}
-
-#[napi]
-pub fn get_tls_status() -> TlsStatus {
-    let status = sf_core::tls::tls_status();
-    TlsStatus {
-        tls_provider_is_fips: status.tls_provider_is_fips,
-        fips_tls_build_enabled: status.fips_tls_build_enabled,
-    }
-}
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// #[napi(object)]
+// pub struct TlsStatus {
+//     pub tls_provider_is_fips: bool,
+//     pub fips_tls_build_enabled: bool,
+// }
+//
+// #[napi]
+// pub fn get_tls_status() -> TlsStatus {
+//     let status = sf_core::tls::tls_status();
+//     TlsStatus {
+//         tls_provider_is_fips: status.tls_provider_is_fips,
+//         fips_tls_build_enabled: status.fips_tls_build_enabled,
+//     }
+// }

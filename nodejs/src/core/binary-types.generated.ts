@@ -114,7 +114,8 @@ export interface ExecuteParams {
 
 export declare function formatSnowflakeDate(format: string, epochMillis: number, nanos: number, scale: number, timezone: string | number): string
 
-export declare function getTlsStatus(): TlsStatus
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export declare function getTlsStatus(): TlsStatus
 
 export declare function isAnError(status: QueryStatus): boolean
 
@@ -188,8 +189,8 @@ export declare function registerClassConstructors(constructors: { SnowflakeDate:
 
 export type StatementStatus = 'fetching' | 'complete'
 
-/** Status of the linked Rustls TLS provider and build flag, not artifact compliance. */
-export interface TlsStatus {
-  tlsProviderIsFips: boolean
-  fipsTlsBuildEnabled: boolean
-}
+// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+// export interface TlsStatus {
+//   tlsProviderIsFips: boolean
+//   fipsTlsBuildEnabled: boolean
+// }

@@ -7,10 +7,9 @@ as defined in PEP 249.
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import Any
 
 from . import util_text  # noqa: F401 - backward compatibility re-exports
-from ._internal.api_client.client_api import core_driver
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
 from .connection_config import ConnectionConfig
@@ -51,14 +50,15 @@ threadsafety = 2  # Threads may share the module and connections, but not cursor
 paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
 
-class TlsStatus(NamedTuple):
-    """Linked Rustls TLS provider status and ``sf_core`` build configuration.
-
-    This is not a compliance verdict for other cryptography or the driver artifact.
-    """
-
-    tls_provider_is_fips: bool
-    fips_tls_build_enabled: bool
+# FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+# class TlsStatus(NamedTuple):
+#     """Linked Rustls TLS provider status and ``sf_core`` build configuration.
+#
+#     This is not a compliance verdict for other cryptography or the driver artifact.
+#     """
+#
+#     tls_provider_is_fips: bool
+#     fips_tls_build_enabled: bool
 
 
 # Sentinel to distinguish "not provided" from explicit values. Forwarding ``None``
@@ -98,13 +98,14 @@ def connect(
     return Connection(**conn_kwargs)
 
 
-def get_tls_status() -> TlsStatus:
-    """Report linked Rustls TLS provider status without opening a connection."""
-    response = core_driver.driver_get_tls_status()
-    return TlsStatus(
-        tls_provider_is_fips=response.tls_provider_is_fips,
-        fips_tls_build_enabled=response.fips_tls_build_enabled,
-    )
+# FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
+# def get_tls_status() -> TlsStatus:
+#     """Report linked Rustls TLS provider status without opening a connection."""
+#     response = core_driver.driver_get_tls_status()
+#     return TlsStatus(
+#         tls_provider_is_fips=response.tls_provider_is_fips,
+#         fips_tls_build_enabled=response.fips_tls_build_enabled,
+#     )
 
 
 # Export all public symbols
@@ -117,10 +118,8 @@ __all__ = [
     "paramstyle",
     # Module functions
     "connect",
-    "get_tls_status",
     # Classes
     "ConnectionConfig",
-    "TlsStatus",
     "Connection",
     "SnowflakeConnection",
     "QueryStatus",
