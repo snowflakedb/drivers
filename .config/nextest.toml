@@ -1,5 +1,18 @@
+[profile.ci]
+# Two extra attempts after the first failure (3 total). A pass on retry is
+# reported as FLAKY so we can find intermittent tests without failing the job.
+retries = 2
+
 [profile.ci.junit]
 path = "junit.xml"
+# Default nextest encoding: rescued retries are <flakyFailure>, exhausted
+# retries are <rerunFailure> (Jenkins/Surefire). Keep failure output so the
+# stack survives ingest.
+store-failure-output = true
+
+[profile.ci-flaky]
+retries = 2
 
 [profile.ci-flaky.junit]
 path = "junit.xml"
+store-failure-output = true

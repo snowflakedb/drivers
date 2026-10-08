@@ -480,6 +480,23 @@ jobs:
         # --locked uses Cargo.lock for reproducible installs.
         run: cargo install cargo-llvm-cov --locked
 
+      # Per-test retries need nextest (libtest has none). taiki-e/install-action
+      # is blocked by the org allow-list, so fetch the same pre-built binary
+      # Windows jobs already install from get.nexte.st.
+      - name: Install cargo-nextest
+        run: |
+          set -euo pipefail
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) target=linux ;;
+            Linux-aarch64) target=linux-arm ;;
+            Darwin-arm64|Darwin-x86_64) target=mac ;;
+            *) echo "unsupported host $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -LsSf "https://get.nexte.st/latest/${target}" | tar zxf - -C "$dest"
+          cargo nextest --version
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
@@ -516,22 +533,14 @@ jobs:
       # no external upload.
       - name: Run tests with coverage
         id: run_rust_tests
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
         # Expose `cloud_provider` so test code can gate on it (e.g.,
         # skip Azure-only tests on `aws`/`gcp` lanes).
         env:
           TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
-
-      - name: Rerun tests with coverage
-        if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
-        env:
-          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
-        run: |
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --no-fail-fast --package sf_core ${{ matrix.cargo_flags }}
+          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            nextest --profile ci --no-fail-fast
 
       - name: Run flaky tests (non-blocking)
         continue-on-error: true
@@ -761,16 +770,6 @@ jobs:
       # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_windows_arm64
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        shell: cmd
-        env:
-          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
-        run: |
-          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --target aarch64-pc-windows-msvc --no-fail-fast
-
-      - name: Rerun tests (Windows ARM64)
-        if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         env:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_arm_cloud }}
@@ -1006,16 +1005,6 @@ jobs:
       # even after a failure (nextest's default is to stop after the first).
       - name: Run tests
         id: run_rust_tests_x86
-        continue-on-error: ${{ github.event_name == 'merge_group' }}
-        shell: cmd
-        env:
-          TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
-        run: |
-          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo nextest run --locked --profile ci --package sf_core --no-default-features --features protobuf --target i686-pc-windows-msvc --no-fail-fast
-
-      - name: Rerun tests (Windows x86)
-        if: steps.run_rust_tests_x86.outcome == 'failure' && github.event_name == 'merge_group'
         shell: cmd
         env:
           TEST_CLOUD_PROVIDER: ${{ needs.load-core-matrix.outputs.windows_x86_cloud }}
