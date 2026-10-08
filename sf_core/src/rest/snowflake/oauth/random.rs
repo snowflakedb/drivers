@@ -3,7 +3,7 @@
 //! `oauth2`'s own generators -- `CsrfToken::new_random_len` and
 //! `PkceCodeChallenge::new_random_sha256` -- draw from `rand`'s thread RNG.
 //! That is a reasonable default for a general-purpose client and the wrong
-//! source here: under `fips-tls`, security-relevant randomness must come from
+//! source here: under `fips`, security-relevant randomness must come from
 //! AWS-LC rather than `rand` (F8).
 //!
 //! The shape is deliberately identical to what `oauth2` produces -- N bytes of

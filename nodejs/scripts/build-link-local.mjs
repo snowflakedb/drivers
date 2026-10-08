@@ -46,10 +46,16 @@ for (const dir of [BUILD_SDK_PACKAGE_DIR, BUILD_CORE_PACKAGE_DIR]) {
 }
 
 if (packageDirs.length > 0) {
-  execFileSync('npm', ['link', '--silent', '--no-audit', ...packageDirs], {
-    cwd: ROOT_DIR,
-    stdio: 'inherit',
-  });
+  const npmCli = process.env.npm_execpath;
+  execFileSync(
+    npmCli ? process.execPath : 'npm',
+    [...(npmCli ? [npmCli] : []), 'link', '--silent', '--no-audit', ...packageDirs],
+    {
+      cwd: ROOT_DIR,
+      stdio: 'inherit',
+      shell: process.platform === 'win32' && !npmCli,
+    },
+  );
   console.log('Linked packages:');
   for (const dir of packageDirs) {
     console.log(`  ${dir}`);

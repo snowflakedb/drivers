@@ -58,17 +58,18 @@ pub(crate) fn build_tls_client_and_rustls_config(
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
 ) -> Result<(Client, Option<Arc<rustls::ClientConfig>>), TlsError> {
-    // The insecure branch still lets reqwest resolve the global provider at
-    // build time. With the `-no-provider` features an empty slot would panic
-    // ("No provider set"). Verified traffic below uses an explicit config,
-    // but both paths pass through the process-wide FIPS gate.
+    #[cfg(feature = "fips")]
+    if !tls_config.verify_certificates {
+        return crate::tls::error::InsecureTlsRejectedSnafu.fail();
+    }
+
+    // Standard-build insecure clients still need reqwest's process default.
+    // Verified clients carry explicit configs in both builds; retaining the
+    // FIPS gate also preserves the existing global-provider startup policy.
     super::ensure_crypto_provider();
-    // In `fips-tls` builds this construction path fails closed if the global
-    // provider is non-FIPS. The insecure branch below still uses that provider,
-    // verified traffic uses the linked module explicitly. Auxiliary raw
-    // clients require their own gate and are not covered by this call.
     super::require_fips_provider()?;
 
+    #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         let builder = apply_reqwest_tls_versions(
@@ -170,6 +171,7 @@ pub fn create_tls_client_with_proxy_and_timeouts(
         .map(|(c, _)| c)
 }
 
+#[cfg(not(feature = "fips"))]
 pub(crate) fn apply_reqwest_tls_versions(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
@@ -177,6 +179,7 @@ pub(crate) fn apply_reqwest_tls_versions(
     apply_reqwest_tls_versions_window(builder, tls_config.versions)
 }
 
+#[cfg(not(feature = "fips"))]
 pub(crate) fn apply_reqwest_tls_versions_window(
     builder: ClientBuilder,
     versions: crate::tls::config::TlsVersions,
@@ -221,7 +224,7 @@ impl ClientAlpn {
 /// Shared reqwest TLS policy for HTTP/1.1 storage clients. Explicit provider,
 /// roots, versions, and ALPN must be set before `.use_preconfigured_tls`:
 /// reqwest ignores TLS options subsequently set on its builder.
-/// The insecure path retains reqwest's verifier under the FIPS global gate.
+/// FIPS builds reject insecure configs; standard builds keep reqwest's verifier.
 fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
@@ -229,12 +232,17 @@ fn configure_tls_builder(
     crl_manager: CrlManager,
     alpn: ClientAlpn,
 ) -> Result<ClientBuilder, TlsError> {
-    // The returned builder is built by the caller. Its insecure path still
-    // resolves the global provider, so install it before handing the builder
-    // back; verified clients use their explicit linked-module config.
+    #[cfg(feature = "fips")]
+    if !tls_config.verify_certificates {
+        return crate::tls::error::InsecureTlsRejectedSnafu.fail();
+    }
+
+    // Standard-build insecure builders resolve the global provider when built;
+    // verified clients use their explicit linked-module config.
     super::ensure_crypto_provider();
     super::require_fips_provider()?;
     let builder = apply_proxy_to_builder(builder, proxy)?;
+    #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
         return Ok(apply_reqwest_tls_versions(builder, tls_config)
@@ -332,7 +340,7 @@ fn build_crl_rustls_config(
 
     // Explicit provider rather than `ClientConfig::builder()`: the latter reads
     // the process-global default, so the module verifying this connection's
-    // chain would be whichever one won a startup race. Under `fips-tls` that
+    // chain would be whichever one won a startup race. Under `fips` that
     // race is the compliance claim.
     let mut config = version_builder
         .dangerous()
@@ -367,6 +375,24 @@ fn build_plain_rustls_client_config(
     Ok(builder
         .with_root_certificates(root_store)
         .with_no_client_auth())
+}
+
+/// Module-backed config with reqwest's default trust (native ∪ webpki roots)
+/// and no CRL checking, for auxiliary HTTPS clients that have no connection
+/// `TlsConfig`: CRL downloads (where CRL checks would recurse), platform
+/// detection probes and WIF attestation.
+pub(crate) fn default_verified_client_builder() -> Result<ClientBuilder, TlsError> {
+    Ok(apply_http_pool_settings(Client::builder())
+        .use_preconfigured_tls(build_default_verified_rustls_config()?))
+}
+
+fn build_default_verified_rustls_config() -> Result<rustls::ClientConfig, TlsError> {
+    build_verified_rustls_config(
+        build_plain_root_store(&RootCertificates::Default)?,
+        rustls::DEFAULT_VERSIONS,
+        true,
+        ClientAlpn::Default,
+    )
 }
 
 /// Reproduce reqwest's verified rustls path with an explicit linked-module
@@ -453,6 +479,7 @@ impl rustls::client::danger::ServerCertVerifier for IgnoreHostnameCertVerifier {
     }
 }
 
+#[cfg(not(feature = "fips"))]
 /// rustls [`ClientConfig`] that skips all certificate verification.
 ///
 /// Returned by [`build_tls_client_and_rustls_config`] for the `verify_certificates=false`
@@ -473,6 +500,7 @@ pub(crate) fn build_insecure_rustls_config() -> Result<Arc<rustls::ClientConfig>
     ))
 }
 
+#[cfg(not(feature = "fips"))]
 /// A diagnostic [`ServerCertVerifier`] that accepts any certificate chain.
 ///
 /// Unlike reqwest's built-in `NoVerifier`, this diagnostic still verifies TLS
@@ -488,6 +516,7 @@ struct NoVerifyCertVerifier {
     supported_algs: rustls::crypto::WebPkiSupportedAlgorithms,
 }
 
+#[cfg(not(feature = "fips"))]
 impl NoVerifyCertVerifier {
     fn new() -> Self {
         Self {
@@ -497,6 +526,7 @@ impl NoVerifyCertVerifier {
     }
 }
 
+#[cfg(not(feature = "fips"))]
 impl rustls::client::danger::ServerCertVerifier for NoVerifyCertVerifier {
     fn verify_server_cert(
         &self,
@@ -793,9 +823,18 @@ mod tests {
         );
     }
 
-    /// The `verify_certificates=false` path is the one most likely to be built
-    /// first in a process, so it is the one most exposed to the global-provider
-    /// race that this phase removes.
+    #[test]
+    fn default_verified_config_uses_the_module_provider() {
+        let config =
+            build_default_verified_rustls_config().expect("default verified rustls config");
+        assert!(Arc::ptr_eq(
+            config.crypto_provider(),
+            &crate::tls::crypto_module::CryptoModule::get().provider()
+        ));
+    }
+
+    #[cfg(not(feature = "fips"))]
+    /// The standard-build diagnostic must not inherit a host-installed provider.
     #[test]
     fn insecure_config_uses_the_module_provider() {
         let config = build_insecure_rustls_config().expect("insecure rustls config");
@@ -1117,6 +1156,67 @@ mod tests {
             !trace.contains(PASSWORD),
             "ErrorTrace output leaked the proxy password: {trace}"
         );
+    }
+
+    #[cfg(feature = "fips")]
+    #[test]
+    fn fips_rejects_insecure_connection_clients() {
+        for config in [
+            TlsConfig {
+                verify_certificates: false,
+                ..Default::default()
+            },
+            TlsConfig::insecure(),
+        ] {
+            for need_diag_config in [false, true] {
+                let result = build_tls_client_and_rustls_config(
+                    &config,
+                    None,
+                    CrlManager::new(),
+                    None,
+                    need_diag_config,
+                );
+
+                assert!(matches!(result, Err(TlsError::InsecureTlsRejected { .. })));
+            }
+        }
+    }
+
+    #[cfg(feature = "fips")]
+    #[test]
+    fn fips_rejects_insecure_storage_clients() {
+        let config = TlsConfig {
+            verify_certificates: false,
+            ..Default::default()
+        };
+
+        let s3 = configure_http1_tls_builder(Client::builder(), &config, None, CrlManager::new());
+        assert!(matches!(s3, Err(TlsError::InsecureTlsRejected { .. })));
+        let azure_gcs =
+            configure_storage_client_builder(Client::builder(), &config, None, CrlManager::new());
+        assert!(matches!(
+            azure_gcs,
+            Err(TlsError::InsecureTlsRejected { .. })
+        ));
+    }
+
+    #[cfg(not(feature = "fips"))]
+    #[test]
+    fn non_fips_builders_accept_insecure_clients() {
+        let config = TlsConfig::insecure();
+
+        let (_, diagnostic) =
+            build_tls_client_and_rustls_config(&config, None, CrlManager::new(), None, true)
+                .expect("non-FIPS insecure connection client");
+        assert!(diagnostic.is_some());
+        configure_http1_tls_builder(Client::builder(), &config, None, CrlManager::new())
+            .expect("non-FIPS insecure S3 client")
+            .build()
+            .expect("build S3 client");
+        configure_storage_client_builder(Client::builder(), &config, None, CrlManager::new())
+            .expect("non-FIPS insecure Azure/GCS client")
+            .build()
+            .expect("build Azure/GCS client");
     }
 
     #[test]

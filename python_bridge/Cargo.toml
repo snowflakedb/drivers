@@ -12,11 +12,10 @@ default = ["extension-module", "native-arrow"]
 extension-module = ["pyo3/extension-module"]
 native-arrow = ["dep:arrow", "dep:snafu", "dep:error_trace", "dep:sf_types", "dep:chrono", "pyo3/chrono"]
 # Links the FIPS-mode crypto module (aws-lc-fips-sys) instead of
-# aws-lc-sys. Despite the name it is no longer TLS-only: JWT signing, DPoP,
-# stage file encryption and private-key parsing now run on the same module. The
-# name and the caveat both stand -- see the `fips-tls` feature comment in
-# sf_core/Cargo.toml for why this is still not a FIPS artifact on its own.
-fips-tls = ["sf_core/fips-tls"]
+# aws-lc-sys for TLS, JWT signing, DPoP, stage file encryption and private-key
+# parsing. This is not a validation or whole-driver FIPS compliance claim;
+# see the `fips` feature comment in sf_core/Cargo.toml for remaining caveats.
+fips = ["sf_core/fips"]
 
 [dependencies]
 arrow = { version = ">=54.0.0, <59", features = ["ffi"], optional = true }

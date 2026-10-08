@@ -51,7 +51,7 @@ macro_rules! record_err {
 // #[repr(C)]
 // pub struct SFTlsStatus {
 //     pub tls_provider_is_fips: u32,
-//     pub fips_tls_build_enabled: u32,
+//     pub fips_build_enabled: u32,
 // }
 //
 // #[unsafe(no_mangle)]
@@ -64,7 +64,7 @@ macro_rules! record_err {
 //     unsafe {
 //         status.write(SFTlsStatus {
 //             tls_provider_is_fips: u32::from(tls_status.tls_provider_is_fips),
-//             fips_tls_build_enabled: u32::from(tls_status.fips_tls_build_enabled),
+//             fips_build_enabled: u32::from(tls_status.fips_build_enabled),
 //         });
 //     }
 //     0

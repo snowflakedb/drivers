@@ -134,7 +134,7 @@ pub enum OAuthError {
     /// DPoP `jti` -- could not be drawn from AWS-LC's DRBG.
     ///
     /// Fails the login or proof rather than falling back to another source.
-    /// Under `fips-tls`, that would draw security randomness outside AWS-LC
+    /// Under `fips`, that would draw security randomness outside AWS-LC
     /// and undermine the build's module boundary. As with
     /// `DPoPProofGeneration`, `Unspecified` carries no detail: AWS-LC does not
     /// report why a primitive failed.

@@ -1,6 +1,7 @@
 use crate::common::mocks::okta;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
+use std::io::Write;
 
 // =============================================================================
 // Test Fixture - Reduces boilerplate for Native Okta integration tests
@@ -9,20 +10,31 @@ use crate::common::tls_proxy::MockServerWithTls;
 struct OktaTestFixture {
     mock: MockServerWithTls,
     client: SnowflakeTestClient,
+    _root_pem: tempfile::NamedTempFile,
 }
 
 impl OktaTestFixture {
     fn new() -> Self {
         let mock = MockServerWithTls::start();
+        let mut root_pem = tempfile::NamedTempFile::new().expect("create Okta root PEM");
+        root_pem
+            .write_all(mock.cert_pem().as_bytes())
+            .expect("write Okta root PEM");
 
         let client = SnowflakeTestClient::with_int_tests_params(Some(&mock.http_url()));
         client.set_connection_option("authenticator", &mock.https_url());
         client.set_connection_option("user", "test_user");
         client.set_connection_option("password", "test_password");
-        client.set_connection_option("verify_certificates", "false");
-        client.set_connection_option("verify_hostname", "false");
+        client.set_connection_option(
+            "custom_root_store_path",
+            root_pem.path().to_str().expect("Okta root PEM path"),
+        );
 
-        Self { mock, client }
+        Self {
+            mock,
+            client,
+            _root_pem: root_pem,
+        }
     }
 
     /// Mount the full successful Okta authentication flow.

@@ -20,11 +20,10 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// Guarantees a rustls default provider is in place, installing aws-lc-rs if
 /// nothing has claimed the slot yet.
 ///
-/// The verified clients built through `tls::client` carry an explicit
-/// linked-module rustls config, but raw auxiliary reqwest clients and the
-/// `verify_certificates=false` path still use the process default. Installing
-/// it prevents the no-provider panic. Only construction paths that separately
-/// call [`require_fips_provider`] can fail closed on a non-FIPS global.
+/// Every HTTPS client the driver builds carries an explicit linked-module
+/// rustls config. Plain-HTTP clients and the standard-build
+/// `verify_certificates=false` path still need this default installed to
+/// prevent reqwest's no-provider panic; FIPS builds reject that opt-out.
 ///
 /// `install_default` is already one-shot inside rustls: a later call returns
 /// `Err` with the provider that won. This function has no crate-local `Once`,
@@ -36,8 +35,8 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// an embedding application has already installed its own provider, and
 /// stomping on that would be worse than honouring it.
 ///
-/// The `fips-tls` check below asks about the *linked module*, not whichever
-/// provider won that race: it catches a build that claims `fips-tls` without
+/// The `fips` check below asks about the *linked module*, not whichever
+/// provider won that race: it catches a build that claims `fips` without
 /// having linked a FIPS-capable aws-lc. Whether the process-global slot is
 /// also FIPS is a separate question, and one with somewhere to fail into, so
 /// [`require_fips_provider`] covers it. Here a mismatch is only logged --
@@ -53,10 +52,10 @@ pub(crate) fn ensure_crypto_provider() {
         );
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     if !tls_provider_is_fips() {
         tracing::error!(
-            "driver was built with the `fips-tls` feature but the linked module's \
+            "driver was built with the `fips` feature but the linked module's \
              TLS provider is not FIPS-approved; TLS is NOT FIPS compliant"
         );
     }
@@ -78,15 +77,15 @@ pub(crate) fn ensure_crypto_provider() {
 /// This function remains available in both builds for Rust consumers. For a
 /// no-connection status report in any wrapper, use [`tls_status`].
 ///
-/// This reports the linked module rather than the process default: the
-/// verified connection/storage clients use its provider for their handshakes,
-/// whereas the global provider may belong to an embedding application.
+/// This reports the linked module rather than the process default: connection,
+/// storage and HTTPS CRL clients use its provider for their handshakes, whereas
+/// the global provider may belong to an embedding application. FIPS builds
+/// reject disabled certificate verification; standard builds retain reqwest's
+/// insecure global-provider path.
 ///
-/// Necessary but not sufficient for a driver-wide compliance claim: verified
-/// connection/storage clients now use this provider explicitly, while auxiliary
-/// raw clients and the intentionally unchanged insecure path still resolve the
-/// process-global provider. [`require_fips_provider`] checks both providers
-/// in FIPS builds; it does not attest the entire driver or deployment.
+/// Necessary but not sufficient for a driver-wide compliance claim:
+/// [`require_fips_provider`] also checks the global provider used by platform
+/// probes in FIPS builds. Neither check attests the entire driver or deployment.
 pub fn tls_provider_is_fips() -> bool {
     crypto_module::CryptoModule::get().provider_is_fips()
 }
@@ -96,55 +95,40 @@ pub fn tls_provider_is_fips() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TlsStatus {
     pub tls_provider_is_fips: bool,
-    pub fips_tls_build_enabled: bool,
+    pub fips_build_enabled: bool,
 }
 
 /// Reports the linked rustls TLS provider's FIPS verdict and this build's
-/// `fips-tls` feature, without initializing a connection or making network calls.
+/// `fips` feature, without initializing a connection or making network calls.
 ///
 /// This does not attest to an installed process-global provider, other driver
 /// cryptography, a validated module version, or the complete artifact.
 pub fn tls_status() -> TlsStatus {
     TlsStatus {
         tls_provider_is_fips: tls_provider_is_fips(),
-        fips_tls_build_enabled: cfg!(feature = "fips-tls"),
+        fips_build_enabled: cfg!(feature = "fips"),
     }
 }
 
-/// Fails closed in `fips-tls` builds unless *both* the linked crypto module and
+/// Fails closed in `fips` builds unless *both* the linked crypto module and
 /// the process-global provider are in FIPS mode.
 ///
 /// `ensure_crypto_provider` only logs a mismatch because it has no error
 /// channel and can run beneath an FFI boundary where unwinding is undefined.
-/// The connection/storage builders (and callers explicitly using this gate)
-/// can return a `TlsError` instead of silently constructing a client against
-/// an unapproved global provider. Raw auxiliary clients without this check
-/// are not covered by that guarantee.
+/// Connection/storage builders, platform-detection probes and WIF attestation
+/// use this gate.
 ///
 /// Compiles to `Ok(())` without the feature.
 ///
 /// # Why the global provider is checked too
 ///
-/// Verified CRL-disabled clients now use a preconfigured rustls config with
-/// the linked module's provider and reqwest's native ∪ bundled webpki trust
-/// roots. Custom roots still replace that union; extra roots extend it. Their
-/// crypto provider no longer depends on who installed the process default.
-///
-/// The `verify_certificates=false` path is deliberately different: reqwest's
-/// built-in `NoVerifier` accepts handshake signatures without verification,
-/// whereas the diagnostic's `NoVerifyCertVerifier` still checks signatures.
-/// Swapping the traffic client to the diagnostic config would change behavior.
-/// That path keeps reqwest's verifier and process-global provider.
-///
-/// Raw auxiliary clients (telemetry, CRL fetch, IMDS) also resolve the global
-/// provider. An embedding application may have installed a different provider
-/// first. Requiring *both* providers to be FIPS fails closed for builders that
-/// call this function, including module-backed and insecure connection/storage
-/// clients; it does not make their providers identical. Raw auxiliary
-/// constructors that call only `ensure_crypto_provider` retain a potential
-/// non-FIPS global-provider path until separately gated or module-backed.
+/// All HTTPS clients use preconfigured rustls configs with the linked module's
+/// provider, so their handshakes do not depend on who installed the process
+/// default, and the insecure reqwest path is compiled only in standard builds.
+/// The global check keeps the existing fail-closed startup policy: a `fips`
+/// process whose default provider is non-FIPS is misconfigured.
 pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     {
         if !tls_provider_is_fips() {
             return Err(error::FipsModeUnavailableSnafu.build());
@@ -159,14 +143,23 @@ pub(crate) fn require_fips_provider() -> Result<(), error::TlsError> {
     Ok(())
 }
 
-/// Proves the `fips-tls` feature actually puts the linked crypto module into FIPS
+/// Proves the `fips` feature actually puts the linked crypto module into FIPS
 /// mode, rather than merely pulling `aws-lc-fips-sys` into the link.
 ///
 /// This is the check that distinguishes "we depend on a FIPS-capable crate"
 /// from "we are running approved algorithms in an approved mode" -- the former
 /// is a build-graph property, the latter is what an auditor asks about.
-#[cfg(all(test, feature = "fips-tls"))]
+#[cfg(all(test, feature = "fips"))]
 mod fips_tests {
+    // Update together with the exact aws-lc-fips-sys pin in sf_core/Cargo.toml.
+    const EXPECTED_FIPS_MODULE_VERSION: &str = "AWS-LC FIPS 3.6.0";
+
+    #[test]
+    fn linked_module_version_matches_pin() {
+        let version = super::crypto_module::CryptoModule::get().version();
+        assert_eq!(version.to_str(), Ok(EXPECTED_FIPS_MODULE_VERSION));
+    }
+
     /// The aws-lc module reports FIPS mode at runtime. Fails if the build
     /// silently linked non-FIPS aws-lc-sys instead of aws-lc-fips-sys.
     #[test]
@@ -177,9 +170,7 @@ mod fips_tests {
         );
     }
 
-    /// The process default installed by `ensure_crypto_provider` must remain
-    /// FIPS-approved for auxiliary raw reqwest clients and the insecure path,
-    /// even though verified connection/storage clients now use the module.
+    /// `require_fips_provider` expects a FIPS-approved process default.
     #[test]
     fn installed_rustls_provider_is_fips() {
         super::ensure_crypto_provider();
@@ -195,9 +186,8 @@ mod fips_tests {
         );
     }
 
-    /// The process-global builder must still use approved algorithms where
-    /// raw or insecure clients rely on it. Module-backed client configs are
-    /// checked separately by the provider-ownership tests in `tls::client`.
+    /// The process-global builder must still use approved algorithms.
+    /// Module-backed configs have provider-ownership tests in `tls::client`.
     #[test]
     fn client_config_is_fips() {
         super::ensure_crypto_provider();
@@ -219,7 +209,7 @@ mod fips_tests {
             .driver_get_tls_status_blocking(DriverGetTlsStatusRequest {})
             .expect("no-connection status RPC must succeed");
         assert!(status.tls_provider_is_fips);
-        assert!(status.fips_tls_build_enabled);
+        assert!(status.fips_build_enabled);
     }
 }
 
@@ -228,7 +218,7 @@ mod status_tests {
     #[test]
     fn status_describes_linked_tls_provider_in_both_builds() {
         let status = super::tls_status();
-        assert_eq!(status.fips_tls_build_enabled, cfg!(feature = "fips-tls"));
-        assert_eq!(status.tls_provider_is_fips, cfg!(feature = "fips-tls"));
+        assert_eq!(status.fips_build_enabled, cfg!(feature = "fips"));
+        assert_eq!(status.tls_provider_is_fips, cfg!(feature = "fips"));
     }
 }

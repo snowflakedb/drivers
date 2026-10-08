@@ -192,5 +192,5 @@ export type StatementStatus = 'fetching' | 'complete'
 // FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
 // export interface TlsStatus {
 //   tlsProviderIsFips: boolean
-//   fipsTlsBuildEnabled: boolean
+//   fipsBuildEnabled: boolean
 // }

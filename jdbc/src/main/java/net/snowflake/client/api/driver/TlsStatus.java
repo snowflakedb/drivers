@@ -4,18 +4,18 @@ package net.snowflake.client.api.driver;
 // under consideration.
 // public final class TlsStatus {
 //   private final boolean tlsProviderIsFips;
-//   private final boolean fipsTlsBuildEnabled;
+//   private final boolean fipsBuildEnabled;
 //
-//   TlsStatus(boolean tlsProviderIsFips, boolean fipsTlsBuildEnabled) {
+//   TlsStatus(boolean tlsProviderIsFips, boolean fipsBuildEnabled) {
 //     this.tlsProviderIsFips = tlsProviderIsFips;
-//     this.fipsTlsBuildEnabled = fipsTlsBuildEnabled;
+//     this.fipsBuildEnabled = fipsBuildEnabled;
 //   }
 //
 //   public boolean isTlsProviderFips() {
 //     return tlsProviderIsFips;
 //   }
 //
-//   public boolean isFipsTlsBuildEnabled() {
-//     return fipsTlsBuildEnabled;
+//   public boolean isFipsBuildEnabled() {
+//     return fipsBuildEnabled;
 //   }
 // }

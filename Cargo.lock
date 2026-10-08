@@ -4738,6 +4738,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-credential-types",
+ "aws-lc-fips-sys",
  "aws-lc-rs",
  "aws-runtime",
  "aws-sdk-s3",

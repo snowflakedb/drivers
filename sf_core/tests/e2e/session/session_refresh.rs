@@ -102,7 +102,7 @@ fn should_refresh_session_proactively() {
         };
 
         let http_client =
-            create_tls_client_with_config(TlsConfig::insecure(), sf_core::crl::CrlManager::new())
+            create_tls_client_with_config(TlsConfig::default(), sf_core::crl::CrlManager::new())
                 .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh

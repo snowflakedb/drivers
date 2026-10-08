@@ -3139,7 +3139,7 @@ pub enum RestError {
     },
     /// Building the AWS SDK transport for Workload Identity failed. Distinct
     /// from [`RestError::CrlValidation`] so a refused crypto provider in a
-    /// `fips-tls` build does not surface as a generic CRL-named TLS error: the
+    /// `fips` build does not surface as a generic CRL-named TLS error: the
     /// cause travels in the message, which is what support and compliance need
     /// to see first.
     #[snafu(display("Failed to build the Workload Identity HTTP client: {source}"))]
@@ -4386,18 +4386,18 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
-    fn base_auth_request_data_reports_is_fips_false_without_fips_tls() {
+    fn base_auth_request_data_reports_is_fips_false_without_fips() {
         let data = base_auth_request_data(&test_login_params());
         assert!(!data.client_environment.is_fips);
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json["CLIENT_ENVIRONMENT"]["IS_FIPS"], false);
     }
 
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
-    fn base_auth_request_data_reports_is_fips_true_with_fips_tls() {
+    fn base_auth_request_data_reports_is_fips_true_with_fips() {
         let data = base_auth_request_data(&test_login_params());
         assert!(data.client_environment.is_fips);
         let json = serde_json::to_value(&data).unwrap();

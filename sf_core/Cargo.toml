@@ -21,24 +21,22 @@ sonic-json = ["sonic-rs"]
 # declaration, not by accident of the resolver happening to unify rustls's
 # transitive activation into the same crate.
 #
-# The name stays because the *claim* is not yet complete:
+# The feature name selects the crypto build, not a validation claim:
 #   - SDK SigV4 request signing computes HMAC-SHA256 outside the module:
 #     `aws-sigv4` uses RustCrypto unconditionally, on every S3 stage
 #     transfer; see F7. The driver's own WIF `GetCallerIdentity` signer
 #     uses `aws_lc_rs`. `ring` itself is no longer linked --
 #     its only two sources, `sigv4a` and `sso`, are both off (see the AWS SDK
 #     block below) -- so this bullet is now about RustCrypto alone.
-#   - The `aws-lc-rs` bound below keeps `aws-lc-fips-sys` on 0.13.x; it
-#     does not establish CMVP validation. Certificate #5314 identifies
-#     the static AWS-LC FIPS 3.1.0 module; later 3.x point releases need
-#     their own validation basis. The built and deployed module must meet
-#     the policy's version, tested environment, and installation requirements.
+#   - AWS-LC FIPS 3.6.0 is exactly pinned below. Certificate and Security
+#     Policy applicability for that version still require compliance
+#     confirmation before any public "validated" claim.
 #
 # Azure Content-MD5 uses RustCrypto `md-5` as a non-security upload integrity
 # checksum; it is not part of the FIPS security claim.
-# So an artifact built with this feature is not yet a validated FIPS artifact,
-# and `fips` stays unclaimed for the complete thing.
-fips-tls = ["rustls/fips", "aws-lc-rs/fips"]
+# An artifact built with this feature is not thereby a validated FIPS artifact
+# or a claim of whole-driver FIPS compliance.
+fips = ["rustls/fips", "aws-lc-rs/fips", "dep:aws-lc-fips-sys"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 auth_oauth_e2e = []
@@ -87,7 +85,7 @@ bytes = "1"
 # and -- more importantly -- makes reqwest silently fall back to
 # `rustls::crypto::ring::default_provider()` for any client built before a
 # process default is installed. `ring` is not a FIPS-validated module, so that
-# fallback would quietly defeat `--features fips-tls`. Without it reqwest instead
+# fallback would quietly defeat `--features fips`. Without it reqwest instead
 # panics ("No provider set"), which is why every client construction path calls
 # `tls::ensure_crypto_provider()` first.
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
@@ -193,26 +191,14 @@ rustls-pemfile = "2.2.0"
 rustls-native-certs = "0.8"
 webpki-roots = "1.0.2"
 thiserror = "1.0.69"
-# Upper bound is load-bearing: `aws-lc-rs` <1.18 selects `aws-lc-fips-sys`
-# 0.13.x (AWS-LC FIPS 3.x), while >=1.18 selects 0.14.x (AWS-LC FIPS 4.x).
-# That bounds the module *family*, not its exact version or validation status:
-# certificate #5314 names the static AWS-LC FIPS 3.1.0 module, while
-# `aws-lc-fips-sys` 0.13.12 vendors 3.2.0 and 0.13.17 vendors 3.6.0.
-# Neither is named by that certificate.
-#
-# A `cargo update` within 0.13.x can change the linked module version without
-# crossing this bound. `try_fips_mode()` confirms FIPS mode, not CMVP validation;
-# tests cannot establish certificate scope. Review the exact vendored version
-# and the policy's tested environments and installation/configuration rules
-# (sections 6 and 11.1) before a validated claim.
-# The resolved crate version belongs in the dependency-policy checks
-# (cargo-deny, Phase 5), and the SBOM must record the module identity too.
-#
-# Note that `aws-lc-fips-sys` 0.14.x's own README still claims it binds 3.0.x;
-# the vendored `AWSLC_VERSION_NUMBER_STRING` is the reliable signal.
-#
-# Revisit the bound and build toolchain together when updating the module.
-# `rustls` requires `aws-lc-rs "1.14"`, so this range sits inside its own.
+# Keep AWS-LC FIPS 3.6.0: 3.1.0's sys crate (0.13.11) predates the fixes for
+# RUSTSEC-2026-0042 (conditional CRL-check bypass) and RUSTSEC-2026-0043
+# (AES-CCM timing). The exact pin must be updated together with
+# EXPECTED_FIPS_MODULE_VERSION in tls::fips_tests.
+# Certificate / Security Policy applicability remains pending compliance review.
+aws-lc-fips-sys = { version = "=0.13.17", optional = true }
+# >=1.18 selects AWS-LC FIPS 4.x. This bound also holds back rustls >=0.23.44,
+# which requires aws-lc-rs 1.18; revisit both when deliberately changing modules.
 aws-lc-rs = ">=1.13.2, <1.18"
 x509-parser = "0.16"
 der-parser = "9.0"
@@ -241,7 +227,7 @@ time = "0.3"
 # and it was weighed against the correctness risk of hand-rolled ASN.1 in a
 # private-key path.
 pkcs8 = { version = "0.10", features = ["3des"] }
-# 3DES-CBC unwrap for a standard build. A `fips-tls` build does not call these
+# 3DES-CBC unwrap for a standard build. A `fips` build does not call these
 # crates: it rejects a PBES2 key whose cipher is DES-EDE3-CBC. They stay
 # because the standard build uses them, and `pkcs8`'s `3des` feature is what
 # lets the parser name that cipher on both builds. AWS-LC's cipher API is
@@ -252,7 +238,7 @@ cbc = "0.1"
 # Traditional encrypted PEM (`Proc-Type: 4,ENCRYPTED`) derives its key with
 # OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to the
 # format, not a choice. AWS-LC exposes no MD5 digest, so reading those keys
-# needs this. The code that calls it is `#[cfg(not(feature = "fips-tls"))]`, so
+# needs this. The code that calls it is `#[cfg(not(feature = "fips"))]`, so
 # a FIPS build never derives a key with MD5; see `crypto::private_key`.
 #
 # Azure Content-MD5 is also an upload integrity checksum, not a security
@@ -272,7 +258,6 @@ zeroize = "1.8"
 hex = "0.4"
 memchr = "2"
 sonic-rs = { version = "0.5", optional = true }
-sha2 = "0.10"
 clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
@@ -288,7 +273,8 @@ libc = "0.2"
 
 [dev-dependencies]
 sf_core = { path = ".", default-features = false, features = ["test-utils"] }
-tokio = { version = "1.47.1", features = ["fs", "test-util"] }
+sha2 = "0.10"
+tokio = { version = "1.47.1", features = ["fs", "process", "test-util"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
@@ -335,7 +321,7 @@ scopeguard = "1.2"
 # tests/common/crypto_provider.rs, which integration_tests picks up through
 # tests/common/mod.rs and logging_query_tests includes directly.
 #
-# Ordering note for the `fips-tls` lane: aws-lc-fips runs its power-on self-test
+# Ordering note for the `fips` lane: aws-lc-fips runs its power-on self-test
 # from its own library constructor, and these initializers add a second one.
 # Ordering between translation units is unspecified, so the two are only safe
 # together because `install_default` just stores an `Arc` and touches no

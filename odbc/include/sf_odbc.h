@@ -68,7 +68,7 @@
  *
  * typedef struct SFTlsStatus {
  *   uint32_t tls_provider_is_fips;
- *   uint32_t fips_tls_build_enabled;
+ *   uint32_t fips_build_enabled;
  * } SFTlsStatus;
  *
  * int32_t SFGetTlsStatus(SFTlsStatus* status);

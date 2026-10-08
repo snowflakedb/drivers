@@ -74,14 +74,14 @@ pub enum AttestationError {
         #[snafu(implicit)]
         location: Location,
     },
-    /// Raised before any provider is dispatched, in `fips-tls` builds whose
+    /// Raised before any provider is dispatched, in `fips` builds whose
     /// process-global rustls provider is not FIPS. The AWS, Azure and GCP
     /// providers exchange authentication material over the caller-supplied
     /// clients, so the same fail-closed gate the TLS factories apply belongs
-    /// here too -- notably for the `wif_create_attestation` RPC, whose plain
-    /// client is not built through those factories. OIDC reads a token it was
-    /// already given and so cannot reach this, but the gate runs before the
-    /// dispatch that would tell them apart.
+    /// here too. OIDC reads a token it was already given and so cannot reach
+    /// this, but the gate runs before the dispatch that would tell them apart.
+    /// The `wif_create_attestation` RPC also uses this variant when its
+    /// module-backed client cannot be built.
     /// `{source}` is carried into the message deliberately. The `TlsError`
     /// underneath is the whole diagnosis -- it distinguishes "wrong artifact
     /// linked" from "the host application installed a non-FIPS provider first",
@@ -201,20 +201,9 @@ pub(crate) async fn create_attestation(
     config: &WorkloadIdentityConfig,
 ) -> Result<Attestation, AttestationError> {
     // The AWS, Azure and GCP providers exchange authentication material over
-    // the supplied clients (OIDC makes no request). Pinning and gating the
-    // crypto backend at this single entry point, before the dispatch that
-    // distinguishes them, gives a caller-built plain client (the
-    // `wif_create_attestation` RPC) the same fail-closed FIPS behaviour as
-    // clients built by the TLS factories, which run both calls in
-    // `configure_tls_builder`. Redundant for the login path -- both calls are
-    // `Once`-cheap and idempotent.
-    //
-    // `client` arrives already built, so its crypto backend cannot be changed
-    // from here. That is why the gate has to cover the process-global provider
-    // and not just the linked module: the RPC path passes a plain
-    // `reqwest::Client`, whose handshake resolves the global slot, and Azure
-    // and GCP attestation both ride that client. See
-    // `tls::require_fips_provider`.
+    // the supplied clients (OIDC makes no request). Every caller now passes a
+    // module-backed client; the gate keeps the same fail-closed FIPS policy as
+    // the TLS factories for a process whose global provider is non-FIPS.
     crate::tls::ensure_crypto_provider();
     crate::tls::require_fips_provider().context(CryptoProviderSnafu)?;
     let endpoints = AttestationEndpoints::default();

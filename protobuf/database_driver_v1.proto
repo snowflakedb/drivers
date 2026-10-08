@@ -1036,8 +1036,8 @@ message DriverGetTlsStatusRequest {}
 message DriverGetTlsStatusResponse {
   // Rustls's FIPS verdict for the linked TLS crypto provider.
   bool tls_provider_is_fips = 1;
-  // Whether sf_core was compiled with the fips-tls feature.
-  bool fips_tls_build_enabled = 2;
+  // Whether sf_core was compiled with the fips feature.
+  bool fips_build_enabled = 2;
 }
 
 // =============================================================================

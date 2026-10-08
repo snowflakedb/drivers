@@ -1,6 +1,8 @@
 /* oxlint-disable no-console */
 import { NapiCli } from '@napi-rs/cli';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
   BUILD_CORE_PACKAGE_DIR,
@@ -12,8 +14,17 @@ import {
 
 const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
 const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
-const fipsTlsBuild = process.env.SF_CORE_FIPS_TLS?.toLowerCase();
-const buildWithFipsTls = fipsTlsBuild === '1' || fipsTlsBuild === 'true';
+const fipsBuild = process.env.SF_CORE_FIPS?.toLowerCase();
+const buildWithFips = fipsBuild === '1' || fipsBuild === 'true';
+// Release builds are opt-in; local development and existing test jobs stay debug.
+const releaseBuild = process.env.SF_CORE_RELEASE?.toLowerCase();
+const buildRelease = releaseBuild === '1' || releaseBuild === 'true';
+const linkerMap = process.env.SF_CORE_LINKER_MAP;
+if (linkerMap && (process.platform !== 'win32' || !buildRelease)) {
+  throw new Error('SF_CORE_LINKER_MAP requires Windows and SF_CORE_RELEASE=1');
+}
+const manifestPath = path.join(ROOT_DIR, '..', 'nodejs_bridge', 'Cargo.toml');
+const cargoOptions = buildWithFips ? ['--locked', '--features', 'fips'] : ['--locked'];
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
 // package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),
@@ -41,15 +52,13 @@ await fs.rm(BUILD_CORE_PACKAGE_DIR, { recursive: true, force: true });
 const cli = new NapiCli();
 const { task } = await cli.build({
   platform: true,
-  // TODO:
-  // SNOW-3996214 - this should be true when we build for the release
-  release: false,
+  release: buildRelease,
   cargoName: 'nodejs_bridge',
-  manifestPath: path.join(ROOT_DIR, '..', 'nodejs_bridge', 'Cargo.toml'),
+  manifestPath,
   packageJsonPath: NODE_SDK_PACKAGE_JSON_PATH,
   outputDir: BUILD_CORE_PACKAGE_DIR,
   cwd: ROOT_DIR,
-  cargoOptions: buildWithFipsTls ? ['--locked', '--features', 'fips-tls'] : ['--locked'],
+  cargoOptions,
   noJsBinding: true,
   dtsHeader: `\
 /**
@@ -74,6 +83,54 @@ await task;
 const producedFiles = await fs.readdir(BUILD_CORE_PACKAGE_DIR);
 const binaryFileName = producedFiles.find((file) => file.endsWith('.node'));
 const dtsFileName = producedFiles.find((file) => file.endsWith('.d.ts'));
+if (linkerMap) {
+  // napi invokes cargo build, which cannot forward final-crate rustc arguments.
+  // A unique /MAP argument forces a fresh final link even on a Cargo cache hit.
+  const mapPath = path.resolve(linkerMap);
+  await fs.mkdir(path.dirname(mapPath), { recursive: true });
+  const mapDirectory = await fs.mkdtemp(path.join(tmpdir(), 'snowflake-sdk-core-map-'));
+  const freshMapPath = path.join(mapDirectory, 'nodejs_bridge.map');
+  try {
+    const compilerOutput = execFileSync(
+      process.env.CARGO ?? 'cargo',
+      [
+        'rustc',
+        '--release',
+        '--lib',
+        '--package',
+        'nodejs_bridge',
+        '--manifest-path',
+        manifestPath,
+        '--message-format=json-render-diagnostics',
+        ...cargoOptions,
+        '--',
+        '-C',
+        `link-arg=/MAP:${freshMapPath}`,
+      ],
+      {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'inherit'],
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+    let dllPath;
+    for (const line of compilerOutput.trim().split('\n')) {
+      const message = JSON.parse(line);
+      if (message.reason === 'compiler-artifact' && message.target.name === 'nodejs_bridge') {
+        dllPath = message.filenames.find((file) => file.endsWith('.dll'));
+      }
+    }
+    if (!dllPath) {
+      throw new Error('cargo rustc did not report the mapped nodejs_bridge DLL');
+    }
+    // A missing fresh map must fail, never reuse an older map at the requested path.
+    await fs.copyFile(freshMapPath, mapPath);
+    await fs.copyFile(dllPath, path.join(BUILD_CORE_PACKAGE_DIR, binaryFileName));
+  } finally {
+    await fs.rm(mapDirectory, { recursive: true, force: true });
+  }
+}
 const platformTriple = binaryFileName.slice(`${NAPI_CONFIG.binaryName}.`.length, -'.node'.length);
 // TODO: Consider enforcing a merge gate to ensure the committed declaration file
 // stays in sync with the current nodejs_bridge state in git

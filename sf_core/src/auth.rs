@@ -433,7 +433,7 @@ mod tests {
     }
 
     /// PBES2 3DES (`openssl pkcs8 -topk8 -v2 des3`) unwraps to the same key as
-    /// the unencrypted PKCS#8 on a standard build. A `fips-tls` build rejects
+    /// the unencrypted PKCS#8 on a standard build. A `fips` build rejects
     /// that cipher before signing.
     #[test]
     fn encrypted_key_produces_the_same_issuer_as_unencrypted() {
@@ -448,7 +448,7 @@ mod tests {
         )
         .unwrap();
 
-        #[cfg(not(feature = "fips-tls"))]
+        #[cfg(not(feature = "fips"))]
         {
             let plain = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
             let iss_of = |pem: &str, pass: Option<&str>| -> String {
@@ -467,10 +467,10 @@ mod tests {
                 "unwrapping must recover the identical key"
             );
         }
-        #[cfg(feature = "fips-tls")]
+        #[cfg(feature = "fips")]
         {
             let err = generate_jwt_token("acct", "user", &encrypted, Some(PASSPHRASE))
-                .expect_err("fips-tls refuses 3DES");
+                .expect_err("fips refuses 3DES");
             match err {
                 AuthError::InvalidPrivateKeyFormat { source, .. } => {
                     assert!(
@@ -564,7 +564,7 @@ mod tests {
         // Sanity: correct password succeeds, proving the encrypted fixture
         // above is genuinely encrypted and genuinely decryptable.
         //
-        // Not under `fips-tls`, though. `private_key_to_pem_passphrase` writes
+        // Not under `fips`, though. `private_key_to_pem_passphrase` writes
         // traditional PKCS#1 (`Proc-Type: 4,ENCRYPTED`), and that format
         // derives its key with OpenSSL's MD5-based `EVP_BytesToKey` -- MD5 is
         // definitional to the format, not a parameter of it, and AWS-LC
@@ -577,15 +577,15 @@ mod tests {
         // encrypted round-trips), and the refusal itself by
         // `legacy_encrypted_pem_is_rejected_in_fips_builds`.
         let correct = generate_jwt_token("acct", "user", &encrypted_pem, Some("correct_password"));
-        #[cfg(not(feature = "fips-tls"))]
+        #[cfg(not(feature = "fips"))]
         assert!(
             correct.is_ok(),
             "correct password should load the key, got: {correct:?}"
         );
-        #[cfg(feature = "fips-tls")]
+        #[cfg(feature = "fips")]
         assert!(
             matches!(correct, Err(AuthError::InvalidPrivateKeyFormat { .. })),
-            "fips-tls refuses traditional encrypted PEM whatever the password, got: {correct:?}"
+            "fips refuses traditional encrypted PEM whatever the password, got: {correct:?}"
         );
     }
 }

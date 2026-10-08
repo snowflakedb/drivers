@@ -119,17 +119,17 @@ fn smoke_connection_set_tls_config() {
 // fn c_api_tls_status_reports_provider_and_build_without_a_connection() {
 //     let mut status = SFTlsStatus {
 //         tls_provider_is_fips: u32::MAX,
-//         fips_tls_build_enabled: u32::MAX,
+//         fips_build_enabled: u32::MAX,
 //     };
 //
 //     assert_eq!(unsafe { SFGetTlsStatus(&mut status) }, 0);
 //     assert_eq!(
-//         status.fips_tls_build_enabled,
-//         u32::from(cfg!(feature = "fips-tls"))
+//         status.fips_build_enabled,
+//         u32::from(cfg!(feature = "fips"))
 //     );
 //     assert_eq!(
 //         status.tls_provider_is_fips,
-//         u32::from(cfg!(feature = "fips-tls"))
+//         u32::from(cfg!(feature = "fips"))
 //     );
 // }
 //

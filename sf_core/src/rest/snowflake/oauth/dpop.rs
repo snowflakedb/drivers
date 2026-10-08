@@ -256,7 +256,7 @@ pub(crate) fn proof_jwt(
     let signing_input = format!("{header_b64}.{claims_b64}");
     // `sign` hashes the message itself. Deliberately not `sign_digest` with a
     // pre-computed hash: AWS-LC marks that path as not FIPS-approved, so a
-    // `fips-tls` build must hand over the message and let the module hash it.
+    // `fips` build must hand over the message and let the module hash it.
     let sig = key
         .key
         .sign(&SystemRandom::new(), signing_input.as_bytes())

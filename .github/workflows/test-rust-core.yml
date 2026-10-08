@@ -145,131 +145,10 @@ jobs:
         if: runner.os == 'Linux'
         uses: ./.github/actions/free-disk-space-linux
 
-      - name: Install Go
-        uses: actions/setup-go@v7
+      - name: Setup FIPS build environment
+        uses: ./.github/actions/setup-fips-build-env
         with:
-          go-version: '1.25.x'
-          cache: false
-
-      - name: Install CMake 3
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
-          python3 -m venv "$CMAKE_VENV"
-          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
-          "$CMAKE_VENV/bin/pip" install 'cmake>=3,<4'
-          cmake_bin="$CMAKE_VENV/bin/cmake"
-          "$cmake_bin" --version | grep '^cmake version 3\.'
-          echo "$CMAKE_VENV/bin" >> "$GITHUB_PATH"
-          echo "CMAKE=$cmake_bin" >> "$GITHUB_ENV"
-
-      - name: Install GCC 13
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes gcc-13 g++-13
-          echo "CC=gcc-13" >> "$GITHUB_ENV"
-          echo "CXX=g++-13" >> "$GITHUB_ENV"
-          gcc-13 --version
-          g++-13 --version
-
-      - name: Select Apple Clang
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          clang --version | grep 'Apple clang'
-          clang++ --version | grep 'Apple clang'
-          echo "CC=clang" >> "$GITHUB_ENV"
-          echo "CXX=clang++" >> "$GITHUB_ENV"
-
-      - name: Configure Windows FIPS tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          python -m pip install "cmake>=3,<4"
-          $cmakeDir = python -c "import cmake; print(cmake.CMAKE_BIN_DIR)"
-          $cmakeExe = Join-Path $cmakeDir "cmake.exe"
-          if (-not (Test-Path $cmakeExe)) {
-            throw "CMake executable not found at $cmakeExe"
-          }
-          "CMAKE=$cmakeExe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $env:CMAKE = $cmakeExe
-
-          $paths = $env:PATH -split ';' | Where-Object {
-            $_ -and $_ -notmatch '\\Strawberry\\c\\bin\\?$'
-          }
-          if (Test-Path "C:\Strawberry\perl\bin") {
-            $paths = @("C:\Strawberry\perl\bin") + $paths
-          }
-          if (-not (Get-Command nasm.exe -ErrorAction SilentlyContinue)) {
-            choco install nasm --yes --no-progress
-            $nasmDir = "C:\Program Files\NASM"
-            if (Test-Path (Join-Path $nasmDir "nasm.exe")) {
-              $paths = @($nasmDir) + $paths
-            }
-          }
-          $env:PATH = $paths -join ';'
-
-          $libclang = Get-ChildItem "C:\Program Files\LLVM\bin\libclang.dll" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $libclang) {
-            throw "libclang.dll not found under C:\Program Files\LLVM\bin"
-          }
-          $libclangPath = $libclang.DirectoryName
-          $env:PATH = "$libclangPath;$env:PATH"
-          "PATH=$env:PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LIBCLANG_PATH=$libclangPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $env:LIBCLANG_PATH = $libclangPath
-
-          foreach ($tool in @('perl.exe', 'nasm.exe', 'clang.exe')) {
-            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "$tool is required for the Windows FIPS build"
-            }
-          }
-          perl --version
-          nasm -version
-          clang --version
-
-      - name: Setup MSVC environment
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/setup-msvc
-        with:
-          arch: ${{ matrix.msvc_arch }}
-
-      - name: Setup OpenSSL (Windows x64)
-        if: runner.os == 'Windows'
-        uses: ./.github/actions/setup-windows-openssl
-        with:
-          arch: x86_64
-          linkage: dynamic
-
-      - name: Verify Windows build tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          foreach ($tool in @('ninja.exe', 'go.exe', 'cl.exe', 'perl.exe', 'nasm.exe', 'clang.exe')) {
-            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "$tool is required for the Windows FIPS build"
-            }
-          }
-          if (-not (Test-Path (Join-Path $env:LIBCLANG_PATH "libclang.dll"))) {
-            throw "libclang.dll is missing from LIBCLANG_PATH"
-          }
-          $cmakeVersion = & $env:CMAKE --version
-          if ($cmakeVersion[0] -notmatch '^cmake version 3\.') {
-            throw "Expected CMake 3.x, got: $($cmakeVersion[0])"
-          }
-          $cmakeVersion
-          ninja --version
-          go version
-          cl
+          msvc-arch: ${{ matrix.msvc_arch || 'x64' }}
 
       - name: Restore Rust cache
         id: rust-cache
@@ -279,11 +158,11 @@ jobs:
           mode: restore
           shared-key: ${{ matrix.cache_key }}
 
-      - name: Build sf_core with FIPS TLS
-        run: cargo build --locked --package sf_core --no-default-features --features fips-tls,protobuf
+      - name: Build sf_core with FIPS
+        run: cargo build --locked --package sf_core --no-default-features --features fips,protobuf
 
       - name: Compile FIPS smoke tests
-        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips-tls,protobuf
+        run: cargo test --locked --no-run --lib --package sf_core --no-default-features --features fips,protobuf
 
       - name: Expose Windows FIPS DLLs
         if: runner.os == 'Windows'
@@ -304,7 +183,14 @@ jobs:
             ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
 
       - name: Run FIPS smoke tests
-        run: cargo test --locked --lib --package sf_core --no-default-features --features fips-tls,protobuf tls::fips_tests
+        # Exclude CRL tests that fetch public URLs; local CRL fixtures remain covered.
+        run: >-
+          cargo test --locked --lib --package sf_core --no-default-features --features fips,protobuf --
+          tls:: crypto:: auth:: rest::snowflake::oauth:: file_manager::encryption crl::
+          rest::snowflake::workload_identity::aws config::private_key
+          --skip crl::disk_tests::disk_crl_tests::test_crl_parsing_performance
+          --skip crl::disk_tests::disk_crl_tests::test_disk_cache_read_and_half_life_refresh
+          --skip crl::cache::tests::should_warn_when_file_permission_check_is_disabled
 
       - name: Decode cloud parameters
         shell: bash
@@ -344,7 +230,7 @@ jobs:
             echo "FIPS connectivity smoke: ${cloud}"
             export PARAMETER_PATH="$(pwd)/parameters_${cloud}.json"
             cargo test --locked --test e2e_tests --package sf_core \
-              --no-default-features --features fips-tls,protobuf \
+              --no-default-features --features fips,protobuf \
               on_a_fips_build
           done
 
@@ -361,6 +247,191 @@ jobs:
         with:
           mode: save
           shared-key: ${{ matrix.cache_key }}
+          slim-mode: aggressive
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  fips_artifacts:
+    needs: load-fips-matrix
+    if: inputs.run_rust_core && needs.load-fips-matrix.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.load-fips-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    name: fips artifacts (${{ matrix.name }})
+    # Release artifacts retain the workspace's thin LTO and single codegen unit.
+    timeout-minutes: 180
+    env:
+      CARGO_PROFILE_RELEASE_STRIP: 'false'
+      # Set before any Cargo invocation, including napi's metadata/build calls.
+      RUSTFLAGS: ${{ startsWith(matrix.os, 'ubuntu') && '-C link-arg=-Wl,--undefined-version' || '' }}
+      SF_CORE_FIPS: '1'
+      SF_CORE_RELEASE: '1'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free runner disk space
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Setup FIPS build environment
+        uses: ./.github/actions/setup-fips-build-env
+        with:
+          msvc-arch: ${{ matrix.msvc_arch || 'x64' }}
+
+      - name: Install unixODBC development files
+        if: runner.os == 'Linux'
+        run: sudo apt-get install --yes unixodbc-dev
+
+      - name: Install unixODBC development files (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install unixodbc
+          odbc_prefix="$(brew --prefix unixodbc)"
+          echo "ODBC_PREFIX=$odbc_prefix" >> "$GITHUB_ENV"
+
+      - name: Test FIPS artifact inspection scripts
+        run: python -m unittest discover -s ci/fips -v
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Match test-nodejs.yml: npm 10 has an install bug, and this library
+      # intentionally does not commit package-lock.json.
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
+      - name: Install Node.js dependencies
+        working-directory: nodejs
+        run: npm install
+
+      - name: Configure release artifact paths
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+
+          rustc = subprocess.check_output(["rustc", "-vV"], text=True)
+          target = next(line.removeprefix("host: ") for line in rustc.splitlines() if line.startswith("host: "))
+          release_dir = Path("target", target, "release").resolve()
+          release_dir.mkdir(parents=True, exist_ok=True)
+          library = {"linux": "libsfodbc.so", "darwin": "libsfodbc.dylib", "win32": "sfodbc.dll"}[sys.platform]
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              # napi always passes an explicit target. Use the same layout for
+              # ODBC and the final Windows cargo rustc link to reuse dependencies.
+              print(f"CARGO_BUILD_TARGET={target}", file=env)
+              print(f"ODBC_ARTIFACT={release_dir / library}", file=env)
+              if sys.platform == "win32":
+                  # A unique /MAP argument forces a fresh final link on cache hits.
+                  map_dir = Path(tempfile.mkdtemp(prefix="fips-odbc-map-"))
+                  print(f"ODBC_LINKER_MAP={map_dir / 'sfodbc.map'}", file=env)
+                  print(f"SF_CORE_LINKER_MAP={release_dir / 'nodejs_bridge.map'}", file=env)
+
+      - name: Restore Rust artifact cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: ${{ matrix.cache_key }}-artifacts
+
+      - name: Build release FIPS ODBC library
+        if: runner.os != 'Windows'
+        run: cargo build --locked --release --lib --package odbc --features fips
+
+      - name: Build release FIPS ODBC library with linker map
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo rustc --locked --release --lib --package odbc --features fips -- -C "link-arg=/MAP:$env:ODBC_LINKER_MAP"
+
+      # ODBC and Node use the same target/profile/FIPS dependency, so these
+      # DLLs are available before unit globalSetup builds the Node addon.
+      - name: Expose Windows FIPS DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path "target" "$env:CARGO_BUILD_TARGET/release"
+          $crypto = Get-ChildItem $releaseDir -Recurse -Filter "aws_lc_fips_*_crypto.dll"
+          $wrapper = Get-ChildItem $releaseDir -Recurse -Filter "aws_lc_fips_*_rust_wrapper.dll"
+          if (-not $crypto) {
+            throw "AWS-LC-FIPS crypto DLL was not produced"
+          }
+          if (-not $wrapper) {
+            throw "AWS-LC-FIPS Rust wrapper DLL was not produced"
+          }
+          (@($crypto) + @($wrapper)) |
+            ForEach-Object { $_.DirectoryName } |
+            Sort-Object -Unique |
+            ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+
+      # Build and link the addon so the inspection below resolves it the same
+      # way src/core/index.ts does.
+      - name: Build Node.js addon
+        working-directory: nodejs
+        run: npm run build:core && npm run build:link-local
+
+      - name: Inspect linked crypto
+        shell: python {0}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          package_dir = Path("nodejs/_build/snowflake-sdk-core")
+          package = json.loads((package_dir / "package.json").read_text(encoding="utf-8"))
+          # Resolve the linked package just as src/core/index.ts does, rather
+          # than inspecting an unrelated target/ DLL or a stale .node copy.
+          node_artifact = subprocess.check_output(
+              ["node", "-p", f"require.resolve({json.dumps(package['name'])})"],
+              cwd="nodejs",
+              text=True,
+          ).strip()
+          if Path(node_artifact).resolve() != (package_dir / package["main"]).resolve():
+              raise RuntimeError("Node.js did not resolve the freshly built FIPS addon")
+          for artifact, linker_map in (
+              (os.environ["ODBC_ARTIFACT"], os.environ.get("ODBC_LINKER_MAP")),
+              (node_artifact, os.environ.get("SF_CORE_LINKER_MAP")),
+          ):
+              command = [sys.executable, "ci/fips/check_linked_crypto.py", artifact]
+              if sys.platform == "win32":
+                  command.extend(["--linker-map", linker_map])
+              subprocess.run(command, check=True)
+
+      - name: Clean up Windows ODBC linker map
+        if: always() && runner.os == 'Windows' && env.ODBC_LINKER_MAP != ''
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import shutil
+
+          shutil.rmtree(Path(os.environ["ODBC_LINKER_MAP"]).parent)
+
+      - name: Save Rust artifact cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: ${{ matrix.cache_key }}-artifacts
           slim-mode: aggressive
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
@@ -648,23 +719,22 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # Non-FIPS ARM64 build and test.
-  # On windows-11-arm, fips-tls fails for aarch64-pc-windows-msvc with:
+  # On windows-11-arm, fips fails for aarch64-pc-windows-msvc with:
   #   library machine type 'x64' conflicts with target machine type 'ARM64'
   # Evidence points to aws-lc-fips-sys Windows build env setup:
   # builder/printenv.bat calls vcvarsall.bat x64, overriding ARM64 toolchain env.
-  # This lane keeps fips-tls disabled.
+  # This lane keeps fips disabled.
   # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
   # Repro job: https://github.com/snowflakedb/drivers/actions/runs/22779459689/job/66081199710
   # The FIPS smoke matrix excludes Windows ARM because it is not a supported
   # FIPS release target.
-  # Coverage note: tests gated behind cfg(feature = "fips-tls") are
-  # tls::fips_tests and the e2e connectivity smoke in fips_connectivity:
-  # SELECT 1 with CRL off, SELECT 1 with CRL enabled, and a small PUT and GET.
-  # The unit tests verify the linked aws-lc module reports FIPS mode and the
-  # installed rustls provider / ClientConfig are FIPS. Those checks require a
-  # FIPS build, so this non-FIPS lane does not run them. Every other test runs
-  # identically with and without fips-tls; only the linked TLS crypto
-  # backend differs (aws-lc-sys vs aws-lc-fips-sys).
+  # Coverage note: fips_smoke runs the TLS, crypto, auth, OAuth, stage-encryption,
+  # CRL, AWS WIF and private-key unit paths with fips enabled. Its cloud e2e
+  # smoke also checks TLS status and a negotiated FIPS suite, AES-encrypted JWT
+  # login, 3DES/legacy PEM rejection, multi-chunk results, CRL-enabled SELECT 1
+  # and a small PUT/GET round-trip. Those e2e checks and FIPS-only unit assertions
+  # require a FIPS build; this non-FIPS lane instead exercises the standard
+  # backend, including its support for the legacy private-key formats.
   test_windows_arm64_nonfips:
     needs: load-core-matrix
     if: inputs.run_rust_core && needs.load-core-matrix.outputs.windows_arm_active == 'true'
@@ -1087,7 +1157,7 @@ jobs:
             --parameter-path "${{ github.workspace }}/parameters.json"
 
   rust-core-status:
-    needs: [load-fips-matrix, format, test_sf_params_spec, fips_smoke, date_output_format_parity, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
+    needs: [load-fips-matrix, format, test_sf_params_spec, fips_smoke, fips_artifacts, date_output_format_parity, test, test_windows_arm64_nonfips, test_windows_x86, cleanup_rust_core]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1103,6 +1173,7 @@ jobs:
              [[ "${{ needs.load-fips-matrix.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_sf_params_spec.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.fips_smoke.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.fips_artifacts.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.date_output_format_parity.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test_windows_arm64_nonfips.result }}" =~ ^(failure|cancelled)$ ]] || \
@@ -1112,6 +1183,7 @@ jobs:
             echo "  - load-fips-matrix: ${{ needs.load-fips-matrix.result }}"
             echo "  - test_sf_params_spec: ${{ needs.test_sf_params_spec.result }}"
             echo "  - fips_smoke: ${{ needs.fips_smoke.result }}"
+            echo "  - fips_artifacts: ${{ needs.fips_artifacts.result }}"
             echo "  - date_output_format_parity: ${{ needs.date_output_format_parity.result }}"
             echo "  - test: ${{ needs.test.result }}"
             echo "  - test_windows_arm64_nonfips: ${{ needs.test_windows_arm64_nonfips.result }}"
@@ -1121,13 +1193,15 @@ jobs:
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "${{ needs.test.result }}" == "skipped" ]] || \
-             [[ "${{ needs.fips_smoke.result }}" == "skipped" ]]; then
+             [[ "${{ needs.fips_smoke.result }}" == "skipped" ]] || \
+             [[ "${{ needs.fips_artifacts.result }}" == "skipped" ]]; then
             # Driver CI only invokes this workflow for drivers it selected, so a
             # skip here means the gating is broken rather than "nothing to do".
             if [[ "${{ inputs.run_rust_core }}" == "true" ]]; then
               echo "✗ Driver CI requested Rust Core tests but a required test job was SKIPPED — check the job-level if: conditions."
               echo "  - test: ${{ needs.test.result }}"
               echo "  - fips_smoke: ${{ needs.fips_smoke.result }}"
+              echo "  - fips_artifacts: ${{ needs.fips_artifacts.result }}"
               exit 1
             fi
             echo "✓ Rust Core tests were SKIPPED (not requested by Driver CI)"

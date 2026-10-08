@@ -1,7 +1,7 @@
 //! The driver's cryptographic module: aws-lc, in FIPS mode or not.
 //!
 //! There is one crypto backend, always aws-lc, and one feature flag deciding
-//! which build of it gets linked -- `fips-tls` selects aws-lc-fips-sys, its
+//! which build of it gets linked -- `fips` selects aws-lc-fips-sys, its
 //! absence selects aws-lc-sys. Nothing here is swappable at runtime and there
 //! is no second backend to choose between, so this type is a single accessor
 //! rather than an abstraction over alternatives.
@@ -17,16 +17,16 @@
 //! `ensure_crypto_provider` installs a process-global default and deliberately
 //! yields to an embedding application that got there first. That is the right
 //! behaviour for a *global* slot, but it means the module carrying our traffic
-//! is decided by a startup race we do not control -- and under `fips-tls` that
+//! is decided by a startup race we do not control -- and under `fips` that
 //! race is the entire compliance claim.
 //!
 //! So this holds its own [`CryptoProvider`] and hands it explicitly to
 //! `ClientConfig::builder_with_provider` and
-//! `WebPkiServerVerifier::builder_with_provider`. Whoever won the global slot,
-//! a `fips-tls` build verifies certificates and negotiates TLS with the module
-//! this build linked. The global install stays for now because reqwest clients
-//! built without `use_preconfigured_tls` still resolve through it; retiring it
-//! is the remaining step of this phase.
+//! `WebPkiServerVerifier::builder_with_provider`. Connection, storage and HTTPS
+//! CRL clients use this explicit provider, and FIPS builds reject disabled
+//! certificate verification. The global install remains for standard-build
+//! insecure clients, plain-HTTP clients and fail-closed platform-detection
+//! probes; it no longer selects the CRL downloader's TLS provider.
 //!
 //! # Why one process-wide instance
 //!
@@ -56,11 +56,16 @@ static MODULE: LazyLock<CryptoModule> = LazyLock::new(|| {
     let module = CryptoModule {
         provider: Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
     };
-    // Module identity, recorded once. A `fips-tls` build whose module did not
+    #[cfg(feature = "fips")]
+    let version = tracing::field::debug(module.version());
+    #[cfg(not(feature = "fips"))]
+    let version = tracing::field::Empty;
+    // Module identity, recorded once. A `fips` build whose module did not
     // enter FIPS mode is the case worth seeing in a log: the two fields
     // disagree, and the build is not making the claim its name implies.
     tracing::debug!(
         linked = module.name(),
+        version,
         provider_is_fips = module.provider_is_fips(),
         "crypto module initialised"
     );
@@ -108,16 +113,22 @@ impl CryptoModule {
         self.provider.fips()
     }
 
+    #[cfg(feature = "fips")]
+    pub(crate) fn version(&self) -> &'static std::ffi::CStr {
+        // SAFETY: AWS-LC returns a static, non-null, NUL-terminated version string.
+        unsafe { std::ffi::CStr::from_ptr(aws_lc_fips_sys::awslc_version_string()) }
+    }
+
     /// Which aws-lc build was linked, for diagnostics and wrapper-facing
     /// status.
     ///
     /// Tracks the Cargo feature rather than the runtime state: it answers
     /// "which module was linked", while
     /// [`provider_is_fips`](Self::provider_is_fips) answers "is that module's
-    /// provider FIPS-approved". Both are needed -- a `fips-tls` build whose
+    /// provider FIPS-approved". Both are needed -- a `fips` build whose
     /// module failed to enter FIPS mode must not look like a non-FIPS build.
     pub(crate) fn name(&self) -> &'static str {
-        if cfg!(feature = "fips-tls") {
+        if cfg!(feature = "fips") {
             "aws-lc-fips"
         } else {
             "aws-lc"
@@ -164,7 +175,7 @@ mod tests {
     /// feature rather than runtime state.
     #[test]
     fn name_tracks_the_linked_module() {
-        let expected = if cfg!(feature = "fips-tls") {
+        let expected = if cfg!(feature = "fips") {
             "aws-lc-fips"
         } else {
             "aws-lc"
@@ -173,14 +184,14 @@ mod tests {
     }
 
     /// A non-FIPS build must not claim FIPS. Gated to non-FIPS builds only:
-    /// under `fips-tls` the corresponding assertion lives in
+    /// under `fips` the corresponding assertion lives in
     /// `tls::fips_tests`, which asserts the positive case end to end.
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn non_fips_build_does_not_report_fips() {
         assert!(
             !CryptoModule::get().provider_is_fips(),
-            "a build without `fips-tls` links aws-lc-sys and must report false"
+            "a build without `fips` links aws-lc-sys and must report false"
         );
     }
 }

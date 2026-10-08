@@ -17,17 +17,17 @@
 //! - **Key derivation** (PBKDF2) and **AES-CBC decryption** run in AWS-LC.
 //!   These are approved operations and they belong inside the module.
 //! - **3DES-CBC decryption**, on a standard build, runs in the `des` crate.
-//!   3DES is not an approved algorithm, so a `fips-tls` build rejects a PBES2
+//!   3DES is not an approved algorithm, so a `fips` build rejects a PBES2
 //!   key whose cipher is 3DES instead of decrypting it.
 //!
 //! # Where the builds differ
 //!
 //! Two customer-supplied formats load on a standard build and are refused on
-//! a `fips-tls` build. AES-128/192/256-CBC PKCS#8 loads on both.
+//! a `fips` build. AES-128/192/256-CBC PKCS#8 loads on both.
 //!
 //! - PBES2 with 3DES-CBC, which `openssl pkcs8 -topk8 -v2 des3` writes. The
 //!   KDF is PBKDF2 inside AWS-LC. A standard build decrypts the ciphertext
-//!   with the `des` crate. A `fips-tls` build returns
+//!   with the `des` crate. A `fips` build returns
 //!   [`PrivateKeyError::TripleDesEncrypted`].
 //! - Traditional encrypted PEM (`-----BEGIN RSA PRIVATE KEY-----` with
 //!   `Proc-Type: 4,ENCRYPTED`), which `openssl rsa -aes256` and
@@ -81,9 +81,9 @@ pub(crate) fn load_rsa_key(
 /// parse the plaintext as whatever the label says it is.
 ///
 /// Split by build. See [`legacy_pem`]: the format's KDF is MD5, which a
-/// `fips-tls` build does not run. PBES2 3DES is the other format refused only
+/// `fips` build does not run. PBES2 3DES is the other format refused only
 /// on that build.
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 fn from_legacy_pem(
     label: &str,
     dek_info: &str,
@@ -96,7 +96,7 @@ fn from_legacy_pem(
     from_labelled_der(label, der.reveal(), None)
 }
 
-#[cfg(feature = "fips-tls")]
+#[cfg(feature = "fips")]
 fn from_legacy_pem(
     _label: &str,
     _dek_info: &str,
@@ -246,9 +246,9 @@ fn decrypt_payload(
         pbes2::EncryptionScheme::Aes128Cbc { iv } => aes_cbc_decrypt(&AES_128, key, iv, ciphertext),
         pbes2::EncryptionScheme::Aes192Cbc { iv } => aes_cbc_decrypt(&AES_192, key, iv, ciphertext),
         pbes2::EncryptionScheme::Aes256Cbc { iv } => aes_cbc_decrypt(&AES_256, key, iv, ciphertext),
-        #[cfg(not(feature = "fips-tls"))]
+        #[cfg(not(feature = "fips"))]
         pbes2::EncryptionScheme::DesEde3Cbc { iv } => des_ede3_cbc_decrypt(key, iv, ciphertext),
-        #[cfg(feature = "fips-tls")]
+        #[cfg(feature = "fips")]
         pbes2::EncryptionScheme::DesEde3Cbc { .. } => TripleDesEncryptedSnafu.fail(),
         // Single-DES has no arm because its `pkcs5` variant is behind the
         // `des-insecure` feature we deliberately leave off: a 56-bit key is
@@ -291,9 +291,9 @@ fn aes_cbc_decrypt(
     Ok(buf.into())
 }
 
-/// 3DES-CBC/PKCS#7. A `fips-tls` build never reaches this: that cipher is
+/// 3DES-CBC/PKCS#7. A `fips` build never reaches this: that cipher is
 /// rejected in [`decrypt_payload`].
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 fn des_ede3_cbc_decrypt(
     key: &[u8],
     iv: &[u8; 8],
@@ -465,17 +465,17 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, PrivateKeyError> {
 /// Gated because of the KDF, not the cipher. The format derives its key with
 /// OpenSSL's `EVP_BytesToKey`, which is MD5-based -- MD5 is definitional to
 /// the format, so there is no variant of this that runs inside AWS-LC. A
-/// `fips-tls` build therefore cannot read these keys and says so, while a
+/// `fips` build therefore cannot read these keys and says so, while a
 /// standard build makes no FIPS claim and keeps the compatibility the OpenSSL
 /// loader had.
 ///
-/// PBES2 3DES is the other format a `fips-tls` build refuses. Recorded as F16
+/// PBES2 3DES is the other format a `fips` build refuses. Recorded as F16
 /// in the compliance plan: a standard build makes no FIPS claim and keeps the
 /// format.
 ///
 /// The bulk decryption still runs in AWS-LC for AES and in `des` for 3DES.
 /// Only the key derivation is MD5.
-#[cfg(not(feature = "fips-tls"))]
+#[cfg(not(feature = "fips"))]
 mod legacy_pem {
     use super::{
         AES_128, AES_192, AES_256, MalformedPemSnafu, PrivateKeyError, Sensitive,
@@ -628,7 +628,7 @@ pub enum PrivateKeyError {
         location: Location,
     },
 
-    /// Only reachable in `fips-tls` builds; standard builds read these keys.
+    /// Only reachable in `fips` builds; standard builds read these keys.
     /// The message says which build the user is on, because otherwise "this
     /// key does not work" is indistinguishable from "this key is broken" for
     /// someone whose colleague on a default artifact is using it happily.
@@ -645,7 +645,7 @@ pub enum PrivateKeyError {
         location: Location,
     },
 
-    /// Only reachable in `fips-tls` builds; standard builds unwrap these keys.
+    /// Only reachable in `fips` builds; standard builds unwrap these keys.
     /// The message names the build for the same reason as [`Self::LegacyEncryptedPem`].
     #[snafu(display(
         "This private key is encrypted with 3DES-CBC. This is a FIPS build, \
@@ -809,9 +809,9 @@ mod tests {
     }
 
     /// `openssl pkcs8 -topk8 -v2 des3` writes PBES2 with 3DES-CBC. A standard
-    /// build unwraps it. A `fips-tls` build rejects it; see
+    /// build unwraps it. A `fips` build rejects it; see
     /// `des_ede3_encrypted_pkcs8_is_rejected_in_fips_builds`.
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn des_ede3_encrypted_pkcs8_round_trips() {
         let key = openssl_key();
@@ -828,9 +828,9 @@ mod tests {
         assert_recovers(&loaded, &key);
     }
 
-    /// A `fips-tls` build names the cipher and the build, and tells the caller
+    /// A `fips` build names the cipher and the build, and tells the caller
     /// how to re-encrypt the key. PEM and bare DER take the same path.
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn des_ede3_encrypted_pkcs8_is_rejected_in_fips_builds() {
         let key = openssl_key();
@@ -926,7 +926,7 @@ mod tests {
     /// from `-des3`, because the KDF derives a different key length for each
     /// and the IV width differs between AES (16) and 3DES (8) -- a mistake in
     /// either would surface as a wrong key rather than as a parse error.
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn legacy_encrypted_pem_round_trips() {
         for (label, cipher) in [
@@ -955,7 +955,7 @@ mod tests {
     /// A wrong passphrase must fail rather than yield a mangled key: the KDF
     /// happily derives *a* key from any passphrase, so the only thing standing
     /// between a typo and a corrupt key is the padding check.
-    #[cfg(not(feature = "fips-tls"))]
+    #[cfg(not(feature = "fips"))]
     #[test]
     fn legacy_encrypted_pem_rejects_wrong_passphrase() {
         let rsa = Rsa::generate(2048).expect("rsa keygen");
@@ -971,7 +971,7 @@ mod tests {
 
     /// FIPS builds cannot derive a key with MD5, so the same key is refused --
     /// with a message that says it is the build talking, not the key.
-    #[cfg(feature = "fips-tls")]
+    #[cfg(feature = "fips")]
     #[test]
     fn legacy_encrypted_pem_is_rejected_in_fips_builds() {
         let rsa = Rsa::generate(2048).expect("rsa keygen");

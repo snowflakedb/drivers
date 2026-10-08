@@ -62,7 +62,7 @@ impl Bridge {
 // #[napi(object)]
 // pub struct TlsStatus {
 //     pub tls_provider_is_fips: bool,
-//     pub fips_tls_build_enabled: bool,
+//     pub fips_build_enabled: bool,
 // }
 //
 // #[napi]
@@ -70,6 +70,6 @@ impl Bridge {
 //     let status = sf_core::tls::tls_status();
 //     TlsStatus {
 //         tls_provider_is_fips: status.tls_provider_is_fips,
-//         fips_tls_build_enabled: status.fips_tls_build_enabled,
+//         fips_build_enabled: status.fips_build_enabled,
 //     }
 // }

@@ -73,7 +73,7 @@ public class SnowflakeDriver implements Driver {
   //       () -> {
   //         DriverGetTlsStatusResponse response = ProtobufApis.coreDriverApi.driverGetTlsStatus();
   //         return new TlsStatus(response.getTlsProviderIsFips(),
-  //             response.getFipsTlsBuildEnabled());
+  //             response.getFipsBuildEnabled());
   //       });
   // }
 
