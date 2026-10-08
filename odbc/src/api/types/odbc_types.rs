@@ -1283,10 +1283,9 @@ pub enum SqlType {
     // ODBC driver (`Source/sf_odbc.h`) for application compatibility.
     //
     // These are *not* returned from `SQLDescribeCol` or
-    // `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`: per the MS ODBC spec, those
-    // descriptors must report the standard `SQL_TYPE_TIMESTAMP` (93) for
-    // ODBC 3.x output. Applications distinguish the three subtypes via
-    // `SQLColAttribute(SQL_DESC_TYPE_NAME)`.
+    // `SQLColAttribute(SQL_DESC_CONCISE_TYPE)`. Those descriptors report
+    // `SQL_TYPE_TIMESTAMP` (93). `SQL_DESC_TYPE_NAME` is `TIMESTAMP_LTZ`,
+    // `TIMESTAMP_TZ`, or `TIMESTAMP_NTZ`.
     SqlSfTimestampLtz = 2000, // SQL_SF_TIMESTAMP_LTZ
     SqlSfTimestampTz = 2001,  // SQL_SF_TIMESTAMP_TZ
     SqlSfTimestampNtz = 2002, // SQL_SF_TIMESTAMP_NTZ

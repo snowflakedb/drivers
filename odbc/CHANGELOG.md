@@ -13,6 +13,7 @@
 
 Bug fixes:
 
+- Fixed query-result `SQL_DESC_TYPE_NAME` so `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`, and `TIMESTAMP_TZ` are reported separately. `SQLDescribeCol` stays `SQL_TYPE_TIMESTAMP` (93). (snowflakedb/drivers#2444)
 - Fixed `SQLBindParameter` and IPD `SQLSetDescRec` to return SQLSTATE `HYC00` (optional feature not implemented) for the Snowflake vendor type codes that `SQLGetTypeInfo` reports but the driver cannot bind: `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`, and `SQL_SF_VECTOR`. `SQLBindParameter` previously returned `HY004`; IPD `SQLSetDescRec` previously returned `HY021`. Bind semi-structured values as `SQL_VARCHAR` and coerce in the SQL with `PARSE_JSON(?)`, `TO_ARRAY(?)`, or `TO_OBJECT(?)`. A type code the catalog does not report still returns `HY004` from `SQLBindParameter`. (snowflakedb/drivers#2369)
 
 ## v4.0.0

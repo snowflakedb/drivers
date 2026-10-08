@@ -8,6 +8,7 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
+#include "sf_odbc.h"
 
 // =============================================================================
 // Tests for SQLColAttribute (ODBC 3.x) based on ODBC specification:
@@ -208,8 +209,14 @@ TEST_CASE("SQLColAttribute returns correct attributes for TIMESTAMP_NTZ.", "[que
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_CONCISE_TYPE) == SQL_TYPE_TIMESTAMP);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_TYPE) == SQL_DATETIME);
   // Then All metadata attributes should match expected values for TIMESTAMP_NTZ
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  OLD_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  }
+  NEW_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TIMESTAMP_NTZ");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TIMESTAMP_NTZ");
+  }
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_DISPLAY_SIZE) == 29);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_OCTET_LENGTH) == 16);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_NUM_PREC_RADIX) == 0);
@@ -236,8 +243,14 @@ TEST_CASE("SQLColAttribute returns correct attributes for TIMESTAMP_LTZ.", "[que
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_CONCISE_TYPE) == SQL_TYPE_TIMESTAMP);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_TYPE) == SQL_DATETIME);
   // Then All metadata attributes should match expected values for TIMESTAMP_LTZ
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  OLD_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  }
+  NEW_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TIMESTAMP_LTZ");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TIMESTAMP_LTZ");
+  }
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_DISPLAY_SIZE) == 29);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_OCTET_LENGTH) == 16);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_NUM_PREC_RADIX) == 0);
@@ -264,8 +277,14 @@ TEST_CASE("SQLColAttribute returns correct attributes for TIMESTAMP_TZ.", "[quer
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_CONCISE_TYPE) == SQL_TYPE_TIMESTAMP);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_TYPE) == SQL_DATETIME);
   // Then All metadata attributes should match expected values for TIMESTAMP_TZ
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
-  CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  OLD_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TYPE_TIMESTAMP");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TYPE_TIMESTAMP");
+  }
+  NEW_DRIVER_ONLY("BD#169") {
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_TYPE_NAME) == "TIMESTAMP_TZ");
+    CHECK(get_string_attr(stmt, 1, SQL_DESC_LOCAL_TYPE_NAME) == "TIMESTAMP_TZ");
+  }
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_DISPLAY_SIZE) == 29);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_OCTET_LENGTH) == 16);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_NUM_PREC_RADIX) == 0);
@@ -279,6 +298,105 @@ TEST_CASE("SQLColAttribute returns correct attributes for TIMESTAMP_TZ.", "[quer
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_FIXED_PREC_SCALE) == SQL_FALSE);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_NULLABLE) == SQL_NULLABLE);
   CHECK(get_numeric_attr(stmt, 1, SQL_DESC_UNNAMED) == SQL_NAMED);
+}
+
+static void expect_standard_timestamp_metadata(const HandleWrapper& stmt, SQLUSMALLINT col, const char* type_name) {
+  SQLCHAR col_name[128];
+  std::memset(col_name, 0xFF, sizeof(col_name));
+  SQLSMALLINT name_length = 0;
+  SQLSMALLINT data_type = 0;
+  SQLULEN col_size = 0;
+  SQLSMALLINT decimal_digits = 0;
+  SQLSMALLINT nullable = 0;
+  SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
+                                 &decimal_digits, &nullable);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+  CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  CHECK(get_numeric_attr(stmt, col, SQL_DESC_CONCISE_TYPE) == SQL_TYPE_TIMESTAMP);
+  CHECK(get_numeric_attr(stmt, col, SQL_DESC_TYPE) == SQL_DATETIME);
+  CHECK(get_string_attr(stmt, col, SQL_DESC_TYPE_NAME) == type_name);
+  CHECK(get_string_attr(stmt, col, SQL_DESC_LOCAL_TYPE_NAME) == type_name);
+}
+
+TEST_CASE("should report the Snowflake timestamp variant in SQL_DESC_TYPE_NAME.", "[query][col_attribute]") {
+  // Given A query result with TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ columns
+  Connection conn;
+  Schema::use_temp_session_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE t (ntz TIMESTAMP_NTZ(9), ltz TIMESTAMP_LTZ(9), tz TIMESTAMP_TZ(9))");
+  auto stmt = conn.execute("SELECT ntz, ltz, tz FROM t");
+
+  // When SQLColAttribute and SQLDescribeCol are called for each timestamp column
+  SQLSMALLINT column_count = 0;
+  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &column_count);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+  CHECK(column_count == 3);
+
+  const char* variant_names[] = {"TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"};
+
+  // Then The 3.x driver reports TYPE_TIMESTAMP for each timestamp column
+  OLD_DRIVER_ONLY("BD#169") {
+    for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+      INFO(variant_names[col - 1]);
+      expect_standard_timestamp_metadata(stmt, col, "TYPE_TIMESTAMP");
+    }
+  }
+
+  // And The 4.x driver reports TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ
+  NEW_DRIVER_ONLY("BD#169") {
+    for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+      INFO(variant_names[col - 1]);
+      expect_standard_timestamp_metadata(stmt, col, variant_names[col - 1]);
+    }
+  }
+}
+
+TEST_CASE("should change timestamp result metadata only on the 3.x driver when ODBC_USE_CUSTOM_SQL_DATA_TYPES is set.",
+          "[query][col_attribute]") {
+  // Given A session with ODBC_USE_CUSTOM_SQL_DATA_TYPES enabled
+  Connection conn;
+  Schema::use_temp_session_schema(conn);
+  conn.execute("ALTER SESSION SET ODBC_USE_CUSTOM_SQL_DATA_TYPES = TRUE");
+
+  // And A query result with TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ columns
+  conn.execute("CREATE TEMPORARY TABLE t (ntz TIMESTAMP_NTZ(9), ltz TIMESTAMP_LTZ(9), tz TIMESTAMP_TZ(9))");
+  auto stmt = conn.execute("SELECT ntz, ltz, tz FROM t");
+
+  // When SQLColAttribute and SQLDescribeCol are called for each timestamp column
+  SQLSMALLINT column_count = 0;
+  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &column_count);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+  CHECK(column_count == 3);
+
+  // Then The 3.x driver reports the vendor timestamp code and variant type name
+  OLD_DRIVER_ONLY("BD#170") {
+    const SQLSMALLINT vendor_codes[] = {SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_TZ};
+    const char* type_names[] = {"TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"};
+    for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+      INFO(type_names[col - 1]);
+      SQLCHAR col_name[128];
+      std::memset(col_name, 0xFF, sizeof(col_name));
+      SQLSMALLINT name_length = 0;
+      SQLSMALLINT data_type = 0;
+      SQLULEN col_size = 0;
+      SQLSMALLINT decimal_digits = 0;
+      SQLSMALLINT nullable = 0;
+      SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, col_name, sizeof(col_name), &name_length, &data_type,
+                                     &col_size, &decimal_digits, &nullable);
+      REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+      CHECK(data_type == vendor_codes[col - 1]);
+      CHECK(get_numeric_attr(stmt, col, SQL_DESC_CONCISE_TYPE) == vendor_codes[col - 1]);
+      CHECK(get_string_attr(stmt, col, SQL_DESC_TYPE_NAME) == type_names[col - 1]);
+    }
+  }
+
+  // And The 4.x driver reports SQL_TYPE_TIMESTAMP and the variant type name
+  NEW_DRIVER_ONLY("BD#170") {
+    const char* variant_names[] = {"TIMESTAMP_NTZ", "TIMESTAMP_LTZ", "TIMESTAMP_TZ"};
+    for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+      INFO(variant_names[col - 1]);
+      expect_standard_timestamp_metadata(stmt, col, variant_names[col - 1]);
+    }
+  }
 }
 
 TEST_CASE("SQLColAttribute returns correct attributes for BINARY.", "[query][col_attribute]") {

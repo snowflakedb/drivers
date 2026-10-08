@@ -3620,3 +3620,60 @@ behavior_differences:
       attempt fails and what it reports. The new driver fails at bind rather
       than at execute, and distinguishes a type it publishes but cannot bind
       (HYC00) from a type it does not recognise at all (HY004).
+
+  169:
+    name: "Query SQL_DESC_TYPE_NAME distinguishes TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ"
+    status: allowed
+    type: bugfix
+    reviewed: true
+    status_rationale: |
+      This closes a bug internal to 4.x, not a divergence from 3.x's default
+      behavior: with ODBC_USE_CUSTOM_SQL_DATA_TYPES left false (the default on
+      both drivers), 3.x also reports "TYPE_TIMESTAMP" for all three variants.
+      No caller could have relied on the old collapsed name being correct, so
+      distinguishing the variants is a non-breaking bugfix. The flag-specific
+      gap this surfaced is tracked separately as BD#170.
+    is_breaking_change: false
+    impact: medium
+    old_driver_behavior: |
+      With ODBC_USE_CUSTOM_SQL_DATA_TYPES left false, SQLColAttribute reports
+      SQL_DESC_TYPE_NAME "TYPE_TIMESTAMP" for TIMESTAMP_NTZ, TIMESTAMP_LTZ,
+      and TIMESTAMP_TZ alike.
+    new_driver_behavior: |
+      SQL_DESC_TYPE_NAME and SQL_DESC_LOCAL_TYPE_NAME are "TIMESTAMP_NTZ",
+      "TIMESTAMP_LTZ", or "TIMESTAMP_TZ" as appropriate. SQLDescribeCol and
+      SQL_DESC_CONCISE_TYPE/SQL_DESC_TYPE stay SQL_TYPE_TIMESTAMP (93) /
+      SQL_DATETIME, per the ODBC spec's single concise type for the whole
+      TIMESTAMP family.
+    description: |
+      SQL_DESC_TYPE_NAME now carries the Snowflake timestamp variant while
+      the concise type stays the standard timestamp, matching the ODBC
+      spec's single concise type for the TIMESTAMP family.
+
+  170:
+    name: "ODBC_USE_CUSTOM_SQL_DATA_TYPES has no effect on 4.x"
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    status_rationale: |
+      3.x uses this session parameter to switch SQLDescribeCol and
+      SQL_DESC_CONCISE_TYPE/SQL_DESC_TYPE to vendor codes 2000/2001/2002 for
+      TIMESTAMP_LTZ/NTZ/TZ. 4.x does not implement the parameter, so setting
+      it has no effect. Reproducing 3.x's non-compliant vendor-code output on
+      4.x would mean deliberately returning a spec-violating concise type, so
+      the gap is accepted rather than fixed; callers that depended on the
+      flag must switch to reading SQL_DESC_TYPE_NAME instead (see BD#169).
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      Setting ODBC_USE_CUSTOM_SQL_DATA_TYPES true makes SQLDescribeCol and
+      SQL_DESC_CONCISE_TYPE/SQL_DESC_TYPE return vendor codes 2002, 2000, and
+      2001 for TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ respectively.
+    new_driver_behavior: |
+      ODBC_USE_CUSTOM_SQL_DATA_TYPES is not read. SQLDescribeCol and
+      SQL_DESC_CONCISE_TYPE/SQL_DESC_TYPE stay SQL_TYPE_TIMESTAMP (93) /
+      SQL_DATETIME regardless of the parameter's value.
+    description: |
+      A caller that relies on ODBC_USE_CUSTOM_SQL_DATA_TYPES to get a
+      distinguishing concise type for timestamp variants has no equivalent
+      on 4.x.
