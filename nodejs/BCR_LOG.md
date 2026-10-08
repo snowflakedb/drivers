@@ -15,6 +15,20 @@ They differ in two cases:
 
 Decide whether those two cases should keep core's separate retry or share one token or error the way old Node does.
 
+### Azure WIF client-id end-to-end coverage
+
+`workloadIdentityAzureClientId` maps to `workload_identity_azure_client_id` and
+selects the user-assigned Azure managed identity used for WIF attestation. Local
+sf_core tests verify that it becomes the IMDS `client_id` parameter and overrides
+`MANAGED_IDENTITY_CLIENT_ID`, but neither the Node.js nor sf_core live WIF suite
+sets it.
+
+[SNOW-4232648](https://snowflakecomputing.atlassian.net/browse/SNOW-4232648)
+tracks attaching a user-assigned identity to the Azure WIF test VM, mapping it
+to a dedicated Snowflake user, and adding live sf_core and Node.js tests that
+assert that user. The test should require the preconfigured identity rather
+than create Azure resources during a test run.
+
 ### API Argument Validation
 
 In the new driver, we will remove most runtime argument validation and instead rely on TypeScript's static type checking. Previously, we had multiple layers of validation, which sometimes led to inconsistent error handling between methods. Omitting redundant runtime validation is standard practice in TypeScript codebases, as static type checks catch most usage errors during development.

@@ -93,6 +93,7 @@ mod tests {
         WorkloadIdentityConfig {
             provider: crate::config::rest_parameters::WifProvider::Oidc,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: Vec::new(),
             oidc_token: oidc_token.map(SensitiveString::from),
             aws_use_outbound_token: false,

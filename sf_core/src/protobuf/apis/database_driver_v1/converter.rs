@@ -1503,6 +1503,7 @@ mod tests {
         let config = WorkloadIdentityConfig {
             provider: WifProvider::Oidc,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: Vec::new(),
             aws_use_outbound_token: false,
             oidc_token: None,

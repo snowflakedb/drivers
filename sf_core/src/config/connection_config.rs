@@ -7,8 +7,7 @@ use url::Url;
 
 use super::private_key::{has_private_key_params, read_private_key};
 use super::token::{
-    has_bearer_token, read_optional_bearer_token, read_required_bearer_token,
-    read_required_header_bearer_token,
+    has_bearer_token, read_required_bearer_token, read_required_header_bearer_token,
 };
 use crate::config::ParamStore;
 use crate::config::param_names::*;
@@ -383,44 +382,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 .get_bool(CLIENT_STORE_TEMPORARY_CREDENTIAL)
                 .unwrap_or(true),
         }),
-        "WORKLOAD_IDENTITY" => {
-            let provider_str = settings
-                .get_string(WORKLOAD_IDENTITY_PROVIDER)
-                .filter(|s| !s.is_empty())
-                .context(MissingParameterSnafu {
-                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
-                })?;
-            let provider = WifProvider::parse_str(&provider_str).with_context(|| {
-                InvalidParameterValueSnafu {
-                    parameter: String::from(WORKLOAD_IDENTITY_PROVIDER),
-                    value: provider_str.clone(),
-                    explanation: format!("Allowed values: {}", WifProvider::allowed_values()),
-                }
-            })?;
-            let entra_resource = settings
-                .get_string(WORKLOAD_IDENTITY_ENTRA_RESOURCE)
-                .filter(|s| !s.is_empty());
-            let impersonation_path = settings
-                .get_string(WORKLOAD_IDENTITY_IMPERSONATION_PATH)
-                .filter(|s| !s.is_empty())
-                .map(|s| {
-                    s.split(',')
-                        .map(|p| p.trim().to_string())
-                        .filter(|p| !p.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let oidc_token = read_optional_bearer_token(settings)?;
-            let aws_use_outbound_token =
-                settings.get_bool_or(WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str(), false);
-            Ok(AuthConfig::WorkloadIdentity(WorkloadIdentityConfig {
-                provider,
-                entra_resource,
-                impersonation_path,
-                oidc_token,
-                aws_use_outbound_token,
-            }))
-        }
+        "WORKLOAD_IDENTITY" => Ok(AuthConfig::WorkloadIdentity(
+            WorkloadIdentityConfig::from_settings(settings)?,
+        )),
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
@@ -599,6 +563,7 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             LoginMethod::WorkloadIdentity(WorkloadIdentityConfig {
                 provider: cfg.provider,
                 entra_resource: cfg.entra_resource.clone(),
+                azure_client_id: cfg.azure_client_id.clone(),
                 impersonation_path: cfg.impersonation_path.clone(),
                 oidc_token: cfg.oidc_token.clone(),
                 aws_use_outbound_token: cfg.aws_use_outbound_token,
@@ -1154,6 +1119,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
         for param in [
             WORKLOAD_IDENTITY_PROVIDER,
             WORKLOAD_IDENTITY_ENTRA_RESOURCE,
+            WORKLOAD_IDENTITY_AZURE_CLIENT_ID,
             WORKLOAD_IDENTITY_IMPERSONATION_PATH,
         ] {
             if non_empty_string(settings, param).is_some() {
@@ -3497,6 +3463,23 @@ mod tests {
     }
 
     #[test]
+    fn build_wif_azure_with_client_id() {
+        let mut pairs = wif_base_settings("AZURE");
+        pairs.push((
+            "workload_identity_azure_client_id",
+            Setting::String("user-assigned-mi".into()),
+        ));
+        let settings = settings_from(&pairs);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::WorkloadIdentity(cfg) => {
+                assert_eq!(cfg.azure_client_id.as_deref(), Some("user-assigned-mi"));
+            }
+            other => panic!("Expected WorkloadIdentity auth, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn validate_azure_impersonation_single_hop_accepted() {
         let mut pairs = wif_base_settings("AZURE");
         pairs.push((
@@ -3591,6 +3574,27 @@ mod tests {
                     && i.code == ValidationCode::ConflictingWifParameters
             }),
             "Expected ConflictingWifParameters for workload_identity_entra_resource, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_wif_azure_client_id_with_non_wif_auth_emits_error() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "workload_identity_azure_client_id",
+                Setting::String("user-assigned-mi".into()),
+            ),
+        ]);
+        let issues = validate_settings(&settings);
+        assert!(
+            issues.iter().any(|i| {
+                i.parameter == "workload_identity_azure_client_id"
+                    && i.code == ValidationCode::ConflictingWifParameters
+            }),
+            "Expected ConflictingWifParameters for workload_identity_azure_client_id, got: {issues:?}"
         );
     }
 

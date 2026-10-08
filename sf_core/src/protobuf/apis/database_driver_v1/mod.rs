@@ -1262,6 +1262,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let config = WorkloadIdentityConfig {
             provider,
             entra_resource: input.entra_resource.filter(|s| !s.is_empty()),
+            azure_client_id: None,
             impersonation_path: input.impersonation_path,
             aws_use_outbound_token: input.aws_use_outbound_token.unwrap_or(false),
             oidc_token: input

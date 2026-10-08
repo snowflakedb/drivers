@@ -15,6 +15,9 @@
 //!   * `SNOWFLAKE_TEST_WIF_ENTRA_RESOURCE`     — Azure Entra resource URI (AZURE only)
 //!   * `SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH` — comma-separated impersonation chain
 //!
+//! TODO(SNOW-4232648): add a live `workload_identity_azure_client_id` case after
+//! the Azure WIF VM has a user-assigned identity mapped to a dedicated Snowflake user.
+//!
 //! Scenario step text mirrors `tests/definitions/shared/authentication/workload_identity.feature`
 //! so a single Gherkin definition validates both sf_core and ODBC test methods.
 

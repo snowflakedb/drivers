@@ -532,6 +532,10 @@ pub const DEFAULT_AZURE_ENTRA_RESOURCE: &str = "api://fd3f753b-eed3-462c-b6a7-a4
 ///
 /// Created by [`WorkloadIdentityConfig::from_settings`] and carried in
 /// [`AuthConfig::WorkloadIdentity`] / [`LoginMethod::WorkloadIdentity`].
+///
+/// TODO: split into a provider enum so `azure_client_id` and `entra_resource`
+/// exist only on Azure, and `aws_use_outbound_token` only on AWS. A value can
+/// currently pair `provider: Aws` with an Azure client id.
 #[derive(Debug)]
 pub struct WorkloadIdentityConfig {
     /// Attestation provider. Determines which cloud metadata service the
@@ -540,6 +544,9 @@ pub struct WorkloadIdentityConfig {
     /// Azure Entra resource URI for the managed-identity token request.
     /// `None` ⇒ use [`DEFAULT_AZURE_ENTRA_RESOURCE`]. Azure provider only.
     pub entra_resource: Option<String>,
+    /// Azure user-assigned managed-identity client id. `None` ⇒ use
+    /// `MANAGED_IDENTITY_CLIENT_ID` when set, otherwise the system-assigned MI.
+    pub azure_client_id: Option<String>,
     /// Ordered impersonation chain.
     /// AWS: IAM role ARNs to `AssumeRole` in order.
     /// GCP: service account emails to impersonate via IAM Credentials API.
@@ -571,6 +578,9 @@ impl WorkloadIdentityConfig {
         let entra_resource = settings
             .get_string("workload_identity_entra_resource")
             .filter(|s| !s.is_empty());
+        let azure_client_id = settings
+            .get_string("workload_identity_azure_client_id")
+            .filter(|s| !s.is_empty());
         let impersonation_path = settings
             .get_string("workload_identity_impersonation_path")
             .filter(|s| !s.is_empty())
@@ -589,6 +599,7 @@ impl WorkloadIdentityConfig {
         Ok(Self {
             provider,
             entra_resource,
+            azure_client_id,
             impersonation_path,
             oidc_token,
             aws_use_outbound_token,

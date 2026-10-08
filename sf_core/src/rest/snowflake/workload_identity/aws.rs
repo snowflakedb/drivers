@@ -898,6 +898,7 @@ mod tests {
         let config = WorkloadIdentityConfig {
             provider: WifProvider::Aws,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: vec![],
             aws_use_outbound_token: false,
             oidc_token: None,
@@ -942,6 +943,7 @@ mod tests {
         WorkloadIdentityConfig {
             provider: WifProvider::Aws,
             entra_resource: None,
+            azure_client_id: None,
             impersonation_path: vec![],
             aws_use_outbound_token,
             oidc_token: None,

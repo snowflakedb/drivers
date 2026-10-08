@@ -285,6 +285,11 @@ pub mod param_names {
     /// when absent.  Azure provider only.
     pub const WORKLOAD_IDENTITY_ENTRA_RESOURCE: ParamKey =
         ParamKey("workload_identity_entra_resource");
+    /// Azure managed-identity client id (user-assigned MI). When absent, the
+    /// driver falls back to `MANAGED_IDENTITY_CLIENT_ID` in the process
+    /// environment, then to the system-assigned identity. Azure provider only.
+    pub const WORKLOAD_IDENTITY_AZURE_CLIENT_ID: ParamKey =
+        ParamKey("workload_identity_azure_client_id");
     /// Comma-separated impersonation chain.
     /// AWS: IAM role ARNs to assume in order (e.g. `arn:aws:iam::123:role/A`).
     /// GCP: service account emails to impersonate in order.
@@ -2295,6 +2300,17 @@ static PARAM_DEFS: &[ParamDef] = &[
         .mutable_after_connect(false)
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::WORKLOAD_IDENTITY_AZURE_CLIENT_ID.as_str())
+        .value_type(ValueType::String)
+        .sensitive(false)
+        .auth(true)
+        .description("Azure user-assigned managed-identity client id (Azure only; falls back to MANAGED_IDENTITY_CLIENT_ID)")
+        .scopes(&[ParamScope::Connection])
+        .used_at_connect(true)
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(NodeJs))
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str())
         .value_type(ValueType::String)
         .sensitive(false)
@@ -3705,6 +3721,8 @@ mod tests {
             "WORKLOAD_IDENTITY_PROVIDER",
             "workload_identity_entra_resource",
             "WORKLOAD_IDENTITY_ENTRA_RESOURCE",
+            "workload_identity_azure_client_id",
+            "WORKLOAD_IDENTITY_AZURE_CLIENT_ID",
             "workload_identity_impersonation_path",
             "WORKLOAD_IDENTITY_IMPERSONATION_PATH",
             "workload_identity_aws_use_outbound_token",
@@ -3713,6 +3731,29 @@ mod tests {
             assert!(
                 r.is_known(key),
                 "Expected WIF param '{key}' to be registered"
+            );
+        }
+    }
+
+    #[test]
+    fn azure_client_id_resolves_for_nodejs_only() {
+        let r = registry();
+        let name = "workload_identity_azure_client_id";
+        assert!(r.resolve(name).is_none());
+        assert_eq!(
+            r.resolve_for(Wrapper::NodeJs, name)
+                .map(|d| d.canonical_name),
+            Some(name)
+        );
+        for wrapper in [
+            Wrapper::Python,
+            Wrapper::Odbc,
+            Wrapper::Jdbc,
+            Wrapper::DotNet,
+        ] {
+            assert!(
+                r.resolve_for(wrapper, name).is_none(),
+                "{name} must not resolve for {wrapper:?}"
             );
         }
     }
