@@ -150,6 +150,39 @@ export type ConnectionOptions = Record<string, unknown> & {
   serverSessionKeepAlive?: boolean;
 
   /**
+   * Enables Certificate Revocation List (CRL) validation.
+   *
+   * When `ENABLED` is set, it fails if the certificate is revoked or if any error occurs (network, parsing, etc.).
+   * When `ADVISORY` is set, it fails only if the certificate is revoked.
+   *
+   * @default "DISABLED"
+   */
+  certRevocationCheckMode?: 'DISABLED' | 'ENABLED' | 'ADVISORY';
+  /**
+   * Allows to connect when certificate doesn't have CRL URLs (cRLDistributionPoints)
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default false
+   */
+  crlAllowCertificatesWithoutCrlURL?: boolean;
+  /**
+   * Enable CRL caching in memory.
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default true
+   */
+  crlInMemoryCache?: boolean;
+  /**
+   * Enable CRL caching on disk. Disk read/write failures are ignored.
+   *
+   * This option applies only when certRevocationCheckMode is `ADVISORY` or `ENABLED`
+   *
+   * @default true
+   */
+  crlOnDiskCache?: boolean;
+  /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
    * listener and waits for the IdP redirect; this function only receives
