@@ -4064,7 +4064,7 @@ mod tests {
                 || def.canonical_name.starts_with("workload_identity_")
             {
                 assert!(
-                    r.is_auth_for(Wrapper::Odbc, def.canonical_name),
+                    def.auth,
                     "{} should be an auth parameter",
                     def.canonical_name
                 );
