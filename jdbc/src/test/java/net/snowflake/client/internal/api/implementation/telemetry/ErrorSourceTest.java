@@ -270,6 +270,10 @@ public class ErrorSourceTest {
     mapped.put(ErrorCode.CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP, ErrorSource.SERVER_ERROR);
     mapped.put(ErrorCode.INTERNAL_ERROR, ErrorSource.INTERNAL_ERROR);
     mapped.put(ErrorCode.FILE_NOT_FOUND, ErrorSource.SERVER_ERROR);
+    mapped.put(ErrorCode.NETWORK_ERROR, ErrorSource.CONNECTIVITY);
+    mapped.put(ErrorCode.IO_ERROR, ErrorSource.CONNECTIVITY);
+    mapped.put(ErrorCode.FILE_OPERATION_UPLOAD_ERROR, ErrorSource.CONNECTIVITY);
+    mapped.put(ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR, ErrorSource.CONNECTIVITY);
     return mapped;
   }
 

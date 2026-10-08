@@ -165,6 +165,12 @@ public enum ErrorSource {
       case CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP:
       case FILE_NOT_FOUND:
         return SERVER_ERROR;
+      case NETWORK_ERROR:
+      case IO_ERROR:
+      case FILE_OPERATION_UPLOAD_ERROR:
+      case FILE_OPERATION_DOWNLOAD_ERROR:
+        // These codes are the vendor-code form of ERROR_KIND_IO.
+        return CONNECTIVITY;
       case INTERNAL_ERROR:
       default:
         return INTERNAL_ERROR;

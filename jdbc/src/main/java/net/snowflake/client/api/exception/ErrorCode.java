@@ -24,7 +24,13 @@ public enum ErrorCode {
   INVALID_PROXY_PROPERTIES(200051, "08000", null),
   CONNECTION_CLOSED(200052, "08003", null),
   COMPRESSION_TYPE_NOT_SUPPORTED(200004, "0A000", null),
-  FILE_NOT_FOUND(200008, "22000", null);
+  FILE_NOT_FOUND(200008, "22000", null),
+  NETWORK_ERROR(200015, "58030", "JDBC driver encountered communication error. Message: {0}."),
+  IO_ERROR(200016, "58000", "JDBC driver encountered IO error. Message: {0}."),
+  FILE_OPERATION_UPLOAD_ERROR(
+      200066, "XX000", "JDBC driver file operation error while performing stage upload."),
+  FILE_OPERATION_DOWNLOAD_ERROR(
+      200067, "XX000", "JDBC driver file operation error while performing stage download.");
 
   private final int messageCode;
   private final String sqlState;
