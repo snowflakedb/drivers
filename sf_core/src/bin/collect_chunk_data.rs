@@ -4,6 +4,7 @@ use clap::Parser;
 use sf_core::chunks::get_chunk_data;
 use sf_core::config::rest_parameters::{
     ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, LoginMethod, LoginParameters, QueryParameters,
+    UNKNOWN_APPLICATION_PATH,
 };
 use sf_core::crl::CrlManager;
 use sf_core::crl::config::CrlConfig;
@@ -129,6 +130,7 @@ fn default_client_info() -> ClientInfo {
         runtime_version: None,
         compiler: None,
         release_type: None,
+        application_path: UNKNOWN_APPLICATION_PATH.to_string(),
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),

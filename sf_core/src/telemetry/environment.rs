@@ -84,6 +84,7 @@ mod tests {
             language_version: "3.12.0".to_string(),
             language_compiler: Some("GCC 13.2.0".to_string()),
             release_type: None,
+            application_path: None,
         };
         let info = EnvironmentInfo::with_wrapper(&identity);
         assert!(!info.os_name.is_empty());
@@ -103,6 +104,7 @@ mod tests {
             language_version: "20.0".to_string(),
             language_compiler: None,
             release_type: None,
+            application_path: None,
         };
         let info = EnvironmentInfo::with_wrapper(&identity);
         assert!(info.language_compiler.is_none());

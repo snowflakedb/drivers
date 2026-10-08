@@ -512,6 +512,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             isa: std::env::consts::ARCH.to_string(),
             core_version: env!("CARGO_PKG_VERSION").to_string(),
             is_fips: crate::tls::tls_provider_is_fips(),
+            application_path: login_parameters.client_info.application_path.clone(),
         },
         spcs_token: login_parameters.spcs_token.clone(),
         ..Default::default()
@@ -4484,6 +4485,37 @@ mod tests {
 
         assert_eq!(data.client_app_id, "PythonConnector");
         assert_eq!(data.client_environment.application, "SNOWCLI.STAGE.COPY");
+    }
+
+    #[test]
+    fn auth_request_sends_application_path() {
+        let login_params = LoginParameters {
+            client_info: ClientInfo {
+                application_path: "/home/user/app.py".to_string(),
+                ..test_client_info()
+            },
+            ..test_login_params()
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(
+                &client,
+                &login_params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                crate::crl::CrlManager::new(),
+            ))
+            .unwrap();
+
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(
+            json["CLIENT_ENVIRONMENT"]["APPLICATION_PATH"],
+            "/home/user/app.py"
+        );
     }
 
     #[test]

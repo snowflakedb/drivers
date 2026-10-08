@@ -2,6 +2,7 @@
 
 ## Upcoming Release
 
+- Added the host application's executable path to login requests as `APPLICATION_PATH`, matching the 3.x driver. (snowflakedb/drivers#2535)
 - Added the Snowflake vendor SQL data type macros (`SQL_SF_TIMESTAMP_LTZ`, `SQL_SF_TIMESTAMP_TZ`, `SQL_SF_TIMESTAMP_NTZ`, `SQL_SF_ARRAY`, `SQL_SF_OBJECT`, `SQL_SF_VARIANT`) to the public `sf_odbc.h`, so applications written against the 3.x header compile without redefining them. (snowflakedb/drivers#2366)
 - Added the `MapToLongVarchar` connection parameter so CHAR and VARCHAR columns whose size exceeds the threshold are reported as `SQL_LONGVARCHAR`. Unset and negative values keep `SQL_VARCHAR`. (snowflakedb/drivers#2215)
 - Added the `DEFAULT_VARCHAR_SIZE` and `DEFAULT_BINARY_SIZE` connection parameters so max-length VARCHAR and BINARY columns report the configured sizes. Unset and negative values keep the session maximum. (snowflakedb/drivers#2216)

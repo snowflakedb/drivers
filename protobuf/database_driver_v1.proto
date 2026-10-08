@@ -302,6 +302,7 @@ message WrapperIdentity {
   optional string language_version = 4;
   optional string language_compiler = 5;
   optional string release_type = 6;
+  optional string application_path = 7;
 }
 
 message ConnectionInitRequest {

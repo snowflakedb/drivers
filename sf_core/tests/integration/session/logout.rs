@@ -1946,5 +1946,6 @@ fn test_client_info() -> ClientInfo {
         runtime_name: None,
         runtime_version: None,
         release_type: None,
+        application_path: "/app/path".to_string(),
     }
 }

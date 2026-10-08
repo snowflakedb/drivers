@@ -1213,7 +1213,7 @@ pub enum ReadBatchesError {
 /// stub them with minimal valid values.
 #[cfg(test)]
 fn stub_ctx() -> StageInfoRefreshContext {
-    use crate::config::rest_parameters::{ClientInfo, QueryParameters};
+    use crate::config::rest_parameters::{ClientInfo, QueryParameters, UNKNOWN_APPLICATION_PATH};
     use crate::crl::config::CrlConfig;
     use crate::tls::config::TlsConfig;
     StageInfoRefreshContext {
@@ -1231,6 +1231,7 @@ fn stub_ctx() -> StageInfoRefreshContext {
                 runtime_version: None,
                 compiler: None,
                 release_type: None,
+                application_path: UNKNOWN_APPLICATION_PATH.to_string(),
                 crl_config: CrlConfig::default(),
                 tls_config: TlsConfig::default(),
                 proxy_config: Default::default(),

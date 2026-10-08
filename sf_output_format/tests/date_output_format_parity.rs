@@ -697,6 +697,7 @@ fn default_client_info() -> ClientInfo {
         runtime_version: None,
         compiler: None,
         release_type: None,
+        application_path: "/app/path".to_string(),
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),

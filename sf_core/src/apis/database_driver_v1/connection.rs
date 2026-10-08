@@ -1015,6 +1015,13 @@ impl DatabaseDriverV1 {
                         Setting::String(release_type),
                     );
                 }
+                if let Some(application_path) = identity.application_path.clone() {
+                    inject_if_absent(
+                        &mut conn.connection_seed,
+                        "client_application_path",
+                        Setting::String(application_path),
+                    );
+                }
 
                 conn.wrapper_identity = Some(identity);
                 Ok(())
@@ -1098,6 +1105,7 @@ pub struct WrapperIdentity {
     /// value different from that suffix. `None` on GA builds when the version
     /// has no suffix.
     pub release_type: Option<String>,
+    pub application_path: Option<String>,
 }
 
 pub struct Connection {

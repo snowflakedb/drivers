@@ -9,6 +9,7 @@ fn test_identity() -> WrapperIdentity {
         language_version: "3.12.1".to_string(),
         language_compiler: Some("GCC 13.2.0".to_string()),
         release_type: Some("rc1".to_string()),
+        application_path: Some("/home/user/app.py".to_string()),
     }
 }
 

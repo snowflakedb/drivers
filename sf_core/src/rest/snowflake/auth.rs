@@ -61,6 +61,8 @@ pub struct AuthRequestClientEnvironment {
     pub core_version: String,
     #[serde(rename = "IS_FIPS")]
     pub is_fips: bool,
+    #[serde(rename = "APPLICATION_PATH")]
+    pub application_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]

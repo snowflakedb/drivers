@@ -6,6 +6,7 @@ New features:
 
 - Added `workload_identity_azure_client_id` so Azure WIF can select a user-assigned managed identity from a connection option, with `MANAGED_IDENTITY_CLIENT_ID` as fallback. (snowflakedb/drivers#2226)
 - Added PAT-with-external-session authentication (`authenticator=PAT_WITH_EXTERNAL_SESSION`) so a programmatic access token plus `external_session_id` can reuse a server-side session without a login request, sending `Authorization: Bearer` and `X-Snowflake-External-Session-ID` on subsequent requests. (snowflakedb/drivers#1996)
+- Added `APPLICATION_PATH` to the login `CLIENT_ENVIRONMENT` payload. Wrappers pass it through `WrapperIdentity.application_path`. An unset or blank path is reported as `UNKNOWN`. (snowflakedb/drivers#2535)
 - Added a connection-free TLS status API and protobuf RPC that report whether the linked rustls TLS provider is in FIPS mode and whether this build enabled `fips-tls`. Neither field claims validated-module or whole-driver FIPS compliance. (snowflakedb/drivers#1355)
 - Added Duo push continuation for username/password MFA so a pending Duo challenge can wait for device approval and then finish login. (snowflakedb/drivers#2021)
 - Added a Python `platform_detection_timeout_seconds` connection parameter that limits each cloud-metadata platform check. Setting it to `0` skips those HTTP and STS queries and keeps only environment-based detection, matching the legacy Python connector. (snowflakedb/drivers#2186)

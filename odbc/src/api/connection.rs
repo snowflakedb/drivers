@@ -49,6 +49,7 @@ use crate::api::{
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::config::param_registry::{Deprecation, Wrapper, param_names};
+use sf_core::config::rest_parameters::UNKNOWN_APPLICATION_PATH;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::sensitive::SensitiveString;
 use snafu::{OptionExt, ResultExt};
@@ -742,6 +743,9 @@ fn connect_with_params(
         .get(param_names::DEFAULT_BINARY_SIZE.as_str())
         .and_then(config_setting_i64)
         .unwrap_or(-1);
+    let application_path = std::env::current_exe()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| UNKNOWN_APPLICATION_PATH.to_string());
 
     let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         let db_handle = c
@@ -796,6 +800,7 @@ fn connect_with_params(
                 // Leave unset so sf_core derives RELEASE_TYPE from driver_version's
                 // suffix (e.g. `4.0.0-rc1` → `rc1`). Set only to override that default.
                 release_type: None,
+                application_path: Some(application_path),
             }),
         })
         .await?;

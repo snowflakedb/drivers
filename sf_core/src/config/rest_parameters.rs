@@ -111,6 +111,7 @@ impl QueryParameters {
             .map(|id| id.reveal().as_str())
     }
 }
+
 #[derive(Clone, Debug)]
 pub struct ClientInfo {
     /// Driver identity sent as CLIENT_APP_ID and used in the User-Agent header.
@@ -141,6 +142,7 @@ pub struct ClientInfo {
     /// `.dev0` / `rc1`). `None` on GA builds; sent as
     /// `CLIENT_ENVIRONMENT.RELEASE_TYPE` when set.
     pub release_type: Option<String>,
+    pub application_path: String,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
     pub proxy_config: ProxyConfig,
@@ -186,6 +188,10 @@ impl ClientInfo {
                 .get_string("client_compiler")
                 .and_then(|s| if s.trim().is_empty() { None } else { Some(s) }),
             release_type,
+            application_path: settings
+                .get_string("client_application_path")
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| UNKNOWN_APPLICATION_PATH.to_string()),
             crl_config,
             tls_config,
             proxy_config,
@@ -194,6 +200,9 @@ impl ClientInfo {
         Ok(client_info)
     }
 }
+
+/// `CLIENT_ENVIRONMENT.APPLICATION_PATH` when the host path is unset or cannot be read.
+pub const UNKNOWN_APPLICATION_PATH: &str = "UNKNOWN";
 
 /// Derive `CLIENT_ENVIRONMENT.RELEASE_TYPE` from a package version.
 pub(crate) fn release_type_from_version(version: &str) -> Option<String> {
@@ -240,6 +249,7 @@ pub mod test_fixtures {
             runtime_version: None,
             compiler: None,
             release_type: None,
+            application_path: "/app/path".to_string(),
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
@@ -1720,6 +1730,47 @@ mod tests {
         assert_eq!(info.runtime_version.as_deref(), Some("21.0.1"));
         assert_eq!(info.compiler.as_deref(), Some("javac 21.0.1"));
         assert!(info.release_type.is_none());
+    }
+
+    #[test]
+    fn test_client_info_application_path_from_setting() {
+        let settings = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            (
+                "client_application_path",
+                Setting::String("/home/user/app.py".to_string()),
+            ),
+        ]);
+        let info = ClientInfo::from_settings(&settings).unwrap();
+        assert_eq!(info.application_path, "/home/user/app.py");
+    }
+
+    #[test]
+    fn test_client_info_application_path_unset_is_unknown() {
+        let missing = create_test_settings(vec![(
+            "host",
+            Setting::String("test.snowflakecomputing.com".to_string()),
+        )]);
+        let blank = create_test_settings(vec![
+            (
+                "host",
+                Setting::String("test.snowflakecomputing.com".to_string()),
+            ),
+            ("client_application_path", Setting::String("  ".to_string())),
+        ]);
+        assert_eq!(
+            ClientInfo::from_settings(&missing)
+                .unwrap()
+                .application_path,
+            "UNKNOWN"
+        );
+        assert_eq!(
+            ClientInfo::from_settings(&blank).unwrap().application_path,
+            "UNKNOWN"
+        );
     }
 
     #[test]

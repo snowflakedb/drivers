@@ -276,6 +276,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 language_version: wrapper.language_version.clone().unwrap_or_default(),
                 language_compiler: wrapper.language_compiler.clone(),
                 release_type: wrapper.release_type.clone(),
+                application_path: wrapper.application_path.clone(),
             };
 
             tracing::debug!(
