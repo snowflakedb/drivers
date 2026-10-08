@@ -12,17 +12,21 @@
 # flow attests against.
 #
 # Usage:
-#   ./tests/auth/run_wif.sh <sf_core|nodejs> [--reference] [wrapper args...]
+#   ./tests/auth/run_wif.sh <sf_core|nodejs> [--reference] [--provider AWS|AZURE|GCP]... [wrapper args...]
 #
-# Arguments, in order:
+# Arguments:
 #   * lane (required) selects which artifact is shipped and run.
 #   * --reference (optional) runs the lane's reference suite instead of its own.
+#   * --provider (optional, repeatable) uploads and runs only those clouds.
+#     Omitted means AZURE, then AWS, then GCP. A named cloud still runs in that order.
 #   * everything else goes to the lane's wrapper.
 #
 # Examples (the lane's artifact must already be in tests/auth/wif/artifacts/):
 #   ./tests/auth/run_wif.sh sf_core
 #   ./tests/auth/run_wif.sh nodejs                                        # universal (e2e)
 #   ./tests/auth/run_wif.sh nodejs --reference                            # reference (e2e-old-driver)
+#   ./tests/auth/run_wif.sh nodejs --provider AWS
+#   ./tests/auth/run_wif.sh nodejs --provider AWS --provider GCP -t "should authenticate"
 #   ./tests/auth/run_wif.sh nodejs -t "should authenticate"
 #   ./tests/auth/run_wif.sh nodejs --reference -t "should authenticate"
 #
@@ -46,7 +50,7 @@ NODEJS_RUNTIME_IMAGE="${WIF_NODEJS_RUNTIME_IMAGE:-node:22-slim}"
 
 if [[ -n "${WIF_LANE:-}" ]]; then
   echo "ERROR: WIF_LANE is unused; pass the lane as the first argument" >&2
-  echo "Usage: $0 <sf_core|nodejs> [--reference] [wrapper args...]" >&2
+  echo "Usage: $0 <sf_core|nodejs> [--reference] [--provider AWS|AZURE|GCP]... [wrapper args...]" >&2
   exit 1
 fi
 
@@ -56,17 +60,57 @@ case "$WIF_LANE" in
     shift
     ;;
   *)
-    echo "Usage: $0 <sf_core|nodejs> [--reference] [wrapper args...]" >&2
+    echo "Usage: $0 <sf_core|nodejs> [--reference] [--provider AWS|AZURE|GCP]... [wrapper args...]" >&2
     exit 1
     ;;
 esac
 
+add_provider() {
+  local provider existing
+  provider="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  case "$provider" in
+    AWS|AZURE|GCP) ;;
+    *)
+      echo "ERROR: --provider must be AWS, AZURE, or GCP (got '$1')" >&2
+      exit 1
+      ;;
+  esac
+  if [[ ${#PROVIDERS[@]} -gt 0 ]]; then
+    for existing in "${PROVIDERS[@]}"; do
+      if [[ "$existing" == "$provider" ]]; then
+        return 0
+      fi
+    done
+  fi
+  PROVIDERS+=("$provider")
+}
+
 REFERENCE=0
-if [[ "${1:-}" == --reference ]]; then
-  REFERENCE=1
-  shift
+PROVIDERS=()
+TEST_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --reference)
+      REFERENCE=1
+      shift
+      ;;
+    --provider)
+      if [[ -z "${2:-}" || "$2" == --* ]]; then
+        echo "ERROR: --provider requires AWS, AZURE, or GCP" >&2
+        exit 1
+      fi
+      add_provider "$2"
+      shift 2
+      ;;
+    *)
+      TEST_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+if [[ ${#PROVIDERS[@]} -eq 0 ]]; then
+  PROVIDERS=(AZURE AWS GCP)
 fi
-TEST_ARGS=("$@")
 
 case "$WIF_LANE" in
   sf_core)
@@ -302,15 +346,38 @@ fi
 BRANCH=$(get_branch)
 export BRANCH
 log "Lane ${WIF_LANE}${SUITE:+ suite=$SUITE} on branch ${BRANCH}"
+log "Providers: ${PROVIDERS[*]}"
 log "Decrypting the WIF keys and parameters"
 setup_parameters
 
-# Run tests for all cloud providers
+is_provider_selected() {
+  local provider="$1" candidate
+  for candidate in "${PROVIDERS[@]}"; do
+    if [[ "$candidate" == "$provider" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Default order stays AZURE, AWS, GCP. An unselected cloud is not uploaded.
 EXIT_STATUS=0
 set +e  # Don't exit on first failure
-run_tests_and_set_result "AZURE" "$HOST_AZURE" "$SNOWFLAKE_TEST_WIF_HOST_AZURE" "$RSA_KEY_PATH_AWS_AZURE" "$SNOWFLAKE_TEST_WIF_USERNAME_AZURE" "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_AZURE"
-run_tests_and_set_result "AWS"   "$HOST_AWS"   "$SNOWFLAKE_TEST_WIF_HOST_AWS"   "$RSA_KEY_PATH_AWS_AZURE" "$SNOWFLAKE_TEST_WIF_USERNAME_AWS"   "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_AWS"
-run_tests_and_set_result "GCP"   "$HOST_GCP"   "$SNOWFLAKE_TEST_WIF_HOST_GCP"   "$RSA_KEY_PATH_GCP"       "$SNOWFLAKE_TEST_WIF_USERNAME_GCP"   "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_GCP"
+if is_provider_selected AZURE; then
+  run_tests_and_set_result "AZURE" "$HOST_AZURE" "$SNOWFLAKE_TEST_WIF_HOST_AZURE" "$RSA_KEY_PATH_AWS_AZURE" "$SNOWFLAKE_TEST_WIF_USERNAME_AZURE" "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_AZURE"
+else
+  log "AZURE: not selected; skipping upload and tests"
+fi
+if is_provider_selected AWS; then
+  run_tests_and_set_result "AWS"   "$HOST_AWS"   "$SNOWFLAKE_TEST_WIF_HOST_AWS"   "$RSA_KEY_PATH_AWS_AZURE" "$SNOWFLAKE_TEST_WIF_USERNAME_AWS"   "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_AWS"
+else
+  log "AWS: not selected; skipping upload and tests"
+fi
+if is_provider_selected GCP; then
+  run_tests_and_set_result "GCP"   "$HOST_GCP"   "$SNOWFLAKE_TEST_WIF_HOST_GCP"   "$RSA_KEY_PATH_GCP"       "$SNOWFLAKE_TEST_WIF_USERNAME_GCP"   "$SNOWFLAKE_TEST_WIF_IMPERSONATION_PATH_GCP"
+else
+  log "GCP: not selected; skipping upload and tests"
+fi
 set -e  # Re-enable exit on error
 echo "Exit status: $EXIT_STATUS"
 exit $EXIT_STATUS
