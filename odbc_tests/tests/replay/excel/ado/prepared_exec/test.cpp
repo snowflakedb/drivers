@@ -10,6 +10,9 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
+// SNOW-4160000: retry HYT00 on this replay's 15s login timeout (Windows CI).
+#define SQLDriverConnect sql_driver_connect_retry_hyt00
+
 TEST_CASE("Replay: excel vba_ado prepared_exec", "[excel][vba_ado][prepared_exec]") {
   auto config = DataSourceConfig::Snowflake().install();
 

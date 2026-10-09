@@ -11,6 +11,9 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
+// SNOW-4160000: retry HYT00 on this replay's 15s login timeout (Windows CI).
+#define SQLDriverConnect sql_driver_connect_retry_hyt00
+
 TEST_CASE("Replay: excel vba_ado sqlbindcol", "[excel][vba_ado][sqlbindcol]") {
   // SQL_C_CHAR narrow-string masking modes for non-ASCII data (BehaviorDifferences.yaml #23).
   const bool old_driver_win_or_linux_arm =

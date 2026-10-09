@@ -1,11 +1,13 @@
 #ifndef COMPATIBILITY_HPP
 #define COMPATIBILITY_HPP
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #ifndef _WIN32
 #include <locale>
 #endif
@@ -307,10 +309,13 @@ class PinDriverManagerEncoding {
   EnvOverride env_;
 };
 
-// Excel PowerQuery replays record SQL_ATTR_LOGIN_TIMEOUT=15. Windows CI
-// (x86/x64) occasionally returns HYT00 on a later SQLDriverConnect in the
-// same replay while earlier connects succeeded. Retry the connect; do not
-// change product login-timeout defaults (SNOW-4160000).
+// Excel PowerQuery/ADO replays record SQL_ATTR_LOGIN_TIMEOUT=15. Windows CI
+// (x86/x64) occasionally returns HYT00 on a SQLDriverConnect in the same
+// replay while earlier connects succeeded — a cold/resuming CI warehouse can
+// make a login exceed 15s, and replays like simultaneous_refresh open many
+// connections at once. Retry the connect with a short backoff so a resuming
+// warehouse has time to come up; do not change product login-timeout defaults
+// (SNOW-4160000).
 //
 // Excel ADO replays record SQL_ATTR_QUERY_TIMEOUT=30. Required Driver CI
 // occasionally returns 57014 (warehouse/statement timeout) on SQLExecDirect
@@ -336,7 +341,8 @@ inline SQLRETURN sql_driver_connect_retry_hyt00(SQLHDBC connection_handle, SQLHW
                                                 SQLCHAR* in_connection_string, SQLSMALLINT string_length_1,
                                                 SQLCHAR* out_connection_string, SQLSMALLINT buffer_length,
                                                 SQLSMALLINT* string_length_2_ptr, SQLUSMALLINT driver_completion) {
-  constexpr int kMaxAttempts = 3;
+  constexpr int kMaxAttempts = 4;
+  constexpr std::chrono::seconds kBackoff{3};
   SQLRETURN ret = SQL_ERROR;
   for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
     ret = SQLDriverConnect(connection_handle, window_handle, in_connection_string, string_length_1,
@@ -348,6 +354,8 @@ inline SQLRETURN sql_driver_connect_retry_hyt00(SQLHDBC connection_handle, SQLHW
         !odbc_dbc_sqlstate_is(connection_handle, "HYT00")) {
       return ret;
     }
+    // HYT00 login timeout: give a cold/resuming CI warehouse time before retrying.
+    std::this_thread::sleep_for(kBackoff);
   }
   return ret;
 }

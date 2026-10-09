@@ -12,6 +12,8 @@
 
 // SNOW-4169173: retry 57014 on this replay's 30s query timeout (CI warehouse).
 #define SQLExecDirect sql_exec_direct_retry_57014
+// SNOW-4160000: retry HYT00 on this replay's 15s login timeout (Windows CI).
+#define SQLDriverConnect sql_driver_connect_retry_hyt00
 
 TEST_CASE("Replay: excel vba_ado transactions", "[excel][vba_ado][transactions]") {
   auto config = DataSourceConfig::Snowflake().install();
