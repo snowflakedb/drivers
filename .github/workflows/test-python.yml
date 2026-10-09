@@ -157,7 +157,8 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python 3.13
-        run: uv python install 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
 
       - name: Install Hatch
         run: uv tool install hatch --with "virtualenv<21.0.0"
@@ -267,7 +268,8 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python 3.13
-        run: uv python install 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
 
       - name: Install Hatch
         run: uv tool install hatch --with "virtualenv<21.0.0"
@@ -396,8 +398,10 @@ jobs:
             uv-${{ matrix.os }}-
 
       - name: Set up Python ${{ matrix.py }}
-        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
-        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
+        # See comment in build_wheel job — ARM64 Windows needs explicit arch request.
+        # SNOW-4241880: retry GitHub release-asset HTTP 500s.
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh "${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}"
 
       - name: Download wheel
         if: matrix.wheel_artifact
@@ -758,7 +762,8 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh "${{ matrix.py }}"
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -829,7 +834,8 @@ jobs:
             uv-ubuntu-latest-
 
       - name: Set up Python 3.13
-        run: uv python install 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
 
       - name: Download wheel
         uses: ./.github/actions/download-artifact-retry

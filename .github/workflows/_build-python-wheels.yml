@@ -225,7 +225,8 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python
-        run: uv python install 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
 
       - name: Build sdist
         working-directory: ./python
@@ -274,7 +275,7 @@ jobs:
         shell: bash
         run: |
           for v in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
-            uv python install "$v"
+            bash ./scripts/ci/uv-python-install.sh "$v"
           done
 
       # ── python_bridge build: Linux (Docker + manylinux for glibc compat) ──
@@ -618,7 +619,8 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install cpython-${{ matrix.py }}-windows-aarch64-none
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh "cpython-${{ matrix.py }}-windows-aarch64-none"
 
       # ── python_bridge build (per-CPython ABI, same as cibuildwheel Windows path) ──
       - name: Restore Rust cache
