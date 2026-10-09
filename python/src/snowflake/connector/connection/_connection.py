@@ -48,6 +48,7 @@ from .._internal.protobuf_gen.database_driver_v1_services import (
 )
 from .._internal.snowflake_restful import SnowflakeRestful
 from .._internal.text_utils import split_statements
+from .._internal.utils import get_application_path
 from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -203,6 +204,7 @@ class Connection(ConnectionMixin[CursorInstance]):
                 language_runtime=platform.python_implementation(),
                 language_version=platform.python_version(),
                 language_compiler=platform.python_compiler(),
+                application_path=get_application_path(),
             ),
         )
 

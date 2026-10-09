@@ -1,10 +1,22 @@
 """Unit tests for snowflake.connector._internal.utils."""
 
+import subprocess
+import sys
+
 import pytest
 
 from snowflake.connector._internal.errorcode import ER_INVALID_VALUE
 from snowflake.connector._internal.utils import _coerce_executemany_params
 from snowflake.connector.errors import ProgrammingError
+
+
+def test_get_application_path_returns_entry_script(tmp_path):
+    script = tmp_path / "app.py"
+    script.write_text(
+        "from snowflake.connector._internal.utils import get_application_path\nprint(get_application_path())\n"
+    )
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == str(script)
 
 
 class TestCoerceExecutemanyParams:

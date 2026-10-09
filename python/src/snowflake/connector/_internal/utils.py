@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 from collections.abc import Iterable, Sequence
 from typing import Any, cast
 
@@ -10,6 +12,15 @@ from .errorcode import ER_INVALID_VALUE
 
 
 _ExecutemanyRow = Sequence[Any] | dict[str, Any]
+
+
+def get_application_path() -> str | None:
+    # Outermost frame of the calling thread, as in the old connector: reports threading.py from a
+    # worker thread and "<stdin>" from a REPL.
+    try:
+        return inspect.stack(context=0)[-1].filename
+    except Exception:
+        return None
 
 
 def _resolve_alias(

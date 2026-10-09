@@ -48,6 +48,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     WrapperIdentity,
 )
 from ..._internal.text_utils import split_statements
+from ..._internal.utils import get_application_path
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
 from ...errors import Error, ProgrammingError
@@ -187,6 +188,7 @@ class Connection(ConnectionMixin[CursorInstance]):
                 language_runtime=platform.python_implementation(),
                 language_version=platform.python_version(),
                 language_compiler=platform.python_compiler(),
+                application_path=get_application_path(),
             ),
         )
 
