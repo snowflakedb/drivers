@@ -18,8 +18,6 @@ import ErrorCode from './constants/ErrorCode.js';
 import { OcspMode as ocspModes } from './constants/OcspMode.js';
 import {
   CoreConnection,
-  coreIsAnError,
-  coreIsStillRunning,
   registerClassConstructors,
   type CoreConnectionInstance,
   type CoreStatementInstance,
@@ -409,11 +407,11 @@ export class Connection {
   }
 
   isStillRunning(status: QueryStatus): boolean {
-    return coreIsStillRunning(status);
+    return this.#core.isStillRunning(status);
   }
 
   isAnError(status: QueryStatus): boolean {
-    return coreIsAnError(status);
+    return this.#core.isAnError(status);
   }
 
   fetchResult(options: FetchResultOptions): RowStatement {

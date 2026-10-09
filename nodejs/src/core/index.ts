@@ -56,10 +56,6 @@ export const CoreColumn = core.Column;
 export const coreFormatSnowflakeDate = core.formatSnowflakeDate;
 export const CoreSessionState = core.SessionState;
 export const CoreQueryBindingFormat = core.QueryBindingFormat;
-export const coreIsAnError = core.isAnError;
-export const coreIsStillRunning = core.isStillRunning;
-// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
-// export const coreGetTlsStatus = core.getTlsStatus;
 
 export type CoreConnectionInstance = InstanceType<typeof CoreConnection>;
 export type CoreStatementInstance = InstanceType<typeof CoreStatement>;

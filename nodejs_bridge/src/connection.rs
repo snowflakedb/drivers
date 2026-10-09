@@ -1,6 +1,7 @@
 use crate::BRIDGE;
 use crate::error::{BridgeError, ToJsError, async_to_js};
-use crate::query::QueryStatus;
+use crate::query;
+use crate::query_status::QueryStatus;
 use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use crate::statement::Statement;
@@ -15,16 +16,12 @@ use sf_core::config::param_names;
 use sf_core::config::rest_parameters::BrowserOpenFn;
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
-use sf_core::rest::snowflake::QueryStatusResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 const NODE_TLS_REJECT_UNAUTHORIZED: &str = "NODE_TLS_REJECT_UNAUTHORIZED";
 const NODE_EXTRA_CA_CERTS: &str = "NODE_EXTRA_CA_CERTS";
-const RETRY_PATTERN: [u32; 7] = [1, 1, 2, 3, 4, 8, 10];
-const NO_DATA_MAX_RETRY: u32 = 24;
-const RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 #[napi]
 pub struct Connection {
@@ -298,10 +295,10 @@ impl Connection {
     #[napi]
     pub fn get_query_status(&self, env: &Env, query_id: String) -> Result<AsyncBlock<QueryStatus>> {
         let session = self.session.clone();
-        async_to_js(env, async move {
-            let result = get_query_status_result(&session, &query_id).await?;
-            Ok::<_, BridgeError>(QueryStatus::parse(&result.status_name))
-        })
+        async_to_js(
+            env,
+            async move { query::get_status(&session, &query_id).await },
+        )
     }
 
     #[napi]
@@ -312,7 +309,7 @@ impl Connection {
     ) -> Result<AsyncBlock<QueryStatus>> {
         let session = self.session.clone();
         async_to_js(env, async move {
-            query_status_throw_if_error(&session, &query_id).await
+            query::get_status_throw_if_error(&session, &query_id).await
         })
     }
 
@@ -324,36 +321,9 @@ impl Connection {
         retry_interval_ms: Option<u32>,
     ) -> Result<AsyncBlock<()>> {
         let session = self.session.clone();
-        let retry_interval =
-            retry_interval_ms.map_or(RETRY_INTERVAL, |ms| Duration::from_millis(ms as u64));
+        let retry_interval = retry_interval_ms.map(|ms| Duration::from_millis(ms as u64));
         async_to_js(env, async move {
-            let mut no_data_counter = 0u32;
-            let mut retry_pattern_pos = 0usize;
-            loop {
-                let status = query_status_throw_if_error(&session, &query_id).await?;
-                if !status.is_still_running() {
-                    if status == QueryStatus::Success {
-                        return Ok(());
-                    }
-                    return Err(BridgeError::QueryIdNotSuccess {
-                        query_id,
-                        status: status.as_str().to_string(),
-                    });
-                }
-
-                tokio::time::sleep(retry_interval * RETRY_PATTERN[retry_pattern_pos]).await;
-
-                if status == QueryStatus::NoData {
-                    no_data_counter += 1;
-                    if no_data_counter > NO_DATA_MAX_RETRY {
-                        return Err(BridgeError::QueryIdNoData(query_id));
-                    }
-                }
-
-                if retry_pattern_pos < RETRY_PATTERN.len() - 1 {
-                    retry_pattern_pos += 1;
-                }
-            }
+            query::wait_for_result(&session, query_id, retry_interval).await
         })
     }
 
@@ -372,6 +342,16 @@ impl Connection {
                 .map(|result| (ready, result))
                 .map_err(BridgeError::from)
         })
+    }
+
+    #[napi]
+    pub fn is_an_error(&self, status: QueryStatus) -> bool {
+        status.is_an_error()
+    }
+
+    #[napi]
+    pub fn is_still_running(&self, status: QueryStatus) -> bool {
+        status.is_still_running()
     }
 
     // TODO: destroy does not release core handles when the connection was never
@@ -458,36 +438,6 @@ async fn run_new_statement<T>(
     .await;
     let _ = BRIDGE.driver.statement_release(stmt_handle);
     result
-}
-
-async fn get_query_status_result(
-    session: &Session,
-    query_id: &str,
-) -> std::result::Result<QueryStatusResult, BridgeError> {
-    require_valid_query_id(query_id)?;
-    let ready = session.ready().await?;
-    let operation_ctx = OperationCtx::with_own_token();
-    BRIDGE
-        .driver
-        .connection_get_query_status(Some(&operation_ctx), ready.connection(), query_id)
-        .await
-        .map_err(BridgeError::from)
-}
-
-async fn query_status_throw_if_error(
-    session: &Session,
-    query_id: &str,
-) -> std::result::Result<QueryStatus, BridgeError> {
-    let result = get_query_status_result(session, query_id).await?;
-    let status = QueryStatus::parse(&result.status_name);
-    if status.is_an_error() {
-        return Err(BridgeError::QueryStatusFailed {
-            query_id: query_id.to_string(),
-            error_code: result.error_code,
-            error_message: result.error_message,
-        });
-    }
-    Ok(status)
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ mod connection;
 mod date_format;
 mod error;
 mod query;
+mod query_status;
 mod session;
 mod session_params;
 mod session_state;

@@ -45,6 +45,8 @@ export declare class Connection {
   getQueryStatusThrowIfError(queryId: string): Promise<QueryStatus>
   waitForQueryResult(queryId: string, retryIntervalMs?: number | undefined | null): Promise<undefined>
   getQueryResult(queryId: string): Statement
+  isAnError(status: QueryStatus): boolean
+  isStillRunning(status: QueryStatus): boolean
   destroy(): Promise<undefined>
 }
 
@@ -113,10 +115,6 @@ export interface ExecuteParams {
 }
 
 export declare function formatSnowflakeDate(format: string, epochMillis: number, nanos: number, scale: number, timezone: string | number): string
-
-export declare function isAnError(status: QueryStatus): boolean
-
-export declare function isStillRunning(status: QueryStatus): boolean
 
 /**
  * Session parameters that both the Node.js layer and this bridge read for a

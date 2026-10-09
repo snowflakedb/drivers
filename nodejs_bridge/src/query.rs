@@ -1,113 +1,84 @@
-use napi_derive::napi;
-use std::str::FromStr;
+use crate::BRIDGE;
+use crate::error::BridgeError;
+use crate::query_status::QueryStatus;
+use crate::session::Session;
+use crate::validation_utils::require_valid_query_id;
+use sf_core::rest::snowflake::QueryStatusResult;
+use std::time::Duration;
 
-#[napi(string_enum = "UPPER_SNAKE")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QueryStatus {
-    Running,
-    Aborting,
-    Success,
-    FailedWithError,
-    Aborted,
-    Queued,
-    FailedWithIncident,
-    Disconnected,
-    ResumingWarehouse,
-    QueuedReparingWarehouse,
-    Restarted,
-    Blocked,
-    NoData,
+// TODO: Similar logic to query.rs exists in every wrapper. Consider moving it to sf_core.
+const WAIT_FOR_RESULT_RETRY_PATTERN: [u32; 7] = [1, 1, 2, 3, 4, 8, 10];
+const WAIT_FOR_RESULT_NO_DATA_MAX_RETRY: u32 = 24;
+const WAIT_FOR_RESULT_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
+pub(crate) async fn get_status(
+    session: &Session,
+    query_id: &str,
+) -> Result<QueryStatus, BridgeError> {
+    let result = fetch_status_result(session, query_id).await?;
+    Ok(QueryStatus::parse(&result.status_name))
 }
 
-impl QueryStatus {
-    const ALL: [(Self, &'static str); 13] = [
-        (Self::Running, "RUNNING"),
-        (Self::Aborting, "ABORTING"),
-        (Self::Success, "SUCCESS"),
-        (Self::FailedWithError, "FAILED_WITH_ERROR"),
-        (Self::Aborted, "ABORTED"),
-        (Self::Queued, "QUEUED"),
-        (Self::FailedWithIncident, "FAILED_WITH_INCIDENT"),
-        (Self::Disconnected, "DISCONNECTED"),
-        (Self::ResumingWarehouse, "RESUMING_WAREHOUSE"),
-        (Self::QueuedReparingWarehouse, "QUEUED_REPARING_WAREHOUSE"),
-        (Self::Restarted, "RESTARTED"),
-        (Self::Blocked, "BLOCKED"),
-        (Self::NoData, "NO_DATA"),
-    ];
-
-    pub(crate) fn parse(status_name: &str) -> Self {
-        Self::from_str(status_name).unwrap_or(Self::NoData)
+pub(crate) async fn get_status_throw_if_error(
+    session: &Session,
+    query_id: &str,
+) -> Result<QueryStatus, BridgeError> {
+    let result = fetch_status_result(session, query_id).await?;
+    let status = QueryStatus::parse(&result.status_name);
+    if status.is_an_error() {
+        return Err(BridgeError::QueryStatusFailed {
+            query_id: query_id.to_string(),
+            error_code: result.error_code,
+            error_message: result.error_message,
+        });
     }
+    Ok(status)
+}
 
-    pub(crate) fn is_an_error(self) -> bool {
-        matches!(
-            self,
-            Self::Aborting
-                | Self::FailedWithError
-                | Self::Aborted
-                | Self::FailedWithIncident
-                | Self::Disconnected
-        )
-    }
+pub(crate) async fn wait_for_result(
+    session: &Session,
+    query_id: String,
+    retry_interval: Option<Duration>,
+) -> Result<(), BridgeError> {
+    let retry_interval = retry_interval.unwrap_or(WAIT_FOR_RESULT_RETRY_INTERVAL);
+    let mut no_data_counter = 0u32;
+    let mut retry_pattern_pos = 0usize;
+    loop {
+        let status = get_status_throw_if_error(session, &query_id).await?;
+        if !status.is_still_running() {
+            if status == QueryStatus::Success {
+                return Ok(());
+            }
+            return Err(BridgeError::QueryIdNotSuccess {
+                query_id,
+                status: status.as_str().to_string(),
+            });
+        }
 
-    pub(crate) fn is_still_running(self) -> bool {
-        matches!(
-            self,
-            Self::Running
-                | Self::Queued
-                | Self::ResumingWarehouse
-                | Self::QueuedReparingWarehouse
-                | Self::Blocked
-                | Self::NoData
-        )
-    }
+        tokio::time::sleep(retry_interval * WAIT_FOR_RESULT_RETRY_PATTERN[retry_pattern_pos]).await;
 
-    pub(crate) fn as_str(self) -> &'static str {
-        for (status, name) in Self::ALL {
-            if status == self {
-                return name;
+        if status == QueryStatus::NoData {
+            no_data_counter += 1;
+            if no_data_counter > WAIT_FOR_RESULT_NO_DATA_MAX_RETRY {
+                return Err(BridgeError::QueryIdNoData(query_id));
             }
         }
-        unreachable!("QueryStatus::ALL lists every variant")
-    }
-}
 
-impl FromStr for QueryStatus {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let upper = s.to_ascii_uppercase();
-        for (status, name) in Self::ALL {
-            if name == upper {
-                return Ok(status);
-            }
+        if retry_pattern_pos < WAIT_FOR_RESULT_RETRY_PATTERN.len() - 1 {
+            retry_pattern_pos += 1;
         }
-        Err(())
     }
 }
 
-#[napi]
-pub fn is_an_error(status: QueryStatus) -> bool {
-    status.is_an_error()
-}
-
-#[napi]
-pub fn is_still_running(status: QueryStatus) -> bool {
-    status.is_still_running()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn query_status_parse_roundtrips_as_str_and_is_case_insensitive() {
-        for (status, name) in QueryStatus::ALL {
-            assert_eq!(status.as_str(), name);
-            assert_eq!(QueryStatus::from_str(name), Ok(status));
-        }
-        assert_eq!(QueryStatus::parse("restarted"), QueryStatus::Restarted);
-        assert_eq!(QueryStatus::parse("not-a-status"), QueryStatus::NoData);
-    }
+async fn fetch_status_result(
+    session: &Session,
+    query_id: &str,
+) -> Result<QueryStatusResult, BridgeError> {
+    require_valid_query_id(query_id)?;
+    let ready = session.ready().await?;
+    BRIDGE
+        .driver
+        .connection_get_query_status(None, ready.connection(), query_id)
+        .await
+        .map_err(BridgeError::from)
 }
