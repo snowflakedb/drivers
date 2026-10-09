@@ -1688,3 +1688,32 @@ behavior_differences:
       A `Date` has no special handling: it binds as VARIANT with the JSON-stringified ISO string,
       so a cast such as `?::TIMESTAMP_NTZ` fails with "Unsupported data type 'VARIANT'". Proper
       temporal binds are tracked in BCR_LOG.md.
+
+  87:
+    name: 'account validation differs from the old driver'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection checks account before connect.
+      - Missing: with no account, host, or accessUrl, throws MissingParameterError 404007
+        ("An account must be specified."). When host is set and account is omitted, the
+        account is copied from the host and createConnection does not throw.
+      - Empty: throws InvalidParameterError 404045 ("Invalid account. The specified value
+        must be a valid subdomain string.").
+      - Non-string: throws InvalidParameterError 404008 ("Invalid account. The specified
+        value must be a string.").
+      - Other values: must match /^\w+([.-]\w+)*$/i. A "." or "-" cannot start or end the
+        value, and separators cannot repeat. A failure is the same 404045 as an empty string.
+    new_driver_behavior: |
+      account is typed as string on ConnectionOptions. createConnection accepts the value.
+      connectAsync fails in core.
+      - Missing: a non-empty account is required even when host is set. connectAsync fails
+        with "Missing required parameter 'account'".
+      - Empty: the same missing-account error as above.
+      - Non-string: rejected by the TypeScript type. There is no runtime 404008.
+      - Other values: each character must be an ASCII letter, digit, ".", "-", or "_".
+        A leading or trailing separator and repeated separators ("--", "..") are allowed.
+        Any other character fails connectAsync.

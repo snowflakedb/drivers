@@ -77,6 +77,10 @@ export {
 
 // TODO: implement ConnectionOptions like in old driver (BD#2)
 export type ConnectionOptions = Record<string, unknown> & {
+  /**
+   * Your account identifier.
+   */
+  account?: string;
   workloadIdentityProvider?: 'AWS' | 'AZURE' | 'GCP' | 'OIDC';
   rowMode?: RowMode;
   fetchAsString?: DataType[];
