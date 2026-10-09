@@ -49,6 +49,13 @@ Deferred work — covered **last**, only once the corresponding feature support 
     (`should_store_id_token_after_successful_browser_login`,
     `should_authenticate_with_cached_id_token`,
     `should_retry_with_browser_flow_when_cached_id_token_fails`).
+  - [`authentication/testOauth.js`](./authentication/testOauth.js) — not a whole-file
+    move. `Successful connection` runs as `oauth should authenticate with pre acquired access token`.
+    `Mismatched username` runs as `should reject a mismatched username for a pre-acquired token`.
+    `Invalid token` is `it.skip` (`oauth should fail legacy authentication with invalid token`).
+    Python, JDBC, and ODBC skip that live negative so a junk token does not lock the
+    shared account. Core ignores every OAuth e2e test behind `auth_oauth_e2e`, including
+    the success tests. The skip is the disposition; that old test was not migrated.
 
 ## Integration tests (`integration/`), sorted by priority
 
@@ -236,6 +243,16 @@ called out explicitly.
   park until after the beta release. `sf_core` + the new Node driver will surface a different set
   of errors when `.createConnection` fails, so this needs a re-review against the new error
   taxonomy rather than a line-by-line migration.
+  Partially migrated: `oauth without username` splits. Login with the user omitted
+  runs as `should authenticate with pre acquired access token without user`.
+  The old row also asserted `accessUrl` `https://account.snowflakecomputing.com`
+  and `account` `account`. This wrapper does not build that URL; core derives the
+  server URL from `account` / `host`. `should forward legacy OAUTH without a username`
+  is the Node boundary: `account`, `authenticator`, and `token` are forwarded, and
+  a username is not required. The `accessUrl` assertion is retired with
+  `ConnectionConfig`. The `invalid username with OAUTH authenticator` and
+  `invalid oauth token` type-check rows stay; `toCoreConnectionOptions`
+  currently `String()`s those values.
   - JWT-named negatives (`missing/invalid username with SNOWFLAKE_JWT`, `invalid private key` /
     `privateKeyPath` / `privateKeyPass`) assert `ERR_CONN_CREATE_*` on `new ConnectionConfig`.
     Revisit when the new Errors hierarchy lands.
@@ -296,6 +313,17 @@ called out explicitly.
     `AUTHENTICATOR=SNOWFLAKE_JWT`). Public Node options live in
     `nodejs/tests/e2e/authentication/private-key-auth.test.ts`. Thenable
     `AuthKeypair.authenticate` / `reauthenticate` overwriting `TOKEN` are not ported.
+  Partially migrated in `unit/authentication/authentication_test.js`:
+  `oauth - authenticate method is thenable` is retired. `AuthOauth` no longer
+  exists, so there is no thenable `authenticate` method to call.
+  `oauth - check token` and `oauth - check authenticator` split. Node forwards
+  the strings in `should map the access token used by legacy OAUTH and
+  WORKLOAD_IDENTITY with an OIDC provider`. The login JSON is
+  `sf_core/tests/integration/authentication/oauth.rs`
+  `should_login_with_legacy_oauth_using_pre_acquired_token`, which never calls
+  Node `createConnection`.
+  `getAuthenticator()` table row `oauth` → `AuthOauth` is retired with that
+  class. The public authenticator is the string that unit test forwards.
 
 ### Agent (CRL / OCSP)
 

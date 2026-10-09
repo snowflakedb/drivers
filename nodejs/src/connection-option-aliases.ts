@@ -22,6 +22,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   schema: 'schema',
   warehouse: 'warehouse',
   role: 'role',
+  retryTimeout: 'login_timeout',
   useEnvProxy: 'use_proxy_env',
   port: 'port',
   protocol: 'protocol',

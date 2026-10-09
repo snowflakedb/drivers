@@ -1,4 +1,4 @@
-@core @odbc @python @jdbc
+@core @odbc @python @jdbc @nodejs
 Feature: OAuth Authentication
 
   OAuth 2.0 authentication for Snowflake drivers, covering the three
@@ -18,6 +18,7 @@ Feature: OAuth Authentication
   #   * odbc_tests/tests/integration/authentication/oauth.cpp  (@odbc_int)
   #   * python/tests/integ/authentication/test_oauth.py        (@python_int)
   #   * jdbc/src/test/java/net/snowflake/jdbc/integration/authentication/OauthTests.java (@jdbc_int)
+  #   * nodejs/tests/e2e/authentication/oauth.test.ts          (@nodejs_int)
   # ===========================================================================
 
   @odbc_int @python_int @jdbc_int
@@ -38,13 +39,13 @@ Feature: OAuth Authentication
     When Trying to Connect
     Then Connection fails with a missing-parameter error citing oauth_token_request_url
 
-  @odbc_int @python_int @jdbc_int
+  @odbc_int @python_int @jdbc_int @nodejs_int
   Scenario: should forward AUTHENTICATOR=OAUTH with TOKEN to core
     Given Authentication is set to legacy OAUTH with a pre-acquired access token
     When Trying to Connect
     Then The wrapper forwards the token to sf_core without raising a missing-parameter error for it
 
-  @odbc_int @python_int @jdbc_int
+  @odbc_int @python_int @jdbc_int @nodejs_int
   Scenario: should fail AUTHENTICATOR=OAUTH when TOKEN is missing
     Given Authentication is set to legacy OAUTH without a TOKEN
     When Trying to Connect
@@ -57,13 +58,13 @@ Feature: OAuth Authentication
   # Implemented in odbc_tests/tests/integration/authentication/oauth.cpp.
   # ===========================================================================
 
-  @odbc_int @python_int @jdbc_int
+  @odbc_int @python_int @jdbc_int @nodejs_int
   Scenario: should accept lowercase oauth authenticator value
     Given Authentication is set to lowercase oauth with a TOKEN
     When Trying to Connect
     Then The wrapper does not reject the AUTHENTICATOR value as unknown
 
-  @odbc_int @python_int @jdbc_int
+  @odbc_int @python_int @jdbc_int @nodejs_int
   Scenario: should fail when AUTHENTICATOR is an unknown OAuth-like value
     Given Authentication is set to a typo of an OAuth flow name
     When Trying to Connect
@@ -91,6 +92,7 @@ Feature: OAuth Authentication
   #   * odbc_tests/tests/e2e/authentication/oauth.cpp               (@odbc_e2e)
   #   * python/tests/e2e/authentication/test_oauth.py               (@python_e2e)
   #   * jdbc/src/test/java/net/snowflake/jdbc/e2e/authentication/OauthTests.java (@jdbc_e2e)
+  #   * nodejs/tests/e2e/authentication/oauth.test.ts               (@nodejs_e2e)
   #
   # Scenario step text matches the existing sf_core comments verbatim so a
   # single Gherkin definition validates the Rust, ODBC, Python, and JDBC test
@@ -103,13 +105,13 @@ Feature: OAuth Authentication
   # is tagged @core_e2e @odbc_e2e @python_e2e @jdbc_e2e.
   # ===========================================================================
 
-  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: oauth should authenticate with pre acquired access token
     Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied via `token=`
     When Trying to Connect
     Then Login is successful and a simple query can be executed
 
-  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e
+  @core_e2e @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: oauth should fail legacy authentication with invalid token
     Given Authentication is set to legacy OAUTH and an invalid OAuth access token is supplied
     When Trying to Connect
@@ -145,12 +147,18 @@ Feature: OAuth Authentication
     When Trying to Connect
     Then Connection fails with an authentication / login error
 
+  @nodejs_e2e
+  Scenario: should reject a mismatched username for a pre-acquired token
+    Given Authentication is set to a pre-acquired token with a username that is not the user tied to the access token
+    When Trying to Connect
+    Then Connection fails with "The user you were trying to authenticate as differs from the user tied to the access token."
+
   # Wrapper-only E2E scenarios -- not implemented in sf_core because the
   # Rust e2e harness covers different cases (keyring short-circuit) and
   # the case-insensitive matching of OAUTH is exercised by sf_core unit
   # tests instead.
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @nodejs_e2e
   Scenario: oauth should authenticate using lowercase oauth authenticator
     Given Authentication is set to lowercase oauth and a valid pre-acquired OAuth access token is supplied via TOKEN
     When Trying to Connect
@@ -166,9 +174,9 @@ Feature: OAuth Authentication
   # the principal is encoded in the IdP-issued token and resolved by GS
   # at login time. These wrapper-level scenarios assert the connector
   # does not reject the connect when `user` is omitted; they currently
-  # only exist for Python (other drivers track parity work separately).
+  # exist for Python and Node.js (other drivers track parity work separately).
 
-  @python_e2e
+  @python_e2e @nodejs_e2e
   Scenario: should authenticate with pre acquired access token without user
     Given Authentication is set to legacy OAUTH and a pre-acquired OAuth access token is supplied via `token=` and user is omitted
     When Trying to Connect without user

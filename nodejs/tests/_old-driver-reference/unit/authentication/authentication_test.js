@@ -5,7 +5,6 @@ const sinon = require('sinon');
 const authenticator = require('./../../../lib/authentication/authentication');
 const AuthDefault = require('./../../../lib/authentication/auth_default');
 const AuthWeb = require('./../../../lib/authentication/auth_web');
-const AuthOauth = require('./../../../lib/authentication/auth_oauth');
 const AuthOkta = require('./../../../lib/authentication/auth_okta');
 const AuthIDToken = require('./../../../lib/authentication/auth_idtoken');
 const AuthenticationTypes = require('./../../../lib/authentication/authentication_types');
@@ -16,8 +15,6 @@ const mockConnectionOptions = MockTestUtil.connectionOptions;
 const connectionOptions = mockConnectionOptions.default;
 const connectionOptionsDefault = mockConnectionOptions.authDefault;
 const connectionOptionsExternalBrowser = mockConnectionOptions.authExternalBrowser;
-const connectionOptionsKeyPair = mockConnectionOptions.authKeyPair;
-const connectionOptionsOauth = mockConnectionOptions.authOauth;
 const connectionOptionsOkta = mockConnectionOptions.authOkta;
 const connectionOptionsIdToken = mockConnectionOptions.authIdToken;
 
@@ -271,51 +268,11 @@ describe('external browser authentication', function () {
 // mapped to sf_core private-key JWT coverage and
 // nodejs/tests/e2e/authentication/private-key-auth.test.ts, then removed.
 
-describe('oauth authentication', function () {
-  it('oauth - authenticate method is thenable', (done) => {
-    const auth = new AuthOauth(connectionOptionsOauth.token);
-
-    auth
-      .authenticate(
-        connectionOptionsKeyPair.authenticator,
-        '',
-        connectionOptionsKeyPair.account,
-        connectionOptionsKeyPair.username,
-      )
-      .then(done)
-      .catch(done);
-  });
-
-  it('oauth - check token', function () {
-    const auth = new AuthOauth(connectionOptionsOauth.token);
-
-    const body = { data: {} };
-    auth.updateBody(body);
-
-    assert.strictEqual(
-      body['data']['TOKEN'],
-      connectionOptionsOauth.token,
-      'Token should be equal',
-    );
-  });
-
-  it('oauth - check authenticator', function () {
-    const body = authenticator.formAuthJSON(
-      connectionOptionsOauth.authenticator,
-      connectionOptionsOauth.account,
-      connectionOptionsOauth.username,
-      {},
-      {},
-      {},
-    );
-
-    assert.strictEqual(
-      body['data']['AUTHENTICATOR'],
-      AuthenticationTypes.OAUTH_AUTHENTICATOR,
-      'Authenticator should be OAUTH',
-    );
-  });
-});
+// The "oauth authentication" describe that used to live here (thenable,
+// check token, check authenticator) has been removed. AuthOauth / updateBody /
+// formAuthJSON are gone. Login JSON coverage is
+// sf_core/tests/integration/authentication/oauth.rs
+// should_login_with_legacy_oauth_using_pre_acquired_token.
 
 describe('okta authentication', function () {
   let httpclient;
@@ -698,11 +655,10 @@ describe('test getAuthenticator()', () => {
       providedAuth: AuthenticationTypes.KEY_PAIR_AUTHENTICATOR,
       expectedAuth: 'AuthKeypair',
     },
-    {
-      name: 'oauth',
-      providedAuth: AuthenticationTypes.OAUTH_AUTHENTICATOR,
-      expectedAuth: 'AuthOauth',
-    },
+    // The getAuthenticator() row oauth → AuthOauth that used to live here has been
+    // removed. Factory coverage is
+    // sf_core/tests/integration/authentication/oauth.rs
+    // should_login_with_legacy_oauth_using_pre_acquired_token.
     { name: 'okta', providedAuth: 'https://mycustom.okta.com:8443', expectedAuth: 'AuthOkta' },
     {
       name: 'workload identity',

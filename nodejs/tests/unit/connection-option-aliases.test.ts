@@ -40,6 +40,20 @@ describe('toCoreConnectionOptions', () => {
     });
   });
 
+  it('should forward legacy OAUTH without a username', () => {
+    expect(
+      toCoreConnectionOptions({
+        account: 'account',
+        authenticator: 'OAUTH',
+        token: 'token',
+      }),
+    ).toEqual({
+      account: 'account',
+      authenticator: 'OAUTH',
+      token: 'token',
+    });
+  });
+
   it('should map the workload identity provider', () => {
     expect(
       toCoreConnectionOptions({

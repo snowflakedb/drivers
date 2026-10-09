@@ -1748,3 +1748,111 @@ behavior_differences:
       string. connectAsync fails with NetworkError 401001 ("Network error. Could not
       reach Snowflake.") because the login request cannot reach that URL.
     status_rationale: If possible the validation should be done by the server.
+
+  90:
+    name: 'sfRetryMaxLoginRetries is not accepted; the new driver has no login-retry count option'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      `sfRetryMaxLoginRetries` is an accepted connection option (default 7). A value of 0
+      disables login retries so the first network/login failure is returned immediately.
+    new_driver_behavior: |
+      `sfRetryMaxLoginRetries` is rejected as an unknown connection option. There is no
+      equivalent login-retry count option.
+    status_rationale: |
+      The option is deprecated and is not carried into the new driver. Callers that relied on
+      a configurable login-retry count must use the new driver's timeout model instead.
+
+  91:
+    name: 'retryTimeout maps to login_timeout with a different default, scope, and invalid-value error'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      retryTimeout is seconds and defaults to 300 when omitted. 0 means unlimited.
+      Any other finite number is raised to at least 300 seconds, so -1 and 2 both
+      become 300 and 400 stays 400. It bounds login-request
+      retries and Okta reauthentication during connect. A value that is not a
+      number is rejected in createConnection. The check passes
+      ERR_CONN_CREATE_INVALID_MAX_RETRY_TIMEOUT, which is not a defined code
+      (the message table has ERR_CONN_CREATE_INVALID_RETRY_TIMEOUT = 404044).
+      The thrown error is InvalidParameterError, its message is the string
+      "undefined", and it has no code.
+    new_driver_behavior: |
+      Omitted, login gives up after 120 seconds. 0 and any negative value, e.g. -1,
+      mean login has no deadline. A positive integer is used as the number of
+      seconds given, so 2 stays 2 and 400 stays 400. A non-integer fails configuration
+      validation: "Expected type Int for parameter 'login_timeout'". The deadline
+      covers the whole login, including retries, rather than one request.
+
+  97:
+    name: 'A refused OAuth connect is NetworkError 401001 with the catalog message'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Connecting to 127.0.0.1:443 fails as NetworkError. error.code is 401001 and
+      the message is "connect ECONNREFUSED 127.0.0.1:443".
+    new_driver_behavior: |
+      The same refusal fails as NetworkError. error.code is 401001 and the message
+      is "Network error. Could not reach Snowflake." The transport detail is on
+      cause. This is the catalog network error, not a wrapped login error.
+
+  98:
+    name: 'A mismatched OAuth username is reported as a wrapped login error'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      The rejection is OperationFailedError. error.code is the string "390309".
+      The message is "The user you were trying to authenticate as differs from
+      the user tied to the access token. [<request id>]". The request id changes
+      on every login.
+    new_driver_behavior: |
+      The rejection is a plain Error. error.name is "Error" and error.code is
+      the string "390309". The message is "Failed to login: Login error: The
+      user you were trying to authenticate as differs from the user tied to the
+      access token. [<request id>], code: 390309". The request id changes on
+      every login.
+
+  99:
+    name: 'Unknown AUTHENTICATOR values are rejected before login'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Given OAUTH_AUTHORIZATION_TYPO as AUTHENTICATOR, the old driver does not reject the value as an
+      unknown authenticator. It proceeds to a login attempt and reports the resulting login/connect
+      error through the connection callback.
+    new_driver_behavior: |
+      Any value outside the allowed authenticator set fails before login. For
+      OAUTH_AUTHORIZATION_TYPO the message is "Invalid authenticator 'OAUTH_AUTHORIZATION_TYPO'".
+    status_rationale: |
+      Rejecting an unsupported authenticator before network login gives the caller a specific,
+      actionable error instead of allowing an invalid value to reach the login path.
+
+  100:
+    name: 'Legacy AUTHENTICATOR=OAUTH without a TOKEN: new driver rejects with a missing-parameter error; old driver does not validate token presence client-side'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When AUTHENTICATOR=OAUTH is used without supplying a TOKEN value, the old driver does not
+      validate token presence client-side; it proceeds to a connection attempt against the configured
+      host and no missing-parameter error is raised to the caller.
+    new_driver_behavior: |
+      sf_core connection validation rejects with a missing-parameter error citing the missing token
+      before any network attempt.

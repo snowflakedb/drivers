@@ -1148,18 +1148,10 @@ describe('ConnectionConfig: basic', function () {
         password: 'password',
       },
     },
-    {
-      name: 'oauth without username',
-      input: {
-        account: 'account',
-        authenticator: 'OAUTH',
-        token: 'token',
-      },
-      options: {
-        accessUrl: 'https://account.snowflakecomputing.com',
-        account: 'account',
-      },
-    },
+    // The "oauth without username" valid-config row that used to live here is split.
+    // Login without a user is `should authenticate with pre acquired access token without user`.
+    // Forwarding account, authenticator, and token is `should forward legacy OAUTH without a username`.
+    // The old `accessUrl` assertion is retired: this wrapper does not build that URL.
     {
       name: 'external browser without username and password',
       input: {
