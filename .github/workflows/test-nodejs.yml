@@ -86,6 +86,16 @@ jobs:
         run: npm run test:unit -- --reporter=default --reporter=junit --outputFile=reports/nodejs-unit.xml
         working-directory: nodejs
 
+      # at this point core is already built and napi declaration are regenerated, fail if different
+      - name: Check committed binary types match the core build
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- nodejs/src/core/binary-types.generated.ts; then
+            echo "nodejs/src/core/binary-types.generated.ts does not match the core build." >&2
+            echo "Run \`npm run build:core\` in nodejs/ and commit the result. Do not edit the file by hand." >&2
+            exit 1
+          fi
+
       - name: Run e2e tests (new driver)
         run: npm run test:e2e -- --reporter=default --reporter=junit --outputFile=reports/nodejs-e2e.xml
         working-directory: nodejs

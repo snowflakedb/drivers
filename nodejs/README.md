@@ -16,7 +16,7 @@ You rarely run these by hand — tests build what they need automatically (see [
 
 This file is the TypeScript API of the native addon. It's produced by `build:core` but **committed to git on purpose**: having it in the source tree lets you typecheck, lint, and get IDE autocomplete without the Rust toolchain or a native build.
 
-Do not edit it by hand. If you change the Rust API, run `npm run build:core` to regenerate it, then commit the result.
+Do not edit it by hand. If you change the Rust API, run `npm run build:core` to regenerate it, then commit the result. Node.js CI rebuilds the core during unit tests and fails when this file differs from that output.
 
 ## Testing
 

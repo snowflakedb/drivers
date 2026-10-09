@@ -114,9 +114,6 @@ export interface ExecuteParams {
 
 export declare function formatSnowflakeDate(format: string, epochMillis: number, nanos: number, scale: number, timezone: string | number): string
 
-// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
-// export declare function getTlsStatus(): TlsStatus
-
 export declare function isAnError(status: QueryStatus): boolean
 
 export declare function isStillRunning(status: QueryStatus): boolean
@@ -181,16 +178,10 @@ export type QueryStatus = 'RUNNING' | 'ABORTING' | 'SUCCESS' | 'FAILED_WITH_ERRO
 /**
  * Gives the bridge the constructors to JS classes it needs to create.
  *
- * Reasoning: `SnowflakeDate` has to extend `Date`, and napi classes can't extend
- * built-in JS classes, so it lives in TypeScript and the bridge calls its constructor.
+ * `SnowflakeDate` extends `Date`, and napi classes can't extend built-in JS classes,
+ * so the class lives in TypeScript and the bridge calls its constructor.
  * The constructors are stored per JS env, because napi references don't work across envs.
  */
 export declare function registerClassConstructors(constructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }): void
 
 export type StatementStatus = 'fetching' | 'complete'
-
-// FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
-// export interface TlsStatus {
-//   tlsProviderIsFips: boolean
-//   fipsTlsBuildEnabled: boolean
-// }
