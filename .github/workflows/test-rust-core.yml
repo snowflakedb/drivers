@@ -271,6 +271,47 @@ jobs:
           go version
           cl
 
+      # ubuntu-24.04-arm runner images ship a pre-provisioned default rustup
+      # toolchain that already contains a `cargo-clippy` binary. When the
+      # first `cargo` invocation implicitly auto-installs our pinned
+      # rust-toolchain.toml (clippy + rustfmt, profile minimal), rustup can
+      # collide with that pre-existing binary: "detected conflict:
+      # 'bin/cargo-clippy'". Once that happens the toolchain is left
+      # half-installed and every subsequent cargo/rustup call on the runner
+      # repeats "recovering from a partially installed toolchain" and fails
+      # the same way. Install the toolchain explicitly up front so we can
+      # detect that exact conflict and self-heal by removing the toolchain
+      # and reinstalling once, before any cargo command needs it.
+      #
+      # This must run BEFORE "Restore Rust cache": that step's own
+      # `rustc -vV` (used to hash the toolchain for the cache key) already
+      # triggers rustup's implicit auto-install of the pinned toolchain, so
+      # by the time this step ran afterward, the same conflict could already
+      # have happened upstream of it.
+      - name: Ensure Rust toolchain is cleanly installed
+        if: matrix.name == 'ubuntu-arm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          if [ -z "$channel" ]; then
+            echo "::error::could not read [toolchain].channel from rust-toolchain.toml"
+            exit 1
+          fi
+          for attempt in 1 2; do
+            log="$RUNNER_TEMP/rustup-install-$attempt.log"
+            if rustup toolchain install "$channel" --profile minimal --component clippy,rustfmt 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 2 ] && grep -q "detected conflict" "$log"; then
+              echo "rustup hit a stale/partial '$channel' toolchain (attempt $attempt) — removing and retrying"
+              rustup toolchain uninstall "$channel" || true
+              continue
+            fi
+            echo "::error::rustup toolchain install for '$channel' failed on attempt $attempt"
+            exit 1
+          done
+
       - name: Restore Rust cache
         id: rust-cache
         continue-on-error: true
