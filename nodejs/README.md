@@ -12,6 +12,17 @@ The driver is TypeScript (`src/`) on top of a native addon compiled from the Rus
 
 You rarely run these by hand — tests build what they need automatically (see [Testing](#testing)).
 
+`build:core` makes a debug build by default. Pass `--release` for the optimized build and `--fips-tls` to link the FIPS crypto module, e.g. `npm run build:core -- --release --fips-tls`.
+
+### Packing
+
+Two scripts build and pack the npm tarballs into `_build/`:
+
+- `npm run pack:core` — release build of the native core for the current platform, packed as `snowflake-sdk-core-<platform>-<version>.tgz`. Requires Rust toolchain.
+- `npm run pack:sdk` — the TypeScript SDK, packed as `snowflake-sdk-<version>.tgz`.
+
+To install locally, pass the SDK tarball and the core tarball for your platform to `npm install` together.
+
 ### Generated code: `src/core/binary-types.generated.ts`
 
 This file is the TypeScript API of the native addon. It's produced by `build:core` but **committed to git on purpose**: having it in the source tree lets you typecheck, lint, and get IDE autocomplete without the Rust toolchain or a native build.

@@ -30,7 +30,9 @@
     "test:e2e-old-driver": "vitest run --project e2e-old-driver",
     "build:core": "node scripts/build-snowflake-sdk-core.mjs",
     "build:sdk": "node scripts/build-snowflake-sdk.mjs",
-    "build:link-local": "node scripts/build-link-local.mjs"
+    "build:link-local": "node scripts/build-link-local.mjs",
+    "pack:core": "npm run build:core -- --release && npm pack ./_build/snowflake-sdk-core --pack-destination ./_build",
+    "pack:sdk": "npm run build:sdk && npm pack ./_build/snowflake-sdk --pack-destination ./_build"
   },
   "napi": {
     "binaryName": "snowflake-sdk-core",

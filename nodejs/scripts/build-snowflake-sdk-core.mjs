@@ -2,6 +2,7 @@
 import { NapiCli } from '@napi-rs/cli';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { parseArgs } from 'node:util';
 import {
   BUILD_CORE_PACKAGE_DIR,
   BUILD_DIR,
@@ -12,8 +13,13 @@ import {
 
 const NAPI_CONFIG = NODE_SDK_PACKAGE.napi;
 const BUILD_PLACEHOLDER_PACKAGES_DIR = path.join(BUILD_DIR, 'napi-placeholder-packages');
-const fipsTlsBuild = process.env.SF_CORE_FIPS_TLS?.toLowerCase();
-const buildWithFipsTls = fipsTlsBuild === '1' || fipsTlsBuild === 'true';
+
+const { values: args } = parseArgs({
+  options: {
+    release: { type: 'boolean', default: false },
+    'fips-tls': { type: 'boolean', default: false },
+  },
+});
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
 // package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),
@@ -38,18 +44,18 @@ await fs.rm(BUILD_CORE_PACKAGE_DIR, { recursive: true, force: true });
 //    - `platform: true` names the `.node` file per host target.
 //    - `noJsBinding: true` skips the generated JS loader shim, so the `.d.ts` is
 //      the only JS-facing artifact.
+//    - `--release` switches cargo to the optimized, stripped release profile.
+//      Tests use the default debug build because it compiles much faster.
 const cli = new NapiCli();
 const { task } = await cli.build({
   platform: true,
-  // TODO:
-  // SNOW-3996214 - this should be true when we build for the release
-  release: false,
+  release: args.release,
   cargoName: 'nodejs_bridge',
   manifestPath: path.join(ROOT_DIR, '..', 'nodejs_bridge', 'Cargo.toml'),
   packageJsonPath: NODE_SDK_PACKAGE_JSON_PATH,
   outputDir: BUILD_CORE_PACKAGE_DIR,
   cwd: ROOT_DIR,
-  cargoOptions: buildWithFipsTls ? ['--locked', '--features', 'fips-tls'] : ['--locked'],
+  cargoOptions: args['fips-tls'] ? ['--locked', '--features', 'fips-tls'] : ['--locked'],
   noJsBinding: true,
   dtsHeader: `\
 /**
@@ -91,7 +97,9 @@ await fs.copyFile(
 );
 
 // 4. Log the build output
-console.log(`build -> _build/${NAPI_CONFIG.packageName}/ (snowflake-sdk-core-${platformTriple})`);
+console.log(
+  `build (release: ${args.release}, fips-tls: ${args['fips-tls']}) -> _build/${NAPI_CONFIG.packageName}/ (snowflake-sdk-core-${platformTriple})`,
+);
 for (const file of await fs.readdir(BUILD_CORE_PACKAGE_DIR)) {
   console.log(`  ${file}`);
 }
