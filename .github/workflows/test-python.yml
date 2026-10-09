@@ -37,6 +37,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # uv defaults to 3 HTTP retries / 30s timeout. pypi.org flakes take
+  # required python_tests (test-pandas hatch install-wheel) down after
+  # `Request failed after 3 retries` on python-dateutil (SNOW-4204469).
+  # 300s per attempt: recent failures are stalled backends, not fast resets.
+  # 6 retries × 300s still finishes in bounded time if only some indexes hang.
+  UV_HTTP_RETRIES: "6"
+  UV_HTTP_TIMEOUT: "300"
 
 jobs:
   load-python-matrix:
@@ -394,14 +401,14 @@ jobs:
 
       - name: Download wheel
         if: matrix.wheel_artifact
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/download-artifact-retry
         with:
           name: ${{ matrix.wheel_artifact }}_py${{ matrix.py }}
           path: python/dist
 
       - name: Download sdist
         if: ${{ !matrix.wheel_artifact }}
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/download-artifact-retry
         with:
           name: python-sdist
           path: python/dist
@@ -825,7 +832,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Download wheel
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/download-artifact-retry
         with:
           name: manylinux_x86_64_py3.13
           path: python/dist
@@ -938,13 +945,13 @@ jobs:
           version: "0.9.28"
 
       - name: Download universal test results
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/download-artifact-retry
         with:
           name: results-universal-${{ env.MATRIX_KEY }}-${{ matrix.cloud_provider }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/download-artifact-retry
         with:
           name: results-reference-${{ env.REF_MATRIX_KEY }}
           path: ${{ github.workspace }}/reference-results

@@ -1,0 +1,44 @@
+name: Download artifact with retry
+description: >
+  Download a workflow artifact with backoff using `gh run download`.
+  Avoids fetching actions/download-artifact from codeload.github.com,
+  which failed required python_tests on ubuntu-24.04-arm with EAI_AGAIN
+  (SNOW-4169177). Callers must checkout the repo first so this composite
+  is local.
+inputs:
+  name:
+    required: true
+    description: Artifact name
+  path:
+    required: true
+    description: Destination directory
+  max-attempts:
+    required: false
+    default: '5'
+    description: Number of download attempts with linear backoff
+
+runs:
+  using: composite
+  steps:
+    - name: Download ${{ inputs.name }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ARTIFACT_NAME: ${{ inputs.name }}
+        DEST: ${{ inputs.path }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        RUN_ID: ${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$DEST"
+        for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+          echo "gh run download ${RUN_ID} -n ${ARTIFACT_NAME} (attempt ${attempt}/${MAX_ATTEMPTS})"
+          if gh run download "$RUN_ID" -n "$ARTIFACT_NAME" -D "$DEST"; then
+            exit 0
+          fi
+          if [ "$attempt" -eq "$MAX_ATTEMPTS" ]; then
+            echo "download-artifact exhausted ${MAX_ATTEMPTS} attempts: ${ARTIFACT_NAME}" >&2
+            exit 1
+          fi
+          sleep $((15 * attempt))
+        done
