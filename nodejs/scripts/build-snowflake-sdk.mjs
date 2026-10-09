@@ -14,7 +14,7 @@ const TSCONFIG_NPM_PATH = path.join(ROOT_DIR, 'tsconfig.npm.json');
 
 // Compiles `src/` into `_build/snowflake-sdk/` as a publish-ready JS package.
 // The built package.json is a copy of the workspace manifest with
-// `optionalDependencies` added for every `snowflake-sdk-core-<platform>`
+// `optionalDependencies` added for every `@snowflake/sdk-core-<platform>`
 // package (napi-rs's install model).
 //
 // The build runs as the numbered steps marked below.

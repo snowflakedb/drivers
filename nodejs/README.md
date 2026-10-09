@@ -6,7 +6,7 @@ Node.js driver for Snowflake.
 
 The driver is TypeScript (`src/`) on top of a native addon compiled from the Rust crate `nodejs_bridge`. Three scripts in `scripts/` produce the pieces:
 
-- `npm run build:core` — compiles the Rust crate into a native `.node` addon under `_build/snowflake-sdk-core/`.
+- `npm run build:core` — compiles the Rust crate into a native `.node` addon under `_build/@snowflake/sdk-core/`.
 - `npm run build:sdk` — compiles `src/` into a publish-ready package under `_build/snowflake-sdk/`.
 - `npm run build:link-local` — links the built packages into the workspace so code (and `tsc`) resolves them by name, the way a real consumer would. (The native addon is resolved by a platform-specific package name that only exists after the build.)
 
@@ -18,7 +18,7 @@ You rarely run these by hand — tests build what they need automatically (see [
 
 Two scripts build and pack the npm tarballs into `_build/`:
 
-- `npm run pack:core` — release build of the native core for the current platform, packed as `snowflake-sdk-core-<platform>-<version>.tgz`. Requires Rust toolchain.
+- `npm run pack:core` — release build of the native core for the current platform, packed as `@snowflake/sdk-core-<platform>-<version>.tgz`. Requires Rust toolchain.
 - `npm run pack:sdk` — the TypeScript SDK, packed as `snowflake-sdk-<version>.tgz`.
 
 To install locally, pass the SDK tarball and the core tarball for your platform to `npm install` together.

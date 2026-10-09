@@ -27,7 +27,7 @@ async function rewriteOldSdkModuleName() {
   console.log(`Renamed module declaration to 'snowflake-sdk-old' in ${OLD_SDK_TYPES_PATH}`);
 }
 
-// Links the locally built `snowflake-sdk` and `snowflake-sdk-core` packages into
+// Links the locally built `snowflake-sdk` and `@snowflake/sdk-core-..` packages into
 // the workspace so tests and `tsc` resolve against the freshly built artifacts.
 //
 // Each `npm link` re-syncs with package.json and removes anything not listed

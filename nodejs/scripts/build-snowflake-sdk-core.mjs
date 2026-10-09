@@ -22,7 +22,7 @@ const { values: args } = parseArgs({
 });
 
 // Compiles the `nodejs_bridge` Rust crate directly into the linkable platform
-// package at `_build/<napi.packageName>/` (i.e. `_build/snowflake-sdk-core/`),
+// package at `_build/<napi.packageName>/` (i.e. `_build/@snowflake/sdk-core/`),
 // then splits the napi outputs into their two homes:
 //   - The generated `.d.ts` (the crate's TypeScript API) is MOVED out of the
 //     built platform package into the committed source tree as
@@ -31,8 +31,7 @@ const { values: args } = parseArgs({
 //     against the native API regardless of which per-platform binary package is
 //     installed at runtime.
 //   - The platform-specific `.node` binary stays in the package alongside a
-//     copied-in `snowflake-sdk-core-<triple>` `package.json` (os/cpu guards,
-//     `main`/`files` pointing at the `.node`).
+//     copied-in `package.json` (os/cpu guards, `main`/`files` pointing at the `.node`).
 //
 // The build runs as the numbered steps marked below.
 
@@ -98,7 +97,7 @@ await fs.copyFile(
 
 // 4. Log the build output
 console.log(
-  `build (release: ${args.release}, fips-tls: ${args['fips-tls']}) -> _build/${NAPI_CONFIG.packageName}/ (snowflake-sdk-core-${platformTriple})`,
+  `build (release: ${args.release}, fips-tls: ${args['fips-tls']}) -> _build/${NAPI_CONFIG.packageName}/ (@snowflake/sdk-core-${platformTriple})`,
 );
 for (const file of await fs.readdir(BUILD_CORE_PACKAGE_DIR)) {
   console.log(`  ${file}`);

@@ -14,9 +14,9 @@ function getCore(): typeof CoreBinary {
     case 'darwin':
       switch (arch) {
         case 'arm64':
-          return require('snowflake-sdk-core-darwin-arm64');
+          return require('@snowflake/sdk-core-darwin-arm64');
         case 'x64':
-          return require('snowflake-sdk-core-darwin-x64');
+          return require('@snowflake/sdk-core-darwin-x64');
       }
       break;
     case 'linux': {
@@ -24,28 +24,28 @@ function getCore(): typeof CoreBinary {
       switch (arch) {
         case 'arm64':
           return isMusl
-            ? require('snowflake-sdk-core-linux-arm64-musl')
-            : require('snowflake-sdk-core-linux-arm64-gnu');
+            ? require('@snowflake/sdk-core-linux-arm64-musl')
+            : require('@snowflake/sdk-core-linux-arm64-gnu');
         case 'x64':
           return isMusl
-            ? require('snowflake-sdk-core-linux-x64-musl')
-            : require('snowflake-sdk-core-linux-x64-gnu');
+            ? require('@snowflake/sdk-core-linux-x64-musl')
+            : require('@snowflake/sdk-core-linux-x64-gnu');
       }
       break;
     }
     case 'win32':
       switch (arch) {
         case 'arm64':
-          return require('snowflake-sdk-core-win32-arm64-msvc');
+          return require('@snowflake/sdk-core-win32-arm64-msvc');
         case 'x64':
-          return require('snowflake-sdk-core-win32-x64-msvc');
+          return require('@snowflake/sdk-core-win32-x64-msvc');
         case 'ia32':
-          return require('snowflake-sdk-core-win32-ia32-msvc');
+          return require('@snowflake/sdk-core-win32-ia32-msvc');
       }
       break;
   }
 
-  throw new Error(`Unsupported platform for snowflake-sdk-core: ${platform}-${arch}.`);
+  throw new Error(`Unsupported platform for @snowflake/sdk-core: ${platform}-${arch}.`);
 }
 
 const core = getCore();
