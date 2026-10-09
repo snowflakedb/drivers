@@ -81,6 +81,10 @@ export type ConnectionOptions = Record<string, unknown> & {
    * Your account identifier.
    */
   account?: string;
+  /**
+   * Specifies a fully-qualified endpoint for connecting to Snowflake.
+   */
+  accessUrl?: string;
   workloadIdentityProvider?: 'AWS' | 'AZURE' | 'GCP' | 'OIDC';
   rowMode?: RowMode;
   fetchAsString?: DataType[];

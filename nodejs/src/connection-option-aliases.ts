@@ -5,6 +5,7 @@
 // to the bridge and silently ignored.
 const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   account: 'account',
+  accessUrl: 'server_url',
   host: 'host',
   username: 'user',
   password: 'password',

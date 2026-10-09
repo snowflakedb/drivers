@@ -1717,3 +1717,34 @@ behavior_differences:
       - Other values: each character must be an ASCII letter, digit, ".", "-", or "_".
         A leading or trailing separator and repeated separators ("--", "..") are allowed.
         Any other character fails connectAsync.
+
+  88:
+    name: 'accessUrl does not fill account'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection with accessUrl "https://access-url.snowflakecomputing.com" and no
+      account sets account to "access-url". createConnection does not throw.
+    new_driver_behavior: |
+      accessUrl does not fill account. account is required. With accessUrl and no
+      account, connectAsync fails with "Missing required parameter 'account'". The
+      error name is "Error" and code is undefined.
+
+  89:
+    name: 'a non-URL accessUrl is not rejected at createConnection'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection rejects "not-a-url" and "" with InvalidParameterError 404010
+      before connect. A non-string gets the same error.
+    new_driver_behavior: |
+      createConnection accepts "not-a-url" and "". The driver does not validate the
+      string. connectAsync fails with NetworkError 401001 ("Network error. Could not
+      reach Snowflake.") because the login request cannot reach that URL.
+    status_rationale: If possible the validation should be done by the server.
