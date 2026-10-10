@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toCoreConnectionOptions } from '../../src/connection-option-aliases.js';
+import { createConnection } from '../../src/index.js';
 
 describe('toCoreConnectionOptions', () => {
   it('maps camelCase driver options onto their sf_core snake_case keys', () => {
@@ -90,20 +91,34 @@ describe('toCoreConnectionOptions', () => {
     });
   });
 
-  it('should convert browserActionTimeout milliseconds to authentication_timeout seconds', () => {
-    expect(
-      toCoreConnectionOptions({
-        browserActionTimeout: 120000,
-      }),
-    ).toEqual({
-      authentication_timeout: '120',
+  it('should convert browserActionTimeout milliseconds to seconds', () => {
+    expect(toCoreConnectionOptions({ browserActionTimeout: 120000 })).toEqual({
+      browserActionTimeout: '120',
     });
   });
 
-  it('should reject a non-positive browserActionTimeout', () => {
-    expect(() => toCoreConnectionOptions({ browserActionTimeout: -1 })).toThrow(
-      'browserActionTimeout must be a positive number',
-    );
+  it.each([
+    [0, '0'],
+    [-1, '-1'],
+    [999, '1'],
+  ])(
+    'should convert browserActionTimeout %s milliseconds to %s seconds',
+    (milliseconds, seconds) => {
+      expect(toCoreConnectionOptions({ browserActionTimeout: milliseconds })).toEqual({
+        browserActionTimeout: seconds,
+      });
+    },
+  );
+
+  it('should reject a non-numeric browserActionTimeout', () => {
+    expect(() =>
+      createConnection({
+        account: 'test-account',
+        username: 'test-user',
+        password: 'test-password',
+        browserActionTimeout: 'invalid',
+      }),
+    ).toThrow("Expected type Int for parameter 'browserActionTimeout'");
   });
 
   it('throws on a key that is not in the alias map', () => {

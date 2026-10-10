@@ -199,7 +199,7 @@ pub fn resolve_options(
                         message: format!(
                             "Expected type {} for parameter '{}', got {}",
                             value_type_names(param_def.value_type, param_def.additional_value_type),
-                            param_def.canonical_name,
+                            key,
                             setting_type_name(&value),
                         ),
                         code: ValidationCode::InvalidType,

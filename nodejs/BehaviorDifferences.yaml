@@ -1167,28 +1167,33 @@ behavior_differences:
     type: enhancement
     reviewed: false
     is_breaking_change: true
-    impact: low
+    impact: medium
     old_driver_behavior: |
-      browserActionTimeout is milliseconds (default 120000). It bounds only the local
-      MFA/SSO / OAuth-authorization-code loopback wait, and for EXTERNALBROWSER the
-      clock starts when the SSO URL is handed to the browser, so the
-      authenticator-request round trip before it is not charged to the budget. Native
-      Okta and the OAuth token exchange after the redirect are not this clock. login
-      HTTP retries are sfRetryMaxLoginRetries / retryTimeout. Exhausting the wait
-      rejects with "Error while getting SAML token: Browser action timed out after <n> ms."
+      browserActionTimeout is milliseconds. Default 120000. createConnection accepts
+      a positive integer only. 0, a negative value, and a fraction throw
+      InvalidParameterError 404040: "Invalid browser timeout value. The specified
+      value must be a positive number."
+      The timer covers the local MFA/SSO or OAuth authorization-code loopback wait.
+      For EXTERNALBROWSER it starts when the SSO URL is handed to the browser. The
+      authenticator-request before that is not included. Native Okta and the OAuth
+      token exchange after the redirect are not included.
+      Timeout: "Error while getting SAML token: Browser action timed out after <n> ms."
     new_driver_behavior: |
-      The same key and unit are accepted. The value is converted with floor(ms/1000)
-      and stored as authentication_timeout (seconds). That budget also covers native
-      Okta and the OAuth authorization-code flow end-to-end (loopback + token request
-      + refresh share one deadline). For EXTERNALBROWSER the clock starts before the
-      authenticator-request, so a slow SSO round trip leaves that much less for the
-      browser callback and a callback the old driver would still accept can arrive
-      after the budget is gone. Exhausting it rejects with "Failed to login:
-      External browser SSO failed: Authentication timeout exceeded (budget <n>s)"
-      and no `error.code`. Values below 1000 ms become 0
-      seconds. login_timeout / sfRetryMaxLoginRetries are separate and still not this
-      option. Non-positive or non-finite values throw a plain Error (no `error.code`);
-      the old driver used ErrorCode 404040.
+      browserActionTimeout is a finite number of milliseconds, including 0 and a
+      negative value such as -1. Divide by 1000 and round down. 1500 ms is 1 second.
+      120000 ms is 120 seconds. 1700 ms is 1 second, 12500 ms is 12 seconds, and
+      314200 ms is 314 seconds. A positive value that rounds down to 0 stays 1
+      second: 1 ms, 1.5 ms, and 999 ms. 0 stays 0 seconds. That budget is already
+      gone. Negatives round down too: -1 ms is -1 seconds, -1500 ms is -2 seconds.
+      A negative number of seconds is accepted. The budget used is the 120 second
+      default.
+      A non-number or a non-finite value fails with "Expected type Int for parameter
+      'browserActionTimeout'".
+      The budget covers native Okta and the OAuth authorization-code flow from start
+      to finish, not only the browser wait. For EXTERNALBROWSER the clock starts
+      before the authenticator-request. A slow SSO round trip leaves less time for
+      the browser callback. Timeout: "Failed to login: External browser SSO failed:
+      Authentication timeout exceeded (budget <n>s)". No error.code.
 
   61:
     name: 'execute() after a connect that never reached the server reports a terminated connection, not a never-established one'
@@ -1787,7 +1792,7 @@ behavior_differences:
       Omitted, login gives up after 120 seconds. 0 and any negative value, e.g. -1,
       mean login has no deadline. A positive integer is used as the number of
       seconds given, so 2 stays 2 and 400 stays 400. A non-integer fails configuration
-      validation: "Expected type Int for parameter 'login_timeout'". The deadline
+      validation: "Expected type Int for parameter 'retryTimeout'". The deadline
       covers the whole login, including retries, rather than one request.
 
   97:

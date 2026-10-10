@@ -12,7 +12,7 @@ describe('retryTimeout', () => {
   it.each([0, 2, 400, -1])('should accept retryTimeout %s', (retryTimeout) => {
     if (isRunningNewDriverWithBD('BD#91')) {
       expect(toCoreConnectionOptions({ retryTimeout })).toEqual({
-        login_timeout: String(retryTimeout),
+        retryTimeout: String(retryTimeout),
       });
     }
     snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout });
@@ -22,7 +22,13 @@ describe('retryTimeout', () => {
     if (isRunningNewDriverWithBD('BD#91')) {
       expect(() =>
         snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout: 1.5 }),
-      ).toThrow("Expected type Int for parameter 'login_timeout'");
+      ).toThrow(
+        expect.objectContaining({
+          code: undefined,
+          message:
+            "Invalid argument: [Error] retryTimeout: Expected type Int for parameter 'retryTimeout', got String",
+        }),
+      );
     } else {
       snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout: 1.5 });
     }
@@ -34,7 +40,13 @@ describe('retryTimeout', () => {
       if (isRunningNewDriverWithBD('BD#91')) {
         expect(() =>
           snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout }),
-        ).toThrow("Expected type Int for parameter 'login_timeout'");
+        ).toThrow(
+          expect.objectContaining({
+            code: undefined,
+            message:
+              "Invalid argument: [Error] retryTimeout: Expected type Int for parameter 'retryTimeout', got String",
+          }),
+        );
       } else {
         expect(() =>
           snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout }),

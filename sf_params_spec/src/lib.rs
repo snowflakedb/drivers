@@ -1227,7 +1227,12 @@ static PARAM_DEFS: &[ParamDef] = &[
         // auth-retry budget, not a socket timeout); for the other wrappers
         // `LOGIN_TIMEOUT` keeps matching the canonical `login_timeout` parameter
         // below, case-insensitively.
-        .aliases(&[Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT"),
+            // Legacy Node.js option. The wrapper converts milliseconds to seconds
+            // before forwarding this spelling.
+            Alias::scoped(Wrapper::NodeJs, "browserActionTimeout"),
+        ])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(120))
         .sensitive(false)
@@ -1892,6 +1897,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         // `LOGIN_TIMEOUT` matches this canonical case-insensitively for every
         // wrapper except ODBC, where it is scoped to `authentication_timeout`
         // (see that param's `Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")`).
+        // `retryTimeout` is the legacy Node.js option for this same clock, not
+        // for `retry_timeout`.
+        .aliases(aliases![NodeJs; "retryTimeout"])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64))
         .sensitive(false)
@@ -3002,6 +3010,9 @@ mod tests {
             // Legacy snowflake-connector-nodejs option spelling. Legacy .NET and
             // JDBC use `token_file_path`, a canonical case variant.
             ("tokenFilePath", "token_file_path", &[NodeJs]),
+            // Legacy Node.js login wall clock. Core `retry_timeout` is a different parameter.
+            ("retryTimeout", "login_timeout", &[NodeJs]),
+            ("browserActionTimeout", "authentication_timeout", &[NodeJs]),
         ];
         for (alias, expected_canonical, owners) in scoped_cases {
             for wrapper in [Odbc, Jdbc, Python, NodeJs, DotNet] {

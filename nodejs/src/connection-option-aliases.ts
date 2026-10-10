@@ -1,3 +1,7 @@
+// TODO: In future we should register an alias in core for each parameter. This map then becomes a
+// set: the Node driver's whitelist of connection options, even when core
+// accepts more.
+//
 // Maps every camelCase connection option this driver accepts (the
 // snowflake-sdk `ConnectionOptions` shape) onto the snake_case key sf_core
 // understands. A key absent from this map is rejected, so a typo or an
@@ -22,7 +26,10 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   schema: 'schema',
   warehouse: 'warehouse',
   role: 'role',
-  retryTimeout: 'login_timeout',
+  // Core's Node.js alias resolves this spelling to login_timeout (BD#91).
+  retryTimeout: 'retryTimeout',
+  // Core's Node.js alias resolves this spelling to authentication_timeout (BD#59).
+  browserActionTimeout: 'browserActionTimeout',
   useEnvProxy: 'use_proxy_env',
   port: 'port',
   protocol: 'protocol',
@@ -43,12 +50,14 @@ export function toCoreConnectionOptions(options: Record<string, unknown>): Recor
     if (value === undefined) {
       continue;
     }
-    if (key === 'browserActionTimeout') {
-      // The Node SDK takes milliseconds; sf_core takes authentication_timeout in seconds (BD#59).
-      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-        throw new Error('browserActionTimeout must be a positive number');
+    if (key === 'browserActionTimeout' && typeof value === 'number' && Number.isFinite(value)) {
+      // Milliseconds in, seconds out (BD#59).
+      // TODO(SNOW-4263660): take seconds, or replace this option with authenticationTimeout.
+      let seconds = Math.floor(value / 1000);
+      if (value > 0 && seconds === 0) {
+        seconds = 1;
       }
-      normalized.authentication_timeout = String(Math.floor(value / 1000));
+      normalized.browserActionTimeout = String(seconds);
       continue;
     }
     const sfCoreKey = CONNECTION_OPTION_ALIASES[key];
