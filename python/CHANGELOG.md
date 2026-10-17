@@ -2,6 +2,10 @@
 
 ## Upcoming Release
 
+New features:
+
+- Changed `execute_string` and `execute_stream` to keep Snowflake Scripting blocks, such as `CREATE PROCEDURE ... AS BEGIN ... END;` and anonymous `DECLARE ... BEGIN ... END;` blocks, together as one statement instead of splitting them on each inner semicolon.
+
 ## 5.0.0 (October 15, 2026)
 
 Breaking changes:
