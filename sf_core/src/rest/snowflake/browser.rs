@@ -8,10 +8,11 @@
 //! Two layers of defense live here:
 //!
 //! 1. [`open_url`] launches the URL on WSL via a direct browser/protocol
-//!    handler (`explorer.exe`, falling back to `wslview`) rather than the
-//!    shell path, so the URL is treated as an opaque navigation target
-//!    instead of a command. This is the primary fix and does not reject any
-//!    legitimate URL. Non-WSL platforms defer to the `webbrowser` crate.
+//!    handler (the user's `$BROWSER` if set, then `explorer.exe`, falling
+//!    back to `wslview`) rather than the shell path, so the URL is treated
+//!    as an opaque navigation target instead of a command. This is the
+//!    primary fix and does not reject any legitimate URL. Non-WSL platforms
+//!    defer to the `webbrowser` crate.
 //! 2. [`validate_browser_url`] additionally rejects URLs that are not
 //!    `https://`, or that contain a character unsafe to pass to a launcher.
 //!    This is transport-independent defense-in-depth.
@@ -36,15 +37,35 @@
 //! backslash, and raw whitespace / control bytes. Encoded whitespace
 //! (`%20`) stays legal, so this does not false-reject.
 //!
-//! ### Launcher ordering: `explorer.exe` before `wslview`
+//! ### Launcher ordering: `$BROWSER`, then `explorer.exe`, then `wslview`
 //!
-//! `explorer.exe` is tried first: it hands the URL to the Windows protocol
-//! handler (which opens the user's default browser) with no interpreter in
-//! the chain. `wslview` (from the `wslu` package) is the fallback — it also
+//! A non-empty `$BROWSER` is tried first: it is the user's explicit choice,
+//! the one xdg-open and Python's `webbrowser` honour, and without it
+//! `explorer.exe` can open File Explorer instead of a browser for a long
+//! SAML URL (snowflakedb/drivers#1363). It carries no more trust than `PATH`
+//! already does when resolving `explorer.exe`: both come from the user's own
+//! environment.
+//!
+//! `explorer.exe` is next: it hands the URL to the Windows protocol handler
+//! (which opens the user's default browser) with no interpreter in the
+//! chain. `wslview` (from the `wslu` package) is the fallback — it also
 //! resolves the default browser, but is a shell script that may invoke a
 //! Windows tool internally, so it carries a small third-party-trust surface.
-//! Validation runs before any launcher, so ordering `explorer.exe` first
-//! simply removes the trust question from the common path.
+//! Validation runs before any launcher, so ordering `explorer.exe` before
+//! `wslview` simply removes the trust question from the default path.
+//!
+//! ### `$BROWSER` is one program path, not a command line
+//!
+//! The value is spawned as a single program with the URL as its only
+//! argument: no splitting on whitespace or `:`, and no `%s` substitution.
+//! The usual WSL values are a bare name such as `wslview` (resolved through
+//! `PATH`, like `explorer.exe`) or a Windows browser path such as
+//! `/mnt/c/Program Files/Google/Chrome/Application/chrome.exe`, which
+//! whitespace splitting would break at the space. Parsing a command line would also mean
+//! splicing the URL into a user template, which is the step SNOW-3649282
+//! removed. A value with arguments, `%s` or a `:`-separated list names no
+//! program, so its spawn fails and the chain continues to `explorer.exe`,
+//! which is the behaviour without `$BROWSER`.
 
 /// Characters that are unsafe to pass to a launcher and are **also** never
 /// legitimate in a URL, so rejecting them is safe on every platform —
@@ -153,17 +174,25 @@ fn detect_wsl() -> bool {
 /// Ordered list of `(program, args)` launcher candidates to try on WSL.
 ///
 /// Every candidate passes `url` as its own standalone argv element to a
-/// program that opens it via the Windows protocol handler — never through
-/// a shell. `explorer.exe` is tried first; `wslview` (from the `wslu`
-/// package) is the fallback. Both open the user's default browser.
+/// program — never through a shell. A non-empty `browser` (the `$BROWSER`
+/// value) is tried first, as one program path; then `explorer.exe`, then
+/// `wslview` (from the `wslu` package), both of which open the user's
+/// default browser. See the module docs for why `$BROWSER` is not parsed.
 ///
-/// Pure and side-effect free so it can be unit-tested without spawning.
+/// Pure and side-effect free so it can be unit-tested without spawning or
+/// touching the process environment.
 #[cfg(target_os = "linux")]
-fn wsl_launch_candidates(url: &str) -> Vec<(&'static str, Vec<String>)> {
-    vec![
-        ("explorer.exe", vec![url.to_string()]),
-        ("wslview", vec![url.to_string()]),
-    ]
+fn wsl_launch_candidates(url: &str, browser: Option<&str>) -> Vec<(String, Vec<String>)> {
+    let mut programs: Vec<&str> = browser.filter(|b| !b.is_empty()).into_iter().collect();
+    for default in ["explorer.exe", "wslview"] {
+        if !programs.contains(&default) {
+            programs.push(default);
+        }
+    }
+    programs
+        .into_iter()
+        .map(|program| (program.to_string(), vec![url.to_string()]))
+        .collect()
 }
 
 /// Try each `(program, args)` candidate in order, returning `Ok` on the
@@ -174,12 +203,12 @@ fn wsl_launch_candidates(url: &str) -> Vec<(&'static str, Vec<String>)> {
 /// processes or requiring a WSL host.
 #[cfg(target_os = "linux")]
 fn open_via_candidates(
-    candidates: Vec<(&'static str, Vec<String>)>,
+    candidates: Vec<(String, Vec<String>)>,
     mut spawn: impl FnMut(&str, &[String]) -> Result<(), String>,
 ) -> Result<(), String> {
     let mut last_err = String::from("no WSL browser launcher available");
     for (program, args) in candidates {
-        match spawn(program, &args) {
+        match spawn(&program, &args) {
             Ok(()) => return Ok(()),
             Err(e) => last_err = format!("{program}: {e}"),
         }
@@ -191,9 +220,9 @@ fn open_via_candidates(
 ///
 /// Runs [`validate_browser_url`] first — so this function is safe to call
 /// from any site regardless of whether the caller pre-validated — then, on
-/// WSL, launches via [`wsl_launch_candidates`] instead of the shell path
-/// (SNOW-3649282); on every other platform, defers to the `webbrowser`
-/// crate.
+/// WSL, launches via [`wsl_launch_candidates`] (`$BROWSER` first, when set)
+/// instead of the shell path (SNOW-3649282); on every other platform,
+/// defers to the `webbrowser` crate.
 ///
 /// Callers that need to distinguish "URL rejected" from "launch failed"
 /// (e.g. to decide whether to print a manual-paste fallback) should still
@@ -203,9 +232,13 @@ fn open_via_candidates(
 pub(crate) fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
+        // Read per call, not cached like `is_wsl`: it is cheap. A non-UTF-8
+        // value reads as unset and keeps the default launcher order.
+        let browser = std::env::var(crate::env_vars::BROWSER).ok();
         open_url_impl(
             url,
             is_wsl(),
+            browser.as_deref(),
             |program, args| {
                 std::process::Command::new(program)
                     .args(args)
@@ -224,9 +257,10 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
     }
 }
 
-/// Routing core of [`open_url`], with `is_wsl` and the launch strategies
-/// injected so the WSL-vs-fallback decision is unit-testable without a WSL
-/// host, real subprocesses, or opening a browser.
+/// Routing core of [`open_url`], with `is_wsl`, the `$BROWSER` value and the
+/// launch strategies injected so the WSL-vs-fallback decision is
+/// unit-testable without a WSL host, real subprocesses, or opening a
+/// browser.
 ///
 /// Validation runs first (the backstop that no caller can bypass); then on
 /// WSL the URL goes to `spawn` via [`wsl_launch_candidates`], otherwise to
@@ -235,6 +269,7 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
 fn open_url_impl(
     url: &str,
     is_wsl: bool,
+    browser: Option<&str>,
     spawn: impl FnMut(&str, &[String]) -> Result<(), String>,
     fallback: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
@@ -243,7 +278,7 @@ fn open_url_impl(
     validate_browser_url(url)?;
 
     if is_wsl {
-        return open_via_candidates(wsl_launch_candidates(url), spawn);
+        return open_via_candidates(wsl_launch_candidates(url, browser), spawn);
     }
     fallback(url)
 }
@@ -389,7 +424,7 @@ mod tests {
         // launcher must never route through cmd.exe / powershell, and must
         // never pass "/c".
         let payload = "https://x/sso?s=y|calc&whoami";
-        for (program, args) in wsl_launch_candidates(payload) {
+        for (program, args) in wsl_launch_candidates(payload, None) {
             assert_ne!(program, "cmd.exe", "must not launch via cmd.exe");
             assert_ne!(program, "powershell.exe", "must not launch via powershell");
             assert!(
@@ -405,22 +440,61 @@ mod tests {
         // The URL — metacharacters and all — must arrive as exactly one
         // argv element, never split or concatenated with other tokens, so
         // the launcher treats it as one navigation target.
+        // Holds with and without `$BROWSER`, including a value that looks
+        // like a command template.
         let payload = "https://x/sso?s=y|calc";
-        for (_program, args) in wsl_launch_candidates(payload) {
-            assert_eq!(
-                args,
-                vec![payload.to_string()],
-                "URL must be the sole argument, passed verbatim"
-            );
+        for browser in [None, Some("wslview"), Some("firefox %s")] {
+            for (_program, args) in wsl_launch_candidates(payload, browser) {
+                assert_eq!(
+                    args,
+                    vec![payload.to_string()],
+                    "URL must be the sole argument, passed verbatim"
+                );
+            }
         }
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn wsl_launcher_prefers_explorer_then_wslview() {
-        let candidates = wsl_launch_candidates("https://idp.example.com/sso");
-        let programs: Vec<_> = candidates.iter().map(|(p, _)| *p).collect();
-        assert_eq!(programs, vec!["explorer.exe", "wslview"]);
+        // Unset or empty `$BROWSER` keeps the default order.
+        for browser in [None, Some("")] {
+            let candidates = wsl_launch_candidates("https://idp.example.com/sso", browser);
+            let programs: Vec<_> = candidates.iter().map(|(p, _)| p.as_str()).collect();
+            assert_eq!(programs, vec!["explorer.exe", "wslview"]);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wsl_launcher_tries_browser_env_first() {
+        // A set `$BROWSER` goes ahead of the defaults, and a default it
+        // names is not tried a second time.
+        let candidates = wsl_launch_candidates("https://idp.example.com/sso", Some("wslview"));
+        let programs: Vec<_> = candidates.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(programs, vec!["wslview", "explorer.exe"]);
+        let candidates =
+            wsl_launch_candidates("https://idp.example.com/sso", Some("/usr/bin/firefox"));
+        let programs: Vec<_> = candidates.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            programs,
+            vec!["/usr/bin/firefox", "explorer.exe", "wslview"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wsl_launcher_treats_browser_env_as_one_program_path() {
+        // No splitting on whitespace or `:`, no `%s` substitution: a Windows
+        // path with a space stays whole, and a command template becomes a
+        // program name that fails to spawn (falling through to explorer.exe).
+        let chrome = "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe";
+        for browser in [chrome, "firefox --new-window %s", "wslview:firefox"] {
+            let candidates = wsl_launch_candidates("https://idp.example.com/sso", Some(browser));
+            let (program, args) = &candidates[0];
+            assert_eq!(program, browser);
+            assert_eq!(args, &["https://idp.example.com/sso".to_string()]);
+        }
     }
 
     // ─── WSL runtime fallback loop (open_via_candidates) ─────────────────
@@ -431,7 +505,7 @@ mod tests {
         use std::cell::RefCell;
         let tried = RefCell::new(Vec::new());
         let result = open_via_candidates(
-            wsl_launch_candidates("https://idp.example.com/sso"),
+            wsl_launch_candidates("https://idp.example.com/sso", None),
             |program, _args| {
                 tried.borrow_mut().push(program.to_string());
                 Ok(()) // first candidate (explorer.exe) succeeds
@@ -451,7 +525,7 @@ mod tests {
         use std::cell::RefCell;
         let tried = RefCell::new(Vec::new());
         let result = open_via_candidates(
-            wsl_launch_candidates("https://idp.example.com/sso"),
+            wsl_launch_candidates("https://idp.example.com/sso", None),
             |program, args| {
                 tried.borrow_mut().push(program.to_string());
                 // Every candidate still receives the URL as a single arg.
@@ -473,9 +547,31 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn open_via_candidates_falls_through_from_unusable_browser_env() {
+        // A `$BROWSER` that does not spawn (e.g. a command template) costs
+        // one failed attempt; explorer.exe is next, as without `$BROWSER`.
+        use std::cell::RefCell;
+        let tried = RefCell::new(Vec::new());
+        let result = open_via_candidates(
+            wsl_launch_candidates("https://idp.example.com/sso", Some("firefox %s")),
+            |program, _args| {
+                tried.borrow_mut().push(program.to_string());
+                if program == "firefox %s" {
+                    Err("No such file or directory".to_string())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(*tried.borrow(), vec!["firefox %s", "explorer.exe"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn open_via_candidates_reports_last_error_when_all_fail() {
         let result = open_via_candidates(
-            wsl_launch_candidates("https://idp.example.com/sso"),
+            wsl_launch_candidates("https://idp.example.com/sso", None),
             |program, _args| Err(format!("{program} unavailable")),
         );
         let err = result.expect_err("all launchers failed");
@@ -500,6 +596,7 @@ mod tests {
         let result = open_url_impl(
             "https://idp.example.com/sso",
             true,
+            None,
             |program, args| {
                 assert_eq!(args, ["https://idp.example.com/sso".to_string()]);
                 tried.borrow_mut().push(program.to_string());
@@ -513,12 +610,37 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn open_url_on_wsl_launches_browser_env_first() {
+        // snowflakedb/drivers#1363: with `$BROWSER` set, it is spawned
+        // before explorer.exe, with the URL as its single argument.
+        use std::cell::RefCell;
+        let tried = RefCell::new(Vec::new());
+        let result = open_url_impl(
+            "https://idp.example.com/sso",
+            true,
+            Some("wslview"),
+            |program, args| {
+                assert_eq!(args, ["https://idp.example.com/sso".to_string()]);
+                tried.borrow_mut().push(program.to_string());
+                Ok(())
+            },
+            |_| panic!("fallback (webbrowser) must not be used on WSL"),
+        );
+        assert!(result.is_ok());
+        assert_eq!(*tried.borrow(), vec!["wslview"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn open_url_off_wsl_uses_fallback_never_spawn() {
+        // Off WSL a set `$BROWSER` does not reach `spawn`; the `webbrowser`
+        // crate chooses the launcher.
         use std::cell::Cell;
         let fell_back = Cell::new(false);
         let result = open_url_impl(
             "https://idp.example.com/sso",
             false,
+            Some("wslview"),
             |_, _| panic!("launcher must not spawn off WSL"),
             |u| {
                 assert_eq!(u, "https://idp.example.com/sso");
@@ -534,11 +656,12 @@ mod tests {
     #[test]
     fn open_url_impl_rejects_unsafe_url_before_routing() {
         // An unsafe URL is refused before either strategy runs, on both
-        // is_wsl branches.
+        // is_wsl branches, and a set `$BROWSER` does not get ahead of it.
         for is_wsl in [true, false] {
             let result = open_url_impl(
                 "https://x/sso?s=y|calc",
                 is_wsl,
+                Some("wslview"),
                 |_, _| panic!("must not spawn for a rejected URL"),
                 |_| panic!("must not fall back for a rejected URL"),
             );
