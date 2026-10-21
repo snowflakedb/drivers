@@ -79,6 +79,7 @@ Changes:
 
 Bug fixes:
 
+- Fixed external-browser and OAuth authorization-code login on WSL ignoring `$BROWSER` and trying `explorer.exe` first, which can open File Explorer instead of the browser. A non-empty `$BROWSER` is now tried first, as a single program path with the URL as its only argument, before `explorer.exe` and `wslview`. (snowflakedb/drivers#1363)
 - Fixed statement-level TIMEZONE overrides so a registered TIMEZONE can be set on a statement and is sent on the query request. (snowflakedb/drivers#2753)
 - Fixed Python `Cursor.request_id` to return a `uuid.UUID` when a request id is present and `None` otherwise. `Cursor._request_id` returns that same value and warns on use. (snowflakedb/drivers#2594)
 - Fixed PAT_WITH_EXTERNAL_SESSION connections always failing `connection_heartbeat` / `isValid` checks because the driver sent a Snowflake session-token heartbeat instead of `Authorization: Bearer` and `X-Snowflake-External-Session-ID`. (snowflakedb/drivers#2600)

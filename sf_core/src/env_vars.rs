@@ -51,6 +51,10 @@ pub const SNOWFLAKE_DISABLE_PLATFORM_DETECTION: &str = "SNOWFLAKE_DISABLE_PLATFO
 /// Set to `"noop"` to suppress actual browser launches in tests.
 pub const SF_TEST_BROWSER_OPENER: &str = "SF_TEST_BROWSER_OPENER";
 
+/// The user's preferred browser program (xdg / `webbrowser` convention). On
+/// WSL it is tried before `explorer.exe` and `wslview`, as one program path.
+pub const BROWSER: &str = "BROWSER";
+
 /// Enable diagnostic file logging (layer-file) with no level filter.
 /// When `"true"`, all log events (core and wrapper) are written to a file.
 pub const SNOWFLAKE_TROUBLESHOOTING_ENABLED: &str = "SNOWFLAKE_TROUBLESHOOTING_ENABLED";
