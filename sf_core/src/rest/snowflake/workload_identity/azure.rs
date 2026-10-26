@@ -8,8 +8,9 @@
 //!    access token, so no IMDS round-trip is needed.
 //!    `workload_identity_impersonation_path` is **not supported** here and is
 //!    rejected with [`AzureAttestationError::AksImpersonationNotSupported`].
-//! 2. Azure Functions runtime (environment variables `IDENTITY_ENDPOINT` +
-//!    `IDENTITY_HEADER` or legacy `MSI_ENDPOINT` + `MSI_SECRET`).
+//! 2. Azure Functions runtime (`IDENTITY_ENDPOINT` together with
+//!    `IDENTITY_HEADER`, or legacy `MSI_ENDPOINT` together with `MSI_SECRET`).
+//!    `IDENTITY_ENDPOINT` without `IDENTITY_HEADER` returns an error.
 //! 3. Azure IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`).
 //!
 //! The `resource` (Entra audience) defaults to the Snowflake-assigned
@@ -107,6 +108,11 @@ pub enum AzureAttestationError {
     },
     #[snafu(display("workload_identity_impersonation_path is not supported on AKS."))]
     AksImpersonationNotSupported {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Managed identity is not enabled on this Azure function."))]
+    AzureFunctionsIdentityHeaderMissing {
         #[snafu(implicit)]
         location: Location,
     },
@@ -209,10 +215,9 @@ pub(super) async fn get_managed_identity_token(
             .filter(|value| !value.is_empty())
     });
 
-    if let (Ok(endpoint), Ok(header)) = (
-        std::env::var(env_vars::IDENTITY_ENDPOINT),
-        std::env::var(env_vars::IDENTITY_HEADER),
-    ) {
+    if let Some(endpoint) = non_empty_env(env_vars::IDENTITY_ENDPOINT) {
+        let header = non_empty_env(env_vars::IDENTITY_HEADER)
+            .context(AzureFunctionsIdentityHeaderMissingSnafu)?;
         return get_from_azure_functions(
             &endpoint,
             &header,
@@ -706,26 +711,27 @@ mod tests {
     // -- Azure Functions dispatch --
     //
     // `get_managed_identity_token` dispatches to `get_from_azure_functions`
-    // instead of IMDS when either `IDENTITY_ENDPOINT`/`IDENTITY_HEADER`
-    // (Azure Functions) or `MSI_ENDPOINT`/`MSI_SECRET` (legacy App Service
-    // MSI) are set. Neither branch is exercised by any test above, which all
-    // force the IMDS path via `without_azure_functions_env`.
+    // when `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` are both set, or when
+    // the legacy `MSI_ENDPOINT`/`MSI_SECRET` pair is set. `IDENTITY_ENDPOINT`
+    // without `IDENTITY_HEADER` returns an error and does not continue to
+    // MSI or IMDS. Neither success branch is exercised by any test above,
+    // which all force the IMDS path via `without_azure_functions_env`.
 
-    /// Sets `IDENTITY_ENDPOINT`/`IDENTITY_HEADER` (clearing the legacy
-    /// `MSI_ENDPOINT`/`MSI_SECRET` pair) so `get_managed_identity_token`
-    /// takes the Azure Functions branch, optionally setting
+    /// Sets `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` (clearing the legacy
+    /// `MSI_ENDPOINT`/`MSI_SECRET` pair). `identity_header` of `None` or `""`
+    /// leaves the header unset or empty. Optionally sets
     /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`. Inverse of
     /// `without_azure_functions_env`.
     async fn with_azure_functions_env<F: Future<Output = ()>>(
         endpoint: &str,
-        identity_header: &str,
+        identity_header: Option<&str>,
         client_id: Option<&str>,
         f: F,
     ) {
         temp_env::async_with_vars(
             [
                 (env_vars::IDENTITY_ENDPOINT, Some(endpoint)),
-                (env_vars::IDENTITY_HEADER, Some(identity_header)),
+                (env_vars::IDENTITY_HEADER, identity_header),
                 (env_vars::MSI_ENDPOINT, None::<&str>),
                 (env_vars::MSI_SECRET, None::<&str>),
                 (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
@@ -788,7 +794,7 @@ mod tests {
         let endpoints = AttestationEndpoints::default();
         let endpoint = format!("{}/MSI/token", server.uri());
 
-        with_azure_functions_env(&endpoint, "test-identity-header", None, async {
+        with_azure_functions_env(&endpoint, Some("test-identity-header"), None, async {
             let token = get_managed_identity_token(&client, &config, &endpoints)
                 .await
                 .expect("expected managed identity token");
@@ -849,7 +855,7 @@ mod tests {
         let endpoints = AttestationEndpoints::default();
         let endpoint = format!("{}/MSI/token", server.uri());
 
-        with_azure_functions_env(&endpoint, "test-identity-header", None, async {
+        with_azure_functions_env(&endpoint, Some("test-identity-header"), None, async {
             let err = get_managed_identity_token(&client, &config, &endpoints)
                 .await
                 .expect_err("expected an error for a non-2xx Azure Functions response");
@@ -867,6 +873,92 @@ mod tests {
             }
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn get_managed_identity_token_errors_when_identity_endpoint_lacks_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"imds-token"}"#),
+            )
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let config = azure_config(None, Vec::new());
+        let client = reqwest::Client::new();
+        let endpoint = format!("{}/metadata/identity/endpoint/from/env", server.uri());
+
+        for header in [None, Some("")] {
+            with_azure_functions_env(&endpoint, header, None, async {
+                let err = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect_err("expected an error when IDENTITY_HEADER is missing");
+                assert!(matches!(
+                    err,
+                    AzureAttestationError::AzureFunctionsIdentityHeaderMissing { .. }
+                ));
+                assert_eq!(
+                    err.to_string(),
+                    "Managed identity is not enabled on this Azure function."
+                );
+            })
+            .await;
+        }
+    }
+
+    async fn assert_functions_request_sends_client_id(entra_resource: Option<&str>) {
+        let server = MockServer::start().await;
+        let resource = entra_resource.unwrap_or(DEFAULT_AZURE_ENTRA_RESOURCE);
+        Mock::given(method("GET"))
+            .and(path("/metadata/identity/endpoint/from/env"))
+            .and(header("X-IDENTITY-HEADER", "some-identity-header-from-env"))
+            .and(query_param("resource", resource))
+            .and(query_param("api-version", "2019-08-01"))
+            .and(query_param("client_id", "managed-client-id-from-env"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"access_token":"mocked-functions-token"}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = azure_config(entra_resource, Vec::new());
+        let client = reqwest::Client::new();
+        let endpoints = AttestationEndpoints::default();
+        let endpoint = format!("{}/metadata/identity/endpoint/from/env", server.uri());
+
+        with_azure_functions_env(
+            &endpoint,
+            Some("some-identity-header-from-env"),
+            Some("managed-client-id-from-env"),
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected managed identity token");
+                assert_eq!(token, "mocked-functions-token");
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn get_managed_identity_token_sends_client_id_and_default_resource_to_azure_functions() {
+        assert_functions_request_sends_client_id(None).await;
+    }
+
+    #[tokio::test]
+    async fn get_managed_identity_token_sends_client_id_and_explicit_entra_resource_to_azure_functions()
+     {
+        assert_functions_request_sends_client_id(Some("api://1111111-2222-3333-44444-55555555"))
+            .await;
     }
 
     // -- Metadata-server error handling --
