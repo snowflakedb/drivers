@@ -1,0 +1,16 @@
+name: "SQL_C_NUMERIC >=1 conversion converts SQL_BIT to true instead of rejecting"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Realigned SQL_C_NUMERIC → SQL_BIT to the 3.x conversion: only 0 and 1
+  are accepted; any other magnitude (e.g. 42) returns 22003.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range) when binding a SQL_C_NUMERIC with a value other than 0 or 1 (e.g., 42) to SQL_BIT. The driver sends the raw numeric magnitude to the server which rejects it for a BOOLEAN column.
+new_driver_behavior: |
+  SQL_C_NUMERIC values other than 0 or 1 bound to SQL_BIT return SQL_ERROR with SQLSTATE 22003. Zero converts to false and one converts to true.
+description: |
+  Applications binding SQL_C_NUMERIC values other than 0 or 1 to BOOLEAN columns now receive 22003 on both drivers.
+legacy_id: 37

@@ -1,0 +1,15 @@
+name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_SUCCESS_WITH_INFO 01004; old driver may omit the SQLSTATE"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC compliance fix. Now we allow the partial conversion.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL column and the buffer is too small to hold the full string representation, the old driver returns SQL_SUCCESS_WITH_INFO but does not set SQLSTATE 01004.
+new_driver_behavior: |
+  Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 (String data, right truncation), per the ODBC specification for string data truncation.
+description: |
+  Applications providing small buffers for SQL_C_CHAR on FLOAT columns now receive SQLSTATE 01004 with the truncated result; the old driver returned SQL_SUCCESS_WITH_INFO without posting 01004.
+legacy_id: 15

@@ -1,0 +1,15 @@
+name: "Invalid SQL_C_WCHAR input fails locally instead of executing"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Binding a lone UTF-16 high surrogate as SQL_C_WCHAR to SQL_VARCHAR makes
+  SQLExecDirect return SQL_SUCCESS.
+new_driver_behavior: |
+  The same call returns SQL_ERROR with SQLSTATE HY000.
+description: |
+  The new driver rejects the invalid wide-character sequence while encoding
+  JSON bindings. The old driver accepts it and submits the statement.
+legacy_id: 162

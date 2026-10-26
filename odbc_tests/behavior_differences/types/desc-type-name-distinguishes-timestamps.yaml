@@ -1,0 +1,28 @@
+name: "Query SQL_DESC_TYPE_NAME distinguishes TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This closes a bug internal to 4.x, not a divergence from 3.x's default
+  behavior: with ODBC_USE_CUSTOM_SQL_DATA_TYPES left false (the default on
+  both drivers), 3.x also reports "TYPE_TIMESTAMP" for all three variants.
+  No caller could have relied on the old collapsed name being correct, so
+  distinguishing the variants is a non-breaking bugfix. Vendor codes when
+  the parameter is true are BD#170.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  With ODBC_USE_CUSTOM_SQL_DATA_TYPES left false, SQLColAttribute reports
+  SQL_DESC_TYPE_NAME "TYPE_TIMESTAMP" for TIMESTAMP_NTZ, TIMESTAMP_LTZ,
+  and TIMESTAMP_TZ alike.
+new_driver_behavior: |
+  SQL_DESC_TYPE_NAME and SQL_DESC_LOCAL_TYPE_NAME are "TIMESTAMP_NTZ",
+  "TIMESTAMP_LTZ", or "TIMESTAMP_TZ" as appropriate. SQLDescribeCol and
+  SQL_DESC_CONCISE_TYPE/SQL_DESC_TYPE stay SQL_TYPE_TIMESTAMP (93) /
+  SQL_DATETIME, per the ODBC spec's single concise type for the whole
+  TIMESTAMP family.
+description: |
+  SQL_DESC_TYPE_NAME now carries the Snowflake timestamp variant while
+  the concise type stays the standard timestamp, matching the ODBC
+  spec's single concise type for the TIMESTAMP family.
+legacy_id: 169

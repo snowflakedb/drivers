@@ -1,0 +1,13 @@
+name: "SQLSTATE for string data exceeding column size returns SQLSTATE 22000 even if server provides different state"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  SQLSTATE is returned from the server.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Returns SQLSTATE 22000 (Data exception, generic class) when inserted string data exceeds the target VARCHAR column size.
+new_driver_behavior: |
+  Returns SQLSTATE 22000 verbatim from the server (or HY000 if the server omits sqlState, or 22001 if sf_core recovers it from the numeric error code 100078).
+legacy_id: 40

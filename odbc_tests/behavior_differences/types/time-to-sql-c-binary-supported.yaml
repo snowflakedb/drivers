@@ -1,0 +1,13 @@
+name: "TIME to SQL_C_BINARY conversion is now supported"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Adds a new conversion that should be allowed as per ODBC API spec.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Returns SQL_ERROR SQLSTATE 07006 (unsupported conversion) when the buffer is at least sizeof(SQL_TIME_STRUCT). Returns SQL_ERROR 22003 for an undersized buffer (buffer size check precedes conversion support check). This behavior is uniform across Linux, macOS, and Windows — the released driver returns SQL_ERROR on the macOS unixODBC and iODBC reference cells as well.
+new_driver_behavior: |
+  Returns SQL_SUCCESS with a 6-byte SQL_TIME_STRUCT containing the hour, minute, and second fields. The indicator is set to sizeof(SQL_TIME_STRUCT). Per the ODBC specification, SQL_C_BINARY is a valid target type for SQL_TYPE_TIME — the data is transferred as-is when the byte length fits the buffer, or SQLSTATE 22003 is returned when the buffer is too small.
+legacy_id: 43

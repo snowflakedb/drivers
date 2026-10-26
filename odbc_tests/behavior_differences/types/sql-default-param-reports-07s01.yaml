@@ -1,0 +1,15 @@
+name: "SQL_DEFAULT_PARAM reports 07S01 instead of HY000"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLExecDirect returns SQL_ERROR with SQLSTATE HY000 and native error 19
+  when a bound parameter uses SQL_DEFAULT_PARAM.
+new_driver_behavior: |
+  The same call returns SQL_ERROR with SQLSTATE 07S01.
+description: |
+  Both drivers reject default parameter values during direct execution, but
+  the new driver uses the specific invalid-use-of-default SQLSTATE.
+legacy_id: 167

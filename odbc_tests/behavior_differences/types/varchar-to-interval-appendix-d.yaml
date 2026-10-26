@@ -1,0 +1,34 @@
+name: "SQL_VARCHAR fetched as SQL_C_INTERVAL_*: stricter Appendix D semantics in the universal driver"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: true
+status_rationale: |
+  4.x implements ODBC Appendix D Character-to-Interval strictly for
+  all 13 SQL_C_INTERVAL_* targets. Spec-compliance.
+impact: high
+old_driver_behavior: |
+  The reference driver already implements most of ODBC Appendix D ("Character to Interval") for VARCHAR -> SQL_C_INTERVAL_* fetches: well-formed literals succeed, trailing-field truncation surfaces 01S07, and leading-field overflow against the default precision surfaces 22015. It diverges from the spec in five places:
+    1. A non-zero fraction targeted at an integer-only qualifier (e.g. '5.5' -> SQL_C_INTERVAL_YEAR) is rejected as 22018 instead of warned 01S07.
+    2. A zero-magnitude fraction (e.g. '5.0' -> SQL_C_INTERVAL_YEAR) is also rejected as 22018 even though no information is lost.
+    3. `SQL_DESC_DATETIME_INTERVAL_PRECISION` set on the ARD is ignored - the parser always uses the built-in default precision = 2.
+    4. A bare integer fetched as a composite target (e.g. '5' -> SQL_C_INTERVAL_YEAR_TO_MONTH) is accepted as the leading field; subsequent SQLGetData calls on the same column return SQL_NO_DATA because the column data is exhausted.
+    5. Trailing day-time fields (HOUR/MINUTE/SECOND) outside their canonical ANSI ranges are accepted as-is (e.g. '25:61' -> SQL_C_INTERVAL_HOUR_TO_MINUTE succeeds). Only YEAR_TO_MONTH still enforces the MONTH 0..=11 range, and the rejection there surfaces 22018 ("invalid literal") rather than 22015 ("interval field overflow").
+    6. The literal minus is preserved on zero-magnitude values: '-0' -> SQL_C_INTERVAL_YEAR and '-0-0' -> SQL_C_INTERVAL_YEAR_TO_MONTH report `interval_sign = SQL_TRUE`.
+new_driver_behavior: |
+  Implements the ODBC Appendix D "Character to Interval" conversion table strictly for all 13 SQL_C_INTERVAL_* targets (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND and every YEAR_TO_MONTH / DAY_TO_* / HOUR_TO_* / MINUTE_TO_SECOND composite). The four spec outcomes map to the standard SQLSTATEs:
+    1. Valid value, no truncation                 -> SQL_SUCCESS
+    2. Valid value, trailing-field truncation     -> SQL_SUCCESS_WITH_INFO, 01S07
+    3. Valid value, leading-field precision lost  -> SQL_ERROR, 22015
+    4. Not a valid interval value                 -> SQL_ERROR, 22018
+  Differences from the reference driver:
+    1. Fractional digits dropped against an integer-only qualifier surface 01S07 with the truncated value rather than 22018.
+    2. Zero-magnitude fractions ('5.0' -> SQL_C_INTERVAL_YEAR) return SQL_SUCCESS with no warning.
+    3. `SQL_DESC_DATETIME_INTERVAL_PRECISION` set on the ARD is honoured by the parser (default 2, configurable up or down).
+    4. Bare integers for composite targets are rejected with 22018.
+    5. Trailing composite fields are range-checked against canonical ANSI ranges (MONTH 0..=11, HOUR 0..=23, MINUTE/SECOND 0..=59) and a violation surfaces 22015 ("Interval field overflow") — per the `SQLGetData` diagnostics table that SQLSTATE fires when "there was no representation of the value of the SQL type in the interval C type", which an out-of-Gregorian-range trailing field is (per the "Constraints of the Gregorian Calendar" appendix). Leading fields keep the precision-driven 22015 check and are intentionally NOT range-checked because per ANSI a leading field can be arbitrarily large within its declared `SQL_DESC_DATETIME_INTERVAL_PRECISION`.
+    6. Zero-magnitude values clear the sign bit regardless of the literal's leading minus ('-0' -> SQL_C_INTERVAL_YEAR reports `interval_sign = SQL_FALSE`), consistent with `numeric_helpers::write_single_field_interval`.
+description: |
+  Spec reference: ODBC Appendix D, "Converting Data from SQL to C Data Types" - "Character to Interval" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-sql-to-c-data-types). Trailing-field range enforcement surfaces SQLSTATE 22015 ("Interval field overflow") because the `SQLGetData` diagnostics table defines 22015 as fired when "there was no representation of the value of the SQL type in the interval C type"; an interval C structure has no representation for trailing fields outside their Gregorian range, per the "Constraints of the Gregorian Calendar" appendix (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/constraints-of-the-gregorian-calendar). The same 22015 mapping is consistent with the driver-internal `field_overflow` helper, which fires 22015 for the larger `u32::MAX`-overflow form of the same issue. The canonical ANSI ranges (HOUR 0..23, MINUTE/SECOND 0..59, MONTH 0..11 in YEAR_TO_MONTH composites) are taken from ANSI SQL/Foundation interval literal grammar.
+  Applications that rely on the reference driver's lenient parsing (accepting bare integers as YEAR_TO_MONTH leading fields, out-of-range trailing day-time fields, or silently truncating zero-magnitude fractions) will see new 22015 or 22018 errors or 01S07 warnings. Applications that set `SQL_DESC_DATETIME_INTERVAL_PRECISION` on the ARD now actually get the precision they asked for instead of the silent default. Callers that previously caught 22018 on '5.5' -> SQL_C_INTERVAL_YEAR must now also handle the 01S07 success-with-info case. Callers that previously caught 22018 on out-of-range YEAR_TO_MONTH months (e.g. '3-12') must also handle 22015 from the universal driver.
+legacy_id: 55

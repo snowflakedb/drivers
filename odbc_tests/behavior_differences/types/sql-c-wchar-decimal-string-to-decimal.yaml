@@ -1,0 +1,21 @@
+name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion works (Linux only)"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Spec-compliant conversion of SQL_C_WCHAR decimal text to SQL_DECIMAL. The 3.x
+  driver already succeeds on Windows and iODBC; unixODBC (16-bit SQLWCHAR) is the
+  only failing cell. 4.x succeeds on all three.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  On unixODBC (16-bit SQLWCHAR: Linux and macOS unixODBC) SQLExecute of a
+  SQL_C_WCHAR decimal literal bound to SQL_DECIMAL returns SQL_ERROR and posts a
+  diagnostic record. The same bind succeeds on Windows and on iODBC (32-bit
+  SQLWCHAR). SQL_C_WCHAR integer
+  text bound to SQL_INTEGER / SQL_BIGINT succeeds on unixODBC — the failure is
+  specific to the decimal conversion path.
+new_driver_behavior: |
+  Converts SQL_C_WCHAR decimal strings to SQL_DECIMAL on all platforms
+  (Windows, unixODBC, iODBC), matching the ODBC spec.
+legacy_id: 39

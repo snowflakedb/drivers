@@ -1,0 +1,15 @@
+name: "DECFLOAT values are returned in scientific notation and properly normalized"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Both notations are numerically equivalent (1.234e8000 == 1234e7997). 4.x normalizes scientific notation
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  DECFLOAT values are not properly normalized, when using scientific notation. (e.g. "12e199" is returned instead of "1.2e200")
+new_driver_behavior: |
+  Returns the values in proper scientific notation (e.g. "1.2e200").
+description: |
+  Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
+legacy_id: 19

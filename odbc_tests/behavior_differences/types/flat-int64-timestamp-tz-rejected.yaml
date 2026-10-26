@@ -1,0 +1,19 @@
+name: "Flat Int64 TIMESTAMP_TZ Arrow layout is rejected"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  A flat Int64 TIMESTAMP_TZ layout is illegal on the wire. Inventing offset 0
+  hid that error; rejecting the converter is the closed failure.
+old_driver_behavior: |
+  A TIMESTAMP_TZ column whose Arrow physical type is flat Int64 (no timezone
+  child) can be fetched as a UTC instant with the offset dropped.
+new_driver_behavior: |
+  Building a converter for TIMESTAMP_TZ with a non-struct Arrow type fails.
+  The driver no longer invents offset 0 for that illegal layout.
+description: |
+  Production GS TIMESTAMP_TZ results are Arrow structs with a timezone child.
+  Treating a flat Int64 as UTC hid a layout error.
+legacy_id: 134

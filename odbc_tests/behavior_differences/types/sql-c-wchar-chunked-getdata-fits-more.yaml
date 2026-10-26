@@ -1,0 +1,22 @@
+name: "SQL_C_WCHAR chunked SQLGetData fits more characters per call than previously"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+status_rationale: |
+  VARCHAR chunked SQL_C_WCHAR already fits 3 data chars + NUL in
+  an 8-byte buffer on both drivers. The remaining delta is BINARY-to-hex
+  SQL_C_WCHAR: 3.x fits 2 data chars, 4.x fits 3.
+impact: medium
+old_driver_behavior: |
+  On the BINARY-to-hex SQL_C_WCHAR path, an 8-byte buffer fits only 2 data
+  wide characters + NUL.
+  VARCHAR SQL_C_WCHAR already uses sizeof(SQLWCHAR) and fits 3 + NUL.
+new_driver_behavior: |
+  WCHAR capacity follows the negotiated DriverManagerEncoding (2-byte UTF-16
+  or 4-byte UTF-32). With UTF-16, an 8-byte buffer fits 3 data characters + NUL
+  for both VARCHAR and BINARY hex.
+description: |
+  Spec reference: unixODBC defines SQLWCHAR as unsigned short (2 bytes) by default via typedef WCHAR SQLWCHAR where WCHAR = unsigned short. Source: https://github.com/lurcher/unixODBC/blob/master/include/sqltypes.h
+  Chunked SQL_C_WCHAR retrieval returns more data per call in 4.x. Applications using iterative SQLGetData will complete in fewer round-trips.
+legacy_id: 22

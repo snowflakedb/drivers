@@ -1,0 +1,31 @@
+name: "Add cross-type conversion support for SQL_BIT parameter binding"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Realigned 4.x to the 3.x SQL_BIT bind matrix. Integer and
+  SQL_C_NUMERIC accept only 0 and 1 (other values return 22003).
+  SQL_C_CHAR "42" returns 22003; "true"/"false" return 22018.
+  SQL_C_DOUBLE 1.5 and SQL_C_FLOAT 0.5 return 01S07 and store the
+  truncated bit. SQL_C_FLOAT is accepted. NaN stores true.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Integer and SQL_C_NUMERIC accept only 0 and 1; other magnitudes
+  return 22003. SQL_C_CHAR integer strings use the same 0/1 rule
+  ("42" is 22003). Non-numeric strings such as "true"/"false" return
+  22018. SQL_C_DOUBLE and SQL_C_FLOAT values in (0, 1) or (1, 2)
+  return SQL_SUCCESS_WITH_INFO 01S07 and store the truncated bit
+  (1.5 → true, 0.5 → false). Negative values and infinities return
+  22003. NaN stores true.
+new_driver_behavior: |
+  Integer and SQL_C_NUMERIC accept only 0 and 1; other magnitudes
+  return 22003. SQL_C_CHAR "42" returns 22003; "true"/"false" return
+  22018. SQL_C_DOUBLE and SQL_C_FLOAT values in (0, 1) or (1, 2)
+  return SQL_SUCCESS_WITH_INFO 01S07 and store the truncated bit
+  (1.5 → true, 0.5 → false). Negative values and infinities return
+  22003. NaN stores true. SQL_C_FLOAT is accepted.
+description: |
+  Applications binding cross-type values to BOOLEAN columns see the
+  same SQL_BIT matrix on both drivers.
+legacy_id: 35

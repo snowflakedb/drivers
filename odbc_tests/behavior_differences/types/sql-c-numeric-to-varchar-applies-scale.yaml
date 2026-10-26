@@ -1,0 +1,15 @@
+name: "SQL_C_NUMERIC to VARCHAR applies scale from SQL_NUMERIC_STRUCT instead of ignoring it"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC compliance fix. New driver now honors the explicitly set scale by the user.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  When binding SQL_C_NUMERIC to SQL_VARCHAR, the driver ignores the scale field of SQL_NUMERIC_STRUCT and converts the raw magnitude to a string without inserting a decimal point or appending trailing zeros. For example, val=12345 with scale=2 produces "12345" instead of "123.45", and val=123 with scale=-2 produces "123" instead of "12300".
+new_driver_behavior: |
+  Honors the scale field per the ODBC specification. Positive scale inserts a decimal point (val=12345, scale=2 → "123.45"). Negative scale appends trailing zeros (val=123, scale=-2 → "12300").
+description: |
+  Spec reference: The SQL_NUMERIC_STRUCT stores a "scaled integer" where actual_value = val × 10^(−scale). https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/c-data-types
+legacy_id: 33

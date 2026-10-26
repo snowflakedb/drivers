@@ -1,0 +1,18 @@
+name: "SQLGetData truncation indicator is consistently the actual data length"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  4.x always returns the remaining byte length rather than SQL_NO_TOTAL. That matches the ODBC spec
+  when the length is known, and it is more useful than SQL_NO_TOTAL (callers
+  can size the next buffer).
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  The truncation indicator returned by 3.x is inconsistent across target C types and platforms: - SQL_C_BINARY truncation: always returns actual byte length. - SQL_C_CHAR truncation via SQLGetData: returns SQL_NO_TOTAL (-4) on Windows and Linux/aarch64, but the actual byte length on Linux/x86_64 and macOS (i.e. the divergence tracks the platform + CPU architecture, not architecture alone). - SQL_C_CHAR truncation via SQLBindCol: always returns actual length. - SQL_C_WCHAR truncation (string source): returns SQL_NO_TOTAL. - SQL_C_WCHAR truncation (binary source): returns actual byte length.
+new_driver_behavior: |
+  Always sets the indicator to the actual total byte length of the remaining data, regardless of platform, source type, or target C type.
+description: |
+  Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+  Applications that check the indicator after a truncated SQLGetData call will now always receive the actual byte count. Applications that previously handled both values (as recommended by the ODBC spec) are unaffected. The consistent behavior eliminates a class of platform-specific bugs where applications worked on one architecture but failed on another due to SQL_NO_TOTAL handling.
+legacy_id: 23

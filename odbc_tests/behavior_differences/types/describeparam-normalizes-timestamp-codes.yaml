@@ -1,0 +1,15 @@
+name: "SQLDescribeParam normalises Snowflake vendor TIMESTAMP codes (2000/2001/2002) to SQL_TYPE_TIMESTAMP (93)"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  3.x behavior is better to consume and explicitly states the requested ParameterType instead of hiding it behind the default implementation which may cause confusion.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  When SQLBindParameter is called with ParameterType set to one of the Snowflake vendor TIMESTAMP codes (SQL_SF_TIMESTAMP_LTZ=2000, SQL_SF_TIMESTAMP_TZ=2001, SQL_SF_TIMESTAMP_NTZ=2002), 3.x stores the raw vendor code on the IPD and returns it verbatim from SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE).
+new_driver_behavior: |
+  After SQLBindParameter with a Snowflake vendor TIMESTAMP code, SQLDescribeParam and SQLGetDescField(IPD, SQL_DESC_TYPE) return that code (2000/2001/2002) verbatim. Execute-time dispatch uses the matching Snowflake logical type.
+description: |
+  Applications that inspect SQLDescribeParam after binding with SQL_SF_TIMESTAMP_LTZ/TZ/NTZ see the vendor code they requested, matching 3.x.
+legacy_id: 50

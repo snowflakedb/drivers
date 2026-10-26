@@ -1,0 +1,15 @@
+name: "SQL_C_BINARY to VARCHAR hex-encodes bytes instead of failing with HTTP 400"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Adds a new conversion, that was previously not supported.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When binding SQL_C_BINARY to SQL_VARCHAR, the driver passes the raw binary data to Snowflake, which rejects the request with HTTP 400.
+new_driver_behavior: |
+  When binding SQL_C_BINARY to SQL_VARCHAR, the driver hex-encodes the binary data before sending (e.g. 0xDEADBEEF → "deadbeef"), which Snowflake accepts as a valid VARCHAR value.
+description: |
+  Spec reference: ODBC "C to SQL: Character" conversion table lists SQL_C_BINARY as a valid source type for SQL_VARCHAR. https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+legacy_id: 34

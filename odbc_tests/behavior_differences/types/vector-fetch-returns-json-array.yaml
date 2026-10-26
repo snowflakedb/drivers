@@ -1,0 +1,18 @@
+name: "VECTOR type fetch: UD returns JSON array string; reference driver unsupported"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  Implemented VECTOR type support.
+old_driver_behavior: |
+  The reference ODBC driver (libsnowflakeclient) has no VECTOR type support. Any query that
+  returns a VECTOR column fails at the conversion layer; no data is returned.
+new_driver_behavior: |
+  UD fetches VECTOR columns as compact JSON array strings (e.g. `[1,2,3]`) via
+  SQL_C_CHAR, SQL_C_WCHAR, and SQL_C_BINARY. SQLDescribeCol reports SQL_VARCHAR with
+  column_size equal to the session VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT parameter.
+  SQL_DESC_TYPE_NAME returns "VECTOR". Numeric C-type conversions (SQL_C_LONG, etc.) are
+  rejected with SQLSTATE 07006, matching the ARRAY/VARIANT precedent.
+legacy_id: 119

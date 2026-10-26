@@ -1,0 +1,21 @@
+name: "SQLDescribeCol column size for SQL_DOUBLE / SQL_FLOAT is 15 (decimal digits) instead of 53 (binary mantissa bits)"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  This is a spec-alignment fix.
+old_driver_behavior: |
+  SQLDescribeCol on a SQL_DOUBLE / SQL_FLOAT column (SQL data type 8) reports a column size of
+  53 -- the number of bits in the IEEE-754 double-precision mantissa.
+new_driver_behavior: |
+  The new driver reports a column size of 15 -- the number of significant decimal digits of a
+  double-precision float, matching the ODBC specification's definition of column size for
+  SQL_DOUBLE / SQL_FLOAT.
+description: |
+  Spec reference: the ODBC "Column Size, Decimal Digits, Transfer Octet Length, and Display
+  Size" table defines the column size of SQL_DOUBLE / SQL_FLOAT as 15 (decimal digits), not the
+  count of binary mantissa bits. Applications that used the old driver's 53 to size buffers will
+  now see 15; the value is a precision/display hint and does not change the fetched data.
+legacy_id: 117

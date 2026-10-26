@@ -1,0 +1,22 @@
+name: "FLOAT/REAL-to-interval fractional truncation is flagged with 01S07 instead of SQL_SUCCESS in some cases"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+status_rationale: |
+  Alignment with the ODBC spec.
+impact: low
+old_driver_behavior: |
+  When a FLOAT/REAL value with a nonzero fractional part is fetched as a single-field interval C type
+  (e.g. 5.7 fetched as SQL_C_INTERVAL_YEAR/_MONTH/_DAY, or a sub-microsecond fraction as
+  SQL_C_INTERVAL_SECOND), the old driver truncates the fraction and returns SQL_SUCCESS with no
+  diagnostic. DECFLOAT and NUMBER sources are unaffected: the old driver flags those with 01S07.
+new_driver_behavior: |
+  Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 ("Fractional truncation") for FLOAT/REAL sources,
+  consistent with DECFLOAT and NUMBER sources and with the ODBC spec.
+description: |
+  Applications relying on the 01S07 warning to detect that a FLOAT-sourced interval lost its fractional
+  part now receive it. Previously tracked (incorrectly) under BD#16 (a NaN-to-integer difference).
+  Related to BD#98, which covers the negative-zero sign normalization on the same FLOAT->interval
+  truncation path.
+legacy_id: 99

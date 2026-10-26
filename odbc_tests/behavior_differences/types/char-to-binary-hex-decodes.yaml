@@ -1,0 +1,29 @@
+name: "SQL_C_CHAR/WCHAR to SQL_BINARY hex-decodes the ASCII literal instead of forwarding raw string bytes"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Both drivers hex-decode character input bound against SQL_BINARY,
+  drop an odd leftover nibble, and return 22018 for non-hex input.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  When SQLBindParameter is called with ValueType=SQL_C_CHAR or
+  SQL_C_WCHAR and a hex literal (e.g. "DEADBEEF") bound against a
+  SQL_BINARY / SQL_VARBINARY / SQL_LONGVARBINARY parameter, the
+  driver decodes pairs of hex digits into raw bytes. "DEADBEEF"
+  lands as 4 bytes (0xDE 0xAD 0xBE 0xEF). An odd leftover nibble is
+  dropped ("DEADBEE" lands as 3 bytes). Non-hex strings return
+  SQL_ERROR with SQLSTATE 22018.
+new_driver_behavior: |
+  Character inputs bound against SQL_BINARY are hex-decoded.
+  Odd-length literals drop the leftover nibble. Non-hex strings
+  return 22018.
+description: |
+  Spec reference: ODBC "C to SQL: Binary" conversion table lists
+  SQL_C_CHAR / SQL_C_WCHAR as legal source types for SQL_BINARY
+  targets and prescribes hex-literal semantics. The table fires
+  22018 only when the value is not hexadecimal; odd length is
+  accepted by decoding complete pairs. Plain assertions cover the
+  round-trip, the leftover-nibble case, and the 22018 reject.
+legacy_id: 49

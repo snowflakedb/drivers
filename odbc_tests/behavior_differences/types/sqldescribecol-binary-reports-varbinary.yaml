@@ -1,0 +1,16 @@
+name: "SQLDescribeCol reports SQL_VARBINARY for BINARY columns instead of SQL_BINARY"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Fixed: new driver now reports SQL_BINARY to match the old driver.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  Reports data_type as SQL_BINARY (-2) for Snowflake BINARY columns via SQLDescribeCol.
+new_driver_behavior: |
+  Reports data_type as SQL_BINARY (-2), matching the old driver.
+description: |
+  Rationale: Snowflake BINARY is a variable-length type (up to 8 MB). The ODBC specification defines SQL_BINARY for fixed-length binary and SQL_VARBINARY for variable-length binary. SQL_VARBINARY is the semantically correct type for Snowflake's BINARY.
+  Most applications treat SQL_BINARY and SQL_VARBINARY interchangeably. Applications that switch on the exact data_type value may need to handle SQL_VARBINARY in addition to SQL_BINARY.
+legacy_id: 24

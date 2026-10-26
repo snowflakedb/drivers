@@ -1,0 +1,15 @@
+name: "SQL_C_NUMERIC ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC spec compliance fix. Honors the settings explicitly set by the caller for the conversions.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When SQLSetDescField is used to set SQL_DESC_PRECISION and SQL_DESC_SCALE on the ARD before calling SQLGetData with SQL_C_NUMERIC, the old driver ignores these values and always uses its own defaults (precision=38, scale=0). The resulting SQL_NUMERIC_STRUCT does not reflect the requested precision/scale.
+new_driver_behavior: |
+  Honors SQL_DESC_PRECISION and SQL_DESC_SCALE from the ARD, rescaling the value accordingly. For example, setting scale=2 on a DECIMAL(10,2) column returns val=12345 (unscaled) instead of val=123 (truncated to scale=0).
+description: |
+  Applications that set descriptor fields for SQL_C_NUMERIC will now see the correct precision and scale in the output struct, matching the ODBC specification behavior.
+legacy_id: 13

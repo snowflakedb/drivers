@@ -1,0 +1,25 @@
+name: "SQL_DESC_LOCAL_TYPE_NAME distinguishes ARRAY, OBJECT, and VARIANT from VARCHAR"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The old driver already reports the specific type name via
+  SQL_DESC_TYPE_NAME, but collapses SQL_DESC_LOCAL_TYPE_NAME on every
+  semi-structured column to the generic VARCHAR type name. Reporting the
+  specific type name there too is a correctness fix with no opt-in flag.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  SQLColAttribute with SQL_DESC_LOCAL_TYPE_NAME on an ARRAY, OBJECT, or
+  VARIANT column returns "VARCHAR" in every case. SQL_DESC_TYPE_NAME
+  already returns "ARRAY", "STRUCT", or "VARIANT" respectively.
+new_driver_behavior: |
+  SQL_DESC_LOCAL_TYPE_NAME now returns "ARRAY", "STRUCT", or "VARIANT"
+  respectively, matching SQL_DESC_TYPE_NAME and the column's
+  semi-structured type.
+description: |
+  SQL_DESC_CONCISE_TYPE and SQL_DESC_TYPE remain SQL_VARCHAR on both
+  drivers, and SQL_DESC_TYPE_NAME already matched on both; only
+  SQL_DESC_LOCAL_TYPE_NAME distinguishes the semi-structured types from a
+  plain VARCHAR column on the new driver.
+legacy_id: 171

@@ -1,0 +1,24 @@
+name: "SQL_RESET_PARAMS sets IPD SQL_DESC_COUNT to 0"
+status: fixed
+type: bugfix
+reviewed: true
+status_rationale: |
+  SQLFreeStmt(SQL_RESET_PARAMS) leaves IPD records in place, so SQL_DESC_COUNT
+  still reports the previous highest bound parameter number. That matches the
+  old driver.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLFreeStmt(SQL_RESET_PARAMS) releases APD bindings but leaves IPD records
+  in place. SQLGetDescField(IPD, SQL_DESC_COUNT) keeps the previous highest
+  bound parameter number after SQLExecDirect, SQLPrepare/SQLExecute, or a
+  reset with no execute.
+new_driver_behavior: |
+  SQLFreeStmt(SQL_RESET_PARAMS) leaves IPD records in place. SQL_DESC_COUNT
+  still reports the previous highest bound parameter number after
+  SQLExecDirect, SQLPrepare/SQLExecute, or a reset with no execute.
+description: |
+  The new driver matches the old driver: SQL_RESET_PARAMS does not set IPD
+  SQL_DESC_COUNT to 0. Execution after reset still follows rebound APD
+  records and, for prepared statements, the prepared parameter count.
+legacy_id: 157

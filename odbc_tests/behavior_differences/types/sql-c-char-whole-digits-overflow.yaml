@@ -1,0 +1,15 @@
+name: "SQL_C_CHAR returns SQL_ERROR (22003) instead of SQL_SUCCESS_WITH_INFO when whole digits do not fit in buffer"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC spec compliance fix. This helps to prevent the loss of the non-fractional digits.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC column and the buffer is too small to hold even the whole (non-fractional) digits, the old driver returns SQL_SUCCESS_WITH_INFO and silently truncates the data without raising SQLSTATE 22003.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range), per the ODBC specification which distinguishes between truncation of fractional digits only (01004) and loss of whole digits (22003).
+description: |
+  Applications that previously received truncated whole digits silently will now receive an error. This is a spec-compliance improvement — the ODBC specification mandates 22003 when whole digits are lost during numeric-to-char conversion.
+legacy_id: 11

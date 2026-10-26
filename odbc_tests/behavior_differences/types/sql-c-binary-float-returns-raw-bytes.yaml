@@ -1,0 +1,18 @@
+name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Both drivers return the raw 8-byte IEEE 754 value. The ODBC SQL-to-C
+  numeric conversion table supports SQL_C_BINARY for approximate numeric
+  types. The SQL_NUMERIC_STRUCT path for SQL_C_BINARY on FLOAT/DOUBLE/REAL
+  was removed along with its 01S07 truncation warning.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_BINARY on a SQL_DOUBLE (FLOAT/DOUBLE/REAL) column, 3.x returns the raw 8-byte IEEE 754 double representation. The indicator is set to 8 and the buffer contents are not interpretable as an SQL_NUMERIC_STRUCT.
+new_driver_behavior: |
+  Returns the raw 8-byte IEEE 754 double representation. The indicator is set to 8.
+description: |
+  Applications requesting SQL_C_BINARY for floating-point columns receive the native double bytes.
+legacy_id: 14

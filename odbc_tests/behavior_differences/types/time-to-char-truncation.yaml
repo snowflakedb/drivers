@@ -1,0 +1,13 @@
+name: "TIME to SQL_C_CHAR/WCHAR truncation and buffer-too-small handling"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The new driver's behavior is the spec-compliant one: SQLSTATE 01004 (string data, right truncated) with SQL_SUCCESS_WITH_INFO is what the ODBC spec prescribes when the buffer holds the base time but not the fractional seconds, and the chunked-retrieval protocol is likewise spec-mandated. The old driver returns SQL_ERROR 22003 for the truncation case and does not implement chunked retrieval at all. Accepted as an intentional divergence rather than something to fix. Both drivers are now asserted directly (paired OLD_DRIVER_ONLY / NEW_DRIVER_ONLY blocks) across all four reference cells — Linux+unixODBC, macOS+unixODBC, Windows+unixODBC and macOS+iODBC — so the truncation and chunked-retrieval facets are verified. One facet remains unassertable: with a buffer physically smaller than the formatted value the old driver has undefined behavior and aborts, so that single test keeps SKIP_OLD_DRIVER("BD#38").
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  TIME to SQL_C_CHAR with a buffer physically smaller than the full formatted time string has undefined behavior in the old driver. TIME to SQL_C_CHAR or SQL_C_WCHAR with a buffer of exactly 9 bytes (enough for HH:MM:SS but not fractional seconds) returns SQL_ERROR with SQLSTATE 22003.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 22003 when the buffer is too small (< 9 bytes for CHAR, < 18bytes for WCHAR), and returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold the base time but truncates fractional seconds, per the ODBC spec.
+legacy_id: 38

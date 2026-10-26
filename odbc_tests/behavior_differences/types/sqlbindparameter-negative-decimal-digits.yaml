@@ -1,0 +1,13 @@
+name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Negative decimal digits make no sense.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Accepts negative DecimalDigits values without error.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE HY104 (Invalid precision or scale value) per the ODBC specification.
+legacy_id: 26

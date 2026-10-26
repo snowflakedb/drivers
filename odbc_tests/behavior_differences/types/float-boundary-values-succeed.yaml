@@ -1,0 +1,15 @@
+name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The legacy driver falsely rejected FLT_MAX literals that IEEE 754 guarantees are representable. Accepting correctly rounded conversions while still rejecting genuinely out-of-range literals is ODBC-aligned.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Converting the exact IEEE 754 single-precision boundary strings '3.4028235e38' (FLT_MAX) and '-3.4028235e38' (-FLT_MAX) to SQL_C_FLOAT returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range), even though both values are representable as a float.
+new_driver_behavior: |
+  Returns SQL_SUCCESS with the correctly converted f32 values. Only values strictly greater than FLT_MAX (e.g. '3.4028236e38') are rejected with 22003.
+description: |
+  Applications that pass the exact float boundary values will now succeed on the new driver where the old driver spuriously reported out-of-range.
+legacy_id: 8

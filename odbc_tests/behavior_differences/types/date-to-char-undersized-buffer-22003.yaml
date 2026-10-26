@@ -1,0 +1,13 @@
+name: "DATE to SQL_C_CHAR/WCHAR undersized buffer returns SQL_ERROR with SQLSTATE 22003 instead of SQLSTATE 07006"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Fixes the sqlState that the driver reports to be on par with the ODBC spec. This change should not impact the customer's application, as it is just changing the state to a more related one.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_CHAR or SQL_C_WCHAR on a DATE column and the buffer is too small to hold the full "YYYY-MM-DD" string (< 11 bytes for CHAR, < 22 bytes for WCHAR), the driver returns SQL_ERROR with SQLSTATE 07006 (Restricted data type attribute violation).
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range) per the ODBC specification, which states that for SQL_TYPE_DATE to SQL_C_CHAR the character data length must be >= 11.
+legacy_id: 41

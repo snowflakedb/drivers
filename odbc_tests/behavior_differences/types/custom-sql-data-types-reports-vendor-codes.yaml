@@ -1,0 +1,37 @@
+name: "ODBC_USE_CUSTOM_SQL_DATA_TYPES reports vendor type codes for timestamps, semi-structured types, GEOGRAPHY, and GEOMETRY"
+status: fixed
+type: enhancement
+reviewed: true
+status_rationale: |
+  4.x reads ODBC_USE_CUSTOM_SQL_DATA_TYPES. When the parameter is true,
+  SQLDescribeCol, SQL_DESC_CONCISE_TYPE, and SQL_DESC_TYPE return vendor
+  codes 2000, 2001, and 2002 for TIMESTAMP_LTZ, TIMESTAMP_TZ, and
+  TIMESTAMP_NTZ, 2003, 2004, and 2005 for ARRAY, OBJECT, and VARIANT, and
+  2004 for text GEOGRAPHY and GEOMETRY, matching 3.x. Binary GEOGRAPHY
+  and GEOMETRY stay SQL_BINARY. SQL_DESC_TYPE_NAME stays the variant name
+  on both drivers.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  Setting ODBC_USE_CUSTOM_SQL_DATA_TYPES true makes SQLDescribeCol,
+  SQL_DESC_CONCISE_TYPE, and SQL_DESC_TYPE return vendor codes 2000, 2001,
+  and 2002 for TIMESTAMP_LTZ, TIMESTAMP_TZ, and TIMESTAMP_NTZ, 2003, 2004,
+  and 2005 for ARRAY, OBJECT, and VARIANT, and 2004 for text GEOGRAPHY
+  and GEOMETRY. Binary GEOGRAPHY and GEOMETRY stay SQL_BINARY. Type names
+  stay the Snowflake names.
+new_driver_behavior: |
+  Setting ODBC_USE_CUSTOM_SQL_DATA_TYPES true makes SQLDescribeCol,
+  SQL_DESC_CONCISE_TYPE, and SQL_DESC_TYPE return vendor codes 2000, 2001,
+  and 2002 for TIMESTAMP_LTZ, TIMESTAMP_TZ, and TIMESTAMP_NTZ, 2003, 2004,
+  and 2005 for ARRAY, OBJECT, and VARIANT, and 2004 for text GEOGRAPHY
+  and GEOMETRY. Binary GEOGRAPHY and GEOMETRY stay SQL_BINARY. Type names
+  stay the Snowflake names. With the parameter false, timestamps stay
+  SQL_TYPE_TIMESTAMP (93), ARRAY, OBJECT, and VARIANT stay SQL_VARCHAR,
+  and GEOGRAPHY/GEOMETRY stay the format's concise type (SQL_VARCHAR or
+  SQL_BINARY).
+description: |
+  The session parameter selects Snowflake vendor type codes on both
+  drivers for the timestamp family, ARRAY, OBJECT, and VARIANT, and text
+  GEOGRAPHY and GEOMETRY. Binary geography and geometry stay SQL_BINARY
+  on both drivers. Flag-off timestamp type names still differ; see BD#169.
+legacy_id: 170

@@ -1,0 +1,15 @@
+name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  This is fixing a bug that surfaced during the development.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  When SQLBindCol is called with a null TargetValuePtr but a valid StrLen_or_IndPtr (intended to unbind the data buffer while keeping the indicator bound), the driver fully unbinds the column and leaves the caller's indicator unchanged after a subsequent SQLFetch.
+new_driver_behavior: |
+  Initially wrote the data length into StrLen_or_IndPtr even though TargetValuePtr was null (treating the indicator as still bound).
+description: |
+  Per the ODBC spec for SQLBindCol, passing a null TargetValuePtr unbinds the data buffer for the column. The reference test in `sql_bind_col.cpp` ("SQLBindCol can unbind data buffer while keeping indicator bound.") now asserts that the indicator remains unchanged for both drivers.
+legacy_id: 9

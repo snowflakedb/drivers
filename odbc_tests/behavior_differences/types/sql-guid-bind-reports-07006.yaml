@@ -1,0 +1,22 @@
+name: "SQL_GUID parameter binding reports 07006 instead of HY000"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Neither driver can bind SQL_GUID. The new driver reports SQLSTATE 07006
+  (restricted data type attribute violation), which is the ODBC SQLSTATE
+  for that conversion, instead of the old driver's general-error HY000.
+  Callers that match HY000 on this unsupported type need to accept 07006.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLBindParameter accepts SQL_GUID as ParameterType. SQLExecDirect then
+  returns SQL_ERROR with SQLSTATE HY000 and native error 18.
+new_driver_behavior: |
+  SQLBindParameter accepts SQL_GUID as ParameterType. SQLExecDirect then
+  returns SQL_ERROR with SQLSTATE 07006.
+description: |
+  Neither driver supports binding a parameter typed SQL_GUID. The new
+  driver uses the restricted-data-type SQLSTATE instead of the old
+  driver's general-error SQLSTATE.
+legacy_id: 158

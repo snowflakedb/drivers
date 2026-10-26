@@ -1,0 +1,24 @@
+name: "Non-contiguous ExecDirect parameter bindings fail with HY000 instead of 42601"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Both drivers reject a non-contiguous ExecDirect bind set. The new driver
+  reports SQLSTATE HY000 locally before the statement is submitted, instead
+  of the server's 42601 compilation error. The client-side check is accepted
+  because it names the bind-hole and avoids a round-trip; callers that match
+  42601 on this misconfiguration need to accept HY000.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Binding only parameters 1 and 3 for SQLExecDirect("SELECT ?, ?, ?")
+  returns SQL_ERROR with SQLSTATE 42601 and reports that a bind variable
+  was not set.
+new_driver_behavior: |
+  The same call returns SQL_ERROR with SQLSTATE HY000 and reports that
+  parameter bindings must be contiguous and start at 1.
+description: |
+  Both drivers reject the malformed bind set. The new driver detects it
+  before submitting the statement, while the old driver reports the
+  server's SQL compilation error.
+legacy_id: 159

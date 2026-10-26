@@ -1,0 +1,15 @@
+name: "SQL_C_BINARY returns SQL_ERROR (22003) for undersized SQL_NUMERIC_STRUCT buffers; old driver ignores BufferLength"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC spec compliance fix. This helps to prevent the loss of the data. You cannot read the SQL_NUMERIC struct if the buffer is too small.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC or DECFLOAT column and the buffer is smaller than sizeof(SQL_NUMERIC_STRUCT) (19 bytes), the old driver ignores the BufferLength argument and writes the full 19-byte SQL_NUMERIC_STRUCT into the caller's buffer regardless of its stated size. When the physical allocation is smaller than 19 bytes this overruns the allocation, causing undefined behavior.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range), per the ODBC specification which states that when byte length of data exceeds BufferLength for SQL_C_BINARY, the result is undefined and SQLSTATE 22003 must be returned.
+description: |
+  Applications providing undersized buffers for SQL_C_BINARY will now receive an error instead of corrupted partial data.
+legacy_id: 12

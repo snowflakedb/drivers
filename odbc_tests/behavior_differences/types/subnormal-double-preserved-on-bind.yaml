@@ -1,0 +1,15 @@
+name: "Preserves subnormal double (DBL_MIN) values instead of storing them as zero during parameter binding"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This fixes the data loss that may happen in a very specific scenarios.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Loses precision for very small subnormal double values near DBL_MIN (2.2e-308), storing them as 0.0.
+new_driver_behavior: |
+  Preserves subnormal double values through the binding pipeline, storing and retrieving 2.2e-308 correctly.
+description: |
+  Applications working with extremely small floating-point values will get correct results on the new driver.
+legacy_id: 36

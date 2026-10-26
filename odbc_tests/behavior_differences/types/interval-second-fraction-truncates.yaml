@@ -1,0 +1,19 @@
+name: "SQLBindParameter SQL_C_INTERVAL_SECOND with fractional seconds bound to exact-numeric SQL targets truncates the fraction instead of overflowing"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Fractional seconds on SQL_C_INTERVAL_SECOND are truncated for
+  exact-numeric SQL targets. 3.x instead rejects DECIMAL/NUMERIC
+  binds with 22015/40530. Integer SQL targets already truncated on both
+  drivers. Accepted as spec-compliance.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  When a SQL_C_INTERVAL_SECOND value carrying a non-zero fractional-seconds component is bound (SQLBindParameter) to a variable-precision exact-numeric SQL target (SQL_DECIMAL / SQL_NUMERIC) with a declared column size, the reference driver rejects the bind at SQLExecute with SQL_ERROR and SQLSTATE 22015 (NativeError 40530, "Interval field overflow") rather than storing the integral seconds magnitude.
+new_driver_behavior: |
+  Per ODBC Appendix D ("Converting Data from C to SQL Data Types" — truncation of interval values), the fractional-seconds component is truncated when the target is an exact-numeric type and the integral seconds magnitude is stored. The bind succeeds (SQL_SUCCESS). The same truncate-and-store contract holds for the integer SQL targets (SQL_TINYINT / SQL_SMALLINT / SQL_INTEGER / SQL_BIGINT).
+description: |
+  Spec reference: ODBC Appendix D, "Converting Data from C to SQL Data Types" (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types). A single-field interval bound to an exact-numeric target carries the magnitude of its single datetime field; fractional seconds carried by SQL_C_INTERVAL_SECOND are truncated when the target is an exact integer type.
+  Applications binding fractional SQL_C_INTERVAL_SECOND values to DECIMAL/NUMERIC parameters get the spec-compliant truncate-and-store behavior on 4.x instead of a 22015 rejection.
+legacy_id: 60

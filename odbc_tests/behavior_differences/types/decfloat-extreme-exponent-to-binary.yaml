@@ -1,0 +1,15 @@
+name: "DECFLOAT extreme exponent to SQL_C_BINARY returns SQL_ERROR (22003) instead of silently succeeding"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This prevents the data loss when extreme exponent numbers are used.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Converting a DECFLOAT with an extreme exponent (e.g. 1e100) to SQL_C_BINARY returns SQL_SUCCESS with an incorrect/clamped value.
+new_driver_behavior: |
+  Converting a DECFLOAT with an extreme exponent (e.g. 1e100) to SQL_C_BINARY returns SQL_ERROR with SQLSTATE 22003 (numeric value out of range).
+description: |
+  The value overflows the i128 intermediate representation.
+legacy_id: 29

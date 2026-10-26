@@ -1,0 +1,15 @@
+name: "DATE to SQL_C_BINARY with undersized buffer returns SQL_ERROR (22003) instead of SQL_SUCCESS"
+status: fixed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Both drivers return SQL_ERROR with SQLSTATE 22003 when SQLGetData uses
+  SQL_C_BINARY on a DATE column and the buffer is smaller than
+  sizeof(SQL_DATE_STRUCT).
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When SQLGetData is called with SQL_C_BINARY on a DATE column and the buffer is smaller than sizeof(SQL_DATE_STRUCT), the driver returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range).
+new_driver_behavior: |
+  When SQLGetData is called with SQL_C_BINARY on a DATE column and the buffer is smaller than sizeof(SQL_DATE_STRUCT), the driver returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range).
+legacy_id: 44

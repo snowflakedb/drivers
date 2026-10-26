@@ -1,0 +1,19 @@
+name: "SQL_C_CHAR/WCHAR non-finite string literals rejected client-side with 22018"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  4.x now forwards SQL_C_CHAR/SQL_C_WCHAR "Infinity", "-Infinity",
+  and "NaN" to the server and stores a non-finite FLOAT, matching the old
+  driver.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  When SQLBindParameter is called with ValueType=SQL_C_CHAR or SQL_C_WCHAR and the string value is "Infinity", "-Infinity", or "NaN" bound against a SQL_REAL / SQL_DOUBLE / SQL_FLOAT parameter, the driver forwards the string to the server and stores a non-finite FLOAT value.
+new_driver_behavior: |
+  Binding SQL_C_CHAR or SQL_C_WCHAR "Infinity", "-Infinity", or "NaN"
+  against SQL_REAL / SQL_DOUBLE / SQL_FLOAT forwards the value and
+  stores a non-finite FLOAT.
+description: |
+  Applications that bind non-finite IEEE-754 values as character strings store Infinity / NaN, matching 3.x.
+legacy_id: 48

@@ -1,0 +1,22 @@
+name: "Numeric-to-interval conversion normalizes negative zero to +0 instead of producing negative zero"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+status_rationale: |
+  This enhances the visibility of the truncated value.
+impact: low
+old_driver_behavior: |
+  When a negative fractional numeric value (FLOAT/REAL, DECFLOAT, or NUMBER) truncates to zero for a
+  single-field interval C type (e.g. -0.5 fetched as SQL_C_INTERVAL_YEAR/_MONTH/_DAY), the old driver
+  sets the interval sign to SQL_TRUE, yielding a negative zero interval.
+new_driver_behavior: |
+  The integer part truncating to zero always yields +0: interval_sign is SQL_FALSE and the field value
+  is 0. There is no negative zero for interval types.
+description: |
+  Applications reading the interval sign for values that truncate to zero will now always see a positive
+  sign. This is the numeric-source counterpart of BD#55 point 6, which documents the same negative-zero
+  normalization for VARCHAR/character sources; both paths share
+  numeric_helpers::write_single_field_interval. Formerly tracked (incorrectly) under BD#17 (a PUT/GET
+  regression) and BD#16 (a NaN-to-integer difference); relabeled to its own entry.
+legacy_id: 98

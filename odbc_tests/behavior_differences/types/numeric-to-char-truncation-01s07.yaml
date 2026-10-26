@@ -1,0 +1,20 @@
+name: "Fractional truncation on a numeric-to-character fetch returns SQLSTATE 01S07 instead of 01000"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  This is a SQLSTATE alignment with the ODBC spec.
+old_driver_behavior: |
+  When a fetch converts a high-scale numeric column into a bound character buffer that cannot
+  hold all fractional digits, the old driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01000
+  (general warning) and vendor code 40460.
+new_driver_behavior: |
+  The new driver returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07 (fractional truncation) --
+  the ODBC 3.x SQLSTATE the specification defines for loss of fractional digits during a
+  numeric-to-character conversion.
+description: |
+  Spec reference: ODBC 3.x defines 01S07 "Fractional truncation" for exactly this case. Both
+  drivers still return SQL_SUCCESS_WITH_INFO, so the (truncated) fetched value is unchanged.
+legacy_id: 118
