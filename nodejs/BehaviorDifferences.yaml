@@ -186,7 +186,7 @@ behavior_differences:
     name: 'BigInt-mode FIXED columns come back as a native bigint instead of a big-integer instance'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -231,7 +231,7 @@ behavior_differences:
     name: 'snowflake.STRING/BOOLEAN/NUMBER/DATE/OBJECT/ARRAY/MAP/JSON module constants are dropped'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -243,8 +243,8 @@ behavior_differences:
       The new driver does not export these constants at all.
     status_rationale: |
       These were leftover constants that nobody removed from the old driver. They are
-      undocumented and unusable (their values match no getType() result), so the new driver simply
-      does not carry them over.
+      undocumented (absent from index.d.ts) and dead code: no public API takes or returns their
+      values, so the new driver does not carry them over.
 
   11:
     name: 'connectAsync rejects on failure instead of delivering the error only via callback'
@@ -271,7 +271,7 @@ behavior_differences:
     name: 'BINARY columns come back as a plain Buffer without toStringSf/getFormat'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -288,6 +288,11 @@ behavior_differences:
       .toStringSf and .getFormat onto the object rather than subclassing Buffer or wrapping it. The
       extra methods were never part of the documented API, and Node already converts a Buffer to hex
       or base64, so there is no real use case for them. The new driver does not carry them over.
+    status_rationale: |
+      The removed methods were never part of the typed API. `Buffer.toString('base64')` gives the
+      same text, and `Buffer.toString('hex').toUpperCase()` matches the uppercase hex from
+      `toStringSf()`. Listed under breaking changes because code that called the undocumented
+      methods needs a one-line update.
 
   13:
     name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
@@ -466,7 +471,7 @@ behavior_differences:
     name: 'representNullAsStringNull is scoped to the connection rather than leaking into module state'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -852,7 +857,7 @@ behavior_differences:
     name: 'isAnError is typed to take a QueryStatus argument'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -959,7 +964,7 @@ behavior_differences:
     name: 'SnowflakeDate is a public export used for DATE and TIMESTAMP values'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1350,7 +1355,7 @@ behavior_differences:
     name: 'a queryTag is validated by the server, not by the client'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1601,7 +1606,7 @@ behavior_differences:
     name: 'The application connection option is not checked for format'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
