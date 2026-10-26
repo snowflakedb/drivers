@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.unicore;
 
+import java.nio.ByteBuffer;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -29,6 +30,23 @@ public final class NativeBuffer implements AutoCloseable {
     return address;
   }
 
+  /**
+   * Aliases {@code length} bytes at {@code address} without copying or checking where the memory
+   * came from. The caller keeps {@code [address, address + length)} readable for the life of the
+   * returned {@link ByteBuffer}.
+   */
+  public static ByteBuffer view(long address, int length) {
+    if (address == 0 || length < 0) {
+      throw new SFSQLException("Native buffer view is not valid");
+    }
+    NativeLibraryLoader.init();
+    ByteBuffer buffer = nativeView(address, length);
+    if (buffer == null) {
+      throw new SFSQLException("Failed to view native buffer");
+    }
+    return buffer;
+  }
+
   @Override
   public void close() {
     if (handle == 0) {
@@ -52,4 +70,6 @@ public final class NativeBuffer implements AutoCloseable {
   private static native void nativeRelease(long handle);
 
   private static native long nativeAllocatedBytes();
+
+  private static native ByteBuffer nativeView(long address, int length);
 }

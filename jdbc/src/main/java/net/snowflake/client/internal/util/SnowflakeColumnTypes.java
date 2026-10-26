@@ -5,7 +5,6 @@ import static net.snowflake.client.api.resultset.SnowflakeType.GEOGRAPHY;
 import java.sql.Types;
 import java.util.Locale;
 import java.util.Optional;
-import javax.annotation.Nullable;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -49,7 +48,7 @@ public class SnowflakeColumnTypes {
   public static ColumnTypeInfo getSnowflakeType(
       String internalColTypeName,
       String extColTypeName,
-      @Nullable String udtOutputType,
+      String udtOutputType,
       int fixedColType,
       boolean isStructuredType,
       boolean isVectorType) {

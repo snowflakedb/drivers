@@ -133,7 +133,8 @@ nothing matches, use the [deep-dive index](index.md) or
 | `UnsatisfiedLinkError`, JNI load, wrong architecture, shaded jar | [jdbc.md](wrappers/jdbc.md) → "Symptom: `UnsatisfiedLinkError`" |
 | no driver logs appear (`loggerImpl` / `TRACING` / SLF4J); note **there is no `sf.logLevel`** | [jdbc.md](wrappers/jdbc.md) → "Symptom: no driver logs appear" |
 | TLS error and the JVM truststore has no effect (rustls, not JSSE) | [jdbc.md](wrappers/jdbc.md) → "Symptom: TLS/certificate errors, and the JVM truststore has no effect" |
-| JDBC Arrow OOM / off-heap (direct) memory; `--add-opens=java.base/java.nio`; `InaccessibleObjectException`; `OutOfMemoryError: Direct buffer memory`; `-XX:MaxDirectMemorySize` | [jdbc.md](wrappers/jdbc.md) → "Arrow result delivery" |
+| JDBC large-result memory; `CLIENT_MEMORY_LIMIT` | [jdbc.md](wrappers/jdbc.md) → "Result delivery" |
+| `InaccessibleObjectException`, "module java.base does not open java.nio", `--add-opens=java.base/java.nio` still required | [jdbc.md](wrappers/jdbc.md) → "Symptom: `InaccessibleObjectException`" |
 | JDBC proxy properties (`proxyHost` / `nonProxyHosts`), `queryTimeoutSeconds`, `allowUnderscoresInHost`, JDBC connection-property behavior | [jdbc.md](wrappers/jdbc.md) → "Connection properties: JDBC-specific behavior" |
 
 ### ODBC

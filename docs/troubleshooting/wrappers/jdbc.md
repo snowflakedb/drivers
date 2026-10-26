@@ -128,46 +128,37 @@ and, to reproduce outside the JVM entirely,
 
 ---
 
-## Arrow result delivery: off-heap memory and `--add-opens`
+## Result delivery
 
-Result sets cross from the native core into Java over the **Arrow C Data
-Interface** (`org.apache.arrow.c`) — a zero-copy handoff, not a re-serialization.
-The Java side wraps the native stream in an Arrow `RootAllocator` and reads
-`RecordBatch`es from it. Two consequences show up only with JDBC:
+The native bridge owns the Arrow C stream and keeps each current `RecordBatch`
+alive. JDBC wraps those columnar buffers with direct `ByteBuffer`s (`NewDirectByteBuffer`)
+and the existing converters read them in place. Result reads have no Arrow Java
+allocator and no `--add-opens=java.base/java.nio` requirement.
 
-**1. You must open `java.nio` to Arrow on JDK 16+.** Arrow's off-heap allocator
-reaches into `java.nio` internals by reflection, which the module system blocks by
-default. The driver ships as a *library* jar and deliberately does **not** set the
-flag for you, so the launching application must pass it:
+Cell values stay in native Arrow buffers until a converter materializes a Java
+object (for example a `String` or `byte[]` from a variable-width column). Direct
+buffers from a batch are invalid after the next batch load or stream close.
+Bound in-flight native memory with `CLIENT_MEMORY_LIMIT` /
+`CLIENT_PREFETCH_THREADS` and consume the result incrementally — see
+[query-execution.md → OOM on a large result set](../core/query-execution.md#symptom-oom-on-a-large-result-set).
 
-```sh
-java --add-opens=java.base/java.nio=ALL-UNNAMED -jar your-app.jar
-```
+---
 
-Without it, the first result fetch fails at Arrow memory initialization (an
-`InaccessibleObjectException`, often surfaced as a `MemoryUtil` init failure) —
-**not** with a Snowflake error. This is JDK-version-dependent: JDK 11 does not need
-it, 16+ does.
+## Symptom: `InaccessibleObjectException` / "module java.base does not open java.nio"
 
-**2. Arrow buffers are off-heap — `-Xmx` is the wrong knob.** The record batches
-live in **direct (off-heap) memory**, not the Java heap:
+The universal driver does not need `--add-opens=java.base/java.nio=ALL-UNNAMED`
+on its own: Arrow Java is no longer on the classpath. If the exception still
+appears, something else in the application is reaching into `java.nio.Buffer`
+reflectively.
 
-- Raising `-Xmx` neither prevents nor fixes an Arrow-side OOM. A large-result OOM
-  surfaces as a direct-buffer / Arrow allocator failure
-  (`OutOfMemoryError: Direct buffer memory`, or an Arrow `OutOfMemoryException`),
-  not `OutOfMemoryError: Java heap space`.
-- If the ceiling you hit is the JVM's direct-memory limit
-  (`OutOfMemoryError: Direct buffer memory`), raise `-XX:MaxDirectMemorySize`. The
-  better lever is to bound the *in-flight* result with the core knobs
-  `CLIENT_MEMORY_LIMIT` / `CLIENT_PREFETCH_THREADS` and consume the stream
-  incrementally rather than materializing it — see
-  [query-execution.md → OOM on a large result set](../core/query-execution.md#symptom-oom-on-a-large-result-set).
-
-> In the self-contained `-all` fat jar, Arrow is relocated under
-> `net.snowflake.client.jdbc.internal.apache.arrow`, so it won't collide with an
-> Arrow your application uses directly — **except** the `org.apache.arrow.c` C Data
-> classes, intentionally left unrelocated for the native bridge. The `--add-opens`
-> above is unaffected: it targets the JDK's `java.nio`, not Arrow's package.
+1. **Legacy snowflake-jdbc on the classpath.** The pinned `snowflake-jdbc`
+   artifact (pre-removal) bundles Arrow Memory and still asks for the open on
+   Java 17+. The project's `referenceTest` and `parityTest` Gradle tasks already
+   set the flag; downstream applications that keep the legacy driver side-by-side
+   need the same JVM arg.
+2. **A different library.** Netty direct-buffer helpers and some JSON parsers
+   also hit `java.nio.Buffer`. The driver itself does not; narrow the flag to
+   the offender's modules.
 
 ---
 

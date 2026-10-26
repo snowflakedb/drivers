@@ -44,6 +44,7 @@ import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.NativeBuffer;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
@@ -58,7 +59,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementPrepareResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
-import org.apache.arrow.memory.util.MemoryUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -558,7 +558,7 @@ public class SnowflakePreparedStatementImplTest {
     BinaryDataPtr json = bindings.getJson();
     long address =
         ByteBuffer.wrap(json.getValue().toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
-    ByteBuffer bytes = MemoryUtil.directBuffer(address, (int) json.getLength());
+    ByteBuffer bytes = NativeBuffer.view(address, (int) json.getLength());
     byte[] copy = new byte[bytes.remaining()];
     bytes.get(copy);
     return new String(copy, StandardCharsets.UTF_8);

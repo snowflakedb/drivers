@@ -5,7 +5,7 @@ name: Build JDBC JARs
 #   - thin bundle (snowflake-jdbc-native, assemble_thin): native-free plain jar + deps POM +
 #     sources/javadoc, plus one per-platform classifier jar (thin Java + that platform's native).
 #
-# windows-aarch64 omitted: arrow-c-data 17.0.0 ships no arrow_cdata_jni for it.
+# windows-aarch64 omitted: no CI runner yet.
 
 on:
   workflow_call:

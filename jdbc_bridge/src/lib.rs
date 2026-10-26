@@ -625,6 +625,27 @@ pub extern "system" fn Java_net_snowflake_client_internal_unicore_NativeBuffer_n
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
+pub extern "system" fn Java_net_snowflake_client_internal_unicore_NativeBuffer_nativeView(
+    mut env: JNIEnv,
+    _class: JClass,
+    address: jlong,
+    length: jint,
+) -> jobject {
+    ffi_guard(std::ptr::null_mut(), || {
+        if address == 0 || length < 0 {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: the Java caller keeps `[address, address + length)` readable for the life of
+        // the returned `ByteBuffer`; nothing here checks where that memory came from.
+        match unsafe { env.new_direct_byte_buffer(address as *mut u8, length as usize) } {
+            Ok(buffer) => buffer.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_net_snowflake_client_internal_unicore_CoreLoggingBridge_nativeIsTroubleshooting(
     _env: JNIEnv,
     _class: JClass,

@@ -8,7 +8,7 @@ The driver is published under `net.snowflake` in three flavors:
 
 | Coordinate | What it is |
 |---|---|
-| `net.snowflake:snowflake-jdbc-native:<version>:<classifier>` | **Recommended.** Self-contained *per-platform* jar: thin Java + that platform's native, in one artifact. Dependencies (Arrow, protobuf, …) resolve from the POM. One dependency, one platform. |
+| `net.snowflake:snowflake-jdbc-native:<version>:<classifier>` | **Recommended.** Self-contained *per-platform* jar: thin Java + that platform's native, in one artifact. Dependencies (protobuf, Jackson, …) resolve from the POM. One dependency, one platform. |
 | `net.snowflake:snowflake-jdbc-native-all` | Self-contained *fat* jar: all dependencies shaded **and** every platform's native bundled in. Portable across platforms in a single artifact; larger, and shades transitive deps. |
 | `net.snowflake:snowflake-jdbc-native` (no classifier) | **Advanced / native-free.** No native bundled — the JVM resolves the lib from `CORE_PATH` or the `jdbc.library.path` system property. Used on unlisted platforms or when you supply the native out-of-band. Not runnable on its own. |
 

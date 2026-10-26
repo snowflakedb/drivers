@@ -19,11 +19,10 @@ plugins {
 def oldJdbcVersion = '4.3.4'
 def slf4jVersion = '2.0.20'
 def lombokVersion = '1.18.48'
-// Override arrow's transitive 2.17.x (backward-compatible). Stays on 2.x (Java 8); 3.x needs Java 17.
+// Stays on 2.x (Java 8); 3.x needs Java 17.
 def jacksonVersion = '2.22.4'
 // jackson-annotations dropped its patch segment at 2.20, so it trails core/databind.
 def jacksonAnnotationsVersion = '2.22'
-def arrowVersion = '17.0.0'
 
 group = 'net.snowflake'
 version = '0.0.6'
@@ -62,17 +61,11 @@ dependencies {
 
     // API facade only — never ship a backend, or consumers get forced/conflicting bindings.
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation "org.apache.arrow:arrow-vector:${arrowVersion}"
-    implementation "org.apache.arrow:arrow-memory-core:${arrowVersion}"
-    implementation "org.apache.arrow:arrow-memory-netty:${arrowVersion}"
-    implementation "org.apache.arrow:arrow-c-data:${arrowVersion}"
     implementation 'com.google.protobuf:protobuf-java:4.36.2'
-    // Pinned so the POM overrides arrow-vector's transitive 2.17.x (databind alone isn't enough).
+    // All three pinned; databind alone does not override core and annotations.
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
     implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
     implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonAnnotationsVersion}"
-    // Arrow requests jackson-datatype-jsr310 2.17.1 with no version of its own. Keep it on this line.
-    implementation "com.fasterxml.jackson.datatype:jackson-datatype-jsr310:${jacksonVersion}"
 
     // test dependencies
     testImplementation 'org.junit.jupiter:junit-jupiter:5.14.4'  // 5.x = last Java 8 line; 6.x needs Java 17
@@ -234,9 +227,6 @@ tasks.named('javadocJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
 // ====================
 // Bundle every runtime dep and relocate third-party packages under
 // net.snowflake.client.jdbc.internal.** (legacy parity) to avoid classpath clashes.
-//
-// org.apache.arrow.c.** is NOT relocated: arrow_cdata_jni resolves those classes by
-// hardcoded name, so relocating breaks native FindClass (references still get rewritten).
 shadowJar {
     // Replace the thin jar as the main artifact (no "-all" classifier).
     archiveClassifier = ''
@@ -248,7 +238,7 @@ shadowJar {
             'Implementation-Vendor': 'Snowflake Inc.',
             // Jackson's META-INF/versions/* classes are only honored on a multi-release jar.
             'Multi-Release': 'true'
-            // No Main-Class/Add-Opens: library jar; consumers pass Arrow --add-opens themselves.
+            // No Main-Class: library jar.
         )
     }
 
@@ -260,14 +250,8 @@ shadowJar {
     }
 
     def internal = 'net.snowflake.client.jdbc.internal'
-    relocate('org.apache.arrow', "${internal}.apache.arrow") {
-        exclude 'org.apache.arrow.c.**'
-    }
     relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
-    relocate 'com.google.flatbuffers', "${internal}.com.google.flatbuffers"
     relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
-    relocate 'io.netty', "${internal}.io.netty"
-    relocate 'org.apache.commons.codec', "${internal}.org.apache.commons.codec"
     // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
 
     mergeServiceFiles()
@@ -281,7 +265,7 @@ shadowJar {
 
 // Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
 // relocators so it can't drift from the config above; the rest are invariants not derivable
-// from relocate(): Arrow C Data carve-out, un-relocated slf4j-api, the java.sql.Driver
+// from relocate(): un-relocated slf4j-api, the java.sql.Driver
 // service file, and (with -PnativeLibsDir) all five platform libs.
 def verifyShadowJar = tasks.register('verifyShadowJar') {
     dependsOn 'shadowJar'
@@ -314,15 +298,17 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
         }
 
         // Non-derivable invariants.
-        // Arrow C Data + its JNI resource stay at the original path.
-        want 'org/apache/arrow/c/Data.class'
-        want 'org/apache/arrow/c/jni/JniWrapper.class'
-        want 'arrow_cdata_jni/'
         // slf4j API deliberately un-relocated; slf4j-simple binding not bundled.
         want 'org/slf4j/Logger.class'
         absent 'org/slf4j/simple/'
         // JDBC auto-registration service must survive shading.
         want 'META-INF/services/java.sql.Driver'
+        // Dropped from the driver dependency graph in #2521. Guard against a transitive drag-in
+        // (e.g. a future dependency pulling arrow-vector back) silently repopulating the jar.
+        ['org/apache/arrow/',
+         'io/netty/',
+         'com/google/flatbuffers/',
+         'org/apache/commons/codec/'].each { absent it }
 
         // Every native staged under -PnativeLibsDir must survive into the fat jar. Derived from the
         // staged tree, not a hardcoded list, so the per-libc Linux subdirs are checked automatically.
@@ -559,7 +545,7 @@ def verifyThinJar = tasks.register('verifyThinJar') {
         absent 'net/snowflake/client/jdbc/internal/'
         // No bundled deps — resolved from Maven at consume time.
         ['org/apache/arrow/', 'com/google/protobuf/', 'com/google/flatbuffers/',
-         'io/netty/', 'org/slf4j/'].each { absent it }
+         'io/netty/', 'org/apache/commons/codec/', 'org/slf4j/'].each { absent it }
         // No bundled native — that ships in the per-platform classifier jars (verified below).
         absent 'net/snowflake/client/internal/unicore/native/'
         // Real driver + JDBC auto-registration service must be present.
@@ -569,12 +555,9 @@ def verifyThinJar = tasks.register('verifyThinJar') {
         // POM invariant: real deps declared (inverse of the fat POM's dep-strip).
         def deps = new XmlSlurper().parse(pomProvider.get().asFile)
             .dependencies.dependency.collect { "${it.groupId}:${it.artifactId}".toString() }
-        // jackson-databind is used directly but only arrived transitively via arrow-vector;
-        // pin it in the POM so consumers whose Arrow graph omits it don't break.
-        ['org.apache.arrow:arrow-vector', 'com.google.protobuf:protobuf-java',
+        ['com.google.protobuf:protobuf-java',
          'org.slf4j:slf4j-api',
-         'com.fasterxml.jackson.core:jackson-databind',
-         'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'].each { want ->
+         'com.fasterxml.jackson.core:jackson-databind'].each { want ->
             if (!deps.contains(want)) problems << "thin POM missing dependency: ${want}"
         }
         // Logging backend stays the consumer's choice (parity with the fat jar).
@@ -697,9 +680,6 @@ def configureCommonTestTask = { t ->
             "(runner availableProcessors=${Runtime.runtime.availableProcessors()})")
     }
 
-    if (JavaVersion.current().isJava9Compatible()) {
-        t.jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
-    }
     if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_19)) {
         t.jvmArgs '--enable-native-access=ALL-UNNAMED'
     }
@@ -783,6 +763,12 @@ test {
 
 tasks.register('referenceTest', Test) {
     configureCommonTestTask(delegate)
+    // The pinned legacy snowflake-jdbc on the referenceTest classpath still relies on Arrow
+    // Memory, which opens java.nio reflectively. Scope the flag to this task so main's test JVM
+    // keeps the module tight.
+    if (JavaVersion.current().isJava9Compatible()) {
+        jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
+    }
     testClassesDirs = sourceSets.test.output.classesDirs
     include 'net/snowflake/client/api/**'
     include 'net/snowflake/jdbc/**'
@@ -847,6 +833,12 @@ jacocoTestReport {
 // regular `:test` task on OpenJ9 too. Track the fix separately; the matrix needs HotSpot today.
 tasks.register('parityTest', Test) {
     configureCommonTestTask(delegate)
+    // The pinned legacy snowflake-jdbc loaded alongside the new driver still relies on Arrow
+    // Memory, which opens java.nio reflectively. Scope the flag to this task so main's test JVM
+    // keeps the module tight.
+    if (JavaVersion.current().isJava9Compatible()) {
+        jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
+    }
     testClassesDirs = sourceSets.test.output.classesDirs
 
     // Keep universal-driver off the test JVM's system classloader so each driver lives only
