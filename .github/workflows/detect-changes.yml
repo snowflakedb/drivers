@@ -328,6 +328,7 @@ jobs:
               - '.github/actions/cargo-cache/**'
               - '.buildkite/**'
               - 'scripts/decode_secrets.*'
+              - 'scripts/wait_for_test_host.*'
               - 'scripts/shared/**'
               # Truly-shared `ci/` files only. Negation patterns ('!path') are
               # NOT used here: dorny/paths-filter runs with the default

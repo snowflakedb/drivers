@@ -622,6 +622,9 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
+
       # cargo-llvm-cov flag semantics + combination rules:
       #
       #   `cargo llvm-cov ... --no-report`  → build instrumented binaries + run tests +

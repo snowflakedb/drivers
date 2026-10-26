@@ -196,6 +196,13 @@ repos:
         pass_filenames: false
         files: ^scripts/(retry_on_network_error\.sh|test_retry_on_network_error\.py)$
         language: python
+    -   id: wait-for-test-host-test
+        name: wait_for_test_host.sh test
+        description: Guard DNS preflight for live-account CI jobs after decode_secrets
+        entry: python3 -m unittest scripts/test_wait_for_test_host.py
+        pass_filenames: false
+        files: ^scripts/(wait_for_test_host\.sh|test_wait_for_test_host\.py)$
+        language: python
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios

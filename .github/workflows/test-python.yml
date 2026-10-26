@@ -591,6 +591,10 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
+        shell: bash
+
       - name: Setup OpenSSL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         uses: ./.github/actions/setup-windows-openssl
@@ -928,6 +932,10 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
+        shell: bash
+
       - name: Install Hatch
         shell: bash
         run: *setup_env
@@ -1004,6 +1012,10 @@ jobs:
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+        shell: bash
+
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
         shell: bash
 
       - name: Install Hatch
