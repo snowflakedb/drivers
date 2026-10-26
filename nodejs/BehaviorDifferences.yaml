@@ -60,24 +60,24 @@ behavior_differences:
       is gone; the type lists exactly the options the driver forwards.
 
   3:
-    name: 'fetchResult now inherits the connection-level rowMode default'
-    status: allowed
-    type: bugfix
+    name: 'fetchResult and getResultsFromQueryId apply the statement and connection rowMode'
+    status: fixed
+    type: bug
     reviewed: false
-    is_breaking_change: true
-    impact: medium
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
-      execute() inherits the connection-level rowMode default (createStatementPreExec falls back
-      to connectionConfig.getRowMode(), statement.js:480), but fetchResult() does not
-      (createStatementPostExec assigns statementOptions.rowMode directly with no fallback,
-      statement.js:202) -- unset rowMode on fetchResult always resolves to object-shaped rows,
-      regardless of the connection's configured rowMode.
+      fetchResult() and getResultsFromQueryId() apply a rowMode passed to them. Without one, the
+      rows follow the connection rowMode, or 'object' when the connection sets none.
     new_driver_behavior: |
-      fetchResult() and execute() share the same precedence chain (statement rowMode > connection
-      default > 'object'), so a connection configured with a non-default rowMode now gets
-      consistent shaping from both methods. Legacy's asymmetry is treated as a bug here, not a
-      contract worth preserving -- a connection-level rowMode setting silently being ignored by
-      exactly one of two entry points is surprising behavior, not an intentional feature.
+      Same as the old driver.
+    status_rationale: |
+      An early new-driver fetchResult() did not accept a rowMode of its own, so only the
+      connection rowMode applied. It now takes the statement rowMode first, like execute().
+    description: |
+      No longer a difference between drivers. Both drivers already applied the connection
+      rowMode in fetchResult(): the old driver's BaseStatement falls back to it when the
+      statement sets no rowMode.
 
   4:
     name: 'Column.isObject/isArray/isMap return the correct value for each semi-structured column type (OBJECT/ARRAY/MAP)'

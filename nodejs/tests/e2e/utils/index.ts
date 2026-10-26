@@ -193,21 +193,23 @@ export function fetchResultAsync(
   options: Omit<FetchResultOptions, 'complete'>,
 ): {
   statement: RowStatement;
-  completion: Promise<{ statement: RowStatement }>;
+  completion: Promise<{ statement: RowStatement; rows: Record<string, unknown>[] }>;
 } {
   let statement!: RowStatement;
-  const completion = new Promise<{ statement: RowStatement }>((resolve, reject) => {
-    statement = connection.fetchResult({
-      ...options,
-      complete: (error, completedStatement) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve({ statement: completedStatement });
-        }
-      },
-    });
-  });
+  const completion = new Promise<{ statement: RowStatement; rows: Record<string, unknown>[] }>(
+    (resolve, reject) => {
+      statement = connection.fetchResult({
+        ...options,
+        complete: (error, completedStatement, rows) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve({ statement: completedStatement, rows: rows as Record<string, unknown>[] });
+          }
+        },
+      });
+    },
+  );
   return { statement, completion };
 }
 

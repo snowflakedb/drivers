@@ -98,6 +98,7 @@ export interface FetchResultOptions {
   queryId: string;
   complete?: StatementCallback;
   streamResult?: boolean;
+  rowMode?: RowMode;
   fetchAsString?: DataType[];
 }
 
@@ -263,10 +264,8 @@ export class Connection {
       complete: options.complete,
       streamResult: options.streamResult,
       rowOptions: {
-        // The old driver's fetchResult() never fell back to the connection-level
-        // rowMode default, unlike execute() -- that asymmetry is treated as a bug
-        // here, not preserved (BD#3).
         ...this.#defaultRowOptions,
+        ...(options.rowMode && { rowMode: options.rowMode }),
         ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
       },
     });

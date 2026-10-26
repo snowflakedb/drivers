@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { RowMode } from '../../types/sdk-types.js';
+import type { Connection, FetchResultOptions, RowMode } from '../../types/sdk-types.js';
 import { createLiveConnection } from '../utils/fixtures.js';
-import { executeAsync } from '../utils/index.js';
+import { executeAsync, fetchResultAsync, getResultsFromQueryIdAsync } from '../utils/index.js';
 
 const SQL = `select 1 as id, 'name1' as name, 'name2' as name`;
 
@@ -39,5 +39,51 @@ describe('Query Row Mode', () => {
     const connection = await createLiveConnection({ rowMode: 'array' });
     const { rows } = await executeAsync(connection, SQL, { rowMode: 'object' });
     expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
+  });
+
+  describe.each<{
+    method: string;
+    fetchRows: (
+      connection: Connection,
+      options: FetchResultOptions,
+    ) => Promise<Record<string, unknown>[]>;
+  }>([
+    {
+      method: 'fetchResult',
+      fetchRows: async (connection, options) =>
+        (await fetchResultAsync(connection, options).completion).rows,
+    },
+    {
+      method: 'getResultsFromQueryId',
+      fetchRows: async (connection, options) =>
+        (await getResultsFromQueryIdAsync(connection, options)).rows,
+    },
+  ])('$method rowMode', ({ fetchRows }) => {
+    it('should shape rows according to connection rowMode', async () => {
+      const connection = await createLiveConnection({ rowMode: 'array' });
+      const { statement } = await executeAsync(connection, SQL);
+      const rows = await fetchRows(connection, { queryId: statement.getQueryId()! });
+      expect(rows[0]).toEqual(EXPECTED_BY_MODE.array);
+    });
+
+    it('should shape rows according to the rowMode passed to it', async () => {
+      const connection = await createLiveConnection();
+      const { statement } = await executeAsync(connection, SQL);
+      const rows = await fetchRows(connection, {
+        queryId: statement.getQueryId()!,
+        rowMode: 'array',
+      });
+      expect(rows[0]).toEqual(EXPECTED_BY_MODE.array);
+    });
+
+    it('should let the rowMode passed to it override connection rowMode', async () => {
+      const connection = await createLiveConnection({ rowMode: 'array' });
+      const { statement } = await executeAsync(connection, SQL);
+      const rows = await fetchRows(connection, {
+        queryId: statement.getQueryId()!,
+        rowMode: 'object',
+      });
+      expect(rows[0]).toEqual(EXPECTED_BY_MODE.object);
+    });
   });
 });
