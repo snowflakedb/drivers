@@ -1,0 +1,25 @@
+name: "SQLCancelHandle(DBC) returns HY010 when an associated statement is mid-async or in data-at-execution"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  The ODBC 3.8 Diagnostics table requires HY010 (Function sequence error) in those cases.
+old_driver_behavior: |
+  SQLCancelHandle(SQL_HANDLE_DBC) is a no-op that returns SQL_SUCCESS even when an associated
+  statement is asynchronously executing (SQL_STILL_EXECUTING) or mid data-at-execution
+  (SQL_NEED_DATA).
+new_driver_behavior: |
+  SQLCancelHandle(SQL_HANDLE_DBC) returns SQL_ERROR with SQLSTATE HY010 when any associated
+  statement is asynchronously executing or mid data-at-execution, matching the ODBC 3.8
+  Diagnostics table. When no child statement is busy, DBC cancel remains a no-op returning
+  SQL_SUCCESS (neither driver supports cancelable connection-level async operations).
+description: |
+  Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancelhandle-function
+  — HY010 when "An asynchronously executing, statement-related function was called for one of
+  the statement handles associated with the Handle, and HandleType was set to SQL_HANDLE_DBC"
+  or when SQLBrowseConnect / streamed parameters leave the connection mid NEED_DATA / param
+  data available. Applications that called SQLCancelHandle(DBC) during statement async/DAE and
+  expected SQL_SUCCESS will now see HY010; they should cancel the statement handle instead.
+legacy_id: 111

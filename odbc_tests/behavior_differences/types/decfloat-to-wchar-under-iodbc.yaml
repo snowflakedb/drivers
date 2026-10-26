@@ -1,0 +1,29 @@
+name: "SQLGetData converts DECFLOAT to SQL_C_WCHAR under iODBC instead of returning SQL_SUCCESS with SQL_NULL_DATA indicator and an untouched buffer"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  3.x under iODBC writes DECFLOAT as SQL_C_WCHAR but reports the
+  indicator in UTF-16 byte units (2 for "0", 76 for a 38-digit
+  value) rather than sizeof(SQLWCHAR). Truncation returns
+  SQL_SUCCESS_WITH_INFO. 4.x converts to the DM's SQLWCHAR width
+  on both DMs.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  Under iODBC, SQLGetData on a DECFLOAT column with TargetType=SQL_C_WCHAR
+  returns SQL_SUCCESS and writes a value, but the length indicator is
+  the UTF-16 byte length (2 * character count), not
+  sizeof(SQLWCHAR) * character count. A too-small buffer returns
+  SQL_SUCCESS_WITH_INFO with indicator 76 for a 38-digit value.
+  Under unixODBC 3.x converts DECFLOAT to SQL_C_WCHAR with the DM
+  SQLWCHAR width.
+new_driver_behavior: |
+  Converts DECFLOAT to SQL_C_WCHAR using the DM SQLWCHAR width on
+  both DMs. Truncation returns SQL_SUCCESS_WITH_INFO with
+  indicator 38 * sizeof(SQLWCHAR) and SQLSTATE 01004.
+description: |
+  Applications that read the SQL_C_WCHAR indicator under iODBC
+  against 3.x see UTF-16 byte lengths. 4.x reports
+  sizeof(SQLWCHAR) units.
+legacy_id: 67

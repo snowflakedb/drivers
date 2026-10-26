@@ -1,0 +1,21 @@
+name: "SQLColumns TIMESTAMP BUFFER_LENGTH is 16 instead of 35"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  BUFFER_LENGTH is the SQL_C_DEFAULT transfer octet length
+  (sizeof SQL_TIMESTAMP_STRUCT = 16), not a copy of COLUMN_SIZE. 3.x returned
+  35 because it copied COLUMN_SIZE.
+old_driver_behavior: |
+  SQLColumns BUFFER_LENGTH (col 8) for TIMESTAMP* copies COLUMN_SIZE and
+  therefore returns 35.
+new_driver_behavior: |
+  SQLColumns BUFFER_LENGTH for TIMESTAMP* is 16 (sizeof SQL_TIMESTAMP_STRUCT),
+  the ODBC transfer octet length under SQL_C_DEFAULT. COLUMN_SIZE remains
+  20+scale. Query-result SQLColAttribute OCTET_LENGTH for
+  TIMESTAMP remains 16 (unchanged).
+description: |
+  Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+legacy_id: 129

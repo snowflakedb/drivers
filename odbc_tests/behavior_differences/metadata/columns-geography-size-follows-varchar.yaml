@@ -1,0 +1,24 @@
+name: "SQLColumns GEOGRAPHY/GEOMETRY sizes follow the session VARCHAR maximum"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  GEOGRAPHY and GEOMETRY report SQL_VARCHAR, so catalog sizes follow the
+  session VARCHAR maximum. 3.x hardcoded 128 MB independently of that
+  parameter.
+old_driver_behavior: |
+  SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
+  GEOGRAPHY and GEOMETRY are 134217728, independent of the session
+  VARCHAR maximum.
+new_driver_behavior: |
+  SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
+  GEOGRAPHY and GEOMETRY equal VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT.
+  The default is 16777216, and changing the session parameter changes
+  all three reported sizes.
+description: |
+  GEOGRAPHY and GEOMETRY report SQL_VARCHAR as DATA_TYPE, so their
+  character and buffer sizes use the same session maximum as other
+  session-sized VARCHAR-compatible catalog types.
+legacy_id: 146

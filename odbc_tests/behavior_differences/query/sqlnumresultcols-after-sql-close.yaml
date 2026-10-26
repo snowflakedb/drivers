@@ -1,0 +1,16 @@
+name: "SQLNumResultCols returns the correct column count instead of 0 after SQL_CLOSE on prepared statement"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC compliance fix. Now the caller receives the correct count of the columns for the prepared statement even after closing the cursor.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After Prepare -> Execute -> SQL_CLOSE, SQLNumResultCols returns 0. The old driver does not preserve prepared statement metadata across SQL_CLOSE.
+new_driver_behavior: |
+  Returns the correct column count (e.g. 3 for "SELECT 1, 2, 3") because SQL_CLOSE transitions the statement back to the Prepared state (S2/S3) where column metadata is available, per the ODBC specification.
+description: |
+  Spec reference: ODBC Statement Transitions table, SQLFreeStmt row (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt) states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3. SQLNumResultCols is defined to succeed in states S2-S12.
+  Applications that rely on SQLNumResultCols after SQL_CLOSE on a prepared statement will now receive the correct count.
+legacy_id: 20

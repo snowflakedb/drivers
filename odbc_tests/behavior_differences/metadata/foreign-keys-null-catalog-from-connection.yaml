@@ -1,0 +1,21 @@
+name: "SQLForeignKeys resolves NULL FK catalog and schema from connection context"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  Default NULL-catalog handling now matches the 3.x driver. Catalog fill for
+  SQLForeignKeys (and SQLPrimaryKeys) happens when UseCurrentCatalog is true or
+  CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX is enabled, not on every NULL catalog.
+old_driver_behavior: |
+  When only FKTableName is supplied with NULL FKCatalogName and NULL FKSchemaName, the reference
+  driver's result depends on UseCurrentCatalog and CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX.
+  With both disabled the catalog stays unconstrained. With UseCurrentCatalog=true (or CTX
+  enabled) the FK_CHILD row is returned from the current database.
+new_driver_behavior: |
+  The same knobs apply. UseCurrentCatalog defaults to false, matching the 3.x DSN
+  parameter. Schema is still filled when a table name is supplied.
+description: |
+  Restores the 3.x UseCurrentCatalog gate that 4.x had dropped (always filling catalog).
+legacy_id: 88

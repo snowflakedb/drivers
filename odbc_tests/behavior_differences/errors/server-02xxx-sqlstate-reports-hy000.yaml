@@ -1,0 +1,22 @@
+name: "Server errors with a 02xxx SQLSTATE report HY000 instead of the server SQLSTATE"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A failed statement reports the server SQLSTATE verbatim, including the
+  no-data class. COPY INTO a missing stage returns SQL_ERROR with SQLSTATE
+  02000 and native error 2003.
+new_driver_behavior: |
+  A server SQLSTATE in the 02xxx class is not copied to an error record;
+  the record uses the driver's default for that error, which is HY000 for
+  a failed query. COPY INTO a missing stage returns SQL_ERROR with
+  SQLSTATE HY000 and native error 2003. The native error and message are
+  unchanged.
+description: |
+  ODBC reserves class 02 for SQL_NO_DATA, which is a success return, so
+  an error record carrying 02000 is ambiguous to callers. Applications
+  that branch on SQLSTATE 02000 after SQL_ERROR see HY000; the native
+  error 2003 still identifies the missing object.
+legacy_id: 172

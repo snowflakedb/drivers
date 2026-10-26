@@ -1,0 +1,25 @@
+name: "A second SQLFreeHandle on an already-freed statement returns SQL_INVALID_HANDLE under iODBC instead of SQL_ERROR + HY000 on the connection"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  A second SQLFreeHandle on an already-freed statement is an invalid handle.
+  SQL_INVALID_HANDLE on every DM matches the spec; 3.x's iODBC SQL_ERROR +
+  HY000 on the parent connection does not.
+old_driver_behavior: |
+  Under iODBC, SQLFreeHandle(SQL_HANDLE_STMT) on a statement that was already
+  freed returns SQL_ERROR and posts SQLSTATE HY000 on the parent connection
+  handle. SQLGetStmtAttr on the same pointer already returns SQL_INVALID_HANDLE.
+  A third SQLFreeHandle then returns SQL_INVALID_HANDLE. Under unixODBC the
+  second SQLFreeHandle returns SQL_INVALID_HANDLE.
+new_driver_behavior: |
+  The second SQLFreeHandle(SQL_HANDLE_STMT) on a freed statement returns
+  SQL_INVALID_HANDLE on every DM, including iODBC. No diagnostic is posted on
+  the connection.
+description: |
+  Applications that double-free a statement under iODBC against the old driver
+  see SQL_ERROR + HY000 on the DBC; the new driver returns the spec
+  SQL_INVALID_HANDLE.
+legacy_id: 126

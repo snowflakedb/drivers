@@ -1,0 +1,15 @@
+name: "SQLGetDescField / SQLSetDescField return SQL_ERROR + HY010 during SQL_NEED_DATA under iODBC instead of silently succeeding"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The ODBC spec requires SQL_ERROR + HY010 when SQLGetDescField / SQLSetDescField is called on an ARD/IRD whose parent statement is in SQL_NEED_DATA. The new driver enforces the state check on every DM and posts the HY010 diagnostic record on the descriptor handle, so SQLGetDiagRec(SQL_HANDLE_DESC, ...) returns the spec-mandated record. The old driver bypasses this state check under iODBC and silently returns SQL_SUCCESS (under unixODBC and Windows DM the old driver enforces it correctly). The spec-compliant new behavior is accepted.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Under iODBC the SQL_NEED_DATA state check is not applied to descriptor entry points reached through the implicit ARD/IRD of the statement: SQLGetDescField and SQLSetDescField return SQL_SUCCESS while the statement is in SQL_NEED_DATA. Under unixODBC and Windows DM the old driver enforces the check and returns SQL_ERROR + HY010.
+new_driver_behavior: |
+  Enforces the SQL_NEED_DATA state check for descriptor entry points and posts the HY010 diagnostic record on the descriptor handle on every DM (unixODBC, iODBC, Windows). SQLGetDescField / SQLSetDescField return SQL_ERROR and SQLGetDiagRec(SQL_HANDLE_DESC, ...) returns the spec-mandated record.
+description: |
+  Applications that issue descriptor calls while a statement is in SQL_NEED_DATA now receive the spec-mandated SQL_ERROR + HY010 from the new driver under iODBC instead of an apparent SQL_SUCCESS. Callers can detect the invalid state and recover (e.g. by cancelling and re-driving the DAE sequence). SQLCopyDesc is not implemented by the new driver (the affected test skips via SKIP_NEW_DRIVER_NOT_IMPLEMENTED) and is not in scope for this BD.
+legacy_id: 69

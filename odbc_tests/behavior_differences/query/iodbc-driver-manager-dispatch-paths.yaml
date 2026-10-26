@@ -1,0 +1,29 @@
+name: "iODBC's DM dispatches the new driver and the old driver along different paths (driver-cap dependent), so identical calls return different return codes / SQLSTATEs under iODBC"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  iODBC's DM picks a short-circuit, a parameter-validation intercept, or a
+  driver forward from each driver's advertised ODBC version and function
+  bitmap. The unixODBC HY096 vs HY000 InfoType difference is a separate
+  spec-alignment we keep (4.x is correct).
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Under iODBC the DM takes the following paths for 3.x:
+    - SQLColumnPrivileges with a NULL TableName is forwarded to 3.x, which submits the call to the backend and surfaces SQL_ERROR from the backend diagnostic.
+    - SQLGetInfo(SQL_DATA_SOURCE_NAME) is answered by 3.x with an empty string + SQL_SUCCESS (nameLen=0).
+    - SQLGetFunctions(FunctionId=<out-of-range>) is answered by 3.x from its static function table with SQL_SUCCESS + supported=SQL_FALSE (no range check).
+    - SQLGetData on a cursor positioned past the end of the result set surfaces SQL_ERROR with SQLSTATE 24000 (matching the unixODBC contract) because 3.x bypasses the iODBC DM's cursor-past-end short-circuit.
+new_driver_behavior: |
+  Under iODBC the DM takes the following paths for 4.x:
+    - SQLGetInfo(SQL_DATA_SOURCE_NAME) is now implemented by 4.x itself (it reads
+      the DSN name captured at connect time), and iODBC forwards the call through rather than
+      short-circuiting it, so the call succeeds with the actual DSN name (matching the
+      unixODBC/Windows behavior) instead of the SQL_ERROR 4.x previously surfaced
+      while the InfoType was unimplemented.
+    - SQLGetData on a cursor positioned past the end of the result set returns SQL_NO_DATA without consulting the driver layer (iODBC DM short-circuits the post-end fetch per its own convention).
+description: |
+  Applications receive different return codes / SQLSTATEs for identical calls depending on driver, even though the underlying state of the connection / statement / cursor is the same. 4.x follows what iODBC's DM mandates; 3.x bypasses several of the DM intercepts.
+  Note on SQLGetInfo with an invalid (out-of-range) InfoType: 4.x returns the spec-mandated HY096 on every DM (Windows, iODBC, and unixODBC all forward the driver's SQLSTATE unchanged — confirmed by CI). 3.x returns HY096 under iODBC and Windows but a generic HY000 under unixODBC (confirmed by the 3.x reference iODBC job). This is therefore a genuine driver behavior difference under unixODBC (4.x = spec-correct HY096, 3.x = HY000), not a DM interception artifact. See `odbc/src/api/error.rs`'s `UnknownInfoType` mapping and the `SQLGetInfo: HY096/HY000 - Invalid InfoType` test's driver-gated unixODBC branch.
+legacy_id: 62

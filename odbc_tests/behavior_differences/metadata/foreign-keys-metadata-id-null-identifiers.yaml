@@ -1,0 +1,18 @@
+name: "SQLForeignKeys metadata_id=TRUE allows NULL identifiers on the unspecified side"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: true
+status_rationale: |
+  Both drivers return HY009 for a NULL catalog, schema, or table pointer on
+  either side in identifier mode.
+impact: low
+old_driver_behavior: |
+  With SQL_ATTR_METADATA_ID=SQL_TRUE, a single-sided query that leaves the
+  unspecified side NULL returns HY009.
+new_driver_behavior: |
+  With SQL_ATTR_METADATA_ID=SQL_TRUE, null-pointer validation applies to
+  every catalog, schema, and table argument.
+description: |
+  Both drivers now return HY009.
+legacy_id: 89

@@ -1,0 +1,18 @@
+name: "SQLGetTypeInfo TIMESTAMP COLUMN_SIZE is 29; ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  SQLGetTypeInfo COLUMN_SIZE 29 is the ODBC standard TIMESTAMP display size
+  (20 + default scale 9). 3.x defaulted to 35 and needed a toggle to get 29;
+  4.x always reports 29 and does not accept that toggle.
+old_driver_behavior: |
+  SQLGetTypeInfo reports COLUMN_SIZE 35 for SQL_TYPE_TIMESTAMP. Setting
+  ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE=true reports 29 instead.
+new_driver_behavior: |
+  SQLGetTypeInfo always reports COLUMN_SIZE 29 for SQL_TYPE_TIMESTAMP.
+  ODBC_USE_STANDARD_TIMESTAMP_COLUMNSIZE is not accepted. TIMESTAMP_LTZ,
+  TIMESTAMP_NTZ, and TIMESTAMP_TZ still report 35.
+legacy_id: 151

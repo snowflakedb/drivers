@@ -1,0 +1,15 @@
+name: "SQLGetDescField on empty IPD returns SQL_NO_DATA instead of SQL_ERROR"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC spec compliance fix.
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  Querying a record field on an empty IPD (no parameters bound, no prepare) returns SQL_ERROR.
+new_driver_behavior: |
+  Querying a record field on an empty IPD (no parameters bound, no prepare) returns SQL_NO_DATA.
+description: |
+  Per the ODBC spec, "SQL_NO_DATA is returned if RecNumber is greater than the current number of descriptor records."
+legacy_id: 28

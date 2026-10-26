@@ -1,0 +1,20 @@
+name: "SQLColAttribute properly supports ODBC 2.x field aliases through the 3.x function"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The old driver's inconsistent handling of 2.x identifiers is a bug; the new driver follows the spec's backward compatibility rules.
+old_driver_behavior: |
+  When SQLColAttribute (ODBC 3.x) is called with ODBC 2.x field identifiers
+  (SQL_COLUMN_NAME, SQL_COLUMN_TYPE, etc.), the old driver exhibits inconsistent
+  behavior — returning empty strings, incorrect values, or HY091 errors
+  depending on the identifier.
+new_driver_behavior: |
+  Properly maps ODBC 2.x field identifiers to their SQL_DESC_* equivalents per
+  the ODBC specification backward compatibility rules.
+is_breaking_change: false
+impact: low
+description: |
+  Applications using ODBC 2.x field identifiers with the 3.x function will now
+  receive correct values.
+legacy_id: 80

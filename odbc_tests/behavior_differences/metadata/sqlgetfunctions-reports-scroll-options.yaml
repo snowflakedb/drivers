@@ -1,0 +1,15 @@
+name: "SQLGetFunctions reports SQL_API_SQLSETSCROLLOPTIONS / SQL_API_SQLPARAMOPTIONS as supported under iODBC instead of omitting them from the bitmap"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  The old driver's ODBC 2.x function bitmap loses two entry points (SQLSetScrollOptions, SQLParamOptions) when running through iODBC because the underlying functions are not exported through iODBC's dispatch. The new driver reports both as supported on both DMs (matching the Windows DM exclusion of SetScrollOptions already documented for the bitmap).
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Under iODBC, SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) and SQLGetFunctions(SQL_API_ALL_FUNCTIONS) omit SQL_API_SQLSETSCROLLOPTIONS and SQL_API_SQLPARAMOPTIONS bits from the returned bitmap. The per-function inventory also omits SQL_API_SQLSETSCROLLOPTIONS.
+new_driver_behavior: |
+  Reports both entry points as supported on both DMs.
+description: |
+  Applications that probe SQLGetFunctions to feature-gate scroll-option calls will see broader api coverage.
+legacy_id: 65

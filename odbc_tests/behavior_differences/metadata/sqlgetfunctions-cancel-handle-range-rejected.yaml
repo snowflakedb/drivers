@@ -1,0 +1,27 @@
+name: "SQLGetFunctions: per-function probe of SQLCancelHandle range-rejected with SQL_ERROR under unixODBC"
+status: allowed
+type: bug
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  unixODBC's SQLGetFunctions never forwards a per-function probe to the
+  driver. It range-rejects any id > SQL_API_SQLFETCHSCROLL (1021) with
+  HY095. SQL_API_SQLCANCELHANDLE is 1022. The driver's ODBC3 bitmap already
+  reports SQLCancelHandle supported.
+old_driver_behavior: |
+  Under unixODBC, `SQLGetFunctions(dbc, SQL_API_SQLCANCELHANDLE, &out)`
+  returns SQL_ERROR (SQLSTATE HY095). The ODBC3 bitmap still reports
+  SQLCancelHandle as supported.
+new_driver_behavior: |
+  Under the unixODBC Driver Manager the per-function probe
+  `SQLGetFunctions(dbc, SQL_API_SQLCANCELHANDLE, &out)` returns SQL_ERROR
+  (SQLSTATE HY095), even though the ODBC3 bitmap the driver returns for
+  SQL_API_ODBC3_ALL_FUNCTIONS correctly reports SQLCancelHandle supported. The
+  error is injected by the Driver Manager, not by the driver.
+description: |
+  It is a unixODBC Driver Manager limitation.
+
+  unixODBC's SQLGetFunctions never forwards a per-function query to the driver.
+  The id-range guard rejects anything `function_id > SQL_API_SQLFETCHSCROLL` (1021).
+legacy_id: 120

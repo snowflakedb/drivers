@@ -1,0 +1,15 @@
+name: "SQLGetCursorName synthesizes the SQL_CUR-prefixed auto cursor name and persists user-supplied names across SQLCloseCursor under iODBC instead of returning SQL_ERROR"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  This is fixed and aligned between old and new driver.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Under iODBC, SQLGetCursorName on a fresh statement returns SQL_ERROR (no synthesized SQL_CUR-prefixed name); SQLGetCursorName after SQLCloseCursor on a previously-named cursor returns SQL_ERROR (name dropped). Under unixODBC the old driver synthesizes and persists the cursor name like the new driver.
+new_driver_behavior: |
+  Synthesizes and persists cursor names on both DMs.
+description: |
+  Applications that call SQLGetCursorName on a fresh statement, or after SQLCloseCursor on a previously-named cursor, receive SQL_ERROR from the old driver under iODBC. The new driver synthesizes the SQL_CUR-prefixed auto name and preserves user-supplied names across SQLCloseCursor.
+legacy_id: 66

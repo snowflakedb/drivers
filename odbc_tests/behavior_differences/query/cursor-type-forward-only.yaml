@@ -1,0 +1,23 @@
+name: "SQLSetStmtAttr(SQL_ATTR_CURSOR_TYPE) supports only SQL_CURSOR_FORWARD_ONLY, replacing any other value with that and returns SQL_SUCCESS_WITH_INFO/01S02"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  As the Snowflake does not support other cursors than forward-only, it is aligning the API with the Snowflake API.
+old_driver_behavior: |
+  The old driver silently accepts non-forward-only cursor types (SQL_CURSOR_STATIC,
+  SQL_CURSOR_DYNAMIC, SQL_CURSOR_KEYSET_DRIVEN) on SQL_ATTR_CURSOR_TYPE without warning.
+  The stored value reflects whatever was requested, even though Snowflake only supports
+  forward-only cursors.
+new_driver_behavior: |
+  The new driver substitutes any unsupported cursor type with SQL_CURSOR_FORWARD_ONLY and
+  returns SQL_SUCCESS_WITH_INFO / 01S02 ("option value changed"), per the ODBC spec requirement
+  that drivers substitute unsupported values and report the substitution.
+description: |
+  Applications that set a scrollable cursor type and then check the return code for exactly
+  SQL_SUCCESS will see SQL_SUCCESS_WITH_INFO instead. Applications that read back
+  SQL_ATTR_CURSOR_TYPE after setting it will see SQL_CURSOR_FORWARD_ONLY regardless of the
+  requested type. This is spec-correct behavior.
+legacy_id: 96

@@ -1,0 +1,22 @@
+name: "Async cancel does interrupt in-progress operations instead of waiting for completion"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Old driver did not support the SQLCancel for the in-progress async operations. The new driver properly cancels such queries.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Supports SQL_ATTR_ASYNC_ENABLE (SQLSetStmtAttr succeeds), but SQLCancel during async polling does not actually interrupt the in-progress operation. Subsequent polling continues to return SQL_STILL_EXECUTING indefinitely or until the query completes naturally, rather than returning SQL_ERROR with HY008.
+new_driver_behavior: |
+  SQLCancel on an async statement sends a cancel request to the server, and subsequent polling returns SQL_ERROR with SQLSTATE HY008 ("Operation canceled") once the cancellation is acknowledged.
+description: |
+  Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function
+  Applications that rely on SQLCancel to abort long-running async queries will not get timely cancellation on the old driver. The query may run to completion despite the cancel request.
+
+  Test coverage note: the async-cancel tests keep SKIP_OLD_DRIVER("BD#32") rather than a paired
+  OLD_DRIVER_ONLY assertion. Because the old driver never interrupts, observing its terminal state
+  would require the long probe query (TIMELIMIT => 30s) to run to natural completion, which collides
+  with the tests' 30s poll ceiling (kMaxPollIterations * kPollInterval) and would be flaky. The old
+  driver simply cannot demonstrate the cancellation this behavior asserts.
+legacy_id: 32

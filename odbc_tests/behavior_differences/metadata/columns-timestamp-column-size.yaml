@@ -1,0 +1,20 @@
+name: "SQLColumns TIMESTAMP COLUMN_SIZE is 20+scale instead of fixed 35"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  ODBC column size for TIMESTAMP is 20 + scale (19 when scale is 0), not a
+  fixed 35. 3.x advertised the worst-case TIMESTAMP_TZ string width for every
+  TIMESTAMP flavor.
+old_driver_behavior: |
+  SQLColumns COLUMN_SIZE (col 7) for TIMESTAMP_NTZ / LTZ / TZ is a fixed 35
+  (worst-case TIMESTAMP_TZ string), regardless of scale.
+new_driver_behavior: |
+  SQLColumns COLUMN_SIZE for TIMESTAMP* is 20 + scale (19 when scale is 0).
+  Default Snowflake scale 9 therefore reports 29. Query-result
+  SQLColAttribute DISPLAY_SIZE for TIMESTAMP remains 29 (unchanged).
+description: |
+  Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/column-size
+legacy_id: 128

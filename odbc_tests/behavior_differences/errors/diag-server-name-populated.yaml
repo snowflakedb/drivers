@@ -1,0 +1,18 @@
+name: "SQLGetDiagField(SQL_DIAG_SERVER_NAME) is populated instead of returning an empty string"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  This is an enhancement that makes the ODBC API more complete.
+old_driver_behavior: |
+  SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns an empty string after a diagnostic is raised
+  on a connected statement/connection.
+new_driver_behavior: |
+  SQLGetDiagField(SQL_DIAG_SERVER_NAME) returns the server/DSN name of the connection, matching
+  the ODBC definition of the field.
+description: |
+  Additive: applications reading SQL_DIAG_SERVER_NAME now receive the connection's server name
+  where the old driver returned "".
+legacy_id: 114

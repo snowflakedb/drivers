@@ -1,0 +1,28 @@
+name: "SQLColumns/SQLProcedureColumns BUFFER_LENGTH for NUMBER/DECIMAL is precision+2 (ODBC transfer octet length), not legacy storage 16"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  Catalog BUFFER_LENGTH is the ODBC transfer octet length under SQL_C_DEFAULT
+  (precision + 2). 3.x's 1/2/4/8/16 ladder is Snowflake on-source
+  storage width, not the catalog field the spec defines. Query-result
+  SQLColAttribute OCTET_LENGTH / DISPLAY_SIZE for NUMBER stays 136, so fetch
+  buffer sizing is unchanged.
+old_driver_behavior: |
+  SQLColumns and SQLProcedureColumns BUFFER_LENGTH (col 8) for NUMBER/DECIMAL
+  return the Snowflake on-source storage width from the precision ladder
+  (1/2/4/8/16), e.g. NUMBER(38,0) → 16 and NUMBER(18,6) → 8 — not the ODBC
+  transfer octet length. Excel Power Query Class-6a
+  (replay_excel_powerquery_navigator_navigate_and_load) asserts the
+  high-precision SQLColumns value 16.
+new_driver_behavior: |
+  SQLColumns and SQLProcedureColumns BUFFER_LENGTH for NUMBER/DECIMAL return
+  precision + 2 (ANSI transfer octet length under SQL_C_DEFAULT), e.g.
+  NUMBER(38,0) → 40 and NUMBER(18,6) → 20. Query-result
+  SQLColAttribute(SQL_DESC_OCTET_LENGTH / DISPLAY_SIZE) for NUMBER remains
+  136 (unchanged).
+description: |
+  Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+legacy_id: 122

@@ -1,0 +1,27 @@
+name: "SQLGetFunctions ODBC3 bitmap reports SQLFreeConnect / SQLFreeEnv as supported under iODBC instead of omitting them"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  The driver exports SQLFreeConnect and SQLFreeEnv, so the ODBC 3 bitmap
+  should report them on every DM. 3.x omitted those bits under iODBC even
+  though the manager still maps the calls to SQLFreeHandle.
+old_driver_behavior: |
+  Under iODBC, SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) omits
+  SQL_API_SQLFREECONNECT and SQL_API_SQLFREEENV from the returned bitmap.
+  Per-function SQLGetFunctions(id) and SQL_API_ALL_FUNCTIONS (ODBC 2.x array)
+  still report both supported. The reference driver does not export these
+  entry points (the DM maps them to SQLFreeHandle).
+new_driver_behavior: |
+  Exports SQLFreeConnect / SQLFreeEnv and reports both in the ODBC3 bitmap on
+  all DMs, including iODBC.
+description: |
+  Applications that probe the ODBC3 function bitmap under iODBC against the
+  old driver will incorrectly believe SQLFreeConnect / SQLFreeEnv are
+  unsupported, even though the DM still dispatches the mapped FreeHandle path.
+  The new driver reports both bits set. Gated with OLD_IODBC_ONLY("BD#127") in
+  the SQL_API_ODBC3_ALL_FUNCTIONS coverage loop in
+  odbc-api/driver_info/get_functions_tests.cpp.
+legacy_id: 127

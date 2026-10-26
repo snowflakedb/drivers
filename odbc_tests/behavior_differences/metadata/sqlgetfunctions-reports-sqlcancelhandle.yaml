@@ -1,0 +1,19 @@
+name: "SQLGetFunctions does report SQLCancelHandle as supported"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: false
+status_rationale: |
+  Both drivers report SQLCancelHandle in the ODBC3 SQLGetFunctions bitmap.
+impact: low
+old_driver_behavior: |
+  SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) reports SQLCancelHandle
+  as supported.
+new_driver_behavior: |
+  SQLGetFunctions(SQL_API_ODBC3_ALL_FUNCTIONS) reports SQLCancelHandle
+  as supported.
+description: |
+  SQLCancelHandle is implemented on both drivers. The ODBC3 bitmap lists
+  it. Asking SQLGetFunctions for function id 1022 by itself is a Driver
+  Manager limitation (BD#120).
+legacy_id: 45

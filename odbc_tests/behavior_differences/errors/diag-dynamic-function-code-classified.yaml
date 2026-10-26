@@ -1,0 +1,19 @@
+name: "SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) classifies the statement instead of returning 0/unknown"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  This fixes the return codes for the call, making the method ODBC-spec compliant.
+old_driver_behavior: |
+  SQLGetDiagField(SQL_DIAG_DYNAMIC_FUNCTION_CODE) returns 0 (SQL_DIAG_UNKNOWN_STATEMENT) and
+  SQL_DIAG_DYNAMIC_FUNCTION returns an empty string after execution.
+new_driver_behavior: |
+  The fields are populated from the statement type: a SELECT reports
+  SQL_DIAG_DYNAMIC_FUNCTION_CODE = 85 (SQL_DIAG_SELECT_CURSOR); INSERT/UPDATE/DELETE/CALL map to
+  their ODBC-spec codes.
+description: |
+  Additive: applications reading SQL_DIAG_DYNAMIC_FUNCTION_CODE now get the classified code where
+  the old driver returned 0.
+legacy_id: 115

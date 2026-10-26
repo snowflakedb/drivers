@@ -1,0 +1,19 @@
+name: "Child statement handles are invalidated through iODBC's alloc table on SQLDisconnect / SQLFreeStmt(SQL_DROP), so a subsequent SQLFreeHandle on the orphaned handle returns the spec SQL_INVALID_HANDLE instead of leaking as SQL_SUCCESS"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Under iODBC the old driver does not coordinate with the DM's per-handle alloc table when it releases child statements: SQLDisconnect (with or without active statements) and SQLFreeStmt(SQL_DROP) report SQL_SUCCESS to the caller but leave the statement entry in iODBC's alloc table, so a subsequent SQLFreeHandle(SQL_HANDLE_STMT) still returns SQL_SUCCESS instead of the spec-mandated SQL_INVALID_HANDLE. The handle remains addressable for the rest of the process. The new driver participates correctly in iODBC's alloc table; the same calls invalidate the child statement entries and the follow-up SQLFreeHandle surfaces SQL_INVALID_HANDLE on both DMs.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Under iODBC the old driver leaves statement handles in iODBC's alloc table after release in three scenarios:
+    - SQLDisconnect with a child statement still attached -> SQLFreeHandle(SQL_HANDLE_STMT) on the child after disconnect returns SQL_SUCCESS instead of SQL_INVALID_HANDLE.
+    - SQLDisconnect while an active result set is still open on a child statement -> same outcome: SQLFreeHandle on the child returns SQL_SUCCESS.
+    - SQLFreeStmt(SQL_DROP) on a statement handle -> SQLFreeHandle(SQL_HANDLE_STMT) afterwards returns SQL_SUCCESS instead of SQL_INVALID_HANDLE; the handle leaks for the rest of the test/session.
+  Under unixODBC the old driver returns SQL_INVALID_HANDLE on the follow-up SQLFreeHandle in each of the three scenarios.
+new_driver_behavior: |
+  The new driver invalidates child statement entries in iODBC's alloc table when SQLDisconnect or SQLFreeStmt(SQL_DROP) releases them, so the follow-up SQLFreeHandle on the orphaned handle returns SQL_INVALID_HANDLE on both DMs.
+description: |
+  Applications that release child statements via SQLDisconnect or SQLFreeStmt(SQL_DROP) on the old driver under iODBC cannot detect the release through SQLFreeHandle's return code; the handle keeps reporting as valid and leaks until process exit. The new driver returns the spec-mandated SQL_INVALID_HANDLE so callers can detect the release and reuse / abandon the handle correctly.
+legacy_id: 68

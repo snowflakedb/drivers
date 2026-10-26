@@ -1,0 +1,13 @@
+name: "Unbound parameter marker returns SQL_ERROR (42000) server error instead of SQL_ERROR (07002) COUNT field incorrect"
+status: fixed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Originally the new driver forwarded unbound-marker execution of a prepared statement to the server, which returned 42000 ("Bind variable ? not set"). Auto-IPD (PR #722) reversed this for prepared statements: the IPD is populated from the server-reported parameter count at SQLPrepare and the APD binding count is validated locally at SQLExecute, so the driver now returns 07002 (COUNT field incorrect) identically to the legacy driver. The old-vs-new delta for the prepared-statement case no longer exists, so this entry is now status: fixed. No BD#27 compatibility marker is needed — the shared behavior is asserted with a plain 07002 check in odbc_tests/tests/e2e/query/sql_bind_parameter.cpp.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After SQL_RESET_PARAMS, executing a prepared statement with unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), caught locally by the driver.
+new_driver_behavior: |
+  After SQL_RESET_PARAMS, a prepared statement with unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT field incorrect), validated locally against the IPD. SQLExecDirect with unbound markers returns server-side 42000 ("Bind variable ? not set").
+legacy_id: 27

@@ -1,0 +1,16 @@
+name: "SQLExecDirect/SQLExecute return 24000 when cursor is already open"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  No delta exists: the reference (old) driver returns SQLSTATE 24000 on a cursor-already-open re-execute, the same as the new driver. Confirmed by the odbc_tests_reference CI job — the sibling cases "SQLExecute returns 24000 when cursor is not closed before re-execute of SELECT", "SQLPrepare with cursor already open returns 24000", and SQLColumns/SQLColumnPrivileges "24000 - Cursor already open" all PASS on the old driver. The original old_driver_behavior recorded below ("silently overwrites and re-executes") was not reproducible against the reference driver and appears to have been described incorrectly. Both drivers are ODBC 3.x compliant on this path, so there is nothing to gate on driver identity; the behavior is asserted with a plain unconditional 24000 check in odbc_tests/tests/odbc-api/submitting_request/exec_direct_tests.cpp (no BD marker, per ud-fixed-bd-must-have-no-test-marker).
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  CORRECTION: the reference driver returns SQL_ERROR with SQLSTATE 24000 (Invalid cursor state), the same as the new driver. (The previously recorded claim that SQLExecDirect/SQLExecute silently overwrite the statement state and allow re-execution without closing the cursor first was not reproducible against the reference driver used in CI and is retracted.)
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE 24000 (Invalid cursor state) per the ODBC 3.x specification. Applications must call SQLFreeStmt(SQL_CLOSE) or SQLCloseCursor before re-executing on a statement that already has an open cursor from a previous SELECT or catalog function.
+description: |
+  Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function
+  Both the old and new drivers enforce 24000 on cursor-already-open, so applications see no behavior change on this path.
+legacy_id: 31

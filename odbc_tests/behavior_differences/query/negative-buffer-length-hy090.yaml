@@ -1,0 +1,15 @@
+name: "SQLGetStmtAttr/SQLGetConnectAttr with negative buffer length returns SQL_ERROR (HY090) instead of SQL_ERROR (HY000)"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Now the ODBC returns a better state that describes what actually happened instead of vague general error.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE HY000 (General error) on Windows when BufferLength is negative for a string attribute.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE HY090 (Invalid string or buffer length) per the ODBC specification.
+description: |
+  Applications checking for SQLSTATE HY090 specifically on Windows will now receive it consistently.
+legacy_id: 53

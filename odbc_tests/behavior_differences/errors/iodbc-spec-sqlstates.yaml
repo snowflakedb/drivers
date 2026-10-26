@@ -1,0 +1,21 @@
+name: "Returns spec-correct ODBC 3.x SQLSTATEs (HY090 / HY010 / HY017 / HY092 / 07009 / HY008) under iODBC via driver-side pre-validation, instead of vendor HY000 / ODBC 2.x aliases / bare SQL_INVALID_HANDLE / extra diagnostic record"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  iODBC's DM pre-processes string-length parameters, tracks per-statement state (prepared / executed / NEED_DATA / async-busy), and validates handle types at the dispatch layer. For the old driver, that pre-processing either reshapes args into a form the driver's spec-SQLSTATE validator no longer recognises (so the driver falls through to vendor HY000), or rejects the call with an ODBC 2.x SQLSTATE alias (S1010 / S1090 / S1093) / a bare SQL_INVALID_HANDLE / SQL_ERROR (no diagnostic record posted) before forwarding, or appends an extra S1010 record alongside the driver's spec record. The new driver validates the same conditions inside the driver before any iODBC re-shaping or dispatch-time check can fire, so the spec-mandated ODBC 3.x SQLSTATE surfaces as the sole diagnostic record on both DMs.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Under iODBC the old driver surfaces non-spec SQLSTATEs in the following buckets:
+    - Negative-length / empty-string arguments -> vendor HY000 ("Snowflake][Support] (30020) Invalid argument") instead of HY090. Affected calls: SQLPrepare (zero / negative TextLength, empty SQL string), SQLExecDirect (zero / negative TextLength), SQLBindParameter (negative BufferLength), SQLNativeSql (negative BufferLength), SQLGetDescField / SQLSetDescField (negative BufferLength), and the SQLColumns / SQLPrimaryKeys / SQLForeignKeys / SQLProcedureColumns / SQLProcedures family (negative name-length args).
+    - Function-sequence / parameter-number errors -> ODBC 2.x aliases instead of HY010 / HY090 / 07009 / HY008. Affected calls: SQLFetch / SQLEndTran after commit/rollback closes cursor (S1010), SQLEndTran during SQL_NEED_DATA (S1010), SQLGetCursorName / SQLSetCursorName during SQL_NEED_DATA (S1010), SQLDescribeParam on unprepared statement and ParameterNumber=0 (S1010 / S1093), SQLNumParams on unprepared statement (S1010), SQLExecute on unprepared statement (S1010), cross-thread SQLCancel on async-busy statement (S1010), SQLGetCursorName / SQLSetCursorName / SQLNativeSql with negative length (S1090), SQLBrowseConnect with negative length (S1090).
+    - Handle-validation errors -> bare SQL_INVALID_HANDLE / SQL_ERROR with no diagnostic record. Affected calls: SQLEndTran called with SQL_HANDLE_STMT (spec: HY092), SQLFreeHandle on an implicit auto-allocated descriptor (spec: HY017), SQLFreeHandle called with a completely bogus HandleType (e.g. 999) (spec: SQL_INVALID_HANDLE).
+    - Descriptor reads / mutations during SQL_NEED_DATA -> SQL_SUCCESS / SQL_NO_DATA instead of HY010. SQLGetDescRec on the ARD during SQL_NEED_DATA returns SQL_NO_DATA (it walks the ARD past the bound parameter, which actually lives on the IPD); SQLGetDescRec on the IRD returns the pre-execution IRD shape as SQL_SUCCESS; SQLSetDescRec on either descriptor returns SQL_SUCCESS silently; SQLCopyDesc into / out of either descriptor returns SQL_SUCCESS silently.
+    - Diagnostic record stacking -> extra ODBC 2.x record appended alongside the driver's spec record. Cross-thread SQLCancel that collides with an in-flight SQLExecDirect leaves two diagnostic records on the statement handle ([0] iODBC's own S1010 from the function-sequence collision, [1] the driver's HY008 for the canceled exec) instead of the spec-mandated single HY008 record.
+  Under unixODBC the same calls already surface the spec ODBC 3.x SQLSTATE as the sole record.
+new_driver_behavior: |
+  Returns the spec ODBC 3.x SQLSTATE / return code as the sole diagnostic record on both DMs by validating the condition inside the driver before any iODBC re-shaping or dispatch-time check can fire.
+description: |
+  Applications receive a proper state from the driver and a single spec-correct diagnostic record they can inspect for SQLSTATE / native code / message without having to scan past iODBC-side function-sequence artefacts.
+legacy_id: 70

@@ -1,0 +1,23 @@
+name: "SQLColumns DATE/TIME BUFFER_LENGTH is 6 instead of 10 / 18"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  BUFFER_LENGTH for DATE and TIME is sizeof SQL_DATE_STRUCT / SQL_TIME_STRUCT
+  (6), not a copy of COLUMN_SIZE. SQL_TIME_STRUCT has no fractional-seconds
+  field, so the length stays 6 even when COLUMN_SIZE is 18.
+old_driver_behavior: |
+  SQLColumns BUFFER_LENGTH (col 8) for DATE and TIME copies COLUMN_SIZE:
+  DATE returns 10 and TIME(9) returns 18.
+new_driver_behavior: |
+  SQLColumns BUFFER_LENGTH for DATE and TIME is 6 (sizeof SQL_DATE_STRUCT /
+  sizeof SQL_TIME_STRUCT), the ODBC transfer octet length under SQL_C_DEFAULT.
+  COLUMN_SIZE remains 10 for DATE and 18 for TIME(9). Query-result
+  SQLColAttribute OCTET_LENGTH for DATE/TIME remains 6 (unchanged).
+description: |
+  Spec: https://learn.microsoft.com/sql/odbc/reference/appendixes/transfer-octet-length
+  SQL_TIME_STRUCT has no fractional-seconds field, so BUFFER_LENGTH stays 6
+  even when COLUMN_SIZE is 18.
+legacy_id: 133

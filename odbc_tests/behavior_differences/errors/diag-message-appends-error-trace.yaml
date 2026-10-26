@@ -1,0 +1,15 @@
+name: "SQLGetDiagRec/SQLGetDiagField MessageText appends an internal error trace by default"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Provides better visibility of errors. Can be disabled.
+old_driver_behavior: |
+  `SQLGetDiagRec` / `SQLGetDiagField(SQL_DIAG_MESSAGE_TEXT)` return only the human-readable diagnostic message produced by the driver/server. No internal call-site trace is appended.
+new_driver_behavior: |
+  `OdbcError::message_text()` appends the driver's internal `ErrorTrace` (file/line entries collected via the `error_trace` derive) to the user-facing diagnostic string by default. The behavior is gated by `error_trace_enabled` in `LoggingConfig`, which defaults to `true` (sf_core/src/logging/mod.rs:87). Setting `ErrorTraceEnabled=false` in `sf.odbc.ini` (parsed by `sf_core::config::logging_config_loader`) suppresses the appended trace and restores legacy-shaped messages.
+impact: medium
+is_breaking_change: true
+description: |
+  Applications that match diagnostic message text against fixed substrings, or that surface `SQLGetDiagRec` output verbatim to end users / test oracles, will see additional trace content appended. Consumers that need the legacy shape must write `ErrorTraceEnabled=false` to `sf.odbc.ini` and point `SF_ODBC_INI` at it.
+legacy_id: 77

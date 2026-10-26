@@ -1,0 +1,16 @@
+name: "SQLDescribeCol returns SQL_SUCCESS with correct name and type instead of failing after SQL_CLOSE on prepared statement"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  This is a ODBC compliance fix. Now the caller receives the correct column metadata.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After Prepare -> Execute -> SQL_CLOSE, SQLDescribeCol returns SQL_ERROR. The old driver does not preserve prepared statement metadata across SQL_CLOSE.
+new_driver_behavior: |
+  Returns SQL_SUCCESS with correct column name and type because SQL_CLOSE transitions the statement back to the Prepared state (S2/S3) where column metadata is available, per the ODBC specification.
+description: |
+  Spec reference: ODBC Statement Transitions table, SQLFreeStmt row (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt) states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3. SQLDescribeCol is defined to succeed in states S2-S12 (prepared or executed).
+  Applications that call SQLDescribeCol after SQL_CLOSE on a prepared statement will now receive valid metadata instead of an error.
+legacy_id: 21

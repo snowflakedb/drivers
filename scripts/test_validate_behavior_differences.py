@@ -233,15 +233,18 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
             self.assertEqual(self.mod._baseline_rev(), "HEAD")
 
     def test_committed_ids_reads_the_given_revision(self) -> None:
-        ids = self.mod._committed_ids(PYTHON_BD, "HEAD")
-        self.assertIsNotNone(ids)
-        assert ids is not None
-        raw = subprocess.check_output(["git", "show", f"HEAD:{PYTHON_BD}"])
-        data = yaml.safe_load(raw)
-        entries = data.get("behavior_differences", {}) if isinstance(data, dict) else {}
-        expected = {int(key) for key, entry in entries.items() if isinstance(entry, dict)}
-        self.assertEqual(ids, expected)
-        self.assertTrue(all(bd_id > 0 for bd_id in ids))
+        for relpath in (PYTHON_BD, ODBC_BD):
+            ids = self.mod._committed_ids(relpath, "HEAD")
+            self.assertIsNotNone(ids)
+            assert ids is not None
+            raw = subprocess.check_output(["git", "show", f"HEAD:{relpath}"])
+            data = yaml.safe_load(raw)
+            entries = data.get("behavior_differences", {}) if isinstance(data, dict) else {}
+            if not isinstance(entries, dict):
+                entries = {}
+            expected = {int(key) for key, entry in entries.items() if isinstance(entry, dict)}
+            self.assertEqual(ids, expected)
+            self.assertTrue(all(bd_id > 0 for bd_id in ids))
         self.assertIsNone(self.mod._committed_ids(PYTHON_BD, "not-a-rev"))
 
 

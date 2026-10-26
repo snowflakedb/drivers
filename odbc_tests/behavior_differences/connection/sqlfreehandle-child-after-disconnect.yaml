@@ -1,0 +1,33 @@
+name: "SQLFreeHandle on leftover child statements after SQLDisconnect does not SIGSEGV under iODBC"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  After SQLDisconnect the old driver leaves child statements in iODBC's alloc
+  table (BD#68). A follow-up SQLFreeHandle(STMT) on that leftover handle, then
+  freeing the DBC, SIGSEGVs inside the old driver's per-statement cleanup.
+  The new driver invalidates the child entries on disconnect (BD#68), so this
+  abort path is not reachable. Distinct from iODBC DM aborts that hit both
+  drivers (rejected HY010 frees, ENV/DBC hierarchy, SQLCopyDesc with a null
+  target, double-free of a DBC) and from BD#126 (statement double-free returns
+  SQL_ERROR + HY000, no abort).
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Under iODBC, SQLDisconnect succeeds but leaves child statement handles in the
+  DM alloc table. SQLFreeHandle(SQL_HANDLE_STMT) on a leftover child does not
+  return SQL_INVALID_HANDLE; when that was the last remaining child, subsequent
+  DBC teardown SIGSEGVs inside the old driver's cleanup. unixODBC and Windows
+  do not abort.
+new_driver_behavior: |
+  SQLDisconnect invalidates child statement entries in iODBC's alloc table
+  (BD#68). A follow-up SQLFreeHandle on those handles returns SQL_INVALID_HANDLE
+  and the process does not abort.
+description: |
+  Applications that disconnect under iODBC on the old driver and then free the
+  leftover statement handles (or let DBC teardown run after probing them) can
+  lose the process to a SIGSEGV. The new driver returns SQL_INVALID_HANDLE
+  without crashing. Other iODBC aborts (HY010 free-while-connected, free ENV
+  with a live DBC, SQLCopyDesc null target, double-free DBC) still fire for
+  both drivers and are skipped with SKIP_IODBC, not this BD.
+legacy_id: 59

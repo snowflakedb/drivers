@@ -1,0 +1,16 @@
+name: "SQLRowCount with null RowCountPtr returns SQL_ERROR (HY009) instead of SQL_SUCCESS"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Row count returns only the amount of rows modified. Calling it with nullptr makes no sense.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  When SQLRowCount is called with a null RowCountPtr after executing a statement, the old driver returns SQL_SUCCESS and silently ignores the null pointer.
+new_driver_behavior: |
+  Returns SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer).
+description: |
+  Although HY009 is not explicitly listed in the SQLRowCount diagnostics table, it is the standard ODBC SQLSTATE for null pointer arguments and is consistent with the driver's defensive validation.
+  Applications that accidentally pass nullptr to SQLRowCount will now receive an error instead of silent success.
+legacy_id: 25

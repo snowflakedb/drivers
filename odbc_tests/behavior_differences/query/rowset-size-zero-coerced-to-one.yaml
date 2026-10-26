@@ -1,0 +1,25 @@
+name: "SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) coerces to 1 instead of storing 0"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  Aligned with the ODBC specification: a rowset size of 0 is invalid and
+  must return SQL_ERROR (HY024). unixODBC already rejects the value in the
+  DM; iODBC and the Windows DM forward it, so the old-vs-new difference is
+  visible only on those managers. SQL_ATTR_ROW_ARRAY_SIZE=0 still coerces
+  to 1; that attribute is stored separately and has no test covering 0, so
+  it is out of scope for this BD.
+old_driver_behavior: |
+  When the DM forwards the call (iODBC, Windows), SQLSetStmtAttr(SQL_ROWSET_SIZE, 0)
+  returns SQL_SUCCESS and stores 0 unchanged. unixODBC rejects 0 in the DM
+  with SQL_ERROR before the driver is invoked.
+new_driver_behavior: |
+  SQLSetStmtAttr(SQL_ROWSET_SIZE, 0) returns SQL_ERROR with SQLSTATE HY024
+  on every DM, including those that forward the value. The stored rowset
+  size is left unchanged.
+description: |
+  SQL_ROWSET_SIZE (ODBC 2.x, attr 9) drives SQLExtendedFetch. A rowset size
+  of 0 is invalid per the ODBC spec.
+legacy_id: 102

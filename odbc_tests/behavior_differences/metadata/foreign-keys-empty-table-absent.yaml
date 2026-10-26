@@ -1,0 +1,23 @@
+name: "SQLForeignKeys treats an empty-string PK/FK table as absent for SHOW side selection"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  SQLForeignKeys chooses SHOW EXPORTED vs SHOW IMPORTED KEYS based on which side supplies a table
+  name. The universal driver treats an empty-string table name the same as an absent (NULL) one,
+  so an empty PKTableName with a populated FKTableName resolves to the FK side (SHOW IMPORTED KEYS
+  scoped to the FK table), consistent with how build_show_in_scope treats empty identifiers as "no
+  filter".
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  With an empty-string PKTableName and a populated FKTableName, the legacy driver does not resolve
+  the query to the FK side and returns an empty result set.
+new_driver_behavior: |
+  An empty-string table name is treated as absent for side selection, so the query resolves to the
+  side whose table name is populated (here the FK side) and returns the relationship row.
+description: |
+  Callers that passed an empty PKTableName alongside a real FKTableName and relied on the legacy
+  empty result set will now receive the FK relationship. The odbc-api test splits the assertion
+  (NEW_DRIVER_ONLY expects the row, OLD_DRIVER_ONLY expects the legacy empty result set).
+legacy_id: 90

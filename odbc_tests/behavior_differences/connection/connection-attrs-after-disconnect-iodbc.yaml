@@ -1,0 +1,15 @@
+name: "Connection-attribute state flips synchronously after SQLDisconnect under iODBC: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_TRUE and reads of other attrs surface SQL_ERROR, instead of stale cached values"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The old driver's connection-attribute cache outlives SQLDisconnect under iODBC: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_FALSE (stale "alive") until the next failed round-trip, and SQLGetConnectAttr for other attrs (e.g. SQL_ATTR_CONNECTION_TIMEOUT) still returns SQL_SUCCESS from the DM-side cache. The new driver invalidates the cache on disconnect so the spec-mandated SQL_CD_TRUE / SQL_ERROR surfaces immediately.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Under iODBC, SQLGetConnectAttr(SQL_ATTR_CONNECTION_DEAD) after SQLDisconnect returns SQL_CD_FALSE (stale "connection is alive") instead of the spec-mandated SQL_CD_TRUE. SQLGetConnectAttr(SQL_ATTR_CONNECTION_TIMEOUT) after SQLDisconnect returns SQL_SUCCESS from the DM-side cache instead of the spec SQL_ERROR. Under unixODBC the old driver flips state synchronously.
+new_driver_behavior: |
+  Invalidates the connection-attribute cache on SQLDisconnect on both DMs: SQL_ATTR_CONNECTION_DEAD reports SQL_CD_TRUE; SQLGetConnectAttr for cached attrs (e.g. SQL_ATTR_CONNECTION_TIMEOUT) returns SQL_ERROR.
+description: |
+  Applications that poll SQL_ATTR_CONNECTION_DEAD on the old driver under iODBC see a stale SQL_CD_FALSE indefinitely after SQLDisconnect (until the next failed round-trip exposes the dead connection), and reads of other connection attributes succeed against stale cached values. The new driver invalidates the cache on disconnect so the spec-mandated SQL_CD_TRUE / SQL_ERROR surfaces immediately and disconnect is detectable through either attribute.
+legacy_id: 64
