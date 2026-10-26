@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -499,7 +500,7 @@ public class MetaDataObjects {
     String catalog = contextAware.getDatabase();
     String schemaPattern = contextAware.getSchema();
 
-    String sqlQuery =
+    MetaDataQueryBuilder.TablePrivilegesQuery query =
         queryBuilder(contextAware).showTablePrivileges(catalog, schemaPattern, tableNamePattern);
 
     RowConverter rowConverter =
@@ -527,7 +528,11 @@ public class MetaDataObjects {
           return null;
         };
 
-    return createResultSet(sqlQuery, rowConverter, MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
+    return createResultSet(
+        query.sql(),
+        query.parameters(),
+        rowConverter,
+        MetaDataResultSetFormat.GET_TABLE_PRIVILEGES);
   }
 
   public ResultSet getPrimaryKeys(String originalCatalog, String originalSchema, String table) {
@@ -941,9 +946,17 @@ public class MetaDataObjects {
 
   private ResultSet createResultSet(
       String sqlQuery, RowConverter rowConverter, MetaDataResultSetFormat rsFormat) {
+    return createResultSet(sqlQuery, Collections.emptyList(), rowConverter, rsFormat);
+  }
+
+  private ResultSet createResultSet(
+      String sqlQuery,
+      List<String> parameters,
+      RowConverter rowConverter,
+      MetaDataResultSetFormat rsFormat) {
     SnowflakeStatementImpl statement = newStatement();
     try {
-      ResultSet showResult = statement.executeQueryInternal(sqlQuery);
+      ResultSet showResult = statement.executeQueryInternal(sqlQuery, parameters);
       String queryId = statement.getQueryID();
       SnowflakeResultSetMetaDataImpl metaData = rsFormat.metaData(queryId);
 

@@ -8,11 +8,14 @@ import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
@@ -101,6 +104,28 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   public InternalResultSet executeQueryInternal(String sql) {
     checkClosed();
     return executeQueryWithBindings(sql, null);
+  }
+
+  /**
+   * Runs {@code sql} with positional TEXT bindings. An empty list runs the statement with no
+   * bindings. Parameter indexes start at 1.
+   */
+  public InternalResultSet executeQueryInternal(String sql, List<String> textParameters) {
+    if (textParameters == null || textParameters.isEmpty()) {
+      return executeQueryInternal(sql);
+    }
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> parameterValues =
+        new LinkedHashMap<>();
+    for (int i = 0; i < textParameters.size(); i++) {
+      parameterValues.put(
+          i + 1,
+          new PreparedStatementBindingSerializer.ParameterValue(
+              SnowflakeType.TEXT, textParameters.get(i)));
+    }
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
+      return executeQueryWithBindings(sql, nativeBindings);
+    }
   }
 
   protected InternalResultSet executeQueryWithBindings(

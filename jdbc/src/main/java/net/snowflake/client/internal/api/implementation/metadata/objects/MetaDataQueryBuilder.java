@@ -2,6 +2,9 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 
 import static net.snowflake.client.internal.api.implementation.metadata.objects.MatchingUtils.isPatternMatchingAll;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import lombok.AccessLevel;
 import lombok.RequiredArgsConstructor;
 import net.snowflake.common.util.Wildcard;
@@ -98,8 +101,10 @@ class MetaDataQueryBuilder {
     return builder.toString();
   }
 
-  String showTablePrivileges(String catalog, String schema, String table) {
-    String sqlQuery = "select * from ";
+  TablePrivilegesQuery showTablePrivileges(String catalog, String schema, String table) {
+    String sqlQuery =
+        "select table_catalog, table_schema, table_name, grantor, grantee, privilege_type,"
+            + " is_grantable from ";
 
     if (catalog != null
         && !catalog.isEmpty()
@@ -109,20 +114,25 @@ class MetaDataQueryBuilder {
     }
     sqlQuery += "information_schema.table_privileges";
 
+    List<String> parameters = new ArrayList<>(2);
+    boolean hasTablePredicate = false;
     if (!isPatternMatchingAll(table)) {
-      sqlQuery += " where table_name = '" + table + "'";
+      sqlQuery += " where table_name = ?";
+      parameters.add(table);
+      hasTablePredicate = true;
     }
 
     if (!isPatternMatchingAll(schema)) {
-      String unescapedSchema = isExactSchema ? schema : unescapeChars(schema);
-      if (sqlQuery.contains("where table_name")) {
-        sqlQuery += " and table_schema = '" + unescapedSchema + "'";
+      String schemaValue = isExactSchema ? schema : unescapeWildcardChars(schema);
+      if (hasTablePredicate) {
+        sqlQuery += " and table_schema = ?";
       } else {
-        sqlQuery += " where table_schema = '" + unescapedSchema + "'";
+        sqlQuery += " where table_schema = ?";
       }
+      parameters.add(schemaValue);
     }
     sqlQuery += " order by table_catalog, table_schema, table_name, privilege_type";
-    return sqlQuery;
+    return new TablePrivilegesQuery(sqlQuery, parameters);
   }
 
   private boolean isSchemaNameWildcardPattern(String inputString) {
@@ -134,10 +144,13 @@ class MetaDataQueryBuilder {
   }
 
   private static String unescapeChars(String escapedString) {
+    return escapeSqlQuotes(unescapeWildcardChars(escapedString));
+  }
+
+  private static String unescapeWildcardChars(String escapedString) {
     String unescapedString = escapedString.replace("\\_", "_");
     unescapedString = unescapedString.replace("\\%", "%");
     unescapedString = unescapedString.replace("\\\\", "\\");
-    unescapedString = escapeSqlQuotes(unescapedString);
     return unescapedString;
   }
 
@@ -164,5 +177,23 @@ class MetaDataQueryBuilder {
   // Add additional quotes to avoid syntax errors with SQL queries.
   private static String escapeSqlQuotes(String originalString) {
     return originalString.replace("\"", "\"\"");
+  }
+
+  static final class TablePrivilegesQuery {
+    private final String sql;
+    private final List<String> parameters;
+
+    TablePrivilegesQuery(String sql, List<String> parameters) {
+      this.sql = sql;
+      this.parameters = Collections.unmodifiableList(new ArrayList<>(parameters));
+    }
+
+    String sql() {
+      return sql;
+    }
+
+    List<String> parameters() {
+      return parameters;
+    }
   }
 }

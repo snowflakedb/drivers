@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.metadata.objects;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 class MetaDataQueryBuilderTest {
@@ -219,6 +220,51 @@ class MetaDataQueryBuilderTest {
             .in("MY_DB", "PUBLIC")
             .build();
     assertEquals("show tables like 'MY_TABLE' in schema \"MY_DB\".\"PUBLIC\"", result);
+  }
+
+  // --- showTablePrivileges() ---
+
+  @Test
+  void shouldBindTableAndSchemaFiltersInTablePrivilegesQuery() {
+    MetaDataQueryBuilder.TablePrivilegesQuery query =
+        builder().showTablePrivileges("MY_DB", "O'Brien", "foo\\' OR 1=1 --");
+    assertEquals(
+        "select table_catalog, table_schema, table_name, grantor, grantee, privilege_type,"
+            + " is_grantable from \"MY_DB\".information_schema.table_privileges"
+            + " where table_name = ?"
+            + " and table_schema = ?"
+            + " order by table_catalog, table_schema, table_name, privilege_type",
+        query.sql());
+    assertEquals(Arrays.asList("foo\\' OR 1=1 --", "O'Brien"), query.parameters());
+  }
+
+  @Test
+  void shouldBindSchemaOnlyWhenTablePatternMatchesAll() {
+    MetaDataQueryBuilder.TablePrivilegesQuery query =
+        builder().showTablePrivileges("db where table_name", "O'Brien", "%");
+    assertEquals(
+        "select table_catalog, table_schema, table_name, grantor, grantee, privilege_type,"
+            + " is_grantable from \"db where table_name\".information_schema.table_privileges"
+            + " where table_schema = ?"
+            + " order by table_catalog, table_schema, table_name, privilege_type",
+        query.sql());
+    assertEquals(Arrays.asList("O'Brien"), query.parameters());
+  }
+
+  @Test
+  void shouldUnescapeSchemaWildcardsWhenBindingTablePrivileges() {
+    MetaDataQueryBuilder.TablePrivilegesQuery query =
+        new MetaDataQueryBuilder(false, false, false)
+            .showTablePrivileges("MY_DB", "MY\\_SCHEMA", "%");
+    assertEquals(Arrays.asList("MY_SCHEMA"), query.parameters());
+  }
+
+  @Test
+  void shouldKeepExactSchemaPatternWhenBindingTablePrivileges() {
+    MetaDataQueryBuilder.TablePrivilegesQuery query =
+        new MetaDataQueryBuilder(true, false, true)
+            .showTablePrivileges("MY_DB", "MY\\_SCHEMA", "%");
+    assertEquals(Arrays.asList("MY\\_SCHEMA"), query.parameters());
   }
 
   // --- build() returns null on early exit, not empty string ---
