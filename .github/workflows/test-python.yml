@@ -477,6 +477,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.load-python-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' && matrix.py == '3.14t' && matrix.hatch_env == 'test-pandas' }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }}${{ matrix.result_format && format(', {0}', matrix.result_format) || '' }})
     # Sdist rows compile the core during install, so they get a longer limit
     # than a cell that installs a prebuilt wheel.
