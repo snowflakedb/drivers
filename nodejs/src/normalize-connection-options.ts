@@ -1,4 +1,4 @@
-import type { ConnectionOptions } from './connection.js';
+import type { ConnectionOptions } from './public-types/index.js';
 
 const KEY_ALIASES = new Map([
   ['user', 'username'],

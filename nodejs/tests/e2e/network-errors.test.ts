@@ -15,7 +15,6 @@ describe('Network Errors', () => {
       host: '127.0.0.1',
       port: String(port),
       protocol: 'http',
-      useEnvProxy: false,
       // 3.x retries a refused login 7 times with backoff by default; the new driver rejects this option as unknown.
       ...(IS_RUNNING_FOR_OLD_DRIVER ? { sfRetryMaxLoginRetries: 0 } : {}),
     });

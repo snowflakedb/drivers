@@ -43,7 +43,7 @@ behavior_differences:
 
   2:
     name: 'ConnectionOptions is not a properly typed interface'
-    status: todo
+    status: fixed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: false
@@ -52,14 +52,12 @@ behavior_differences:
       index.d.ts types connection options as real fields (e.g. rowMode?: RowMode), so a
       TypeScript caller who typos a connection option gets a compile-time error.
     new_driver_behavior: |
-      ConnectionOptions (index.ts) is Record<string, string> & { rowMode?: RowMode } -- rowMode
-      is now typed to match the old driver, so a typo'd rowMode is caught at compile time same as
-      the old driver. Every other connection option is still an untyped string, so a typo there compiles
-      fine and either fails at runtime (if the field is used) or silently passes through
-      (if not). No runtime behavior differs for valid input on any option -- both drivers behave
-      identically at runtime -- so this is a compile-time type-safety/DX gap, not an execution
-      difference. Tracked inline via index.ts's pre-existing "TODO: implement ConnectionOptions
-      like in old driver" comment.
+      Same as the old driver: ConnectionOptions (public-types/ConnectionOptions.ts) lists every connection
+      option the driver accepts as a typed field, so a typo'd option is a compile-time error.
+    status_rationale: |
+      ConnectionOptions used to include Record<string, unknown>, so any key compiled and an
+      unknown one failed only at runtime with "Unknown connection option". The index signature
+      is gone; the type lists exactly the options the driver forwards.
 
   3:
     name: 'fetchResult now inherits the connection-level rowMode default'

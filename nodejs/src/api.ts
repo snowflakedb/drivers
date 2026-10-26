@@ -13,12 +13,8 @@ export { normalizeConnectionOptions } from './normalize-connection-options.js';
 export { getFipsStatus } from './core/index.js';
 export { updateGlobalConfig as configure } from './global-config.js';
 
-export type {
-  ConnectionOptions,
-  ConnectionCallback,
-  StatementOption,
-  FetchResultOptions,
-} from './connection.js';
+export type { ConnectionCallback, StatementOption, FetchResultOptions } from './connection.js';
+export type { ConnectionOptions } from './public-types/index.js';
 export type { SnowflakeError } from './error.js';
 export type { Bind, Binds, InsertBinds } from './query-result/binds.js';
 export type { RowStatement } from './query-result/RowStatement.js';
