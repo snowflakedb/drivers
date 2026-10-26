@@ -1,0 +1,31 @@
+name: "Windows DSN Tracing(0-6) field removed; legacy TRACING ignored and warns as deprecated"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  Logging is process-wide (`sf.odbc.ini` at env alloc), so the Windows
+  Tracing(0-6) field could not drive log level. A no-op DSN control is worse
+  than removing it. Leftover `TRACING` values are not sent as session
+  parameters. They warn like the other retired logging keys (BD#154) so
+  callers move to `LogLevel`/`LogPath` in `sf.odbc.ini` or the
+  troubleshooting env vars.
+old_driver_behavior: |
+  The Windows ODBC setup dialog exposes a Tracing(0-6) field that persists
+  `TRACING` in the DSN registry. Values 0–6 control per-DSN driver trace log
+  verbosity when `LogPath` is configured. `TRACING` in a connection string or
+  DSN is accepted at connect with no diagnostic that names it.
+new_driver_behavior: |
+  The setup dialog no longer shows or writes `TRACING`, and saving a DSN leaves
+  a stored `TRACING` value in place. `TRACING` in a connection string or DSN is
+  ignored: connect posts SQLSTATE 01000 ("Parameter 'TRACING' is deprecated
+  and has no effect. Set LogLevel in sf.odbc.ini to configure driver log
+  verbosity.") and returns `SQL_SUCCESS_WITH_INFO`. Driver logging is
+  configured only through `sf.odbc.ini` (`LogLevel`, `LogPath`, …) or
+  troubleshooting env vars.
+description: |
+  Applications that relied on the Windows dialog or a DSN `TRACING` value to
+  enable driver logs must configure `sf.odbc.ini` instead. The numeric 0–6 scale
+  is not mapped to `LogLevel`.
+legacy_id: 144

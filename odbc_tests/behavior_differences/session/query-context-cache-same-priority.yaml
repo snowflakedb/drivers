@@ -1,0 +1,17 @@
+name: "Query context cache displaces an existing entry when a new ID has the same priority"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  The driver retains one entry per priority and displaces the existing
+  entry when a new ID arrives at that priority.
+old_driver_behavior: |
+  New ID at an occupied priority displaces the occupant immediately.
+new_driver_behavior: |
+  New ID at an occupied priority displaces the occupant immediately.
+description: |
+  The query context cache is an opaque optimization layer between the driver and the
+  server. The driver retains one entry per priority.
+legacy_id: 132

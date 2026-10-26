@@ -1,0 +1,15 @@
+name: "Concurrent SQLDisconnect is now thread safe"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  Well, it's better not to crash.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Calling SQLDisconnect concurrently from multiple threads on the same connection handle causes a segfault in the old driver due to lack of synchronisation in the disconnect path.
+new_driver_behavior: |
+  Concurrent SQLDisconnect calls are serialized; exactly one returns SQL_SUCCESS and the rest return SQL_ERROR with SQLSTATE 08003 (Connection not open).
+description: |
+  Multi-threaded applications that disconnect from multiple threads no longer risk a crash.
+legacy_id: 54

@@ -1,0 +1,33 @@
+name: "SQLDriverConnect fails with SQLSTATE 28000 and native error 0 for an invalid WIF provider, missing OIDC token, or malformed JWT"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  3.x does not treat these as connection-parameter errors. An invalid
+  WORKLOAD_IDENTITY_PROVIDER or OIDC without TOKEN is only logged; login
+  still runs without a WIF attestation. A malformed TOKEN throws in the
+  JWT parser during login-body construction. The SQL_ERROR the application
+  sees is whatever Simba/the driver manager assign to that later failure
+  (08001, HY000, or 28000). 4.x rejects all three locally as authorization
+  parameter errors (28000 / native 0) with a diagnostic that names the
+  field.
+old_driver_behavior: |
+  SQLDriverConnect with AUTHENTICATOR=workload_identity returns SQL_ERROR
+  for WORKLOAD_IDENTITY_PROVIDER=INVALID_CLOUD, for provider=OIDC with no
+  TOKEN, and for TOKEN=not-a-valid-jwt. None of those paths is a 
+  required-setting check. Invalid provider and missing OIDC token are
+  logged in libsnowflakeclient and login proceeds without TOKEN/PROVIDER
+  on the wire. Malformed JWT raises JwtException while building the login
+  body. The diagnostic SQLSTATE is 08001, HY000, or 28000 depending on
+  the Simba/driver-manager wrapping of that later failure; native error
+  is not 20032; the message does not consistently name
+  workload_identity_provider or token.
+new_driver_behavior: |
+  SQLDriverConnect returns SQL_ERROR, SQLSTATE 28000, and native error 0
+  before any login request. Invalid WORKLOAD_IDENTITY_PROVIDER names
+  workload_identity_provider; OIDC without TOKEN names token; a
+  structurally invalid JWT reports that the token is not a valid JWT
+  (or an attestation error with the same SQLSTATE/native error).
+legacy_id: 155

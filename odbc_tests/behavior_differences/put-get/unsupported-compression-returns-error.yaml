@@ -1,0 +1,15 @@
+name: "Unsupported compression type returns error instead of being silently ignored"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  This is a bug introduced in the UD ODBC implementation and has to be aligned with the old driver behavior.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  PUT with SOURCE_COMPRESSION=AUTO_DETECT on a file with an unsupported compression format (e.g. LZMA/xz) returns SQL_SUCCESS and uploads the file anyway (treated as uncompressed).
+new_driver_behavior: |
+  PUT with SOURCE_COMPRESSION=AUTO_DETECT on an unsupported compression format returns SQL_SUCCESS and uploads the file (treated as uncompressed).
+description: |
+  Regression fixed. Applications uploading LZMA or other unsupported formats under AUTO_DETECT again succeed silently, matching the legacy driver.
+legacy_id: 6

@@ -1,0 +1,16 @@
+name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  There's no point accepting WIF parameters when these are unused (WORKLOAD_IDENTITY authenticator is not set).
+old_driver_behavior: |
+  SFConnection.cpp registers WORKLOAD_IDENTITY_PROVIDER / WORKLOAD_IDENTITY_ENTRA_RESOURCE /
+  WORKLOAD_IDENTITY_IMPERSONATION_PATH as optional accepted keys but reads them only inside the
+  authenticator==workload_identity branch of SFConnection::Connect, so a non-WIF authenticator
+  accepts the attributes and never reads them (no cross-param guard).
+new_driver_behavior: |
+  The universal driver's sf_core::validate_settings rejects the combination (ConflictingParameters, Error).
+legacy_id: 108

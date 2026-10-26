@@ -1,0 +1,15 @@
+name: "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY is sent as a server session parameter"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  This aligns the behavior with other drivers and allows to query the parameter back from the server for the current session.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The old driver uses CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY only client-side to configure the background heartbeat thread interval. It is not forwarded to the server as a session parameter, so SHOW PARAMETERS LIKE 'CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY' returns the server default (3600).
+new_driver_behavior: |
+  The new driver sends CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY to the server as a session parameter during login, making it queryable via SHOW PARAMETERS. The value is also used client-side to configure the heartbeat interval.
+description: |
+  Applications that query SHOW PARAMETERS to verify the heartbeat frequency will now see the value they configured in the connection string.
+legacy_id: 57

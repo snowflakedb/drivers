@@ -1,0 +1,30 @@
+name: "External-browser IDP-user-mismatch message carries a prefix and an error trace"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  The mismatch stays discriminable and the server's sentence still reaches the
+  application on the first line. GS detects the mismatch and answers with code
+  390191 and a sentence naming it; both drivers report SQLSTATE 28000, native
+  error 390191, and that sentence. What differs is the text around it - 4.x opens
+  the first line with "Failed to login: Login error: ", closes it with the GS
+  code, and follows it with an error trace naming sf_core and odbc source
+  locations. Callers keying on the native error code are unaffected; callers
+  displaying the message verbatim see the prefix and the trace. That framing comes
+  from a shared sf_core Display and reaches every login failure rather than this
+  one alone, so it is general presentation work on the error path, not a change to
+  what the driver can detect.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When the user authenticated at the IdP during an external-browser (SSO) login
+  differs from the username on the connection, the diagnostic message is the server
+  sentence on its own: "The user you were trying to authenticate as differs from the
+  user currently logged in at the IDP."
+new_driver_behavior: |
+  SQLSTATE, native error code and the server sentence match the old driver. The
+  first line reads "Failed to login: Login error: <sentence>, code: 390191", and a
+  multi-line error trace follows it.
+description: |
+  The mismatch stays identifiable by native error code 390191 on both drivers.
+legacy_id: 140

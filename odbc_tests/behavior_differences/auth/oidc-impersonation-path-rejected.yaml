@@ -1,0 +1,16 @@
+name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  This path does not make sense for this type of authentication. Now the explicit error is returned to the user.
+  snowflake-connector-python/nodejs/.NET all reject this combination client-side; ODBC 3.x never did.
+old_driver_behavior: |
+  ODBC links libsnowflakeclient for attestation creation; its createOIDCAttestation
+  (cpp/OIDCAttestation.cpp) never reads the impersonation-path setting for provider=OIDC, so it's
+  silently discarded today.
+new_driver_behavior: |
+  The driver rejects the workload_identity_impersonation_path with provider=oidc.
+legacy_id: 109

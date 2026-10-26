@@ -1,0 +1,15 @@
+name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Switching the GET size metric to decrypted-on-disk payload size changes comparisons against on-stage ciphertext length.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  The GET result set size column (column 2) reports the raw downloaded byte count (e.g. 32 bytes for a small test file), which includes the client-side encryption padding/overhead before decryption.
+new_driver_behavior: |
+  The GET size column (column 2) reports the raw downloaded byte count before decryption (e.g. 32 bytes for the same test file).
+description: |
+  Regression fixed. The GET size column again matches the legacy driver's pre-decryption byte count.
+legacy_id: 4

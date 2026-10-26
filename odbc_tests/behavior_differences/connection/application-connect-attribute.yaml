@@ -1,0 +1,18 @@
+name: "SQL_SF_CONN_ATTR_APPLICATION is a Snowflake-custom pre-connect attribute not present in the legacy driver"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  Adds a new way of setting up the Application.
+old_driver_behavior: |
+  The legacy driver does not expose SQL_SF_CONN_ATTR_APPLICATION. Setting or getting this
+  attribute returns an error on the old driver.
+new_driver_behavior: |
+  The new driver accepts SQL_SF_CONN_ATTR_APPLICATION before connect, stores the value, and
+  returns it on GET. The attribute is forwarded to the server as the application name.
+description: |
+  Applications using SQL_SF_CONN_ATTR_APPLICATION require the new driver. The old driver
+  has no equivalent attribute, so tests for this attribute are gated with NEW_DRIVER_ONLY.
+legacy_id: 97

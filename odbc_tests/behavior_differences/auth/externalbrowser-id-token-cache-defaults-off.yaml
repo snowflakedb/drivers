@@ -1,0 +1,20 @@
+name: "External-browser (ID token) credential caching defaults to off; 3.x driver cached it by default"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: false
+impact: medium
+status_rationale: |
+  Both drivers cache the external-browser ID token when the caller leaves
+  CLIENT_STORE_TEMPORARY_CREDENTIAL unset. The difference is closed.
+old_driver_behavior: |
+  After a successful external-browser (SSO) login with no explicit caching
+  parameter set, the old driver caches the ID token locally on every platform,
+  so a subsequent connection for the same user can skip the browser step.
+new_driver_behavior: |
+  CLIENT_STORE_TEMPORARY_CREDENTIAL defaults to true on every platform. An
+  explicit true or false always wins.
+description: |
+  Applications that omit the flag keep implicit ID-token caching, as on the
+  old driver. Set CLIENT_STORE_TEMPORARY_CREDENTIAL=false to opt out.
+legacy_id: 139

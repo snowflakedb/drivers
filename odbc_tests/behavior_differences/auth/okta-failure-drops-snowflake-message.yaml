@@ -1,0 +1,20 @@
+name: "Native Okta authenticator-request logical failures drop the Snowflake message"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Restores parity: the 4.x driver includes the GS message in the
+  connection error Display string.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
+  GS `message` (e.g. "not accepted by your Snowflake account configuration" or
+  "is not supported") is included in the connection error.
+new_driver_behavior: |
+  When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
+  GS `message` is included in the connection error.
+description: |
+  Regression fixed. Applications again see the GS authenticator-request rejection
+  message in the connection error, matching the legacy driver.
+legacy_id: 142

@@ -1,0 +1,15 @@
+name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  This is an enhancement of the API. Widening access is deliberate.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Calling SQLFetch on the statement returned by `ALTER USER <user> ADD PROGRAMMATIC ACCESS TOKEN ...` returns SQL_ERROR with SQLSTATE 24000, native error 10510, and message "Invalid cursor state". The token name and secret cannot be read through ODBC.
+new_driver_behavior: |
+  SQLFetch returns SQL_SUCCESS and the token name (column 1) and token secret (column 2) can be retrieved via SQLGetData, allowing the PAT to be used immediately for authentication.
+description: |
+  Applications can now create a PAT and obtain its secret in a single round-trip via ODBC. On the old driver, the token secret must be acquired through a different channel.
+legacy_id: 7

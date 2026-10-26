@@ -1,0 +1,35 @@
+name: "Unrecognized connection-string keywords are rejected locally with 01S00"
+status: fixed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+status_rationale: |
+  4.x now rejects unrecognized connection-string keywords with a local 01S00 warning, closing
+  the gap where it emitted no warning at all. A key is unrecognized when it does not resolve
+  through the sf_core parameter registry under the ODBC flavor.
+impact: low
+old_driver_behavior: |
+  SQLDriverConnect with an unrecognized connection-string keyword (e.g.
+  "DSN=<dsn>;INVALIDKEY=abc") returns SQL_SUCCESS_WITH_INFO and posts a diagnostic record with
+  SQLSTATE 01S00, native error 17, message "N invalid keys are found in the connection string:
+  <KEY>", derived from a local check against a static acceptedConnectionKeys allowlist plus an
+  SF_SESSION_PARAMETERS snapshot. The connection still opens. (Under iODBC 3.x reports
+  SQL_SUCCESS_WITH_INFO but does not post the 01S00 record on the DBC handle - see BD#61.)
+new_driver_behavior: |
+  4.x performs an equivalent local unknown-keyword check: SQLDriverConnect posts a diagnostic
+  record with SQLSTATE 01S00, native error 17, message "N invalid keys are found in the
+  connection string: <KEY>", and the connection still opens (SQL_SUCCESS_WITH_INFO). The
+  keyword is not forwarded to the server as a session parameter. Recognition is driven by the
+  sf_core parameter registry rather than a ported static allowlist. Recognized session-scoped
+  parameters are sent to the server, while registry `ignored` entries (`DSN`, `DRIVER`,
+  related installer metadata, and deprecated keys such as `TRACING`) resolve and are dropped —
+  see BD#144 for `TRACING`. The connection still opens.
+description: |
+  Aligns with the customer feature request SNOW-3765949. Recognition uses the sf_core registry
+  as the single source of truth, avoiding a drift-prone copy of 3.x's acceptedConnectionKeys
+  snapshot. Not a breaking change: 01S00 is SQL_SUCCESS_WITH_INFO, so the connection opens on
+  both drivers.
+  The odbc-api test connecting/driver_connect_tests.cpp ("SQLDriverConnect: Unrecognized
+  connection string keyword flags 01S00") asserts both drivers, with an IODBC_ONLY carve-out
+  (BD#61) where neither driver posts the 01S00 record on the DBC handle.
+legacy_id: 106

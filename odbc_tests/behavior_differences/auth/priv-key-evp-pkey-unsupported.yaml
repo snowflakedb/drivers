@@ -1,0 +1,16 @@
+name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
+status: allowed
+type: api_incompatibility
+reviewed: true
+status_rationale: |
+  Raw OpenSSL structs cannot safely cross our Rust ODBC boundary today. Supporting string-based PEM material is the sanctioned replacement surface; breakage for EVP_PKEY callers is deliberate and callers must migrate to PRIV_KEY_CONTENT / PRIV_KEY_BASE64 workflows.
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Accepts raw EVP_PKEY* pointers via SQLSetConnectAttr.
+new_driver_behavior: |
+  Does not support the raw EVP_PKEY* pointers.
+description: |
+  Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
+  Applications that used the raw EVP_PKEY* pointers will fail to connect. The user would need to parse the EVP_PKEY in the PRIV_KEY_CONTENT or PRIV_KEY_BASE64 format on their own.
+legacy_id: 10

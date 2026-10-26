@@ -1,0 +1,21 @@
+name: "HTTP connect attempts time out after 60 seconds by default"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A connection attempt to Snowflake gives up once a 300-second budget across login
+  retries is spent, and after about 135 seconds for requests after login.
+new_driver_behavior: |
+  A connection attempt gives up after 60 seconds, covering name lookup, the TCP
+  handshake, and TLS. Login retries it within LOGIN_TIMEOUT (default 300 seconds).
+  Setting connect_timeout changes the limit; 0 removes it.
+description: |
+  The new driver uses the 60-second connect default of the old JDBC and Python
+  drivers. A connect that takes longer than 60 seconds fails here and is retried while
+  the operation's retry budget lasts; the old driver kept waiting for up to 300
+  seconds during login, or 90 seconds plus the server's health-check interval (45 by
+  default) afterwards. In both drivers the operating system's TCP connect limit
+  (about 21 seconds on Windows, 75 on macOS, 127 on Linux) can end an attempt sooner.
+legacy_id: 173

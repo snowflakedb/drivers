@@ -1,0 +1,20 @@
+name: "PUT_FASTFAIL diagnostic message differs between drivers while both fail fast"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Both drivers abort the PUT batch at the first failing file when fast-fail is enabled; only the
+  diagnostic text differs. The ODBC spec does not mandate specific message wording, so this is a
+  cosmetic difference, not a functional one.
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  SQLGetDiagRec on the aborted PUT statement returns a message containing "Fast fail enabled,
+  Skipped uploading rest of the files."
+new_driver_behavior: |
+  SQLGetDiagRec on the aborted PUT statement returns a message containing "Failed to read or
+  write file" (the underlying per-file I/O error, e.g. permission denied).
+description: |
+  Applications that match on the exact diagnostic text (rather than the SQLSTATE) will see a
+  different message on the new driver.
+legacy_id: 105

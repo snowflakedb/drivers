@@ -1,0 +1,15 @@
+name: "Encryption field is no longer included in the result"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  To be aligned with the old driver, as this is a regression.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  The PUT result set encryption column (column 8) contains "ENCRYPTED" and the GET result set encryption column (column 4) contains "DECRYPTED" after a successful file transfer.
+new_driver_behavior: |
+  The PUT (column 8) and GET (column 4) encryption columns contain "ENCRYPTED" / "DECRYPTED" on a successful transfer.
+description: |
+  Regression fixed. Applications that inspect the PUT/GET encryption column again see "ENCRYPTED" / "DECRYPTED" on success, matching the legacy driver.
+legacy_id: 3

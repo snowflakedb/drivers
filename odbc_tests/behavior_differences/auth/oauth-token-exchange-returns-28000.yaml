@@ -1,0 +1,20 @@
+name: "OAuth IdP token-exchange rejection returns SQLSTATE 28000 instead of generic HY000"
+status: allowed
+type: bugfix
+reviewed: true
+status_rationale: |
+  The new driver classifies an IdP-side credential rejection (bad client secret during the
+  OAuth Authorization Code / Client Credentials token-exchange step) as an authentication
+  failure, which the ODBC spec models with SQLSTATE 28000. The legacy driver reports the
+  generic HY000. Surfacing 28000 lets applications distinguish auth failures from other
+  general errors, so the difference is accepted.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A failed OAuth token exchange (e.g. invalid client secret) surfaces with SQLSTATE HY000.
+new_driver_behavior: |
+  Returns SQLSTATE 28000 (invalid authorization specification).
+description: |
+  Applications inspecting the SQLSTATE on a failed OAuth Authorization Code or Client
+  Credentials connection will now see 28000 instead of HY000.
+legacy_id: 83

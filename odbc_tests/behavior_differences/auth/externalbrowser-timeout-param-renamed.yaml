@@ -1,0 +1,24 @@
+name: "External browser / auth timeout connection parameter renamed: BROWSER_RESPONSE_TIMEOUT -> AUTHENTICATION_TIMEOUT (and timeout error message reworded)"
+status: allowed
+type: enhancement
+reviewed: true
+status_rationale: |
+  Deliberate rename. To be documented.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  The wait for the external-browser SSO callback is bounded by the
+  BROWSER_RESPONSE_TIMEOUT connection-string attribute (seconds). On expiry the
+  driver returns an error containing "Authentication timed out after <N> seconds"
+  and "Snowflake driver did not receive browser authentication response".
+new_driver_behavior: |
+  BROWSER_RESPONSE_TIMEOUT is not recognized. The external-browser callback wait
+  is bounded by AUTHENTICATION_TIMEOUT (default 120s), the same attribute used
+  for all interactive auth flows. On expiry the driver returns
+  "Authentication timeout exceeded (budget <N>s)".
+description: |
+  DSNs that set BROWSER_RESPONSE_TIMEOUT for external-browser auth are silently
+  ignored on the new driver and fall back to the 120s AUTHENTICATION_TIMEOUT
+  default. Applications must switch to AUTHENTICATION_TIMEOUT. Applications
+  matching on the old timeout message must update to the new wording.
+legacy_id: 138

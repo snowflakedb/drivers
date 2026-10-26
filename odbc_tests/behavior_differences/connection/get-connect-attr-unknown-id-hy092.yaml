@@ -1,0 +1,18 @@
+name: "SQLGetConnectAttr with out-of-range attribute identifier returns HY092 instead of accepting silently"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  It provides a better visibility of what's happening internally for the user, aligning with the ODBC spec.
+old_driver_behavior: |
+  The old driver does not classify completely out-of-range attribute identifiers (e.g. 99999)
+  as HY092; it may return HY000 or pass through without an error.
+new_driver_behavior: |
+  The new driver returns SQL_ERROR / HY092 ("invalid attribute/option identifier") for any
+  attribute identifier outside the defined ODBC range, matching the ODBC 3.x specification.
+description: |
+  Applications querying unknown connection attribute IDs will now receive a well-defined
+  HY092 error instead of an undefined response. No impact on well-formed applications.
+legacy_id: 95

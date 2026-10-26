@@ -1,0 +1,22 @@
+name: "MaxHttpRetries maps to retry_max_attempts with different default, floor, and zero semantics"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  The 3.x spelling stays accepted so existing DSNs still set a retry cap.
+  retry_max_attempts is the shared 4.x contract (default 6, honor 1–6, treat
+  0 as unset). Reproducing 3.x's floor-at-7 and infinite-zero would fight that
+  contract.
+old_driver_behavior: |
+  MaxHttpRetries (default 7) caps HTTP retries for all requests, including login.
+  Values 1–6 are raised to 7. 0 retries indefinitely.
+new_driver_behavior: |
+  MaxHttpRetries is accepted and sets retry_max_attempts (default 6). Values 1–6
+  are honored (1 means no retry). 0 is treated as unset and falls back to 6.
+description: |
+  The 3.x spelling is accepted so existing DSNs keep applying a retry cap instead
+  of posting 01S00 and ignoring the value. The shared retry_max_attempts contract
+  does not reproduce the 3.x floor-at-7 or 0-means-infinite rules.
+legacy_id: 148

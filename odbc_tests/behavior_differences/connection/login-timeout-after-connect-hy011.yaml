@@ -1,0 +1,23 @@
+name: "SQLSetConnectAttr(SQL_ATTR_LOGIN_TIMEOUT) after connect returns HY011 instead of SQL_SUCCESS"
+status: allowed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: low
+status_rationale: |
+  It does not make sense to silently accept a value that is already no-op.
+old_driver_behavior: |
+  The old driver accepts SQL_ATTR_LOGIN_TIMEOUT set calls after the connection is established,
+  returning SQL_SUCCESS silently. The attribute has no effect post-connect (the login timeout
+  only applies during the connection attempt), so the acceptance is misleading.
+new_driver_behavior: |
+  The new driver correctly rejects SQL_ATTR_LOGIN_TIMEOUT set calls after connect with
+  SQL_ERROR / HY011 ("attribute cannot be set now"), per the ODBC spec designation of
+  SQL_ATTR_LOGIN_TIMEOUT as a pre-connect-only attribute. Note: some Driver Managers (e.g.
+  Windows DM) manage login timeout state internally and return SQL_SUCCESS without forwarding
+  the call to the driver, so the HY011 is only observable when the DM forwards the call.
+description: |
+  Applications that set SQL_ATTR_LOGIN_TIMEOUT post-connect and rely on SQL_SUCCESS without
+  error-checking will encounter HY011 on platforms where the DM forwards the call. The change
+  is a spec-compliance fix; the attribute was always a no-op post-connect.
+legacy_id: 94

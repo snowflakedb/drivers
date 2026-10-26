@@ -1,0 +1,19 @@
+name: "GET warns when multiple files share a destination basename"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  The download outcome is unchanged. The extra WARN names colliding GET
+  destinations so callers can see a silent overwrite that 3.x left unlogged.
+old_driver_behavior: |
+  A GET that downloads multiple stage files which reduce to the same local destination
+  basename (e.g. files from different stage subdirectories) completes with no warning; the
+  later file's write silently overwrites the earlier file at the shared destination path.
+new_driver_behavior: |
+  When a GET batch's destination basenames collide, the new driver logs one WARN-level
+  message per batch: "Downloading multiple files with the same name could cause failures.
+  File names with multiple entries: [...]", naming every colliding basename. The download
+  outcome is unchanged; the log message is the only new observable effect.
+legacy_id: 135

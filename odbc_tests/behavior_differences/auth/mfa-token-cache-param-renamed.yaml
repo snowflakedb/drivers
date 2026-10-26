@@ -1,0 +1,34 @@
+name: "MFA token-caching connection parameter renamed: CLIENT_REQUEST_MFA_TOKEN -> CLIENT_STORE_TEMPORARY_CREDENTIAL"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  The CLIENT_REQUEST_MFA_TOKEN parameter is doing something different than it describes.
+  DSNs that set CLIENT_REQUEST_MFA_TOKEN=true keep working because caching
+  already defaults on. DSNs that set CLIENT_REQUEST_MFA_TOKEN=false no longer
+  disable MFA caching; they must set CLIENT_STORE_TEMPORARY_CREDENTIAL=false
+old_driver_behavior: |
+  MFA token caching is a dedicated connection-string attribute,
+  CLIENT_REQUEST_MFA_TOKEN. When true, the driver reads/writes the MFA token in
+  the OS credential store and sends session parameter CLIENT_REQUEST_MFA_TOKEN=true
+  on USERNAME_PASSWORD_MFA login. Default is true on Windows/macOS and false on
+  Linux. CLIENT_STORE_TEMPORARY_CREDENTIAL is a separate attribute and does not
+  control MFA caching (it controls external-browser ID-token and OAuth auth-code
+  caching only).
+new_driver_behavior: |
+  MFA token caching is enabled by CLIENT_STORE_TEMPORARY_CREDENTIAL=true (default true on every platform).
+  The same attribute also controls ID-token and OAuth token caching. When MFA caching is on, the login
+  request still includes both CLIENT_REQUEST_MFA_TOKEN=true and
+  CLIENT_STORE_TEMPORARY_CREDENTIAL=true in session parameters.
+description: |
+  3.x ODBC (libsnowflakeclient) has two independent connection attributes:
+  CLIENT_REQUEST_MFA_TOKEN for USERNAME_PASSWORD_MFA token cache, and
+  CLIENT_STORE_TEMPORARY_CREDENTIAL for external-browser ID-token and OAuth
+  auth-code cache. 4.x consolidates both onto CLIENT_STORE_TEMPORARY_CREDENTIAL.
+  The login body still sends CLIENT_REQUEST_MFA_TOKEN=true as a session
+  parameter when MFA caching is on, so only the DSN/connection-string spelling
+  changed. Applications that set CLIENT_REQUEST_MFA_TOKEN=false to disable MFA
+  caching must switch to CLIENT_STORE_TEMPORARY_CREDENTIAL=false.
+legacy_id: 137

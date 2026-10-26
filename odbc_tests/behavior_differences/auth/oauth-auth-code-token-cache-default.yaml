@@ -1,0 +1,20 @@
+name: "OAuth Authorization Code token caching default differs from legacy ODBC (platform-dependent across reference drivers)"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Both drivers cache the OAUTH_AUTHORIZATION_CODE access / refresh token
+  by default when the caller leaves CLIENT_STORE_TEMPORARY_CREDENTIAL
+  unset.
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by default
+  on all platforms.
+new_driver_behavior: |
+  OAUTH_AUTHORIZATION_CODE connections cache the access / refresh token by
+  default when CLIENT_STORE_TEMPORARY_CREDENTIAL is unset.
+description: |
+  ODBC applications that relied on implicit AC token caching keep that behavior
+  without setting CLIENT_STORE_TEMPORARY_CREDENTIAL.
+legacy_id: 85

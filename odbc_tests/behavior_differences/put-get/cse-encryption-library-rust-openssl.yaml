@@ -1,0 +1,16 @@
+name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+status_rationale: |
+  This is a metadata value fix, that allows for better identification of the encryption library,
+  which differs between the drivers.
+old_driver_behavior: |
+  Azure/GCS `encryptiondata` JSON: the driver (libsnowflakeclient) hardcodes
+  `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on its Azure builder, but its own
+  GCS builder emits a different literal, `"openssl 1.1.1i"`.
+new_driver_behavior: |
+  UD emits `"Rust(OpenSSL)"` for the same field on both clouds.
+legacy_id: 112

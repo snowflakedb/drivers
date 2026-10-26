@@ -1,0 +1,19 @@
+name: "Header of a gzip-compressed file does not contain filename"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Both drivers omit FNAME from the PUT AUTO_COMPRESS gzip header.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip header omits FNAME.
+  Gzip mtime is zeroed, so identical content produces the same bytes.
+new_driver_behavior: |
+  When AUTO_COMPRESS=TRUE, the PUT-uploaded gzip header omits FNAME.
+  Gzip mtime is zeroed, so identical content produces the same bytes.
+description: |
+  Applications that read the source filename back out of the gzip
+  header of an AUTO_COMPRESS upload find no FNAME field on either
+  driver. Byte streams for identical content stay comparable.
+legacy_id: 5

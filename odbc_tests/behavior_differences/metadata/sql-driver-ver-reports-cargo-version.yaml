@@ -1,0 +1,15 @@
+name: "SQLGetInfo(SQL_DRIVER_VER) reports the Cargo package version verbatim instead of a zero-padded `MM.mm.bbbb` string"
+status: fixed
+type: bugfix
+reviewed: true
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  The ODBC spec defines SQL_DRIVER_VER as `##.##.####`. The universal driver emits that spec-compliant fixed-width string; the reference driver does not. The remaining delta (padded vs. unpadded) is a deliberate, accepted spec-compliance improvement, so the value is asserted per-driver rather than realigned.
+old_driver_behavior: |
+  SQLGetInfo(SQL_DRIVER_VER) returns an unpadded, three-component semver (e.g. `3.16.0`), not the fixed-width `##.##.####` the ODBC spec prescribes.
+new_driver_behavior: |
+  SQLGetInfo(SQL_DRIVER_VER) zero-pads the Cargo package version to the fixed-width `MM.mm.bbbb` format (major/minor to two digits, build to four), so `4.0.0` is returned as `04.00.0000`, matching the ODBC spec's `##.##.####`.
+description: |
+  Applications that parse SQL_DRIVER_VER get a spec-compliant fixed-width `MM.mm.bbbb` string from the universal driver, versus the reference driver's unpadded semver. Consumers that treat the string as opaque or only use the dot count are unaffected.
+legacy_id: 76

@@ -1,0 +1,22 @@
+name: "Remove OCSP support in favor of CRLs"
+status: allowed
+type: api_incompatibility
+reviewed: true
+is_breaking_change: true
+impact: high
+status_rationale: |
+  This change aligns with the broader move away from OCSP, which has been a frequent cause of production outages and offers little real security in the default fail-open mode.
+old_driver_behavior: |
+  Certificate revocation uses OCSP, controlled by parameters such as
+  `OCSP_FAIL_OPEN`, `DisableOCSPCheck`, and `SF_OCSP_RESPONSE_CACHE_SERVER_URL`.
+new_driver_behavior: |
+  OCSP is not implemented. Certificate revocation uses CRLs, configured via
+  CRL parameters (`CRL_MODE`, `crl_enable_memory_caching`,
+  `crl_enable_disk_caching`, etc.). Leftover OCSP connection-string keys
+  `DisableOCSPCheck` and `OCSP_FAIL_OPEN` are accepted and ignored with SQLSTATE
+  01000 (BD#156). Other OCSP keys such as `SF_OCSP_RESPONSE_CACHE_SERVER_URL`
+  remain unrecognized.
+description: |
+  The universal core performs TLS revocation checking in Rust with CRL support shared
+  across wrappers. OCSP was not ported; callers must migrate to CRL configuration.
+legacy_id: 124

@@ -1,0 +1,15 @@
+name: "On Windows, PUT source column returns filename only instead of full absolute path"
+status: fixed
+type: bug
+reviewed: true
+status_rationale: |
+  Regression.
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  On Windows, the PUT result set source column returns the full absolute file path (e.g. C:/Users/.../test_data.csv).
+new_driver_behavior: |
+  On Windows the PUT source column returns the full absolute file path.
+description: |
+  Regression fixed. Applications that parse the PUT source column for the full path on Windows again receive the absolute path.
+legacy_id: 17
