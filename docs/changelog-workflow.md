@@ -12,6 +12,7 @@ Classify the pull request before adding a fragment:
 - Dependency updates use `dependency`.
 - Driver implementation changes that customers cannot observe use `internal`.
 - Tests, CI, documentation, and AI configuration do not need a fragment.
+- JDBC is in private preview. Do not add a fragment for a JDBC change.
 
 Create `<component>/changelog/unreleased/<slug>.md`. The slug uses lowercase
 words separated by hyphens and does not start with a number. The category
