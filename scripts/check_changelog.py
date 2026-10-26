@@ -67,6 +67,8 @@ _VERSION_HEADING_RE = re.compile(
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _LABEL_RE = re.compile(r"^([A-Za-z][A-Za-z ]*):$")
 _UPCOMING_POINTER = "In-progress notes are files under `changelog/unreleased/`."
+# The Node.js changelog is still a hand-written draft without fragment files.
+_SKIPPED_COMPONENTS: frozenset[str] = frozenset({"nodejs"})
 
 
 @dataclass(frozen=True)
@@ -238,7 +240,7 @@ def assign_slugs(bullets: list[str]) -> list[str]:
 def discover_components(root: Path) -> list[Path]:
     found: list[Path] = []
     for child in sorted(root.iterdir()):
-        if not child.is_dir() or child.is_symlink():
+        if not child.is_dir() or child.is_symlink() or child.name in _SKIPPED_COMPONENTS:
             continue
         if (child / "CHANGELOG.md").is_file() or (child / "changelog").is_dir():
             found.append(child)
