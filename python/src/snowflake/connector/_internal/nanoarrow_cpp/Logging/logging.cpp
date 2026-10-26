@@ -27,8 +27,19 @@ Logger::Logger(const char* name) : m_name(name) {}
 
 void Logger::log(int level, const char* path_name, const char* func_name, int line_num,
                  const char* msg) {
-  std::call_once(m_initOnceFlag, [this]() { setupPyLogger(); });
+  auto initialize = [this]() {
+    py::PyUniqueLock lock;
+    setupPyLogger();
+  };
+  if (PyGILState_Check()) {
+    Py_BEGIN_ALLOW_THREADS
+    std::call_once(m_initOnceFlag, initialize);
+    Py_END_ALLOW_THREADS
+  } else {
+    std::call_once(m_initOnceFlag, initialize);
+  }
 
+  py::PyUniqueLock lock;
   PyObject* logger = m_pyLogger.get();
   py::UniqueRef keywords(PyDict_New());
   py::UniqueRef call_log(PyObject_GetAttrString(logger, "log"));
