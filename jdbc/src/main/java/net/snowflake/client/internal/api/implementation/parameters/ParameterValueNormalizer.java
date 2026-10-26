@@ -1,6 +1,9 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +19,17 @@ import lombok.RequiredArgsConstructor;
 public final class ParameterValueNormalizer {
 
   private static final String NO_PROXY = "no_proxy";
+
+  /**
+   * Millisecond timeout properties that {@link ParameterKeyNormalizer} leaves on their legacy
+   * spelling. sf_core resolves them as aliases of {@code connect_timeout}, {@code retry_timeout},
+   * and {@code request_timeout}, which take whole seconds, so these keys must not be mapped to the
+   * canonical names: a millisecond value would then be indistinguishable from a seconds value.
+   */
+  private static final Set<String> LEGACY_MILLISECOND_TIMEOUT_KEYS =
+      new HashSet<>(
+          Arrays.asList(
+              "http_client_connection_timeout", "http_client_socket_timeout", "networktimeout"));
 
   @RequiredArgsConstructor
   private enum LegacyTlsVersion {
@@ -40,7 +54,8 @@ public final class ParameterValueNormalizer {
    * Normalizes a property value for the given canonical (already key-normalized) property. Returns
    * the value unchanged when no translation applies.
    *
-   * @param canonicalKey the sf_core canonical key (output of {@link ParameterKeyNormalizer})
+   * @param canonicalKey the output of {@link ParameterKeyNormalizer}: the sf_core canonical key, or
+   *     the legacy key for the millisecond timeout properties that sf_core aliases itself
    * @param value the property value as supplied by the caller
    */
   public static Object normalize(String canonicalKey, Object value) {
@@ -50,7 +65,30 @@ public final class ParameterValueNormalizer {
     if (isTlsVersionKey(canonicalKey) && value instanceof String) {
       return LegacyTlsVersion.toCoreValue((String) value);
     }
+    if (LEGACY_MILLISECOND_TIMEOUT_KEYS.contains(canonicalKey.toLowerCase(Locale.ROOT))) {
+      Long milliseconds = readMilliseconds(value);
+      return milliseconds == null ? value : secondsRoundedUp(milliseconds);
+    }
     return value;
+  }
+
+  /** sf_core reads 0 as no timeout, so a positive limit must not round down to 0. */
+  private static long secondsRoundedUp(long milliseconds) {
+    return milliseconds > 0 ? (milliseconds - 1) / 1000 + 1 : milliseconds / 1000;
+  }
+
+  private static Long readMilliseconds(Object value) {
+    if (value instanceof Integer || value instanceof Long) {
+      return ((Number) value).longValue();
+    }
+    if (value instanceof String) {
+      try {
+        return Long.parseLong(((String) value).trim());
+      } catch (NumberFormatException e) {
+        return null;
+      }
+    }
+    return null;
   }
 
   private static boolean isTlsVersionKey(String canonicalKey) {

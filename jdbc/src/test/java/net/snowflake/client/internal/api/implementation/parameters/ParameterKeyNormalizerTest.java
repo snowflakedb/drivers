@@ -80,6 +80,20 @@ class ParameterKeyNormalizerTest {
   }
 
   @Test
+  void shouldLeaveLegacyMillisecondTimeoutKeysUnchanged() {
+    assertAll(
+        () ->
+            assertEquals(
+                "HTTP_CLIENT_CONNECTION_TIMEOUT",
+                ParameterKeyNormalizer.normalize("HTTP_CLIENT_CONNECTION_TIMEOUT")),
+        () ->
+            assertEquals(
+                "HTTP_CLIENT_SOCKET_TIMEOUT",
+                ParameterKeyNormalizer.normalize("HTTP_CLIENT_SOCKET_TIMEOUT")),
+        () -> assertEquals("networkTimeout", ParameterKeyNormalizer.normalize("networkTimeout")));
+  }
+
+  @Test
   void shouldNotAliasClientStoreTemporaryCredential() {
     // sf_core already aliases this key, so the normalizer must leave it untouched (see the
     // MFA/credential-cache note in ParameterKeyNormalizer).

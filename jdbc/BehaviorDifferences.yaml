@@ -703,7 +703,7 @@ behavior_differences:
     status_rationale: |
       Behaviorally equivalent to legacy; documented for completeness of the pooling behavioral surface.
   41:
-    name: "Connection.getNetworkTimeout() returns 0 (universal not yet wired to sf_core); legacy returns the configured value"
+    name: "Connection.getNetworkTimeout() returns 0; the old driver returns the value passed to setNetworkTimeout"
     status: unknown
     type: bugfix
     reviewed: false
@@ -714,17 +714,18 @@ behavior_differences:
       the value and getNetworkTimeout() returns it (e.g. after setNetworkTimeout(null, 200),
       getNetworkTimeout() returns 200).
     new_driver_behavior: |
-      The universal driver's SnowflakeConnectionImpl.setNetworkTimeout is currently a no-op and
-      getNetworkTimeout() always returns 0 (connection network timeout is not yet wired to sf_core;
-      tracked under the retries & timeouts epic). LogicalConnection delegates directly, so a pooled
-      logical connection observes the same 0. Cross-driver reference tests gate the post-set assertion
-      via PoolingTestCompat.assertNetworkTimeoutAfterSet (0 on universal, the set value on legacy).
+      The new driver's setNetworkTimeout is a no-op and getNetworkTimeout() always returns 0,
+      including on a pooled logical connection. The networkTimeout connection property is
+      separate (entry 78).
     description: |
-      Documents that connection network timeout is not yet implemented in the universal driver, so the
-      getter returns 0 regardless of setNetworkTimeout, unlike the legacy driver.
+      Documents that connection network timeout is not yet implemented in the new driver, so the
+      getter returns 0 regardless of setNetworkTimeout, unlike the old driver. The old setter
+      stores a connection-local value that HTTP never reads. LogicalConnection delegates directly.
+      Cross-driver reference tests gate the post-set assertion via
+      PoolingTestCompat.assertNetworkTimeoutAfterSet (0 on the new driver, the set value on the old).
     status_rationale: |
-      Not yet reviewed. The no-op is a known temporary gap (network timeout support is deferred to the
-      retries & timeouts epic); the getter contract will be revisited when it lands.
+      Not yet reviewed. The getter stays 0 because no HTTP timeout reads the setter's value in
+      either driver. HTTP timeout behavior is covered by entries 77 and 78.
   42:
     name: "Linux legacy external-browser id-token cache requires CLIENT_STORE_TEMPORARY_CREDENTIAL session param"
     status: unknown
@@ -1395,3 +1396,23 @@ behavior_differences:
       The default duration matches the old JDBC socket timeout. The new timer does not
       reset when bytes arrive, so a healthy download slower than size/300 throughput
       can fail here.
+
+  78:
+    name: "Millisecond timeout properties apply in whole seconds"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      HTTP_CLIENT_CONNECTION_TIMEOUT and HTTP_CLIENT_SOCKET_TIMEOUT are milliseconds.
+      networkTimeout is the retry budget for transient failures, including query
+      requests, in milliseconds divided down to seconds.
+    new_driver_behavior: |
+      The three properties take milliseconds and apply in whole seconds, rounded up, so a
+      positive value below 1000 ms becomes 1 second. networkTimeout does not bound retries
+      of query requests.
+    description: |
+      The properties are JDBC-scoped aliases for connect_timeout, retry_timeout, and
+      request_timeout, and the JDBC wrapper converts milliseconds to seconds. request_timeout
+      covers non-query requests only. retry_timeout is a per-attempt wall clock (entry 77).

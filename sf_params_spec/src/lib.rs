@@ -1993,6 +1993,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::REQUEST_TIMEOUT.as_str())
+        .aliases(aliases![Jdbc; "networkTimeout"])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_REQUEST_TIMEOUT_SECS as i64))
         .sensitive(false)
@@ -2003,7 +2004,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_TIMEOUT.as_str())
-        .aliases(aliases![NodeJs; "timeout"])
+        .aliases(&[
+            Alias::scoped(Wrapper::NodeJs, "timeout"),
+            Alias::scoped(Wrapper::Jdbc, "HTTP_CLIENT_SOCKET_TIMEOUT"),
+        ])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -2013,6 +2017,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CONNECT_TIMEOUT.as_str())
+        .aliases(aliases![Jdbc; "HTTP_CLIENT_CONNECTION_TIMEOUT"])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -3138,6 +3143,9 @@ mod tests {
             ("retryTimeout", "login_timeout", &[NodeJs]),
             ("browserActionTimeout", "authentication_timeout", &[NodeJs]),
             ("timeout", "retry_timeout", &[NodeJs]),
+            ("HTTP_CLIENT_CONNECTION_TIMEOUT", "connect_timeout", &[Jdbc]),
+            ("HTTP_CLIENT_SOCKET_TIMEOUT", "retry_timeout", &[Jdbc]),
+            ("networkTimeout", "request_timeout", &[Jdbc]),
             ("wifHost", "wif_host", &[Jdbc, NodeJs]),
             ("workloadIdentityHost", "wif_host", &[Jdbc]),
             ("workload_identity_host", "wif_host", &[Jdbc, Python]),

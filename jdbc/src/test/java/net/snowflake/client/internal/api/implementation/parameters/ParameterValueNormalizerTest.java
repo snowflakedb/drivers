@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.api.implementation.parameters;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
@@ -52,6 +53,40 @@ class ParameterValueNormalizerTest {
   void shouldLeaveCoreTlsVersionValuesUnchanged() {
     assertEquals("tls12", ParameterValueNormalizer.normalize("min_tls_version", "tls12"));
     assertEquals("tls13", ParameterValueNormalizer.normalize("max_tls_version", "tls13"));
+  }
+
+  @Test
+  void shouldRoundLegacyHttpClientTimeoutsUpToWholeSeconds() {
+    assertAll(
+        () ->
+            assertEquals(
+                60L, ParameterValueNormalizer.normalize("HTTP_CLIENT_CONNECTION_TIMEOUT", "60000")),
+        () ->
+            assertEquals(
+                300L, ParameterValueNormalizer.normalize("HTTP_CLIENT_SOCKET_TIMEOUT", 300000)),
+        () ->
+            assertEquals(
+                1L, ParameterValueNormalizer.normalize("HTTP_CLIENT_SOCKET_TIMEOUT", "10")),
+        () ->
+            assertEquals(
+                2L, ParameterValueNormalizer.normalize("HTTP_CLIENT_CONNECTION_TIMEOUT", "1001")),
+        () ->
+            assertEquals(
+                0L, ParameterValueNormalizer.normalize("HTTP_CLIENT_CONNECTION_TIMEOUT", 0)),
+        () ->
+            assertEquals(
+                "abc",
+                ParameterValueNormalizer.normalize("HTTP_CLIENT_CONNECTION_TIMEOUT", "abc")));
+  }
+
+  @Test
+  void shouldRoundLegacyNetworkTimeoutUpToWholeSeconds() {
+    assertAll(
+        () -> assertEquals(1L, ParameterValueNormalizer.normalize("networkTimeout", "500")),
+        () -> assertEquals(1L, ParameterValueNormalizer.normalize("networkTimeout", 1000)),
+        () -> assertEquals(2L, ParameterValueNormalizer.normalize("networkTimeout", "1999")),
+        () -> assertEquals(0L, ParameterValueNormalizer.normalize("networkTimeout", "0")),
+        () -> assertEquals("abc", ParameterValueNormalizer.normalize("networkTimeout", "abc")));
   }
 
   @Test

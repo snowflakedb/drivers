@@ -1741,6 +1741,30 @@ class SnowflakeConnectionImplTest {
           () -> assertEquals(8080L, options.get("proxy_port").getIntValue()),
           () -> assertEquals(".foo.com,host1", options.get("no_proxy").getStringValue()));
     }
+
+    @Test
+    void shouldSendLegacyMillisecondTimeoutsToCoreAsSeconds() throws Exception {
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "dummy");
+      props.setProperty("HTTP_CLIENT_CONNECTION_TIMEOUT", "100");
+      props.put("HTTP_CLIENT_SOCKET_TIMEOUT", 200000);
+      props.setProperty("networkTimeout", "3000");
+
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+
+      new SnowflakeConnectionImpl(
+          "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+
+      verify(mockCoreApi).connectionSetOptions(any(), optionsCaptor.capture());
+      Map<String, ConfigSetting> options = optionsCaptor.getValue();
+      assertAll(
+          () -> assertEquals(1L, options.get("HTTP_CLIENT_CONNECTION_TIMEOUT").getIntValue()),
+          () -> assertEquals(200L, options.get("HTTP_CLIENT_SOCKET_TIMEOUT").getIntValue()),
+          () -> assertEquals(3L, options.get("networkTimeout").getIntValue()));
+    }
   }
 
   @Nested
