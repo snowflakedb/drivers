@@ -54,7 +54,7 @@ The `dev` environment is designed for **human developers** during active develop
 - Installs from sources (`skip-install = false`)
 - Editable mode enabled (`dev-mode = true`)
 - Changes to source code are immediately available
-- Supports Python matrix: 3.11, 3.12, 3.13, 3.14
+- Supports Python matrix: 3.11, 3.12, 3.13, 3.14, 3.15, 3.15t
 
 **Usage:**
 ```bash

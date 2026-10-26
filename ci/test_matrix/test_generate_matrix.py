@@ -1017,6 +1017,56 @@ class OdbcMatrixTests(unittest.TestCase):
             self.assertIn(r, gm.filter_active(self.gha, level), level)
 
 
+def _workflow_job(workflow: str, job: str) -> str:
+    lines = workflow.splitlines()
+    start = next(i for i, line in enumerate(lines) if line == f"  {job}:")
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if (
+            line.startswith("  ")
+            and not line.startswith("   ")
+            and line.endswith(":")
+            and not line.startswith("  #")
+        ):
+            end = i
+            break
+    return "\n".join(lines[start:end])
+
+
+def _matrix_include_rows(job_text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_include = False
+    item_indent: int | None = None
+    for line in job_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if stripped == "include:":
+            in_include = True
+            continue
+        if not in_include:
+            continue
+        if item_indent is not None and indent < item_indent:
+            break
+        if stripped.startswith("- "):
+            if current is not None:
+                rows.append(current)
+            item_indent = indent
+            key, value = stripped[2:].split(":", 1)
+            current = {key.strip(): value.strip().strip("\"'")}
+            continue
+        if current is None:
+            continue
+        key, value = stripped.split(":", 1)
+        current[key.strip()] = value.strip().strip("\"'")
+    if current is not None:
+        rows.append(current)
+    return rows
+
+
 class PythonMatrixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1032,7 +1082,7 @@ class PythonMatrixTests(unittest.TestCase):
     def test_freethreading_pr_cell_installs_from_wheel(self) -> None:
         rows = [
             r for r in gm.filter_active(self.gha, "pr")
-            if r["py"] == "3.14t" and not r.get("result_format")
+            if r["py"] == "3.15t" and not r.get("result_format")
         ]
         by_env = {r["hatch_env"]: r for r in rows}
         self.assertEqual(set(by_env), {"test", "test-native-arrow", "test-pandas"})
@@ -1048,6 +1098,52 @@ class PythonMatrixTests(unittest.TestCase):
             "Python 3.10 was dropped; the matrix floor is 3.11",
         )
 
+    def test_pr_ubuntu_test_cell_is_py311(self) -> None:
+        rows = [
+            (r["os"], r["py"], r["cloud_provider"], r["hatch_env"])
+            for r in gm.filter_active(self.gha, "pr")
+            if r["os"] == "ubuntu-latest"
+            and r["hatch_env"] == "test"
+            and not r.get("result_format")
+        ]
+        self.assertIn(("ubuntu-latest", "3.11", "gcp", "test"), rows)
+        self.assertNotIn(("ubuntu-latest", "3.13", "aws", "test"), rows)
+        self.assertNotIn(("ubuntu-latest", "3.15", "aws", "test"), rows)
+
+    def test_compare_results_pairs_with_a_pr_cell(self) -> None:
+        workflow = (gm.REPO_ROOT / ".github" / "workflows" / "test-python.yml").read_text()
+        compare_rows = _matrix_include_rows(_workflow_job(workflow, "python_compare_results"))
+        reference_rows = _matrix_include_rows(_workflow_job(workflow, "python_tests_reference"))
+        pr_cells = {
+            (r["os"], r["py"], r["cloud_provider"], r["hatch_env"])
+            for r in gm.filter_active(self.gha, "pr")
+            if not r.get("result_format")
+        }
+        self.assertTrue(compare_rows)
+        self.assertEqual(
+            {ref["cloud_provider"] for ref in reference_rows},
+            {"aws"},
+            "reference tests exercise hybrid tables, which the GCP test account does not support",
+        )
+        for row in compare_rows:
+            self.assertIn(
+                (row["os"], row["py"], row["cloud_provider"], row["hatch_env"]),
+                pr_cells,
+            )
+            paired = [
+                ref
+                for ref in reference_rows
+                if ref["hatch_env"] == row["ref_hatch_env"]
+                and ref["os"] == row["os"]
+                and ref["py"] == row["py"]
+                and ref["cloud_provider"] == row["cloud_provider"]
+            ]
+            self.assertEqual(len(paired), 1, row)
+        self.assertEqual(
+            {(ref["os"], ref["py"], ref["cloud_provider"]) for ref in reference_rows},
+            {(row["os"], row["py"], row["cloud_provider"]) for row in compare_rows},
+        )
+
     def test_macos_x64_present(self) -> None:
         # Regression test: macOS Intel (macos-15-intel runner) coverage must
         # remain in the matrix. Drop this row from PYTHON_PLATFORM and the
@@ -1055,7 +1151,7 @@ class PythonMatrixTests(unittest.TestCase):
         intel_rows = [r for r in self.gha if r["os"] == "macos-15-intel"]
         self.assertTrue(intel_rows, "expected macos-15-intel cells in the python matrix")
         for r in intel_rows:
-            self.assertIn(r["py"], {"3.11", "3.12", "3.13", "3.14", "3.14t"})
+            self.assertIn(r["py"], {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"})
             self.assertEqual(r.get("wheel_artifact"), "macosx_x86_64", r["name"])
 
     def test_windows_arm_at_merge_scope(self) -> None:
@@ -1138,8 +1234,6 @@ class PythonMatrixTests(unittest.TestCase):
             self.assertFalse(missing, f"row {r} missing keys {missing}")
 
     def test_ubuntu_linux_present_at_merge_queue(self) -> None:
-        # ubuntu-x64-aws-3.13-test is in both PR_CELLS and MERGE_QUEUE_CELLS.
-        # Gets trigger_level="pr" + merge_queue_cell=True.
         mq_rows = gm.filter_active(self.gha, "merge_queue")
         ubuntu_mq = [
             r for r in mq_rows
@@ -1175,9 +1269,9 @@ class PythonMatrixTests(unittest.TestCase):
 
     def test_native_arrow_is_one_linux_cell(self) -> None:
         # Ubuntu x64 AWS runs the full suite with use_core_arrow for 3.13
-        # and 3.14t. 3.13 is also on the merge queue.
+        # and 3.15t. 3.13 is also on the merge queue.
         native = [r for r in self.gha if r["hatch_env"] == "test-native-arrow"]
-        self.assertEqual(sorted(r["py"] for r in native), ["3.13", "3.14t"])
+        self.assertEqual(sorted(r["py"] for r in native), ["3.13", "3.15t"])
         for r in native:
             self.assertEqual(r["os"], "ubuntu-latest", r["name"])
             self.assertEqual(r["cloud_provider"], "aws", r["name"])
@@ -1185,8 +1279,8 @@ class PythonMatrixTests(unittest.TestCase):
             self.assertIsNone(r.get("result_format"), r["name"])
         py313 = next(r for r in native if r["py"] == "3.13")
         self.assertTrue(py313.get("merge_queue_cell"))
-        py314t = next(r for r in native if r["py"] == "3.14t")
-        self.assertFalse(py314t.get("merge_queue_cell"))
+        py315t = next(r for r in native if r["py"] == "3.15t")
+        self.assertFalse(py315t.get("merge_queue_cell"))
         mq_native = [
             r for r in gm.filter_active(self.gha, "merge_queue")
             if r["hatch_env"] == "test-native-arrow"
@@ -1725,13 +1819,13 @@ class BuildTargetsTests(unittest.TestCase):
         # Updated after cloud rotation was moved into CONSTRAINTS (models/python.py):
         # each PyVersion maps to exactly one cloud, so all versions now appear at
         # nightly for every platform (each runs once against its assigned cloud).
-        # Windows-arm excludes 3.13, 3.14, and 3.14t (no win-arm wheel for those).
+        # Windows-arm excludes 3.13, 3.14, 3.15, and 3.15t (no win-arm wheel for those).
         legacy = {
-            "linux_x86":   {"3.11", "3.12", "3.13", "3.14", "3.14t"},
-            "linux_aarch": {"3.11", "3.12", "3.13", "3.14", "3.14t"},
-            "macos_arm":   {"3.11", "3.12", "3.13", "3.14", "3.14t"},
-            "macos_x86":   {"3.11", "3.12", "3.13", "3.14", "3.14t"},
-            "windows_x86": {"3.11", "3.12", "3.13", "3.14", "3.14t"},
+            "linux_x86":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
+            "linux_aarch": {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
+            "macos_arm":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
+            "macos_x86":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
+            "windows_x86": {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
             "windows_arm": {"3.11", "3.12"},
         }
         actual = {k: set(v) for k, v in self.targets_nightly.items()}

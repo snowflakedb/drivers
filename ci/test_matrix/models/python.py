@@ -4,7 +4,7 @@ PARAMS = {
     "OS":        ["ubuntu", "macos", "windows"],
     "Arch":      ["x64", "arm"],
     "Cloud":     ["aws", "gcp", "azure"],
-    "PyVersion": ["3.11", "3.12", "3.13", "3.14", "3.14t"],
+    "PyVersion": ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"],
     "HatchEnv":  ["test", "test-pandas", "test-native-arrow"],
 }
 
@@ -17,7 +17,8 @@ _CLOUD_FOR_PY = {
     "3.12": "azure",
     "3.13": "aws",
     "3.14": "gcp",
-    "3.14t": "aws",
+    "3.15": "aws",
+    "3.15t": "aws",
 }
 
 
@@ -29,12 +30,12 @@ def is_valid(c):
         if c["HatchEnv"] == "test-pandas": return False
 
     # Ubuntu x64 AWS runs the full suite with use_core_arrow for 3.13 and
-    # 3.14t. Other combos would multiply nightly cost.
+    # 3.15t. Other combos would multiply nightly cost.
     if c["HatchEnv"] == "test-native-arrow":
         if c["OS"] != "ubuntu":                      return False
         if c["Arch"] != "x64":                       return False
         if c["Cloud"] != "aws":                      return False
-        if c["PyVersion"] not in ("3.13", "3.14t"):  return False
+        if c["PyVersion"] not in ("3.13", "3.15t"):  return False
 
     # Cloud rotation: each Python version is tested against one cloud.
     if c["Cloud"] != _CLOUD_FOR_PY[c["PyVersion"]]:
@@ -73,12 +74,12 @@ def merge_valid(c):
 MERGE_VALID = [merge_valid]
 
 PR_CELLS = [
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "gcp", "PyVersion": "3.11", "HatchEnv": "test"},
     {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.13", "HatchEnv": "test-native-arrow"},
     {"OS": "windows", "Arch": "x64", "Cloud": "gcp", "PyVersion": "3.14", "HatchEnv": "test"},
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.14t", "HatchEnv": "test"},
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.14t", "HatchEnv": "test-native-arrow"},
-    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.14t", "HatchEnv": "test-pandas"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.15t", "HatchEnv": "test"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.15t", "HatchEnv": "test-native-arrow"},
+    {"OS": "ubuntu",  "Arch": "x64", "Cloud": "aws", "PyVersion": "3.15t", "HatchEnv": "test-pandas"},
 ]
 
 MERGE_QUEUE_CELLS = [

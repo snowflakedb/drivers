@@ -100,6 +100,8 @@ hatch run test.py3.11:all
 hatch run test.py3.12:all
 hatch run test.py3.13:all
 hatch run test.py3.14:all
+hatch run test.py3.15:all
+hatch run test.py3.15t:all
 ```
 
 ### Code Quality

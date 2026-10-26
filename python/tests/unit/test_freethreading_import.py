@@ -29,7 +29,7 @@ def require_gil_enabled():
     cannot run there.
     """
     if _is_freethreaded_build():
-        pytest.skip("requires a GIL-enabled build (for example python3.14, not python3.14t)")
+        pytest.skip("requires a GIL-enabled build (for example python3.15, not python3.15t)")
     if not hasattr(sys, "_is_gil_enabled"):
         pytest.skip("sys._is_gil_enabled exists on Python 3.13 and newer")
 
@@ -38,7 +38,7 @@ def require_gil_enabled():
 def require_gil_disabled():
     """Skip unless this interpreter is a free-threaded build."""
     if not _is_freethreaded_build():
-        pytest.skip("requires a free-threaded build (for example python3.14t)")
+        pytest.skip("requires a free-threaded build (for example python3.15t)")
 
 
 def _run_in_subprocess(script: str) -> subprocess.CompletedProcess[str]:

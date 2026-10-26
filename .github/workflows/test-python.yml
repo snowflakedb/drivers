@@ -498,7 +498,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # An extension that is not free-threading compatible re-enables the GIL
-      # on import. PYTHON_GIL=0 keeps a 3.14t suite running with the GIL off.
+      # on import. PYTHON_GIL=0 keeps a 3.15t suite running with the GIL off.
       - name: Keep the GIL disabled on free-threaded CPython
         if: endsWith(matrix.py, 't')
         shell: bash
@@ -893,9 +893,10 @@ jobs:
         # downloads in python_compare_results line up with python_tests.
         # macOS reference comparison was removed when the macOS PR cell
         # was deferred to merge-queue scope (limited macOS runner
-        # availability). reference-pandas shares this job's os/py/cloud with
-        # `reference`; it is not paired in python_compare_results because
-        # PR_CELLS has no test-pandas cell to download artifacts from.
+        # availability). The AWS test-native-arrow PR cell supplies the
+        # universal artifact for the reference comparison. AWS is required
+        # because hybrid tables are unavailable in the GCP test account.
+        # reference-pandas shares the reference cell's os, Python, and cloud.
         include:
           - hatch_env: reference
             os: ubuntu-latest
@@ -1096,9 +1097,11 @@ jobs:
         # Cloud is constrained to aws/gcp — Azure is excluded for
         # reference stability. The macOS comparison row was removed when
         # the macOS PR cell was deferred to merge-queue scope.
-        # reference-pandas is omitted here: PR_CELLS has no test-pandas cell.
+        # reference-pandas is omitted here: its universal test-pandas cell
+        # runs a different Python version. The test-native-arrow cell has the
+        # matching AWS environment for the reference connector.
         include:
-          - hatch_env: test
+          - hatch_env: test-native-arrow
             ref_hatch_env: reference
             os: ubuntu-latest
             py: "3.13"

@@ -20,6 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Free Threading :: 2 - Beta",
 ]
 requires-python = ">=3.11"
@@ -48,7 +49,8 @@ pyarrow = [
 pandas = [
     "pyarrow>=14.0.1",
     "pandas>=1.0.0,<3.0.0; python_version < '3.13'",
-    "pandas>=2.1.2,<3.0.0; python_version >= '3.13'",
+    "pandas>=2.1.2,<3.0.0; python_version >= '3.13' and python_version < '3.15'",
+    "pandas>=3.0.0; python_version >= '3.15'",
 ]
 test = [
     "pytest>=8",
@@ -310,7 +312,7 @@ PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 
 [[tool.hatch.envs.dev.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.14t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
 
 [tool.hatch.envs.dev.scripts]
 # Per-test retries come from addopts --reruns 2 (not a second whole-suite run).
@@ -333,7 +335,7 @@ skip-install = true
 dev-mode = false
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.14t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
@@ -355,7 +357,7 @@ no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_m
 template = "test"
 
 [[tool.hatch.envs.test-native-arrow.matrix]]
-python = ["3.13", "3.14t"]
+python = ["3.13", "3.15t"]
 
 [tool.hatch.envs.test-native-arrow.env-vars]
 SNOWFLAKE_TEST_USE_CORE_ARROW = "1"
@@ -366,7 +368,7 @@ template = "test"
 features = ["test", "dev", "pandas"]
 
 [[tool.hatch.envs.test-pandas.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.14t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
 
 [tool.hatch.envs.test-pandas.scripts]
 cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
