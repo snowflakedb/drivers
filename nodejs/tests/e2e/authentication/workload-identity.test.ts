@@ -1,4 +1,14 @@
-import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 import type { Connection, ConnectionOptions } from '../../types/sdk-types.js';
 import { createLiveConnection } from '../utils/fixtures.js';
 import getTestParameter from '../utils/getTestParameter.js';
@@ -12,6 +22,7 @@ import {
   TEST_CONNECTION_OPTIONS,
 } from '../utils/index.js';
 import { verifySimpleQuery } from '../utils/query.js';
+import { loginSuccess, logoutSuccess, WiremockServer } from '../utils/wiremock/index.js';
 
 type WorkloadIdentityProvider = NonNullable<ConnectionOptions['workloadIdentityProvider']>;
 
@@ -514,5 +525,72 @@ describe('Workload identity wrapper rules', () => {
             message: 'workloadIdentityImpersonationPath for AZURE is not supported',
           },
     );
+  });
+});
+
+// stubEnv(undefined) removes the key from process.env, which sf_core reads.
+// onTestFinished runs after each attempt, including retries, and after the
+// connection cleanup registered later in the test.
+function stubAwsRegionFallbackEnv(): void {
+  vi.stubEnv('AWS_REGION', undefined);
+  vi.stubEnv('AWS_DEFAULT_REGION', undefined);
+  vi.stubEnv('AWS_SESSION_TOKEN', undefined);
+  vi.stubEnv('AWS_PROFILE', undefined);
+  vi.stubEnv('AWS_ACCESS_KEY_ID', 'AKIATESTEXAMPLE');
+  vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-secret');
+  vi.stubEnv('AWS_EC2_METADATA_SERVICE_ENDPOINT', 'http://127.0.0.1:1');
+  vi.stubEnv('AWS_EC2_METADATA_DISABLED', 'true');
+  vi.stubEnv('SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES', 'localhost');
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+}
+
+describe('AWS WIF region fallback', () => {
+  let wiremock: WiremockServer;
+
+  beforeAll(async () => {
+    wiremock = await WiremockServer.spawn();
+  });
+
+  beforeEach(async () => {
+    await wiremock.reset();
+  });
+
+  afterAll(async () => {
+    await wiremock.destroy();
+  });
+
+  it('should fall back to us-east-1 when AWS metadata has no region', async () => {
+    stubAwsRegionFallbackEnv();
+    await wiremock.stub([loginSuccess(), logoutSuccess()]);
+
+    const connection = snowflake.createConnection({
+      account: 'test-account',
+      authenticator: 'WORKLOAD_IDENTITY',
+      workloadIdentityProvider: 'AWS',
+      ...wiremock.connectionOptions,
+    });
+
+    if (isRunningNewDriverWithBD('BD#139')) {
+      await connection.connectAsync();
+      onTestFinished(async () => {
+        await destroyConnectionAsync(connection);
+      });
+      const [loginRequest] = await wiremock.findRequests('/session/v1/login-request.*');
+      const token = JSON.parse(
+        Buffer.from(JSON.parse(loginRequest.body).data.TOKEN, 'base64').toString('utf8'),
+      ) as { url: string };
+      expect(token.url).toBe(
+        'https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15',
+      );
+    } else {
+      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+        name: 'Error',
+        message:
+          'Error making request to the metadata service: Error: connect ECONNREFUSED 127.0.0.1:1',
+      });
+      expect(await wiremock.findRequests('/session/v1/login-request.*')).toHaveLength(0);
+    }
   });
 });

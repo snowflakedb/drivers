@@ -2622,3 +2622,21 @@ behavior_differences:
       Both failures are login errors with name Error and code undefined. A token response that
       omits access_token reports "Failed to login: OAuth flow failed: Failed to decode OAuth token response".
       HTTP 400 invalid_client reports "Failed to login: OAuth flow failed: Identity Provider responded with error: invalid_client: The client secret supplied for a confidential client is invalid."
+
+  139:
+    name: 'AWS WIF defaults to us-east-1 when region discovery fails'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Without AWS_REGION, a failure to read the region from EC2 metadata rejects
+      WIF authentication with the metadata error.
+    new_driver_behavior: |
+      Region resolution checks AWS_REGION, AWS_DEFAULT_REGION, and EC2 metadata.
+      AWS_EC2_METADATA_SERVICE_ENDPOINT overrides the metadata address. If none
+      provides a region, authentication continues with us-east-1.
+    status_rationale: |
+      SNOW-4356822 resolves this: fail authentication when region discovery
+      finds nothing, instead of continuing with us-east-1.
