@@ -168,9 +168,7 @@ TEST_CASE("should handle disabling connection-level async", "[e2e][query][async]
 // ASYNC EXECUTION (POLLING)
 // =============================================================================
 
-// [flaky]: the old reference driver can abort (simba_abort / pthread_mutex_lock)
-// when this long-running async query races with parallel ctest workers.
-TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[e2e][query][async][flaky]") {
+TEST_CASE("should return SQL_STILL_EXECUTING for long query", "[e2e][query][async]") {
   // Given Snowflake client is logged in with async enabled
   Connection conn;
   auto stmt = conn.createStatement();
@@ -588,11 +586,7 @@ TEST_CASE("should return SQL_ERROR asynchronously for invalid SQL", "[e2e][query
   CHECK(get_sqlstate(stmt) == "42000");
 }
 
-// [flaky]: the old reference driver can abort (simba_abort / pthread_mutex_lock)
-// when a non-permitted call races the still-executing async query under parallel
-// ctest workers, crashing the test subprocess. Same class as the long-query async
-// case above. Tagged flaky so the blocking reference run is not destabilized.
-TEST_CASE("should reject non-permitted function call during async execution", "[e2e][query][async][flaky]") {
+TEST_CASE("should reject non-permitted function call during async execution", "[e2e][query][async]") {
   // Given Snowflake client is logged in with async enabled and a query in progress
   Connection conn;
   auto stmt = conn.createStatement();

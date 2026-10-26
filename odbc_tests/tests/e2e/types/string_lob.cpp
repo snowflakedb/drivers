@@ -95,7 +95,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at maximum 128 MB 
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at historical 16 MB limit",
-                 "[e2e][types][datatype][string][lob][flaky]") {
+                 "[e2e][types][datatype][string][lob]") {
   // Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
   // Given Snowflake client is logged in
 
