@@ -2,16 +2,15 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.util.List;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import org.apache.arrow.vector.complex.FixedSizeListVector;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 
 public class VectorTypeConverter extends AbstractArrowVectorConverter {
 
-  private final ArrowBackedColumn vector;
+  private final Column vector;
 
-  public VectorTypeConverter(
-      FixedSizeListVector valueVector, int vectorIndex, DataConversionContext context) {
+  public VectorTypeConverter(Column valueVector, int vectorIndex, DataConversionContext context) {
     super(SnowflakeType.ARRAY.name(), valueVector, vectorIndex, context);
-    this.vector = ArrowBackedColumn.wrap(valueVector);
+    this.vector = valueVector;
   }
 
   @Override

@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -12,6 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.sql.Types;
 import java.util.Arrays;
 import net.snowflake.client.internal.api.decorator.Telemetry;
@@ -170,6 +173,39 @@ class ResultSetFactoryTest {
     assertTrue(result.isAfterLast());
     assertEquals(2, result.getMetaData().getColumnCount());
     assertEquals("TABLE_SCHEM", result.getMetaData().getColumnName(1));
+  }
+
+  @Test
+  void shouldDecodeLittleEndianStreamPointer() {
+    byte[] bytes =
+        ByteBuffer.allocate(Long.BYTES)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .putLong(0x0123456789ABCDEFL)
+            .array();
+
+    assertEquals(0x0123456789ABCDEFL, ResultSetFactory.pointerFromBytes(bytes));
+  }
+
+  @Test
+  void shouldRoundTripStreamPointerValues() {
+    long[] values = {0L, 1L, -1L, 42L, Long.MAX_VALUE, Long.MIN_VALUE};
+    for (long value : values) {
+      byte[] bytes =
+          ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+      assertEquals(value, ResultSetFactory.pointerFromBytes(bytes));
+    }
+  }
+
+  @Test
+  void shouldInterpretStreamPointerBytesAsLittleEndian() {
+    long value = 0x0102030405060708L;
+    byte[] littleEndian =
+        ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+    byte[] bigEndian =
+        ByteBuffer.allocate(Long.BYTES).order(ByteOrder.BIG_ENDIAN).putLong(value).array();
+
+    assertEquals(value, ResultSetFactory.pointerFromBytes(littleEndian));
+    assertNotEquals(value, ResultSetFactory.pointerFromBytes(bigEndian));
   }
 
   private static CoreException driverException(String message) {

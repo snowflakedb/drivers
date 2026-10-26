@@ -15,22 +15,16 @@ import java.util.Random;
 import java.util.Set;
 import java.util.stream.Stream;
 import net.snowflake.client.internal.core.arrow.TestHelper;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import net.snowflake.client.internal.util.BinaryOutputFormat;
 import net.snowflake.client.internal.util.HexUtil;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class VarBinaryToBinaryConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   private final Random random = new Random();
 
   @Test
@@ -45,17 +39,14 @@ public class VarBinaryToBinaryConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "BINARY");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARBINARY.getType(), null, customFieldMeta);
-
-    VarBinaryVector vector = new VarBinaryVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.BINARY, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -84,7 +75,7 @@ public class VarBinaryToBinaryConverterTest extends BaseConverterTest {
         TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(index));
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @ParameterizedTest
@@ -93,11 +84,9 @@ public class VarBinaryToBinaryConverterTest extends BaseConverterTest {
       BinaryOutputFormat format, byte[] value, String expected) {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "BINARY");
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARBINARY.getType(), null, customFieldMeta);
 
-    try (VarBinaryVector vector = new VarBinaryVector("col_one", fieldType, allocator)) {
-      vector.setSafe(0, value);
+    try (Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.BINARY, customFieldMeta)) {
+      ColumnBuilder.set(vector, 0, value);
       DataConversionContext context =
           new DataConversionContext() {
             @Override

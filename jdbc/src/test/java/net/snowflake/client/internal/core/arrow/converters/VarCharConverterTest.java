@@ -19,19 +19,13 @@ import java.util.Set;
 import java.util.TimeZone;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 public class VarCharConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   private final Random random = new Random();
 
   @Test
@@ -46,17 +40,14 @@ public class VarCharConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARCHAR.getType(), null, customFieldMeta);
-
-    VarCharVector vector = new VarCharVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.UTF8, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i).getBytes(StandardCharsets.UTF_8));
+        ColumnBuilder.set(vector, i, expectedValues.get(i).getBytes(StandardCharsets.UTF_8));
       }
     }
 
@@ -82,7 +73,7 @@ public class VarCharConverterTest extends BaseConverterTest {
         assertArrayEquals(expectedValues.get(i).getBytes(StandardCharsets.UTF_8), bytesVal);
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -90,14 +81,11 @@ public class VarCharConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARCHAR.getType(), null, customFieldMeta);
-
-    VarCharVector vector = new VarCharVector("col_one", fieldType, allocator);
-    vector.setSafe(0, "0".getBytes(StandardCharsets.UTF_8));
-    vector.setSafe(1, "1".getBytes(StandardCharsets.UTF_8));
-    vector.setNull(2);
-    vector.setSafe(3, "5".getBytes(StandardCharsets.UTF_8));
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.UTF8, customFieldMeta);
+    ColumnBuilder.set(vector, 0, "0".getBytes(StandardCharsets.UTF_8));
+    ColumnBuilder.set(vector, 1, "1".getBytes(StandardCharsets.UTF_8));
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, "5".getBytes(StandardCharsets.UTF_8));
 
     ArrowVectorConverter converter = new VarCharConverter(vector, 0, this);
 
@@ -114,13 +102,10 @@ public class VarCharConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARCHAR.getType(), null, customFieldMeta);
-
-    VarCharVector vector = new VarCharVector("col_one", fieldType, allocator);
-    vector.setNull(0);
-    vector.setSafe(1, "2023-10-26".getBytes(StandardCharsets.UTF_8));
-    vector.setSafe(2, "abc".getBytes(StandardCharsets.UTF_8));
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.UTF8, customFieldMeta);
+    ColumnBuilder.setNull(vector, 0);
+    ColumnBuilder.set(vector, 1, "2023-10-26".getBytes(StandardCharsets.UTF_8));
+    ColumnBuilder.set(vector, 2, "abc".getBytes(StandardCharsets.UTF_8));
 
     ArrowVectorConverter converter = new VarCharConverter(vector, 0, this);
 
@@ -137,7 +122,7 @@ public class VarCharConverterTest extends BaseConverterTest {
   public void shouldDispatchStructuredTypeToVarCharConverterViaUtil(String logicalType)
       throws Exception {
     String json = "{\"k\":1}";
-    try (VarCharVector vector = structuredVector(logicalType, json)) {
+    try (Column vector = structuredVector(logicalType, json)) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 
       assertInstanceOf(VarCharConverter.class, converter);
@@ -150,7 +135,7 @@ public class VarCharConverterTest extends BaseConverterTest {
   @ParameterizedTest
   @ValueSource(strings = {"MAP", "ARRAY", "OBJECT"})
   public void shouldReturnNullForNullStructuredValue(String logicalType) throws Exception {
-    try (VarCharVector vector = structuredVector(logicalType, "{\"k\":1}")) {
+    try (Column vector = structuredVector(logicalType, "{\"k\":1}")) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 
       assertNull(converter.toString(1));
@@ -158,15 +143,13 @@ public class VarCharConverterTest extends BaseConverterTest {
     }
   }
 
-  private VarCharVector structuredVector(String logicalType, String json) {
+  private Column structuredVector(String logicalType, String json) {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", logicalType);
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.VARCHAR.getType(), null, customFieldMeta);
-    VarCharVector vector = new VarCharVector("col_structured", fieldType, allocator);
-    vector.setSafe(0, json.getBytes(StandardCharsets.UTF_8));
-    vector.setNull(1);
-    vector.setValueCount(2);
+    Column vector = ColumnBuilder.of("col_structured", Column.PhysicalKind.UTF8, customFieldMeta);
+    ColumnBuilder.set(vector, 0, json.getBytes(StandardCharsets.UTF_8));
+    ColumnBuilder.setNull(vector, 1);
+    ColumnBuilder.setValueCount(vector, 2);
     return vector;
   }
 }

@@ -1,39 +1,27 @@
 package net.snowflake.client.internal.core.arrow.cursor;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowStreamReader;
-import org.apache.arrow.vector.ipc.ArrowStreamWriter;
+import java.util.ArrayList;
+import java.util.List;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 
 final class ArrowCursorTestUtils {
   private ArrowCursorTestUtils() {}
 
-  static TestResources createIntResources(int[]... batches) throws IOException {
-    RootAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-    ByteArrayOutputStream output = new ByteArrayOutputStream();
-    try (IntVector vector = new IntVector("col", allocator);
-        VectorSchemaRoot root = VectorSchemaRoot.of(vector);
-        ArrowStreamWriter writer = new ArrowStreamWriter(root, null, output)) {
-      writer.start();
-      for (int[] batch : batches) {
-        vector.allocateNew(batch.length);
-        for (int rowIndex = 0; rowIndex < batch.length; rowIndex++) {
-          vector.setSafe(rowIndex, batch[rowIndex]);
-        }
-        vector.setValueCount(batch.length);
-        root.setRowCount(batch.length);
-        writer.writeBatch();
-        vector.clear();
+  static TestResources createIntResources(int[]... batches) {
+    List<ColumnBatch> roots = new ArrayList<>();
+    for (int[] batch : batches) {
+      Column vector = ColumnBuilder.of("col", Column.PhysicalKind.INT32, null);
+      for (int rowIndex = 0; rowIndex < batch.length; rowIndex++) {
+        ColumnBuilder.set(vector, rowIndex, batch[rowIndex]);
       }
-      writer.end();
+      ColumnBuilder.setValueCount(vector, batch.length);
+      ColumnBatch root = ColumnBatch.of(vector);
+      root.setRowCount(batch.length);
+      roots.add(root);
     }
-    ArrowStreamReader reader =
-        new ArrowStreamReader(new ByteArrayInputStream(output.toByteArray()), allocator);
-    return new TestResources(new ArrowResources(null, allocator, reader));
+    return new TestResources(new ArrowResources(new ColumnBatchListReader(roots)));
   }
 
   static final class TestResources implements AutoCloseable {
@@ -48,10 +36,8 @@ final class ArrowCursorTestUtils {
     }
 
     @Override
-    public void close() throws Exception {
-      resources.closeReader();
-      resources.closeStream();
-      resources.closeAllocator();
+    public void close() {
+      resources.closeAll();
     }
   }
 }

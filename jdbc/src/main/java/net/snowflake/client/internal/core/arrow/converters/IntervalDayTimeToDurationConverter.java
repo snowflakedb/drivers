@@ -4,7 +4,7 @@ import java.time.Duration;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
-import org.apache.arrow.vector.ValueVector;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 
 /**
  * Converter for the {@code INTERVAL DAY TO TIME} logical type. Snowflake materializes the interval
@@ -14,13 +14,13 @@ import org.apache.arrow.vector.ValueVector;
  */
 public class IntervalDayTimeToDurationConverter extends AbstractArrowVectorConverter {
 
-  private final ArrowBackedColumn vector;
+  private final Column vector;
   private static final long NANOS_IN_SECOND = 1_000_000_000;
 
   public IntervalDayTimeToDurationConverter(
-      ValueVector vector, int columnIndex, DataConversionContext context) {
+      Column vector, int columnIndex, DataConversionContext context) {
     super(SnowflakeType.INTERVAL_DAY_TIME.name(), vector, columnIndex, context);
-    this.vector = ArrowBackedColumn.wrap(vector);
+    this.vector = vector;
   }
 
   @Override

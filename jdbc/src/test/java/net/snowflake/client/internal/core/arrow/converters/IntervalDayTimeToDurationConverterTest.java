@@ -9,12 +9,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -23,12 +19,6 @@ import org.junit.jupiter.api.Test;
  */
 public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
   private static final long NANOS_IN_SECOND = 1_000_000_000L;
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
 
   private static Map<String, String> intervalFieldMeta() {
     Map<String, String> meta = new HashMap<>();
@@ -36,18 +26,17 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
     return meta;
   }
 
-  private BigIntVector createVector(Long... nanos) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, intervalFieldMeta());
-    BigIntVector vector = new BigIntVector("col_interval_day_time", fieldType, allocator);
+  private Column createVector(Long... nanos) {
+    Column vector =
+        ColumnBuilder.of("col_interval_day_time", Column.PhysicalKind.INT64, intervalFieldMeta());
     for (int i = 0; i < nanos.length; i++) {
       if (nanos[i] == null) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
       } else {
-        vector.setSafe(i, nanos[i]);
+        ColumnBuilder.set(vector, i, nanos[i]);
       }
     }
-    vector.setValueCount(nanos.length);
+    ColumnBuilder.setValueCount(vector, nanos.length);
     return vector;
   }
 
@@ -55,7 +44,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
   public void shouldConvertPositiveIntervalToDuration() throws Exception {
     // 1 day 2 hours 3 minutes 4.5 seconds expressed in nanoseconds.
     long totalNanos = (((24L + 2) * 3600) + (3 * 60) + 4) * NANOS_IN_SECOND + 500_000_000L;
-    BigIntVector vector = createVector(totalNanos);
+    Column vector = createVector(totalNanos);
     try {
       IntervalDayTimeToDurationConverter converter =
           new IntervalDayTimeToDurationConverter(vector, 0, this);
@@ -74,7 +63,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
     // Snowflake stores negative intervals as negative total-nanos; the converter must round-trip
     // to a negative Duration (it negates a positive Duration to avoid Duration.ofSeconds overflow).
     long totalNanos = -(90L * NANOS_IN_SECOND + 250_000_000L); // -1 min 30.25 s
-    BigIntVector vector = createVector(totalNanos);
+    Column vector = createVector(totalNanos);
     try {
       IntervalDayTimeToDurationConverter converter =
           new IntervalDayTimeToDurationConverter(vector, 0, this);
@@ -91,7 +80,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldConvertZeroIntervalToZeroDuration() throws Exception {
-    BigIntVector vector = createVector(0L);
+    Column vector = createVector(0L);
     try {
       IntervalDayTimeToDurationConverter converter =
           new IntervalDayTimeToDurationConverter(vector, 0, this);
@@ -107,7 +96,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
   public void shouldConvertSubSecondIntervalToDuration() throws Exception {
     // A value smaller than one second must not lose its nanosecond fraction.
     long totalNanos = 123_456_789L;
-    BigIntVector vector = createVector(totalNanos);
+    Column vector = createVector(totalNanos);
     try {
       IntervalDayTimeToDurationConverter converter =
           new IntervalDayTimeToDurationConverter(vector, 0, this);
@@ -122,7 +111,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldReturnNullForNullInterval() throws Exception {
-    BigIntVector vector = createVector(NANOS_IN_SECOND, null);
+    Column vector = createVector(NANOS_IN_SECOND, null);
     try {
       IntervalDayTimeToDurationConverter converter =
           new IntervalDayTimeToDurationConverter(vector, 0, this);
@@ -137,7 +126,7 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldDispatchViaConverterUtil() throws Exception {
-    BigIntVector vector = createVector(5L * NANOS_IN_SECOND);
+    Column vector = createVector(5L * NANOS_IN_SECOND);
     try {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 

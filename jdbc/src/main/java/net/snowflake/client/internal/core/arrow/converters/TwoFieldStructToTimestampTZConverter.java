@@ -9,11 +9,10 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
 import net.snowflake.client.internal.jdbc.SnowflakeTimeWithTimezone;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.ValueVector;
 
 /**
  * Converter from a two-field struct ({@code epoch} seconds + {@code timezone} index) to {@code
@@ -31,19 +30,20 @@ import org.apache.arrow.vector.ValueVector;
  * valid timezone index for {@code TIMESTAMP_TZ}, so that branch is dropped here.
  */
 public class TwoFieldStructToTimestampTZConverter extends AbstractArrowVectorConverter {
-  private final ArrowBackedColumn structVector;
-  private final ArrowBackedColumn epochs;
-  private final ArrowBackedColumn timeZoneIndices;
+  private final Column structVector;
+  private final Column epochs;
+  private final Column timeZoneIndices;
   private final int scale;
 
   public TwoFieldStructToTimestampTZConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context, int scale) {
+      Column fieldVector, int columnIndex, DataConversionContext context, int scale) {
     // Legacy passes TIMESTAMP_LTZ.name() here; kept verbatim so INVALID_VALUE_CONVERT error
     // messages render identically to snowflake-jdbc.
     super(SnowflakeType.TIMESTAMP_LTZ.name(), fieldVector, columnIndex, context);
-    this.structVector = ArrowBackedColumn.wrap(fieldVector);
-    this.epochs = structVector.child(FIELD_NAME_EPOCH, BigIntVector.class);
-    this.timeZoneIndices = structVector.child(FIELD_NAME_TIMEZONE, IntVector.class);
+    this.structVector = fieldVector;
+    this.epochs = requireStructChildKind(structVector, FIELD_NAME_EPOCH, PhysicalKind.INT64);
+    this.timeZoneIndices =
+        requireStructChildKind(structVector, FIELD_NAME_TIMEZONE, PhysicalKind.INT32);
     this.scale = scale;
   }
 

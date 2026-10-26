@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
@@ -7,11 +9,12 @@ import net.snowflake.client.internal.api.implementation.connection.InternalSnowf
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
-import net.snowflake.client.internal.core.arrow.ArrowStreamFactory;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
+import net.snowflake.client.internal.core.arrow.cursor.NativeBatchReader;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.NativeArrowStream;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ArrowArrayStreamPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseFetchChunkResponse;
@@ -171,13 +174,20 @@ public class ResultSetFactory {
       long totalRowCount,
       DataConversionContext conversionContext) {
     byte[] streamPointerBytes = arrayStreamPtr.getValue().toByteArray();
-    long pointer = ArrowStreamFactory.pointerFromBytes(streamPointerBytes);
-    ArrowResources arrowResources = ArrowStreamFactory.createFromPointer(pointer);
+    long pointer = pointerFromBytes(streamPointerBytes);
     SnowflakeResultSetMetaDataImpl metaData =
         SnowflakeResultSetMetaDataImpl.from(queryId, columns, conversionContext);
-    ArrowRowReader rowReader = new ArrowRowReader(arrowResources, conversionContext, totalRowCount);
+    RowReader rowReader =
+        new ArrowRowReader(
+            new ArrowResources(new NativeBatchReader(NativeArrowStream.open(pointer))),
+            conversionContext,
+            totalRowCount);
     return new SnowflakeResultSetImpl(
         statement, queryId, rowReader, metaData, false, resultSetChunksProvider);
+  }
+
+  static long pointerFromBytes(byte[] bytes) {
+    return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong();
   }
 
   /**

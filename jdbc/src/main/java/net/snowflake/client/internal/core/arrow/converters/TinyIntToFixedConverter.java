@@ -5,16 +5,16 @@ import java.nio.ByteBuffer;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 public class TinyIntToFixedConverter extends AbstractArrowVectorConverter {
-  protected final ArrowBackedColumn tinyColumn;
+  protected final Column tinyColumn;
   protected int sfScale;
   protected ByteBuffer byteBuf = ByteBuffer.allocate(Byte.BYTES);
 
   public TinyIntToFixedConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context) {
+      Column fieldVector, int columnIndex, DataConversionContext context) {
     super(
         String.format(
             "%s(%s,%s)",
@@ -24,7 +24,7 @@ public class TinyIntToFixedConverter extends AbstractArrowVectorConverter {
         fieldVector,
         columnIndex,
         context);
-    this.tinyColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.tinyColumn = fieldVector;
   }
 
   @Override

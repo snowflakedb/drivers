@@ -5,39 +5,32 @@ import static net.snowflake.client.api.exception.ErrorCode.INTERNAL_ERROR;
 import java.io.Closeable;
 import java.io.IOException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
-import org.apache.arrow.c.ArrowArrayStream;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowReader;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
 
 public final class ArrowResources {
-  private ArrowArrayStream stream;
-  private ArrowReader reader;
-  private BufferAllocator allocator;
-  private VectorSchemaRoot currentRoot;
+  private ArrowBatchReader reader;
+  private ColumnBatch currentRoot;
 
-  public ArrowResources(ArrowArrayStream stream, BufferAllocator allocator, ArrowReader reader) {
-    this.stream = stream;
-    this.allocator = allocator;
+  public ArrowResources(ArrowBatchReader reader) {
     this.reader = reader;
   }
 
-  public VectorSchemaRoot getActiveRoot() {
+  public ColumnBatch getActiveRoot() {
     if (currentRoot != null) {
       return currentRoot;
     }
     try {
-      return reader.getVectorSchemaRoot();
+      return reader.getBatch();
     } catch (IOException e) {
       throw SFSQLException.fromErrorCode(INTERNAL_ERROR, "Unable to read Arrow schema", e);
     }
   }
 
-  void setCurrentRoot(VectorSchemaRoot root) {
+  void setCurrentRoot(ColumnBatch root) {
     currentRoot = root;
   }
 
-  VectorSchemaRoot getCurrentRoot() {
+  ColumnBatch getCurrentRoot() {
     return currentRoot;
   }
 
@@ -45,15 +38,13 @@ public final class ArrowResources {
     return reader.loadNextBatch();
   }
 
-  VectorSchemaRoot getReaderRoot() throws IOException {
-    return reader.getVectorSchemaRoot();
+  ColumnBatch getReaderRoot() throws IOException {
+    return reader.getBatch();
   }
 
   public void closeAll() {
     SFSQLException failure = null;
     failure = closeResource(failure, this::closeReader);
-    failure = closeResource(failure, this::closeStream);
-    failure = closeResource(failure, this::closeAllocator);
     if (failure != null) {
       throw failure;
     }
@@ -65,23 +56,9 @@ public final class ArrowResources {
     }
   }
 
-  public void closeStream() {
-    if (stream != null) {
-      stream.close();
-    }
-  }
-
-  public void closeAllocator() {
-    if (allocator != null) {
-      allocator.close();
-    }
-  }
-
   public void reset() {
     currentRoot = null;
     reader = null;
-    stream = null;
-    allocator = null;
   }
 
   private SFSQLException appendCloseFailure(

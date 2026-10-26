@@ -2,7 +2,7 @@ package net.snowflake.client.internal.core.arrow.cursor;
 
 import java.io.IOException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
-import org.apache.arrow.vector.VectorSchemaRoot;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
 
 public final class ArrowBatchManager {
   private final CursorState cursor;
@@ -30,9 +30,9 @@ public final class ArrowBatchManager {
     }
   }
 
-  private VectorSchemaRoot loadNextNonEmptyBatch() throws IOException {
+  private ColumnBatch loadNextNonEmptyBatch() throws IOException {
     while (resources.loadNextBatch()) {
-      VectorSchemaRoot root = resources.getReaderRoot();
+      ColumnBatch root = resources.getReaderRoot();
       if (root.getRowCount() > 0) {
         return root;
       }
@@ -41,14 +41,14 @@ public final class ArrowBatchManager {
   }
 
   private boolean advanceToNextBatch() throws IOException {
-    VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
+    schema.resetConverterCache();
+    ColumnBatch nextRoot = loadNextNonEmptyBatch();
     if (nextRoot == null) {
       cursor.setAfterLast();
       return false;
     }
     resources.setCurrentRoot(nextRoot);
     cursor.startNewBatch(resources.getCurrentRoot().getRowCount());
-    schema.resetConverterCache();
     return true;
   }
 }

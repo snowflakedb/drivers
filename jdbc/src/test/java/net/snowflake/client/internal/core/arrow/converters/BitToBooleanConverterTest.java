@@ -12,17 +12,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class BitToBooleanConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   private final Random random = new Random();
 
   @Test
@@ -37,16 +31,14 @@ public class BitToBooleanConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "BOOLEAN");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.BIT.getType(), null, customFieldMeta);
-
-    BitVector vector = new BitVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.BOOL, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i) ? 1 : 0);
+        ColumnBuilder.set(vector, i, expectedValues.get(i) ? 1 : 0);
       }
     }
 
@@ -79,6 +71,6 @@ public class BitToBooleanConverterTest extends BaseConverterTest {
         }
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 }

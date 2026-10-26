@@ -4,21 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.complex.StructVector;
-import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.apache.arrow.vector.types.pojo.Schema;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -45,12 +35,6 @@ import org.junit.jupiter.api.Test;
  * assert for them.
  */
 public class TimestampOverflowConverterTest extends BaseConverterTest {
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
 
   // Positive overflow: Long.MAX_VALUE seconds is > Long.MAX_VALUE / 1000, so isTimestampOverflow
   // trips. The 9-digit nanosecond fraction makes the expected BigDecimal rendering unambiguous.
@@ -65,9 +49,9 @@ public class TimestampOverflowConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldRenderSecondsBigDecimalAndNullGettersWhenNtzOverflows() throws Exception {
-    try (VectorSchemaRoot root =
+    try (ColumnBatch root =
         twoFieldRoot("TIMESTAMP_NTZ", OVERFLOW_EPOCH_SECONDS, OVERFLOW_FRACTION_NANOS)) {
-      StructVector vector = (StructVector) root.getVector("col");
+      Column vector = root.column("col");
       TwoFieldStructToTimestampNTZConverter converter =
           new TwoFieldStructToTimestampNTZConverter(vector, 0, this, 9);
 
@@ -86,9 +70,9 @@ public class TimestampOverflowConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldRenderSecondsBigDecimalAndNullGettersWhenLtzOverflows() throws Exception {
-    try (VectorSchemaRoot root =
+    try (ColumnBatch root =
         twoFieldRoot("TIMESTAMP_LTZ", OVERFLOW_EPOCH_SECONDS, OVERFLOW_FRACTION_NANOS)) {
-      StructVector vector = (StructVector) root.getVector("col");
+      Column vector = root.column("col");
       TwoFieldStructToTimestampLTZConverter converter =
           new TwoFieldStructToTimestampLTZConverter(vector, 0, this, 9);
 
@@ -102,10 +86,10 @@ public class TimestampOverflowConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldRenderSecondsBigDecimalAndNullGettersWhenTzOverflows() throws Exception {
-    try (VectorSchemaRoot root =
+    try (ColumnBatch root =
         threeFieldRoot(
             "TIMESTAMP_TZ", OVERFLOW_EPOCH_SECONDS, OVERFLOW_FRACTION_NANOS, UTC_TIMEZONE_INDEX)) {
-      StructVector vector = (StructVector) root.getVector("col");
+      Column vector = root.column("col");
       ThreeFieldStructToTimestampTZConverter converter =
           new ThreeFieldStructToTimestampTZConverter(vector, 0, this, 9);
 
@@ -120,68 +104,45 @@ public class TimestampOverflowConverterTest extends BaseConverterTest {
   /**
    * Builds a single-row {@code {epoch, fraction}} struct with the given overflow value at index 0.
    */
-  private VectorSchemaRoot twoFieldRoot(String logicalType, long epoch, int fraction) {
-    VectorSchemaRoot root = VectorSchemaRoot.create(twoFieldSchema(logicalType), allocator);
-    StructVector vector = (StructVector) root.getVector("col");
-    vector.allocateNew();
-    ((BigIntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_EPOCH))
-        .setSafe(0, epoch);
-    ((IntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_FRACTION))
-        .setSafe(0, fraction);
-    vector.setIndexDefined(0);
-    vector.setValueCount(1);
-    root.setRowCount(1);
-    return root;
+  private ColumnBatch twoFieldRoot(String logicalType, long epoch, int fraction) {
+    return timestampRoot(logicalType, epoch, fraction, null);
   }
 
   /**
    * Builds a single-row {@code {epoch, fraction, timezone}} struct with the given overflow value at
    * index 0.
    */
-  private VectorSchemaRoot threeFieldRoot(
+  private ColumnBatch threeFieldRoot(
       String logicalType, long epoch, int fraction, int timezoneIndex) {
-    VectorSchemaRoot root = VectorSchemaRoot.create(threeFieldSchema(logicalType), allocator);
-    StructVector vector = (StructVector) root.getVector("col");
-    vector.allocateNew();
-    ((BigIntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_EPOCH))
-        .setSafe(0, epoch);
-    ((IntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_FRACTION))
-        .setSafe(0, fraction);
-    ((IntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_TIMEZONE))
-        .setSafe(0, timezoneIndex);
-    vector.setIndexDefined(0);
-    vector.setValueCount(1);
-    root.setRowCount(1);
-    return root;
+    return timestampRoot(logicalType, epoch, fraction, timezoneIndex);
   }
 
-  private static Schema twoFieldSchema(String logicalType) {
-    return structSchema(
-        logicalType,
-        Arrays.asList(
-            signedIntField(AbstractArrowVectorConverter.FIELD_NAME_EPOCH, 64),
-            signedIntField(AbstractArrowVectorConverter.FIELD_NAME_FRACTION, 32)));
-  }
-
-  private static Schema threeFieldSchema(String logicalType) {
-    return structSchema(
-        logicalType,
-        Arrays.asList(
-            signedIntField(AbstractArrowVectorConverter.FIELD_NAME_EPOCH, 64),
-            signedIntField(AbstractArrowVectorConverter.FIELD_NAME_FRACTION, 32),
-            signedIntField(AbstractArrowVectorConverter.FIELD_NAME_TIMEZONE, 32)));
-  }
-
-  private static Schema structSchema(String logicalType, java.util.List<Field> children) {
+  private ColumnBatch timestampRoot(
+      String logicalType, long epoch, int fraction, Integer timezoneIndex) {
     Map<String, String> metadata = new HashMap<>();
     metadata.put("logicalType", logicalType);
-    Field structField =
-        new Field("col", new FieldType(true, ArrowType.Struct.INSTANCE, null, metadata), children);
-    return new Schema(Collections.singletonList(structField));
-  }
-
-  private static Field signedIntField(String name, int bitWidth) {
-    return new Field(
-        name, new FieldType(true, new ArrowType.Int(bitWidth, true), null, null), null);
+    Column epochs =
+        ColumnBuilder.of(
+            AbstractArrowVectorConverter.FIELD_NAME_EPOCH, Column.PhysicalKind.INT64, null);
+    Column fractions =
+        ColumnBuilder.of(
+            AbstractArrowVectorConverter.FIELD_NAME_FRACTION, Column.PhysicalKind.INT32, null);
+    ColumnBuilder.set(epochs, 0, epoch);
+    ColumnBuilder.set(fractions, 0, fraction);
+    Column vector;
+    if (timezoneIndex == null) {
+      vector = ColumnBuilder.struct("col", metadata, epochs, fractions);
+    } else {
+      Column timezone =
+          ColumnBuilder.of(
+              AbstractArrowVectorConverter.FIELD_NAME_TIMEZONE, Column.PhysicalKind.INT32, null);
+      ColumnBuilder.set(timezone, 0, timezoneIndex);
+      vector = ColumnBuilder.struct("col", metadata, epochs, fractions, timezone);
+    }
+    ColumnBuilder.setDefined(vector, 0);
+    ColumnBuilder.setValueCount(vector, 1);
+    ColumnBatch root = ColumnBatch.of(vector);
+    root.setRowCount(1);
+    return root;
   }
 }

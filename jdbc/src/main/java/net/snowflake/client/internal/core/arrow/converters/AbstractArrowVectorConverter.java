@@ -11,8 +11,9 @@ import java.util.TimeZone;
 import lombok.Getter;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
   /** Struct child holding seconds since epoch. */
@@ -25,19 +26,43 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
   static final String FIELD_NAME_TIMEZONE = "timezone";
 
   protected String logicalTypeStr;
-  private final ValueVector valueVector;
+  private final Column valueVector;
   protected final DataConversionContext context;
   protected final int columnIndex;
 
   AbstractArrowVectorConverter(
-      String logicalTypeStr,
-      ValueVector valueVector,
-      int vectorIndex,
-      DataConversionContext context) {
+      String logicalTypeStr, Column valueVector, int vectorIndex, DataConversionContext context) {
     this.logicalTypeStr = logicalTypeStr;
     this.valueVector = valueVector;
     this.columnIndex = vectorIndex + 1;
     this.context = context;
+  }
+
+  /**
+   * Resolves a named struct child and fails if it is missing or has a kind the enclosing converter
+   * cannot decode. The converter is built once, on the first read of the column, and reused after
+   * that, so a schema mismatch surfaces on that first read.
+   */
+  static Column requireStructChildKind(Column parent, String childName, PhysicalKind expected) {
+    Column child = parent.child(childName);
+    if (child == null) {
+      throw new SFSQLException(
+          ErrorCode.INTERNAL_ERROR,
+          "Arrow struct column " + parent.getField().getName() + " is missing child " + childName);
+    }
+    if (child.physicalKind() != expected) {
+      throw new SFSQLException(
+          ErrorCode.INTERNAL_ERROR,
+          "Arrow struct column "
+              + parent.getField().getName()
+              + " child "
+              + childName
+              + " has kind "
+              + child.physicalKind()
+              + ", expected "
+              + expected);
+    }
+    return child;
   }
 
   @Override

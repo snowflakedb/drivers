@@ -16,15 +16,11 @@ import java.util.TimeZone;
 import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.DateDayVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class DateConverterTest extends BaseConverterTest {
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
 
   private static Map<String, String> dateFieldMeta() {
     Map<String, String> meta = new HashMap<>();
@@ -32,14 +28,12 @@ public class DateConverterTest extends BaseConverterTest {
     return meta;
   }
 
-  private DateDayVector createVector(int... epochDays) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.DATEDAY.getType(), null, dateFieldMeta());
-    DateDayVector vector = new DateDayVector("col_date", fieldType, allocator);
+  private Column createVector(int... epochDays) {
+    Column vector = ColumnBuilder.of("col_date", Column.PhysicalKind.DATE32, dateFieldMeta());
     for (int i = 0; i < epochDays.length; i++) {
-      vector.setSafe(i, epochDays[i]);
+      ColumnBuilder.set(vector, i, epochDays[i]);
     }
-    vector.setValueCount(epochDays.length);
+    ColumnBuilder.setValueCount(vector, epochDays.length);
     return vector;
   }
 
@@ -50,7 +44,7 @@ public class DateConverterTest extends BaseConverterTest {
     int day19700101 = 0;
     int day19991231 = (int) LocalDate.of(1999, 12, 31).toEpochDay();
 
-    DateDayVector vector = createVector(day20240115, day19700101, day19991231);
+    Column vector = createVector(day20240115, day19700101, day19991231);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -75,7 +69,7 @@ public class DateConverterTest extends BaseConverterTest {
     int day15821015 = (int) LocalDate.of(1582, 10, 15).toEpochDay();
     int[] days = {day00010101, day01000301, day04000229, day15821004, day15821015};
 
-    DateDayVector vector = createVector(days);
+    Column vector = createVector(days);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -102,12 +96,10 @@ public class DateConverterTest extends BaseConverterTest {
 
   @Test
   public void testNullHandling() throws Exception {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.DATEDAY.getType(), null, dateFieldMeta());
-    DateDayVector vector = new DateDayVector("col_date", fieldType, allocator);
-    vector.setSafe(0, (int) LocalDate.of(2024, 1, 15).toEpochDay());
-    vector.setNull(1);
-    vector.setValueCount(2);
+    Column vector = ColumnBuilder.of("col_date", Column.PhysicalKind.DATE32, dateFieldMeta());
+    ColumnBuilder.set(vector, 0, (int) LocalDate.of(2024, 1, 15).toEpochDay());
+    ColumnBuilder.setNull(vector, 1);
+    ColumnBuilder.setValueCount(vector, 2);
 
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
@@ -131,7 +123,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testToObject() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -146,7 +138,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testToTimestamp() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -168,7 +160,7 @@ public class DateConverterTest extends BaseConverterTest {
   public void shouldNotShiftObjectOrStringWhenFormatFlagSetButTimestampHonorsCalendar()
       throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     TimeZone sessionTz = TimeZone.getTimeZone("Asia/Tokyo");
     TimeZone utc = TimeZone.getTimeZone("UTC");
     // Runtime flag on (profile DATE_WITH_TZ=t) but the connection-time default stays true,
@@ -211,7 +203,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testNumericConversions() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -230,7 +222,7 @@ public class DateConverterTest extends BaseConverterTest {
     // Epoch day for 2024-01-15 is 19737, which is within Short.MAX_VALUE (32767),
     // so use a later date whose epoch day definitely overflows a short
     int epochDay = (int) LocalDate.of(2060, 1, 1).toEpochDay(); // ~32873, > Short.MAX_VALUE
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -243,7 +235,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testToShortInRange() throws Exception {
     // Epoch day 100 (1970-04-11) is well within short range
-    DateDayVector vector = createVector(100);
+    Column vector = createVector(100);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -256,7 +248,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testToBooleanThrows() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -268,11 +260,9 @@ public class DateConverterTest extends BaseConverterTest {
 
   @Test
   public void testConverterDispatchViaUtil() throws Exception {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.DATEDAY.getType(), null, dateFieldMeta());
-    DateDayVector vector = new DateDayVector("col_date", fieldType, allocator);
-    vector.setSafe(0, (int) LocalDate.of(2024, 1, 15).toEpochDay());
-    vector.setValueCount(1);
+    Column vector = ColumnBuilder.of("col_date", Column.PhysicalKind.DATE32, dateFieldMeta());
+    ColumnBuilder.set(vector, 0, (int) LocalDate.of(2024, 1, 15).toEpochDay());
+    ColumnBuilder.setValueCount(vector, 1);
 
     try {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
@@ -286,7 +276,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void testToStringDefaultFormat() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -299,7 +289,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void shouldIgnoreTimezoneWhenNotFormatted() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     try {
       DateConverter converter = new DateConverter(vector, 0, this);
 
@@ -320,7 +310,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void shouldApplyTimezoneShiftWhenFormatted() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     // Session timezone Asia/Tokyo, JVM-side request UTC: a non-zero offset must be applied,
     // matching ArrowDateUtil.getDate(day, jvmTz, sessionTz).
     TimeZone sessionTz = TimeZone.getTimeZone("Asia/Tokyo");
@@ -350,7 +340,7 @@ public class DateConverterTest extends BaseConverterTest {
   @Test
   public void shouldHonorSessionDateFormatInToString() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
-    DateDayVector vector = createVector(epochDay);
+    Column vector = createVector(epochDay);
     SnowflakeDateTimeFormat monFormat = SnowflakeDateTimeFormat.fromSqlFormat("DD-MON-YYYY");
     DataConversionContext ctx =
         new DataConversionContext() {

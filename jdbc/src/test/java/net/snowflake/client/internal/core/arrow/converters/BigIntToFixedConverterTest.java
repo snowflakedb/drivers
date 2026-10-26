@@ -17,17 +17,11 @@ import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class BigIntToFixedConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   /** Random seed */
   private final Random random = new Random();
 
@@ -45,17 +39,14 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -85,7 +76,7 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
         assertEquals(longVal, bb.getLong());
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -102,17 +93,14 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -137,7 +125,7 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
       }
     }
 
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -147,11 +135,8 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 123456789L);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 123456789L);
 
     final ArrowVectorConverter converter = new BigIntToScaledFixedConverter(vector, 0, this, 3);
 
@@ -165,7 +150,7 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toTime(0));
     TestHelper.assertSFException(
         invalidConversionErrorCode, () -> converter.toTimestamp(0, TimeZone.getDefault()));
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -175,13 +160,9 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    // test value which is out of range of int/short/byte
-    BigIntVector vectorFoo = new BigIntVector("col_one", fieldType, allocator);
-    vectorFoo.setSafe(0, 2147483650L);
-    vectorFoo.setSafe(1, -2147483650L);
+    Column vectorFoo = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
+    ColumnBuilder.set(vectorFoo, 0, 2147483650L);
+    ColumnBuilder.set(vectorFoo, 1, -2147483650L);
 
     final ArrowVectorConverter converterFoo = new BigIntToFixedConverter(vectorFoo, 0, this);
 
@@ -191,12 +172,12 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toInt(1));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toShort(1));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toByte(1));
-    vectorFoo.clear();
+    ColumnBuilder.clear(vectorFoo);
 
     // test value which is in range of byte, all get method should return
-    BigIntVector vectorBar = new BigIntVector("col_one", fieldType, allocator);
-    vectorBar.setSafe(0, 10L);
-    vectorBar.setSafe(1, -10L);
+    Column vectorBar = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
+    ColumnBuilder.set(vectorBar, 0, 10L);
+    ColumnBuilder.set(vectorBar, 1, -10L);
 
     final ArrowVectorConverter converterBar = new BigIntToFixedConverter(vectorBar, 0, this);
 
@@ -206,7 +187,7 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     assertEquals((short) -10, converterBar.toShort(1));
     assertEquals(10, converterBar.toInt(0));
     assertEquals(-10, converterBar.toInt(1));
-    vectorBar.clear();
+    ColumnBuilder.clear(vectorBar);
   }
 
   @Test
@@ -216,14 +197,11 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     ArrowVectorConverter converter = new BigIntToFixedConverter(vector, 0, this);
 
@@ -242,14 +220,11 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
-
-    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     final ArrowVectorConverter converter = new BigIntToScaledFixedConverter(vector, 0, this, 3);
 

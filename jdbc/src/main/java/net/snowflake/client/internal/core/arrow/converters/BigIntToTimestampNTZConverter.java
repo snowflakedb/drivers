@@ -10,9 +10,9 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.jdbc.SnowflakeTimeWithTimezone;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 /**
  * Converter from a compact {@code Int64} (scaled epoch) to {@code TIMESTAMP_NTZ}. The stored value
@@ -23,14 +23,14 @@ import org.apache.arrow.vector.ValueVector;
 public class BigIntToTimestampNTZConverter extends AbstractArrowVectorConverter {
   private static final TimeZone NTZ = TimeZone.getTimeZone("UTC");
 
-  private final ArrowBackedColumn bigColumn;
+  private final Column bigColumn;
   private final int scale;
   private final ByteBuffer byteBuf = ByteBuffer.allocate(Long.BYTES);
 
   public BigIntToTimestampNTZConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context, int scale) {
+      Column fieldVector, int columnIndex, DataConversionContext context, int scale) {
     super(SnowflakeType.TIMESTAMP_NTZ.name(), fieldVector, columnIndex, context);
-    this.bigColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.bigColumn = fieldVector;
     this.scale = scale;
   }
 

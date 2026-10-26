@@ -9,26 +9,27 @@ import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 /**
- * Converts epoch days to JDBC types, mirroring snowflake-jdbc's {@code DateConverter}.
- * Timezone-aware materialization (and the Julian→Gregorian correction for pre-1582-10-05 dates) is
- * gated on {@code JDBC_FORMAT_DATE_WITH_TIMEZONE}; see {@link DataConversionContext}.
+ * Converts an Arrow {@link Column} (epoch days) to JDBC types, mirroring snowflake-jdbc's {@code
+ * DateConverter}. Timezone-aware materialization (and the Julian→Gregorian correction for
+ * pre-1582-10-05 dates) is gated on {@code JDBC_FORMAT_DATE_WITH_TIMEZONE}; see {@link
+ * DataConversionContext}.
  */
 public class DateConverter extends AbstractArrowVectorConverter {
   private static final TimeZone TIME_ZONE_UTC = TimeZone.getTimeZone("UTC");
 
-  private final ArrowBackedColumn dateColumn;
+  private final Column dateVector;
 
-  public DateConverter(ValueVector fieldVector, int columnIndex, DataConversionContext context) {
+  public DateConverter(Column fieldVector, int columnIndex, DataConversionContext context) {
     super(SnowflakeType.DATE.name(), fieldVector, columnIndex, context);
-    this.dateColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.dateVector = fieldVector;
   }
 
   private int getEpochDays(int index) {
-    return dateColumn.getInt(index);
+    return dateVector.getInt(index);
   }
 
   private LocalDate getLocalDate(int index) {

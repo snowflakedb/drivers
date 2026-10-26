@@ -10,10 +10,10 @@ import net.snowflake.client.internal.api.implementation.exception.SFSQLException
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverterUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.Field;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.types.pojo.Field;
 
 public final class SchemaState {
   private static final DataConversionContext EMPTY_CONTEXT = new DataConversionContext() {};
@@ -31,13 +31,13 @@ public final class SchemaState {
   private int[] columnScales;
   private ArrowVectorConverter[] converterCache;
 
-  public SchemaState(VectorSchemaRoot root) {
+  public SchemaState(ColumnBatch root) {
     this(root, EMPTY_CONTEXT);
   }
 
-  public SchemaState(VectorSchemaRoot root, DataConversionContext context) {
+  public SchemaState(ColumnBatch root, DataConversionContext context) {
     this.context = context;
-    List<Field> fields = root.getSchema().getFields();
+    List<Field> fields = root.fields();
     columnNames = new String[fields.size()];
     columnTypes = new int[fields.size()];
     columnScales = new int[fields.size()];
@@ -96,7 +96,7 @@ public final class SchemaState {
     return columnNames.length;
   }
 
-  public ArrowVectorConverter getConverter(int columnIndex, VectorSchemaRoot root) {
+  public ArrowVectorConverter getConverter(int columnIndex, ColumnBatch root) {
     int index = columnIndex - 1;
     if (index < 0 || index >= converterCache.length) {
       throw SFSQLException.fromErrorCode(INTERNAL_ERROR, "Invalid column index: " + columnIndex);
@@ -106,7 +106,7 @@ public final class SchemaState {
       return cached;
     }
     try {
-      FieldVector vector = root.getVector(index);
+      Column vector = root.column(index);
       ArrowVectorConverter converter =
           ArrowVectorConverterUtil.initConverter(vector, context, index);
       converterCache[index] = converter;
@@ -125,6 +125,14 @@ public final class SchemaState {
 
   void resetConverterCache() {
     clearConverterCache();
+  }
+
+  boolean hasCachedConverter(int columnIndex) {
+    int index = columnIndex - 1;
+    return converterCache != null
+        && index >= 0
+        && index < converterCache.length
+        && converterCache[index] != null;
   }
 
   public void reset() {

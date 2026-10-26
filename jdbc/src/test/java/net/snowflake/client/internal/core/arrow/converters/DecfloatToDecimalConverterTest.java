@@ -6,55 +6,44 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.VarBinaryVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.complex.StructVector;
-import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.apache.arrow.vector.types.pojo.Schema;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class DecfloatToDecimalConverterTest extends BaseConverterTest {
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
 
   @Test
   public void testDecfloatConversionsAndDispatch() throws Exception {
-    Schema schema = setupSchema();
+    Map<String, String> metadata = new HashMap<>();
+    metadata.put("logicalType", "DECFLOAT");
+    Column significand = ColumnBuilder.of("significand", Column.PhysicalKind.BINARY, null);
+    Column exponent = ColumnBuilder.of("exponent", Column.PhysicalKind.INT16, null);
+    Column vector = ColumnBuilder.struct("col_one", metadata, significand, exponent);
 
-    try (VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator)) {
-      StructVector vector = (StructVector) root.getVector("col_one");
-      VarBinaryVector significand = (VarBinaryVector) vector.getChild("significand");
-      SmallIntVector exponent = (SmallIntVector) vector.getChild("exponent");
+    try (ColumnBatch root = ColumnBatch.of(vector)) {
+      ColumnBuilder.set(significand, 0, new BigInteger("123456").toByteArray());
+      ColumnBuilder.set(exponent, 0, (short) -3);
+      ColumnBuilder.setDefined(vector, 0);
 
-      vector.allocateNew();
-      significand.setSafe(0, new BigInteger("123456").toByteArray());
-      exponent.setSafe(0, (short) -3);
-      vector.setIndexDefined(0);
+      ColumnBuilder.setNull(vector, 1);
 
-      vector.setNull(1);
+      ColumnBuilder.set(significand, 2, new BigInteger("2147483648").toByteArray());
+      ColumnBuilder.set(exponent, 2, (short) 0);
+      ColumnBuilder.setDefined(vector, 2);
 
-      significand.setSafe(2, new BigInteger("2147483648").toByteArray());
-      exponent.setSafe(2, (short) 0);
-      vector.setIndexDefined(2);
+      ColumnBuilder.set(significand, 3, new BigInteger("9223372036854775808").toByteArray());
+      ColumnBuilder.set(exponent, 3, (short) 0);
+      ColumnBuilder.setDefined(vector, 3);
 
-      significand.setSafe(3, new BigInteger("9223372036854775808").toByteArray());
-      exponent.setSafe(3, (short) 0);
-      vector.setIndexDefined(3);
+      ColumnBuilder.set(significand, 4, new BigInteger("12345").toByteArray());
+      ColumnBuilder.set(exponent, 4, (short) -2);
+      ColumnBuilder.setDefined(vector, 4);
 
-      significand.setSafe(4, new BigInteger("12345").toByteArray());
-      exponent.setSafe(4, (short) -2);
-      vector.setIndexDefined(4);
-
-      vector.setValueCount(5);
+      ColumnBuilder.setValueCount(vector, 5);
       root.setRowCount(5);
 
       ArrowVectorConverter converter = new DecfloatToDecimalConverter(vector, 0, this);
@@ -157,9 +146,9 @@ public class DecfloatToDecimalConverterTest extends BaseConverterTest {
     BigDecimal plain = new BigDecimal("123.456");
     BigDecimal hundred = new BigDecimal(BigInteger.ONE, -2);
     BigDecimal million = new BigDecimal(BigInteger.ONE, -6);
-    try (VectorSchemaRoot root = VectorSchemaRoot.create(setupSchema(), allocator)) {
-      ArrowVectorConverter converter =
-          loadDecfloat(root, scientific, plain, hundred, million, BigDecimal.ZERO, null);
+    try (DecfloatFixture fixture =
+        loadDecfloat(scientific, plain, hundred, million, BigDecimal.ZERO, null)) {
+      ArrowVectorConverter converter = fixture.converter;
       assertEquals("1.2e200", converter.toString(0));
       assertEquals("123.456", converter.toString(1));
       assertEquals("100", converter.toString(2));
@@ -173,32 +162,33 @@ public class DecfloatToDecimalConverterTest extends BaseConverterTest {
     }
   }
 
-  private void assertDecfloatStrings(BigDecimal[] values, String[] expected) throws Exception {
-    try (VectorSchemaRoot root = VectorSchemaRoot.create(setupSchema(), allocator)) {
-      ArrowVectorConverter converter = loadDecfloat(root, values);
+  private void assertDecfloatStrings(BigDecimal[] values, String[] expected) {
+    try (DecfloatFixture fixture = loadDecfloat(values)) {
       for (int i = 0; i < expected.length; i++) {
-        assertEquals(expected[i], converter.toString(i));
+        assertEquals(expected[i], fixture.converter.toString(i));
       }
     }
   }
 
-  private ArrowVectorConverter loadDecfloat(VectorSchemaRoot root, BigDecimal... values) {
-    StructVector vector = (StructVector) root.getVector("col_one");
-    VarBinaryVector significand = (VarBinaryVector) vector.getChild("significand");
-    SmallIntVector exponent = (SmallIntVector) vector.getChild("exponent");
-    vector.allocateNew();
+  private DecfloatFixture loadDecfloat(BigDecimal... values) {
+    Map<String, String> metadata = new HashMap<>();
+    metadata.put("logicalType", "DECFLOAT");
+    Column significand = ColumnBuilder.of("significand", Column.PhysicalKind.BINARY, null);
+    Column exponent = ColumnBuilder.of("exponent", Column.PhysicalKind.INT16, null);
+    Column vector = ColumnBuilder.struct("col_one", metadata, significand, exponent);
+    ColumnBatch root = ColumnBatch.of(vector);
     for (int i = 0; i < values.length; i++) {
       if (values[i] == null) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
       } else {
-        significand.setSafe(i, values[i].unscaledValue().toByteArray());
-        exponent.setSafe(i, (short) -values[i].scale());
-        vector.setIndexDefined(i);
+        ColumnBuilder.set(significand, i, values[i].unscaledValue().toByteArray());
+        ColumnBuilder.set(exponent, i, (short) -values[i].scale());
+        ColumnBuilder.setDefined(vector, i);
       }
     }
-    vector.setValueCount(values.length);
+    ColumnBuilder.setValueCount(vector, values.length);
     root.setRowCount(values.length);
-    return new DecfloatToDecimalConverter(vector, 0, this);
+    return new DecfloatFixture(root, new DecfloatToDecimalConverter(vector, 0, this));
   }
 
   private static String zeros(int count) {
@@ -209,20 +199,18 @@ public class DecfloatToDecimalConverterTest extends BaseConverterTest {
     return out.toString();
   }
 
-  private static Schema setupSchema() {
-    Map<String, String> metadata = new HashMap<>();
-    metadata.put("logicalType", "DECFLOAT");
+  private static final class DecfloatFixture implements AutoCloseable {
+    private final ColumnBatch batch;
+    private final ArrowVectorConverter converter;
 
-    Field significandField =
-        new Field("significand", new FieldType(true, ArrowType.Binary.INSTANCE, null, null), null);
-    Field exponentField =
-        new Field("exponent", new FieldType(true, new ArrowType.Int(16, true), null, null), null);
-    Field decfloatField =
-        new Field(
-            "col_one",
-            new FieldType(true, ArrowType.Struct.INSTANCE, null, metadata),
-            Arrays.asList(significandField, exponentField));
+    private DecfloatFixture(ColumnBatch batch, ArrowVectorConverter converter) {
+      this.batch = batch;
+      this.converter = converter;
+    }
 
-    return new Schema(Collections.singletonList(decfloatField));
+    @Override
+    public void close() {
+      batch.close();
+    }
   }
 }

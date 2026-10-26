@@ -18,6 +18,10 @@ import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
 import net.snowflake.client.internal.unicore.CoreHandleCleaner;
 
+/**
+ * One Arrow result cursor. Cell reads use direct views of the current native batch. Those views are
+ * dropped before the next batch or {@link #close()} frees it.
+ */
 class ArrowRowReader implements RowReader {
 
   private final ArrowResources resources;
@@ -217,7 +221,7 @@ class ArrowRowReader implements RowReader {
 
   private void checkState() {
     if (closed) {
-      throw new IllegalStateException("RowReader is closed");
+      throw new SFSQLException(ErrorCode.RESULTSET_ALREADY_CLOSED, "ResultSet is closed");
     }
     if (cursor.isAfterLast()) {
       throw new IllegalStateException("After last row");

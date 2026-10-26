@@ -18,17 +18,11 @@ import java.util.Set;
 import java.util.TimeZone;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class SmallIntToFixedConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   /** Random seed */
   private final Random random = new Random();
 
@@ -46,17 +40,14 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -85,7 +76,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
         assertEquals(shortVal, bb.getShort());
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -102,17 +93,14 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -140,7 +128,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
       }
     }
 
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -150,11 +138,8 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 200);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 200);
 
     final ArrowVectorConverter converter = new SmallIntToScaledFixedConverter(vector, 0, this, 3);
 
@@ -168,7 +153,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toTime(0));
     TestHelper.assertSFException(
         invalidConversionErrorCode, () -> converter.toTimestamp(0, TimeZone.getDefault()));
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -178,24 +163,20 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    // test value which is out of range of byte
-    SmallIntVector vectorFoo = new SmallIntVector("col_one", fieldType, allocator);
-    vectorFoo.setSafe(0, 200);
-    vectorFoo.setSafe(1, -200);
+    Column vectorFoo = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
+    ColumnBuilder.set(vectorFoo, 0, 200);
+    ColumnBuilder.set(vectorFoo, 1, -200);
 
     final ArrowVectorConverter converterFoo = new SmallIntToFixedConverter(vectorFoo, 0, this);
 
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toByte(0));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toByte(1));
-    vectorFoo.clear();
+    ColumnBuilder.clear(vectorFoo);
 
     // test value which is in range of byte, all get method should return
-    SmallIntVector vectorBar = new SmallIntVector("col_one", fieldType, allocator);
-    vectorBar.setSafe(0, 10);
-    vectorBar.setSafe(1, -10);
+    Column vectorBar = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
+    ColumnBuilder.set(vectorBar, 0, 10);
+    ColumnBuilder.set(vectorBar, 1, -10);
 
     final ArrowVectorConverter converterBar = new SmallIntToFixedConverter(vectorBar, 0, this);
 
@@ -205,7 +186,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     assertEquals(-10, converterBar.toInt(1));
     assertEquals(10L, converterBar.toLong(0));
     assertEquals(-10L, converterBar.toLong(1));
-    vectorBar.clear();
+    ColumnBuilder.clear(vectorBar);
   }
 
   @Test
@@ -215,14 +196,11 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     ArrowVectorConverter converter = new SmallIntToFixedConverter(vector, 0, this);
 
@@ -245,14 +223,11 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
-
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     final ArrowVectorConverter converter = new SmallIntToScaledFixedConverter(vector, 0, this, 3);
 

@@ -1,14 +1,13 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.util.Map;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.Field;
+import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
 import net.snowflake.client.internal.util.SnowflakeColumnTypes;
-import org.apache.arrow.vector.FieldVector;
-import org.apache.arrow.vector.ValueVector;
-import org.apache.arrow.vector.complex.FixedSizeListVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.Field;
 
 public final class ArrowVectorConverterUtil {
   private ArrowVectorConverterUtil() {}
@@ -22,7 +21,7 @@ public final class ArrowVectorConverterUtil {
   }
 
   /** Read the {@code scale} from an Arrow field's metadata, defaulting to 0 when absent. */
-  private static int getScaleFromFieldMetadata(ValueVector vector) {
+  private static int getScaleFromFieldMetadata(Column vector) {
     String scaleStr = vector.getField().getMetadata().get("scale");
     return scaleStr == null ? 0 : Integer.parseInt(scaleStr);
   }
@@ -33,11 +32,16 @@ public final class ArrowVectorConverterUtil {
    * java data.
    */
   public static ArrowVectorConverter initConverter(
-      ValueVector vector, DataConversionContext context, int idx) {
-    Types.MinorType type = Types.getMinorTypeForArrowType(vector.getField().getType());
+      Column vector, DataConversionContext context, int idx) {
+    PhysicalKind type = vector.physicalKind();
+    if (type == PhysicalKind.FLOAT32) {
+      throw new SFSQLException(
+          ErrorCode.INTERNAL_ERROR,
+          "JDBC driver internal error: Unexpected Arrow Field for FLOAT32.");
+    }
     SnowflakeType st = getSnowflakeTypeFromFieldMetadata(vector.getField());
 
-    if (type == Types.MinorType.DECIMAL) {
+    if (type == PhysicalKind.DECIMAL128) {
       return new DecimalToScaledFixedConverter(vector, idx, context);
     }
 
@@ -61,22 +65,22 @@ public final class ArrowVectorConverterUtil {
         case FIXED:
           int sfScale = getScaleFromFieldMetadata(vector);
           switch (type) {
-            case TINYINT:
+            case INT8:
               if (sfScale == 0) {
                 return new TinyIntToFixedConverter(vector, idx, context);
               }
               return new TinyIntToScaledFixedConverter(vector, idx, context, sfScale);
-            case SMALLINT:
+            case INT16:
               if (sfScale == 0) {
                 return new SmallIntToFixedConverter(vector, idx, context);
               }
               return new SmallIntToScaledFixedConverter(vector, idx, context, sfScale);
-            case INT:
+            case INT32:
               if (sfScale == 0) {
                 return new IntToFixedConverter(vector, idx, context);
               }
               return new IntToScaledFixedConverter(vector, idx, context, sfScale);
-            case BIGINT:
+            case INT64:
               if (sfScale == 0) {
                 return new BigIntToFixedConverter(vector, idx, context);
               }
@@ -104,15 +108,18 @@ public final class ArrowVectorConverterUtil {
         case TIME:
           int timeScale = getScaleFromFieldMetadata(vector);
           switch (type) {
-            case INT:
-            case BIGINT:
+            case INT32:
+            case INT64:
               return new TimeConverter(vector, idx, context, timeScale);
             default:
               throw new SFSQLException("Unsupported Arrow physical type for TIME: " + type);
           }
 
         case VECTOR:
-          return new VectorTypeConverter((FixedSizeListVector) vector, idx, context);
+          if (type != PhysicalKind.FIXED_SIZE_LIST) {
+            throw new SFSQLException("Unsupported Arrow physical type for VECTOR: " + type);
+          }
+          return new VectorTypeConverter(vector, idx, context);
 
           // Structured types (MAP/ARRAY/OBJECT) currently fall back to string rendering, matching
           // legacy snowflake-jdbc's VarCharConverter fallback when the column is not materialized
@@ -180,7 +187,7 @@ public final class ArrowVectorConverterUtil {
    * TIMESTAMP} fall-through when {@code CLIENT_TIMESTAMP_TYPE_MAPPING} resolves to LTZ.
    */
   private static ArrowVectorConverter initTimestampLtzConverter(
-      ValueVector vector, DataConversionContext context, int idx) {
+      Column vector, DataConversionContext context, int idx) {
     int scale = getScaleFromFieldMetadata(vector);
     if (vector.getField().getChildren().isEmpty()) {
       return new BigIntToTimestampLTZConverter(vector, idx, context, scale);
@@ -201,7 +208,7 @@ public final class ArrowVectorConverterUtil {
    * maps to it.
    */
   private static ArrowVectorConverter initTimestampTzConverter(
-      ValueVector vector, DataConversionContext context, int idx) {
+      Column vector, DataConversionContext context, int idx) {
     int scale = getScaleFromFieldMetadata(vector);
     if (vector.getField().getChildren().size() == 2) {
       return new TwoFieldStructToTimestampTZConverter(vector, idx, context, scale);
@@ -212,10 +219,5 @@ public final class ArrowVectorConverterUtil {
         "Unsupported Arrow physical layout for TIMESTAMP_TZ: "
             + vector.getField().getChildren().size()
             + " struct children");
-  }
-
-  public static ArrowVectorConverter initConverter(
-      FieldVector vector, DataConversionContext context, int columnIndex) {
-    return initConverter((ValueVector) vector, context, columnIndex);
   }
 }

@@ -2,7 +2,7 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.time.Period;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import org.apache.arrow.vector.ValueVector;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 
 /**
  * Converter for the {@code INTERVAL YEAR TO MONTH} logical type. Snowflake materializes the
@@ -12,13 +12,13 @@ import org.apache.arrow.vector.ValueVector;
  */
 public class IntervalYearMonthToPeriodConverter extends AbstractArrowVectorConverter {
 
-  private final ArrowBackedColumn column;
+  private final Column column;
   private static final int MONTHS_IN_YEAR = 12;
 
   public IntervalYearMonthToPeriodConverter(
-      ValueVector vector, int columnIndex, DataConversionContext context) {
+      Column vector, int columnIndex, DataConversionContext context) {
     super(SnowflakeType.INTERVAL_YEAR_MONTH.name(), vector, columnIndex, context);
-    this.column = ArrowBackedColumn.wrap(vector);
+    this.column = vector;
   }
 
   @Override

@@ -59,6 +59,10 @@ public final class ColumnBatch implements AutoCloseable {
     return new ColumnBatch(fields, columns, batch.getRowCount());
   }
 
+  public List<Field> fields() {
+    return fields;
+  }
+
   public Column column(int index) {
     return columns.get(index);
   }

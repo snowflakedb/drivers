@@ -19,17 +19,11 @@ import java.util.Set;
 import java.util.TimeZone;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class IntToFixedConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   /** Random seed */
   private final Random random = new Random();
 
@@ -47,16 +41,14 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -85,7 +77,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
         assertEquals(intVal, bb.getInt());
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   /**
@@ -95,7 +87,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
    */
   @Test
   public void shouldReturnLongFromToObjectForScaleZeroFixedByDefault() throws Exception {
-    IntVector vector = scaleZeroVectorWithSingleValue(42);
+    Column vector = scaleZeroVectorWithSingleValue(42);
 
     ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, this);
     Object value = converter.toObject(0);
@@ -103,7 +95,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     assertInstanceOf(
         Long.class, value, "default JDBC_TREAT_DECIMAL_AS_INT=true must materialize a long");
     assertEquals(42L, value);
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   /**
@@ -115,7 +107,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
   @Test
   public void shouldReturnBigDecimalFromToObjectForScaleZeroFixedWhenBothDecimalFlagsAreFalse()
       throws Exception {
-    IntVector vector = scaleZeroVectorWithSingleValue(42);
+    Column vector = scaleZeroVectorWithSingleValue(42);
 
     ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, decimalFlags(false, false));
     Object value = converter.toObject(0);
@@ -125,7 +117,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
         value,
         "both decimal flags false must materialize a BigDecimal, matching legacy snowflake-jdbc");
     assertEquals(BigDecimal.valueOf(42L, 0), value);
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   /**
@@ -135,7 +127,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
   @Test
   public void shouldReturnLongFromToObjectForScaleZeroFixedWhenOnlyArrowDecimalFlagIsTrue()
       throws Exception {
-    IntVector vector = scaleZeroVectorWithSingleValue(42);
+    Column vector = scaleZeroVectorWithSingleValue(42);
 
     ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, decimalFlags(false, true));
     Object value = converter.toObject(0);
@@ -145,7 +137,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
         value,
         "JDBC_ARROW_TREAT_DECIMAL_AS_INT=true must materialize a long even when JDBC_TREAT_DECIMAL_AS_INT=false");
     assertEquals(42L, value);
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   private static DataConversionContext decimalFlags(
@@ -163,15 +155,14 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     };
   }
 
-  private IntVector scaleZeroVectorWithSingleValue(int val) {
+  private Column scaleZeroVectorWithSingleValue(int val) {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, val);
-    vector.setValueCount(1);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vector, 0, val);
+    ColumnBuilder.setValueCount(vector, 1);
     return vector;
   }
 
@@ -189,16 +180,14 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -226,7 +215,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
       }
     }
 
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -236,10 +225,8 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 33000);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 33000);
 
     final ArrowVectorConverter converter = new IntToScaledFixedConverter(vector, 0, this, 3);
 
@@ -253,7 +240,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toTime(0));
     TestHelper.assertSFException(
         invalidConversionErrorCode, () -> converter.toTimestamp(0, TimeZone.getDefault()));
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 
   @Test
@@ -263,12 +250,9 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    // test value which is out of range of short/byte
-    IntVector vectorFoo = new IntVector("col_one", fieldType, allocator);
-    vectorFoo.setSafe(0, 33000);
-    vectorFoo.setSafe(1, -33000);
+    Column vectorFoo = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vectorFoo, 0, 33000);
+    ColumnBuilder.set(vectorFoo, 1, -33000);
 
     final ArrowVectorConverter converterFoo = new IntToFixedConverter(vectorFoo, 0, this);
 
@@ -279,12 +263,12 @@ public class IntToFixedConverterTest extends BaseConverterTest {
 
     assertEquals(33000L, converterFoo.toLong(0));
     assertEquals(-33000L, converterFoo.toLong(1));
-    vectorFoo.clear();
+    ColumnBuilder.clear(vectorFoo);
 
     // test value which is in range of byte
-    IntVector vectorBar = new IntVector("col_one", fieldType, allocator);
-    vectorBar.setSafe(0, 10);
-    vectorBar.setSafe(1, -10);
+    Column vectorBar = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vectorBar, 0, 10);
+    ColumnBuilder.set(vectorBar, 1, -10);
 
     final ArrowVectorConverter converterBar = new IntToFixedConverter(vectorBar, 0, this);
 
@@ -294,7 +278,7 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     assertEquals((short) -10, converterBar.toShort(1));
     assertEquals(10L, converterBar.toLong(0));
     assertEquals(-10L, converterBar.toLong(1));
-    vectorBar.clear();
+    ColumnBuilder.clear(vectorBar);
   }
 
   @Test
@@ -304,13 +288,11 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "0");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     ArrowVectorConverter converter = new IntToFixedConverter(vector, 0, this);
 
@@ -329,13 +311,11 @@ public class IntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "3");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 0);
-    vector.setSafe(1, 1);
-    vector.setNull(2);
-    vector.setSafe(3, 5);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 0);
+    ColumnBuilder.set(vector, 1, 1);
+    ColumnBuilder.setNull(vector, 2);
+    ColumnBuilder.set(vector, 3, 5);
 
     final ArrowVectorConverter converter = new IntToScaledFixedConverter(vector, 0, this, 3);
 

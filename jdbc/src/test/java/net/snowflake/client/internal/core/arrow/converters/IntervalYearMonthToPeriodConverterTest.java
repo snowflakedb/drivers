@@ -8,29 +8,17 @@ import java.time.Period;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link IntervalYearMonthToPeriodConverter}. Snowflake stores the interval as a
  * signed total-months integer whose physical Arrow width (SB2/SB4/SB8) depends on the declared
- * precision, so the converter must handle {@link SmallIntVector}, {@link IntVector}, and {@link
- * BigIntVector} backings. Days in the resulting {@link Period} are always 0.
+ * precision, so the converter reads each width through the same signed accessor. Days in the
+ * resulting {@link Period} are always 0.
  */
 public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
 
   private static Map<String, String> intervalFieldMeta() {
     Map<String, String> meta = new HashMap<>();
@@ -38,55 +26,52 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
     return meta;
   }
 
-  private SmallIntVector createSmallIntVector(Short... months) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, intervalFieldMeta());
-    SmallIntVector vector = new SmallIntVector("col_interval_ym_sb2", fieldType, allocator);
+  private Column createSmallIntVector(Short... months) {
+    Column vector =
+        ColumnBuilder.of("col_interval_ym_sb2", Column.PhysicalKind.INT16, intervalFieldMeta());
     for (int i = 0; i < months.length; i++) {
       if (months[i] == null) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
       } else {
-        vector.setSafe(i, months[i]);
+        ColumnBuilder.set(vector, i, months[i]);
       }
     }
-    vector.setValueCount(months.length);
+    ColumnBuilder.setValueCount(vector, months.length);
     return vector;
   }
 
-  private IntVector createIntVector(Integer... months) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.INT.getType(), null, intervalFieldMeta());
-    IntVector vector = new IntVector("col_interval_ym_sb4", fieldType, allocator);
+  private Column createIntVector(Integer... months) {
+    Column vector =
+        ColumnBuilder.of("col_interval_ym_sb4", Column.PhysicalKind.INT32, intervalFieldMeta());
     for (int i = 0; i < months.length; i++) {
       if (months[i] == null) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
       } else {
-        vector.setSafe(i, months[i]);
+        ColumnBuilder.set(vector, i, months[i]);
       }
     }
-    vector.setValueCount(months.length);
+    ColumnBuilder.setValueCount(vector, months.length);
     return vector;
   }
 
-  private BigIntVector createBigIntVector(Long... months) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, intervalFieldMeta());
-    BigIntVector vector = new BigIntVector("col_interval_ym_sb8", fieldType, allocator);
+  private Column createBigIntVector(Long... months) {
+    Column vector =
+        ColumnBuilder.of("col_interval_ym_sb8", Column.PhysicalKind.INT64, intervalFieldMeta());
     for (int i = 0; i < months.length; i++) {
       if (months[i] == null) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
       } else {
-        vector.setSafe(i, months[i]);
+        ColumnBuilder.set(vector, i, months[i]);
       }
     }
-    vector.setValueCount(months.length);
+    ColumnBuilder.setValueCount(vector, months.length);
     return vector;
   }
 
   @Test
   public void shouldConvertSmallIntMonthsToPeriod() throws Exception {
     // 25 months = 2 years 1 month; 12 months = 1 year exactly; 5 months = 0 years 5 months.
-    SmallIntVector vector = createSmallIntVector((short) 25, (short) 12, (short) 5);
+    Column vector = createSmallIntVector((short) 25, (short) 12, (short) 5);
     try {
       IntervalYearMonthToPeriodConverter converter =
           new IntervalYearMonthToPeriodConverter(vector, 0, this);
@@ -104,7 +89,7 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
   @Test
   public void shouldConvertNegativeSmallIntMonthsToPeriod() throws Exception {
     // -14 months = -1 year -2 months (Java integer division truncates toward zero).
-    SmallIntVector vector = createSmallIntVector((short) -14);
+    Column vector = createSmallIntVector((short) -14);
     try {
       IntervalYearMonthToPeriodConverter converter =
           new IntervalYearMonthToPeriodConverter(vector, 0, this);
@@ -118,9 +103,9 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldConvertIntMonthsToPeriod() throws Exception {
-    // A value beyond the SB2 range exercises the SB4 (IntVector) backing.
+    // A value beyond the SB2 range exercises the SB4 (Column) backing.
     int months = 40_000; // 3333 years 4 months
-    IntVector vector = createIntVector(months);
+    Column vector = createIntVector(months);
     try {
       IntervalYearMonthToPeriodConverter converter =
           new IntervalYearMonthToPeriodConverter(vector, 0, this);
@@ -133,9 +118,9 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldConvertBigIntMonthsToPeriod() throws Exception {
-    // A value beyond the SB4 range exercises the SB8 (BigIntVector) backing.
+    // A value beyond the SB4 range exercises the SB8 (Column) backing.
     long months = 3_000_000_000L;
-    BigIntVector vector = createBigIntVector(months);
+    Column vector = createBigIntVector(months);
     try {
       IntervalYearMonthToPeriodConverter converter =
           new IntervalYearMonthToPeriodConverter(vector, 0, this);
@@ -148,7 +133,7 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldReturnNullForNullInterval() throws Exception {
-    SmallIntVector vector = createSmallIntVector((short) 12, null);
+    Column vector = createSmallIntVector((short) 12, null);
     try {
       IntervalYearMonthToPeriodConverter converter =
           new IntervalYearMonthToPeriodConverter(vector, 0, this);
@@ -163,7 +148,7 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldDispatchSmallIntViaConverterUtil() throws Exception {
-    SmallIntVector vector = createSmallIntVector((short) 25);
+    Column vector = createSmallIntVector((short) 25);
     try {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 
@@ -176,7 +161,7 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldDispatchIntViaConverterUtil() throws Exception {
-    IntVector vector = createIntVector(40_000);
+    Column vector = createIntVector(40_000);
     try {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 
@@ -189,7 +174,7 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldDispatchBigIntViaConverterUtil() throws Exception {
-    BigIntVector vector = createBigIntVector(3_000_000_000L);
+    Column vector = createBigIntVector(3_000_000_000L);
     try {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
 

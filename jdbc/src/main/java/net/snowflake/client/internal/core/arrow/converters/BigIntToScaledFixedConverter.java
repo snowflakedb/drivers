@@ -5,12 +5,12 @@ import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
   public BigIntToScaledFixedConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context, int scale) {
+      Column fieldVector, int columnIndex, DataConversionContext context, int scale) {
     super(fieldVector, columnIndex, context);
     logicalTypeStr =
         String.format(

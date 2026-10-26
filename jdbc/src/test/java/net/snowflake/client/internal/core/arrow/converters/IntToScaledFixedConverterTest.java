@@ -7,21 +7,11 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class IntToScaledFixedConverterTest extends BaseConverterTest {
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
 
   @Test
   public void shouldConvertScaledFixedValue() {
@@ -30,11 +20,10 @@ public class IntToScaledFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("precision", "10");
     customFieldMeta.put("scale", "2");
 
-    FieldType fieldType = new FieldType(true, Types.MinorType.INT.getType(), null, customFieldMeta);
-    IntVector vector = new IntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 12_345);
-    vector.setNull(1);
-    vector.setValueCount(2);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta);
+    ColumnBuilder.set(vector, 0, 12_345);
+    ColumnBuilder.setNull(vector, 1);
+    ColumnBuilder.setValueCount(vector, 2);
 
     try {
       IntToScaledFixedConverter converter = new IntToScaledFixedConverter(vector, 0, this, 2);

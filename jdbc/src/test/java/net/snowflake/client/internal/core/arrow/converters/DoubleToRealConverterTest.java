@@ -14,17 +14,11 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import net.snowflake.client.internal.core.arrow.TestHelper;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.Float8Vector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class DoubleToRealConverterTest extends BaseConverterTest {
-  /** allocator for arrow */
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
   /** Random seed */
   private final Random random = new Random();
 
@@ -40,17 +34,14 @@ public class DoubleToRealConverterTest extends BaseConverterTest {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "REAL");
 
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.FLOAT8.getType(), null, customFieldMeta);
-
-    Float8Vector vector = new Float8Vector("col_one", fieldType, allocator);
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.FLOAT64, customFieldMeta);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
-        vector.setNull(i);
+        ColumnBuilder.setNull(vector, i);
         nullValIndex.add(i);
       } else {
-        vector.setSafe(i, expectedValues.get(i));
+        ColumnBuilder.set(vector, i, expectedValues.get(i));
       }
     }
 
@@ -85,6 +76,6 @@ public class DoubleToRealConverterTest extends BaseConverterTest {
         assertEquals(doubleVal, bb.getDouble());
       }
     }
-    vector.clear();
+    ColumnBuilder.clear(vector);
   }
 }

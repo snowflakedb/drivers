@@ -5,42 +5,26 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import net.snowflake.client.internal.unicore.ConfigSettingFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.complex.StructVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.apache.arrow.vector.types.pojo.Schema;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ArrowVectorConverterUtilTest extends BaseConverterTest {
-
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  void closeAllocator() {
-    allocator.close();
-  }
 
   @ParameterizedTest
   @CsvSource({
@@ -53,30 +37,25 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
   })
   void shouldResolveLogicalTypeMetadataCaseInsensitively(String logicalType, String expected) {
     Map<String, String> metadata = Collections.singletonMap("logicalType", logicalType);
-    Field field =
-        new Field("col", new FieldType(true, ArrowType.Utf8.INSTANCE, null, metadata), null);
-
-    assertEquals(
-        SnowflakeType.valueOf(expected),
-        ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(field));
+    try (Column column = ColumnBuilder.of("col", PhysicalKind.UTF8, metadata)) {
+      assertEquals(
+          SnowflakeType.valueOf(expected),
+          ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(column.getField()));
+    }
   }
 
   @Test
   void shouldReturnNullWhenLogicalTypeMetadataIsAbsent() {
-    Field field =
-        new Field(
-            "col",
-            new FieldType(true, ArrowType.Utf8.INSTANCE, null, Collections.emptyMap()),
-            null);
-
-    assertNull(ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(field));
+    try (Column column = ColumnBuilder.of("col", PhysicalKind.UTF8, Collections.emptyMap())) {
+      assertNull(ArrowVectorConverterUtil.getSnowflakeTypeFromFieldMetadata(column.getField()));
+    }
   }
 
   @Test
   void shouldDispatchBareTimestampArrowColumnToNtzConverterWhenSessionMappingIsLowercaseWireName() {
     DataConversionContext context = contextWithTimestampMapping("timestamp_ntz");
 
-    try (BigIntVector vector = createBareTimestampVector()) {
+    try (Column vector = bareTimestampColumn()) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, context, 0);
       assertInstanceOf(BigIntToTimestampNTZConverter.class, converter);
     }
@@ -86,7 +65,7 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
   void shouldDispatchBareTimestampArrowColumnToLtzConverterWhenSessionMappingIsLowercaseWireName() {
     DataConversionContext context = contextWithTimestampMapping("timestamp_ltz");
 
-    try (BigIntVector vector = createBareTimestampVector()) {
+    try (Column vector = bareTimestampColumn()) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, context, 0);
       assertInstanceOf(BigIntToTimestampLTZConverter.class, converter);
     }
@@ -96,8 +75,7 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
   void shouldDispatchTwoFieldBareTimestampToLtzConverterWhenSessionMappingIsLowercaseWireName() {
     DataConversionContext context = contextWithTimestampMapping("timestamp_ltz");
 
-    try (VectorSchemaRoot root = createBareTimestampStruct("epoch", "fraction")) {
-      StructVector vector = (StructVector) root.getVector("col");
+    try (Column vector = bareTimestampStruct()) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, context, 0);
       assertInstanceOf(TwoFieldStructToTimestampLTZConverter.class, converter);
     }
@@ -107,8 +85,7 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
   void shouldDispatchTwoFieldBareTimestampToNtzConverterWhenSessionMappingIsLowercaseWireName() {
     DataConversionContext context = contextWithTimestampMapping("timestamp_ntz");
 
-    try (VectorSchemaRoot root = createBareTimestampStruct("epoch", "fraction")) {
-      StructVector vector = (StructVector) root.getVector("col");
+    try (Column vector = bareTimestampStruct()) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, context, 0);
       assertInstanceOf(TwoFieldStructToTimestampNTZConverter.class, converter);
     }
@@ -118,7 +95,7 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
   void shouldRejectBareTimestampArrowColumnWhenSessionMappingIsNeitherNtzNorLtz() {
     DataConversionContext context = contextWithTimestampMapping("not_a_timestamp");
 
-    try (BigIntVector vector = createBareTimestampVector()) {
+    try (Column vector = bareTimestampColumn()) {
       SFSQLException ex =
           assertThrows(
               SFSQLException.class,
@@ -128,15 +105,26 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
     }
   }
 
+  @Test
+  void shouldRejectFloat32Column() {
+    try (Column vector = ColumnBuilder.of("col", PhysicalKind.FLOAT32, Collections.emptyMap())) {
+      SFSQLException failure =
+          assertThrows(
+              SFSQLException.class, () -> ArrowVectorConverterUtil.initConverter(vector, this, 0));
+      SQLException sql = failure.toSQLException();
+      assertEquals(ErrorCode.INTERNAL_ERROR.getMessageCode(), sql.getErrorCode());
+      assertEquals(ErrorCode.INTERNAL_ERROR.getSqlState(), sql.getSQLState());
+      assertEquals(
+          "JDBC driver internal error: Unexpected Arrow Field for FLOAT32.", failure.getMessage());
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"text", "variant"})
   void shouldParseLowercaseArrowLogicalTypeNames(String logicalType) {
     Map<String, String> meta = new HashMap<>();
     meta.put("logicalType", logicalType);
-    FieldType fieldType = new FieldType(true, Types.MinorType.VARCHAR.getType(), null, meta);
-    try (VarCharVector vector = new VarCharVector("col", fieldType, allocator)) {
-      vector.setSafe(0, "x".getBytes(StandardCharsets.UTF_8));
-      vector.setValueCount(1);
+    try (Column vector = ColumnBuilder.of("col", PhysicalKind.UTF8, meta)) {
       ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
       assertInstanceOf(VarCharConverter.class, converter);
     }
@@ -149,34 +137,22 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
     return SessionDataConversionContext.from(new FrozenParametersRegistry(parameters));
   }
 
-  private BigIntVector createBareTimestampVector() {
+  private static Column bareTimestampColumn() {
     Map<String, String> metadata = new HashMap<>();
     metadata.put("logicalType", "TIMESTAMP");
     metadata.put("scale", "0");
-    FieldType fieldType = new FieldType(true, Types.MinorType.BIGINT.getType(), null, metadata);
-    BigIntVector vector = new BigIntVector("col_ts", fieldType, allocator);
-    vector.setSafe(0, 0L);
-    vector.setValueCount(1);
-    return vector;
+    return ColumnBuilder.of("col_ts", PhysicalKind.INT64, metadata);
   }
 
-  private VectorSchemaRoot createBareTimestampStruct(String firstChild, String secondChild) {
+  private static Column bareTimestampStruct() {
     Map<String, String> metadata = new HashMap<>();
     metadata.put("logicalType", "TIMESTAMP");
     metadata.put("scale", "0");
-    Field structField =
-        new Field(
-            "col",
-            new FieldType(true, ArrowType.Struct.INSTANCE, null, metadata),
-            Arrays.asList(signedIntField(firstChild, 64), signedIntField(secondChild, 32)));
-    VectorSchemaRoot root =
-        VectorSchemaRoot.create(new Schema(Collections.singletonList(structField)), allocator);
-    root.allocateNew();
-    return root;
-  }
-
-  private static Field signedIntField(String name, int bitWidth) {
-    return new Field(
-        name, new FieldType(true, new ArrowType.Int(bitWidth, true), null, null), null);
+    Column epochs =
+        ColumnBuilder.of(AbstractArrowVectorConverter.FIELD_NAME_EPOCH, PhysicalKind.INT64, null);
+    Column fractions =
+        ColumnBuilder.of(
+            AbstractArrowVectorConverter.FIELD_NAME_FRACTION, PhysicalKind.INT32, null);
+    return ColumnBuilder.struct("col", metadata, epochs, fractions);
   }
 }

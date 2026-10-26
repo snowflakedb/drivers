@@ -9,12 +9,11 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
 import net.snowflake.client.internal.jdbc.SnowflakeDateWithTimezone;
 import net.snowflake.client.internal.jdbc.SnowflakeTimeWithTimezone;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.ValueVector;
 
 /**
  * Converter from a two-field struct ({@code epoch} seconds + {@code fraction} nanos) to {@code
@@ -29,17 +28,17 @@ import org.apache.arrow.vector.ValueVector;
  * DataConversionContext#isUseSessionTimezone()} directly.
  */
 public class TwoFieldStructToTimestampLTZConverter extends AbstractArrowVectorConverter {
-  private final ArrowBackedColumn structVector;
-  private final ArrowBackedColumn epochs;
-  private final ArrowBackedColumn fractions;
+  private final Column structVector;
+  private final Column epochs;
+  private final Column fractions;
   private final int scale;
 
   public TwoFieldStructToTimestampLTZConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context, int scale) {
+      Column fieldVector, int columnIndex, DataConversionContext context, int scale) {
     super(SnowflakeType.TIMESTAMP_LTZ.name(), fieldVector, columnIndex, context);
-    this.structVector = ArrowBackedColumn.wrap(fieldVector);
-    this.epochs = structVector.child(FIELD_NAME_EPOCH, BigIntVector.class);
-    this.fractions = structVector.child(FIELD_NAME_FRACTION, IntVector.class);
+    this.structVector = fieldVector;
+    this.epochs = requireStructChildKind(structVector, FIELD_NAME_EPOCH, PhysicalKind.INT64);
+    this.fractions = requireStructChildKind(structVector, FIELD_NAME_FRACTION, PhysicalKind.INT32);
     this.scale = scale;
   }
 

@@ -5,22 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.sql.Timestamp;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.complex.StructVector;
-import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.apache.arrow.vector.types.pojo.Schema;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest {
@@ -28,17 +18,10 @@ public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest
   private static final long EPOCH_SECONDS = 1_579_046_400L;
   private static final int FRACTION_NANOS = 123_456_789;
 
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
-
   @Test
   public void shouldConvertEpochAndFractionToTimestamp() throws Exception {
-    try (VectorSchemaRoot root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
-      StructVector vector = (StructVector) root.getVector("col");
+    try (ColumnBatch root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
+      Column vector = root.column("col");
       TwoFieldStructToTimestampNTZConverter converter =
           new TwoFieldStructToTimestampNTZConverter(vector, 0, noClientTzShift(), 9);
 
@@ -52,8 +35,8 @@ public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest
 
   @Test
   public void shouldShiftWallClockWhenHonoringClientTimezone() throws Exception {
-    try (VectorSchemaRoot root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
-      StructVector vector = (StructVector) root.getVector("col");
+    try (ColumnBatch root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
+      Column vector = root.column("col");
       TwoFieldStructToTimestampNTZConverter converter =
           new TwoFieldStructToTimestampNTZConverter(vector, 0, honorClientTz(), 9);
 
@@ -66,10 +49,10 @@ public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest
 
   @Test
   public void shouldReturnNullForNullStructRow() throws Exception {
-    try (VectorSchemaRoot root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
-      StructVector vector = (StructVector) root.getVector("col");
-      vector.setNull(1);
-      vector.setValueCount(2);
+    try (ColumnBatch root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
+      Column vector = root.column("col");
+      ColumnBuilder.setNull(vector, 1);
+      ColumnBuilder.setValueCount(vector, 2);
       root.setRowCount(2);
 
       TwoFieldStructToTimestampNTZConverter converter =
@@ -82,36 +65,23 @@ public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest
     }
   }
 
-  private VectorSchemaRoot twoFieldRoot(long epoch, int fraction) {
-    VectorSchemaRoot root = VectorSchemaRoot.create(twoFieldSchema(), allocator);
-    StructVector vector = (StructVector) root.getVector("col");
-    vector.allocateNew();
-    ((BigIntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_EPOCH))
-        .setSafe(0, epoch);
-    ((IntVector) vector.getChild(AbstractArrowVectorConverter.FIELD_NAME_FRACTION))
-        .setSafe(0, fraction);
-    vector.setIndexDefined(0);
-    vector.setValueCount(1);
-    root.setRowCount(1);
-    return root;
-  }
-
-  private static Schema twoFieldSchema() {
+  private ColumnBatch twoFieldRoot(long epoch, int fraction) {
     Map<String, String> metadata = new HashMap<>();
     metadata.put("logicalType", "TIMESTAMP_NTZ");
-    Field structField =
-        new Field(
-            "col",
-            new FieldType(true, ArrowType.Struct.INSTANCE, null, metadata),
-            Arrays.asList(
-                signedIntField(AbstractArrowVectorConverter.FIELD_NAME_EPOCH, 64),
-                signedIntField(AbstractArrowVectorConverter.FIELD_NAME_FRACTION, 32)));
-    return new Schema(Collections.singletonList(structField));
-  }
-
-  private static Field signedIntField(String name, int bitWidth) {
-    return new Field(
-        name, new FieldType(true, new ArrowType.Int(bitWidth, true), null, null), null);
+    Column epochs =
+        ColumnBuilder.of(
+            AbstractArrowVectorConverter.FIELD_NAME_EPOCH, Column.PhysicalKind.INT64, null);
+    Column fractions =
+        ColumnBuilder.of(
+            AbstractArrowVectorConverter.FIELD_NAME_FRACTION, Column.PhysicalKind.INT32, null);
+    ColumnBuilder.set(epochs, 0, epoch);
+    ColumnBuilder.set(fractions, 0, fraction);
+    Column vector = ColumnBuilder.struct("col", metadata, epochs, fractions);
+    ColumnBuilder.setDefined(vector, 0);
+    ColumnBuilder.setValueCount(vector, 1);
+    ColumnBatch root = ColumnBatch.of(vector);
+    root.setRowCount(1);
+    return root;
   }
 
   private static DataConversionContext noClientTzShift() {

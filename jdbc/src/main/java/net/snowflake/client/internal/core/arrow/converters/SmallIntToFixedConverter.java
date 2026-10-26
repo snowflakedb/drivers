@@ -5,16 +5,16 @@ import java.nio.ByteBuffer;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
-  protected final ArrowBackedColumn smallColumn;
+  protected final Column smallColumn;
   protected int sfScale;
   protected ByteBuffer byteBuf = ByteBuffer.allocate(Short.BYTES);
 
   public SmallIntToFixedConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context) {
+      Column fieldVector, int columnIndex, DataConversionContext context) {
     super(
         String.format(
             "%s(%s,%s)",
@@ -24,7 +24,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
         fieldVector,
         columnIndex,
         context);
-    this.smallColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.smallColumn = fieldVector;
   }
 
   @Override
@@ -53,7 +53,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
 
   @Override
   public short toShort(int index) {
-    if (isNull(index)) {
+    if (smallColumn.isNull(index)) {
       return 0;
     }
     return getShort(index);
@@ -81,7 +81,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
 
   @Override
   public BigDecimal toBigDecimal(int index) {
-    if (isNull(index)) {
+    if (smallColumn.isNull(index)) {
       return null;
     }
     return BigDecimal.valueOf(getShort(index), sfScale);
@@ -89,7 +89,7 @@ public class SmallIntToFixedConverter extends AbstractArrowVectorConverter {
 
   @Override
   public Object toObject(int index) {
-    if (isNull(index)) {
+    if (smallColumn.isNull(index)) {
       return null;
     }
     if (!shouldTreatDecimalAsInt()) {

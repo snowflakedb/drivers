@@ -2,24 +2,23 @@ package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
 import net.snowflake.client.api.resultset.SnowflakeType;
-import org.apache.arrow.vector.ValueVector;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 
 public class BitToBooleanConverter extends AbstractArrowVectorConverter {
-  private final ArrowBackedColumn bitColumn;
+  private final Column bitVector;
 
   /**
-   * @param fieldVector ValueVector
+   * @param fieldVector Column
    * @param columnIndex column index
    * @param context DataConversionContext
    */
-  public BitToBooleanConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context) {
+  public BitToBooleanConverter(Column fieldVector, int columnIndex, DataConversionContext context) {
     super(SnowflakeType.BOOLEAN.name(), fieldVector, columnIndex, context);
-    this.bitColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.bitVector = fieldVector;
   }
 
   private int getBit(int index) {
-    return bitColumn.getBit(index);
+    return bitVector.getBit(index);
   }
 
   @Override

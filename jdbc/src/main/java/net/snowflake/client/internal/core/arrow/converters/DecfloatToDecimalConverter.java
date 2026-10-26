@@ -6,18 +6,18 @@ import java.util.Map;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
 
   private static final int MAX_PLAIN_UNSIGNED_CHARACTERS = 38;
 
-  private final ArrowBackedColumn column;
+  private final Column vector;
 
-  public DecfloatToDecimalConverter(ValueVector vector, int idx, DataConversionContext context) {
+  public DecfloatToDecimalConverter(Column vector, int idx, DataConversionContext context) {
     super(SnowflakeType.DECFLOAT.name(), vector, idx, context);
-    this.column = ArrowBackedColumn.wrap(vector);
+    this.vector = vector;
   }
 
   @Override
@@ -25,7 +25,7 @@ class DecfloatToDecimalConverter extends AbstractArrowVectorConverter {
     if (isNull(index)) {
       return null;
     }
-    Map<String, Object> value = (Map<String, Object>) column.getObject(index);
+    Map<String, Object> value = (Map<String, Object>) vector.getObject(index);
     byte[] significandBytes = (byte[]) value.get("significand");
     short exponent = (short) value.get("exponent");
     BigInteger significand = new BigInteger(significandBytes);

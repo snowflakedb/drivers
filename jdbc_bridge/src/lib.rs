@@ -544,10 +544,17 @@ fn wrap_buffer<'local>(
     if buffer.address == 0 {
         return Err("arrow buffer has a null address".to_string());
     }
-    // SAFETY: `address` is non-null and names `length` bytes inside the RecordBatch held in
-    // StreamState for this handle. That batch stays alive until the next next_batch or close.
-    // Java must not use the ByteBuffer after that, and must not close the stream concurrently
-    // with this return.
+    // Java `ByteBuffer.capacity()` is a signed `int`. A buffer whose length does not fit becomes
+    // an error here, not a silently truncated direct view.
+    if i32::try_from(buffer.length).is_err() {
+        return Err(format!(
+            "Arrow buffer length {} exceeds Java ByteBuffer capacity",
+            buffer.length
+        ));
+    }
+    // SAFETY: `buffer.address` is non-null and points into the `RecordBatch` that `StreamState`
+    // owns for this handle. `export_next_batch` holds the stream mutex for this call. The direct
+    // buffer aliases that memory until the next `next_batch` or `close` on this stream.
     let direct = unsafe {
         env.new_direct_byte_buffer(buffer.address as *mut u8, buffer.length)
             .map_err(|error| error.to_string())?

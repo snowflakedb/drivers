@@ -8,24 +8,13 @@ import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.BigIntVector;
-import org.apache.arrow.vector.types.Types;
-import org.apache.arrow.vector.types.pojo.FieldType;
-import org.junit.jupiter.api.AfterEach;
+import net.snowflake.client.internal.core.arrow.vector.Column;
+import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
 
 public class BigIntToTimestampNTZConverterTest extends BaseConverterTest {
   // 2020-01-15T00:00:00Z — post-1582, so Julian→Gregorian adjustTimestamp is a no-op.
   private static final long EPOCH_SECONDS = 1_579_046_400L;
-
-  private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-  @AfterEach
-  public void closeAllocator() {
-    allocator.close();
-  }
 
   private static Map<String, String> timestampNtzMeta(int scale) {
     Map<String, String> meta = new HashMap<>();
@@ -34,14 +23,13 @@ public class BigIntToTimestampNTZConverterTest extends BaseConverterTest {
     return meta;
   }
 
-  private BigIntVector createVector(int scale, long... values) {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, timestampNtzMeta(scale));
-    BigIntVector vector = new BigIntVector("col_ts_ntz", fieldType, allocator);
+  private Column createVector(int scale, long... values) {
+    Column vector =
+        ColumnBuilder.of("col_ts_ntz", Column.PhysicalKind.INT64, timestampNtzMeta(scale));
     for (int i = 0; i < values.length; i++) {
-      vector.setSafe(i, values[i]);
+      ColumnBuilder.set(vector, i, values[i]);
     }
-    vector.setValueCount(values.length);
+    ColumnBuilder.setValueCount(vector, values.length);
     return vector;
   }
 
@@ -50,7 +38,7 @@ public class BigIntToTimestampNTZConverterTest extends BaseConverterTest {
     int scale = 3;
     // Compact Int64 at scale 3: whole seconds * 10^3 + millisecond fraction.
     long compact = EPOCH_SECONDS * 1_000L + 456L;
-    BigIntVector vector = createVector(scale, compact);
+    Column vector = createVector(scale, compact);
     try {
       BigIntToTimestampNTZConverter converter =
           new BigIntToTimestampNTZConverter(vector, 0, noClientTzShift(), scale);
@@ -66,12 +54,10 @@ public class BigIntToTimestampNTZConverterTest extends BaseConverterTest {
 
   @Test
   public void shouldReturnNullForNullRow() throws Exception {
-    FieldType fieldType =
-        new FieldType(true, Types.MinorType.BIGINT.getType(), null, timestampNtzMeta(0));
-    BigIntVector vector = new BigIntVector("col_ts_ntz", fieldType, allocator);
-    vector.setSafe(0, EPOCH_SECONDS);
-    vector.setNull(1);
-    vector.setValueCount(2);
+    Column vector = ColumnBuilder.of("col_ts_ntz", Column.PhysicalKind.INT64, timestampNtzMeta(0));
+    ColumnBuilder.set(vector, 0, EPOCH_SECONDS);
+    ColumnBuilder.setNull(vector, 1);
+    ColumnBuilder.setValueCount(vector, 2);
     try {
       BigIntToTimestampNTZConverter converter =
           new BigIntToTimestampNTZConverter(vector, 0, noClientTzShift(), 0);

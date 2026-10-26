@@ -10,8 +10,8 @@ import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
+import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.util.SnowflakeUtil;
-import org.apache.arrow.vector.ValueVector;
 
 /**
  * Converter from a compact {@code Int64} (scaled epoch) to {@code TIMESTAMP_LTZ}. The stored value
@@ -21,14 +21,14 @@ import org.apache.arrow.vector.ValueVector;
  * BigIntToTimestampLTZConverter}.
  */
 public class BigIntToTimestampLTZConverter extends AbstractArrowVectorConverter {
-  private final ArrowBackedColumn bigColumn;
+  private final Column bigColumn;
   private final int scale;
   private final ByteBuffer byteBuf = ByteBuffer.allocate(Long.BYTES);
 
   public BigIntToTimestampLTZConverter(
-      ValueVector fieldVector, int columnIndex, DataConversionContext context, int scale) {
+      Column fieldVector, int columnIndex, DataConversionContext context, int scale) {
     super(SnowflakeType.TIMESTAMP_LTZ.name(), fieldVector, columnIndex, context);
-    this.bigColumn = ArrowBackedColumn.wrap(fieldVector);
+    this.bigColumn = fieldVector;
     this.scale = scale;
   }
 
