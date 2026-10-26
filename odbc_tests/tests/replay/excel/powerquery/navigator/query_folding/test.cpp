@@ -13,7 +13,7 @@
 // SNOW-4160000: retry HYT00 on this replay's 15s login timeout (Windows CI).
 #define SQLDriverConnect sql_driver_connect_retry_hyt00
 
-TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][powerquery][navigator][long_running]") {
+TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][powerquery][navigator]") {
   auto config = DataSourceConfig::Snowflake().install();
 
   SQLHENV env0 = SQL_NULL_HENV;
@@ -16764,12 +16764,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 8); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"CHAR");
       CHECK(ind == 16);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"VECTOR");
+      CHECK(ind == 24);
     }
   }
 
@@ -16855,12 +16862,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 20); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"LENGTH");
       CHECK(ind == 24);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"max length");
+      CHECK(ind == 40);
     }
   }
 
@@ -16938,12 +16952,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 10); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 6); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"WCHAR");
       CHECK(ind == 20);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"OWN");
+      CHECK(ind == 12);
     }
   }
 
@@ -17036,12 +17057,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 14); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 8); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"VARCHAR");
       CHECK(ind == 28);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"CHAR");
+      CHECK(ind == 16);
     }
   }
 
@@ -17205,12 +17233,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 16); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 10); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"WVARCHAR");
       CHECK(ind == 32);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"WCHAR");
+      CHECK(ind == 20);
     }
   }
 
@@ -17300,11 +17335,18 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       NEW_DRIVER_ONLY("BD#119") { CHECK(actual == u"VARCHAR"); }
       CHECK(ind == 14);
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"BOOLEAN");
+      CHECK(ind == 28);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"VARCHAR");
       CHECK(ind == 28);
     }
   }
@@ -17340,7 +17382,10 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     SQLRETURN ret = SQLGetData(stmt3, 4, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 2); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 2); }
+      IODBC_ONLY { CHECK(ind == 4); }
+    }
   }
 
   // SQLGetData col 5
@@ -17350,7 +17395,10 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     SQLRETURN ret = SQLGetData(stmt3, 5, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 2); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 2); }
+      IODBC_ONLY { CHECK(ind == 4); }
+    }
   }
 
   // SQLGetData col 6
@@ -17360,7 +17408,10 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     SQLRETURN ret = SQLGetData(stmt3, 6, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
     OLD_DRIVER_ONLY("BD#119") { CHECK(ind == SQL_NULL_DATA); }
-    NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 12); }
+    NEW_DRIVER_ONLY("BD#119") {
+      NON_IODBC { CHECK(ind == 12); }
+      IODBC_ONLY { CHECK(ind == 24); }
+    }
   }
 
   // SQLGetData col 7
@@ -17438,12 +17489,19 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
       OLD_DRIVER_ONLY("BD#119") { CHECK(ind == 6); }
       NEW_DRIVER_ONLY("BD#119") { CHECK(ind == 16); }
     }
-    IODBC_ONLY {
+    OLD_IODBC_ONLY("BD#119") {
       const size_t code_units =
           std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
       std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
       CHECK(actual == U"BIT");
       CHECK(ind == 12);
+    }
+    NEW_IODBC_ONLY("BD#119") {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(actual == U"WVARCHAR");
+      CHECK(ind == 32);
     }
   }
 
@@ -20974,14 +21032,28 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     std::vector<char> buf(2048, static_cast<char>(0xFF));
     SQLRETURN ret = SQLGetData(stmt7, 4, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt7), OdbcMatchers::IsSuccess());
-    const size_t code_units =
-        std::min<size_t>(static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));
-    std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);
-    CHECK(actual ==
+    NON_IODBC {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));
+      std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);
+      CHECK(
+          actual ==
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
-    CHECK(ind == 512);
+      CHECK(ind == 512);
+    }
+    IODBC_ONLY {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(
+          actual ==
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+      CHECK(ind == 1024);
+    }
   }
 
   // SQLGetData col 5
@@ -21846,14 +21918,28 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     std::vector<char> buf(2048, static_cast<char>(0xFF));
     SQLRETURN ret = SQLGetData(stmt8, 4, SQL_C_WCHAR, buf.data(), 2048, &ind);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt8), OdbcMatchers::IsSuccess());
-    const size_t code_units =
-        std::min<size_t>(static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));
-    std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);
-    CHECK(actual ==
+    NON_IODBC {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char16_t), buf.size() / sizeof(char16_t));
+      std::u16string actual(reinterpret_cast<const char16_t*>(buf.data()), code_units);
+      CHECK(
+          actual ==
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
           u"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
-    CHECK(ind == 512);
+      CHECK(ind == 512);
+    }
+    IODBC_ONLY {
+      const size_t code_units =
+          std::min<size_t>(static_cast<size_t>(ind) / sizeof(char32_t), buf.size() / sizeof(char32_t));
+      std::u32string actual(reinterpret_cast<const char32_t*>(buf.data()), code_units);
+      CHECK(
+          actual ==
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+          U"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+      CHECK(ind == 1024);
+    }
   }
 
   // SQLGetData col 5
