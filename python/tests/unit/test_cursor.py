@@ -1029,6 +1029,58 @@ class TestSfqidOnFailedQuery:
         assert cursor.request_id is None
 
 
+_EMPTY_STATEMENTS = ["", " ", " \t\n\r ", None]
+
+
+class TestExecuteEmptyStatement:
+    """An empty or whitespace-only statement is a client-side no-op, matching the legacy connector."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def mock_async_core_client(self):
+        mock = MagicMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    @pytest.mark.parametrize("operation", _EMPTY_STATEMENTS)
+    def test_sync_execute_returns_cursor_without_sending(self, mock_connection, mock_core_client, operation, caplog):
+        cursor = SnowflakeCursor(mock_connection)
+
+        with caplog.at_level("WARNING", logger="snowflake.connector.cursor._base"):
+            result = cursor.execute(operation)
+
+        assert result is cursor
+        assert cursor.description is None
+        assert cursor.rowcount is None
+        mock_core_client.statement_new.assert_not_called()
+        mock_core_client.statement_execute_query.assert_not_called()
+        assert "execute: no query is given to execute" in caplog.messages
+
+    @pytest.mark.parametrize("operation", _EMPTY_STATEMENTS)
+    def test_async_execute_returns_cursor_without_sending(
+        self, mock_connection, mock_async_core_client, operation, caplog
+    ):
+        cursor = AsyncSnowflakeCursor(mock_connection)
+
+        with caplog.at_level("WARNING", logger="snowflake.connector.aio.cursor._base"):
+            result = asyncio.run(cursor.execute(operation))
+
+        assert result is cursor
+        assert cursor.description is None
+        assert cursor.rowcount is None
+        mock_async_core_client.statement_new.assert_not_called()
+        mock_async_core_client.statement_execute_query.assert_not_called()
+        assert "execute: no query is given to execute" in caplog.messages
+
+
 class TestQueryResultStats:
     """Unit tests for QueryResultStats NamedTuple."""
 

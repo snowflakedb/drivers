@@ -247,6 +247,10 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             self._rownumber = -1
             return self
 
+        if not operation:
+            logger.warning("execute: no query is given to execute")
+            return self
+
         if logger.is_enabled_for(logging.INFO) and self._connection.config.log_query_text:
             logger.info("query: [%s]", self._format_query_for_log(operation))
 
