@@ -16,12 +16,32 @@ from decimal import Decimal
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from tests.compatibility import is_old_driver
 
 
 LARGE_RESULT_SET_ROW_COUNT = 100_000
+
+NULLABLE_FLOAT_SQL = "SELECT 1.0::FLOAT AS one, 'NaN'::FLOAT AS nan_val, NULL::FLOAT AS null_val"
+
+
+def _float64_types_mapper():
+    return {pa.float64(): pd.Float64Dtype()}.get
+
+
+def _assert_nullable_float64(df: pd.DataFrame) -> None:
+    assert [dtype == pd.Float64Dtype() for dtype in df.dtypes] == [True, True, True]
+    one, nan_val, null_val = (df.iloc[0, column] for column in range(3))
+    assert one == 1.0
+    assert null_val is pd.NA
+    # pandas 3 stores a Float64 NaN as pd.NA today; pandas 2 keeps a numpy NaN.
+    if int(pd.__version__.split(".", 1)[0]) >= 3:
+        assert nan_val is pd.NA
+    else:
+        assert isinstance(nan_val, np.floating) and np.isnan(nan_val)
+
 
 PANDAS_TYPE_CASES = [
     # (type_name, value_expr, null_expr, value_check, empty_column_dtype_check)
@@ -197,6 +217,16 @@ class TestFetchPandasAll:
         assert ts_val.minute == 30
         assert ts_val.microsecond == 123456
 
+    def test_should_apply_nullable_float64_types_mapper_via_fetch_pandas_all(self, cursor):
+        # When a FLOAT row containing a finite value, NaN, and NULL is fetched
+        cursor.execute(NULLABLE_FLOAT_SQL)
+
+        # And fetch_pandas_all is called with a Float64Dtype types_mapper
+        result = cursor.fetch_pandas_all(types_mapper=_float64_types_mapper())
+
+        # Then nullable floats should preserve NULL, and NaN should follow the installed pandas
+        _assert_nullable_float64(result)
+
 
 class TestFetchPandasBatches:
     """Tests for fetch_pandas_batches cursor method."""
@@ -219,6 +249,17 @@ class TestFetchPandasBatches:
 
         # And The total row count across all DataFrames should be 100000
         assert total_rows == LARGE_RESULT_SET_ROW_COUNT
+
+    def test_should_apply_nullable_float64_types_mapper_via_fetch_pandas_batches(self, cursor):
+        # When a FLOAT row containing a finite value, NaN, and NULL is fetched
+        cursor.execute(NULLABLE_FLOAT_SQL)
+
+        # And fetch_pandas_batches is called with a Float64Dtype types_mapper
+        batches = list(cursor.fetch_pandas_batches(types_mapper=_float64_types_mapper()))
+
+        # Then the single batch should use nullable floats the same way as fetch_pandas_all
+        assert len(batches) == 1
+        _assert_nullable_float64(batches[0])
 
 
 class TestResultBatchPicklePandas:

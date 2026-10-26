@@ -18,11 +18,14 @@ is_float = pd.api.types.is_float_dtype
 is_object = pd.api.types.is_object_dtype
 is_datetime64 = pd.api.types.is_datetime64_dtype
 is_datetime64_ns = pd.api.types.is_datetime64_ns_dtype
-is_datetime64_tz = pd.api.types.is_datetime64tz_dtype
 is_timedelta = pd.api.types.is_timedelta64_dtype
 is_string = pd.api.types.is_string_dtype
 
 NULL_FLOAT = float("nan")
+
+
+def is_datetime64_tz(dtype) -> bool:
+    return isinstance(dtype, pd.DatetimeTZDtype)
 
 
 def assert_vector_equal(actual, expected) -> None:

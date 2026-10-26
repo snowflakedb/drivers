@@ -48,8 +48,8 @@ pyarrow = [
 ]
 pandas = [
     "pyarrow>=14.0.1",
-    "pandas>=1.0.0,<3.0.0; python_version < '3.13'",
-    "pandas>=2.1.2,<3.0.0; python_version >= '3.13' and python_version < '3.15'",
+    "pandas>=1.0.0; python_version < '3.13'",
+    "pandas>=2.1.2; python_version >= '3.13' and python_version < '3.15'",
     "pandas>=3.0.0; python_version >= '3.15'",
 ]
 test = [
