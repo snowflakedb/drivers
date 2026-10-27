@@ -31,7 +31,7 @@ pub mod telemetry;
 
 use std::collections::HashMap;
 
-use crate::auth::{AuthError, Credentials, create_credentials};
+use crate::auth::{AuthError, Credentials, create_credentials, load_key_pair_jwt};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
@@ -802,24 +802,6 @@ async fn evict_oauth_access_token_for_authorization_code(
     oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache).await;
 }
 
-pub(crate) fn prebuild_keypair_credentials(
-    login_parameters: &LoginParameters,
-) -> Result<Option<Credentials>, RestError> {
-    crate::auth::prebuild_private_key_credentials(login_parameters).context(AuthenticationSnafu)
-}
-
-async fn credentials_for_login(
-    login_parameters: &LoginParameters,
-    prebuilt_credentials: Option<Credentials>,
-) -> Result<Credentials, AuthError> {
-    if let (Some(creds @ Credentials::Jwt { .. }), LoginMethod::PrivateKey { .. }) =
-        (prebuilt_credentials, &login_parameters.login_method)
-    {
-        return Ok(creds);
-    }
-    create_credentials(login_parameters).await
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn auth_request_data(
     client: &reqwest::Client,
@@ -828,7 +810,6 @@ pub async fn auth_request_data(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
-    prebuilt_credentials: Option<Credentials>,
     crl_manager: CrlManager,
     roots: RootStoreProvider,
 ) -> Result<AuthRequestData, RestError> {
@@ -1004,7 +985,7 @@ pub async fn auth_request_data(
             data.provider = Some(attestation.provider.to_string());
             data.token = Some(attestation.token);
         }
-        _ => match credentials_for_login(login_parameters, prebuilt_credentials)
+        _ => match create_credentials(login_parameters)
             .await
             .context(AuthenticationSnafu)?
         {
@@ -1018,9 +999,8 @@ pub async fn auth_request_data(
                 data.password = Some(password);
                 set_duo_authn_fields(&mut data, passcode_in_password, passcode);
             }
-            Credentials::Jwt { username, token } => {
+            Credentials::Jwt { username } => {
                 data.login_name = Some(username);
-                data.token = Some(token);
                 data.authenticator = Some(authenticator::SNOWFLAKE_JWT.to_string());
             }
             Credentials::Pat { username, token } => {
@@ -1134,8 +1114,6 @@ async fn send_login_request(
     policy: &RetryPolicy,
     options: LoginHttpOptions,
 ) -> Result<AuthResponse, RestError> {
-    use crate::http::retry::HttpContext;
-
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
 
@@ -1167,7 +1145,23 @@ async fn send_login_request(
         None
     };
 
+    let key_pair_jwt = load_key_pair_jwt(login_parameters)
+        .await
+        .context(AuthenticationSnafu)?;
+
     let build_request = || {
+        let mut request = login_request.clone();
+        if let Some(key_pair_jwt) = &key_pair_jwt {
+            request.data.token = key_pair_jwt
+                .sign()
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to sign the key-pair JWT; sending the login request without a token"
+                    )
+                })
+                .ok();
+        }
         let mut builder = client
             .post(&login_url)
             .query(&[
@@ -1188,7 +1182,7 @@ async fn send_login_request(
                     login_parameters.role.as_deref().unwrap_or_default(),
                 ),
             ])
-            .json(login_request)
+            .json(&request)
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
             .header("Authorization", "Snowflake Token=\"None\"");
@@ -1368,7 +1362,6 @@ pub async fn snowflake_login(
         None,
         &policy,
         None,
-        None,
         crl_manager,
         roots,
         None,
@@ -1383,7 +1376,6 @@ pub async fn snowflake_login(
         session_parameters,
         token_cache,
         retry_policy,
-        prebuilt_credentials,
         xp_backend,
         crl_manager,
         roots,
@@ -1399,7 +1391,6 @@ pub async fn snowflake_login_with_client(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
-    prebuilt_credentials: Option<Credentials>,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
     crl_manager: CrlManager,
     roots: RootStoreProvider,
@@ -1560,7 +1551,6 @@ pub async fn snowflake_login_with_client(
         token_cache.clone(),
         prompt_locks,
         retry_policy,
-        prebuilt_credentials,
         crl_manager.clone(),
         roots.clone(),
     )
@@ -1634,7 +1624,6 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
-                    None,
                     crl_manager.clone(),
                     roots.clone(),
                 )
@@ -1710,7 +1699,6 @@ pub async fn snowflake_login_with_client(
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
-                    None,
                     crl_manager.clone(),
                     roots.clone(),
                 )
@@ -3845,7 +3833,6 @@ mod tests {
             None,
             None,
             &RetryPolicy::default(),
-            None,
             Some(&backend),
             crate::crl::CrlManager::new(),
             crate::tls::RootStoreProvider::new(),
@@ -4357,7 +4344,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4393,7 +4379,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4517,7 +4502,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4546,7 +4530,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4572,7 +4555,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4604,7 +4586,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4632,7 +4613,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4686,7 +4666,6 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
                 None,
@@ -4724,7 +4703,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4767,7 +4745,6 @@ mod tests {
                     None,
                     None,
                     &RetryPolicy::default(),
-                    None,
                     crate::crl::CrlManager::new(),
                     crate::tls::RootStoreProvider::new(),
                 ))
@@ -4793,7 +4770,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4818,7 +4794,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             ))
@@ -4891,6 +4866,167 @@ mod tests {
                 3,
                 "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
+            );
+        }
+
+        #[tokio::test]
+        async fn key_pair_login_retry_sends_a_fresh_jwt() {
+            use base64::Engine as _;
+            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            use std::sync::Mutex;
+
+            let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+            let pem = String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap();
+            let pkey = openssl::pkey::PKey::from_rsa(rsa).unwrap();
+            let expected_fp = base64::engine::general_purpose::STANDARD
+                .encode(openssl::sha::sha256(&pkey.public_key_to_der().unwrap()));
+
+            let server = MockServer::start().await;
+            let tokens = Arc::new(Mutex::new(Vec::<String>::new()));
+            let tokens_for_mock = tokens.clone();
+
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(move |req: &Request| {
+                    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                    tokens_for_mock.lock().unwrap().push(
+                        body["data"]["TOKEN"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+                    if tokens_for_mock.lock().unwrap().len() == 1 {
+                        ResponseTemplate::new(200).set_delay(Duration::from_secs(3))
+                    } else {
+                        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "mock_token",
+                                "masterToken": "mock_master_token",
+                                "sessionId": 12345
+                            }
+                        }))
+                    }
+                })
+                .expect(2)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                login_method: LoginMethod::PrivateKey {
+                    username: "testuser".to_string(),
+                    private_key: pem.into(),
+                    passphrase: None,
+                },
+                ..test_login_params()
+            };
+            let auth_req = AuthRequest {
+                data: AuthRequestData {
+                    account_name: "testaccount".to_string(),
+                    login_name: Some("testuser".to_string()),
+                    authenticator: Some(authenticator::SNOWFLAKE_JWT.to_string()),
+                    ..Default::default()
+                },
+                in_flight_ctx: None,
+            };
+
+            let result = send_login_request(
+                &reqwest::Client::new(),
+                &params,
+                &auth_req,
+                &RetryPolicy::default(),
+                LoginHttpOptions {
+                    timeout: Some(Duration::from_millis(1100)),
+                    allow_post_retry: true,
+                },
+            )
+            .await;
+
+            assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
+            let captured = tokens.lock().unwrap().clone();
+            assert_eq!(captured.len(), 2, "Expected exactly 2 login attempts");
+            assert!(
+                captured.iter().all(|token| token.starts_with("eyJ")),
+                "every attempt must carry a signed JWT, got {captured:?}"
+            );
+
+            let claims_of = |token: &str| -> serde_json::Value {
+                serde_json::from_slice(
+                    &URL_SAFE_NO_PAD
+                        .decode(token.split('.').nth(1).unwrap())
+                        .unwrap(),
+                )
+                .unwrap()
+            };
+            let first = claims_of(&captured[0]);
+            let second = claims_of(&captured[1]);
+            assert!(
+                second["iat"].as_i64().unwrap() > first["iat"].as_i64().unwrap(),
+                "retry after a timeout must carry a later iat: {first} vs {second}"
+            );
+            assert_eq!(
+                first["exp"].as_i64().unwrap(),
+                first["iat"].as_i64().unwrap() + 120
+            );
+            assert_eq!(
+                second["exp"].as_i64().unwrap(),
+                second["iat"].as_i64().unwrap() + 120
+            );
+            assert_eq!(
+                first["iss"].as_str().unwrap(),
+                format!("TESTACCOUNT.TESTUSER.SHA256:{expected_fp}")
+            );
+            assert_eq!(second["iss"], first["iss"]);
+        }
+
+        #[tokio::test]
+        async fn key_pair_login_with_invalid_key_fails_before_sending() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex(r"/session/v1/login-request"))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(0)
+                .mount(&server)
+                .await;
+
+            let params = LoginParameters {
+                server_url: server.uri(),
+                login_method: LoginMethod::PrivateKey {
+                    username: "testuser".to_string(),
+                    private_key: "not a pem".to_string().into(),
+                    passphrase: None,
+                },
+                ..test_login_params()
+            };
+            let auth_req = AuthRequest {
+                data: AuthRequestData {
+                    account_name: "testaccount".to_string(),
+                    login_name: Some("testuser".to_string()),
+                    authenticator: Some(authenticator::SNOWFLAKE_JWT.to_string()),
+                    ..Default::default()
+                },
+                in_flight_ctx: None,
+            };
+
+            let err = send_login_request(
+                &reqwest::Client::new(),
+                &params,
+                &auth_req,
+                &RetryPolicy::default(),
+                LoginHttpOptions::standard(),
+            )
+            .await
+            .expect_err("an unparseable private key must fail the login");
+            assert!(
+                matches!(
+                    err,
+                    RestError::Authentication {
+                        source: AuthError::InvalidPrivateKeyFormat { .. },
+                        ..
+                    }
+                ),
+                "expected InvalidPrivateKeyFormat, got {err:?}"
             );
         }
 
@@ -5173,7 +5309,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
@@ -5477,7 +5612,6 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
                 None,
@@ -5521,7 +5655,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
@@ -6371,7 +6504,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             )
@@ -6407,7 +6539,6 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                None,
                 crate::crl::CrlManager::new(),
                 crate::tls::RootStoreProvider::new(),
             )

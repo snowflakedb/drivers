@@ -1,3 +1,9 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use aws_lc_rs::encoding::AsDer;
+use aws_lc_rs::signature::{KeyPair, RsaKeyPair};
+use base64::Engine as _;
+use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 use serde::Serialize;
 use snafu::{Location, ResultExt, Snafu};
 
@@ -31,7 +37,6 @@ pub enum Credentials {
     },
     Jwt {
         username: String,
-        token: SensitiveString,
     },
     Pat {
         username: String,
@@ -53,92 +58,75 @@ pub enum Credentials {
 }
 
 #[derive(Debug, Serialize)]
-struct Claim {
-    sub: String,
-    iss: String,
+struct Claim<'a> {
+    sub: &'a str,
+    iss: &'a str,
     iat: i64,
     exp: i64,
 }
 
-fn generate_jwt_token(
-    account: &str,
-    username: &str,
-    private_key: &str,
-    passphrase: Option<&str>,
-) -> Result<String, AuthError> {
-    use aws_lc_rs::encoding::AsDer;
-    use aws_lc_rs::signature::KeyPair;
-    use base64::Engine as _;
-    use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let key = crate::crypto::private_key::load_rsa_key(private_key.as_bytes(), passphrase)
-        .context(InvalidPrivateKeyFormatSnafu)?;
-
-    // Snowflake matches the `iss` fingerprint against SHA-256 of the *SPKI*
-    // (X.509 SubjectPublicKeyInfo) DER -- the same bytes
-    // `openssl rsa -pubin -outform DER` emits. `PublicKeyX509Der` is that
-    // encoding; the PKCS#1 `RSAPublicKey` form would hash to something the
-    // server does not recognise.
-    let spki = key
-        .public_key()
-        .as_der()
-        .context(PublicKeyExtractionSnafu)?;
-    let fingerprint = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, spki.as_ref());
-    let public_key_b64 = BASE64.encode(fingerprint.as_ref());
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context(SystemTimeSnafu)?
-        .as_secs() as i64;
-
-    // Normalize the account name to just the account locator (first segment before any dots).
-    // Per Snowflake documentation, the JWT `iss` field must use the account locator without
-    // region information, and both account and username must be uppercase.
-    // See: https://docs.snowflake.com/en/developer-guide/sql-api/authenticating#using-key-pair-authentication
-    // Format: <account_locator>.<user>.SHA256:<public_key_fingerprint>
-    // Example: "driverspreprod6.preprod6.us-west-2.aws" -> "DRIVERSPREPROD6"
-    let account_locator = extract_account_locator(account);
-
-    let sub = format!("{}.{}", account_locator, username.to_uppercase());
-    let iss = format!("{sub}.SHA256:{public_key_b64}");
-    let claim = Claim {
-        sub,
-        iss,
-        iat: now,
-        exp: now + 120,
-    };
-
-    // The JWS is assembled here rather than through the `jwt` crate, whose
-    // signing traits are implemented only for OpenSSL keys (`PKeyWithDigest`).
-    // Same shape as `rest::snowflake::oauth::dpop`, which hand-builds its proof
-    // for a different reason.
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
-    let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claim).context(JWTSerializeSnafu)?);
-    let signing_input = format!("{header}.{claims}");
-
-    let mut signature = vec![0u8; key.public_modulus_len()];
-    key.sign(
-        &aws_lc_rs::signature::RSA_PKCS1_SHA256,
-        &aws_lc_rs::rand::SystemRandom::new(),
-        signing_input.as_bytes(),
-        &mut signature,
-    )
-    .context(JWTSignSnafu)?;
-
-    Ok(format!(
-        "{signing_input}.{}",
-        URL_SAFE_NO_PAD.encode(&signature)
-    ))
+pub(crate) struct KeyPairJwt {
+    key: RsaKeyPair,
+    sub: String,
+    iss: String,
 }
 
-// Runs synchronously on the connect path so JWT signing completes before the
-// rustls/aws-lc TLS client is built. The `create_credentials` PrivateKey arm
-// still uses `spawn_blocking`; moving pre-build signing to the blocking pool
-// initializes OpenSSL after TLS on Windows and breaks key-pair connect there.
-pub fn prebuild_private_key_credentials(
+impl KeyPairJwt {
+    fn load(
+        account: &str,
+        username: &str,
+        private_key: &str,
+        passphrase: Option<&str>,
+    ) -> Result<Self, AuthError> {
+        let key = crate::crypto::private_key::load_rsa_key(private_key.as_bytes(), passphrase)
+            .context(InvalidPrivateKeyFormatSnafu)?;
+        let spki = key
+            .public_key()
+            .as_der()
+            .context(PublicKeyExtractionSnafu)?;
+        let fingerprint = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, spki.as_ref());
+        let sub = format!(
+            "{}.{}",
+            extract_account_locator(account),
+            username.to_uppercase()
+        );
+        let iss = format!("{sub}.SHA256:{}", BASE64.encode(fingerprint.as_ref()));
+        Ok(Self { key, sub, iss })
+    }
+
+    pub(crate) fn sign(&self) -> Result<SensitiveString, AuthError> {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context(SystemTimeSnafu)?
+            .as_secs() as i64;
+        let claim = Claim {
+            sub: &self.sub,
+            iss: &self.iss,
+            iat: now_secs,
+            exp: now_secs + 120,
+        };
+
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claim).context(JWTSerializeSnafu)?);
+        let signing_input = format!("{header}.{claims}");
+
+        let mut signature = vec![0u8; self.key.public_modulus_len()];
+        self.key
+            .sign(
+                &aws_lc_rs::signature::RSA_PKCS1_SHA256,
+                &aws_lc_rs::rand::SystemRandom::new(),
+                signing_input.as_bytes(),
+                &mut signature,
+            )
+            .context(JWTSignSnafu)?;
+
+        Ok(format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(&signature)).into())
+    }
+}
+
+pub(crate) async fn load_key_pair_jwt(
     login_parameters: &LoginParameters,
-) -> Result<Option<Credentials>, AuthError> {
+) -> Result<Option<KeyPairJwt>, AuthError> {
     let LoginMethod::PrivateKey {
         username,
         private_key,
@@ -147,16 +135,23 @@ pub fn prebuild_private_key_credentials(
     else {
         return Ok(None);
     };
-    let token = generate_jwt_token(
-        &login_parameters.account_name,
-        username,
-        private_key.reveal(),
-        passphrase.as_ref().map(|p| p.reveal().as_str()),
-    )?;
-    Ok(Some(Credentials::Jwt {
-        username: username.clone(),
-        token: token.into(),
-    }))
+    let account = login_parameters.account_name.clone();
+    let username = username.clone();
+    let private_key = private_key.clone();
+    let passphrase = passphrase.clone();
+    tokio::task::spawn_blocking(move || {
+        let key_pair_jwt = KeyPairJwt::load(
+            &account,
+            &username,
+            private_key.reveal(),
+            passphrase.as_ref().map(|p| p.reveal().as_str()),
+        )?;
+        key_pair_jwt.sign()?;
+        Ok(key_pair_jwt)
+    })
+    .await
+    .context(BlockingTaskJoinSnafu)?
+    .map(Some)
 }
 
 pub async fn create_credentials(
@@ -186,33 +181,9 @@ pub async fn create_credentials(
             method: "ExternalBrowser",
         }
         .fail(),
-        LoginMethod::PrivateKey {
-            username,
-            private_key,
-            passphrase,
-        } => {
-            // RSA key parsing + RS256 signing is CPU-bound crypto; run it on
-            // the blocking pool so it doesn't stall this runtime worker. Move
-            // the secrets in as owned `SensitiveString`s so they stay zeroizing.
-            let account = login_parameters.account_name.clone();
-            let username_owned = username.clone();
-            let private_key = private_key.clone();
-            let passphrase = passphrase.clone();
-            let token = tokio::task::spawn_blocking(move || {
-                generate_jwt_token(
-                    &account,
-                    &username_owned,
-                    private_key.reveal(),
-                    passphrase.as_ref().map(|p| p.reveal().as_str()),
-                )
-            })
-            .await
-            .context(BlockingTaskJoinSnafu)??;
-            Ok(Credentials::Jwt {
-                username: username.clone(),
-                token: token.into(),
-            })
-        }
+        LoginMethod::PrivateKey { username, .. } => Ok(Credentials::Jwt {
+            username: username.clone(),
+        }),
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
             username: username.clone(),
             token: token.clone(),
@@ -302,7 +273,7 @@ pub enum AuthError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Background JWT-signing task failed to join"))]
+    #[snafu(display("Background JWT key-loading task failed to join"))]
     BlockingTaskJoin {
         source: tokio::task::JoinError,
         #[snafu(implicit)]
@@ -315,10 +286,20 @@ mod tests {
     use super::*;
     use crate::config::rest_parameters::test_fixtures::test_client_info;
 
-    use base64::Engine as _;
     use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 
     const PASSPHRASE: &str = "correct horse battery staple";
+
+    fn generate_jwt_token(
+        account: &str,
+        username: &str,
+        private_key: &str,
+        passphrase: Option<&str>,
+    ) -> Result<String, AuthError> {
+        KeyPairJwt::load(account, username, private_key, passphrase)?
+            .sign()
+            .map(|token| token.reveal().to_string())
+    }
 
     #[tokio::test]
     async fn pat_with_external_session_create_credentials_returns_unsupported_login_method() {

@@ -118,7 +118,6 @@ fn should_refresh_session_proactively() {
             None,
             &policy,
             None,
-            None,
             sf_core::crl::CrlManager::new(),
             sf_core::tls::RootStoreProvider::new(),
             None,

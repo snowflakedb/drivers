@@ -372,10 +372,6 @@ impl DatabaseDriverV1 {
                     browser_opener,
                 );
 
-                let prebuilt_credentials =
-                    snowflake::prebuild_keypair_credentials(&login_parameters)
-                        .context(LoginSnafu)?;
-
                 // ---- Diagnostics: pre-connect -----------------------------------
                 // Run diagnostics when explicitly enabled OR when troubleshooting
                 // is active (SNOWFLAKE_TROUBLESHOOTING_ENABLED=true implies diagnostics).
@@ -479,7 +475,6 @@ impl DatabaseDriverV1 {
                     token_cache,
                     Some(&self.prompt_locks),
                     &retry_policy,
-                    prebuilt_credentials,
                     xp_backend.as_deref(),
                     self.crl_manager.clone(),
                     self.root_store_provider.clone(),
