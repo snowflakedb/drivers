@@ -438,11 +438,15 @@ impl ApiError {
 /// diagnostic. Wrappers can translate the values into their native error
 /// types without matching sf_core's internal error variants.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ErrorDiagnostics {
     /// Snowflake's numeric server error code.
     pub vendor_code: Option<i32>,
-    /// SQLSTATE supplied by the server or inferred from the vendor code when
-    /// sf_core has a canonical mapping. Server values are returned verbatim.
+    /// SQLSTATE supplied by the server (returned verbatim), else one sf_core
+    /// assigns for the failure type (`28000` rejected credentials, `08001`
+    /// connection not established or re-authentication required, `HYT00`
+    /// timeout), else one mapped from the vendor code when sf_core has a
+    /// canonical mapping.
     pub sql_state: Option<String>,
     /// Server-assigned Snowflake query ID.
     pub query_id: Option<String>,
@@ -453,10 +457,13 @@ pub struct ErrorDiagnostics {
 impl ApiError {
     /// Returns structured diagnostics suitable for any language or driver wrapper.
     ///
-    /// The server-provided SQLSTATE is authoritative. When it is absent for a
-    /// query error, sf_core falls back to its vendor-code mapping. Known login
-    /// credential failures use the authorization SQLSTATE (`28000`). No
-    /// diagnostic is inferred from human-readable message text.
+    /// The server-provided SQLSTATE is authoritative. Otherwise sf_core uses
+    /// the SQLSTATE for the failure type (`28000` rejected login credentials,
+    /// `08001` connection not established or re-authentication required for
+    /// login, session, and token errors, `HYT00` timeouts), and finally falls
+    /// back to its vendor-code mapping for any error that carries a vendor
+    /// code, including login and token errors. No diagnostic is inferred from
+    /// human-readable message text.
     #[must_use]
     pub fn diagnostics(&self) -> ErrorDiagnostics {
         let context = self.snowflake_context();
