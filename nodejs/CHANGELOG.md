@@ -21,7 +21,7 @@ You may need to adjust your setup if you:
 
 ### Known Issues
 
-> These issues will be fixed in upcoming beta releases, before the official 4.x release.
+> These issues will be addressed in upcoming beta releases, before the official 4.x release.
 
 - FIPS mode is not supported yet. The Node.js FIPS settings, such as the `--enable-fips` and `--force-fips` flags or `crypto.setFips()`, only change how the built-in `crypto` module works. The new driver does its cryptography in its native library instead of that module, so these settings have no effect on it.
 
@@ -31,22 +31,38 @@ You may need to adjust your setup if you:
 > This list of breaking changes is not final. We may add or remove entries based on feedback from the beta.
 
 - Changed the minimum supported Node.js version from 20 to 22, because Node.js 20 has reached end of life. Upgrade to Node.js 22 or later before you update the driver.
+- The driver no longer honors most Node.js runtime flags, environment variables and global settings of the Node.js `tls`, `https`, `dns` or `crypto` modules, because it doesn't use these modules. For example, flags such as `--use-openssl-ca`, `--openssl-config`, `--tls-min-v1.3`, `--tls-cipher-list` or `--dns-result-order`, and code such as `tls.DEFAULT_MIN_VERSION = 'TLSv1.3'` or `dns.setDefaultResultOrder('ipv4first')`, have no effect on it. Only two Node.js environment variables still work:
+  - `NODE_TLS_REJECT_UNAUTHORIZED=0` turns off TLS certificate checks.
+  - `NODE_EXTRA_CA_CERTS` adds the certificates from the given file to the list of trusted certificates.
 - Data Types
-  - Changed integer columns to return a native JavaScript `BigInt` instead of a `big-integer` object when the `jsTreatIntegerAsBigInt` connection option or the `JS_TREAT_INTEGER_AS_BIGINT` session parameter is enabled. `BigInt` is built into JavaScript and needs no extra package. If you use `big-integer` methods such as `.equals()` or `BigInteger.isInstance()`, switch to `BigInt` operators and `typeof value === 'bigint'`.
+  - Changed integer columns to return a native JavaScript `BigInt` instead of a `big-integer` object when the `jsTreatIntegerAsBigInt` connection option or the `JS_TREAT_INTEGER_AS_BIGINT` session parameter is enabled. `BigInt` is built into JavaScript and needs no extra package. Both types hold the same values and work mostly the same way. The difference is that `big-integer` adds its own helper methods on top. If you use them, for example `.equals()`, `.add()` or `BigInteger.isInstance()`, switch to `BigInt` operators such as `===` and `+`, and to `typeof value === 'bigint'`.
   - Changed `BINARY` columns to return a plain `Buffer`. Before, the driver added two undocumented methods, `toStringSf()` and `getFormat()`, to every `Buffer` it returned. These methods were removed. To get the value as text, use `buffer.toString('hex').toUpperCase()` or `buffer.toString('base64')`.
+- Removed undocumented APIs. They were never meant to be public and were not part of the TypeScript types:
+  - The `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. No public API used them.
+  - The `connection.isTokenValid()` method.
+  - The `getCurrentDatabaseProvider()` method on the object returned by `statement.getSessionState()`. It always returned `null`.
+  - The `sessionToken`, `masterToken`, `sessionTokenExpirationTime` and `masterTokenExpirationTime` options of `snowflake.createConnection()`. They were not part of `ConnectionOptions`. To reuse a session, use `connection.serialize()` and `snowflake.deserializeConnection()`.
 
 ### New Features
 
 - Added utils for missing data types on a `Column` class: `isDecfloat()`, `isIntervalYearMonth()` and `isIntervalDayTime()`
 - Added the `SnowflakeDate` export, the class of the values returned for `DATE` and `TIMESTAMP` columns. It extends `Date` and adds `getEpochSeconds()`, `getNanoSeconds()`, `getScale()`, `getTimezone()` and `getFormat()`. These methods existed before but had no types, so TypeScript code can now use them after a `value instanceof SnowflakeDate` check instead of a hand-written type.
+- Added the `connectionName` connection option, which chooses a connection profile by name. You can pass other connection options next to it. The driver starts from the profile and replaces only the options you pass, for example to use a different `warehouse` than the profile sets. Without it, a profile is read only when `createConnection()` gets no options, as before.
+- Added support for connection profiles in [`config.toml`](https://docs.snowflake.com/en/developer-guide/snowflake-cli/connecting/configure-cli), the configuration file that other Snowflake tools also use. Profiles go under `[connections.<name>]`, and the `default_connection_name` key sets the profile used when `createConnection()` gets no options.
+- Added support for `workloadIdentityImpersonationPath` with the `AZURE` workload identity provider. The path must contain exactly one service principal client ID.
 
 ### Bugfixes
 
 - Fixed `representNullAsStringNull` set on one connection also applying to every other connection in the same process.
 - Fixed missing `status` argument in `connection.isAnError()` types. The method is now typed as `isAnError(status: QueryStatus): boolean`.
+- Fixed `Column.isObject()` and `Column.isArray()` returning `false` for `OBJECT` and `ARRAY` columns, even though `getType()` returned `'object'` or `'array'`.
+- Fixed `statement.getNumUpdatedRows()` returning `-1` for `COPY INTO <table>`. It now returns the number of rows loaded.
+- Fixed `connection.getQueryStatusThrowIfError()` rejecting with code `-1` when the query failed on the server. The error now has the query's Snowflake error code, for example `'002003'`.
+- Fixed `pool.acquire()` and `pool.use()` rejecting with a plain `Error` when a pooled connection fails to connect. They now reject with the original connect error, including its `name`, `code` and `sqlState`.
 
 ### Internal
 
-- Removed the undocumented `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. They were dead code: no public API used them.
 - Removed the client-side length check for the `queryTag` connection option. Snowflake still checks it when you connect, so an invalid `queryTag` can still fail when `connect()` or `connectAsync()` is called.
 - Removed the format check for the `application` connection option. Any string is now accepted, because Snowflake does not check this value.
+- Changed how `ISA` is reported in telemetry to be consistent with other drivers.
+- Changed when `PLATFORM` is reported in telemetry, so it no longer blocks the first connection request.

@@ -4,7 +4,6 @@
 #  - unknown (default): status is not yet determined
 #  - todo: BD has to be fixed
 #  - fixed: BD has been addressed, removing the difference between the old and new driver;
-#           once fixed, the entry must be removed from this file
 #  - allowed: the change is expected and is accepted
 #
 # Allowed types:
@@ -80,22 +79,24 @@ behavior_differences:
       statement sets no rowMode.
 
   4:
-    name: 'Column.isObject/isArray/isMap return the correct value for each semi-structured column type (OBJECT/ARRAY/MAP)'
+    name: 'Column.isObject/isArray return true for semi-structured OBJECT and ARRAY columns'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Old snowflake-sdk always returns false from Column.isObject()/isArray()/isMap() for an untyped
-      semi-structured OBJECT/ARRAY/MAP column (e.g. OBJECT_CONSTRUCT(...) or a `::MAP(VARCHAR, VARCHAR)`
-      cast without ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE enabled on the backend), even though
-      getType() reports "object"/"array"/"map" for that same column.
+      isObject(), isArray() and isMap() return true only when the server sends structured `fields`
+      metadata, which it does only with ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE on.
+      - For semi-structured OBJECT and ARRAY columns, isObject() and isArray() return false, even
+        though getType() returns 'object' or 'array'.
+      - Without the flag, a `::MAP(K, V)` cast comes back as `object`, so isMap() is false.
+      - With the flag, isMap() is true and the value is a JS `Map`.
     new_driver_behavior: |
-      The new driver derives isObject/isArray/isMap purely from the column type name that the server
-      sends (distinct `object`/`array`/`map`), so these predicates return true for semi-structured
-      columns. A `::MAP(K, V)` cast still comes back as `object` from the server and is surfaced as a
-      plain JS object rather than a JS `Map`, but isObject() now correctly reflects the reported type.
+      The predicates check only the column type name that the server sends.
+      - isObject() and isArray() return true for semi-structured OBJECT and ARRAY columns.
+      - isMap() is true only when the server reports type `map`. Without structured types that does
+        not happen, so isMap() is false on both drivers, and a `::MAP(K, V)` cast is a plain JS object.
     description: |
       In the old driver, SqlTypes.isObject/isArray/isMap require the server to send structured
       `fields` metadata for the column (they all check `fieldsMetadata != null`). For an untyped
@@ -107,13 +108,14 @@ behavior_differences:
       isObject()/isArray()/isMap() false for the common semi-structured case. The new driver keys off
       the reported column type, which is correct for semi-structured columns. Structured-type support
       (typed OBJECT/ARRAY/MAP distinguished via `fields`, returning a real JS `Map` for MAP) is a
-      separate initiative tracked in SNOW-3445814
+      separate initiative tracked in SNOW-3445814. Until then, the old driver's opt-in structured
+      MAP (isMap() true, value is a JS `Map`) has no new-driver equivalent.
 
   5:
     name: 'Column.isVariant ignores structured `fields` metadata'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -164,7 +166,7 @@ behavior_differences:
     name: 'DECFLOAT above the documented exponent range loses its server-canonical spelling'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -347,7 +349,7 @@ behavior_differences:
     name: 'Bare FF against a scale-0 TIME column keeps the separator when width is zero'
     status: fixed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -366,7 +368,7 @@ behavior_differences:
     name: 'FFn against TIME zero-pads to the requested width, not the column scale'
     status: fixed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -571,7 +573,7 @@ behavior_differences:
     name: 'destroy() issued while a connect is in flight is refused rather than queued'
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -591,7 +593,7 @@ behavior_differences:
     name: 'The core silently drops non-whitelisted statement-level parameters'
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -606,6 +608,10 @@ behavior_differences:
       the statement runs under the session default instead of the requested value.
     description: |
       sf_core fixed
+    status_rationale: |
+      sf_core now sends every statement-level parameter in the query request, so a parameter
+      such as TIME_OUTPUT_FORMAT applies to that one query on both drivers and the session keeps
+      its value.
 
   29:
     name: 'VECTOR columns decode to a native number[] instead of the raw server string'
@@ -944,7 +950,7 @@ behavior_differences:
     name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1025,7 +1031,7 @@ behavior_differences:
     name: 'isTokenValid is not implemented'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1055,7 +1061,7 @@ behavior_differences:
     name: 'getNumUpdatedRows reports COPY rows_loaded instead of -1'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1096,8 +1102,8 @@ behavior_differences:
     name: 'createPool factory-create errors keep the connect error object'
     status: allowed
     type: enhancement
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       When a pooled connection fails to connect, `acquire()` / `use()` reject with a plain
@@ -1107,6 +1113,10 @@ behavior_differences:
       The same calls reject with the error `connectAsync()` rejected with, including its
       name (for example OperationFailedError for a rejected login), vendor code and
       SQLSTATE when the driver supplies them.
+    status_rationale: |
+      Dropping the error name, vendor code and SQLSTATE was a bug in the old driver. Keeping the
+      original error lets callers handle a failed pooled connect the same way as a failed
+      connectAsync().
 
   56:
     name: 'describeOnly multi-statement throws instead of returning the wrapper result'
@@ -1152,9 +1162,9 @@ behavior_differences:
 
   58:
     name: 'SessionState has no getCurrentDatabaseProvider'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1374,7 +1384,7 @@ behavior_differences:
     name: 'Login request omits CLIENT_ENVIRONMENT.PLATFORM'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1386,6 +1396,9 @@ behavior_differences:
       driver in the background and each session reports the result as an in-band
       `platform_detection_status` telemetry log when it closes, provided detection has
       finished by then. Connect never waits for detection.
+    status_rationale: |
+      Not a user-facing change. The platform list only goes to Snowflake for telemetry, and no
+      driver API returns it. Sending it after login means connect does not wait for detection.
 
   71:
     name: 'deserializeConnection either restores the session or throws 408003'
@@ -1589,7 +1602,7 @@ behavior_differences:
     name: 'Login request CLIENT_ENVIRONMENT.ISA uses Rust architecture names'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1623,10 +1636,14 @@ behavior_differences:
       checks.
 
   83:
-    name: 'createConnection rejects session and master tokens as connection options'
+    name: 'createConnection does not accept session and master tokens as connection options'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
+    status_rationale: |
+      The options are undocumented and not part of `ConnectionOptions`. serialize() and
+      deserializeConnection() are the public way to reuse a session, so the new driver does not
+      carry these options over.
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1634,9 +1651,9 @@ behavior_differences:
       `masterTokenExpirationTime`. The connection uses those tokens and does not log in. The
       options are not part of the typed `ConnectionOptions`.
     new_driver_behavior: |
-      createConnection throws `Unknown connection option: sessionToken` (or the name of the
-      other option). The only way to reuse an existing session is deserializeConnection with a
-      string returned by serialize().
+      createConnection does not apply these options: the connection does not use the tokens.
+      Passing one is handled like any other unknown connection option (BD#102). The only way to
+      reuse an existing session is deserializeConnection with a string returned by serialize().
     description: |
       These options were never meant to be public. The old driver does not document them and
       does not list them in the typed `ConnectionOptions`. The new driver accepts only options
@@ -1862,7 +1879,7 @@ behavior_differences:
     name: 'OAuth authorization-code loopback timeout error wording'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1872,6 +1889,9 @@ behavior_differences:
       The same wait reports `OAuth browser authorization timed out` when the loopback listener
       expires while the authentication budget is still remaining. If the whole-flow budget is
       already gone, the message is `Authentication timeout exceeded (budget {n}s)` instead.
+    status_rationale: |
+      Only the error text differs. The changelog already says that error messages differ in the
+      new driver, so this gets no entry of its own.
 
   97:
     name: 'A refused OAuth connect is NetworkError 401001 with the catalog message'
@@ -1942,7 +1962,7 @@ behavior_differences:
 
   101:
     name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
-    status: allowed
+    status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -1962,6 +1982,21 @@ behavior_differences:
       Settings are validated once, by the core, when the connection logs in. Repeating
       that validation in createConnection would keep a second copy of the rules in the
       wrapper.
+
+      Status is unknown: failing in createConnection, as the old driver does, is probably the
+      behavior we want. A fix may be a new design rather than a copy of the old driver.
+
+      These entries describe specific settings that the old driver rejects in createConnection
+      and the new driver rejects at connect:
+      - BD#73: a non-PEM privateKey
+      - BD#87: account validation
+      - BD#88: accessUrl does not fill account
+      - BD#89: a non-URL accessUrl
+      - BD#91: a non-numeric retryTimeout
+      - BD#103: a connection profile that cannot be loaded
+      - BD#122: a non-numeric timeout
+      - BD#126: an empty password
+      - BD#127, BD#128: an empty or missing PAT token file
 
   102:
     name: 'Unknown connection options are rejected with InvalidParameterError'
@@ -1988,7 +2023,7 @@ behavior_differences:
     name: 'TOML connection profiles support connectionName, config.toml and explicit overrides'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2000,12 +2035,16 @@ behavior_differences:
       synchronously and drops the underlying reason.
     new_driver_behavior: |
       The no-options path behaves the same. In addition, the `connectionName` option selects a
-      profile, and other options passed alongside it override the profile's values. When
-      `connections.toml` lacks the profile, it is read from `[connections.<name>]` in
-      `config.toml`, whose `default_connection_name` also names the default profile. A profile
-      that cannot be loaded fails connect() with an error that names the reason.
+      profile, and other options passed alongside it override the profile's values. Profiles
+      can also live under `[connections.<name>]` in `config.toml`, whose
+      `default_connection_name` names the default profile. When both files define the same
+      profile, the two are merged and `connections.toml` wins for keys set in both. A profile
+      that cannot be loaded fails at connect (BD#101) with an error that names the reason.
     description: |
       Profile loading is done by the core and matches the other universal-driver wrappers.
+    status_rationale: |
+      A new feature that the other new drivers also have. Where a profile-load failure is
+      reported is covered by BD#101.
 
   104:
     name: 'Cancel of a finished query succeeds'
@@ -2027,7 +2066,7 @@ behavior_differences:
     name: 'Cancelled query fails with a plain Error'
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2119,7 +2158,7 @@ behavior_differences:
     name: 'Azure WIF accepts a single-hop impersonation path'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2130,12 +2169,15 @@ behavior_differences:
       accepted. Connect may still fail later (no IMDS or unreachable host) but the error is
       not the old AZURE-not-supported reject. Two or more client_ids error as Azure
       single-hop (`exactly one client_id`).
+    status_rationale: |
+      A new feature. Azure supports a single impersonation hop, and the new driver accepts it
+      instead of rejecting every Azure impersonation path.
 
   110:
     name: 'WIF disallowed-host error wording'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2144,6 +2186,10 @@ behavior_differences:
     new_driver_behavior: |
       WORKLOAD_IDENTITY to a disallowed host errors with
       `Refusing to send a Workload Identity attestation to '127.0.0.1': host is not snowflakecomputing.com/.cn/.mil (or an SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES entry)`
+    status_rationale: |
+      Only the error text differs, and the new text also names the allowed host suffixes. The
+      changelog already says that error messages differ in the new driver, so this gets no entry
+      of its own.
 
   112:
     name: 'Uppercase proxy environment variables win over lowercase ones'

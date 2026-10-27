@@ -64,88 +64,6 @@ behavior_differences:
       contract worth preserving -- a connection-level rowMode setting silently being ignored by
       exactly one of two entry points is surprising behavior, not an intentional feature.
 
-  4:
-    name: 'Column.isObject/isArray/isMap return the correct value for each semi-structured column type (OBJECT/ARRAY/MAP)'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Old snowflake-sdk always returns false from Column.isObject()/isArray()/isMap() for an untyped
-      semi-structured OBJECT/ARRAY/MAP column (e.g. OBJECT_CONSTRUCT(...) or a `::MAP(VARCHAR, VARCHAR)`
-      cast without ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE enabled on the backend), even though
-      getType() reports "object"/"array"/"map" for that same column.
-    new_driver_behavior: |
-      The new driver derives isObject/isArray/isMap purely from the column type name that the server
-      sends (distinct `object`/`array`/`map`), so these predicates return true for semi-structured
-      columns. A `::MAP(K, V)` cast still comes back as `object` from the server and is surfaced as a
-      plain JS object rather than a JS `Map`, but isObject() now correctly reflects the reported type.
-    description: |
-      In the old driver, SqlTypes.isObject/isArray/isMap require the server to send structured
-      `fields` metadata for the column (they all check `fieldsMetadata != null`). For an untyped
-      semi-structured column the server returns no `fields`, so these predicates return false while
-      getType() still reports the semi-structured type. The new driver derives the predicates from
-      the reported column type name and no longer consults `fields`.
-    status_rationale: |
-      The old driver's dependence on `fields` metadata for these predicates was a bug: it left
-      isObject()/isArray()/isMap() false for the common semi-structured case. The new driver keys off
-      the reported column type, which is correct for semi-structured columns. Structured-type support
-      (typed OBJECT/ARRAY/MAP distinguished via `fields`, returning a real JS `Map` for MAP) is a
-      separate initiative tracked in SNOW-3445814
-
-  5:
-    name: 'Column.isVariant ignores structured `fields` metadata'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Old snowflake-sdk returns true from Column.isVariant() for an untyped semi-structured
-      OBJECT/ARRAY/MAP column (without ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE enabled on the
-      backend), and returns false once the column is a structured type. So for the same
-      OBJECT/ARRAY/MAP column, isVariant() flips depending on whether structured types are enabled.
-    new_driver_behavior: |
-      The new driver classifies VARIANT/OBJECT/ARRAY/MAP as variant purely by the column type name,
-      so isVariant() returns true for these columns regardless of whether structured types would be
-      enabled. The structured-vs-semi-structured distinction the old driver drew for isVariant is
-      not made.
-    description: |
-      In the old driver, SqlTypes.isVariant branches on whether the server sent structured `fields`
-      metadata for the column: variant when `fields` is absent (semi-structured), non-variant when
-      `fields` is present (structured). The new driver derives isVariant from the reported column
-      type name alone and does not consult `fields`, so it no longer draws that distinction. This is
-      consistent with the new driver only supporting semi-structured types today.
-    status_rationale: |
-      Not a public-facing behavior change: the structured-types code path was a work in progress in
-      the old driver, and structured OBJECT/ARRAY/MAP columns are not produced without opting into
-      ENABLE_STRUCTURED_TYPES_IN_CLIENT_RESPONSE. The new driver only supports semi-structured types
-      today; full structured-type handling (including the `fields`-based isVariant distinction) is a
-      separate initiative tracked in https://snowflakecomputing.atlassian.net/browse/SNOW-3445814.
-
-  7:
-    name: 'DECFLOAT above the documented exponent range loses its server-canonical spelling'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Snowflake's DECFLOAT exponent range is -16383 to 16384, so a value needing a larger exponent
-      comes back from the server with a digit shifted into the significand instead: `'1e16385'::DECFLOAT`
-      is sent as `10e16384`. Server-side TO_VARCHAR returns the same, so that spelling is canonical,
-      and the old driver reproduces it by returning the server text untouched.
-    new_driver_behavior: |
-      Returns `1e16385` -- equal in value, but not the string Snowflake produces. sf_core strips
-      trailing zeros off the significand while parsing (chunks/json_parser.rs), which turns
-      `10e16384` into `1e16385` before the Node bridge ever sees it.
-    status_rationale: |
-      Both spellings are mathematically equal; sf_core's normalization produces the more conventional
-      form (a single leading significand digit) rather than preserving the source's shifted-digit
-      quirk. This only affects values beyond the documented exponent range, an edge case with no
-      identified caller dependency on the exact server spelling.
-
   9:
     name: 'FLOAT special values NaN/inf/-inf are all collapsed to NaN by the old driver'
     status: allowed
@@ -237,44 +155,6 @@ behavior_differences:
     description: |
       A TIME-only anomaly in the old driver, not a contract. The universal driver returns.
       real null. Verified live against both drivers.
-
-  15:
-    name: 'Bare FF against a scale-0 TIME column keeps the separator when width is zero'
-    status: fixed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A bare FF token against a scale-0 TIME column renders the fractional width as zero digits
-      and keeps the preceding separator (e.g. 'HH24:MI:SS.FF' -> '12:34:56.'), matching TO_CHAR.
-    new_driver_behavior: |
-      Same as the old driver: 'HH24:MI:SS.FF' on TIME(0) renders '12:34:56.' via sf_output_format.
-    status_rationale: |
-      An early universal-driver TIME formatter dropped the digit-less suffix; TIME now renders
-      through sf_output_format, which follows the server, so the old and new drivers match again.
-    description: |
-      No longer a difference between drivers. TO_CHAR keeps the separator when the fractional
-      width resolves to zero.
-
-  16:
-    name: 'FFn against TIME zero-pads to the requested width, not the column scale'
-    status: fixed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      An explicit FFn width wins over the column scale: a TIME(0) column under 'HH24:MI:SS.FF9'
-      renders '.000000000', and a TIME(3) column under the same format renders '.123000000'.
-    new_driver_behavior: |
-      Same as the old driver: explicit FFn width wins; bare FF still takes its width from scale.
-    status_rationale: |
-      An early universal-driver TIME formatter capped FFn at column scale; TIME now renders through
-      sf_output_format, which follows the server, so the old and new drivers match again.
-    description: |
-      No longer a difference between drivers. Column scale only governs bare FF; FFn always pads
-      to n digits.
 
   17:
     name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"
@@ -442,46 +322,6 @@ behavior_differences:
       BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
       connection option and the stage path is chosen by the ALTER'd value instead.
 
-  27:
-    name: 'destroy() issued while a connect is in flight is refused rather than queued'
-    status: fixed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A connection whose login is still running is in its own connecting state, and a destroy
-      reaching it is put on a queue and run once the login settles
-      (StateConnecting.destroy -> enqueueRequest). The caller sees the outcome of that later
-      destroy: success when the login succeeded, ClientError 406502 when it failed.
-    new_driver_behavior: |
-      A destroy issued while login is in flight waits until that login settles, then closes the
-      connection. The caller sees success when the login succeeded, ClientError 406502 when it
-      failed.
-    status_rationale: |
-      The connecting state used for ClientError 405501 also lets destroy tell a login in flight
-      from one that never started, so it waits for the login instead of refusing with 406501.
-
-  28:
-    name: 'The core silently drops non-whitelisted statement-level parameters'
-    status: fixed
-    type: bug
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      execute()'s parameters option is copied onto the execute request body
-      (statement.js: json.parameters = statementContext.parameters), so a session parameter passed
-      per-statement -- e.g. { parameters: { TIME_OUTPUT_FORMAT: 'HH24:MI:SS.FF9' } } -- is honored
-      for that one query without altering the session.
-    new_driver_behavior: |
-      execute() forwards parameters to the core (index.ts -> bridge statement_set_options), but the
-      core sends only the QUERY_PARAMETER_NAMES whitelist (QUERY_TAG, MULTI_STATEMENT_COUNT) in the
-      query request; a non-whitelisted key is accepted without error and then silently dropped, so
-      the statement runs under the session default instead of the requested value.
-    description: |
-      sf_core fixed
-
   29:
     name: 'VECTOR columns decode to a native number[] instead of the raw server string'
     status: todo
@@ -634,27 +474,6 @@ behavior_differences:
       Pinned by sf_core `put_get_max_attempts_has_no_upper_bound_unlike_old_drivers_clamp`.
       Callers who set a count above the legacy cap get more PUT/GET attempts than before.
 
-  37:
-    name: 'Native Okta authenticator-request logical failures drop the Snowflake message'
-    status: fixed
-    type: bug
-    reviewed: true
-    status_rationale: |
-      Restores parity: the 4.x driver includes the GS message in the
-      connection error Display string.
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
-      GS `message` (e.g. "not accepted by your Snowflake account configuration" or
-      "is not supported") is included in the connection error.
-    new_driver_behavior: |
-      When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
-      GS `message` is included in the connection error.
-    description: |
-      Regression fixed. Applications again see the GS authenticator-request rejection
-      message in the connection error, matching the legacy driver.
-
   39:
     name: 'clientStoreTemporaryCredential defaults true and is always overridable'
     status: unknown
@@ -778,26 +597,6 @@ behavior_differences:
       implemented.
     status_rationale: We aim to reduce the number of custom error types in the driver.
 
-  47:
-    name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      getQueryStatusThrowIfError for a query that failed server-side rejects with
-      OperationFailedError, code -1, and the monitoring errorMessage.
-    new_driver_behavior: |
-      The same call rejects with OperationFailedError, code `'002003'` (the
-      query's errorCode from monitoring, zero-padded like execute()), and the
-      same errorMessage.
-    status_rationale: |
-      The old driver does not surface the monitoring errorCode on this path.
-      `'002003'` matches the SQL compilation vendor code from execute. -1 is a
-      generic error code that the old driver uses when it cannot determine the
-      error code from the Snowflake server.
-
   49:
     name: 'asyncExec complete callback does not pass { queryId } as the rows argument'
     status: unknown
@@ -838,22 +637,6 @@ behavior_differences:
       Every query returns RowStatement. RowStatement exposes `hasNext()` and `NextResult()`, and
       there is no separate FileAndStageBindStatement type.
 
-  51:
-    name: 'isTokenValid is not implemented'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Connection.isTokenValid() exists at runtime and returns whether both session and
-      master token expiries are still in the future. It is omitted from dist/index.d.ts.
-    new_driver_behavior: |
-      Connection has no isTokenValid method.
-    status_rationale: |
-      The old driver already omitted the method from the published types. The new driver
-      does not add a runtime-only copy of an unpublished API.
-
   52:
     name: 'Zero UTC offset in a TIME format prints Z, not +00:00'
     status: allowed
@@ -867,26 +650,6 @@ behavior_differences:
       Those elements print `Z`, matching `TO_CHAR` for a zero UTC offset.
     description: |
       The new driver follows the server. The old driver always writes a numeric offset.
-
-  53:
-    name: 'getNumUpdatedRows reports COPY rows_loaded instead of -1'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      COPY INTO <table> is DML-family but not in the INSERT/UPDATE/DELETE/MERGE/multi-insert
-      whitelist, so getNumUpdatedRows() returns -1.
-    new_driver_behavior: |
-      COPY INTO <table> returns the sum of the rows_loaded status-column, matching JDBC
-      getUpdateCount for COPY. UNLOAD (COPY INTO <location>) stays -1 on both the old and
-      new Node drivers. JDBC getUpdateCount for a plain UNLOAD is 0 on both JDBC drivers
-      and is not this API.
-    status_rationale: |
-      Completes the old driver's COPY TODO. The number is rows loaded into the table, not
-      file count. UNLOAD stays -1 because exporting to files is not a table-row update.
-      JDBC's 0 is getUpdateCount on a statement that does not produce a result set.
 
   54:
     name: 'client rejects a non-UUID requestId before talking to GS'
@@ -908,22 +671,6 @@ behavior_differences:
       The old client check was wrong. GS never executed a non-UUID `requestId`;
       rejecting up front with the same code as a bad `queryId` is the fix, not
       an incompatibility.
-
-  55:
-    name: 'createPool factory-create errors keep the connect error object'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      When a pooled connection fails to connect, `acquire()` / `use()` reject with a plain
-      `Error` whose message is the connect error message. Vendor code and SQLSTATE from the
-      original error are dropped.
-    new_driver_behavior: |
-      The same calls reject with the error `connectAsync()` rejected with, including its
-      name (for example OperationFailedError for a rejected login), vendor code and
-      SQLSTATE when the driver supplies them.
 
   56:
     name: 'describeOnly multi-statement throws instead of returning the wrapper result'
@@ -966,21 +713,6 @@ behavior_differences:
     status_rationale: |
       Runtime for the session-name getters is the same. SessionState is the honest
       TypeScript type; object was not.
-
-  58:
-    name: 'SessionState has no getCurrentDatabaseProvider'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      SessionState.getCurrentDatabaseProvider() returns the query JSON databaseProvider
-      value, which is always null.
-    new_driver_behavior: |
-      SessionState has no getCurrentDatabaseProvider method.
-    status_rationale: |
-      The Snowflake server marks databaseProvider as deprecated and always returns null.
 
   59:
     name: 'browserActionTimeout still accepted (ms) but bounds core authentication_timeout'
@@ -1167,23 +899,6 @@ behavior_differences:
     status_rationale: |
       Python, JDBC, and core do the same: a statement QUERY_TAG overrides the connection
       tag for that query. The statement is the more specific level, so its value wins.
-
-  70:
-    name: 'Login request omits CLIENT_ENVIRONMENT.PLATFORM'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Platform detection runs before login and the detected platforms are sent as the
-      `CLIENT_ENVIRONMENT.PLATFORM` array in the login request body (e.g. `is_aws_lambda`
-      when `LAMBDA_TASK_ROOT` is set).
-    new_driver_behavior: |
-      The login request has no `CLIENT_ENVIRONMENT.PLATFORM` field. Detection runs once per
-      driver in the background and each session reports the result as an in-band
-      `platform_detection_status` telemetry log when it closes, provided detection has
-      finished by then. Connect never waits for detection.
 
   71:
     name: 'deserializeConnection either restores the session or throws 408003'
@@ -1382,43 +1097,6 @@ behavior_differences:
       Re-sending a query after a failed renewal is a core retry policy rather than an
       error-mapping detail. The difference shows only when a renewal coincides with a network
       failure; during a longer outage both drivers end with NetworkError.
-
-  81:
-    name: 'Login request CLIENT_ENVIRONMENT.ISA uses Rust architecture names'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `CLIENT_ENVIRONMENT.ISA` in the login request body is the Node.js `process.arch` value,
-      e.g. `arm64` or `x64`.
-    new_driver_behavior: |
-      `CLIENT_ENVIRONMENT.ISA` is the Rust target architecture name, e.g. `aarch64` or
-      `x86_64`. This is the same value every other new driver sends.
-    status_rationale: |
-      Not a user-facing change. The value only goes to the server in the login request for
-      telemetry purposes, and no driver API returns it.
-
-  83:
-    name: 'createConnection rejects session and master tokens as connection options'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection accepts `sessionToken`, `masterToken`, `sessionTokenExpirationTime` and
-      `masterTokenExpirationTime`. The connection uses those tokens and does not log in. The
-      options are not part of the typed `ConnectionOptions`.
-    new_driver_behavior: |
-      createConnection throws `Unknown connection option: sessionToken` (or the name of the
-      other option). The only way to reuse an existing session is deserializeConnection with a
-      string returned by serialize().
-    description: |
-      These options were never meant to be public. The old driver does not document them and
-      does not list them in the typed `ConnectionOptions`. The new driver accepts only options
-      that are part of the public API.
 
   84:
     name: 'A deserialized connection serializes without token expiration times'
@@ -1636,21 +1314,6 @@ behavior_differences:
       The default store is initialized on first use rather than at connect, so its failure is
       handled like any other best-effort cache failure.
 
-  95:
-    name: 'OAuth authorization-code loopback timeout error wording'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      When the authorization-code loopback wait expires, the error is
-      `Browser action timed out after {n} ms.` with n the browserActionTimeout value in milliseconds.
-    new_driver_behavior: |
-      The same wait reports `OAuth browser authorization timed out` when the loopback listener
-      expires while the authentication budget is still remaining. If the whole-flow budget is
-      already gone, the message is `Authentication timeout exceeded (budget {n}s)` instead.
-
   97:
     name: 'A refused OAuth connect is NetworkError 401001 with the catalog message'
     status: unknown
@@ -1720,7 +1383,7 @@ behavior_differences:
 
   101:
     name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
-    status: allowed
+    status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -1762,29 +1425,6 @@ behavior_differences:
       An option that is silently ignored leaves the application believing it took effect,
       so the new driver fails instead.
 
-  103:
-    name: 'TOML connection profiles support connectionName, config.toml and explicit overrides'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      createConnection() and createPool() with no options load the profile named by
-      `SNOWFLAKE_DEFAULT_CONNECTION_NAME` (or `default`) from `connections.toml`. A profile is
-      never loaded when any option is passed, there is no option to name a profile, and
-      `config.toml` is not read. When the profile cannot be loaded (missing profile, unsafe
-      file permissions), createConnection() throws `Connection options must be specified.`
-      synchronously and drops the underlying reason.
-    new_driver_behavior: |
-      The no-options path behaves the same. In addition, the `connectionName` option selects a
-      profile, and other options passed alongside it override the profile's values. When
-      `connections.toml` lacks the profile, it is read from `[connections.<name>]` in
-      `config.toml`, whose `default_connection_name` also names the default profile. A profile
-      that cannot be loaded fails connect() with an error that names the reason.
-    description: |
-      Profile loading is done by the core and matches the other universal-driver wrappers.
-
   104:
     name: 'Cancel of a finished query succeeds'
     status: unknown
@@ -1800,25 +1440,6 @@ behavior_differences:
       The abort request is still sent, and its response, including 000605, is ignored.
     status_rationale: |
       Cancelling after the query has already finished should not be an error.
-
-  105:
-    name: 'Cancelled query fails with a plain Error'
-    status: fixed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      The cancelled execute fails with OperationFailedError, code 000604,
-      SQLSTATE 57014, "SQL execution canceled".
-    new_driver_behavior: |
-      Same as the old driver: the cancelled execute fails with OperationFailedError, code 000604,
-      SQLSTATE 57014, "SQL execution canceled".
-    status_rationale: |
-      The new driver used to fail a cancelled execute with a plain Error "Operation was cancelled"
-      and no code or SQLSTATE; it now reports the server cancellation error.
-    description: |
-      No longer a difference between drivers.
 
   106:
     name: 'WIF validation and OIDC-impersonation error messages use snake_case core wording'
@@ -1892,36 +1513,6 @@ behavior_differences:
       JSON file is used only when no such keyring is available. Its directory
       comes from SF_TEMPORARY_CREDENTIAL_CACHE_DIR when that variable names an
       existing directory, then the usual platform cache locations.
-
-  109:
-    name: 'Azure WIF accepts a single-hop impersonation path'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Any workloadIdentityImpersonationPath with provider AZURE errors with
-      `workloadIdentityImpersonationPath for AZURE is not supported`.
-    new_driver_behavior: |
-      A single Azure service-principal client_id in workloadIdentityImpersonationPath is
-      accepted. Connect may still fail later (no IMDS or unreachable host) but the error is
-      not the old AZURE-not-supported reject. Two or more client_ids error as Azure
-      single-hop (`exactly one client_id`).
-
-  110:
-    name: 'WIF disallowed-host error wording'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      WORKLOAD_IDENTITY to a disallowed host errors with
-      `WORKLOAD_IDENTITY requires a recognized Snowflake host. Got: 127.0.0.1.`
-    new_driver_behavior: |
-      WORKLOAD_IDENTITY to a disallowed host errors with
-      `Refusing to send a Workload Identity attestation to '127.0.0.1': host is not snowflakecomputing.com/.cn/.mil (or an SNOWFLAKE_WIF_ALLOWED_HOST_SUFFIXES entry)`
 
   112:
     name: 'Uppercase proxy environment variables win over lowercase ones'
@@ -2116,7 +1707,7 @@ behavior_differences:
 
   124:
     name: 'toCoreConnectionOptions stringifies null'
-    status: allowed
+    status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true

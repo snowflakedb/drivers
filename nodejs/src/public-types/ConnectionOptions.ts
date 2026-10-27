@@ -126,21 +126,25 @@ export type ConnectionOptions = {
   workloadIdentityHost?: string;
 
   /**
-   * When authenticator=WORKLOAD_IDENTITY, specifies a chain of service accounts for transitive impersonation.
-   * Each element represents a service account to impersonate in sequence, allowing workloads to authenticate
-   * as a different identity than their default attached service account.
+   * When authenticator=WORKLOAD_IDENTITY, specifies a chain of identities to impersonate in order.
+   * This lets a workload authenticate as a different identity than its default attached one.
    *
-   * Supported for AWS and GCP.
+   * Supported for:
+   * * AWS and GCP - one or more identities.
+   * * AZURE - exactly one service principal client ID. Azure supports only a single
+   *   impersonation step.
+   *
+   * Not supported for OIDC.
    */
   workloadIdentityImpersonationPath?: string[];
 
   /**
-   * When workloadIdentityProvider=AZURE, customize Azure Entra Id Resource
+   * When workloadIdentityProvider=AZURE, customizes Azure Entra Id Resource
    */
   workloadIdentityAzureEntraIdResource?: string;
 
   /**
-   * When workloadIdentityProvider=AZURE, customize Azure Managed Identity Client Id
+   * When workloadIdentityProvider=AZURE, customizes Azure Managed Identity Client Id
    */
   workloadIdentityAzureClientId?: string;
 
@@ -148,16 +152,16 @@ export type ConnectionOptions = {
    * When workloadIdentityProvider=AWS, selects the AWS attestation method.
    *
    * AWS WIF supports two methods:
-   * * `GetCallerIdentity` (default, `false`) - the connector encodes a SigV4-signed
+   * * `GetCallerIdentity` (default, `false`) - the driver encodes a SigV4-signed
    *   `GetCallerIdentity` request as the attestation token.
-   * * `GetWebIdentityToken` (`true`) - the connector calls STS `GetWebIdentityToken` and
+   * * `GetWebIdentityToken` (`true`) - the driver calls STS `GetWebIdentityToken` and
    *   forwards a standards-based JWT instead. This provides stateless token verification and
    *   compatibility with AWS outbound identity federation. It requires the AWS IAM role to have
    *   `sts:GetWebIdentityToken` permission and the Snowflake service user to be configured with an
    *   `ISSUER`.
    *
    * See {@link https://docs.snowflake.com/en/user-guide/workload-identity-federation#label-wif-aws-upgrade-jwt}
-   * for setup instructions, including the Node.js connector configuration.
+   * for setup instructions.
    *
    * @default false
    */
@@ -243,11 +247,17 @@ export type ConnectionOptions = {
   arrayBindingThreshold?: number;
 
   /**
-   * Named profile in `connections.toml` or `config.toml`. When this is the only
-   * option, the profile supplies the connection. When other options are also
-   * set, they override the profile.
+   * Name of the connection profile to use from `connections.toml` or `config.toml`.
    *
-   * @default process.env.SNOWFLAKE_DEFAULT_CONNECTION_NAME ?? "default"
+   * The driver reads a profile only in these cases:
+   * - `connectionName` is set. Other connection options passed next to it replace the
+   *   profile's values for those options.
+   * - `createConnection()` gets no options. The driver uses the profile named by:
+   *   1. the `SNOWFLAKE_DEFAULT_CONNECTION_NAME` environment variable
+   *   2. the `default_connection_name` key in `config.toml`
+   *   3. `"default"`
+   *
+   * In all other cases, no profile is read, and only the options you pass are used.
    */
   connectionName?: string;
 
