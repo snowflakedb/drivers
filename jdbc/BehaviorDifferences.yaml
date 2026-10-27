@@ -402,115 +402,121 @@ behavior_differences:
       evicts a pooled connection on an error event - a close event would mark the dead connection
       reusable.
   26:
-    name: "Unsupported logical-connection features no longer fire connectionErrorOccurred"
+    name: "SQLFeatureNotSupportedException from a pooled connection no longer fires connectionErrorOccurred"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: medium
     old_driver_behavior: |
-      Every SQLException thrown by a delegated Connection method on a LogicalConnection — including
-      SQLFeatureNotSupportedException for unimplemented JDBC features — triggers
-      ConnectionEventListener.connectionErrorOccurred on the owning PooledConnection.
+      Every `SQLException` a delegated `java.sql.Connection` method throws on a pooled logical
+      handle, `SQLFeatureNotSupportedException` included, fires
+      `ConnectionEventListener.connectionErrorOccurred` on the owning `PooledConnection` before the
+      exception reaches the caller.
     new_driver_behavior: |
-      SQLFeatureNotSupportedException is rethrown without firing connectionErrorOccurred. Genuine
-      connection failures (other SQLExceptions) still fire the error event.
+      `SQLFeatureNotSupportedException` reaches the caller without firing
+      `connectionErrorOccurred`. Any other `SQLException` from the underlying connection still
+      fires it.
     description: |
-      connectionErrorOccurred signals a broken physical connection, and pool managers typically
-      evict the connection when they receive it. Invoking an unsupported JDBC feature is a caller
-      mistake, not a connection failure, and must not cause a healthy pooled connection to be
-      discarded.
+      `connectionErrorOccurred` signals a broken physical connection, and pool managers typically
+      evict the connection when they receive it. Probing for an unsupported JDBC feature is a
+      caller mistake, not a connection failure, so a pool no longer discards a healthy connection
+      over it. Client-info failures are BD#32 and `unwrap` of an unsupported type is BD#35.
     status_rationale: |
-      Intentional fix to avoid spurious pool eviction/churn when applications probe JDBC
+      Intentional fix to avoid spurious pool eviction and churn when applications probe JDBC
       capabilities on a pooled logical connection.
   27:
-    name: "PooledConnection.getConnection() after close() throws SQLException instead of NPE"
+    name: "PooledConnection.getConnection() after close() throws SQLException instead of NullPointerException"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      After SnowflakePooledConnection.close() the physical connection reference is null; a
-      subsequent getConnection() dereferences it and throws an unchecked NullPointerException.
+      After `SnowflakePooledConnection.close()`, `getConnection()` throws an unchecked
+      `NullPointerException`. After a logical `abort()`, `getConnection()` returns a new logical
+      handle.
     new_driver_behavior: |
-      getConnection() throws a SnowflakeSQLException with error code CONNECTION_CLOSED (200052 /
-      SQLSTATE 08003) whenever the physical connection is unavailable - both after
-      PooledConnection.close() (reference cleared) and when the physical connection is already dead
-      (e.g. after a logical abort()). The legacy driver has no guard: after PooledConnection.close()
-      it throws a NullPointerException, and after a logical abort() it still hands back a logical
-      connection that is already closed.
+      After `PooledConnection.close()`, and after a logical `abort()`, `getConnection()` throws
+      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
     description: |
-      Provides a checked, diagnosable JDBC error instead of an unchecked NPE (or a silently dead
-      handle) for callers that borrow from a no-longer-usable PooledConnection.
+      A pool manager or application that borrows from an already-closed `PooledConnection` catches
+      a checked `SQLException` on the new driver; code that catches `NullPointerException` there no
+      longer reaches that handler. The pool events `abort()` fires are BD#40.
     status_rationale: |
-      Intentional fix; the failure mode is now a proper SQLException consistent with other
-      closed-resource paths.
+      `javax.sql.PooledConnection.getConnection()` declares `SQLException`, so a closed pooled
+      connection reporting an unchecked `NullPointerException` is outside the method's contract.
   28:
-    name: "Connection event listener exceptions are isolated during event dispatch"
+    name: "A listener RuntimeException no longer stops event dispatch or escapes close()"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      fireConnectionCloseEvent / fireConnectionErrorEvent iterate listeners (stored in a HashSet)
-      with no exception handling, so a listener that throws aborts dispatch to the remaining
-      listeners and can propagate into the caller's close() or operation path.
+      When one registered `ConnectionEventListener` throws a `RuntimeException`, the remaining
+      listeners receive no callback. On `close()` that `RuntimeException` propagates to the caller
+      and the logical handle stays open.
     new_driver_behavior: |
-      Each listener callback is wrapped; a RuntimeException from one listener is logged and dispatch
-      continues to the remaining listeners. Listeners are held in a CopyOnWriteArraySet for safe
-      iteration under concurrent registration.
+      The `RuntimeException` is logged and the remaining listeners still receive the callback.
+      `close()` completes, and a `SQLException` raised by the close path itself is still thrown.
+      An `Error` from a listener propagates on both drivers.
     description: |
-      Ensures one misbehaving ConnectionEventListener cannot break pool bookkeeping or the
-      application's close path.
+      One misbehaving `ConnectionEventListener` can no longer break pool bookkeeping or an
+      application's close path. An application that relied on a listener exception aborting
+      `close()` sees the handle closed instead.
     status_rationale: |
-      Intentional robustness improvement; event delivery is now best-effort and isolated per
+      `javax.sql.ConnectionEventListener` callbacks are notifications, and the pooling contract
+      gives a listener no way to veto a close, so dispatch is best-effort and isolated per
       listener.
   29:
-    name: "LogicalConnection enforces closed-state on client-info access"
+    name: "Client-info access on a closed pooled handle throws CONNECTION_CLOSED instead of reaching the physical session"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      setClientInfo and getClientInfo(String) on a LogicalConnection delegate to the physical
-      connection with no closed-state guard (the no-arg getClientInfo() was already guarded).
+      On a closed logical handle, `setClientInfo` and `getClientInfo(String)` delegate to the still
+      open physical connection: `setClientInfo` throws `SQLClientInfoException` reporting the
+      property as not settable and fires `connectionErrorOccurred`, and `getClientInfo(String)`
+      returns the property value. The no-argument `getClientInfo()` throws
+      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
     new_driver_behavior: |
-      setClientInfo(String,String) and setClientInfo(Properties) on a closed logical handle throw
-      SQLClientInfoException carrying SQLSTATE 08003 / vendor code 200052 (CONNECTION_CLOSED), with
-      failedProperties populated for every property that could not be set (the single-key overload
-      reports that one name; the Properties overload reports every key). getClientInfo(String) and
-      getClientInfo() on a closed logical handle throw SnowflakeSQLException(CONNECTION_CLOSED)
-      (200052 / 08003). The physical SnowflakeConnectionImpl reports the same codes and
-      failedProperties on its closed-state setClientInfo paths; its closed-state getClientInfo paths
-      throw a plain SQLException("Connection is closed") via checkClosed() (no SQLState/vendor code).
-      Open handles delegate as before.
+      On a closed logical handle, `setClientInfo` throws `SQLClientInfoException` and both
+      `getClientInfo` methods throw `SnowflakeSQLException`, all carrying vendor code `200052` and
+      SQLSTATE `08003`, and none of them reaches the physical connection. `setClientInfo` does not
+      fire `connectionErrorOccurred`.
     description: |
-      Closed logical connections must reject operations per the JDBC Connection contract.
+      Closing a pooled handle leaves the physical connection open on both drivers, so on the old
+      driver a returned handle can still read and write client info on a session another borrower
+      may hold. `java.sql.Connection` requires a closed connection to reject these calls. The
+      physical connection's own closed-state client-info behavior is BD#22.
     status_rationale: |
       Intentional fix for closed-handle correctness, consistent with the other closed-state checks
-      on LogicalConnection.
+      on a logical connection.
   30:
-    name: "Logical connection is marked closed before the close event is fired"
+    name: "A listener handling connectionClosed observes isClosed() true instead of false"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      LogicalConnection.close() fires connectionClosed and then sets isClosed = true, so a listener
-      callback that inspects the handle observes isClosed() == false, and a re-entrant close() from
-      a listener can fire the close event more than once.
+      `LogicalConnection.close()` fires `connectionClosed` and sets the closed flag afterwards, so
+      a listener callback sees `isClosed()` false and can still create statements on the handle.
+      A listener that calls `close()` again re-enters the dispatch until the stack overflows.
     new_driver_behavior: |
-      close() sets isClosed = true before firing connectionClosed, guaranteeing idempotency and
-      preventing duplicate events from re-entrant listener callbacks.
+      `close()` sets the closed flag before firing `connectionClosed`, so a listener callback sees
+      `isClosed()` true. A `close()` from inside the callback is a no-op and the event fires once.
     description: |
-      Makes logical close idempotent and re-entrancy-safe; the close event still fires exactly once.
+      Neither driver closes the physical connection on a logical `close()`. A listener that used
+      the callback to run a last statement on the handle now gets the closed-connection error
+      instead.
     status_rationale: |
-      Intentional fix; trades the legacy event-then-flag ordering for a consistently-closed handle
-      during listener callbacks.
+      `java.sql.Connection.isClosed()` must report a connection closed once `close()` has been
+      called, and the `javax.sql` pooling contract delivers `connectionClosed` for a handle that is
+      already back in the pool, so the flag belongs before the event.
   31:
     name: "DataSource exposes a trimmed, sf_core-supported configuration surface"
     status: unknown
