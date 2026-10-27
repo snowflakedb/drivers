@@ -16,7 +16,7 @@ old_driver_behavior: |
 new_driver_behavior: |
   `ConnectionSetSessionParametersRequest.parameters` is a string-only
   protobuf `map<string, string>`, and `auth_request_data`
-  (`sf_core/src/rest/snowflake/mod.rs:603-608`) unconditionally wraps
+  (`sf_core/src/rest/snowflake/mod.rs`) wraps
   every session-parameter value as `serde_json::Value::String` when
   building the login request — this is pre-existing UD behavior, not
   introduced by this fix. This fix's coercion (`bool` → lowercase
@@ -26,7 +26,11 @@ new_driver_behavior: |
   built-in operation` beforehand. The practical effect: every
   non-string session-parameter value's JSON type is flattened to a JSON
   string on the wire (e.g. `true` → `"true"`, `5` → `"5"`) — the
-  character content matches legacy, but the JSON type does not. String
+  character content matches the old driver, but the JSON type does not. The one
+  exception is `CLIENT_VALIDATE_DEFAULT_PARAMETERS` (set through
+  `validate_default_parameters`), which the login request sends as a
+  JSON boolean, so `validate_default_parameters=True` rejects a
+  nonexistent database, schema, or warehouse at login. String
   values are unaffected (identical logical content; only a cosmetic
   JSON-escaping style difference between Python's and Rust's default
   encoders, immaterial to any compliant JSON parser).
@@ -42,3 +46,7 @@ description: |
   don't have visibility into whether GS's session-parameter parser is
   strict about JSON type, so this stays `impact: low` rather than
   overclaiming.
+  The login request sends `CLIENT_VALIDATE_DEFAULT_PARAMETERS` as a JSON
+  boolean because Global Services enables database, schema, and
+  warehouse validation only for a JSON boolean value; a string would
+  silently disable the check.

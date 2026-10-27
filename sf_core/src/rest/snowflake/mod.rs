@@ -802,6 +802,14 @@ async fn evict_oauth_access_token_for_authorization_code(
     oauth::remove_oauth_dpop_bundled(&idp_url, server_url, &cfg.username, role, token_cache).await;
 }
 
+fn login_session_parameter_value(key: &str, value: &str) -> serde_json::Value {
+    match (key, value) {
+        ("CLIENT_VALIDATE_DEFAULT_PARAMETERS", "true") => serde_json::Value::Bool(true),
+        ("CLIENT_VALIDATE_DEFAULT_PARAMETERS", "false") => serde_json::Value::Bool(false),
+        _ => serde_json::Value::String(value.to_string()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn auth_request_data(
     client: &reqwest::Client,
@@ -824,7 +832,7 @@ pub async fn auth_request_data(
     if let Some(params) = session_parameters {
         let json_params = params
             .iter()
-            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .map(|(k, v)| (k.clone(), login_session_parameter_value(k, v)))
             .collect();
         data.session_parameters = Some(json_params);
     }
@@ -4395,6 +4403,58 @@ mod tests {
             session_params.get("CLIENT_STORE_TEMPORARY_CREDENTIAL"),
             Some(&serde_json::Value::Bool(true))
         );
+    }
+
+    fn login_session_parameters_for(
+        session_parameters: &HashMap<String, String>,
+    ) -> HashMap<String, serde_json::Value> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        rt.block_on(auth_request_data(
+            &client,
+            &test_login_params(),
+            Some(session_parameters),
+            None,
+            None,
+            &RetryPolicy::default(),
+            crate::crl::CrlManager::new(),
+            crate::tls::RootStoreProvider::new(),
+        ))
+        .unwrap()
+        .session_parameters
+        .expect("SESSION_PARAMETERS should be set when session parameters are passed")
+    }
+
+    #[test]
+    fn auth_request_sends_validate_default_parameters_as_json_bool() {
+        for (value, expected) in [("true", true), ("false", false)] {
+            let session_params = login_session_parameters_for(&HashMap::from([
+                (
+                    "CLIENT_VALIDATE_DEFAULT_PARAMETERS".to_string(),
+                    value.to_string(),
+                ),
+                ("QUERY_TAG".to_string(), "true".to_string()),
+            ]));
+
+            assert_eq!(
+                session_params.get("CLIENT_VALIDATE_DEFAULT_PARAMETERS"),
+                Some(&serde_json::Value::Bool(expected))
+            );
+            assert_eq!(
+                session_params.get("QUERY_TAG"),
+                Some(&serde_json::Value::String("true".to_string()))
+            );
+        }
+    }
+
+    #[test]
+    fn auth_request_omits_validate_default_parameters_when_unset() {
+        let session_params = login_session_parameters_for(&HashMap::from([(
+            "QUERY_TAG".to_string(),
+            "batch".to_string(),
+        )]));
+
+        assert!(!session_params.contains_key("CLIENT_VALIDATE_DEFAULT_PARAMETERS"));
     }
 
     #[test]
