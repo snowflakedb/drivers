@@ -131,6 +131,14 @@ fn c_api_fips_status_rejects_null_output() {
 }
 
 #[test]
+fn windows_export_list_includes_sf_get_fips_status() {
+    let exported = include_str!("../exports.def")
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some("SFGetFipsStatus"));
+    assert!(exported, "SFGetFipsStatus is missing from odbc/exports.def");
+}
+
+#[test]
 fn c_api_lifecycle_with_telemetry_shim_is_non_fatal() {
     use odbc_sys as sql;
     use sfodbc::c_api::*;

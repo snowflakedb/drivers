@@ -68,8 +68,7 @@ EXPORTS
     SQLColumnPrivilegesW
     SQLTablePrivilegesW
     SQLStatisticsW
-    ; FIPS_TLS_STATUS_WITHHELD: withheld from the shipped contract while the status shape is still under consideration.
-    ; SFGetTlsStatus
+    SFGetFipsStatus
     ConfigDSN
     ConfigDSNW
     ConfigDriver
