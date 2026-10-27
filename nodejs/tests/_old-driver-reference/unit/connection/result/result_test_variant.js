@@ -91,6 +91,7 @@ describe('Result: test variant parsing', function () {
     );
   });
 
+  // The new driver has no fallback, warning, or telemetry for these values (BD#140); its error is covered by nodejs/tests/e2e/query/data-types/semi-structured.test.ts.
   it('falls back to new Function for non-JSON-compliant values and sends telemetry once', function (done) {
     const response = createVariantResponse([['[1, undefined, 3]'], ['[NaN, Infinity]']]);
     const requestAsyncSpy = sinon.stub().resolves();

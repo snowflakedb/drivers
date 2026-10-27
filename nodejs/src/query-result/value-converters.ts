@@ -17,7 +17,19 @@ export const variantConverter: CellConverter = (value) => {
   const text = value as string;
   try {
     return GlobalConfig.jsonColumnVariantParser(text);
-  } catch {
-    return GlobalConfig.xmlColumnVariantParser(text);
+  } catch (jsonError) {
+    try {
+      return GlobalConfig.xmlColumnVariantParser(text);
+    } catch (xmlError) {
+      throw new Error(
+        'Variant value cannot be parsed as JSON or XML.\n' +
+          ` - JSON parse error: ${errorMessage(jsonError)}\n` +
+          ` - XML parse error: ${errorMessage(xmlError)}\n` +
+          'If the value contains NaN, Infinity or undefined, set the STRICT_JSON_OUTPUT ' +
+          'session parameter to TRUE, or pass a custom jsonColumnVariantParser to snowflake.configure().',
+      );
+    }
   }
 };
+
+const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));

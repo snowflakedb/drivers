@@ -37,6 +37,10 @@ You may need to adjust your setup if you:
 - Data Types
   - Changed integer columns to return a native JavaScript `BigInt` instead of a `big-integer` object when the `jsTreatIntegerAsBigInt` connection option or the `JS_TREAT_INTEGER_AS_BIGINT` session parameter is enabled. `BigInt` is built into JavaScript and needs no extra package. Both types hold the same values and work mostly the same way. The difference is that `big-integer` adds its own helper methods on top. If you use them, for example `.equals()`, `.add()` or `BigInteger.isInstance()`, switch to `BigInt` operators such as `===` and `+`, and to `typeof value === 'bigint'`.
   - Changed `BINARY` columns to return a plain `Buffer`. Before, the driver added two undocumented methods, `toStringSf()` and `getFormat()`, to every `Buffer` it returned. These methods were removed. To get the value as text, use `buffer.toString('hex').toUpperCase()` or `buffer.toString('base64')`.
+  - Changed `VARIANT`, `OBJECT`, `ARRAY` and `MAP` values to be parsed with `JSON.parse()` only. Before, the driver evaluated values that were not valid JSON as JavaScript code. We removed this as a safety precaution and because `JSON.parse()` is much faster.
+    By default (the `STRICT_JSON_OUTPUT` parameter is `FALSE`), Snowflake can return `NaN`, `Infinity` and `undefined` in these values, and they are not valid JSON. For example, `OBJECT_CONSTRUCT('a', 'NaN'::FLOAT)` returns `{"a": NaN}`, and `ARRAY_CONSTRUCT(1, NULL, 2)` returns `[1, undefined, 2]`. Queries that return such values now fail with an error. To read them, either:
+    - set `STRICT_JSON_OUTPUT` to `TRUE`. Snowflake then returns `null` instead of `undefined`, and the strings `"NaN"` and `"Infinity"`.
+    - pass your own `jsonColumnVariantParser` to `snowflake.configure()`.
 - Removed undocumented APIs. They were never meant to be public and were not part of the TypeScript types:
   - The `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. No public API used them.
   - The `connection.isTokenValid()` method.

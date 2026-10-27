@@ -356,16 +356,59 @@ describe('semi-structured data type', () => {
   });
 
   describe('Parsing', () => {
-    it('should parse JSON with undefined, Infinity, and NaN as JS types', async () => {
-      const { rows } = await executeAsync(
+    it('should fail on JSON with undefined, Infinity, and NaN', async () => {
+      const query = executeAsync(
         connection,
+        "SELECT parse_json('{a: undefined, b: Infinity, c: NaN, d: [-Infinity, undefined, NaN]}') as VARIANT_COLUMN",
+      );
+      if (isRunningNewDriverWithBD('BD#140')) {
+        await expect(query).rejects.toMatchObject({
+          error: {
+            name: 'Error',
+            message: expect.stringContaining(
+              'If the value contains NaN, Infinity or undefined, set the STRICT_JSON_OUTPUT session parameter to TRUE',
+            ),
+          },
+        });
+      } else {
+        const { rows } = await query;
+        expect(rows[0].VARIANT_COLUMN).toEqual({
+          a: null,
+          b: Infinity,
+          c: NaN,
+          d: [-Infinity, undefined, NaN],
+        });
+      }
+    });
+
+    it('should fail on a SQL NULL inside an array', async () => {
+      const query = executeAsync(connection, 'SELECT ARRAY_CONSTRUCT(1, NULL, 2) AS ARRAY_COLUMN');
+      if (isRunningNewDriverWithBD('BD#140')) {
+        await expect(query).rejects.toMatchObject({
+          error: {
+            name: 'Error',
+            message: expect.stringContaining('Variant value cannot be parsed as JSON or XML.'),
+          },
+        });
+      } else {
+        const { rows } = await query;
+        expect(rows[0].ARRAY_COLUMN).toEqual([1, undefined, 2]);
+      }
+    });
+
+    it('should parse JSON with undefined, Infinity, and NaN when STRICT_JSON_OUTPUT is TRUE', async () => {
+      const strictConnection = await createLiveConnection();
+      await executeAsync(strictConnection, 'ALTER SESSION SET STRICT_JSON_OUTPUT = TRUE');
+
+      const { rows } = await executeAsync(
+        strictConnection,
         "SELECT parse_json('{a: undefined, b: Infinity, c: NaN, d: [-Infinity, undefined, NaN]}') as VARIANT_COLUMN",
       );
       expect(rows[0].VARIANT_COLUMN).toEqual({
         a: null,
-        b: Infinity,
-        c: NaN,
-        d: [-Infinity, undefined, NaN],
+        b: 'Infinity',
+        c: 'NaN',
+        d: ['-Infinity', null, 'NaN'],
       });
     });
 

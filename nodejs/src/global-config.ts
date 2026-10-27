@@ -49,15 +49,14 @@ export interface ConfigureOptions {
   customLogger?: SnowflakeLogger;
 
   /**
-   * Custom parser for JSON data in VARIANT, OBJECT, and ARRAY columns.
+   * Custom parser for JSON data in VARIANT, OBJECT, ARRAY, and MAP columns.
    *
-   * By default the driver parses values with `JSON.parse()`. If that fails (e.g. the
-   * value contains non-standard tokens like `undefined`, `NaN`, or `Infinity` that
-   * Snowflake's VARIANT type allows), it falls back to eval-based parsing, which is
-   * slower and logs a warning.
-   *
-   * To avoid the fallback, set the `STRICT_JSON_OUTPUT` session parameter to `TRUE` so
-   * Snowflake normalizes non-standard values into valid JSON before sending them.
+   * The driver uses `JSON.parse()` unless this option is set. `JSON.parse()` fails on `NaN`,
+   * `Infinity`, and `undefined`, which Snowflake returns while the `STRICT_JSON_OUTPUT`
+   * parameter is `FALSE` (its default value). For example, `ARRAY_CONSTRUCT(1, NULL, 2)`
+   * returns `[1, undefined, 2]`. To read such values, either:
+   * - set `STRICT_JSON_OUTPUT` to `TRUE`, so Snowflake returns valid JSON.
+   * - set this option to a parser that accepts these values.
    *
    * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-consume
    * @see https://docs.snowflake.com/en/sql-reference/parameters#strict-json-output
@@ -161,28 +160,7 @@ const buildDefaults = (): ResolvedConfig => ({
   logFilePath: 'snowflake.log',
   additionalLogToConsole: true,
   customLogger: undefined,
-  jsonColumnVariantParser: (
-    rawColumnValue: string,
-    // NOTE: We're intentionally not documenting the context argument in CustomParser to match old driver typing
-    context?: {
-      onNonJsonCompliantVariant: () => void;
-    },
-  ) => {
-    try {
-      return JSON.parse(rawColumnValue);
-    } catch {
-      // NOTE:
-      // JSON.parse (RFC 8259) throws on values such as undefined, NaN, and Infinity,
-      // but Snowflake can return them when STRICT_JSON_OUTPUT is FALSE (default).
-      // This fallback evaluates only VARIANT output from the trusted Snowflake service,
-      // whose encoder does not emit executable JavaScript.
-      //
-      // https://docs.snowflake.com/en/sql-reference/parameters#strict_json_output
-      const result = new Function(`return (${rawColumnValue});`)();
-      context?.onNonJsonCompliantVariant();
-      return result;
-    }
-  },
+  jsonColumnVariantParser: (rawColumnValue: string) => JSON.parse(rawColumnValue),
   xmlColumnVariantParser: (rawColumnValue: string) => {
     const validateResult = XMLValidator.validate(rawColumnValue);
     if (validateResult === true) {

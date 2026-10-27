@@ -370,6 +370,11 @@ called out explicitly.
     `nodejs_bridge` `date_format.rs` and the timestamp e2e files
     (`timestamp-ntz.test.ts`, `timestamp-ltz.test.ts`, `timestamp-tz.test.ts`).
     `Date: basic` stays until DATE cells are `SnowflakeDate`.
+  - [`result_test_variant.js`](./unit/connection/result/result_test_variant.js) — JSON and XML
+    parsing is covered by
+    [`semi-structured.test.ts`](../e2e/query/data-types/semi-structured.test.ts). The new driver
+    has no `new Function()` fallback, warning, or telemetry for values that are not standard JSON
+    (BD#140), so the fallback test has no counterpart. Drop the file after beta.
 
 ### Configuration / global config
 

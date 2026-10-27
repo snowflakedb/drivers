@@ -2689,3 +2689,31 @@ behavior_differences:
     status_rationale: |
       SNOW-4356822 resolves this: fail authentication when region discovery
       finds nothing, instead of continuing with us-east-1.
+
+  140:
+    name: 'VARIANT values that are not standard JSON fail to parse'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      The default jsonColumnVariantParser tries JSON.parse() and, when it fails, evaluates the
+      value with new Function(). With STRICT_JSON_OUTPUT=FALSE (the default), Snowflake sends
+      NaN, Infinity and -Infinity values and a SQL NULL inside an array
+      (ARRAY_CONSTRUCT(1, NULL, 2) arrives as [1, undefined, 2]) as bare tokens. This happens in
+      VARIANT, OBJECT, ARRAY and MAP columns, including structured ARRAY(FLOAT) and
+      OBJECT(a FLOAT). They come back as the JavaScript values NaN, Infinity, -Infinity and
+      undefined. Each such value logs a warning, and the first one per result sends a
+      selecting_non_json_compliant_variant telemetry event.
+    new_driver_behavior: |
+      The default jsonColumnVariantParser is JSON.parse() only. A value with these tokens fails
+      JSON parsing and then XML parsing, and the query fails with an Error whose message lists
+      both parse errors and suggests STRICT_JSON_OUTPUT=TRUE or a custom jsonColumnVariantParser.
+      There is no warning or telemetry event. With STRICT_JSON_OUTPUT=TRUE, Snowflake sends
+      undefined as null and NaN, Infinity and -Infinity as the strings 'NaN', 'Infinity' and
+      '-Infinity'.
+    status_rationale: |
+      A driver should not run code it receives in query results, even from a trusted service, and
+      JSON.parse() is much faster than new Function(). Users who need these tokens set
+      STRICT_JSON_OUTPUT=TRUE or pass their own jsonColumnVariantParser to snowflake.configure().

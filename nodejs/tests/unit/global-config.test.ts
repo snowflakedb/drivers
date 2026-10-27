@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import ErrorCode from '../../src/constants/ErrorCode.js';
 import ErrorMessage from '../../src/constants/ErrorMessage.js';
 import { GlobalConfig, updateGlobalConfig, resetGlobalConfig } from '../../src/global-config.js';
@@ -25,27 +25,14 @@ describe('GlobalConfig', () => {
       expect(GlobalConfig.jsonColumnVariantParser('"hello"')).toBe('hello');
     });
 
-    it('parses Snowflake-specific non-JSON-compliant tokens via fallback', () => {
-      expect(GlobalConfig.jsonColumnVariantParser('{"a":undefined}')).toEqual({ a: undefined });
-      expect(GlobalConfig.jsonColumnVariantParser('{"a":NaN}').a).toBeNaN();
-      expect(GlobalConfig.jsonColumnVariantParser('{"a":Infinity}')).toEqual({ a: Infinity });
-    });
+    it.each(['{"a":undefined}', '{"a":NaN}', '{"a":Infinity}', '[-Infinity]'])(
+      'should throw a SyntaxError on the non-JSON value %s',
+      (rawColumnValue) => {
+        expect(() => GlobalConfig.jsonColumnVariantParser(rawColumnValue)).toThrow(SyntaxError);
+      },
+    );
 
-    it('invokes onNonJsonCompliantVariant only on the fallback path', () => {
-      const onNonJsonCompliantVariant = vi.fn();
-      // The context arg is intentionally omitted from the public CustomParser type
-      // (see global-config.ts), so reach the runtime signature explicitly here.
-      const parse = GlobalConfig.jsonColumnVariantParser as (
-        rawColumnValue: string,
-        context?: { onNonJsonCompliantVariant: () => void },
-      ) => unknown;
-      parse('{"a":1}', { onNonJsonCompliantVariant });
-      expect(onNonJsonCompliantVariant).not.toHaveBeenCalled();
-      parse('{"a":NaN}', { onNonJsonCompliantVariant });
-      expect(onNonJsonCompliantVariant).toHaveBeenCalledTimes(1);
-    });
-
-    it('throws a SyntaxError on invalid JSON', () => {
+    it('should throw a SyntaxError on invalid JSON', () => {
       expect(() => GlobalConfig.jsonColumnVariantParser('{invalid')).toThrow(SyntaxError);
     });
   });
