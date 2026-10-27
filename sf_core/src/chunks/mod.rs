@@ -516,23 +516,27 @@ pub async fn get_chunk_data(
         .fail()?;
     }
 
-    let body = response.bytes().await.context(CommunicationSnafu)?;
-    let bytes = body.to_vec();
+    let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
+    // Take ownership of the response allocation instead of copying it: when
+    // reqwest already inflated the body, this is the whole decoded chunk.
+    let bytes = Vec::from(response.bytes().await.context(CommunicationSnafu)?);
     // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
     // body doesn't stall this runtime worker.
-    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes))
+    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
         .await
         .context(SpawnBlockingSnafu)?
 }
 
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
-fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
+/// `uncompressed_size` is the server-reported size, used only to allocate the
+/// output once instead of growing it by repeated reallocation.
+fn maybe_decompress_gzip(data: Vec<u8>, uncompressed_size: usize) -> Result<Vec<u8>, ChunkError> {
     if data.len() >= 2 && data[..2] == GZIP_MAGIC {
         use flate2::bufread::GzDecoder;
         use std::io::Read as _;
         let mut decoder = GzDecoder::new(&data[..]);
-        let mut decompressed = Vec::new();
+        let mut decompressed = Vec::with_capacity(uncompressed_size);
         decoder
             .read_to_end(&mut decompressed)
             .context(ChunkDecompressionSnafu)?;
@@ -666,7 +670,8 @@ mod tests {
     #[test]
     fn maybe_decompress_gzip_leaves_plain_bytes_unchanged() {
         let plain = b"plain chunk body".to_vec();
-        let decompressed = maybe_decompress_gzip(plain.clone()).expect("plain bytes should pass");
+        let decompressed =
+            maybe_decompress_gzip(plain.clone(), plain.len()).expect("plain bytes should pass");
         assert_eq!(decompressed, plain);
     }
 
@@ -674,9 +679,12 @@ mod tests {
     fn maybe_decompress_gzip_inflates_gzip_payload() {
         let plain = b"[ \"1\" ], [ \"2\" ]";
         let compressed = gzip_compress(plain);
-        let decompressed =
-            maybe_decompress_gzip(compressed).expect("gzip payload should decompress");
-        assert_eq!(decompressed, plain);
+        // The size hint only pre-allocates; a wrong hint must not change output.
+        for hint in [0, 1, plain.len(), plain.len() * 4] {
+            let decompressed = maybe_decompress_gzip(compressed.clone(), hint)
+                .expect("gzip payload should decompress");
+            assert_eq!(decompressed, plain);
+        }
     }
 
     #[test]
