@@ -10,7 +10,7 @@ use sf_core::file_manager::TransferCtx;
 use sf_core::file_manager::internal::test_scheduler;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
-    SingleDownloadData, StageInfo,
+    MaterialDescription, SingleDownloadData, StageInfo,
 };
 use sf_core::sensitive::SensitiveString;
 use std::io::Read;
@@ -300,13 +300,13 @@ enum Cloud {
     Azure,
 }
 
-/// Inserts the Azure-format `encryptiondata` JSON blob plus digest/matdesc
-/// headers shared by GCS and Azure — only the meta-header prefixes differ
-/// between the two clouds.
+/// Inserts the Azure-format `encryptiondata` JSON blob and matdesc headers
+/// shared by GCS and Azure — only the meta-header prefixes differ between
+/// the two clouds. `sfc-digest` is set only when `digest` is `Some`.
 fn insert_blob_cse_headers(
     tpl: wiremock::ResponseTemplate,
     enc_meta: &EncryptedFileMetadata,
-    digest: &str,
+    digest: Option<&str>,
     h_digest: &str,
     h_enc: &str,
     h_mat: &str,
@@ -332,9 +332,13 @@ fn insert_blob_cse_headers(
         "smkId":   enc_meta.material_desc.smk_id,
         "keySize": "256"
     });
-    tpl.insert_header(h_digest, digest)
+    let tpl = tpl
         .insert_header(h_enc, enc_data_json.to_string().as_str())
-        .insert_header(h_mat, mat_desc_json.to_string().as_str())
+        .insert_header(h_mat, mat_desc_json.to_string().as_str());
+    match digest {
+        Some(digest) => tpl.insert_header(h_digest, digest),
+        None => tpl,
+    }
 }
 
 impl Cloud {
@@ -351,20 +355,25 @@ impl Cloud {
     /// Inserts this cloud's client-side-encryption metadata headers onto a
     /// mock response. S3 carries key/iv/matdesc as discrete `x-amz-meta-*`
     /// headers; GCS and Azure carry an Azure-format `encryptiondata` JSON blob
-    /// under their respective meta-header prefixes.
+    /// under their respective meta-header prefixes. `digest: None` leaves the
+    /// `sfc-digest` header off.
     fn insert_cse_headers(
         self,
         tpl: wiremock::ResponseTemplate,
         enc_meta: &EncryptedFileMetadata,
-        digest: &str,
+        digest: Option<&str>,
     ) -> wiremock::ResponseTemplate {
         match self {
             Cloud::S3 => {
                 let mat_desc_json = serde_json::to_string(&enc_meta.material_desc).unwrap();
-                tpl.insert_header("x-amz-meta-sfc-digest", digest)
+                let tpl = tpl
                     .insert_header("x-amz-meta-x-amz-matdesc", mat_desc_json.as_str())
                     .insert_header("x-amz-meta-x-amz-key", enc_meta.encrypted_key.as_str())
-                    .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str())
+                    .insert_header("x-amz-meta-x-amz-iv", enc_meta.iv.as_str());
+                match digest {
+                    Some(digest) => tpl.insert_header("x-amz-meta-sfc-digest", digest),
+                    None => tpl,
+                }
             }
             Cloud::Gcs => insert_blob_cse_headers(
                 tpl,
@@ -410,7 +419,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
         .respond_with(cloud.insert_cse_headers(
             ResponseTemplate::new(200).set_body_bytes(vec![0u8; cipher_len]),
             &enc_meta,
-            &digest,
+            Some(digest.as_str()),
         ))
         .mount(&server)
         .await;
@@ -418,7 +427,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
         .respond_with(cloud.insert_cse_headers(
             ResponseTemplate::new(200).set_body_bytes(ciphertext),
             &enc_meta,
-            &digest,
+            Some(digest.as_str()),
         ))
         .mount(&server)
         .await;
@@ -891,7 +900,7 @@ async fn open_download_stream_cse_roundtrip_for(cloud: Cloud) {
         .respond_with(cloud.insert_cse_headers(
             ResponseTemplate::new(200).set_body_bytes(ciphertext),
             &enc_meta,
-            &digest,
+            Some(digest.as_str()),
         ))
         .mount(&server)
         .await;
@@ -933,6 +942,141 @@ async fn open_download_stream_for_stage_gcs_cse_roundtrip() {
 #[tokio::test]
 async fn open_download_stream_for_stage_azure_cse_roundtrip() {
     open_download_stream_cse_roundtrip_for(Cloud::Azure).await;
+}
+
+/// Zero-disk GET of a server-side unload: a real key wrap and no `sfc-digest`.
+/// `download_files` does not call `open_download_stream_for_stage`.
+async fn open_download_stream_decrypts_without_digest_for(cloud: Cloud) {
+    use sf_core::file_manager::open_download_stream_for_stage;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let plaintext = format!("{cloud:?} open_download_stream unload without digest").into_bytes();
+    let material = test_encryption_material();
+    let (ciphertext, enc_meta, _digest) =
+        encrypt_source(ByteSource::Bytes(plaintext.clone().into()), &material);
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(cloud.insert_cse_headers(
+            ResponseTemplate::new(200).set_body_bytes(ciphertext.clone()),
+            &enc_meta,
+            None,
+        ))
+        .mount(&server)
+        .await;
+
+    let stage = cloud_stage(cloud, server.uri());
+    let opened = open_download_stream_for_stage(
+        &stage,
+        cloud.src_location(),
+        None,
+        &zero_backoff_test_retry_policy(),
+        None,
+        Some(material),
+        false,
+        MultipartParams::default(),
+    )
+    .await
+    .expect("open_download_stream_for_stage must succeed");
+
+    let decrypted = drain_download_stream(opened)
+        .await
+        .expect("streaming decrypt must succeed");
+    assert_ne!(
+        decrypted, ciphertext,
+        "{cloud:?}: stream wrote the ciphertext"
+    );
+    assert_eq!(
+        decrypted, plaintext,
+        "{cloud:?}: chunked download of an unload must reproduce the plaintext"
+    );
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_s3_decrypts_when_digest_absent() {
+    open_download_stream_decrypts_without_digest_for(Cloud::S3).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_gcs_decrypts_when_digest_absent() {
+    open_download_stream_decrypts_without_digest_for(Cloud::Gcs).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_azure_decrypts_when_digest_absent() {
+    open_download_stream_decrypts_without_digest_for(Cloud::Azure).await;
+}
+
+fn git_stage_placeholder_metadata(material: &EncryptionMaterial) -> EncryptedFileMetadata {
+    use base64::Engine;
+    let standard = base64::engine::general_purpose::STANDARD;
+    EncryptedFileMetadata {
+        encrypted_key: standard.encode(b"test-key"),
+        iv: standard.encode(b"test-iv"),
+        material_desc: MaterialDescription {
+            query_id: material.query_id.clone(),
+            smk_id: material.smk_id.clone(),
+            key_size: "256".to_string(),
+        },
+    }
+}
+
+/// Zero-disk GET of a git-stage object: encryption headers, the 8-byte
+/// `test-key` placeholder, and no digest. The body is copied through.
+async fn open_download_stream_git_stage_wrap_returns_raw_bytes_for(cloud: Cloud) {
+    use sf_core::file_manager::open_download_stream_for_stage;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    let raw = format!("{cloud:?} git-stage stream payload").into_bytes();
+    let material = test_encryption_material();
+    let metadata = git_stage_placeholder_metadata(&material);
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(cloud.insert_cse_headers(
+            ResponseTemplate::new(200).set_body_bytes(raw.clone()),
+            &metadata,
+            None,
+        ))
+        .mount(&server)
+        .await;
+
+    let stage = cloud_stage(cloud, server.uri());
+    let opened = open_download_stream_for_stage(
+        &stage,
+        cloud.src_location(),
+        None,
+        &zero_backoff_test_retry_policy(),
+        None,
+        Some(material),
+        false,
+        MultipartParams::default(),
+    )
+    .await
+    .expect("open_download_stream_for_stage must succeed");
+
+    let out = drain_download_stream(opened)
+        .await
+        .expect("git-stage stream must succeed");
+    assert_eq!(
+        out, raw,
+        "{cloud:?}: git-stage stream must return the body unchanged"
+    );
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_s3_returns_raw_bytes_for_git_stage_wrap() {
+    open_download_stream_git_stage_wrap_returns_raw_bytes_for(Cloud::S3).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_gcs_returns_raw_bytes_for_git_stage_wrap() {
+    open_download_stream_git_stage_wrap_returns_raw_bytes_for(Cloud::Gcs).await;
+}
+
+#[tokio::test]
+async fn open_download_stream_for_stage_azure_returns_raw_bytes_for_git_stage_wrap() {
+    open_download_stream_git_stage_wrap_returns_raw_bytes_for(Cloud::Azure).await;
 }
 
 /// Minimal `StageInfoRefresher` for the Azure SAS-refresh test: counts

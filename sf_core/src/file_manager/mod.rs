@@ -1304,9 +1304,8 @@ fn prepare_download_output_paths(
     Ok((output_path, partial_path))
 }
 
-fn cse_info_from_s3_object(
-    file_metadata: Option<EncryptedFileMetadata>,
-    digest: Option<String>,
+fn cse_info_for_material(
+    cloud_cse_info: Option<CseDownloadInfo>,
     enc_material: Option<&EncryptionMaterial>,
 ) -> Result<Option<CseDownloadInfo>, FileManagerError> {
     // TODO(SNOW-4115038): missing CSE headers and placeholder wraps currently
@@ -1315,21 +1314,21 @@ fn cse_info_from_s3_object(
     let Some(enc_material) = enc_material else {
         return Ok(None);
     };
-    let Some(metadata) = file_metadata else {
+    let Some(cse_info) = cloud_cse_info else {
         tracing::debug!(
-            "encryption_material present but S3 encryption headers absent; \
+            "encryption_material present but cloud encryption headers absent; \
              writing raw bytes"
         );
         return Ok(None);
     };
-    if !wrapped_key_matches_material(&metadata, enc_material).context(DecryptionSnafu)? {
+    if !wrapped_key_matches_material(&cse_info.metadata, enc_material).context(DecryptionSnafu)? {
         tracing::debug!(
-            "S3 encryption headers present but wrapped key does not match encryption material; \
+            "cloud encryption headers present but wrapped key does not match encryption material; \
              treating as raw bytes"
         );
         return Ok(None);
     }
-    Ok(Some(CseDownloadInfo { metadata, digest }))
+    Ok(Some(cse_info))
 }
 
 /// Downloads one file. See `upload_single_file` for the refresh semantics.
@@ -1465,7 +1464,10 @@ async fn download_single_file_to(
             .await
             .context(S3DownloadSnafu)?;
 
-            let cse_info = cse_info_from_s3_object(file_metadata, digest, enc_material.as_ref())?;
+            let cse_info = cse_info_for_material(
+                CseDownloadInfo::from_headers(file_metadata, digest),
+                enc_material.as_ref(),
+            )?;
             let partial_path2 = partial_path.clone();
 
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking.
@@ -1611,9 +1613,9 @@ async fn download_single_file_to(
 
             let cloud_byte_count_hint = dl.cloud_byte_count;
             let cloud_bytes_read = dl.cloud_bytes_read;
-            let cse_info = dl.cse_info;
             // Taken before `body` is moved into the blocking task, which consumes it.
             let producer_guard = ProducerAbortGuard::arm(dl.body.producer_abort());
+            let cse_info = cse_info_for_material(dl.cse_info, enc_material.as_ref())?;
             let body = dl.body;
             let partial_path2 = partial_path.clone();
             // Blocking finalize (decrypt / copy, no rename) in a spawn_blocking task
@@ -1714,9 +1716,9 @@ async fn download_single_file_to(
 
             let cloud_byte_count_hint = dl.cloud_byte_count;
             let cloud_bytes_read = dl.cloud_bytes_read;
-            let cse_info = dl.cse_info;
             // Taken before `body` is consumed — see the GCS arm.
             let producer_guard = ProducerAbortGuard::arm(dl.body.producer_abort());
+            let cse_info = cse_info_for_material(dl.cse_info, enc_material.as_ref())?;
             let body = dl.body;
             let partial_path2 = partial_path.clone();
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking;
@@ -1834,7 +1836,10 @@ pub async fn open_s3_download_stream(
         .await
         .context(S3DownloadSnafu)?;
 
-    let cse_info = cse_info_from_s3_object(file_metadata, digest, encryption_material.as_ref())?;
+    let cse_info = cse_info_for_material(
+        CseDownloadInfo::from_headers(file_metadata, digest),
+        encryption_material.as_ref(),
+    )?;
     let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
 
     Ok(spawn_download_stream_pipeline(
@@ -1934,6 +1939,14 @@ fn open_cloud_download_stream(
             "zero-disk download requires a single-GET streamed body",
         ))
         .context(IoSnafu);
+    };
+
+    let cse_info = match cse_info_for_material(cse_info, encryption_material.as_ref()) {
+        Ok(cse_info) => cse_info,
+        Err(e) => {
+            producer_abort.abort();
+            return Err(e);
+        }
     };
 
     Ok(spawn_download_stream_pipeline(
@@ -2364,18 +2377,15 @@ fn write_cloud_download(
             .context(DecryptionSnafu);
             write_or_cleanup(output_file, partial_path, result).map(|n| (n, None))
         }
-        // enc_material present but no CSE headers on the object (sfcdigest absent) —
-        // git-stage objects on Azure/GCS carry encryption key-wrap headers but no
-        // sfcdigest; the download path sets cse_info=None (see cloud git-stage fix).
+        // enc_material present but `cse_info_for_material` found no CSE headers, or
+        // a wrap that is not this query-stage master key (git-stage objects).
         // Treat as raw bytes: the spill_target was Temp (because enc_material.is_some()),
         // so hand the temp out for the caller to rename, or copy a streamed body.
         // TODO(SNOW-4115038): this arm writes raw bytes. Legacy Python/JDBC/Node
         // fail the GET when encryption_material is set and unwrap/decrypt cannot
         // succeed.
         (Some(_), None) => {
-            tracing::debug!(
-                "enc_material present but cse_info absent; treating as raw bytes (git-stage)"
-            );
+            tracing::debug!("enc_material present but object is not CSE; treating as raw bytes");
             match body {
                 CloudDownloadBody::Spilled(CloudSpilledBody::Temp(temp)) => {
                     Ok((cloud_byte_count_hint, Some(temp)))

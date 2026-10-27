@@ -1998,9 +1998,10 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
 
 #[tokio::test]
 async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
-    // Git stage objects on GCS carry CSE key-wrap headers (encryptiondata,
-    // matdesc) but no sfc-digest — the object was uploaded by Snowflake's git
-    // integration. download_files must succeed and write the raw bytes.
+    // Git stage objects on GCS carry CSE-shaped headers (encryptiondata,
+    // matdesc) whose wrap is a placeholder, not a key wrapped with the stage
+    // master key, and no sfc-digest. download_files must succeed and write the
+    // raw bytes.
     let server = MockServer::start().await;
 
     let enc_data = serde_json::json!({
@@ -2037,11 +2038,7 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         src_locations: vec!["git-file.txt".to_string()],
         local_location: local_location.clone(),
         stage_info: gcs_stage_with_presigned_url(&presigned_url),
-        encryption_materials: vec![Some(sf_core::file_manager::EncryptionMaterial {
-            query_stage_master_key: SensitiveString::from("dGVzdC1tYXN0ZXIta2V5"),
-            query_id: "test-query".to_string(),
-            smk_id: "1".to_string(),
-        })],
+        encryption_materials: vec![Some(cse_test_material())],
         presigned_urls: vec![Some(presigned_url)],
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
@@ -2062,6 +2059,89 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
     let written = std::fs::read(std::path::Path::new(&local_location).join("git-file.txt"))
         .expect("downloaded file should exist");
     assert_eq!(written, b"raw-git-file-bytes");
+}
+
+fn cse_test_material() -> sf_core::file_manager::EncryptionMaterial {
+    use base64::Engine;
+    sf_core::file_manager::EncryptionMaterial {
+        query_stage_master_key: SensitiveString::from(
+            base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
+        ),
+        query_id: "test-query".to_string(),
+        smk_id: "1".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn gcs_download_decrypts_unloaded_object_without_sfc_digest() {
+    // Objects written by a server-side unload (COPY INTO @stage) carry a real
+    // key wrap in encryptiondata / matdesc but no sfc-digest. GET must decrypt
+    // them rather than write the ciphertext.
+    use std::io::Read as _;
+
+    let plaintext = b"PAR1-unloaded-parquet-PAR1".to_vec();
+    let material = cse_test_material();
+    let (encryptor, metadata) =
+        sf_core::file_manager::internal::build_encryptor(&material, plaintext.len() as i64)
+            .expect("build_encryptor");
+    let mut ciphertext = Vec::new();
+    encryptor
+        .encrypting_reader(std::io::Cursor::new(plaintext.clone()))
+        .expect("encrypting_reader")
+        .read_to_end(&mut ciphertext)
+        .expect("read ciphertext");
+    let enc_data = serde_json::json!({
+        "EncryptionMode": "FullBlob",
+        "WrappedContentKey": {
+            "KeyId": "symmKey1",
+            "EncryptedKey": metadata.encrypted_key,
+            "Algorithm": "AES_CBC_256"
+        },
+        "ContentEncryptionIV": metadata.iv
+    });
+    let mat_desc = serde_json::to_string(&metadata.material_desc).expect("serialize matdesc");
+
+    let server = MockServer::start().await;
+    let presigned_url = format!("{}/presigned/data_0_0_0.snappy.parquet", server.uri());
+    Mock::given(method("GET"))
+        .and(path("/presigned/data_0_0_0.snappy.parquet"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(ciphertext.clone())
+                .insert_header("x-goog-meta-encryptiondata", enc_data.to_string().as_str())
+                .insert_header("x-goog-meta-matdesc", mat_desc.as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let local_location = tmp.path().to_string_lossy().to_string();
+    let data = DownloadData {
+        src_locations: vec!["data_0_0_0.snappy.parquet".to_string()],
+        local_location: local_location.clone(),
+        stage_info: gcs_stage_with_presigned_url(&presigned_url),
+        encryption_materials: vec![Some(material)],
+        presigned_urls: vec![Some(presigned_url)],
+        flavor: PutGetResultsetFlavor::Python,
+        multipart: MultipartParams::default(),
+        unsafe_file_write: false,
+        get_fastfail: true,
+        cwd: None,
+    };
+
+    download_files(
+        data,
+        &RetryPolicy::put_get(&ParamStore::new()),
+        TransferCtx::default(),
+    )
+    .await
+    .expect("unloaded object download should succeed");
+
+    let written =
+        std::fs::read(std::path::Path::new(&local_location).join("data_0_0_0.snappy.parquet"))
+            .expect("downloaded file should exist");
+    assert_ne!(written, ciphertext, "GET wrote the ciphertext");
+    assert_eq!(written, plaintext);
 }
 
 // ---------------------------------------------------------------

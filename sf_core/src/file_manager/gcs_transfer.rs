@@ -1231,10 +1231,9 @@ pub(super) async fn gcs_get_streaming(
 }
 
 /// Parses the `sfc-digest` and (for CSE) the `encryptiondata` / `matdesc` GCS
-/// user-metadata headers into a [`CseDownloadInfo`] — `Some` for a
-/// client-side-encrypted object (where the content digest must ride alongside
-/// the encryption headers), `None` for SSE / raw objects. Shared by the single
-/// streamed GET and the ranged-download path.
+/// user-metadata headers into a [`CseDownloadInfo`] — `Some` when the object
+/// carries encryption headers (with or without a digest), `None` otherwise.
+/// Shared by the single streamed GET and the ranged-download path.
 fn parse_gcs_cse_info(
     headers: &reqwest::header::HeaderMap,
 ) -> Result<Option<CseDownloadInfo>, GcsDownloadError> {
@@ -1253,22 +1252,13 @@ fn parse_gcs_cse_info(
     let material_desc: MaterialDescription =
         serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
 
-    // Git-stage objects on GCS carry encryption headers but no sfc-digest.
-    let Some(digest) = digest else {
-        // TODO(SNOW-4115038): missing digest currently writes raw bytes.
-        // Legacy Python/JDBC/Node fail the GET when encryption_material is set
-        // and unwrap/decrypt cannot succeed.
-        tracing::debug!("GCS encryptiondata present but sfc-digest absent; returning raw bytes");
-        return Ok(None);
-    };
-
     Ok(Some(CseDownloadInfo {
         metadata: EncryptedFileMetadata {
             encrypted_key: enc_data.wrapped_content_key.encrypted_key,
             iv: enc_data.content_encryption_iv,
             material_desc,
         },
-        digest: Some(digest),
+        digest,
     }))
 }
 
