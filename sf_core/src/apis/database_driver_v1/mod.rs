@@ -48,7 +48,7 @@ pub use get_objects::{
     FIELD_COLUMN_ORDINAL_POSITION, FIELD_COLUMN_PRECISION, FIELD_COLUMN_REMARKS,
     FIELD_COLUMN_SCALE, FIELD_DB_SCHEMA_NAME, FIELD_DB_SCHEMA_TABLES, FIELD_TABLE_COLUMNS,
     FIELD_TABLE_CONSTRAINTS, FIELD_TABLE_NAME, FIELD_TABLE_TYPE, GetObjectsRequest, TableMetadata,
-    nested_get_objects_schema,
+    TableType, nested_get_objects_schema,
 };
 pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
 pub use like_pattern::ESCAPE_CHAR;

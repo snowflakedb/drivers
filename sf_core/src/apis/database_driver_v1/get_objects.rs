@@ -7,7 +7,7 @@
 //! - `DEPTH_CATALOGS`   (1): list databases
 //! - `DEPTH_DB_SCHEMAS` (2): list schemas
 //! - `DEPTH_TABLES`     (3): list tables/views
-//! - `DEPTH_COLUMNS`    (4): deferred
+//! - `DEPTH_COLUMNS`    (4): list columns
 //!
 //! ## Result schema (nested ADBC format)
 //! `catalog_name: utf8`
@@ -164,31 +164,47 @@ pub struct GetObjectsRequest {
 
 /// An owned catalog node in the typed GetObjects metadata tree.
 ///
-/// `db_schemas` is `None` when the requested depth stops at catalogs and is
-/// `Some` (possibly empty) when schemas were requested.
+/// `db_schemas` is empty at catalog depth. At deeper depths, the fetcher
+/// returns only catalogs with matching schemas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogMetadata {
     pub catalog_name: String,
-    pub db_schemas: Option<Vec<DbSchemaMetadata>>,
+    pub db_schemas: Vec<DbSchemaMetadata>,
 }
 
 /// An owned schema node in the typed GetObjects metadata tree.
 ///
-/// `tables` is `None` when the requested depth stops at schemas and is `Some`
-/// (possibly empty) when tables were requested.
+/// `tables` is empty at schema depth. At deeper depths, the fetcher returns
+/// only schemas with matching tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbSchemaMetadata {
     pub db_schema_name: String,
-    pub tables: Option<Vec<TableMetadata>>,
+    pub tables: Vec<TableMetadata>,
+}
+
+/// A normalized table or view kind returned by `SHOW OBJECTS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableType {
+    Table,
+    View,
+}
+
+impl TableType {
+    /// The ADBC table-type value used in the nested Arrow result.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Table => "TABLE",
+            Self::View => "VIEW",
+        }
+    }
 }
 
 /// An owned table node in the typed GetObjects metadata tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableMetadata {
     pub table_name: String,
-    /// `Some("TABLE")` or `Some("VIEW")` when table metadata was requested;
-    /// `None` at column depth because `SHOW COLUMNS` does not return table type.
-    pub table_type: Option<String>,
+    /// `None` at column depth: `SHOW COLUMNS` does not report table kind.
+    pub table_type: Option<TableType>,
     /// Columns are empty when the requested depth stops at tables.
     pub columns: Vec<ColumnDescriptor>,
 }
@@ -197,12 +213,12 @@ pub struct TableMetadata {
 // kind → TABLE_TYPE normalization
 // ---------------------------------------------------------------------------
 
-fn normalize_kind(kind: &str) -> &'static str {
+fn normalize_kind(kind: &str) -> TableType {
     match kind.to_uppercase().as_str() {
         "TABLE" | "TRANSIENT TABLE" | "TEMPORARY TABLE" | "EXTERNAL TABLE" | "ICEBERG TABLE"
-        | "EVENT TABLE" | "HYBRID TABLE" | "MATERIALIZED TABLE" => "TABLE",
-        "VIEW" | "MATERIALIZED VIEW" | "SECURE VIEW" => "VIEW",
-        _ => "TABLE",
+        | "EVENT TABLE" | "HYBRID TABLE" | "MATERIALIZED TABLE" => TableType::Table,
+        "VIEW" | "MATERIALIZED VIEW" | "SECURE VIEW" => TableType::View,
+        _ => TableType::Table,
     }
 }
 
@@ -232,12 +248,12 @@ fn escape_show_like(pattern: &str) -> String {
 // ---------------------------------------------------------------------------
 
 impl DatabaseDriverV1 {
-    /// Returns GetObjects metadata as an owned, depth-aware tree.
+    /// Returns GetObjects metadata as an owned tree.
     ///
     /// Unlike [`Self::connection_get_objects`], this API does not encode the
-    /// metadata into an Arrow result-set handle. A `None` child collection
-    /// means the requested depth stopped at its parent; `Some(Vec::new())`
-    /// means that level was requested but matched no objects.
+    /// metadata into an Arrow result-set handle. Child vectors are empty at
+    /// depths that stop before them; at deeper depths, only parents with
+    /// matching children are returned. Arrow nullability comes from the request depth.
     pub async fn connection_get_objects_typed(
         &self,
         req: GetObjectsRequest,
@@ -252,7 +268,7 @@ impl DatabaseDriverV1 {
     ) -> Result<super::result_set::ResultSetInfo, ApiError> {
         let depth = req.depth;
         let (conn_ptr, metadata) = self.fetch_get_objects_metadata(req).await?;
-        let batch = build_metadata_batch(metadata, depth)?;
+        let batch = build_metadata_batch(&metadata, depth)?;
         let http_client = {
             let conn = conn_ptr.lock().await;
             conn.http_client
@@ -372,7 +388,7 @@ async fn fetch_catalogs(
             }
             Some(CatalogMetadata {
                 catalog_name: name.to_string(),
-                db_schemas: None,
+                db_schemas: Vec::new(),
             })
         })
         .collect())
@@ -404,7 +420,7 @@ async fn fetch_schemas(
 
     let rows = execute_show(conn_ptr, &sql).await?;
 
-    let mut by_catalog: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut by_catalog: BTreeMap<String, Vec<DbSchemaMetadata>> = BTreeMap::new();
 
     for row in &rows {
         let db_name = match get_column(row, "database_name") {
@@ -427,22 +443,20 @@ async fn fetch_schemas(
             continue;
         }
 
-        by_catalog.entry(db_name).or_default().push(schema_name);
+        by_catalog
+            .entry(db_name)
+            .or_default()
+            .push(DbSchemaMetadata {
+                db_schema_name: schema_name,
+                tables: Vec::new(),
+            });
     }
 
     Ok(by_catalog
         .into_iter()
-        .map(|(catalog_name, schemas)| CatalogMetadata {
+        .map(|(catalog_name, db_schemas)| CatalogMetadata {
             catalog_name,
-            db_schemas: Some(
-                schemas
-                    .into_iter()
-                    .map(|db_schema_name| DbSchemaMetadata {
-                        db_schema_name,
-                        tables: None,
-                    })
-                    .collect(),
-            ),
+            db_schemas,
         })
         .collect())
 }
@@ -454,7 +468,7 @@ async fn fetch_schemas(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TableTypeFilter {
     All,
-    Explicit(Vec<String>), // "TABLE" and/or "VIEW"
+    Explicit(Vec<TableType>),
     /// Caller supplied table-type keywords, but none were TABLE or VIEW (e.g. "SYNONYM").
     /// Legacy returns an empty result set rather than falling back to All.
     Unsupported,
@@ -467,10 +481,18 @@ fn normalize_table_types(types: &[String]) -> TableTypeFilter {
     if types.len() == 1 && types[0].trim() == "%" {
         return TableTypeFilter::All;
     }
-    let normalized: Vec<String> = types
+    let normalized: Vec<TableType> = types
         .iter()
-        .map(|t| t.trim().to_uppercase())
-        .filter(|t| t == "TABLE" || t == "VIEW")
+        .filter_map(|t| {
+            let kind = t.trim();
+            if kind.eq_ignore_ascii_case("TABLE") {
+                Some(TableType::Table)
+            } else if kind.eq_ignore_ascii_case("VIEW") {
+                Some(TableType::View)
+            } else {
+                None
+            }
+        })
         .collect();
 
     if normalized.is_empty() {
@@ -521,7 +543,7 @@ async fn fetch_tables(
     )
     .await?;
 
-    let mut by_cat_sch: BTreeMap<String, BTreeMap<String, Vec<(String, String)>>> = BTreeMap::new();
+    let mut by_cat_sch: BTreeMap<String, BTreeMap<String, Vec<TableMetadata>>> = BTreeMap::new();
 
     for row in &rows {
         let db_name = match get_column(row, "database_name") {
@@ -537,7 +559,7 @@ async fn fetch_tables(
             None => continue,
         };
         let kind = get_column(row, "kind").unwrap_or("TABLE");
-        let normalized_type = normalize_kind(kind).to_string();
+        let normalized_type = normalize_kind(kind);
 
         if let Some(pattern) = catalog_filter
             && !like_pattern::matches(pattern, &db_name)
@@ -565,31 +587,24 @@ async fn fetch_tables(
             .or_default()
             .entry(sch_name)
             .or_default()
-            .push((tbl_name, normalized_type));
+            .push(TableMetadata {
+                table_name: tbl_name,
+                table_type: Some(normalized_type),
+                columns: Vec::new(),
+            });
     }
 
     Ok(by_cat_sch
         .into_iter()
         .map(|(catalog_name, schemas)| CatalogMetadata {
             catalog_name,
-            db_schemas: Some(
-                schemas
-                    .into_iter()
-                    .map(|(db_schema_name, tables)| DbSchemaMetadata {
-                        db_schema_name,
-                        tables: Some(
-                            tables
-                                .into_iter()
-                                .map(|(table_name, table_type)| TableMetadata {
-                                    table_name,
-                                    table_type: Some(table_type),
-                                    columns: Vec::new(),
-                                })
-                                .collect(),
-                        ),
-                    })
-                    .collect(),
-            ),
+            db_schemas: schemas
+                .into_iter()
+                .map(|(db_schema_name, tables)| DbSchemaMetadata {
+                    db_schema_name,
+                    tables,
+                })
+                .collect(),
         })
         .collect())
 }
@@ -812,80 +827,12 @@ fn get_column<'a>(row: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // Arrow batch builders
 // ---------------------------------------------------------------------------
 
-fn build_metadata_batch(
-    metadata: Vec<CatalogMetadata>,
-    depth: i32,
-) -> Result<RecordBatch, ApiError> {
+fn build_metadata_batch(metadata: &[CatalogMetadata], depth: i32) -> Result<RecordBatch, ApiError> {
     match depth {
-        DEPTH_CATALOGS => build_catalogs_batch(
-            metadata
-                .into_iter()
-                .map(|catalog| Some(catalog.catalog_name))
-                .collect(),
-        ),
-        DEPTH_DB_SCHEMAS => {
-            let by_catalog = metadata
-                .into_iter()
-                .map(|catalog| {
-                    let schemas = catalog
-                        .db_schemas
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|schema| schema.db_schema_name)
-                        .collect();
-                    (catalog.catalog_name, schemas)
-                })
-                .collect();
-            build_schemas_batch(by_catalog)
-        }
-        DEPTH_TABLES => {
-            let by_catalog = metadata
-                .into_iter()
-                .map(|catalog| {
-                    let schemas = catalog
-                        .db_schemas
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|schema| {
-                            let tables = schema
-                                .tables
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|table| {
-                                    (table.table_name, table.table_type.unwrap_or_default())
-                                })
-                                .collect();
-                            (schema.db_schema_name, tables)
-                        })
-                        .collect();
-                    (catalog.catalog_name, schemas)
-                })
-                .collect();
-            build_tables_batch(by_catalog)
-        }
-        DEPTH_COLUMNS => {
-            let by_catalog = metadata
-                .into_iter()
-                .map(|catalog| {
-                    let schemas = catalog
-                        .db_schemas
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|schema| {
-                            let tables = schema
-                                .tables
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|table| (table.table_name, table.columns))
-                                .collect();
-                            (schema.db_schema_name, tables)
-                        })
-                        .collect();
-                    (catalog.catalog_name, schemas)
-                })
-                .collect();
-            build_columns_batch(by_catalog)
-        }
+        DEPTH_CATALOGS => build_catalogs_batch(metadata),
+        DEPTH_DB_SCHEMAS => build_schemas_batch(metadata),
+        DEPTH_TABLES => build_tables_batch(metadata),
+        DEPTH_COLUMNS => build_columns_batch(metadata),
         other => InvalidArgumentSnafu {
             argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
         }
@@ -893,21 +840,16 @@ fn build_metadata_batch(
     }
 }
 
-fn build_catalogs_batch(catalog_names: Vec<Option<String>>) -> Result<RecordBatch, ApiError> {
+fn build_catalogs_batch(metadata: &[CatalogMetadata]) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
-    let n = catalog_names.len();
-
     let mut cat_builder = arrow::array::StringBuilder::new();
-    for name in &catalog_names {
-        match name {
-            Some(n) => cat_builder.append_value(n),
-            None => cat_builder.append_null(),
-        }
+    for catalog in metadata {
+        cat_builder.append_value(&catalog.catalog_name);
     }
     let cat_array: ArrayRef = Arc::new(cat_builder.finish());
 
     // catalog_db_schemas: all-null LargeList (CATALOGS depth doesn't populate schemas)
-    let null_schemas = build_all_null_schema_list(n)?;
+    let null_schemas = build_all_null_schema_list(metadata.len())?;
 
     RecordBatch::try_new(schema, vec![cat_array, null_schemas]).map_err(|e| {
         InvalidArgumentSnafu {
@@ -917,24 +859,15 @@ fn build_catalogs_batch(catalog_names: Vec<Option<String>>) -> Result<RecordBatc
     })
 }
 
-fn build_schemas_batch(by_catalog: BTreeMap<String, Vec<String>>) -> Result<RecordBatch, ApiError> {
+fn build_schemas_batch(metadata: &[CatalogMetadata]) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
-
-    let mut catalog_names: Vec<String> = Vec::new();
-    let mut schema_lists: Vec<Vec<String>> = Vec::new();
-
-    for (cat, schemas) in by_catalog {
-        catalog_names.push(cat);
-        schema_lists.push(schemas);
-    }
-
     let mut cat_builder = arrow::array::StringBuilder::new();
-    for name in &catalog_names {
-        cat_builder.append_value(name);
+    for catalog in metadata {
+        cat_builder.append_value(&catalog.catalog_name);
     }
     let cat_array: ArrayRef = Arc::new(cat_builder.finish());
 
-    let db_schemas_array = build_schema_list_array_null_tables(&schema_lists)?;
+    let db_schemas_array = build_schema_list_array_null_tables(metadata)?;
 
     RecordBatch::try_new(schema, vec![cat_array, db_schemas_array]).map_err(|e| {
         InvalidArgumentSnafu {
@@ -944,26 +877,15 @@ fn build_schemas_batch(by_catalog: BTreeMap<String, Vec<String>>) -> Result<Reco
     })
 }
 
-fn build_tables_batch(
-    by_cat_sch: BTreeMap<String, BTreeMap<String, Vec<(String, String)>>>,
-) -> Result<RecordBatch, ApiError> {
+fn build_tables_batch(metadata: &[CatalogMetadata]) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
-
-    let mut catalog_names: Vec<String> = Vec::new();
-    let mut schema_maps: Vec<BTreeMap<String, Vec<(String, String)>>> = Vec::new();
-
-    for (cat, schemas) in by_cat_sch {
-        catalog_names.push(cat);
-        schema_maps.push(schemas);
-    }
-
     let mut cat_builder = arrow::array::StringBuilder::new();
-    for name in &catalog_names {
-        cat_builder.append_value(name);
+    for catalog in metadata {
+        cat_builder.append_value(&catalog.catalog_name);
     }
     let cat_array: ArrayRef = Arc::new(cat_builder.finish());
 
-    let db_schemas_array = build_full_schema_list_array(&schema_maps)?;
+    let db_schemas_array = build_full_schema_list_array(metadata)?;
 
     RecordBatch::try_new(schema, vec![cat_array, db_schemas_array]).map_err(|e| {
         InvalidArgumentSnafu {
@@ -972,7 +894,6 @@ fn build_tables_batch(
         .build()
     })
 }
-
 // ---------------------------------------------------------------------------
 // Arrow array builder helpers
 // ---------------------------------------------------------------------------
@@ -1002,17 +923,18 @@ fn build_all_null_schema_list(count: usize) -> Result<ArrayRef, ApiError> {
 }
 
 /// Builds `LargeList<Struct<db_schema_name, db_schema_tables(null)>>` for DB_SCHEMAS depth.
-fn build_schema_list_array_null_tables(schema_lists: &[Vec<String>]) -> Result<ArrayRef, ApiError> {
-    let total_schemas: usize = schema_lists.iter().map(|s| s.len()).sum();
+fn build_schema_list_array_null_tables(metadata: &[CatalogMetadata]) -> Result<ArrayRef, ApiError> {
+    let total_schemas: usize = metadata.iter().map(|c| c.db_schemas.len()).sum();
     let mut schema_names: Vec<&str> = Vec::with_capacity(total_schemas);
-    let mut cat_offsets = Vec::with_capacity(schema_lists.len() + 1);
+    let mut cat_offsets = Vec::with_capacity(metadata.len() + 1);
     cat_offsets.push(0i64);
 
-    for schemas in schema_lists {
-        for s in schemas {
-            schema_names.push(s.as_str());
+    for catalog in metadata {
+        for db_schema in &catalog.db_schemas {
+            schema_names.push(&db_schema.db_schema_name);
         }
-        cat_offsets.push(cat_offsets.last().copied().unwrap_or(0) + schemas.len() as i64);
+        cat_offsets
+            .push(cat_offsets.last().copied().unwrap_or(0) + catalog.db_schemas.len() as i64);
     }
 
     // db_schema_tables: all-null LargeList per schema. Empty-but-typed child
@@ -1046,18 +968,16 @@ fn build_schema_list_array_null_tables(schema_lists: &[Vec<String>]) -> Result<A
 }
 
 /// Builds the full nested `LargeList<Struct<schema_fields>>` for TABLES depth.
-fn build_full_schema_list_array(
-    schema_maps: &[BTreeMap<String, Vec<(String, String)>>],
-) -> Result<ArrayRef, ApiError> {
-    // Flatten all schemas across catalogs
-    let total_schemas: usize = schema_maps.iter().map(|m| m.len()).sum();
-    let total_tables: usize = schema_maps
+fn build_full_schema_list_array(metadata: &[CatalogMetadata]) -> Result<ArrayRef, ApiError> {
+    // Flatten all schemas across catalogs in the fetcher's established order.
+    let total_schemas: usize = metadata.iter().map(|c| c.db_schemas.len()).sum();
+    let total_tables: usize = metadata
         .iter()
-        .flat_map(|m| m.values())
-        .map(|t| t.len())
+        .flat_map(|c| &c.db_schemas)
+        .map(|s| s.tables.len())
         .sum();
 
-    let mut cat_offsets: Vec<i64> = Vec::with_capacity(schema_maps.len() + 1);
+    let mut cat_offsets: Vec<i64> = Vec::with_capacity(metadata.len() + 1);
     cat_offsets.push(0);
     let mut sch_offsets: Vec<i64> = Vec::with_capacity(total_schemas + 1);
     sch_offsets.push(0);
@@ -1066,27 +986,18 @@ fn build_full_schema_list_array(
     let mut all_table_names: Vec<&str> = Vec::with_capacity(total_tables);
     let mut all_table_types: Vec<&str> = Vec::with_capacity(total_tables);
 
-    // We need to borrow from the input, so collect intermediate vecs first
-    let schema_name_strs: Vec<Vec<&str>> = schema_maps
-        .iter()
-        .map(|m| m.keys().map(|s| s.as_str()).collect())
-        .collect();
-    let table_vecs: Vec<Vec<&[(String, String)]>> = schema_maps
-        .iter()
-        .map(|m| m.values().map(|t| t.as_slice()).collect())
-        .collect();
-
-    for (i, schemas) in schema_name_strs.iter().enumerate() {
-        for (j, &sch_name) in schemas.iter().enumerate() {
-            all_schema_names.push(sch_name);
-            let tables = table_vecs[i][j];
-            for (tbl_name, tbl_type) in tables {
-                all_table_names.push(tbl_name.as_str());
-                all_table_types.push(tbl_type.as_str());
+    for catalog in metadata {
+        for db_schema in &catalog.db_schemas {
+            all_schema_names.push(&db_schema.db_schema_name);
+            for table in &db_schema.tables {
+                all_table_names.push(&table.table_name);
+                all_table_types.push(table.table_type.map_or("", TableType::as_str));
             }
-            sch_offsets.push(sch_offsets.last().copied().unwrap_or(0) + tables.len() as i64);
+            sch_offsets
+                .push(sch_offsets.last().copied().unwrap_or(0) + db_schema.tables.len() as i64);
         }
-        cat_offsets.push(cat_offsets.last().copied().unwrap_or(0) + schemas.len() as i64);
+        cat_offsets
+            .push(cat_offsets.last().copied().unwrap_or(0) + catalog.db_schemas.len() as i64);
     }
 
     // Build an empty columns list for each table.
@@ -1118,9 +1029,8 @@ fn build_full_schema_list_array(
 /// `table_columns`); `table_constraints` is always an empty Utf8 list.
 ///
 /// Centralizing the struct assembly here means a new field on `table_fields()`
-/// or `schema_fields()` is a single-site change. The per-depth accumulation
-/// loops stay in their own builders because their inputs are different shapes
-/// (`Vec<(name, type)>` vs. `BTreeMap<table, Vec<ColumnDescriptor>>`).
+/// or `schema_fields()` is a single-site change. Each depth accumulates columns
+/// separately to preserve its existing empty versus populated Arrow child.
 fn assemble_schema_list_array<'a>(
     all_schema_names: Vec<&'a str>,
     all_table_names: Vec<&'a str>,
@@ -1412,49 +1322,33 @@ async fn fetch_columns(
         .into_iter()
         .map(|(catalog_name, schemas)| CatalogMetadata {
             catalog_name,
-            db_schemas: Some(
-                schemas
-                    .into_iter()
-                    .map(|(db_schema_name, tables)| DbSchemaMetadata {
-                        db_schema_name,
-                        tables: Some(
-                            tables
-                                .into_iter()
-                                .map(|(table_name, columns)| TableMetadata {
-                                    table_name,
-                                    table_type: None,
-                                    columns,
-                                })
-                                .collect(),
-                        ),
-                    })
-                    .collect(),
-            ),
+            db_schemas: schemas
+                .into_iter()
+                .map(|(db_schema_name, tables)| DbSchemaMetadata {
+                    db_schema_name,
+                    tables: tables
+                        .into_iter()
+                        .map(|(table_name, columns)| TableMetadata {
+                            table_name,
+                            table_type: None,
+                            columns,
+                        })
+                        .collect(),
+                })
+                .collect(),
         })
         .collect())
 }
 
-fn build_columns_batch(
-    by_cat_sch_tbl: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>>,
-) -> Result<RecordBatch, ApiError> {
+fn build_columns_batch(metadata: &[CatalogMetadata]) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
-
-    let mut catalog_names: Vec<String> = Vec::new();
-    let mut schema_maps: Vec<BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>> =
-        Vec::new();
-
-    for (cat, schemas) in by_cat_sch_tbl {
-        catalog_names.push(cat);
-        schema_maps.push(schemas);
-    }
-
     let mut cat_builder = arrow::array::StringBuilder::new();
-    for name in &catalog_names {
-        cat_builder.append_value(name);
+    for catalog in metadata {
+        cat_builder.append_value(&catalog.catalog_name);
     }
     let cat_array: ArrayRef = Arc::new(cat_builder.finish());
 
-    let db_schemas_array = build_full_columns_schema_list_array(&schema_maps)?;
+    let db_schemas_array = build_full_columns_schema_list_array(metadata)?;
 
     let batch =
         RecordBatch::try_new(schema, vec![cat_array, db_schemas_array]).context(ArrowParseSnafu)?;
@@ -1464,22 +1358,22 @@ fn build_columns_batch(
 /// Builds the full nested `LargeList<Struct<schema_fields>>` for COLUMNS depth,
 /// where `table_columns` is populated with real `ColumnDescriptor` data.
 fn build_full_columns_schema_list_array(
-    schema_maps: &[BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>],
+    metadata: &[CatalogMetadata],
 ) -> Result<ArrayRef, ApiError> {
-    let total_schemas: usize = schema_maps.iter().map(|m| m.len()).sum();
-    let total_tables: usize = schema_maps
+    let total_schemas: usize = metadata.iter().map(|c| c.db_schemas.len()).sum();
+    let total_tables: usize = metadata
         .iter()
-        .flat_map(|m| m.values())
-        .map(|t| t.len())
+        .flat_map(|c| &c.db_schemas)
+        .map(|s| s.tables.len())
         .sum();
-    let total_columns: usize = schema_maps
+    let total_columns: usize = metadata
         .iter()
-        .flat_map(|m| m.values())
-        .flat_map(|t| t.values())
-        .map(|c| c.len())
+        .flat_map(|c| &c.db_schemas)
+        .flat_map(|s| &s.tables)
+        .map(|t| t.columns.len())
         .sum();
 
-    let mut cat_offsets: Vec<i64> = Vec::with_capacity(schema_maps.len() + 1);
+    let mut cat_offsets: Vec<i64> = Vec::with_capacity(metadata.len() + 1);
     cat_offsets.push(0);
     let mut sch_offsets: Vec<i64> = Vec::with_capacity(total_schemas + 1);
     sch_offsets.push(0);
@@ -1502,14 +1396,13 @@ fn build_full_columns_schema_list_array(
     let mut col_defs: Vec<Option<&str>> = Vec::with_capacity(total_columns);
     let mut col_remarks_vec: Vec<Option<&str>> = Vec::with_capacity(total_columns);
 
-    // Iterate deterministically (BTreeMap is sorted).
-    for schema_map in schema_maps {
-        for (sch_name, table_map) in schema_map {
-            all_schema_names.push(sch_name.as_str());
-            for (tbl_name, columns) in table_map {
-                all_table_names.push(tbl_name.as_str());
+    for catalog in metadata {
+        for db_schema in &catalog.db_schemas {
+            all_schema_names.push(&db_schema.db_schema_name);
+            for table in &db_schema.tables {
+                all_table_names.push(&table.table_name);
                 all_table_types.push(""); // TABLE_TYPE not populated for DEPTH_COLUMNS
-                for col in columns {
+                for col in &table.columns {
                     col_names.push(Some(col.column_name.as_str()));
                     col_ordinals.push(col.ordinal_position);
                     col_logical_types.push(Some(col.logical_type.as_str()));
@@ -1521,11 +1414,14 @@ fn build_full_columns_schema_list_array(
                     col_defs.push(col.column_def.as_deref());
                     col_remarks_vec.push(col.remarks.as_deref());
                 }
-                tbl_offsets.push(tbl_offsets.last().copied().unwrap_or(0) + columns.len() as i64);
+                tbl_offsets
+                    .push(tbl_offsets.last().copied().unwrap_or(0) + table.columns.len() as i64);
             }
-            sch_offsets.push(sch_offsets.last().copied().unwrap_or(0) + table_map.len() as i64);
+            sch_offsets
+                .push(sch_offsets.last().copied().unwrap_or(0) + db_schema.tables.len() as i64);
         }
-        cat_offsets.push(cat_offsets.last().copied().unwrap_or(0) + schema_map.len() as i64);
+        cat_offsets
+            .push(cat_offsets.last().copied().unwrap_or(0) + catalog.db_schemas.len() as i64);
     }
 
     // Build the column struct array.
@@ -1572,8 +1468,77 @@ fn build_full_columns_schema_list_array(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rest::snowflake::QueryIds;
+    use crate::rest::snowflake::{QueryIds, SessionTokens};
     use arrow::ipc::reader::StreamReader;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn get_objects_request(conn_handle: Handle, depth: i32) -> GetObjectsRequest {
+        GetObjectsRequest {
+            conn_handle,
+            depth,
+            catalog: None,
+            db_schema: None,
+            table_name: None,
+            table_type: vec![],
+            column_name: None,
+        }
+    }
+
+    async fn mock_get_objects_connection(server: &MockServer) -> (DatabaseDriverV1, Handle) {
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = driver.connection_new();
+        let conn_ptr = driver.connections.get_obj(conn_handle).unwrap();
+        let mut conn = conn_ptr.lock().await;
+        conn.http_client = Some(reqwest::Client::new());
+        conn.server_url = Some(server.uri());
+        conn.client_info = Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+        *conn.tokens.write().await = Some(SessionTokens {
+            session_token: "test-session-token".into(),
+            master_token: "test-master-token".into(),
+            session_id: Some(1),
+            session_expires_at: None,
+            master_expires_at: None,
+            master_validity: None,
+        });
+        drop(conn);
+        (driver, conn_handle)
+    }
+
+    async fn mount_show_rows(
+        server: &MockServer,
+        sql: &'static str,
+        names: &[&str],
+        rows: serde_json::Value,
+        calls: u64,
+    ) {
+        let rowtype: Vec<_> = names
+            .iter()
+            .map(|name| serde_json::json!({"name": name, "type": "TEXT", "nullable": true}))
+            .collect();
+        let total = rows.as_array().unwrap().len();
+        Mock::given(method("POST"))
+            .and(path("/queries/v1/query-request"))
+            .and(move |request: &wiremock::Request| {
+                let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+                    return false;
+                };
+                body["sqlText"].as_str() == Some(sql)
+            })
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "data": {
+                    "queryId": "show-metadata",
+                    "queryResultFormat": "json",
+                    "rowtype": rowtype,
+                    "rowset": rows,
+                    "total": total
+                }
+            })))
+            .expect(calls)
+            .mount(server)
+            .await;
+    }
 
     // --- Schema contract ---
 
@@ -1643,21 +1608,21 @@ mod tests {
             "HYBRID TABLE",
             "MATERIALIZED TABLE",
         ] {
-            assert_eq!(normalize_kind(kind), "TABLE", "kind={kind}");
+            assert_eq!(normalize_kind(kind), TableType::Table, "kind={kind}");
         }
     }
 
     #[test]
     fn kind_normalization_view_family() {
         for kind in &["VIEW", "view", "MATERIALIZED VIEW", "SECURE VIEW"] {
-            assert_eq!(normalize_kind(kind), "VIEW", "kind={kind}");
+            assert_eq!(normalize_kind(kind), TableType::View, "kind={kind}");
         }
     }
 
     #[test]
     fn kind_normalization_unknown_defaults_to_table() {
-        assert_eq!(normalize_kind("DYNAMIC TABLE"), "TABLE");
-        assert_eq!(normalize_kind("SOMETHING_UNKNOWN"), "TABLE");
+        assert_eq!(normalize_kind("DYNAMIC TABLE"), TableType::Table);
+        assert_eq!(normalize_kind("SOMETHING_UNKNOWN"), TableType::Table);
     }
 
     // --- table_type normalization ---
@@ -1677,14 +1642,16 @@ mod tests {
 
     #[test]
     fn table_type_explicit_table_and_view() {
-        let filter = normalize_table_types(&["TABLE".to_string(), "VIEW".to_string()]);
-        assert!(matches!(filter, TableTypeFilter::Explicit(ref v) if v.len() == 2));
+        assert_eq!(
+            normalize_table_types(&["TABLE".to_string(), "VIEW".to_string()]),
+            TableTypeFilter::Explicit(vec![TableType::Table, TableType::View])
+        );
     }
 
     #[test]
     fn table_type_case_insensitive_normalization() {
         let filter = normalize_table_types(&["table".to_string()]);
-        assert_eq!(filter, TableTypeFilter::Explicit(vec!["TABLE".to_string()]));
+        assert_eq!(filter, TableTypeFilter::Explicit(vec![TableType::Table]));
     }
 
     #[test]
@@ -2003,7 +1970,7 @@ mod tests {
 
     #[test]
     fn build_columns_batch_empty_produces_valid_batch() {
-        let batch = build_columns_batch(BTreeMap::new()).unwrap();
+        let batch = build_columns_batch(&[]).unwrap();
         assert_eq!(batch.num_rows(), 0);
         assert_eq!(batch.schema().field(0).name(), FIELD_CATALOG_NAME);
     }
@@ -2012,18 +1979,18 @@ mod tests {
     fn build_columns_batch_single_column() {
         let json = r#"{"type":"FIXED","nullable":false,"precision":38,"scale":0}"#;
         let col = decode_data_type_json(json, "ID".to_string(), 1, None, None);
-        let mut tbl_map: BTreeMap<String, Vec<ColumnDescriptor>> = BTreeMap::new();
-        tbl_map.insert("MYTABLE".to_string(), vec![col]);
-        let mut sch_map: BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>> =
-            BTreeMap::new();
-        sch_map.insert("PUBLIC".to_string(), tbl_map);
-        let mut by_cat: BTreeMap<
-            String,
-            BTreeMap<String, BTreeMap<String, Vec<ColumnDescriptor>>>,
-        > = BTreeMap::new();
-        by_cat.insert("MYDB".to_string(), sch_map);
-
-        let batch = build_columns_batch(by_cat).unwrap();
+        let metadata = vec![CatalogMetadata {
+            catalog_name: "MYDB".to_string(),
+            db_schemas: vec![DbSchemaMetadata {
+                db_schema_name: "PUBLIC".to_string(),
+                tables: vec![TableMetadata {
+                    table_name: "MYTABLE".to_string(),
+                    table_type: None,
+                    columns: vec![col],
+                }],
+            }],
+        }];
+        let batch = build_columns_batch(&metadata).unwrap();
         // 1 catalog row
         assert_eq!(batch.num_rows(), 1);
 
@@ -2093,15 +2060,15 @@ mod tests {
         let metadata = vec![
             CatalogMetadata {
                 catalog_name: "ZDB".to_string(),
-                db_schemas: None,
+                db_schemas: vec![],
             },
             CatalogMetadata {
                 catalog_name: "ADB".to_string(),
-                db_schemas: None,
+                db_schemas: vec![],
             },
         ];
 
-        let batch = build_metadata_batch(metadata, DEPTH_CATALOGS).unwrap();
+        let batch = build_metadata_batch(&metadata, DEPTH_CATALOGS).unwrap();
         let names = batch
             .column(0)
             .as_any()
@@ -2123,13 +2090,13 @@ mod tests {
     fn typed_schema_tree_preserves_null_table_depth() {
         let metadata = vec![CatalogMetadata {
             catalog_name: "DB".to_string(),
-            db_schemas: Some(vec![DbSchemaMetadata {
+            db_schemas: vec![DbSchemaMetadata {
                 db_schema_name: "PUBLIC".to_string(),
-                tables: None,
-            }]),
+                tables: vec![],
+            }],
         }];
 
-        let batch = build_metadata_batch(metadata, DEPTH_DB_SCHEMAS).unwrap();
+        let batch = build_metadata_batch(&metadata, DEPTH_DB_SCHEMAS).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
@@ -2151,20 +2118,27 @@ mod tests {
     }
 
     #[test]
-    fn typed_table_tree_preserves_empty_non_null_columns() {
+    fn typed_table_tree_preserves_types_and_empty_non_null_columns() {
         let metadata = vec![CatalogMetadata {
             catalog_name: "DB".to_string(),
-            db_schemas: Some(vec![DbSchemaMetadata {
+            db_schemas: vec![DbSchemaMetadata {
                 db_schema_name: "PUBLIC".to_string(),
-                tables: Some(vec![TableMetadata {
-                    table_name: "T".to_string(),
-                    table_type: Some("TABLE".to_string()),
-                    columns: Vec::new(),
-                }]),
-            }]),
+                tables: vec![
+                    TableMetadata {
+                        table_name: "T".to_string(),
+                        table_type: Some(TableType::Table),
+                        columns: Vec::new(),
+                    },
+                    TableMetadata {
+                        table_name: "V".to_string(),
+                        table_type: Some(TableType::View),
+                        columns: Vec::new(),
+                    },
+                ],
+            }],
         }];
 
-        let batch = build_metadata_batch(metadata, DEPTH_TABLES).unwrap();
+        let batch = build_metadata_batch(&metadata, DEPTH_TABLES).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
@@ -2186,6 +2160,15 @@ mod tests {
             .as_any()
             .downcast_ref::<StructArray>()
             .unwrap();
+        let table_types = table_values
+            .column_by_name(FIELD_TABLE_TYPE)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(table_types.value(0), "TABLE");
+        assert_eq!(table_types.value(1), "VIEW");
+        assert_eq!(table_types.null_count(), 0);
         let columns = table_values
             .column_by_name(FIELD_TABLE_COLUMNS)
             .unwrap()
@@ -2194,6 +2177,8 @@ mod tests {
             .unwrap();
         assert!(!columns.is_null(0));
         assert_eq!(columns.value_length(0), 0);
+        assert!(!columns.is_null(1));
+        assert_eq!(columns.value_length(1), 0);
     }
 
     #[test]
@@ -2212,23 +2197,20 @@ mod tests {
         };
         let metadata = vec![CatalogMetadata {
             catalog_name: "DB".to_string(),
-            db_schemas: Some(vec![DbSchemaMetadata {
+            db_schemas: vec![DbSchemaMetadata {
                 db_schema_name: "PUBLIC".to_string(),
-                tables: Some(vec![TableMetadata {
+                tables: vec![TableMetadata {
                     table_name: "T".to_string(),
                     table_type: None,
                     columns: vec![column.clone()],
-                }]),
-            }]),
+                }],
+            }],
         }];
 
-        let table = &metadata[0].db_schemas.as_ref().unwrap()[0]
-            .tables
-            .as_ref()
-            .unwrap()[0];
+        let table = &metadata[0].db_schemas[0].tables[0];
         assert_eq!(table.columns, vec![column]);
         assert_eq!(table.table_type, None);
-        let batch = build_metadata_batch(metadata, DEPTH_COLUMNS).unwrap();
+        let batch = build_metadata_batch(&metadata, DEPTH_COLUMNS).unwrap();
         let schemas = batch
             .column(1)
             .as_any()
@@ -2265,5 +2247,321 @@ mod tests {
             .downcast_ref::<LargeListArray>()
             .unwrap();
         assert_eq!(columns.value_length(0), 1);
+    }
+
+    // --- Public typed API, with real SHOW response decoding ---
+
+    #[tokio::test]
+    async fn typed_catalogs_filters_show_rows() {
+        let server = MockServer::start().await;
+        mount_show_rows(
+            &server,
+            "SHOW DATABASES IN ACCOUNT",
+            &["name"],
+            serde_json::json!([["APP_Z"], ["OTHER_DB"], ["APP_B"]]),
+            1,
+        )
+        .await;
+        let (driver, conn_handle) = mock_get_objects_connection(&server).await;
+        let mut request = get_objects_request(conn_handle, DEPTH_CATALOGS);
+        request.catalog = Some("APP%".into());
+
+        let metadata = driver.connection_get_objects_typed(request).await.unwrap();
+        assert_eq!(
+            metadata,
+            vec![
+                CatalogMetadata {
+                    catalog_name: "APP_Z".into(),
+                    db_schemas: vec![],
+                },
+                CatalogMetadata {
+                    catalog_name: "APP_B".into(),
+                    db_schemas: vec![],
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_schemas_filter_catalog_and_schema_show_rows() {
+        let server = MockServer::start().await;
+        mount_show_rows(
+            &server,
+            "SHOW SCHEMAS IN ACCOUNT",
+            &["name", "database_name"],
+            serde_json::json!([
+                ["PUB_Z", "APP_DB"],
+                ["PRIVATE", "APP_DB"],
+                ["PUB_OTHER", "OTHER_DB"],
+                ["PUB_B", "APP_DB"]
+            ]),
+            1,
+        )
+        .await;
+        let (driver, conn_handle) = mock_get_objects_connection(&server).await;
+        let mut request = get_objects_request(conn_handle, DEPTH_DB_SCHEMAS);
+        request.catalog = Some("APP%".into());
+        request.db_schema = Some("PUB%".into());
+
+        let metadata = driver.connection_get_objects_typed(request).await.unwrap();
+        assert_eq!(
+            metadata,
+            vec![CatalogMetadata {
+                catalog_name: "APP_DB".into(),
+                db_schemas: vec![
+                    DbSchemaMetadata {
+                        db_schema_name: "PUB_Z".into(),
+                        tables: vec![],
+                    },
+                    DbSchemaMetadata {
+                        db_schema_name: "PUB_B".into(),
+                        tables: vec![],
+                    },
+                ],
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_tables_filter_show_rows_and_distinguish_table_from_view() {
+        let server = MockServer::start().await;
+        mount_show_rows(
+            &server,
+            "SHOW OBJECTS LIKE 'T%' IN ACCOUNT",
+            &["name", "database_name", "schema_name", "kind"],
+            serde_json::json!([
+                ["T_TABLE", "APP_DB", "PUBLIC", "TRANSIENT TABLE"],
+                ["T_VIEW", "APP_DB", "PUBLIC", "SECURE VIEW"],
+                ["T_UNKNOWN", "APP_DB", "PUBLIC", null],
+                ["X_SKIP", "APP_DB", "PUBLIC", "VIEW"],
+                ["T_SKIP_SCHEMA", "APP_DB", "PRIVATE", "VIEW"],
+                ["T_SKIP_CATALOG", "OTHER_DB", "PUBLIC", "VIEW"]
+            ]),
+            3,
+        )
+        .await;
+        let (driver, conn_handle) = mock_get_objects_connection(&server).await;
+        let mut request = get_objects_request(conn_handle, DEPTH_TABLES);
+        request.catalog = Some("APP%".into());
+        request.db_schema = Some("PUB%".into());
+        request.table_name = Some("T%".into());
+
+        let all = driver
+            .connection_get_objects_typed(request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            all,
+            vec![CatalogMetadata {
+                catalog_name: "APP_DB".into(),
+                db_schemas: vec![DbSchemaMetadata {
+                    db_schema_name: "PUBLIC".into(),
+                    tables: vec![
+                        TableMetadata {
+                            table_name: "T_TABLE".into(),
+                            table_type: Some(TableType::Table),
+                            columns: vec![],
+                        },
+                        TableMetadata {
+                            table_name: "T_VIEW".into(),
+                            table_type: Some(TableType::View),
+                            columns: vec![],
+                        },
+                        TableMetadata {
+                            table_name: "T_UNKNOWN".into(),
+                            table_type: Some(TableType::Table),
+                            columns: vec![],
+                        },
+                    ],
+                }],
+            }]
+        );
+
+        request.table_type = vec!["vIeW".into()];
+        let views = driver
+            .connection_get_objects_typed(request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            views[0].db_schemas[0].tables,
+            vec![all[0].db_schemas[0].tables[1].clone()]
+        );
+
+        request.table_type = vec!["TABLE".into()];
+        let tables = driver
+            .connection_get_objects_typed(request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            tables[0].db_schemas[0].tables,
+            vec![
+                all[0].db_schemas[0].tables[0].clone(),
+                all[0].db_schemas[0].tables[2].clone()
+            ]
+        );
+
+        request.table_type = vec!["SYNONYM".into()];
+        assert!(
+            driver
+                .connection_get_objects_typed(request)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_columns_filter_and_decode_show_rows_with_legacy_arrow_byte_parity() {
+        use crate::apis::database_driver_v1::result_set::InlineData;
+        use arrow::ipc::writer::StreamWriter;
+        use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+
+        let server = MockServer::start().await;
+        let fixed = r#"{"type":"FIXED","nullable":false,"precision":38,"scale":0}"#;
+        let text = r#"{"type":"TEXT","nullable":true,"charLength":25,"byteLength":100}"#;
+        mount_show_rows(
+            &server,
+            "SHOW COLUMNS LIKE 'I%' IN ACCOUNT",
+            &[
+                "column_name",
+                "table_name",
+                "schema_name",
+                "database_name",
+                "data_type",
+                "default",
+                "comment",
+            ],
+            serde_json::json!([
+                ["ID", "T_ONE", "PUBLIC", "APP_DB", fixed, "0", "primary key"],
+                ["NONMATCH", "T_ONE", "PUBLIC", "APP_DB", fixed, "", ""],
+                ["ITEM", "T_ONE", "PUBLIC", "APP_DB", text, "", "item name"],
+                ["ID", "X_SKIP", "PUBLIC", "APP_DB", fixed, "", ""],
+                ["ID", "T_TWO", "PRIVATE", "APP_DB", fixed, "", ""],
+                ["ID", "T_TWO", "PUBLIC", "OTHER_DB", fixed, "", ""]
+            ]),
+            2,
+        )
+        .await;
+        let (driver, conn_handle) = mock_get_objects_connection(&server).await;
+        let mut request = get_objects_request(conn_handle, DEPTH_COLUMNS);
+        request.catalog = Some("APP%".into());
+        request.db_schema = Some("PUB%".into());
+        request.table_name = Some("T%".into());
+        request.column_name = Some("I%".into());
+
+        let metadata = driver
+            .connection_get_objects_typed(request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            metadata,
+            vec![CatalogMetadata {
+                catalog_name: "APP_DB".into(),
+                db_schemas: vec![DbSchemaMetadata {
+                    db_schema_name: "PUBLIC".into(),
+                    tables: vec![TableMetadata {
+                        table_name: "T_ONE".into(),
+                        table_type: None,
+                        columns: vec![
+                            ColumnDescriptor {
+                                column_name: "ID".into(),
+                                ordinal_position: 1,
+                                logical_type: "FIXED".into(),
+                                precision: Some(38),
+                                scale: Some(0),
+                                char_length: None,
+                                byte_length: None,
+                                nullable: false,
+                                column_def: Some("0".into()),
+                                remarks: Some("primary key".into()),
+                            },
+                            ColumnDescriptor {
+                                column_name: "ITEM".into(),
+                                ordinal_position: 2,
+                                logical_type: "TEXT".into(),
+                                precision: None,
+                                scale: None,
+                                char_length: Some(25),
+                                byte_length: Some(100),
+                                nullable: true,
+                                column_def: None,
+                                remarks: Some("item name".into()),
+                            },
+                        ],
+                    }],
+                }],
+            }]
+        );
+
+        // The legacy result-set API must encode the same tree, including the
+        // column-depth empty (non-null) Arrow table_type values.
+        let expected_batch = build_metadata_batch(&metadata, DEPTH_COLUMNS).unwrap();
+        let result = driver.connection_get_objects(request).await.unwrap();
+        let chunks = driver.result_set_get_chunks(result.handle).await.unwrap();
+        let InlineData::ArrowIpc(encoded) = chunks.chunk_data.inline else {
+            panic!("GetObjects result set should contain an inline Arrow IPC stream");
+        };
+        let actual_bytes = BASE64.decode(encoded).unwrap();
+        let mut expected_bytes = Vec::new();
+        {
+            let mut writer =
+                StreamWriter::try_new(&mut expected_bytes, &expected_batch.schema()).unwrap();
+            writer.write(&expected_batch).unwrap();
+            writer.finish().unwrap();
+        }
+        assert_eq!(actual_bytes, expected_bytes);
+        let mut reader = StreamReader::try_new(std::io::Cursor::new(actual_bytes), None).unwrap();
+        assert_eq!(reader.schema(), nested_get_objects_schema());
+        let actual_batch = reader.next().unwrap().unwrap();
+        assert_eq!(actual_batch, expected_batch);
+        let schemas = actual_batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(!schemas.is_null(0));
+        let schema_values = schemas.values();
+        let schema_values = schema_values
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let tables = schema_values
+            .column_by_name(FIELD_DB_SCHEMA_TABLES)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(!tables.is_null(0));
+        let table_values = tables.values();
+        let table_values = table_values.as_any().downcast_ref::<StructArray>().unwrap();
+        let table_types = table_values
+            .column_by_name(FIELD_TABLE_TYPE)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(table_types.value(0), "");
+        assert!(!table_types.is_null(0));
+        let columns = table_values
+            .column_by_name(FIELD_TABLE_COLUMNS)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<LargeListArray>()
+            .unwrap();
+        assert!(!columns.is_null(0));
+        assert_eq!(columns.value_length(0), 2);
+        assert!(reader.next().is_none());
+        driver.result_set_release(result.handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn typed_api_rejects_invalid_depth() {
+        let server = MockServer::start().await;
+        let (driver, conn_handle) = mock_get_objects_connection(&server).await;
+        let err = driver
+            .connection_get_objects_typed(get_objects_request(conn_handle, DEPTH_COLUMNS + 1))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("depth 5 is invalid"), "{err}");
     }
 }
