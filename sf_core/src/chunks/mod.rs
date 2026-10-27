@@ -479,7 +479,7 @@ pub async fn get_chunk_data(
     let policy = RetryPolicy::default();
     let http_ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
 
-    let response = match execute_with_retry(
+    let mut response = match execute_with_retry(
         || client.get(url.clone()).headers(headers.clone()),
         &http_ctx,
         &policy,
@@ -517,9 +517,20 @@ pub async fn get_chunk_data(
     }
 
     let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
-    // Take ownership of the response allocation instead of copying it: when
-    // reqwest already inflated the body, this is the whole decoded chunk.
-    let bytes = Vec::from(response.bytes().await.context(CommunicationSnafu)?);
+    // Read the body frame by frame into one buffer allocated up front.
+    // `Response::bytes` keeps every frame until the end and then concatenates
+    // them, so the whole chunk briefly exists twice. A body that reqwest
+    // inflates (`Content-Encoding: gzip`) reports no length, so fall back to
+    // the server-reported uncompressed size; a raw gzip body (GCS) reports its
+    // compressed length.
+    let capacity = response
+        .content_length()
+        .and_then(|len| usize::try_from(len).ok())
+        .unwrap_or(uncompressed_size);
+    let mut bytes = Vec::with_capacity(capacity);
+    while let Some(frame) = response.chunk().await.context(CommunicationSnafu)? {
+        bytes.extend_from_slice(&frame);
+    }
     // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
     // body doesn't stall this runtime worker.
     tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
@@ -878,6 +889,51 @@ mod tests {
             .expect("spawn_blocking should join");
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 2);
+    }
+
+    /// Each body shape must arrive intact whatever the reported size: the
+    /// size only pre-allocates the read buffer.
+    #[tokio::test]
+    async fn get_chunk_data_reads_plain_encoded_and_raw_gzip_bodies() {
+        // Large enough to arrive in several frames.
+        let plain: Vec<u8> = (0..300_000u32).flat_map(|i| i.to_le_bytes()).collect();
+        let compressed = gzip_compress(&plain);
+        let bodies = [
+            (
+                "plain",
+                ResponseTemplate::new(200).set_body_bytes(plain.clone()),
+            ),
+            (
+                "content-encoding gzip",
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Encoding", "gzip")
+                    .set_body_bytes(compressed.clone()),
+            ),
+            (
+                "raw gzip",
+                ResponseTemplate::new(200).set_body_bytes(compressed.clone()),
+            ),
+        ];
+        for (name, response) in bodies {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            for uncompressed_size in [0, 1, plain.len() as i64, plain.len() as i64 * 4] {
+                let chunk = ChunkDownloadData {
+                    url: server.uri(),
+                    row_count: 1,
+                    uncompressed_size,
+                    compressed_size: compressed.len() as i64,
+                    headers: HashMap::new(),
+                };
+                let bytes = get_chunk_data(Client::new(), chunk)
+                    .await
+                    .unwrap_or_else(|e| panic!("{name}: download failed: {e:?}"));
+                assert!(bytes == plain, "{name} with size {uncompressed_size}");
+            }
+        }
     }
 
     #[tokio::test]
