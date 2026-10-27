@@ -211,10 +211,9 @@ pub fn tables<E: OdbcEncoding>(
         return set_static_table_types(&mut inner);
     }
 
-    // Substitute a NULL catalog with the connection's current database when
-    // UseCurrentCatalog is true (see resolve_null_catalog_to_connection_context).
-    // Otherwise the catalog stays NULL so SHOW can run IN ACCOUNT, unless
-    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier
+    // UseCurrentCatalog substitutes a NULL catalog with the current database.
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills a catalog that is still
+    // NULL, and a NULL schema only when that fill sets a catalog. Identifier
     // mode (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
@@ -230,9 +229,6 @@ pub fn tables<E: OdbcEncoding>(
     // TableType is always a value list, not a pattern
     let table_types = parse_table_type_list(type_raw.as_deref());
 
-    // Core GetObjects applied CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX after
-    // the ODBC NULL-catalog substitution. Do not gate solely on schema — a
-    // supplied schema must not skip catalog fill when catalog is still unresolved.
     fill_null_catalog_schema_from_connection_ctx(
         &mut catalog_pattern,
         &mut schema_pattern,
@@ -251,9 +247,8 @@ pub fn tables<E: OdbcEncoding>(
 
 /// Substitute a NULL catalog with the connection's current database.
 ///
-/// Called when `UseCurrentCatalog` is true. A NULL schema is left NULL so it
-/// matches all schemas in the database — unless
-/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` fills it in `tables()`.
+/// Called when `UseCurrentCatalog` is true. A catalog this returns stays set,
+/// so connection-context fill does not replace the schema.
 fn resolve_null_catalog_to_connection_context(
     catalog_raw: Option<String>,
     conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
@@ -262,20 +257,12 @@ fn resolve_null_catalog_to_connection_context(
         return Ok(catalog_raw);
     }
 
-    let rt = global().context(OdbcRuntimeSnafu)?;
-    let info = rt.block_on(async |c| {
-        c.connection_get_info(ConnectionGetInfoRequest {
-            conn_handle: Some(conn_handle),
-            info_codes: vec![],
-            include_master_token: false,
-        })
-        .await
-    })?;
+    let (database, _) = session_database_and_schema(conn_handle)?;
 
     // The server name is a literal identifier, not a user pattern; escape LIKE
     // metacharacters so is_exact_pattern() recovers it and issues IN DATABASE
     // rather than falling through to IN ACCOUNT when the name contains _ or %.
-    Ok(info.database.map(|db| escape_like_wildcards(&db)))
+    Ok(database.map(|db| escape_like_wildcards(&db)))
 }
 
 // Mirrors the ODBC SQLColumns C entry point one-to-one.
@@ -316,10 +303,9 @@ pub fn columns<E: OdbcEncoding>(
     let use_current_catalog = conn.use_current_catalog;
     drop(conn);
 
-    // Substitute a NULL catalog with the connection's current database when
-    // UseCurrentCatalog is true (see resolve_null_catalog_to_connection_context).
-    // Otherwise the catalog stays NULL so SHOW can run IN ACCOUNT, unless
-    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it below. Identifier
+    // UseCurrentCatalog substitutes a NULL catalog with the current database.
+    // CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills a catalog that is still
+    // NULL, and a NULL schema only when that fill sets a catalog. Identifier
     // mode (metadata_id=TRUE) still requires non-NULL args → HY009.
     let catalog_raw = if metadata_id {
         catalog_raw
@@ -333,8 +319,6 @@ pub fn columns<E: OdbcEncoding>(
     let table_pattern = catalog_arg_to_pattern(table_raw.as_deref(), metadata_id)?;
     let column_pattern = catalog_arg_to_pattern(column_raw.as_deref(), metadata_id)?;
 
-    // Core GetObjects applied CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX after
-    // the ODBC NULL-catalog substitution (same as SQLTables).
     fill_null_catalog_schema_from_connection_ctx(
         &mut catalog_pattern,
         &mut schema_pattern,
@@ -456,24 +440,9 @@ fn metadata_request_use_connection_ctx(
         .is_some_and(|v| config_setting_bool(&v)))
 }
 
-/// Fill still-NULL catalog/schema patterns from the session when
-/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` is enabled.
-///
-/// Shared by [`tables`] and [`columns`] so both stay aligned with core
-/// GetObjects' `apply_connection_context` behavior after the ODBC NULL-catalog
-/// substitution.
-fn fill_null_catalog_schema_from_connection_ctx(
-    catalog_pattern: &mut Option<String>,
-    schema_pattern: &mut Option<String>,
+fn session_database_and_schema(
     conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
-) -> OdbcResult<()> {
-    if catalog_pattern.is_some() && schema_pattern.is_some() {
-        return Ok(());
-    }
-    if !metadata_request_use_connection_ctx(conn_handle)? {
-        return Ok(());
-    }
-
+) -> OdbcResult<(Option<String>, Option<String>)> {
     let rt = global().context(OdbcRuntimeSnafu)?;
     let info = rt.block_on(async |c| {
         c.connection_get_info(ConnectionGetInfoRequest {
@@ -483,16 +452,62 @@ fn fill_null_catalog_schema_from_connection_ctx(
         })
         .await
     })?;
-    if catalog_pattern.is_none()
-        && let Some(db) = info.database
-    {
-        *catalog_pattern = Some(escape_like_wildcards(&db));
+    Ok((info.database, info.schema))
+}
+
+fn apply_null_catalog_connection_ctx(
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    session_database: Option<&str>,
+    session_schema: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    if catalog.is_some() {
+        return (catalog.map(str::to_string), schema.map(str::to_string));
     }
-    if schema_pattern.is_none()
-        && let Some(sch) = info.schema
-    {
-        *schema_pattern = Some(escape_like_wildcards(&sch));
+    let filled_catalog = session_database
+        .filter(|name| !name.is_empty())
+        .map(escape_like_wildcards);
+    let filled_schema = if filled_catalog.is_some() {
+        match schema {
+            Some(name) => Some(name.to_string()),
+            None => session_schema
+                .filter(|name| !name.is_empty())
+                .map(escape_like_wildcards),
+        }
+    } else {
+        schema.map(str::to_string)
+    };
+    (filled_catalog, filled_schema)
+}
+
+/// Fill a still-NULL catalog from the session when
+/// `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` is enabled, and a still-NULL
+/// schema only when that fill sets a catalog.
+///
+/// A non-NULL catalog, including one [`resolve_null_catalog_to_connection_context`]
+/// already substituted, is unchanged. A blank session name is unset. Shared by
+/// [`tables`] and [`columns`].
+fn fill_null_catalog_schema_from_connection_ctx(
+    catalog_pattern: &mut Option<String>,
+    schema_pattern: &mut Option<String>,
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+) -> OdbcResult<()> {
+    if catalog_pattern.is_some() {
+        return Ok(());
     }
+    if !metadata_request_use_connection_ctx(conn_handle)? {
+        return Ok(());
+    }
+
+    let (session_database, session_schema) = session_database_and_schema(conn_handle)?;
+    let (catalog, schema) = apply_null_catalog_connection_ctx(
+        catalog_pattern.as_deref(),
+        schema_pattern.as_deref(),
+        session_database.as_deref(),
+        session_schema.as_deref(),
+    );
+    *catalog_pattern = catalog;
+    *schema_pattern = schema;
     Ok(())
 }
 
@@ -512,20 +527,12 @@ fn fill_null_procedure_catalog_from_connection(
         return Ok(());
     }
 
-    let rt = global().context(OdbcRuntimeSnafu)?;
-    let info = rt.block_on(async |c| {
-        c.connection_get_info(ConnectionGetInfoRequest {
-            conn_handle: Some(conn_handle),
-            info_codes: vec![],
-            include_master_token: false,
-        })
-        .await
-    })?;
+    let (database, schema) = session_database_and_schema(conn_handle)?;
     if db_name.is_none() {
-        *db_name = info.database;
+        *db_name = database;
     }
     if use_ctx && schema_raw.is_none() {
-        *schema_pattern = info.schema;
+        *schema_pattern = schema;
     }
     Ok(())
 }
@@ -549,23 +556,15 @@ fn resolve_show_identifiers(
         return Ok((catalog, schema));
     }
 
-    let rt = global().context(OdbcRuntimeSnafu)?;
-    let info = rt.block_on(async |c| {
-        c.connection_get_info(ConnectionGetInfoRequest {
-            conn_handle: Some(conn_handle),
-            info_codes: vec![],
-            include_master_token: false,
-        })
-        .await
-    })?;
+    let (database, session_schema) = session_database_and_schema(conn_handle)?;
 
     let catalog = if fill_catalog {
-        catalog.or(info.database)
+        catalog.or(database)
     } else {
         catalog
     };
     let schema = if fill_schema {
-        schema.or(info.schema)
+        schema.or(session_schema)
     } else {
         schema
     };
@@ -5842,6 +5841,45 @@ mod procedure_columns_tests {
 #[cfg(test)]
 mod sqltables_tests {
     use super::*;
+
+    #[test]
+    fn connection_ctx_leaves_a_pattern_catalog_unscoped() {
+        let (catalog, schema) =
+            apply_null_catalog_connection_ctx(Some("%"), None, Some("DB"), Some("SCH"));
+        assert_eq!(catalog.as_deref(), Some("%"));
+        assert_eq!(schema, None);
+    }
+
+    #[test]
+    fn connection_ctx_fills_null_catalog_and_schema() {
+        let (catalog, schema) =
+            apply_null_catalog_connection_ctx(None, None, Some("DB"), Some("SCH"));
+        assert_eq!(catalog.as_deref(), Some("DB"));
+        assert_eq!(schema.as_deref(), Some("SCH"));
+    }
+
+    #[test]
+    fn connection_ctx_keeps_an_explicit_schema() {
+        let (catalog, schema) =
+            apply_null_catalog_connection_ctx(None, Some("OTHER"), Some("DB"), Some("SCH"));
+        assert_eq!(catalog.as_deref(), Some("DB"));
+        assert_eq!(schema.as_deref(), Some("OTHER"));
+    }
+
+    #[test]
+    fn connection_ctx_blank_session_database_fills_nothing() {
+        let (catalog, schema) =
+            apply_null_catalog_connection_ctx(None, None, Some(""), Some("SCH"));
+        assert_eq!(catalog, None);
+        assert_eq!(schema, None);
+    }
+
+    #[test]
+    fn connection_ctx_blank_session_schema_leaves_schema_unset() {
+        let (catalog, schema) = apply_null_catalog_connection_ctx(None, None, Some("DB"), Some(""));
+        assert_eq!(catalog.as_deref(), Some("DB"));
+        assert_eq!(schema, None);
+    }
 
     #[test]
     fn like_match_is_case_sensitive() {

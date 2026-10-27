@@ -1,0 +1,36 @@
+{
+  "name": "SHOW OBJECTS returns no rows",
+  "priority": 5,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matches": "(?s)(?i).*objects.*"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "show-objects-empty",
+        "statementTypeId": 4096,
+        "rowtype": [
+          {"name": "database_name", "type": "text", "nullable": true},
+          {"name": "schema_name", "type": "text", "nullable": true},
+          {"name": "name", "type": "text", "nullable": true},
+          {"name": "kind", "type": "text", "nullable": true}
+        ],
+        "rowset": [],
+        "total": 0,
+        "returned": 0,
+        "queryResultFormat": "json"
+      }
+    }
+  }
+}

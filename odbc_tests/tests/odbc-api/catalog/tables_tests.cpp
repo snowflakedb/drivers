@@ -15,6 +15,7 @@
 #include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "ScopedTable.hpp"
+#include "SessionParameterOverride.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -725,6 +726,126 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: NULL schema spans all schema
   }
   CHECK(found_current_schema);
   CHECK(found_second_schema);
+}
+
+TEST_CASE_METHOD(
+    ReadOnlyDbStmtFixture,
+    "SQLTables: CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX does not narrow an explicit catalog to the current schema",
+    "[odbc-api][catalog][tables]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, nullptr, 0, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  bool found_current_schema = false;
+  bool found_second_schema = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+    const ColumnValue cat = sqltables_get_column(stmt_handle(), 1);
+    const ColumnValue schem = sqltables_get_column(stmt_handle(), 2);
+    const ColumnValue name = sqltables_get_column(stmt_handle(), 3);
+    CHECK(cat.text == database_name());
+    if (schem.text == schema_name() && name.text == readonly_db::BASIC_TABLE) {
+      found_current_schema = true;
+    }
+    if (schem.text == READONLY_SECOND_SCHEMA_NAME && name.text == readonly_db::SECOND_SCHEMA_TABLE) {
+      found_second_schema = true;
+    }
+  }
+  CHECK(found_current_schema);
+  CHECK(found_second_schema);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLTables: UseCurrentCatalog plus connection context lists tables outside the current schema",
+                 "[odbc-api][catalog][tables]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  bool found_current_schema = false;
+  bool found_second_schema = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+    const ColumnValue cat = sqltables_get_column(stmt_handle(), 1);
+    const ColumnValue schem = sqltables_get_column(stmt_handle(), 2);
+    const ColumnValue name = sqltables_get_column(stmt_handle(), 3);
+    CHECK(cat.text == database_name());
+    if (schem.text == schema_name() && name.text == readonly_db::BASIC_TABLE) {
+      found_current_schema = true;
+    }
+    if (schem.text == READONLY_SECOND_SCHEMA_NAME && name.text == readonly_db::SECOND_SCHEMA_TABLE) {
+      found_second_schema = true;
+    }
+  }
+  CHECK(found_current_schema);
+  CHECK(found_second_schema);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLTables: connection context with catalog % lists a table outside the current schema",
+                 "[odbc-api][catalog][tables]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  const std::string catalog_pattern = "%";
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(catalog_pattern.c_str()), SQL_NTS, nullptr, 0,
+                            sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  bool found_second_schema = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+    const ColumnValue schem = sqltables_get_column(stmt_handle(), 2);
+    const ColumnValue name = sqltables_get_column(stmt_handle(), 3);
+    if (schem.text == READONLY_SECOND_SCHEMA_NAME && name.text == readonly_db::SECOND_SCHEMA_TABLE) {
+      found_second_schema = true;
+    }
+  }
+  CHECK(found_second_schema);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
+                 "SQLTables: connection context with NULL catalog and schema lists only the current schema",
+                 "[odbc-api][catalog][tables]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  bool found_current_schema = false;
+  while (true) {
+    ret = SQLFetch(stmt_handle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+    const ColumnValue cat = sqltables_get_column(stmt_handle(), 1);
+    const ColumnValue schem = sqltables_get_column(stmt_handle(), 2);
+    const ColumnValue name = sqltables_get_column(stmt_handle(), 3);
+    CHECK(cat.text == database_name());
+    CHECK(schem.text == schema_name());
+    if (name.text == readonly_db::BASIC_TABLE) {
+      found_current_schema = true;
+    }
+  }
+  CHECK(found_current_schema);
 }
 
 // ============================================================================

@@ -1,0 +1,34 @@
+{
+  "name": "Successful login with connection context and a blank session database",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token",
+        "masterToken": "mock_master_token",
+        "sessionId": 12345,
+        "validityInSeconds": 3600,
+        "masterValidityInSeconds": 14400,
+        "sessionInfo": {
+          "databaseName": "",
+          "schemaName": "",
+          "warehouseName": "",
+          "roleName": ""
+        },
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": false},
+          {"name": "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "value": true}
+        ]
+      }
+    }
+  },
+  "priority": 10
+}

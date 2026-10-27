@@ -1268,6 +1268,48 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   CHECK(rows.empty());
 }
 
+static void require_alldatatypes_columns(SQLHSTMT stmt) {
+  std::vector<std::string> names;
+  while (true) {
+    SQLRETURN ret = SQLFetch(stmt);
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    REQUIRE(ret == SQL_SUCCESS);
+    const ColumnValue schema = sqlcolumns_get_column(stmt, 2);
+    const ColumnValue name = sqlcolumns_get_column(stmt, 4);
+    CHECK(schema.text == READONLY_SECOND_SCHEMA_NAME);
+    names.push_back(name.text);
+  }
+  REQUIRE(names.size() == 25);
+  CHECK(std::find(names.begin(), names.end(), "ROWKIND") != names.end());
+}
+
+TEST_CASE_METHOD(
+    ReadOnlyDbStmtFixture,
+    "SQLColumns: CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX does not narrow an explicit catalog to the current schema",
+    "[odbc-api][columns][catalog]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, nullptr, 0,
+                             sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  require_alldatatypes_columns(stmt_handle());
+}
+
+TEST_CASE_METHOD(ReadOnlyDbUseCurrentCatalogStmtFixture,
+                 "SQLColumns: UseCurrentCatalog plus connection context lists columns outside the current schema",
+                 "[odbc-api][columns][catalog]") {
+  SessionParameterOverride ctx(stmt_handle(), "CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX", "TRUE");
+  REQUIRE(ctx.is_active());
+
+  SQLRETURN ret =
+      SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar(readonly_db::SECOND_SCHEMA_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  require_alldatatypes_columns(stmt_handle());
+}
+
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: Specific ColumnName filters results",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
