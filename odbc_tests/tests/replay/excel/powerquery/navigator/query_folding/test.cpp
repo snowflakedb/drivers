@@ -2984,7 +2984,8 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt2, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -11635,7 +11636,8 @@ TEST_CASE("Replay: excel powerquery navigator query_folding", "[replay][excel][p
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt3, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt3), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED

@@ -226,6 +226,7 @@ pub(crate) struct SnowflakeNumber {
     pub(crate) scale: u32,
     pub(crate) precision: u32,
     pub(crate) sql_type: NumericSqlType,
+    pub(crate) is_unsigned: bool,
 }
 
 impl SnowflakeType for SnowflakeNumber {

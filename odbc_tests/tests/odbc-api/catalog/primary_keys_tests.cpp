@@ -11,6 +11,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -531,4 +532,15 @@ TEST_CASE_METHOD(DbcFixture, "SQLPrimaryKeys: Requires active connection", "[odb
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLPrimaryKeys: KEY_SEQ reports SMALLINT IRD attributes",
+                 "[odbc-api][primarykeys][catalog]") {
+  const SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                                       SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  require_catalog_integer_ird(stmt_handle(), 5, 6, 2, "SMALLINT");
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 4, 6});
+  require_catalog_wide_octet_length(stmt_handle(), 4, 255);
 }

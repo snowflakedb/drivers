@@ -11,6 +11,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -919,4 +920,18 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: empty PK table with FK 
     REQUIRE(ret == SQL_NO_DATA);
   }
   OLD_DRIVER_ONLY("BD#90") { REQUIRE(ret == SQL_NO_DATA); }
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLForeignKeys: SMALLINT result columns report SMALLINT IRD attributes",
+                 "[odbc-api][foreignkeys][catalog]") {
+  SQLRETURN ret = SQLForeignKeys(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, 0, sqlchar(database_name()), SQL_NTS,
+                                 sqlchar(schema_name()), SQL_NTS, sqlchar(readonly_db::FK_CHILD), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  constexpr SQLUSMALLINT smallintCols[] = {9, 10, 11, 14};
+  for (const SQLUSMALLINT col : smallintCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+  }
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 4, 5, 6, 7, 8, 12, 13});
+  require_catalog_wide_octet_length(stmt_handle(), 4, 255);
 }

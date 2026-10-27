@@ -8,6 +8,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -192,4 +193,28 @@ TEST_CASE_METHOD(DbcFixture, "SQLStatistics: Requires active connection", "[odbc
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: numeric result columns report integer IRD attributes",
+                 "[odbc-api][catalog][statistics]") {
+  const SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  constexpr SQLUSMALLINT smallintCols[] = {4, 7};
+  for (const SQLUSMALLINT col : smallintCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+  }
+  NEW_DRIVER_ONLY("BD#sqlstatistics-ordinal-position-integer") {
+    require_catalog_integer_ird(stmt_handle(), 8, 6, 2, "SMALLINT");
+  }
+  OLD_DRIVER_ONLY("BD#sqlstatistics-ordinal-position-integer") {
+    require_catalog_integer_ird(stmt_handle(), 8, 11, 4, "INTEGER");
+  }
+  constexpr SQLUSMALLINT integerCols[] = {11, 12};
+  for (const SQLUSMALLINT col : integerCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 11, 4, "INTEGER");
+  }
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 5, 6, 9, 10, 13});
+  require_catalog_wide_octet_length(stmt_handle(), 1, 255);
 }

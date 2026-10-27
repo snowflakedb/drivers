@@ -1,0 +1,13 @@
+name: "SQLColumns and SQLGetTypeInfo NUM_PREC_RADIX are INTEGER on the old driver"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  SQLColumns NUM_PREC_RADIX and SQLGetTypeInfo NUM_PREC_RADIX report
+  SQL_INTEGER, display size 11, and octet length 4.
+new_driver_behavior: |
+  Both columns report SQL_SMALLINT, display size 6, and octet length 2.
+description: |
+  Both result sets define NUM_PREC_RADIX as SMALLINT.

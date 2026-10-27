@@ -9,9 +9,9 @@ use crate::conversion::warning::Warnings;
 use crate::conversion::{
     column_size_from_field, decimal_digits_from_field, display_size_from_field,
     is_case_sensitive_from_field, is_unsigned_from_field, literal_prefix_from_field,
-    literal_suffix_from_field, num_prec_radix_from_field, octet_length_from_field,
-    precision_from_field, searchable_from_field, sql_type_from_field, type_name_from_field,
-    verbose_sql_type_from_field,
+    literal_suffix_from_field, local_type_name_from_field, num_prec_radix_from_field,
+    octet_length_from_field, precision_from_field, searchable_from_field, sql_type_from_field,
+    type_name_from_field, verbose_sql_type_from_field,
 };
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
@@ -436,8 +436,13 @@ pub(crate) fn compute_ird_field<'a>(
         | DescField::BaseTableName
         | DescField::CatalogName
         | DescField::SchemaName => Ok(Str("")),
-        DescField::TypeName | DescField::LocalTypeName => {
+        DescField::TypeName => {
             let name = type_name_from_field(field, numeric_settings).context(ConversionSnafu)?;
+            Ok(Str(name))
+        }
+        DescField::LocalTypeName => {
+            let name =
+                local_type_name_from_field(field, numeric_settings).context(ConversionSnafu)?;
             Ok(Str(name))
         }
         DescField::LiteralPrefix => {

@@ -29,6 +29,7 @@ pub(crate) struct SnowflakeVarchar {
     pub len: u32,
     pub semi_structured_type_name: Option<&'static str>,
     pub map_to_long_varchar: Option<u32>,
+    pub wide: bool,
 }
 
 impl SnowflakeVarchar {

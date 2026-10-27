@@ -11,6 +11,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -582,4 +583,19 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: REMARKS is SQL_NULL_DATA
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedures: numeric result columns report integer IRD attributes",
+                 "[odbc-api][procedures][catalog]") {
+  const SQLRETURN ret = SQLProcedures(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  constexpr SQLUSMALLINT integerCols[] = {4, 5, 6};
+  for (const SQLUSMALLINT col : integerCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 11, 4, "INTEGER");
+  }
+  require_catalog_integer_ird(stmt_handle(), 8, 6, 2, "SMALLINT");
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 7});
+  require_catalog_wide_octet_length(stmt_handle(), 1, 255);
 }

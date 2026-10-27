@@ -12,6 +12,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -764,4 +765,34 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: metadata_id=FALSE 
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: result columns report IRD attributes",
+                 "[odbc-api][procedurecolumns][catalog]") {
+  const SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                                            SQL_NTS, sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 4, 7, 13, 14, 19});
+
+  constexpr SQLUSMALLINT smallintCols[] = {5, 6, 10, 12, 15, 16};
+  constexpr SQLUSMALLINT integerCols[] = {8, 9, 11, 17, 18};
+  constexpr SQLUSMALLINT unsignedCols[] = {20, 21};
+  constexpr SQLUSMALLINT varcharCols[] = {5, 6, 8, 9, 10, 11, 12, 15, 16, 17, 18, 20, 21};
+  NEW_DRIVER_ONLY("BD#sqlprocedurecolumns-numeric-columns-varchar") {
+    for (const SQLUSMALLINT col : varcharCols) {
+      require_catalog_varchar_ird(stmt_handle(), col);
+    }
+  }
+  OLD_DRIVER_ONLY("BD#sqlprocedurecolumns-numeric-columns-varchar") {
+    for (const SQLUSMALLINT col : smallintCols) {
+      require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+    }
+    for (const SQLUSMALLINT col : integerCols) {
+      require_catalog_integer_ird(stmt_handle(), col, 11, 4, "INTEGER");
+    }
+    for (const SQLUSMALLINT col : unsignedCols) {
+      require_catalog_integer_ird(stmt_handle(), col, 5, 2, "SMALLINT", true);
+    }
+  }
 }

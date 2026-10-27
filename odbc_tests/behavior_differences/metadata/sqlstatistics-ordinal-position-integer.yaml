@@ -1,0 +1,14 @@
+name: "SQLStatistics ORDINAL_POSITION is INTEGER on the old driver"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  SQLStatistics ORDINAL_POSITION reports SQL_INTEGER, display size 11,
+  and octet length 4.
+new_driver_behavior: |
+  ORDINAL_POSITION reports SQL_SMALLINT, display size 6, and octet
+  length 2.
+description: |
+  The SQLStatistics result set defines ORDINAL_POSITION as SMALLINT.

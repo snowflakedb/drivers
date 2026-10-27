@@ -8,6 +8,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -201,4 +202,23 @@ TEST_CASE_METHOD(DbcFixture, "SQLSpecialColumns: Requires active connection",
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: numeric result columns report integer IRD attributes",
+                 "[odbc-api][catalog][specialcolumns]") {
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  constexpr SQLUSMALLINT smallintCols[] = {1, 3, 7, 8};
+  for (const SQLUSMALLINT col : smallintCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+  }
+  const SQLUSMALLINT integerCols[] = {5, 6};
+  for (const SQLUSMALLINT col : integerCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 11, 4, "INTEGER");
+  }
+  require_catalog_wide_columns(stmt_handle(), {2, 4});
+  require_catalog_wide_octet_length(stmt_handle(), 2, 255);
 }

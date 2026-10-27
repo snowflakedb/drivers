@@ -92,6 +92,15 @@ fn narrow_char_byte_width() -> odbc_sys::Len {
     }
 }
 
+/// Catalog TEXT `BUFFER_LENGTH` / `CHAR_OCTET_LENGTH` and the catalog
+/// wide-character `SQL_DESC_OCTET_LENGTH` use this rather than
+/// `narrow_char_byte_width()`.
+pub(crate) const CATALOG_TEXT_MAX_BYTES_PER_CHAR: i32 = 4;
+
+/// Catalog schemas set this key on an unsigned SMALLINT column. Query result
+/// fields do not carry it.
+pub(crate) const CATALOG_UNSIGNED_METADATA_KEY: &str = "sfOdbcUnsigned";
+
 /// Per-column converter from Arrow values to ODBC buffers.
 ///
 /// `'static` so it can be cached per column per `RecordBatch`. Two entry
@@ -489,6 +498,49 @@ enum SnowflakeFieldType {
     IntervalDayTime(interval_result::IntervalDayTimeReader),
 }
 
+struct SqlIntegerIrd {
+    display_size: odbc_sys::Len,
+    octet_length: odbc_sys::Len,
+    type_name: &'static str,
+    local_type_name: &'static str,
+}
+
+fn sql_integer_ird(sql_type: number::NumericSqlType, is_unsigned: bool) -> Option<SqlIntegerIrd> {
+    match sql_type {
+        number::NumericSqlType::SmallInt => Some(SqlIntegerIrd {
+            display_size: if is_unsigned { 5 } else { 6 },
+            octet_length: 2,
+            type_name: "SMALLINT",
+            local_type_name: if is_unsigned {
+                "USMALLINT"
+            } else {
+                "SSMALLINT"
+            },
+        }),
+        number::NumericSqlType::Integer => Some(SqlIntegerIrd {
+            display_size: 11,
+            octet_length: 4,
+            type_name: "INTEGER",
+            local_type_name: "SINTEGER",
+        }),
+        number::NumericSqlType::Decimal
+        | number::NumericSqlType::BigInt
+        | number::NumericSqlType::VarChar => None,
+    }
+}
+
+fn field_is_catalog_unsigned(field: &Field) -> bool {
+    field
+        .metadata()
+        .get(CATALOG_UNSIGNED_METADATA_KEY)
+        .is_some_and(|value| value == "true")
+}
+
+fn field_is_catalog_wide_char(field: &Field) -> bool {
+    concise_sql_type_override(field)
+        .is_some_and(|code| code.0 == WVARCHAR_CONCISE_SQL_TYPE || code.0 == WCHAR_CONCISE_SQL_TYPE)
+}
+
 impl SnowflakeFieldType {
     fn from_field(
         field: &Field,
@@ -506,6 +558,7 @@ impl SnowflakeFieldType {
                     len,
                     semi_structured_type_name: None,
                     map_to_long_varchar: numeric_settings.map_to_long_varchar,
+                    wide: field_is_catalog_wide_char(field),
                 }))
             }
             "FIXED" => {
@@ -524,6 +577,8 @@ impl SnowflakeFieldType {
                     scale,
                     precision,
                     sql_type,
+                    is_unsigned: sql_type == number::NumericSqlType::SmallInt
+                        && field_is_catalog_unsigned(field),
                 }))
             }
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
@@ -587,6 +642,7 @@ impl SnowflakeFieldType {
                     len,
                     semi_structured_type_name,
                     map_to_long_varchar: numeric_settings.map_to_long_varchar,
+                    wide: false,
                 }))
             }
             "VECTOR" => {
@@ -638,6 +694,7 @@ impl SnowflakeFieldType {
                     len,
                     semi_structured_type_name: None,
                     map_to_long_varchar: numeric_settings.map_to_long_varchar,
+                    wide: false,
                 }))
             }
         }
@@ -719,7 +776,9 @@ impl SnowflakeFieldType {
     fn type_name(&self) -> &'static str {
         match self {
             Self::Varchar(t) => t.type_name(),
-            Self::Number(_) => "DECIMAL",
+            Self::Number(t) => sql_integer_ird(t.sql_type, t.is_unsigned)
+                .map(|ird| ird.type_name)
+                .unwrap_or("DECIMAL"),
             Self::Date(_) => "TYPE_DATE",
             Self::Time(_) => "TYPE_TIME",
             Self::TimestampNtz(_) => "TIMESTAMP_NTZ",
@@ -735,10 +794,22 @@ impl SnowflakeFieldType {
         }
     }
 
+    fn local_type_name(&self) -> &'static str {
+        match self {
+            Self::Number(t) => sql_integer_ird(t.sql_type, t.is_unsigned)
+                .map(|ird| ird.local_type_name)
+                .unwrap_or_else(|| self.type_name()),
+            _ => self.type_name(),
+        }
+    }
+
     fn display_size(&self) -> odbc_sys::Len {
         match self {
             Self::Varchar(t) => t.len as odbc_sys::Len,
-            Self::Number(_) | Self::Decfloat(_) => 136,
+            Self::Number(t) => sql_integer_ird(t.sql_type, t.is_unsigned)
+                .map(|ird| ird.display_size)
+                .unwrap_or(136),
+            Self::Decfloat(_) => 136,
             Self::Date(_) => 10,
             Self::Time(t) => t.column_size() as odbc_sys::Len,
             Self::TimestampNtz(t) => t.column_size() as odbc_sys::Len,
@@ -755,8 +826,18 @@ impl SnowflakeFieldType {
 
     fn octet_length(&self) -> odbc_sys::Len {
         match self {
-            Self::Varchar(t) => (t.len as odbc_sys::Len) * narrow_char_byte_width(),
-            Self::Number(_) | Self::Decfloat(_) => 136,
+            Self::Varchar(t) => {
+                let width = if t.wide {
+                    CATALOG_TEXT_MAX_BYTES_PER_CHAR as odbc_sys::Len
+                } else {
+                    narrow_char_byte_width()
+                };
+                (t.len as odbc_sys::Len) * width
+            }
+            Self::Number(t) => sql_integer_ird(t.sql_type, t.is_unsigned)
+                .map(|ird| ird.octet_length)
+                .unwrap_or(136),
+            Self::Decfloat(_) => 136,
             Self::Date(_) => 6,
             Self::Time(_) => 6,
             Self::TimestampNtz(_) => 16,
@@ -781,6 +862,9 @@ impl SnowflakeFieldType {
     }
 
     fn is_unsigned(&self) -> bool {
+        if let Self::Number(t) = self {
+            return t.is_unsigned;
+        }
         matches!(
             self,
             Self::Varchar(_)
@@ -1137,8 +1221,10 @@ pub fn verbose_sql_type_from_field(
 #[cfg(test)]
 mod concise_sql_type_override_tests {
     use super::{
-        INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE,
-        WCHAR_CONCISE_SQL_TYPE, WVARCHAR_CONCISE_SQL_TYPE, make_converter, sql_type_from_field,
+        CATALOG_UNSIGNED_METADATA_KEY, INTEGER_CONCISE_SQL_TYPE, NumericSettings,
+        SMALLINT_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE, WVARCHAR_CONCISE_SQL_TYPE,
+        display_size_from_field, is_unsigned_from_field, local_type_name_from_field,
+        make_converter, octet_length_from_field, sql_type_from_field, type_name_from_field,
     };
     use crate::api::CDataType;
     use crate::conversion::test_utils::helpers::binding_for_value;
@@ -1268,6 +1354,159 @@ mod concise_sql_type_override_tests {
             .unwrap();
         assert_eq!(value, 12);
         assert_eq!(str_len, std::mem::size_of::<i32>() as sql::Len);
+    }
+
+    fn assert_number_ird(
+        field: &Field,
+        settings: &NumericSettings,
+        display: sql::Len,
+        octet: sql::Len,
+        name: &str,
+        local_name: &str,
+    ) {
+        assert_eq!(display_size_from_field(field, settings).unwrap(), display);
+        assert_eq!(octet_length_from_field(field, settings).unwrap(), octet);
+        assert_eq!(type_name_from_field(field, settings).unwrap(), name);
+        assert_eq!(
+            local_type_name_from_field(field, settings).unwrap(),
+            local_name
+        );
+    }
+
+    fn plain_fixed_field(scale: u32, precision: u32) -> Field {
+        let metadata: HashMap<String, String> = [
+            ("logicalType".to_string(), "FIXED".to_string()),
+            ("scale".to_string(), scale.to_string()),
+            ("precision".to_string(), precision.to_string()),
+        ]
+        .into();
+        Field::new("col", DataType::Int32, true).with_metadata(metadata)
+    }
+
+    #[test]
+    fn fixed_smallint_concise_reports_smallint_ird() {
+        let field = catalog_fixed_field(DataType::Int16, 0, 5, SMALLINT_CONCISE_SQL_TYPE);
+        assert_number_ird(
+            &field,
+            &NumericSettings::default(),
+            6,
+            2,
+            "SMALLINT",
+            "SSMALLINT",
+        );
+    }
+
+    #[test]
+    fn fixed_integer_concise_reports_integer_ird() {
+        let field = catalog_fixed_field(DataType::Int32, 0, 10, INTEGER_CONCISE_SQL_TYPE);
+        assert_number_ird(
+            &field,
+            &NumericSettings::default(),
+            11,
+            4,
+            "INTEGER",
+            "SINTEGER",
+        );
+    }
+
+    #[test]
+    fn fixed_without_concise_keeps_number_ird() {
+        let field = plain_fixed_field(0, 10);
+        assert_number_ird(
+            &field,
+            &NumericSettings::default(),
+            136,
+            136,
+            "DECIMAL",
+            "DECIMAL",
+        );
+        let settings = NumericSettings {
+            treat_decimal_as_int: true,
+            ..NumericSettings::default()
+        };
+        assert_number_ird(&field, &settings, 136, 136, "DECIMAL", "DECIMAL");
+        assert!(!is_unsigned_from_field(&field, &settings).unwrap());
+    }
+
+    fn with_metadata_key(field: Field, key: &str) -> Field {
+        let mut metadata = field.metadata().clone();
+        metadata.insert(key.to_string(), "true".to_string());
+        field.with_metadata(metadata)
+    }
+
+    #[test]
+    fn fixed_unsigned_smallint_reports_five_digit_display_size() {
+        let field = with_metadata_key(
+            catalog_fixed_field(DataType::Int16, 0, 5, SMALLINT_CONCISE_SQL_TYPE),
+            CATALOG_UNSIGNED_METADATA_KEY,
+        );
+        let settings = NumericSettings::default();
+        assert_number_ird(&field, &settings, 5, 2, "SMALLINT", "USMALLINT");
+        assert!(is_unsigned_from_field(&field, &settings).unwrap());
+    }
+
+    #[test]
+    fn catalog_unsigned_key_on_integer_stays_signed() {
+        let field = with_metadata_key(
+            catalog_fixed_field(DataType::Int32, 0, 10, INTEGER_CONCISE_SQL_TYPE),
+            CATALOG_UNSIGNED_METADATA_KEY,
+        );
+        let settings = NumericSettings::default();
+        assert_number_ird(&field, &settings, 11, 4, "INTEGER", "SINTEGER");
+        assert!(!is_unsigned_from_field(&field, &settings).unwrap());
+    }
+
+    #[test]
+    fn server_unsigned_key_does_not_mark_a_column_unsigned() {
+        let field = with_metadata_key(
+            catalog_fixed_field(DataType::Int16, 0, 5, SMALLINT_CONCISE_SQL_TYPE),
+            "unsigned",
+        );
+        let settings = NumericSettings::default();
+        assert_number_ird(&field, &settings, 6, 2, "SMALLINT", "SSMALLINT");
+        assert!(!is_unsigned_from_field(&field, &settings).unwrap());
+    }
+
+    #[test]
+    fn non_numeric_local_type_name_matches_type_name() {
+        let settings = NumericSettings::default();
+        let logical = |name: &str, data_type: DataType| {
+            let metadata: HashMap<String, String> =
+                [("logicalType".to_string(), name.to_string())].into();
+            Field::new("col", data_type, true).with_metadata(metadata)
+        };
+        let fields = [
+            logical("DATE", DataType::Date32),
+            logical("BOOLEAN", DataType::Boolean),
+            logical("REAL", DataType::Float64),
+            plain_text_field(),
+            text_field_with_concise(WVARCHAR_CONCISE_SQL_TYPE),
+        ];
+        for field in fields {
+            assert_eq!(
+                local_type_name_from_field(&field, &settings).unwrap(),
+                type_name_from_field(&field, &settings).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_wide_char_octet_length_ignores_narrow_locale_width() {
+        let settings = NumericSettings::default();
+        let narrow_width: sql::Len = if cfg!(windows) || crate::api::encoding::is_ascii_locale() {
+            1
+        } else {
+            4
+        };
+        let wvarchar = text_field_with_concise(WVARCHAR_CONCISE_SQL_TYPE);
+        let wchar = text_field_with_concise(WCHAR_CONCISE_SQL_TYPE);
+        assert_eq!(octet_length_from_field(&wvarchar, &settings).unwrap(), 1020);
+        assert_eq!(octet_length_from_field(&wchar, &settings).unwrap(), 1020);
+        assert_eq!(display_size_from_field(&wvarchar, &settings).unwrap(), 255);
+        assert_eq!(
+            octet_length_from_field(&plain_text_field(), &settings).unwrap(),
+            255 * narrow_width
+        );
     }
 }
 
@@ -1773,6 +2012,16 @@ pub fn type_name_from_field(
         }
     }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.type_name())
+}
+
+pub fn local_type_name_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<&'static str, ConversionError> {
+    if field.metadata().contains_key("extTypeName") {
+        return type_name_from_field(field, numeric_settings);
+    }
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.local_type_name())
 }
 
 pub fn display_size_from_field(

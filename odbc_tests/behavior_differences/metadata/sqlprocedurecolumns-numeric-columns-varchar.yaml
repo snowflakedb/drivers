@@ -1,0 +1,15 @@
+name: "SQLProcedureColumns numeric columns report VARCHAR"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  The numeric SQLProcedureColumns result columns report signed SMALLINT
+  (display size 6, octet length 2), signed INTEGER (display size 11,
+  octet length 4), or unsigned SMALLINT (display size 5, octet length 2).
+new_driver_behavior: |
+  Those columns report VARCHAR with display size 20. The local type name
+  is VARCHAR.
+description: |
+  The procedure-column result schema stores these columns as text.

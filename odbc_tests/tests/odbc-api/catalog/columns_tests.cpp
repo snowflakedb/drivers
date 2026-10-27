@@ -17,6 +17,7 @@
 #include "ReadOnlyDbFixture.hpp"
 #include "SchemaFixtures.hpp"
 #include "SessionParameterOverride.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -132,7 +133,7 @@ TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: Result set col
 // SNOW-3897864 / BD#117: IRD concise types of the SQLColumns result set itself
 // (not the DATA_TYPE / TYPE_NAME cell values describing user table columns).
 // Match the reference driver catalog IRD: string cols = SQL_WVARCHAR; numerics =
-// SMALLINT / INTEGER (NUM_PREC_RADIX is INTEGER on the reference driver).
+// SMALLINT / INTEGER. NUM_PREC_RADIX differs between drivers (BD#catalog-num-prec-radix-integer).
 TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: result-set IRD concise types match reference driver",
                  "[odbc-api][columns][catalog]") {
   SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
@@ -149,7 +150,6 @@ TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: result-set IRD
       {7, SQL_INTEGER},    // COLUMN_SIZE
       {8, SQL_INTEGER},    // BUFFER_LENGTH
       {9, SQL_SMALLINT},   // DECIMAL_DIGITS
-      {10, SQL_INTEGER},   // NUM_PREC_RADIX (reference driver INTEGER)
       {11, SQL_SMALLINT},  // NULLABLE
       {12, SQL_WVARCHAR},  // REMARKS
       {13, SQL_WVARCHAR},  // COLUMN_DEF
@@ -179,6 +179,13 @@ TEST_CASE_METHOD(UseCurrentCatalogDefaultDSNFixture, "SQLColumns: result-set IRD
                          &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     CHECK(dataType == expected);
+  }
+
+  NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    CHECK(catalog_numeric_attr(stmt_handle(), 10, SQL_DESC_CONCISE_TYPE) == SQL_SMALLINT);
+  }
+  OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    CHECK(catalog_numeric_attr(stmt_handle(), 10, SQL_DESC_CONCISE_TYPE) == SQL_INTEGER);
   }
 }
 
@@ -1703,4 +1710,29 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: REMARKS and COLUMN_DEF are 
   }
 
   REQUIRE(rowCount >= 1);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumns: SMALLINT and INTEGER result columns report integer IRD attributes",
+                 "[odbc-api][columns][catalog]") {
+  const SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                   sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLUSMALLINT smallintCols[] = {5, 9, 11, 14, 15};
+  for (const SQLUSMALLINT col : smallintCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+  }
+  require_catalog_integer_ird(stmt_handle(), 19, 5, 2, "SMALLINT", true);
+  const SQLUSMALLINT integerCols[] = {7, 8, 16, 17};
+  for (const SQLUSMALLINT col : integerCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 11, 4, "INTEGER");
+  }
+  NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    require_catalog_integer_ird(stmt_handle(), 10, 6, 2, "SMALLINT");
+  }
+  OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    require_catalog_integer_ird(stmt_handle(), 10, 11, 4, "INTEGER");
+  }
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 4, 6, 12, 13, 18});
+  require_catalog_wide_octet_length(stmt_handle(), 4, 255);
 }

@@ -62,6 +62,7 @@ mod tests {
             scale,
             precision,
             sql_type: NumericSqlType::Decimal,
+            is_unsigned: false,
         }
     }
 
@@ -70,6 +71,7 @@ mod tests {
             scale,
             precision,
             sql_type: NumericSqlType::from_scale_and_precision(scale, precision, settings),
+            is_unsigned: false,
         }
     }
 
@@ -123,6 +125,7 @@ mod tests {
             scale,
             precision,
             sql_type,
+            is_unsigned: false,
         }
     }
 

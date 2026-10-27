@@ -29,10 +29,10 @@ use crate::api::{
     ConnectionState, ExecutionOrigin, OdbcResult, StatementInner, StatementState, stmt_from_handle,
 };
 use crate::conversion::{
-    INTEGER_CONCISE_SQL_TYPE, NumericSettings, SMALLINT_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE,
-    WVARCHAR_CONCISE_SQL_TYPE, column_size_from_field, decimal_digits_from_field,
-    num_prec_radix_from_field, octet_length_from_field, sql_type_from_field,
-    verbose_sql_type_from_field,
+    CATALOG_TEXT_MAX_BYTES_PER_CHAR, CATALOG_UNSIGNED_METADATA_KEY, INTEGER_CONCISE_SQL_TYPE,
+    NumericSettings, SMALLINT_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE, WVARCHAR_CONCISE_SQL_TYPE,
+    column_size_from_field, decimal_digits_from_field, num_prec_radix_from_field,
+    octet_length_from_field, sql_type_from_field, verbose_sql_type_from_field,
 };
 use arrow::array::{Array, ArrayRef, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -106,25 +106,25 @@ fn flat_tables_schema() -> SchemaRef {
 
 fn flat_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
-        catalog_wvarchar_field("TABLE_CAT", 255),    // 1
-        catalog_wvarchar_field("TABLE_SCHEM", 255),  // 2
-        catalog_wvarchar_field("TABLE_NAME", 255),   // 3
-        catalog_wvarchar_field("COLUMN_NAME", 255),  // 4
-        catalog_smallint_field("DATA_TYPE"),         // 5
-        catalog_wvarchar_field("TYPE_NAME", 255),    // 6
-        catalog_int_field("COLUMN_SIZE"),            // 7
-        catalog_int_field("BUFFER_LENGTH"),          // 8
-        catalog_smallint_field("DECIMAL_DIGITS"),    // 9
-        catalog_int_field("NUM_PREC_RADIX"),         // 10 (reference driver: INTEGER)
-        catalog_smallint_field("NULLABLE"),          // 11
-        catalog_wvarchar_field("REMARKS", 65535),    // 12
-        catalog_wvarchar_field("COLUMN_DEF", 65535), // 13
-        catalog_smallint_field("SQL_DATA_TYPE"),     // 14
-        catalog_smallint_field("SQL_DATETIME_SUB"),  // 15
-        catalog_int_field("CHAR_OCTET_LENGTH"),      // 16
-        catalog_int_field("ORDINAL_POSITION"),       // 17
-        catalog_wvarchar_field("IS_NULLABLE", 3),    // 18
-        catalog_smallint_field("USER_DATA_TYPE"),    // 19
+        catalog_wvarchar_field("TABLE_CAT", 255),          // 1
+        catalog_wvarchar_field("TABLE_SCHEM", 255),        // 2
+        catalog_wvarchar_field("TABLE_NAME", 255),         // 3
+        catalog_wvarchar_field("COLUMN_NAME", 255),        // 4
+        catalog_smallint_field("DATA_TYPE"),               // 5
+        catalog_wvarchar_field("TYPE_NAME", 255),          // 6
+        catalog_int_field("COLUMN_SIZE"),                  // 7
+        catalog_int_field("BUFFER_LENGTH"),                // 8
+        catalog_smallint_field("DECIMAL_DIGITS"),          // 9
+        catalog_smallint_field("NUM_PREC_RADIX"),          // 10
+        catalog_smallint_field("NULLABLE"),                // 11
+        catalog_wvarchar_field("REMARKS", 65535),          // 12
+        catalog_wvarchar_field("COLUMN_DEF", 65535),       // 13
+        catalog_smallint_field("SQL_DATA_TYPE"),           // 14
+        catalog_smallint_field("SQL_DATETIME_SUB"),        // 15
+        catalog_int_field("CHAR_OCTET_LENGTH"),            // 16
+        catalog_int_field("ORDINAL_POSITION"),             // 17
+        catalog_wvarchar_field("IS_NULLABLE", 3),          // 18
+        catalog_unsigned_smallint_field("USER_DATA_TYPE"), // 19
     ]))
 }
 
@@ -1730,8 +1730,10 @@ const SNOWFLAKE_DEFAULT_NUMBER_PRECISION: i32 = 38;
 
 /// The 21-column `SQLProcedureColumns` result set: 19 ODBC 3.x spec columns plus
 /// the two driver-specific trailing columns (`IS RESULT SET COLUMN`,
-/// `USER_DATA_TYPE`) the reference driver appends. Numeric columns are emitted as
-/// text and converted at `SQLGetData` time, matching the `SQLColumns` schema.
+/// `USER_DATA_TYPE`) the reference driver appends. The numeric columns are text
+/// fields of length 20 that `SQLGetData` parses, so their descriptors report
+/// VARCHAR instead of the SMALLINT or INTEGER type noted on each column.
+// TODO(SNOW-4301584): type the numeric columns as `SQLColumns` does.
 fn procedure_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         catalog_wvarchar_field("PROCEDURE_CAT", 255),   // 1
@@ -3248,7 +3250,7 @@ fn catalog_num_prec_radix(
     logical_type: &str,
     field: &Field,
     numeric_settings: &NumericSettings,
-) -> Option<i32> {
+) -> Option<i16> {
     if logical_type.eq_ignore_ascii_case("REAL") {
         return Some(10);
     }
@@ -3256,12 +3258,8 @@ fn catalog_num_prec_radix(
     // a meaningful value, so collapsing 0 → NULL is harmless here.
     num_prec_radix_from_field(field, numeric_settings)
         .ok()
-        .and_then(|s| if s == 0 { None } else { i32::try_from(s).ok() })
+        .and_then(|s| if s == 0 { None } else { i16::try_from(s).ok() })
 }
-
-/// Catalog BUFFER_LENGTH / CHAR_OCTET_LENGTH for TEXT use this
-/// rather than `narrow_char_byte_width()`.
-const CATALOG_TEXT_MAX_BYTES_PER_CHAR: i32 = 4;
 
 /// Types whose catalog sizes follow the session `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`
 /// instead of the sizes `SHOW COLUMNS` reports for them.
@@ -3396,7 +3394,7 @@ struct FlatColumnRow {
     col_size: Option<i32>,
     buf_len: Option<i32>,
     dec_digits: Option<i16>,
-    num_prec_radix: Option<i32>,
+    num_prec_radix: Option<i16>,
     nullable: Option<i16>,
     remarks: Option<String>,
     col_def: Option<String>,
@@ -3603,7 +3601,7 @@ fn build_flat_columns_batch(
             i32_col(col_sizes),
             i32_col(buf_lens),
             i16_col(dec_digits),
-            i32_col(num_prec_radixes),
+            i16_col(num_prec_radixes),
             i16_col(nullables),
             str_col(remarks),
             str_col(col_defs),
@@ -3746,7 +3744,7 @@ fn set_static_empty_catalog_result(
 fn special_columns_schema() -> SchemaRef {
     Arc::new(Schema::new(vec![
         catalog_smallint_field("SCOPE"),
-        catalog_wvarchar_field("COLUMN_NAME", 128),
+        catalog_wvarchar_field("COLUMN_NAME", 255),
         catalog_smallint_field("DATA_TYPE"),
         catalog_wvarchar_field("TYPE_NAME", 128),
         catalog_int_field("COLUMN_SIZE"),
@@ -3968,7 +3966,15 @@ pub fn statistics<E: OdbcEncoding>(
 
 /// Arrow field for a nullable SMALLINT catalog column (FIXED/scale=0/precision=5).
 fn catalog_smallint_field(name: &str) -> Field {
-    let metadata: HashMap<String, String> = [
+    catalog_smallint_field_with_unsigned(name, false)
+}
+
+fn catalog_unsigned_smallint_field(name: &str) -> Field {
+    catalog_smallint_field_with_unsigned(name, true)
+}
+
+fn catalog_smallint_field_with_unsigned(name: &str, unsigned: bool) -> Field {
+    let mut metadata: HashMap<String, String> = [
         ("logicalType".to_string(), "FIXED".to_string()),
         ("scale".to_string(), "0".to_string()),
         ("precision".to_string(), "5".to_string()),
@@ -3978,6 +3984,12 @@ fn catalog_smallint_field(name: &str) -> Field {
         ),
     ]
     .into();
+    if unsigned {
+        metadata.insert(
+            CATALOG_UNSIGNED_METADATA_KEY.to_string(),
+            "true".to_string(),
+        );
+    }
     Field::new(name, DataType::Int16, true).with_metadata(metadata)
 }
 
@@ -4017,9 +4029,9 @@ fn type_info_schema() -> SchemaRef {
         catalog_smallint_field("MAXIMUM_SCALE"),
         catalog_smallint_field("SQL_DATA_TYPE"),
         catalog_smallint_field("SQL_DATETIME_SUB"),
-        catalog_int_field("NUM_PREC_RADIX"),
+        catalog_smallint_field("NUM_PREC_RADIX"),
         catalog_smallint_field("INTERVAL_PRECISION"),
-        catalog_smallint_field("USER_DATA_TYPE"),
+        catalog_unsigned_smallint_field("USER_DATA_TYPE"),
     ]))
 }
 
@@ -4066,7 +4078,7 @@ struct TypeInfoRow {
     /// Sub-code for datetime types; NULL for all other types.
     sql_datetime_sub: Option<i16>,
     /// Radix for numeric types; NULL for non-numeric types.
-    num_prec_radix: Option<i32>,
+    num_prec_radix: Option<i16>,
     user_data_type: i16,
 }
 
@@ -4658,7 +4670,7 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
     let maximum_scales: Vec<Option<i16>> = rows.iter().map(|r| r.maximum_scale).collect();
     let sql_data_types: Vec<Option<i16>> = rows.iter().map(|r| Some(r.sql_data_type)).collect();
     let sql_datetime_subs: Vec<Option<i16>> = rows.iter().map(|r| r.sql_datetime_sub).collect();
-    let num_prec_radixes: Vec<Option<i32>> = rows.iter().map(|r| r.num_prec_radix).collect();
+    let num_prec_radixes: Vec<Option<i16>> = rows.iter().map(|r| r.num_prec_radix).collect();
     let interval_precisions: Vec<Option<i16>> = rows.iter().map(|_| None).collect();
     let user_data_types: Vec<Option<i16>> = rows.iter().map(|r| Some(r.user_data_type)).collect();
 
@@ -4692,7 +4704,7 @@ fn build_type_info_batch(rows: &[&TypeInfoRow]) -> OdbcResult<RecordBatch> {
             i16_col(maximum_scales),
             i16_col(sql_data_types),
             i16_col(sql_datetime_subs),
-            i32_col(num_prec_radixes),
+            i16_col(num_prec_radixes),
             i16_col(interval_precisions),
             i16_col(user_data_types),
         ],
@@ -4806,6 +4818,18 @@ mod type_info_tests {
     }
 
     #[test]
+    fn columns_num_prec_radix_is_smallint() {
+        let schema = flat_columns_schema();
+        let radix = &schema.fields()[9];
+        assert_eq!(radix.name(), "NUM_PREC_RADIX");
+        assert_eq!(radix.data_type(), &DataType::Int16);
+        assert_eq!(
+            radix.metadata().get("conciseSqlType"),
+            Some(&SMALLINT_CONCISE_SQL_TYPE.to_string())
+        );
+    }
+
+    #[test]
     fn statistics_asc_or_desc_is_tagged_wchar() {
         let schema = statistics_schema();
         let field = &schema.fields()[9];
@@ -4833,14 +4857,14 @@ mod type_info_tests {
     }
 
     #[test]
-    fn interval_precision_is_smallint_num_prec_radix_is_integer() {
+    fn interval_precision_and_num_prec_radix_are_smallint() {
         let schema = type_info_schema();
         let radix = &schema.fields()[17];
         assert_eq!(radix.name(), "NUM_PREC_RADIX");
-        assert_eq!(radix.data_type(), &DataType::Int32);
+        assert_eq!(radix.data_type(), &DataType::Int16);
         assert_eq!(
             radix.metadata().get("conciseSqlType"),
-            Some(&INTEGER_CONCISE_SQL_TYPE.to_string())
+            Some(&SMALLINT_CONCISE_SQL_TYPE.to_string())
         );
         let interval = &schema.fields()[18];
         assert_eq!(interval.name(), "INTERVAL_PRECISION");

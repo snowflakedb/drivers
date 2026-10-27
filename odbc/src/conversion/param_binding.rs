@@ -290,6 +290,7 @@ pub(crate) fn make_converter(
                 scale: 0,
                 precision: 19,
                 sql_type: NumericSqlType::BigInt,
+                is_unsigned: false,
             },
         })),
 
@@ -309,6 +310,7 @@ pub(crate) fn make_converter(
                 len: 0,
                 semi_structured_type_name: None,
                 map_to_long_varchar: None,
+                wide: false,
             },
         })),
 

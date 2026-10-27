@@ -9,6 +9,7 @@
 
 #include "ODBCFixtures.hpp"
 #include "ReadOnlyDbFixture.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -265,4 +266,13 @@ TEST_CASE_METHOD(DbcFixture, "SQLColumnPrivileges: Requires active connection",
 
   // Note: Reference driver refuses to allocate statement on disconnected handle
   REQUIRE(ret == SQL_ERROR);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLColumnPrivileges: wide character result columns report wide IRD attributes",
+                 "[odbc-api][catalog][columnprivileges]") {
+  const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                                            SQL_NTS, sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, sqlchar("%"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  require_catalog_wide_columns(stmt_handle(), {1, 2, 3, 4, 5, 6, 7, 8});
 }

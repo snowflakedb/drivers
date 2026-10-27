@@ -15,6 +15,7 @@
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -1122,13 +1123,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: string IRD columns repo
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
-                 "SQLGetTypeInfo: INTERVAL_PRECISION is SQL_SMALLINT and NUM_PREC_RADIX remains SQL_INTEGER",
+                 "SQLGetTypeInfo: INTERVAL_PRECISION is SQL_SMALLINT and NUM_PREC_RADIX is SMALLINT on the new driver",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::pair<SQLSMALLINT, SQLSMALLINT> expectedTypes[] = {
-      {18, SQL_INTEGER},
       {19, SQL_SMALLINT},
   };
 
@@ -1151,6 +1151,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
     REQUIRE(ret == SQL_SUCCESS);
     CHECK(dataType == expected);
   }
+
+  const auto requireNumPrecRadixType = [&](SQLSMALLINT expected) {
+    CHECK(catalog_numeric_attr(stmt_handle(), 18, SQL_DESC_CONCISE_TYPE) == expected);
+    char colName[256] = {};
+    SQLSMALLINT nameLen = 0;
+    SQLSMALLINT dataType = 0x7FFF;
+    SQLULEN colSize = 0;
+    SQLSMALLINT decDigits = 0;
+    SQLSMALLINT nullable = 0;
+    ret = SQLDescribeCol(stmt_handle(), 18, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
+    REQUIRE(ret == SQL_SUCCESS);
+    CHECK(dataType == expected);
+  };
+  NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { requireNumPrecRadixType(SQL_SMALLINT); }
+  OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { requireNumPrecRadixType(SQL_INTEGER); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: query-result VARCHAR remains SQL_VARCHAR",
@@ -1654,4 +1670,26 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
   }
 
   SQLDisconnect(dbc_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLGetTypeInfo: SMALLINT and INTEGER result columns report integer IRD attributes",
+                 "[odbc-api][gettypeinfo][driver_info]") {
+  const SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLUSMALLINT smallintCols[] = {2, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 19};
+  for (const SQLUSMALLINT col : smallintCols) {
+    require_catalog_integer_ird(stmt_handle(), col, 6, 2, "SMALLINT");
+  }
+  require_catalog_integer_ird(stmt_handle(), 20, 5, 2, "SMALLINT", true);
+  require_catalog_integer_ird(stmt_handle(), 3, 11, 4, "INTEGER");
+  NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    require_catalog_integer_ird(stmt_handle(), 18, 6, 2, "SMALLINT");
+  }
+  OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") {
+    require_catalog_integer_ird(stmt_handle(), 18, 11, 4, "INTEGER");
+  }
+  require_catalog_wide_columns(stmt_handle(), {1, 4, 5, 6, 13});
+  require_catalog_wide_octet_length(stmt_handle(), 1, 128);
 }

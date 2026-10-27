@@ -2332,7 +2332,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt2, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -38196,7 +38197,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt8, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt8), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -46859,7 +46861,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt9, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt9), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -56157,7 +56160,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt13, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt13), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -80185,7 +80189,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt19, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt19), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -88848,7 +88853,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt20, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt20), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
@@ -98146,7 +98152,8 @@ TEST_CASE("Replay: excel powerquery navigator simultaneous_refresh", "[replay][e
     SQLSMALLINT strLen = 0;
     SQLRETURN ret = SQLColAttribute(stmt24, col, SQL_DESC_CONCISE_TYPE, nullptr, 0, &strLen, &numAttr);
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt24), OdbcMatchers::IsSuccess());
-    CHECK(numAttr == SQL_INTEGER);
+    NEW_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_SMALLINT); }
+    OLD_DRIVER_ONLY("BD#catalog-num-prec-radix-integer") { CHECK(numAttr == SQL_INTEGER); }
   }
 
   // SQLColAttribute - SQL_DESC_UNSIGNED
