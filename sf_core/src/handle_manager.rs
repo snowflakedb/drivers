@@ -340,4 +340,33 @@ mod tests {
         assert_eq!(ids.len(), 800);
         assert_eq!(live_count(&manager), 0);
     }
+
+    #[test]
+    fn concurrent_take_of_one_handle_has_exactly_one_winner() {
+        const WORKERS: usize = 8;
+        for round in 0..50 {
+            let manager = Arc::new(HandleManager::new());
+            let handle = manager.add_handle(round);
+            let barrier = Arc::new(std::sync::Barrier::new(WORKERS));
+            let workers: Vec<_> = (0..WORKERS)
+                .map(|_| {
+                    let manager = Arc::clone(&manager);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        manager.take_obj(handle)
+                    })
+                })
+                .collect();
+            let taken: Vec<_> = workers
+                .into_iter()
+                .filter_map(|w| w.join().expect("worker thread panicked"))
+                .collect();
+
+            assert_eq!(taken.len(), 1, "round {round}");
+            assert_eq!(*taken[0], round);
+            assert!(manager.get_obj(handle).is_none());
+            assert_eq!(live_count(&manager), 0);
+        }
+    }
 }
