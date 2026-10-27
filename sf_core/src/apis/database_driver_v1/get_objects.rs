@@ -44,6 +44,9 @@ pub const DEPTH_CATALOGS: i32 = 1;
 pub const DEPTH_DB_SCHEMAS: i32 = 2;
 pub const DEPTH_TABLES: i32 = 3;
 pub const DEPTH_COLUMNS: i32 = 4; // deferred
+/// Most concurrent metadata SHOW requests per GetObjects level. Beyond this,
+/// a broader SHOW avoids excessive round trips.
+const MAX_METADATA_SCOPES: usize = 8;
 
 // ---------------------------------------------------------------------------
 // Arrow field-name constants (public — wrapper flatten uses them to avoid drift)
@@ -304,23 +307,39 @@ async fn fetch_catalogs(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
 ) -> Result<RecordBatch, ApiError> {
-    let sql = "SHOW DATABASES IN ACCOUNT".to_string();
-    let rows = execute_show(conn_ptr, &sql).await?;
+    let names = fetch_catalog_names(conn_ptr, catalog_filter).await?;
+    build_catalogs_batch(names)
+}
 
-    let catalog_names: Vec<Option<String>> = rows
+async fn fetch_catalog_names(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    catalog_filter: Option<&str>,
+) -> Result<Vec<String>, ApiError> {
+    let rows = execute_show(conn_ptr, "SHOW DATABASES IN ACCOUNT").await?;
+    Ok(rows
         .iter()
         .filter_map(|row| {
             let name = get_column(row, "name")?;
-            if let Some(pattern) = catalog_filter
-                && !like_pattern::matches(pattern, name)
-            {
+            if catalog_filter.is_some_and(|pattern| !like_pattern::matches(pattern, name)) {
                 return None;
             }
-            Some(Some(name.to_string()))
+            Some(name.to_string())
         })
-        .collect();
+        .collect())
+}
 
-    build_catalogs_batch(catalog_names)
+// An exact catalog already has a useful SHOW scope; only a LIKE pattern
+// requires discovery of its concrete database names.
+async fn resolve_catalog_pattern(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    catalog_filter: Option<&str>,
+) -> Result<Option<Vec<String>>, ApiError> {
+    match catalog_filter {
+        Some(pattern) if like_pattern::is_exact(pattern).is_none() => {
+            fetch_catalog_names(conn_ptr, Some(pattern)).await.map(Some)
+        }
+        _ => Ok(None),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -332,50 +351,132 @@ async fn fetch_schemas(
     catalog_filter: Option<&str>,
     schema_filter: Option<&str>,
 ) -> Result<RecordBatch, ApiError> {
-    // Pick tightest scope: exact catalog -> IN DATABASE "db", else IN ACCOUNT
-    let sql = if let Some(pattern) = catalog_filter {
-        if let Some(literal) = like_pattern::is_exact(pattern) {
-            if !literal.is_empty() {
-                format!("SHOW SCHEMAS IN DATABASE \"{}\"", escape_dq(&literal))
-            } else {
-                "SHOW SCHEMAS IN ACCOUNT".to_string()
-            }
+    let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter).await?;
+    let schemas =
+        fetch_schema_names(conn_ptr, catalog_filter, schema_filter, catalogs.as_deref()).await?;
+    build_schemas_batch(schemas)
+}
+
+/// Scope schema discovery by resolved databases when affordable; otherwise
+/// retain the existing account-wide SHOW and client-side LIKE filtering.
+fn schema_lookup_scopes(
+    catalog_filter: Option<&str>,
+    resolved_catalogs: Option<&[String]>,
+) -> Vec<String> {
+    if let Some(catalogs) = resolved_catalogs {
+        return if catalogs.len() <= MAX_METADATA_SCOPES {
+            catalogs.iter().map(|cat| database_scope(cat)).collect()
         } else {
-            "SHOW SCHEMAS IN ACCOUNT".to_string()
-        }
-    } else {
-        "SHOW SCHEMAS IN ACCOUNT".to_string()
-    };
+            vec!["IN ACCOUNT".to_string()]
+        };
+    }
+    match catalog_filter
+        .and_then(like_pattern::is_exact)
+        .filter(|literal| !literal.is_empty())
+    {
+        Some(cat) => vec![database_scope(&cat)],
+        None => vec!["IN ACCOUNT".to_string()],
+    }
+}
 
-    let rows = execute_show(conn_ptr, &sql).await?;
+async fn fetch_schema_names(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+    resolved_catalogs: Option<&[String]>,
+) -> Result<BTreeMap<String, Vec<String>>, ApiError> {
+    let scopes = schema_lookup_scopes(catalog_filter, resolved_catalogs);
+    let rows = execute_scoped_show(conn_ptr, "SHOW SCHEMAS", "", &scopes).await?;
+    Ok(schema_names_from_rows(&rows, catalog_filter, schema_filter))
+}
 
+fn schema_names_from_rows(
+    rows: &[Vec<(String, String)>],
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+) -> BTreeMap<String, Vec<String>> {
     let mut by_catalog: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
-    for row in &rows {
+    for row in rows {
         let db_name = match get_column(row, "database_name") {
-            Some(n) => n.to_string(),
+            Some(n) => n,
             None => continue,
         };
         let schema_name = match get_column(row, "name") {
-            Some(n) => n.to_string(),
+            Some(n) => n,
             None => continue,
         };
 
-        if let Some(pattern) = catalog_filter
-            && !like_pattern::matches(pattern, &db_name)
+        if catalog_filter.is_some_and(|pattern| !like_pattern::matches(pattern, db_name))
+            || schema_filter.is_some_and(|pattern| !like_pattern::matches(pattern, schema_name))
         {
             continue;
         }
-        if let Some(pattern) = schema_filter
-            && !like_pattern::matches(pattern, &schema_name)
-        {
-            continue;
-        }
-
-        by_catalog.entry(db_name).or_default().push(schema_name);
+        by_catalog
+            .entry(db_name.to_string())
+            .or_default()
+            .push(schema_name.to_string());
     }
+    by_catalog
+}
 
-    build_schemas_batch(by_catalog)
+fn database_scope(cat: &str) -> String {
+    format!("IN DATABASE \"{}\"", escape_dq(cat))
+}
+
+fn schema_scope(cat: &str, sch: &str) -> String {
+    format!("IN SCHEMA \"{}\".\"{}\"", escape_dq(cat), escape_dq(sch))
+}
+
+/// Prefer one SHOW per matching schema, then one per matching database. No
+/// matching schemas means no deeper SHOW, even for an account-wide request.
+fn scopes_for_schemas(schemas: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let count: usize = schemas.values().map(Vec::len).sum();
+    if count <= MAX_METADATA_SCOPES {
+        return schemas
+            .iter()
+            .flat_map(|(cat, names)| names.iter().map(move |sch| schema_scope(cat, sch)))
+            .collect();
+    }
+    if schemas.len() <= MAX_METADATA_SCOPES {
+        return schemas.keys().map(|cat| database_scope(cat)).collect();
+    }
+    vec!["IN ACCOUNT".to_string()]
+}
+
+async fn object_show_scopes(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    catalog_filter: Option<&str>,
+    schema_filter: Option<&str>,
+    exact_table: Option<&str>,
+) -> Result<Vec<String>, ApiError> {
+    let exact_catalog = catalog_filter.and_then(like_pattern::is_exact);
+    let exact_schema = schema_filter.and_then(like_pattern::is_exact);
+    if (catalog_filter.is_some() && exact_catalog.is_none())
+        || (schema_filter.is_some() && exact_schema.is_none())
+    {
+        let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter).await?;
+        let schemas =
+            fetch_schema_names(conn_ptr, catalog_filter, schema_filter, catalogs.as_deref())
+                .await?;
+        return Ok(scopes_for_schemas(&schemas));
+    }
+    let scope = match (
+        exact_catalog.as_deref().filter(|s| !s.is_empty()),
+        exact_schema.as_deref().filter(|s| !s.is_empty()),
+        exact_table,
+    ) {
+        (Some(cat), Some(sch), Some(tbl)) => format!(
+            "IN TABLE \"{}\".\"{}\".\"{}\"",
+            escape_dq(cat),
+            escape_dq(sch),
+            escape_dq(tbl)
+        ),
+        (Some(cat), Some(sch), _) => schema_scope(cat, sch),
+        (Some(cat), _, _) => database_scope(cat),
+        _ => "IN ACCOUNT".to_string(),
+    };
+    Ok(vec![scope])
 }
 
 // ---------------------------------------------------------------------------
@@ -426,31 +527,14 @@ async fn fetch_tables(
         return build_tables_batch(BTreeMap::new());
     }
 
-    let exact_catalog = catalog_filter
-        .and_then(like_pattern::is_exact)
-        .filter(|s| !s.is_empty());
-    let exact_schema = schema_filter
-        .and_then(like_pattern::is_exact)
-        .filter(|s| !s.is_empty());
-
+    let scopes = object_show_scopes(conn_ptr, catalog_filter, schema_filter, None).await?;
     // Always issue `SHOW OBJECTS`: it lists both tables and views with a
     // reliable `kind` column. `SHOW VIEWS` omits `kind` on some Snowflake
     // versions, so switching commands per requested type leaves the row
     // loop unable to tell tables and views apart. The TABLE/VIEW distinction
     // is applied client-side via the `kind`-derived `normalized_type` below.
     let like_clause = build_like_clause(table_name_filter);
-    let scope = match (&exact_catalog, &exact_schema) {
-        (Some(cat), Some(sch)) => {
-            format!("IN SCHEMA \"{}\".\"{}\"", escape_dq(cat), escape_dq(sch))
-        }
-        (Some(cat), None) => format!("IN DATABASE \"{}\"", escape_dq(cat)),
-        _ => "IN ACCOUNT".to_string(),
-    };
-    let rows = execute_show(
-        conn_ptr,
-        &format_show_sql("SHOW OBJECTS", &like_clause, &scope),
-    )
-    .await?;
+    let rows = execute_scoped_show(conn_ptr, "SHOW OBJECTS", &like_clause, &scopes).await?;
 
     let mut by_cat_sch: BTreeMap<String, BTreeMap<String, Vec<(String, String)>>> = BTreeMap::new();
 
@@ -525,6 +609,22 @@ fn format_show_sql(show_cmd: &str, like_clause: &str, scope: &str) -> String {
     } else {
         format!("{show_cmd} {like_clause} {scope}")
     }
+}
+/// Join bounded SHOW requests concurrently. `try_join_all` preserves scope
+/// order, so each table's columns retain their original SHOW ordinal order.
+/// `execute_show` applies the same not-found/error handling to every scope.
+async fn execute_scoped_show(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    show_cmd: &str,
+    like_clause: &str,
+    scopes: &[String],
+) -> Result<Vec<Vec<(String, String)>>, ApiError> {
+    let results = futures::future::try_join_all(scopes.iter().map(|scope| async move {
+        let sql = format_show_sql(show_cmd, like_clause, scope);
+        execute_show(conn_ptr, &sql).await
+    }))
+    .await?;
+    Ok(results.into_iter().flatten().collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -720,16 +820,13 @@ fn get_column<'a>(row: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // Arrow batch builders
 // ---------------------------------------------------------------------------
 
-fn build_catalogs_batch(catalog_names: Vec<Option<String>>) -> Result<RecordBatch, ApiError> {
+fn build_catalogs_batch(catalog_names: Vec<String>) -> Result<RecordBatch, ApiError> {
     let schema = nested_get_objects_schema();
     let n = catalog_names.len();
 
     let mut cat_builder = arrow::array::StringBuilder::new();
     for name in &catalog_names {
-        match name {
-            Some(n) => cat_builder.append_value(n),
-            None => cat_builder.append_null(),
-        }
+        cat_builder.append_value(name);
     }
     let cat_array: ArrayRef = Arc::new(cat_builder.finish());
 
@@ -1130,36 +1227,19 @@ async fn fetch_columns(
         return build_columns_batch(BTreeMap::new());
     }
 
-    let exact_catalog = catalog_filter
-        .and_then(like_pattern::is_exact)
-        .filter(|s| !s.is_empty());
-    let exact_schema = schema_filter
-        .and_then(like_pattern::is_exact)
-        .filter(|s| !s.is_empty());
     let exact_table = table_name_filter
         .and_then(like_pattern::is_exact)
         .filter(|s| !s.is_empty());
-
+    let scopes = object_show_scopes(
+        conn_ptr,
+        catalog_filter,
+        schema_filter,
+        exact_table.as_deref(),
+    )
+    .await?;
     // Coarse column-name pushdown; build_like_clause handles None/"" → no LIKE.
     let col_like_clause = build_like_clause(column_name_filter);
-
-    // Pick the tightest scope available.
-    let scope = match (&exact_catalog, &exact_schema, &exact_table) {
-        (Some(cat), Some(sch), Some(tbl)) => format!(
-            "IN TABLE \"{}\".\"{}\".\"{}\"",
-            escape_dq(cat),
-            escape_dq(sch),
-            escape_dq(tbl)
-        ),
-        (Some(cat), Some(sch), None) => {
-            format!("IN SCHEMA \"{}\".\"{}\"", escape_dq(cat), escape_dq(sch))
-        }
-        (Some(cat), None, _) => format!("IN DATABASE \"{}\"", escape_dq(cat)),
-        _ => "IN ACCOUNT".to_string(),
-    };
-
-    let sql = format_show_sql("SHOW COLUMNS", &col_like_clause, &scope);
-    let rows = execute_show(conn_ptr, &sql).await?;
+    let rows = execute_scoped_show(conn_ptr, "SHOW COLUMNS", &col_like_clause, &scopes).await?;
 
     // Group columns by (catalog, schema, table), preserving SHOW row order for
     // ordinal_position assignment. BTreeMap gives deterministic lexicographic sort.
@@ -1503,6 +1583,106 @@ mod tests {
     fn table_type_comma_separated_unsupported_if_no_table_or_view() {
         let filter = normalize_table_types(&["SYSTEM TABLE".to_string(), "SYNONYM".to_string()]);
         assert_eq!(filter, TableTypeFilter::Unsupported);
+    }
+
+    #[test]
+    fn wildcard_names_resolve_to_schema_scoped_show_without_changing_matches() {
+        // `_` is a LIKE wildcard, not an exact identifier. Discovery keeps
+        // the same client-side filtering as an account-wide SHOW.
+        let rows = vec![
+            vec![
+                ("database_name".to_string(), "ADBC_TESTING".to_string()),
+                ("name".to_string(), "ADBC_TESTING".to_string()),
+            ],
+            vec![
+                ("database_name".to_string(), "OTHER".to_string()),
+                ("name".to_string(), "PUBLIC".to_string()),
+            ],
+        ];
+        assert_eq!(like_pattern::is_exact("ADBC_TESTING"), None);
+        let selected = schema_names_from_rows(&rows, Some("ADBC_TESTING"), Some("ADBC_TESTING"));
+        assert_eq!(
+            selected,
+            schema_names_from_rows(&rows[..1], Some("ADBC_TESTING"), Some("ADBC_TESTING"))
+        );
+        assert_eq!(
+            scopes_for_schemas(&selected),
+            vec!["IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""]
+        );
+        assert_eq!(
+            format_show_sql("SHOW COLUMNS", "", &scopes_for_schemas(&selected)[0]),
+            "SHOW COLUMNS IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""
+        );
+        assert_eq!(
+            format_show_sql(
+                "SHOW OBJECTS",
+                "LIKE 'T%'",
+                &scopes_for_schemas(&selected)[0]
+            ),
+            "SHOW OBJECTS LIKE 'T%' IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""
+        );
+    }
+
+    #[test]
+    fn up_to_eight_schemas_keep_stable_scope_order() {
+        let schemas = BTreeMap::from([
+            ("Z_DB".to_string(), vec!["B".to_string(), "C".to_string()]),
+            (
+                "A_DB".to_string(),
+                (0..MAX_METADATA_SCOPES - 2)
+                    .map(|n| format!("S{n}"))
+                    .collect(),
+            ),
+        ]);
+        let scopes = scopes_for_schemas(&schemas);
+        assert_eq!(scopes.len(), MAX_METADATA_SCOPES);
+        assert_eq!(scopes[0], "IN SCHEMA \"A_DB\".\"S0\"");
+        assert_eq!(scopes[MAX_METADATA_SCOPES - 1], "IN SCHEMA \"Z_DB\".\"C\"");
+    }
+
+    #[test]
+    fn many_schemas_fall_back_to_database_scope() {
+        let schemas = BTreeMap::from([(
+            "MY_DB".to_string(),
+            (0..=MAX_METADATA_SCOPES)
+                .map(|n| format!("SCHEMA_{n}"))
+                .collect(),
+        )]);
+        assert_eq!(scopes_for_schemas(&schemas), vec!["IN DATABASE \"MY_DB\""]);
+    }
+
+    #[test]
+    fn many_databases_fall_back_to_account_scope() {
+        let schemas = (0..=MAX_METADATA_SCOPES)
+            .map(|n| (format!("DB_{n}"), vec!["SCHEMA".to_string()]))
+            .collect();
+        assert_eq!(scopes_for_schemas(&schemas), vec!["IN ACCOUNT"]);
+        let catalogs = (0..=MAX_METADATA_SCOPES)
+            .map(|n| format!("DB_{n}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            schema_lookup_scopes(Some("DB_%"), Some(&catalogs)),
+            vec!["IN ACCOUNT"]
+        );
+    }
+
+    #[test]
+    fn no_resolved_scopes_issue_no_deeper_show() {
+        assert!(scopes_for_schemas(&BTreeMap::new()).is_empty());
+        assert!(schema_lookup_scopes(Some("NO_MATCH%"), Some(&[])).is_empty());
+    }
+
+    #[test]
+    fn schema_discovery_uses_resolved_databases_and_escapes_names() {
+        let catalogs = vec!["A\"B".to_string(), "C".to_string()];
+        assert_eq!(
+            schema_lookup_scopes(Some("%"), Some(&catalogs)),
+            vec!["IN DATABASE \"A\"\"B\"", "IN DATABASE \"C\""]
+        );
+        assert_eq!(
+            schema_lookup_scopes(Some("MY\\_DB"), None),
+            vec!["IN DATABASE \"MY_DB\""]
+        );
     }
 
     #[test]
