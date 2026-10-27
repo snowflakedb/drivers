@@ -50,3 +50,23 @@ class SnowflakeCursor(SnowflakeCursorBase):
             list[tuple]: List of all remaining rows as tuples
         """
         return super().fetchall()
+
+    def __next__(self) -> Row:
+        """
+        Fetch the next row from the currently executed statement.
+
+        Returns:
+            tuple: Next row
+
+        Raises:
+            StopIteration: When no more rows are available
+        """
+        return cast(Row, super().__next__())
+
+    def next(self) -> Row:
+        """Python 2 compatibility alias for ``__next__``. Returns a tuple row.
+
+        Raises:
+            StopIteration: When no more rows are available
+        """
+        return self.__next__()

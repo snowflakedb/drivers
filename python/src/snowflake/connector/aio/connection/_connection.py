@@ -9,7 +9,7 @@ import warnings
 
 from collections.abc import AsyncGenerator, Callable, Iterable, Iterator
 from io import StringIO
-from typing import Any
+from typing import Any, TypeVar, overload
 
 from ..._common.telemetry import AsyncTelemetryClient
 from ..._internal.api_client.client_api import async_core_driver, core_driver
@@ -53,10 +53,12 @@ from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
 from ...errors import Error, ProgrammingError
 from ...version import __version__
-from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
+from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor, SnowflakeCursorBase
 
 
 logger = get_logger(__name__)
+
+_CursorClsT = TypeVar("_CursorClsT", bound=SnowflakeCursorBase)
 
 
 # Both WIF cross-param guards in sf_core's validate_settings emit a dedicated
@@ -73,7 +75,7 @@ def _next_or_exhausted(iterator: Iterator[None]) -> object:
     return next(iterator, _CALLBACK_EXHAUSTED)
 
 
-class Connection(ConnectionMixin[CursorInstance]):
+class Connection(ConnectionMixin):
     """Async connection objects represent a database connection."""
 
     _session_parameters: _SessionParametersProxy
@@ -362,6 +364,32 @@ class Connection(ConnectionMixin[CursorInstance]):
             return bool(response.valid)
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Cursors
+    # ------------------------------------------------------------------
+
+    @overload
+    def cursor(self, cursor_class: None = None) -> SnowflakeCursor: ...
+
+    @overload
+    def cursor(self, cursor_class: type[_CursorClsT]) -> _CursorClsT: ...
+
+    @pep249
+    @api_telemetry
+    @requires_open
+    def cursor(self, cursor_class: type[SnowflakeCursorBase] | None = None) -> Any:
+        """Return a new Cursor object using the connection.
+
+        Args:
+            cursor_class: The class to instantiate. Defaults to the
+                connection's ``SnowflakeCursor``; pass ``DictCursor`` to get
+                results as dictionaries.
+
+        Returns:
+            A new cursor object.
+        """
+        return self._instantiate_cursor(cursor_class)
 
     # ------------------------------------------------------------------
     # Multi-statement execution

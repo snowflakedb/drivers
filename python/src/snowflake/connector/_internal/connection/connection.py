@@ -6,7 +6,7 @@ import os
 import uuid
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from ..._common.extras import check_dependency
 from ..._common.extras import numpy as np
@@ -19,7 +19,6 @@ from ..decorators import api_telemetry, backward_compatibility, internal_api, pe
 from ..errorhandler import ErrorHandlerMixin
 from ..logging import get_logger
 from .constants import LOG_MAX_QUERY_LENGTH
-from .decorators import requires_open
 
 
 if TYPE_CHECKING:
@@ -28,10 +27,6 @@ if TYPE_CHECKING:
     from ..protobuf_gen.database_driver_v1_pb2 import ConnectionHandle, DatabaseHandle
     from ..protobuf_gen.database_driver_v1_services import ConnectionGetInfoResponse
 
-
-# Cursor instance type produced by ``cursor()``; each concrete Connection binds
-# it to its own (sync vs. async) ``CursorInstance`` union.
-_CursorT = TypeVar("_CursorT")
 
 logger = get_logger(__name__)
 
@@ -74,7 +69,7 @@ def _session_param_is_true(value: bool | str | None) -> bool:
     return False
 
 
-class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
+class ConnectionMixin(ErrorHandlerMixin):
     """Connection members shared by sync and async connection classes.
 
     Subclasses set handle/proxy fields (``conn_handle``, ``_session_parameters``,
@@ -145,25 +140,10 @@ class ConnectionMixin(ErrorHandlerMixin, Generic[_CursorT]):
     # Cursors
     # ------------------------------------------------------------------
 
-    @pep249
-    @api_telemetry
-    @requires_open
-    def cursor(self, cursor_class: type[_CursorT] | None = None) -> _CursorT:
-        """Return a new Cursor object using the connection.
-
-        Args:
-            cursor_class: The class to instantiate. Defaults to the
-                connection's ``SnowflakeCursor``; pass ``DictCursor`` to get
-                results as dictionaries.
-
-        Returns:
-            A new cursor object.
-        """
-        # The concrete Connection subclass passes itself to the cursor
-        # constructor; the mixin can't prove ``self`` is that concrete type,
-        # so it builds through an untyped factory.
+    def _instantiate_cursor(self, cursor_class: type[Any] | None) -> Any:
+        # The class is chosen by the caller, so this cannot name its constructor.
         factory: Any = cursor_class or self._default_cursor_class
-        return cast("_CursorT", factory(self))
+        return factory(self)
 
     # ------------------------------------------------------------------
     # Handle release

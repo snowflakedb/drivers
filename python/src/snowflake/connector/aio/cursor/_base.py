@@ -9,7 +9,7 @@ import abc
 import logging
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, BinaryIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Self, cast
 
 from snowflake.connector._core import sf_core_python
 
@@ -167,7 +167,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _statement_params: dict[str, Any] | None = None,
         file_stream: BinaryIO | None = None,
         **kwargs: Any,
-    ) -> SnowflakeCursorBase:
+    ) -> Self:
         """
         Execute a database operation (query or command).
         Resets the cursor state before the execution.
@@ -228,7 +228,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _force_qmark_paramstyle: bool = False,
         file_stream: BinaryIO | None = None,
         **kwargs: Any,
-    ) -> SnowflakeCursorBase:
+    ) -> Self:
         """Execute query logic."""
         operation = operation.strip(" \t\n\r") if operation else ""
 
@@ -395,7 +395,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         *,
         seqparams: Iterable[Sequence[Any] | dict[str, Any]] | None = None,
         _force_qmark_paramstyle: bool = False,
-    ) -> SnowflakeCursorBase:
+    ) -> Self:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -647,13 +647,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         )
 
     @pep249
-    def __aiter__(self) -> SnowflakeCursorBase:
-        """
-        Return the cursor itself as an async iterator.
-
-        Returns:
-            SnowflakeCursorBase: Self
-        """
+    def __aiter__(self) -> Self:
+        """Return the cursor itself as an async iterator."""
         return self
 
     async def __anext__(self) -> Row | DictRow:
@@ -733,13 +728,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # Context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> SnowflakeCursorBase:
-        """
-        Enter the runtime context for the cursor.
-
-        Returns:
-            SnowflakeCursorBase: Self
-        """
+    async def __aenter__(self) -> Self:
+        """Enter the runtime context for the cursor."""
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:

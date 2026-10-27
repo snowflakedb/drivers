@@ -12,7 +12,7 @@ import warnings
 from collections.abc import Callable, Generator, Iterable, Iterator
 from functools import cached_property
 from io import StringIO
-from typing import Any, cast
+from typing import Any, TypeVar, cast, overload
 
 from .._common.telemetry import TelemetryClient as _InternalTelemetryClient
 from .._internal.api_client.client_api import core_driver
@@ -51,12 +51,14 @@ from .._internal.text_utils import split_statements
 from .._internal.utils import get_application_path
 from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
-from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
+from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor, SnowflakeCursorBase
 from ..errors import Error, ProgrammingError
 from ..version import __version__
 
 
 logger = get_logger(__name__)
+
+_CursorClsT = TypeVar("_CursorClsT", bound=SnowflakeCursorBase)
 
 
 # Both WIF cross-param guards in sf_core's validate_settings emit a dedicated
@@ -66,7 +68,7 @@ def _is_wif_conflict(exc: ProgrammingError) -> bool:
     return exc.validation_code == VALIDATION_CODE_CONFLICTING_WIF_PARAMETERS
 
 
-class Connection(ConnectionMixin[CursorInstance]):
+class Connection(ConnectionMixin):
     """Connection objects represent a database connection."""
 
     _session_parameters: SessionParametersProxy
@@ -497,6 +499,32 @@ class Connection(ConnectionMixin[CursorInstance]):
             return bool(response.valid)
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Cursors
+    # ------------------------------------------------------------------
+
+    @overload
+    def cursor(self, cursor_class: None = None) -> SnowflakeCursor: ...
+
+    @overload
+    def cursor(self, cursor_class: type[_CursorClsT]) -> _CursorClsT: ...
+
+    @pep249
+    @api_telemetry
+    @requires_open
+    def cursor(self, cursor_class: type[SnowflakeCursorBase] | None = None) -> Any:
+        """Return a new Cursor object using the connection.
+
+        Args:
+            cursor_class: The class to instantiate. Defaults to the
+                connection's ``SnowflakeCursor``; pass ``DictCursor`` to get
+                results as dictionaries.
+
+        Returns:
+            A new cursor object.
+        """
+        return self._instantiate_cursor(cursor_class)
 
     # ------------------------------------------------------------------
     # Multi-statement execution

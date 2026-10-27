@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .._common.extras import pandas, requires_dependency
 from .._internal.decorators import api_telemetry
@@ -76,7 +76,8 @@ class _AsyncWritePandasOperation(WritePandasMixin):
         cfg = self._cfg
         cfg.emit_warnings()
 
-        cur: AsyncSnowflakeCursor = cfg.conn.cursor(AsyncSnowflakeCursor)  # type: ignore[assignment, arg-type]
+        # This pipeline runs on the async connection. ``cfg.conn`` also allows the sync one.
+        cur = cast("Connection", cfg.conn).cursor(AsyncSnowflakeCursor)
         target_location: str | None = None
         try:
             stage_location = await self._create_stage(cur)

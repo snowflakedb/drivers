@@ -474,7 +474,8 @@ class WritePandasOperation(WritePandasMixin):
         cfg = self._cfg
         cfg.emit_warnings()
 
-        cursor = cast(SnowflakeCursor, cfg.conn.cursor(SnowflakeCursor))  # type: ignore[arg-type]
+        # This pipeline runs on the sync connection. ``cfg.conn`` also allows the async one.
+        cursor = cast("Connection", cfg.conn).cursor(SnowflakeCursor)
         target_location: str | None = None
         try:
             stage_location = self._create_stage(cursor)

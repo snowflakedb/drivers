@@ -56,3 +56,23 @@ class DictCursor(SnowflakeCursorBase):
             list[dict]: List of all remaining rows as dictionaries
         """
         return await super().fetchall()
+
+    async def __anext__(self) -> DictRow:
+        """
+        Fetch the next row from the currently executed statement as a dictionary.
+
+        Returns:
+            dict: Next row
+
+        Raises:
+            StopAsyncIteration: When no more rows are available
+        """
+        return cast(DictRow, await super().__anext__())
+
+    async def next(self) -> DictRow:
+        """Python 2 compatibility alias for ``__anext__``. Returns a dictionary row.
+
+        Raises:
+            StopAsyncIteration: When no more rows are available
+        """
+        return await self.__anext__()
