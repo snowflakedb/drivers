@@ -2,6 +2,7 @@ mod column;
 mod result;
 
 pub use column::Column;
+use column::column_names;
 
 use crate::BRIDGE;
 use crate::error::{BridgeError, ToJsError, async_to_js};
@@ -256,32 +257,37 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get_columns(&self) -> Option<Vec<Column>> {
+    pub fn get_columns(&self, rename_duplicates: bool) -> Option<Vec<Column>> {
         self.successful_query_result().map(|query_result| {
-            query_result
-                .result_set_descriptor
-                .columns
+            let columns = &query_result.result_set_descriptor.columns;
+            columns
                 .iter()
+                .zip(column_names(columns, rename_duplicates))
                 .enumerate()
-                .map(|(i, meta)| Column::from_metadata(i as u32, meta))
+                .map(|(i, (meta, name))| Column::from_metadata(i as u32, meta, name))
                 .collect()
         })
     }
 
     #[napi]
-    pub fn get_column(&self, identifier: Either<String, u32>) -> Option<Column> {
+    pub fn get_column(
+        &self,
+        identifier: Either<String, u32>,
+        rename_duplicates: bool,
+    ) -> Option<Column> {
         let query_result = self.successful_query_result()?;
         let columns = &query_result.result_set_descriptor.columns;
-        match identifier {
-            Either::A(name) => columns
-                .iter()
-                .enumerate()
-                .find(|(_, meta)| meta.name == name)
-                .map(|(i, meta)| Column::from_metadata(i as u32, meta)),
-            Either::B(index) => columns
-                .get(index as usize)
-                .map(|meta| Column::from_metadata(index, meta)),
-        }
+        let mut names = column_names(columns, rename_duplicates);
+        let index = match identifier {
+            Either::A(name) => names.iter().position(|candidate| *candidate == name)?,
+            Either::B(index) => index as usize,
+        };
+        let meta = columns.get(index)?;
+        Some(Column::from_metadata(
+            index as u32,
+            meta,
+            names.swap_remove(index),
+        ))
     }
 
     // TODO: instead of Node calling close, maybe we should call it when the result set is

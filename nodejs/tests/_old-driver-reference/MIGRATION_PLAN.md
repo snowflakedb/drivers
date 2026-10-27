@@ -375,6 +375,9 @@ called out explicitly.
     [`semi-structured.test.ts`](../e2e/query/data-types/semi-structured.test.ts). The new driver
     has no `new Function()` fallback, warning, or telemetry for values that are not standard JSON
     (BD#140), so the fallback test has no counterpart. Drop the file after beta.
+  - `result_test_duplicated_columns.js` — migrated and deleted. The rename algorithm cases live
+    in `nodejs_bridge` `statement/column.rs`; `Column.getName()` and `getColumn()` per row mode
+    are in [`row-mode.test.ts`](../e2e/query/row-mode.test.ts).
 
 ### Configuration / global config
 

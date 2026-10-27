@@ -82,8 +82,8 @@ export declare class Statement {
    * statement has finished, so a result that is not yet ready is a programming error
    */
   getSessionParametersSnapshot(): KnownSessionParameters
-  getColumns(): Array<Column> | null
-  getColumn(identifier: string | number): Column | null
+  getColumns(renameDuplicates: boolean): Array<Column> | null
+  getColumn(identifier: string | number, renameDuplicates: boolean): Column | null
   close(): void
   hasNext(): boolean
   isMultiStatement(): boolean

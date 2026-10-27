@@ -12,6 +12,10 @@ import type { RowStatement } from './RowStatement.js';
 // enum still accept those string literals as input before converting.
 export type RowMode = 'array' | 'object' | 'object_with_renamed_duplicated_columns';
 
+export function renamesDuplicateColumns(rowMode: RowMode): boolean {
+  return rowMode === 'object_with_renamed_duplicated_columns';
+}
+
 export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
 
 export type ConverterFactory = (

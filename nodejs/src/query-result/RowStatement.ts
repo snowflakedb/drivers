@@ -11,6 +11,7 @@ import type {
   StreamOptions,
 } from './types.js';
 import { createRowStream } from './rows.js';
+import { renamesDuplicateColumns } from './types.js';
 
 // TODO:
 // Not sure if we actually need to have a wrapper around core statement.
@@ -75,11 +76,14 @@ export class RowStatement {
   }
 
   getColumns(): Column[] | undefined {
-    return this.#core.getColumns() ?? undefined;
+    return this.#core.getColumns(renamesDuplicateColumns(this.#rowOptions.rowMode)) ?? undefined;
   }
 
   getColumn(columnIdentifier: string | number): Column | undefined {
-    return this.#core.getColumn(columnIdentifier) ?? undefined;
+    return (
+      this.#core.getColumn(columnIdentifier, renamesDuplicateColumns(this.#rowOptions.rowMode)) ??
+      undefined
+    );
   }
 
   hasNext(): boolean {

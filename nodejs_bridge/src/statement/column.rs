@@ -1,5 +1,6 @@
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::ColumnMetadata;
+use std::collections::{HashMap, HashSet};
 
 #[napi]
 pub struct Column {
@@ -12,9 +13,9 @@ pub struct Column {
 }
 
 impl Column {
-    pub(super) fn from_metadata(index: u32, meta: &ColumnMetadata) -> Self {
+    pub(super) fn from_metadata(index: u32, meta: &ColumnMetadata, name: String) -> Self {
         Self {
-            name: meta.name.clone(),
+            name,
             index,
             nullable: meta.nullable,
             scale: meta.scale,
@@ -162,5 +163,112 @@ impl Column {
     #[napi]
     pub fn is_vector(&self) -> bool {
         self.type_name == "vector"
+    }
+}
+
+pub(super) fn column_names(columns: &[ColumnMetadata], rename_duplicates: bool) -> Vec<String> {
+    let names: Vec<&str> = columns.iter().map(|meta| meta.name.as_str()).collect();
+    if rename_duplicates {
+        rename_duplicate_column_names(&names)
+    } else {
+        names.into_iter().map(str::to_owned).collect()
+    }
+}
+
+fn rename_duplicate_column_names(names: &[&str]) -> Vec<String> {
+    let mut taken: HashSet<String> = names.iter().map(|&name| name.to_owned()).collect();
+    let mut occurrences: HashMap<&str, usize> = HashMap::new();
+    names
+        .iter()
+        .map(|&name| {
+            if name.is_empty() {
+                return String::new();
+            }
+            let Some(times) = occurrences.get_mut(name) else {
+                occurrences.insert(name, 1);
+                return name.to_owned();
+            };
+            let candidate = loop {
+                *times += 1;
+                let candidate = format!("{name}_{times}");
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+            };
+            taken.insert(candidate.clone());
+            candidate
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_keep_names_without_duplicates() {
+        assert_eq!(
+            rename_duplicate_column_names(&["COL1", "COL2"]),
+            ["COL1", "COL2"]
+        );
+    }
+
+    #[test]
+    fn should_rename_a_single_duplicated_column() {
+        assert_eq!(
+            rename_duplicate_column_names(&["COL1", "COL1"]),
+            ["COL1", "COL1_2"]
+        );
+    }
+
+    #[test]
+    fn should_return_no_names_for_no_columns() {
+        assert!(rename_duplicate_column_names(&[]).is_empty());
+    }
+
+    #[test]
+    fn should_skip_a_suffix_that_already_exists() {
+        assert_eq!(
+            rename_duplicate_column_names(&["COL1", "COL1", "COL1_2"]),
+            ["COL1", "COL1_3", "COL1_2"]
+        );
+    }
+
+    #[test]
+    fn should_rename_multiple_duplicated_columns() {
+        assert_eq!(
+            rename_duplicate_column_names(&[
+                "COL1", "COL1", "COL2", "COL2", "COL2", "COL3", "COL3"
+            ]),
+            [
+                "COL1", "COL1_2", "COL2", "COL2_2", "COL2_3", "COL3", "COL3_2"
+            ]
+        );
+    }
+
+    #[test]
+    fn should_rename_duplicates_of_names_that_already_carry_a_suffix() {
+        assert_eq!(
+            rename_duplicate_column_names(&["COL1", "COL1_2", "COL1_2", "COL1"]),
+            ["COL1", "COL1_2", "COL1_2_2", "COL1_3"]
+        );
+    }
+
+    #[test]
+    fn should_never_rename_empty_names() {
+        assert_eq!(rename_duplicate_column_names(&["", ""]), ["", ""]);
+    }
+
+    #[test]
+    fn should_chain_renames_across_repeated_and_suffixed_names() {
+        assert_eq!(
+            rename_duplicate_column_names(&[
+                "KEY", "FOO", "KEY_1", "FOO", "KEY_3", "FOO_3", "KEY", "FOO", "KEY", "FOO"
+            ]),
+            [
+                "KEY", "FOO", "KEY_1", "FOO_2", "KEY_3", "FOO_3", "KEY_2", "FOO_4", "KEY_4",
+                "FOO_5"
+            ]
+        );
     }
 }

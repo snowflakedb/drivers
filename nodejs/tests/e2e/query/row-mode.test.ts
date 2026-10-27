@@ -35,6 +35,31 @@ describe('Query Row Mode', () => {
     });
   });
 
+  describe('Column metadata', () => {
+    const COLUMN_NAMES_BY_MODE = {
+      array: ['ID', 'NAME', 'NAME'],
+      object: ['ID', 'NAME', 'NAME'],
+      object_with_renamed_duplicated_columns: ['ID', 'NAME', 'NAME_2'],
+    } satisfies Record<RowMode, string[]>;
+
+    it.each(ROW_MODES)('should name columns according to rowMode = %s', async (rowMode) => {
+      const connection = await createLiveConnection();
+      const { statement } = await executeAsync(connection, SQL, { rowMode });
+      expect(statement.getColumns()?.map((column) => column.getName())).toEqual(
+        COLUMN_NAMES_BY_MODE[rowMode],
+      );
+    });
+
+    it('should find a renamed column by its new name and the first duplicate by the original name', async () => {
+      const connection = await createLiveConnection();
+      const { statement } = await executeAsync(connection, SQL, {
+        rowMode: 'object_with_renamed_duplicated_columns',
+      });
+      expect(statement.getColumn('NAME_2')?.getIndex()).toBe(2);
+      expect(statement.getColumn('NAME')?.getIndex()).toBe(1);
+    });
+  });
+
   it('statement rowMode overrides connection rowMode', async () => {
     const connection = await createLiveConnection({ rowMode: 'array' });
     const { rows } = await executeAsync(connection, SQL, { rowMode: 'object' });

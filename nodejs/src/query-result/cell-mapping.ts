@@ -1,6 +1,5 @@
 import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
 import type { CellConverter, ConverterFactory, DataType, RowOptions } from './types.js';
-import { resolveColumnNames } from './column-names.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
@@ -93,7 +92,7 @@ export function createRowFormatter({
   sessionParameters,
   rowOptions,
 }: RowFormatterOptions): RowFormatter {
-  const columnNames = resolveColumnNames(columns, rowOptions.rowMode);
+  const columnNames = columns.map((column) => column.getName());
   const asStringColumnTypes = new Set(
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
   );
