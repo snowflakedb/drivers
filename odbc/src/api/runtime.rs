@@ -161,7 +161,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         return Ok(());
     }
     load_ini_config();
-    crate::api::encoding::negotiate_from_config();
+    let windows_utf32_ignored = crate::api::encoding::negotiate_from_config();
     let log_manager = sf_core::logging::LogManager::for_odbc();
     if let Some(lm) = &log_manager {
         crate::api::error_trace_flag::set_error_trace_enabled(lm.error_trace_enabled());
@@ -205,6 +205,9 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         desc_manager: HandleManager::new(HandleKind::Desc),
     }));
     tracing::info!("ODBC driver starting v{}", env!("CARGO_PKG_VERSION"));
+    if windows_utf32_ignored {
+        crate::api::encoding::warn_windows_utf32_ignored();
+    }
     guard.env_count += 1;
     Ok(())
 }

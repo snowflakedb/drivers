@@ -80,6 +80,7 @@ add_odbc_test(e2e_logging_odbc_logging logging/odbc_logging.cpp)
 add_odbc_test(e2e_logging_troubleshooting logging/troubleshooting.cpp)
 
 # session
+add_odbc_test(e2e_session_driver_manager_encoding session/driver_manager_encoding.cpp)
 add_odbc_test(e2e_session_session_parameters session/session_parameters.cpp)
 add_odbc_test(e2e_session_connection_params session/connection_params.cpp)
 add_odbc_test(e2e_session_logout session/logout.cpp)

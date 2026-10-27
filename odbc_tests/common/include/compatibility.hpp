@@ -84,6 +84,13 @@ extern bool is_iodbc_test_suite();
 #define WINDOWS_ONLY if (get_platform() == PLATFORM::PLATFORM_WINDOWS)
 #define UNIX_ONLY if (get_platform() == PLATFORM::PLATFORM_LINUX || get_platform() == PLATFORM::PLATFORM_MACOS)
 
+#define SKIP_NON_WINDOWS(message)                       \
+  do {                                                  \
+    if (get_platform() != PLATFORM::PLATFORM_WINDOWS) { \
+      SKIP("Skipping on non-Windows: " message);        \
+    }                                                   \
+  } while (0)
+
 // Snowflake JSON result format serializes REAL with fewer decimal digits than
 // Arrow. Unset QUERY_RESULT_FORMAT is Arrow (the default).
 #define JSON_ONLY(...) if (test_utils::get_query_result_format() == "JSON")

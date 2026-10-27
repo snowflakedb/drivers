@@ -135,6 +135,7 @@ The width is selected by the **`DriverManagerEncoding`** key in `sf.odbc.ini`
 |---|---|
 | unixODBC | `UTF-16` (the driver's default) |
 | iODBC — the DM macOS ships by default | `UTF-32` |
+| Windows Driver Manager | `UTF-16` (a configured `UTF-32` is ignored) |
 
 The driver negotiates the encoding **once** per process and does **not** transcode
 on your behalf: on a suspected mismatch it logs a one-time warning naming this INI
@@ -144,9 +145,9 @@ key, then continues with the configured width. If wide text is garbled, set
 > The macOS `.pkg` ships `DriverManagerEncoding=UTF-32` for iODBC. If you instead
 > run **unixODBC on macOS**, override it to `UTF-16` (via `$SF_ODBC_INI` or a
 > per-user `sf.odbc.ini`), or every wide-string call is mis-decoded. On Windows the
-> default (`UTF-16`) already matches the Windows Driver Manager — leave this key
-> unset there. The one-time mismatch warning above is **UNIX-only**, so a stray
-> `UTF-32` on Windows silently mis-decodes every wide call with no diagnostic.
+> Driver Manager's wide character is always 2 bytes, so the driver always uses
+> `UTF-16` there. A `DriverManagerEncoding=UTF-32` entry is ignored, and the driver
+> log records a warning at startup naming the key; remove it to silence the warning.
 
 ---
 

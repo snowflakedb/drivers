@@ -20,6 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 //   DriverManagerEncoding=UTF-16   ; default; matches unixODBC
 //   DriverManagerEncoding=UTF-32   ; required for iODBC on UNIX
 //
+// On Windows the driver manager's `SQLWCHAR` is always 2 bytes, so a
+// configured UTF-32 is ignored there and UTF-16 is used.
+//
 // The first wide buffer the driver sees is also inspected for its byte
 // pattern as a sanity check; if the bytes don't match the configured
 // encoding a warning is logged once with a pointer to the INI key the
@@ -92,11 +95,12 @@ static MISMATCH_WARNED: AtomicBool = AtomicBool::new(false);
 /// correctly-configured iODBC. The heuristic is warn-only.
 static MISMATCH_DETECTED: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn negotiate_from_config() {
-    let enc = sf_core::config::get_ini_config()
+#[must_use]
+pub(crate) fn negotiate_from_config() -> bool {
+    let configured = sf_core::config::get_ini_config()
         .and_then(|ini| ini.get(DRIVER_MANAGER_ENCODING_KEY))
-        .and_then(parse_wchar_encoding_value)
-        .unwrap_or(WCharEncoding::Utf16);
+        .and_then(parse_wchar_encoding_value);
+    let enc = effective_wchar_encoding(configured, cfg!(windows));
     // First call wins; subsequent calls are no-ops by design (the
     // negotiated DM-side wide width must remain stable for the life of
     // the process).
@@ -109,6 +113,25 @@ pub(crate) fn negotiate_from_config() {
     // can't identify the DM we leave detection to
     // `detect_wchar_encoding_from_bytes`.
     probe_driver_manager_identity(enc);
+    configured.is_some_and(|c| c != enc)
+}
+
+pub(crate) fn warn_windows_utf32_ignored() {
+    tracing::warn!(
+        configured = %WCharEncoding::Utf32,
+        effective = %WCharEncoding::Utf16,
+        "`{DRIVER_MANAGER_ENCODING_KEY}=UTF-32` in sf.odbc.ini is ignored on Windows: the \
+         Windows driver manager uses UTF-16 SQLWCHAR, so the driver uses UTF-16. Remove the \
+         key from sf.odbc.ini to silence this warning."
+    );
+}
+
+fn effective_wchar_encoding(configured: Option<WCharEncoding>, windows: bool) -> WCharEncoding {
+    match configured {
+        Some(WCharEncoding::Utf32) if windows => WCharEncoding::Utf16,
+        Some(enc) => enc,
+        None => WCharEncoding::Utf16,
+    }
 }
 
 /// Runtime driver-manager identification via `dlsym`/`dladdr`. Returns
@@ -1046,6 +1069,38 @@ mod tests {
     fn parse_wchar_encoding_value_rejects_garbage() {
         for s in ["", "ascii", "utf-8", "wchar"] {
             assert_eq!(parse_wchar_encoding_value(s), None);
+        }
+    }
+
+    // ---------- effective_wchar_encoding ----------------------------------
+
+    #[test]
+    fn effective_wchar_encoding_replaces_utf32_with_utf16_on_windows() {
+        assert_eq!(
+            effective_wchar_encoding(Some(WCharEncoding::Utf32), true),
+            WCharEncoding::Utf16
+        );
+    }
+
+    #[test]
+    fn effective_wchar_encoding_keeps_utf32_off_windows() {
+        assert_eq!(
+            effective_wchar_encoding(Some(WCharEncoding::Utf32), false),
+            WCharEncoding::Utf32
+        );
+    }
+
+    #[test]
+    fn effective_wchar_encoding_utf16_and_unset_stay_utf16_on_every_platform() {
+        for windows in [true, false] {
+            assert_eq!(
+                effective_wchar_encoding(Some(WCharEncoding::Utf16), windows),
+                WCharEncoding::Utf16
+            );
+            assert_eq!(
+                effective_wchar_encoding(None, windows),
+                WCharEncoding::Utf16
+            );
         }
     }
 

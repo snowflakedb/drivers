@@ -60,8 +60,12 @@ the default (`UTF-16`) is used.
 
 Use `UTF-32` when the application links against an iODBC build
 where `SQLWCHAR` is `wchar_t` (4 bytes on Linux/macOS); use `UTF-16` for
-unixODBC, Windows DM, and any driver manager that defines `SQLWCHAR` as
+unixODBC and any driver manager that defines `SQLWCHAR` as
 `unsigned short`.
+
+On Windows the driver manager's `SQLWCHAR` is always 2 bytes, so the driver
+always uses `UTF-16`. A `DriverManagerEncoding=UTF-32` entry is ignored there,
+and the driver logs a warning at startup.
 
 ## Testing
 
