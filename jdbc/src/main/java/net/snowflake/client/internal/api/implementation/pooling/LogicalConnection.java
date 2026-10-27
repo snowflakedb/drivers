@@ -393,7 +393,7 @@ class LogicalConnection implements Connection {
    * the {@code shouldFireConnectionErrorEventWhenPhysicalConnectionDelegatesThrow} scenario. Note
    * this only covers thrown exceptions: a physical {@code isValid()} that simply returns {@code
    * false} on a heartbeat/liveness failure (the normal Snowflake behavior) does not throw and so
-   * does not fire {@code connectionErrorOccurred} (see BD#34).
+   * does not fire {@code connectionErrorOccurred}.
    */
   @Override
   public boolean isValid(int timeout) {

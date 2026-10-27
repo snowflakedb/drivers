@@ -23,13 +23,13 @@ class SnowflakeDataSourceReferenceParityTest {
    * sf_core-supported connection parameters plus JDBC client-side knobs the wrapper already honors
    * (see BehaviorDifferences.yaml BD#31).
    *
-   * <p>Intentionally dropped setters include OCSP ({@code setOcspFailOpen}), HTTP header
-   * customizers ({@code setHttpHeadersCustomizers}), easy-logging ({@code setClientConfigFile}),
-   * and other legacy-only or no-op properties such as {@code setNetworkTimeout}, {@code
-   * setEnablePutGet}, {@code setStringsQuotedForColumnDef}, {@code
-   * setDisableGcsDefaultCredentials}, {@code setEnableClientRequestMfaToken}, and {@code
-   * setEnableClientStoreTemporaryCredential} (see BD#5; replaced by {@code
-   * setClientStoreTemporaryCredential}).
+   * <p>Intentionally absent setters: OCSP ({@code setOcspFailOpen}, BD#46), HTTP header customizers
+   * ({@code setHttpHeadersCustomizers}, BD#43), {@code setClientConfigFile}, {@code
+   * setNetworkTimeout}, {@code setDisableGcsDefaultCredentials}, and {@code
+   * setEnableClientRequestMfaToken} (BD#5). {@code setEnablePutGet} has no setter; the connection
+   * property {@code enablePutGet} is still applied. {@code setStringsQuotedForColumnDef} has no
+   * setter; {@code STRINGS_QUOTED_FOR_COLUMN_DEF} on the properties map is still read. {@code
+   * setEnableClientStoreTemporaryCredential} is {@code setClientStoreTemporaryCredential}.
    *
    * <p>{@code setArrowTreatDecimalAsInt} stores {@code JDBC_ARROW_TREAT_DECIMAL_AS_INT}, matching
    * snowflake-jdbc.

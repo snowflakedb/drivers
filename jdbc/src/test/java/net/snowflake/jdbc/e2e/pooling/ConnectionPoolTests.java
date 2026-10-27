@@ -490,8 +490,7 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
       expectConnectionClosed(() -> logicalConnection.prepareCall("call foo()"));
       expectConnectionClosed(() -> logicalConnection.unwrap(SnowflakeConnectionImpl.class));
       expectConnectionClosed(() -> logicalConnection.isWrapperFor(SnowflakeConnectionImpl.class));
-      // isValid() on a closed handle is a no-throw false (universal driver); legacy may still
-      // probe.
+      // isValid() on a closed handle returns false on both drivers (BD#34).
       assertIsValidFalseOnClosedHandle(logicalConnection);
     }
 

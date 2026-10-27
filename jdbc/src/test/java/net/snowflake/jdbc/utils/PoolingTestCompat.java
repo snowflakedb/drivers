@@ -98,10 +98,10 @@ public final class PoolingTestCompat {
   /**
    * Asserts that an operation on a closed logical handle is rejected with {@code
    * CONNECTION_CLOSED}. The universal driver uniformly enforces closed-state on every {@link
-   * Connection} method (BD#37), with the individually-documented client-info/unwrap/isValid cases
-   * in BD#29/BD#33/BD#34. The legacy reference driver does not uniformly enforce closed-state, so
-   * the assertion runs on the universal driver only rather than forcing an assertion the legacy
-   * driver would not satisfy.
+   * Connection} method (BD#37), with the individually-documented client-info and unwrap cases in
+   * BD#29 and BD#33. {@code isValid} returns false on both drivers (BD#34). The legacy reference
+   * driver does not uniformly enforce closed-state, so this assertion runs on the universal driver
+   * only.
    */
   public static void assertThrowsConnectionClosed(SqlRunnable action) {
     if (isUniversalDriverPooling()) {
@@ -110,14 +110,13 @@ public final class PoolingTestCompat {
   }
 
   /**
-   * Universal driver reports a closed logical handle as invalid via {@code isValid() == false};
-   * legacy may still probe the open physical connection (BD#34).
+   * Both drivers return false from {@code isValid} after logical {@code close()} returns.
+   * snowflake-jdbc short-circuits on the closed flag and does not probe the physical connection
+   * (BD#34).
    */
   public static void assertIsValidFalseOnClosedHandle(Connection logicalConnection)
       throws SQLException {
-    if (isUniversalDriverPooling()) {
-      assertFalse(logicalConnection.isValid(10));
-    }
+    assertFalse(logicalConnection.isValid(10));
   }
 
   /**

@@ -518,123 +518,116 @@ behavior_differences:
       called, and the `javax.sql` pooling contract delivers `connectionClosed` for a handle that is
       already back in the pool, so the flag belongs before the event.
   31:
-    name: "DataSource exposes a trimmed, sf_core-supported configuration surface"
+    name: "Nine DataSource setters present on the old driver do not exist on the new driver"
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: medium
     status_rationale: |
-      Legacy snowflake-jdbc exposes 50+ DataSource setters on SnowflakeBasicDataSource and
-      SnowflakeConnectionPoolDataSource, including client-side JDBC knobs that sf_core does not
-      consume. The universal driver keeps setters whose values are either understood by sf_core
-      at connect time or honored by the JDBC wrapper (e.g. tracing, enablePatternSearch,
-      JDBC_ARROW_TREAT_DECIMAL_AS_INT via setArrowTreatDecimalAsInt, JDBC_DEFAULT_FORMAT_DATE_WITH_TIMEZONE,
-      JDBC_GET_DATE_USE_NULL_TIMEZONE) and drops the rest rather than storing silent no-ops.
-      Wired setters are normalized and forwarded at connect time. OCSP and HttpHeadersCustomizer
-      are covered by BD#46 and BD#43. setArrowTreatDecimalAsInt writes JDBC_ARROW_TREAT_DECIMAL_AS_INT
-      (legacy parity); Arrow-format getObject ORs that flag with JDBC_TREAT_DECIMAL_AS_INT.
+      Not yet reviewed. Dropping a setter instead of keeping it as a silent no-op is deliberate,
+      but whether any of the nine names must be restored for source compatibility needs an
+      explicit decision.
+    old_driver_behavior: |
+      `SnowflakeBasicDataSource` and `SnowflakeConnectionPoolDataSource` declare
+      `setNetworkTimeout`, `setEnablePutGet`, `setClientConfigFile`,
+      `setDisableGcsDefaultCredentials`, `setStringsQuotedForColumnDef`,
+      `setEnableClientRequestMfaToken`, `setEnableClientStoreTemporaryCredential`,
+      `setOcspFailOpen`, and `setHttpHeadersCustomizers`.
+    new_driver_behavior: |
+      Those nine setters are absent: a call to one does not compile, and reflection reports no such
+      method. `setEnableClientStoreTemporaryCredential` is present under the name
+      `setClientStoreTemporaryCredential`. Every setter the new driver declares is applied at
+      connect time; none is a silent no-op.
+    description: |
+      Callers must drop or rename these calls. `enablePutGet` and `STRINGS_QUOTED_FOR_COLUMN_DEF`
+      are still settable as connection properties, so that configuration survives the move.
+      `setEnableClientRequestMfaToken` is BD#5, `setOcspFailOpen` is BD#46, and
+      `setHttpHeadersCustomizers` is BD#43.
   32:
-    name: "setClientInfo failures no longer fire connectionErrorOccurred"
+    name: "A setClientInfo failure on an open pooled handle no longer fires connectionErrorOccurred"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      LogicalConnection.setClientInfo and getClientInfo wrap the physical delegate and fire
-      connectionErrorOccurred on any SQLClientInfoException before rethrowing.
+      On an open pooled handle, a `setClientInfo` call that raises `SQLClientInfoException` fires
+      `ConnectionEventListener.connectionErrorOccurred` on the owning `PooledConnection` before the
+      exception reaches the caller.
     new_driver_behavior: |
-      On an open handle, whenever the physical delegate raises a SQLClientInfoException it is
-      rethrown without firing connectionErrorOccurred. This is the generic pooling-layer plumbing:
-      setClientInfo delegates directly, and getClientInfo routes through callOnPhysical, which
-      exempts SQLClientInfoException. On an open handle with the current Snowflake physical
-      connection the only delegate path that actually raises SQLClientInfoException is setClientInfo
-      on an unknown/unsupported property name (closed-handle client-info paths are covered by BD#29);
-      getClientInfo on Snowflake never throws SQLClientInfoException (getClientInfo(String)
-      returns null and getClientInfo() returns an empty Properties), so the getClientInfo exemption
-      is forward-looking (it matters for other delegates/mocks). A SQLClientInfoException
-      reports that a client-info property could not be set - a caller/property error, not a broken
-      physical connection - so a healthy pooled connection is no longer evicted. Mirrors the
-      SQLFeatureNotSupportedException handling documented in BD#26. (Closed-handle client-info
-      behavior is separate and covered by BD#29: setClientInfo throws SQLClientInfoException with
-      CONNECTION_CLOSED, while getClientInfo throws SnowflakeSQLException(CONNECTION_CLOSED).)
+      The `SQLClientInfoException` reaches the caller and `connectionErrorOccurred` does not fire.
     description: |
-      connectionErrorOccurred signals a dead physical connection and typically triggers pool
-      eviction; a rejected client-info property must not cause that.
+      `connectionErrorOccurred` signals a dead physical connection and typically triggers pool
+      eviction, which a rejected client-info property must not cause. `getClientInfo` raises no
+      `SQLClientInfoException` on either driver. `setClientInfo(null)` and an empty property set
+      are BD#23; a closed handle is BD#29.
     status_rationale: |
-      Intentional fix to avoid spurious pool eviction/churn when applications set client-info
+      Intentional fix to avoid spurious pool eviction and churn when applications set client-info
       properties on a pooled logical connection.
   33:
-    name: "Closed logical connection rejects unwrap/isWrapperFor"
+    name: "unwrap/isWrapperFor on a closed pooled handle throws CONNECTION_CLOSED instead of returning the physical connection"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      LogicalConnection.unwrap / isWrapperFor delegate to the physical connection with no
-      closed-state guard, so a logically closed handle (already returned to the pool) can still
-      unwrap and operate on the live physical connection, defeating checkout/return isolation.
+      After the logical handle is closed, `unwrap` returns the live physical connection and
+      `isWrapperFor` reports the Snowflake types, so the caller can keep running statements on the
+      pooled session.
     new_driver_behavior: |
-      unwrap and isWrapperFor call throwExceptionIfClosed() first; on a closed logical handle they
-      throw SnowflakeSQLException(CONNECTION_CLOSED) instead of exposing the physical connection.
-    description: |
-      Enforces the JDBC closed-connection contract uniformly across the wrapper API and prevents a
-      returned handle from reaching the pooled physical connection.
-    status_rationale: |
-      Intentional fix for closed-handle correctness, consistent with the other closed-state checks
-      on LogicalConnection.
-  34:
-    name: "isValid() on a closed logical connection returns false without throwing"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      LogicalConnection.isValid(int) delegates to the physical connection with no closed-state guard,
-      so a logically closed handle (already returned to the pool) can probe and report the still-open
-      pooled physical connection as valid, defeating checkout/return isolation.
-    new_driver_behavior: |
-      isValid(int) checks the logical closed flag first and returns false when the handle is closed,
-      without throwing and without firing connectionErrorOccurred. On an open handle it delegates to
-      the physical connection. Note the asymmetry on the open-handle path: a heartbeat/liveness
-      failure makes SnowflakeConnectionImpl.isValid() return false without throwing, so it fires no
-      connectionErrorOccurred; only a delegating SQLException (e.g. the negative-timeout argument
-      error mandated by Connection.isValid(int)) fires connectionErrorOccurred and propagates.
-    description: |
-      Matches the JDBC Connection.isValid() contract (a closed connection is not valid and the method
-      must not throw) and prevents a returned handle from reporting liveness of the pooled physical
+      `unwrap` and `isWrapperFor` for `SnowflakeConnection` and the other Snowflake types throw
+      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
+      `unwrap(Connection.class)` returns the closed logical handle itself and never the physical
       connection.
+    description: |
+      A closed handle can no longer reach the pooled physical connection, which another borrower
+      may already hold. `unwrap` of a type neither driver supports is BD#35.
     status_rationale: |
-      Intentional fix for closed-handle correctness, consistent with the other closed-state checks
-      on LogicalConnection.
+      `java.sql.Connection` requires a closed connection to reject its methods, and the
+      `javax.sql` pooling contract hands the physical connection back to the pool on logical
+      close, so exposing it through `unwrap` afterwards breaks checkout isolation.
+  34:
+    name: "isValid() on a closed pooled handle returns false without probing the physical connection on both drivers"
+    status: fixed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      After `close()` returns, `isValid(int)` returns false and the physical connection is not
+      called. A negative timeout on an already-closed handle also returns false.
+    new_driver_behavior: |
+      The same: `isValid(int)` returns false with no call to the physical connection, and a
+      negative timeout on an already-closed handle returns false.
+    description: |
+      Callers need no change, and `assertIsValidFalseOnClosedHandle` asserts this on both drivers
+      without a driver guard.
+    status_rationale: |
+      No difference remains. `java.sql.Connection.isValid()` requires false for a closed
+      connection and forbids throwing, and both drivers short-circuit on the closed flag.
   35:
-    name: "unwrap/isWrapperFor failures no longer fire connectionErrorOccurred"
+    name: "unwrap to an unsupported type on an open pooled handle no longer fires connectionErrorOccurred"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      LogicalConnection.unwrap and isWrapperFor route their physical delegation through the shared
-      error-event helper, so any SQLException thrown while resolving the requested type (e.g.
-      unwrapping to an unsupported interface) fires connectionErrorOccurred on the owning
-      PooledConnection.
+      On an open pooled handle, `unwrap` to a type the connection does not support throws
+      `SQLException` and fires `connectionErrorOccurred` on the owning `PooledConnection`.
+      `isWrapperFor` for that type returns false and fires no event.
     new_driver_behavior: |
-      On an open handle, unwrap and isWrapperFor delegate directly to the physical connection (after
-      the closed-state guard from BD#33) and rethrow any SQLException without firing
-      connectionErrorOccurred. A failed type resolution is a caller/type mistake, not a broken
-      physical connection. Mirrors the SQLFeatureNotSupportedException and SQLClientInfoException
-      handling documented in BD#26 and BD#32.
+      `unwrap` to an unsupported type throws `SQLException`, with different message text, and
+      `connectionErrorOccurred` does not fire. `isWrapperFor` returns false.
     description: |
-      connectionErrorOccurred signals a dead physical connection and typically triggers pool
-      eviction; a caller asking to unwrap to an unsupported type must not cause a healthy pooled
-      connection to be discarded.
+      `connectionErrorOccurred` signals a dead physical connection and typically triggers pool
+      eviction, which a caller asking for an unsupported wrapper type must not cause. A closed
+      handle is BD#33.
     status_rationale: |
-      Intentional fix to avoid spurious pool eviction/churn when applications probe wrapper types on
-      a pooled logical connection.
+      Intentional fix to avoid spurious pool eviction and churn when applications probe wrapper
+      types on a pooled logical connection.
   36:
     name: "PooledConnection.getConnection() invalidates the previously returned logical handle"
     status: allowed
@@ -668,26 +661,22 @@ behavior_differences:
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The legacy snowflake-jdbc logical connection does not uniformly reject operations after the
-      logical handle is closed: some java.sql.Connection methods (e.g. certain getters and
-      statement/metadata factory methods) still delegate to the pooled physical connection instead
-      of throwing, so a returned-to-pool handle can keep operating on a live physical session. The
-      individually surprising cases are documented separately (client-info BD#29, unwrap/isWrapperFor
-      BD#33, isValid BD#34).
+      A closed logical handle does not reject every call. `createStatement`, `prepareStatement`,
+      and `getMetaData` throw `SnowflakeSQLException` with vendor code `200052`. The calls that
+      still reach the pooled physical connection are `setClientInfo` (both overloads),
+      `getClientInfo(String)`, `unwrap`, `isWrapperFor`, and `abort`. The no-argument
+      `getClientInfo()` throws vendor code `200052` (BD#29), and `isValid` returns false (BD#34).
     new_driver_behavior: |
-      Nearly every operational java.sql.Connection method on a closed LogicalConnection first calls
-      throwExceptionIfClosed() and throws SnowflakeSQLException(CONNECTION_CLOSED) (200052 / 08003),
-      so a closed logical handle uniformly rejects operations. The few methods with contract-mandated
-      closed-state behavior differ deliberately and are documented separately: isValid() returns false
-      without throwing (BD#34), setClientInfo() throws SQLClientInfoException carrying the same
-      CONNECTION_CLOSED code (BD#29), and close()/isClosed()/abort() are idempotent no-ops. Because the
-      legacy driver does not enforce closed-state uniformly, the cross-driver reference tests assert the
-      CONNECTION_CLOSED code only on the universal driver (PoolingTestCompat.assertThrowsConnectionClosed
-      is a no-op on the legacy reference driver) rather than forcing an assertion the legacy driver would
-      not satisfy.
+      Nearly every operational `java.sql.Connection` method on a closed logical handle throws
+      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`. `close()`,
+      `isClosed()`, and `abort()` are idempotent no-ops.
     description: |
-      Documents the blanket closed-state enforcement divergence that justifies gating the
-      closed-state reference assertions to the universal driver.
+      The methods whose closed-state behavior the JDBC contract fixes are documented separately:
+      `isValid()` returns false on both drivers (BD#34), `setClientInfo()` throws
+      `SQLClientInfoException` carrying the same vendor code (BD#29), and `unwrap`/`isWrapperFor`
+      is BD#33. Because the old driver does not enforce closed-state uniformly, the cross-driver
+      reference tests assert the vendor code on the new driver only;
+      `PoolingTestCompat.assertThrowsConnectionClosed` is a no-op on the old driver.
     status_rationale: |
       Intentional correctness fix; a logically-closed handle must not reach the pooled physical
       connection. Matches the JDBC Connection closed-state contract.

@@ -58,8 +58,7 @@ public class LogicalConnectionClosedIT extends PoolingTestBase {
       // CONNECTION_CLOSED code (a SQLException subtype), so the shared assertion still applies.
       expectConnectionClosed(() -> logicalConnection.setClientInfo("k", "v"));
 
-      // isValid() on a closed handle is a no-throw false (universal driver); legacy may still
-      // probe.
+      // isValid() on a closed handle returns false on both drivers (BD#34).
       assertIsValidFalseOnClosedHandle(logicalConnection);
       if (PoolingTestCompat.isUniversalDriverPooling()) {
         PoolingTestCompat.invokeAbort(logicalConnection);
