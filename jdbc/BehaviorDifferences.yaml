@@ -245,96 +245,120 @@ behavior_differences:
       FUNCTION_SCHEM is the function's schema on the new driver. The old driver copies the
       schema pattern, so % or null appears in the column. An exact schema name matches.
   21:
-    name: "ResultSet.isLast() works on query-backed DatabaseMetaData result sets; legacy throws"
+    name: "ResultSet.isLast() on a query-backed DatabaseMetaData result set returns a boolean instead of throwing"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     status_rationale: |
-      Legacy snowflake-jdbc returns query-backed metadata result sets (getSchemas, getTables, etc.)
-      as SnowflakeDatabaseMetaDataQueryResultSet, whose isLast() throws
-      SnowflakeLoggedFeatureNotSupportedException. The universal driver routes every result set
-      through one RowReader stack, so isLast() returns a correct boolean uniformly.
+      `java.sql.ResultSet.isLast()` and `isAfterLast()` carry no exemption for metadata result
+      sets, so returning a boolean is the interface contract and the throw is the divergence.
+    old_driver_behavior: |
+      `isLast()` and `isAfterLast()` on a query-backed `DatabaseMetaData` result set
+      (`getSchemas`, `getTables`, and the other SHOW-backed calls) throw
+      `SnowflakeLoggedFeatureNotSupportedException`, a `SQLFeatureNotSupportedException`
+      subclass. An empty in-memory metadata result reports `isLast()` false before the first
+      `next()`.
+    new_driver_behavior: |
+      `isLast()` and `isAfterLast()` return a boolean on every metadata result set. An empty
+      in-memory metadata result reports `isLast()` true before the first `next()`.
+    description: |
+      `isFirst()` and `isBeforeFirst()` already agree on both drivers, and callers that iterate
+      with `next()` alone see no change. A caller that catches `SQLFeatureNotSupportedException`
+      around `isLast()` no longer reaches that handler.
   22:
-    name: "setClientInfo on closed connection throws SQLClientInfoException with CONNECTION_CLOSED"
-    status: allowed
+    name: "setClientInfo on a closed connection throws SQLClientInfoException with CONNECTION_CLOSED on both drivers"
+    status: fixed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     status_rationale: |
-      Per JDBC, setClientInfo must throw SQLClientInfoException and populate failedProperties for
-      every property that could not be set. On a closed connection the universal driver throws
-      SQLClientInfoException carrying SQLSTATE 08003 / vendor code 200052 with
-      REASON_UNKNOWN_PROPERTY entries, matching legacy snowflake-jdbc closed-state setClientInfo
-      behavior (including when the property set is empty/null, where JDBC otherwise allows normal
-      completion on an open connection).
+      No difference remains. `java.sql.Connection.setClientInfo` reports failure as
+      `SQLClientInfoException`, and on a closed connection both drivers throw it with the same
+      message and the same `CONNECTION_CLOSED` code.
+    old_driver_behavior: |
+      `setClientInfo(String, String)` and `setClientInfo(Properties)` on a closed connection throw
+      `SQLClientInfoException("The connection is not opened.")` with SQLSTATE `08003` and vendor
+      code `200052`, with `failedProperties` carrying `REASON_UNKNOWN_PROPERTY` for every property
+      named in the call.
+    new_driver_behavior: |
+      The same: `SQLClientInfoException("The connection is not opened.")`, SQLSTATE `08003`,
+      vendor code `200052`, and the same `failedProperties` entries.
+    description: |
+      Callers need no change. `setClientInfo(null)` on an open connection is BD#23, and a closed
+      pooled handle is BD#29. No test gates on this entry.
   23:
-    name: "setClientInfo(null) on open connection completes normally; legacy throws NullPointerException"
+    name: "setClientInfo(null) on an open connection returns instead of throwing NullPointerException"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     status_rationale: |
-      Legacy snowflake-jdbc setClientInfo(Properties) dereferences properties.propertyNames()
-      unconditionally and throws NullPointerException when properties is null. The JDBC contract
-      treats a null argument as an empty property set, so the universal driver returns normally on an
-      open connection. Closed connections still throw SQLClientInfoException with CONNECTION_CLOSED.
+      `java.sql.Connection.setClientInfo(Properties)` documents no behavior for a null argument,
+      and the old driver dereferences it before any validation, so the failure a caller sees is an
+      unchecked `NullPointerException` rather than the `SQLClientInfoException` the method declares.
+    old_driver_behavior: |
+      On an open connection, `setClientInfo(null)` throws `NullPointerException`, and an empty
+      `Properties` throws `SQLClientInfoException`. On a closed connection, `setClientInfo(null)`
+      still throws `NullPointerException`.
+    new_driver_behavior: |
+      On an open connection, `setClientInfo(null)` returns, and an empty `Properties` returns. On a
+      closed connection, `setClientInfo(null)` throws
+      `SQLClientInfoException("The connection is not opened.")`.
+    description: |
+      Neither driver stores client info, so `getClientInfo()` stays empty after the call, and a
+      named property fails on both. A caller that catches `NullPointerException` around a null or
+      empty property set no longer reaches that handler on an open connection. The closed-connection
+      exception is BD#22.
   24:
-    name: "Statement.getQueryID() after a synchronous multistatement returns the parent query ID; legacy returns the first child's query ID"
+    name: "Statement.getQueryID() after a synchronous multistatement returns the parent query ID instead of the first child's"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: true
     impact: low
     status_rationale: |
-      After a synchronous multistatement execute, legacy snowflake-jdbc's getQueryID() returns the
-      FIRST CHILD's ID: SFStatement.execute auto-advances to the first child (via getMoreResults())
-      and never updates queryID afterward, leaving the parent (SYSTEM$MULTISTMT) ID unreachable. The
-      universal driver returns the PARENT ID (applyMultiStatementResult sets it from
-      MultiStatementState.getParentQueryId()), stable across iteration. Both drivers return the
-      parent in the async flow. Returning the parent is intentional and consistent with the Python
-      wrapper the state model was ported from. Introduced in SNOW-2881690 (#819).
-
-      Consequence for the test suite: shouldReturnChildQueryIdsForMultistatementQuery calls
-      getChildQueryIds(getQueryID()), so it consumes this difference — the parent ID expands to 3
-      children on the universal driver, the first child's ID to length 1 on legacy — and is therefore
-      @SkipOldDriver("BD#24"). getChildQueryIds itself has parity given the same query ID.
+      The parent `SYSTEM$MULTISTMT` id is the only id that names the whole call and stays stable
+      across iteration; the old driver's first-child id leaves the parent unreachable. The new
+      driver matches the Python wrapper the multistatement state model was ported from.
+    old_driver_behavior: |
+      After a successful synchronous multistatement `execute()`, `getQueryID()` returns the first
+      child's query id, and `getMoreResults()` does not change it. For an async query that has
+      already finished, `getQueryID()` returns the first child's id.
+    new_driver_behavior: |
+      `getQueryID()` returns the parent query id, and `getMoreResults()` does not change it. For an
+      async query that has already finished, it stays on the submit id.
+    description: |
+      A single-statement `execute()` returns the same id on both drivers, as does an async query
+      that is still running (the parent id). A caller that feeds `getQueryID()` to
+      `getChildQueryIds()` gets the children of the whole call on the new driver and one id on the
+      old driver, which is why `shouldReturnChildQueryIdsForMultistatementQuery` is
+      `@SkipOldDriver("BD#24")`; `getChildQueryIds` itself agrees given the same query id.
   25:
-    name: "Failed GET download no longer leaves a partial or corrupt file at the destination"
+    name: "A failed GET leaves an existing destination file intact instead of truncating or deleting it"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     status_rationale: |
-      The legacy driver wrote GET output directly to the destination (decrypting in place) with
-      no staging file and no cleanup, so a failed or interrupted transfer left a truncated/corrupt
-      file at the destination. The universal driver's atomic `.part`-then-rename prevents any
-      partial file from ever appearing at the destination. The improvement is accepted.
+      A GET that fails must not destroy data already at the destination. Staging into a temporary
+      file and renaming on success is what keeps the destination path either the previous file or
+      the complete new one.
     old_driver_behavior: |
-      The legacy snowflake-jdbc driver writes downloaded bytes straight to the final destination
-      path — there is no `.part`/staging file and no rename-on-success (SnowflakeS3Client /
-      SnowflakeAzureClient / SnowflakeGCSClient `download(...)`). Encrypted files are decrypted in
-      place on that same destination file (`EncryptionProvider.decrypt`). On a mid-transfer failure
-      (network error, decryption failure) nothing deletes the partial file, and GET performs no
-      post-download digest verification — so a truncated or corrupt file is left at the destination
-      path, where a subsequent read sees inconsistent data. The caller must detect the failure,
-      delete the file, and retry manually.
+      The old driver writes straight to the destination path and truncates it when the download
+      starts. On S3 and GCS a failed transfer leaves the partial file there; on Azure the path is
+      deleted. A decryption failure can leave an unusable file at the destination.
     new_driver_behavior: |
-      GET downloads assemble into a sibling `<dst>.part` staging file and rename it to the final
-      destination only after the transfer completes successfully (and, for client-side-encrypted
-      files, only after the SHA-256 content digest verifies). The user-visible destination path is
-      therefore only ever a complete file; a failed or interrupted download never publishes partial
-      or corrupt data there. On failure the driver drains any in-flight chunk writes and then
-      removes the `.part` staging file, so a failed download leaves the filesystem clean. (A
-      client-side-encrypted download stages ciphertext in a separate temporary file that is likewise
-      removed on failure and unlinked once decrypted.) The only residue possible is after a hard
-      process kill (SIGKILL / power loss), where at most a single `<dst>.part` can remain —
-      self-documenting, and overwritten by the next download of the same file rather than
-      accumulating. The contract is cloud-generic (S3, Azure, and GCS).
+      The new driver writes `<dst>.part` and renames it onto the destination only after the
+      transfer succeeds. A failed GET removes `<dst>.part` and leaves any existing destination file
+      unchanged. A hard process kill can leave a `<dst>.part` file behind.
+    description: |
+      A successful GET produces the same file on both drivers. Callers that delete a truncated
+      destination file after a failed GET no longer need that cleanup.
   40:
     name: "LogicalConnection.abort() closes the logical handle and notifies the pool"
     status: allowed
