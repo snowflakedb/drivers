@@ -515,6 +515,13 @@ impl DatabaseDriverV1 {
 
                 let login_result = login_result.context(LoginSnafu)?;
 
+                let start_heartbeat_from_query_response = matches!(
+                    login_parameters.login_method,
+                    LoginMethod::SessionToken { .. }
+                ) && !init_params.as_ref().is_some_and(
+                    |params| params.contains_key(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str()),
+                );
+
                 // Initialize connection with session parameters from login response.
                 // The server returns system-level parameters but may not echo back
                 // user-set parameters (e.g. QUERY_TAG), so we merge in the
@@ -650,35 +657,10 @@ impl DatabaseDriverV1 {
                         crate::telemetry::record_session_init(&env_info);
                     }
 
-                    if keep_alive
-                        && conn.xp_backend_arc().context(LoginSnafu)?.is_none()
-                        && conn.external_session_id.is_none()
-                    {
-                        let interval = compute_heartbeat_interval(
-                            conn.tokens
-                                .read()
-                                .await
-                                .as_ref()
-                                .and_then(|t| t.master_validity),
-                            heartbeat_frequency_secs,
-                        );
-                        let handle = spawn_heartbeat_task(
-                            conn.tokens.clone(),
-                            conn.http_client
-                                .clone()
-                                .context(ConnectionNotInitializedSnafu)?,
-                            conn.server_url
-                                .clone()
-                                .context(ConnectionNotInitializedSnafu)?,
-                            conn.client_info
-                                .clone()
-                                .context(ConnectionNotInitializedSnafu)?,
-                            interval,
-                            conn.is_master_token_expired.clone(),
-                            conn.session_terminated.clone(),
-                        );
-                        conn.heartbeat_handle = Some(handle);
+                    if keep_alive {
+                        conn.start_heartbeat(heartbeat_frequency_secs).await?;
                     }
+                    conn.start_heartbeat_from_query_response = start_heartbeat_from_query_response;
                 }
                 Ok(())
             }
@@ -1163,6 +1145,9 @@ pub struct Connection {
     pub(crate) telemetry_id: Option<u64>,
     /// Handle to the per-connection heartbeat background task (if keep-alive is enabled).
     pub(crate) heartbeat_handle: Option<HeartbeatHandle>,
+    /// Set for a session adopted without a client `CLIENT_SESSION_KEEP_ALIVE`: the
+    /// heartbeat then starts on the first query response that reports keep-alive on.
+    start_heartbeat_from_query_response: bool,
     /// Set for `PAT_WITH_EXTERNAL_SESSION`. Query headers and
     /// `connection_heartbeat` send Bearer plus this id. Session refresh,
     /// background keep-alive, and HTTP logout are skipped.
@@ -1227,6 +1212,7 @@ impl Connection {
             wrapper_identity: None,
             telemetry_id: None,
             heartbeat_handle: None,
+            start_heartbeat_from_query_response: false,
             external_session_id: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
             xp_slot: Arc::new(XpSlot::new(false, None)),
@@ -1574,6 +1560,56 @@ impl Connection {
                 );
             }
         }
+    }
+
+    pub(crate) async fn start_heartbeat_if_session_keeps_alive(&mut self) {
+        if !self.start_heartbeat_from_query_response || self.heartbeat_handle.is_some() {
+            return;
+        }
+        let frequency_secs = {
+            let params = self.session_parameters.read().await;
+            if !params.get_bool_or(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str(), false) {
+                return;
+            }
+            params.get_u64(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str())
+        };
+        if let Err(error) = self.start_heartbeat(frequency_secs).await {
+            tracing::warn!(%error, "Failed to start the session keep-alive heartbeat");
+        }
+    }
+
+    async fn start_heartbeat(&mut self, frequency_secs: Option<u64>) -> Result<(), ApiError> {
+        if self.heartbeat_handle.is_some()
+            || self.external_session_id.is_some()
+            || self.xp_backend_arc().context(LoginSnafu)?.is_some()
+        {
+            return Ok(());
+        }
+        let interval = compute_heartbeat_interval(
+            self.tokens
+                .read()
+                .await
+                .as_ref()
+                .and_then(|t| t.master_validity),
+            frequency_secs,
+        );
+        let handle = spawn_heartbeat_task(
+            self.tokens.clone(),
+            self.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            self.server_url
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            self.client_info
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            interval,
+            self.is_master_token_expired.clone(),
+            self.session_terminated.clone(),
+        );
+        self.heartbeat_handle = Some(handle);
+        Ok(())
     }
 }
 

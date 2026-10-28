@@ -588,7 +588,7 @@ async fn should_send_heartbeats_on_an_adopted_session_when_keep_alive_is_true() 
     mount_logout_success(&server).await;
 
     // When a connection adopts a session with keep-alive enabled
-    let client = adopt_session(&server, Some(true)).await;
+    let client = adopt_session(&server, KeepAlive::Option(true)).await;
     let started = tokio::time::timeout(Duration::from_secs(10), heartbeats.wait_until_satisfied())
         .await
         .is_ok();
@@ -606,44 +606,103 @@ async fn should_not_send_heartbeats_on_an_adopted_session_when_keep_alive_is_omi
     mount_logout_success(&server).await;
 
     // When a connection adopts a session without the keep-alive option
-    let client = adopt_session(&server, None).await;
+    let client = adopt_session(&server, KeepAlive::Omitted).await;
     tokio::time::sleep(NO_HEARTBEAT_WINDOW).await;
     close_connection(client).await;
 
     // Then no heartbeat is sent: `expect(0)` is verified when the server drops
 }
 
-async fn adopt_session(server: &MockServer, keep_alive: Option<bool>) -> SnowflakeTestClient {
-    let server_uri = server.uri();
-    tokio::task::spawn_blocking(move || {
-        let providers = DriverProviders {
-            wrapper_presets: WrapperPresets {
-                validate_session_token: false,
-                ..WrapperPresets::default()
-            },
-            ..Default::default()
-        };
-        let client = SnowflakeTestClient::with_int_tests_params_using(Some(&server_uri), providers);
-        client.set_connection_option("session_token", "adopted-session-token");
-        client.set_connection_option("master_token", "adopted-master-token");
-        client.set_connection_option_int("master_validity_in_seconds", 1);
-        if let Some(keep_alive) = keep_alive {
-            client.set_connection_option_bool("CLIENT_SESSION_KEEP_ALIVE", keep_alive);
-        }
-        client
-            .connect()
-            .expect("adopting the session should succeed");
-        client
-    })
-    .await
-    .expect("adopt task panicked")
+#[tokio::test]
+async fn should_start_heartbeats_on_an_adopted_session_after_a_query_reports_keep_alive() {
+    // Given a mock server whose query response reports keep-alive on for the session
+    let server = MockServer::start().await;
+    let heartbeats = server
+        .register_as_scoped(heartbeat_mock().expect(2..))
+        .await;
+    query_mock(Some(true)).mount(&server).await;
+    mount_logout_success(&server).await;
+
+    // When a connection adopts the session without the keep-alive option and runs a query
+    let client = adopt_session(&server, KeepAlive::Omitted).await;
+    let client = run_query(client).await;
+    let started = tokio::time::timeout(Duration::from_secs(10), heartbeats.wait_until_satisfied())
+        .await
+        .is_ok();
+    close_connection(client).await;
+
+    // Then heartbeats are sent for the adopted session
+    assert!(started, "expected at least 2 heartbeats within 10 s");
 }
 
-async fn close_connection(client: SnowflakeTestClient) {
-    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
-        .await
-        .expect("close task panicked");
-    assert!(result.is_ok(), "close should succeed: {result:?}");
+#[tokio::test]
+async fn should_not_send_heartbeats_on_an_adopted_session_when_a_query_omits_keep_alive() {
+    // Given a mock server whose query response does not mention keep-alive
+    let server = MockServer::start().await;
+    heartbeat_mock().expect(0).mount(&server).await;
+    query_mock(None).expect(1).mount(&server).await;
+    mount_logout_success(&server).await;
+
+    // When a connection adopts the session without the keep-alive option and runs a query
+    let client = adopt_session(&server, KeepAlive::Omitted).await;
+    let client = run_query(client).await;
+    tokio::time::sleep(NO_HEARTBEAT_WINDOW).await;
+    close_connection(client).await;
+
+    // Then no heartbeat is sent: `expect(0)` is verified when the server drops
+}
+
+#[tokio::test]
+async fn should_not_send_heartbeats_on_an_adopted_session_when_a_query_reports_keep_alive_off() {
+    // Given a mock server whose query response reports keep-alive off for the session
+    let server = MockServer::start().await;
+    heartbeat_mock().expect(0).mount(&server).await;
+    query_mock(Some(false)).expect(1).mount(&server).await;
+    mount_logout_success(&server).await;
+
+    // When a connection adopts the session without the keep-alive option and runs a query
+    let client = adopt_session(&server, KeepAlive::Omitted).await;
+    let client = run_query(client).await;
+    tokio::time::sleep(NO_HEARTBEAT_WINDOW).await;
+    close_connection(client).await;
+
+    // Then no heartbeat is sent: `expect(0)` is verified when the server drops
+}
+
+#[tokio::test]
+async fn should_not_send_heartbeats_on_an_adopted_session_when_keep_alive_is_false_and_a_query_reports_it_on()
+ {
+    // Given a mock server whose query response reports keep-alive on for the session
+    let server = MockServer::start().await;
+    heartbeat_mock().expect(0).mount(&server).await;
+    query_mock(Some(true)).mount(&server).await;
+    mount_logout_success(&server).await;
+
+    // When a connection adopts the session with keep-alive disabled and runs a query
+    let client = adopt_session(&server, KeepAlive::Option(false)).await;
+    let client = run_query(client).await;
+    tokio::time::sleep(NO_HEARTBEAT_WINDOW).await;
+    close_connection(client).await;
+
+    // Then no heartbeat is sent: `expect(0)` is verified when the server drops
+}
+
+#[tokio::test]
+async fn should_not_send_heartbeats_on_an_adopted_session_when_a_session_parameter_disables_keep_alive_and_a_query_reports_it_on()
+ {
+    // Given a mock server whose query response reports keep-alive on for the session
+    let server = MockServer::start().await;
+    heartbeat_mock().expect(0).mount(&server).await;
+    query_mock(Some(true)).mount(&server).await;
+    mount_logout_success(&server).await;
+
+    // When a connection adopts the session with keep-alive disabled through session parameters and runs a query
+    let client = adopt_session(&server, KeepAlive::SessionParameter(false)).await;
+    let client = run_query(client).await;
+    tokio::time::sleep(NO_HEARTBEAT_WINDOW).await;
+    close_connection(client).await;
+
+    // Then no heartbeat is sent: `expect(0)` is verified when the server drops
 }
 
 // ---------------------------------------------------------------------------
@@ -669,6 +728,80 @@ fn heartbeat_mock() -> Mock {
         .and(path("/session/heartbeat"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
         .named("heartbeat")
+}
+
+fn query_mock(session_keep_alive: Option<bool>) -> Mock {
+    let parameters: Vec<_> = session_keep_alive
+        .map(|value| json!({"name": "CLIENT_SESSION_KEEP_ALIVE", "value": value}))
+        .into_iter()
+        .collect();
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "queryId": "keep-alive-query",
+                "queryResultFormat": "json",
+                "rowset": [],
+                "rowtype": [],
+                "parameters": parameters,
+            }
+        })))
+        .named("query")
+}
+
+enum KeepAlive {
+    Omitted,
+    Option(bool),
+    SessionParameter(bool),
+}
+
+async fn adopt_session(server: &MockServer, keep_alive: KeepAlive) -> SnowflakeTestClient {
+    let server_uri = server.uri();
+    tokio::task::spawn_blocking(move || {
+        let providers = DriverProviders {
+            wrapper_presets: WrapperPresets {
+                validate_session_token: false,
+                ..WrapperPresets::default()
+            },
+            ..Default::default()
+        };
+        let client = SnowflakeTestClient::with_int_tests_params_using(Some(&server_uri), providers);
+        client.set_connection_option("session_token", "adopted-session-token");
+        client.set_connection_option("master_token", "adopted-master-token");
+        client.set_connection_option_int("master_validity_in_seconds", 1);
+        match keep_alive {
+            KeepAlive::Omitted => {}
+            KeepAlive::Option(value) => {
+                client.set_connection_option_bool("CLIENT_SESSION_KEEP_ALIVE", value);
+            }
+            KeepAlive::SessionParameter(value) => {
+                client.set_session_parameter("CLIENT_SESSION_KEEP_ALIVE", &value.to_string());
+            }
+        }
+        client
+            .connect()
+            .expect("adopting the session should succeed");
+        client
+    })
+    .await
+    .expect("adopt task panicked")
+}
+
+async fn run_query(client: SnowflakeTestClient) -> SnowflakeTestClient {
+    tokio::task::spawn_blocking(move || {
+        client.execute_sql("SELECT 1");
+        client
+    })
+    .await
+    .expect("query task panicked")
+}
+
+async fn close_connection(client: SnowflakeTestClient) {
+    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+        .await
+        .expect("close task panicked");
+    assert!(result.is_ok(), "close should succeed: {result:?}");
 }
 
 fn test_tokens(session_token: &str) -> SessionTokens {

@@ -252,6 +252,7 @@ pub(super) async fn update_caches(
             },
         )
         .await;
+        conn.start_heartbeat_if_session_keeps_alive().await;
     }
     conn.query_context_cache
         .update_query_context_cache(

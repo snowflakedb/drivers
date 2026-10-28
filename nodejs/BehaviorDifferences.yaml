@@ -2494,7 +2494,7 @@ behavior_differences:
       that gap. is_breaking_change stays true because the error class changes.
 
   129:
-    name: 'A deserialized connection sends heartbeats when clientSessionKeepAlive is true'
+    name: 'A deserialized connection sends heartbeats when keep-alive is on'
     status: allowed
     type: enhancement
     reviewed: false
@@ -2502,19 +2502,22 @@ behavior_differences:
     impact: low
     old_driver_behavior: |
       A connection from deserializeConnection() never sends heartbeat requests, even with
-      clientSessionKeepAlive: true in its options. Calling connect() on it fails with 405502
-      and does not start them either.
+      clientSessionKeepAlive: true in its options or keep-alive on for the session. Calling
+      connect() on it fails with 405502 and does not start them either.
     new_driver_behavior: |
       With clientSessionKeepAlive: true in the options passed to deserializeConnection(), the
       connection sends heartbeat requests from the moment deserializeConnection() returns until
-      destroy(). The interval is 15 minutes by default; clientSessionKeepAliveHeartbeatFrequency
-      is clamped to 900-3600 seconds. Without the option, or with false, the connection sends no
-      heartbeats, even when the original connection or the user or account has keep-alive on.
+      destroy(). Without the option, it starts sending them after the first query whose response
+      reports CLIENT_SESSION_KEEP_ALIVE true for the session, as it does when the original
+      connection or the user or account has keep-alive on. With false, it sends none. Once
+      started, heartbeats continue until destroy(), even if keep-alive is turned off later. The
+      interval is 15 minutes by default; clientSessionKeepAliveHeartbeatFrequency is clamped to
+      900-3600 seconds.
     description: |
-      A deserialized connection gets no session parameters from a login, so only the option
-      passed to deserializeConnection() turns heartbeats on. When the original connection also
-      has keep-alive on, both connections send heartbeats for the same session. That is harmless
-      and doubles the heartbeat requests.
+      A deserialized connection gets no session parameters from a login, so without the option
+      it learns the keep-alive setting only from query responses. Before its first query it
+      sends no heartbeats. When the original connection also has keep-alive on, both connections
+      send heartbeats for the same session. That is harmless and doubles the heartbeat requests.
 
   130:
     name: 'LargeResultSetError has the HTTP status on cause instead of the raw response object'

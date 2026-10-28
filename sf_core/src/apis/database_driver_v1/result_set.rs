@@ -495,7 +495,7 @@ pub(super) async fn fetch_query_response_data(
     };
 
     if response.success {
-        let conn = conn_ptr.lock().await;
+        let mut conn = conn_ptr.lock().await;
         conn.update_session_params_cache(
             "",
             response.data.parameters.as_ref(),
@@ -507,6 +507,7 @@ pub(super) async fn fetch_query_response_data(
             },
         )
         .await;
+        conn.start_heartbeat_if_session_keeps_alive().await;
     }
 
     Ok(response.data)

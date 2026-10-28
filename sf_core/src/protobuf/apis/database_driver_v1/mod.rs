@@ -1449,6 +1449,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionSetOptionsRequest,
     ) -> BlockingProtoResult<ConnectionSetOptionsResponse>;
+    fn connection_set_session_parameters_blocking(
+        &self,
+        input: ConnectionSetSessionParametersRequest,
+    ) -> BlockingProtoResult<ConnectionSetSessionParametersResponse>;
     fn statement_new_blocking(
         &self,
         input: StatementNewRequest,
@@ -1630,6 +1634,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionSetOptionsRequest,
     ) -> BlockingProtoResult<ConnectionSetOptionsResponse> {
         block_on_client_call(self.connection_set_options(input))
+    }
+
+    fn connection_set_session_parameters_blocking(
+        &self,
+        input: ConnectionSetSessionParametersRequest,
+    ) -> BlockingProtoResult<ConnectionSetSessionParametersResponse> {
+        block_on_client_call(self.connection_set_session_parameters(input))
     }
 
     fn statement_new_blocking(

@@ -901,6 +901,17 @@ impl SnowflakeTestClient {
         self.set_connection_config_setting(option_name, option_value.into());
     }
 
+    pub fn set_session_parameter(&self, name: &str, value: &str) {
+        self.client
+            .connection_set_session_parameters_blocking(ConnectionSetSessionParametersRequest {
+                conn_handle: Some(self.conn_handle),
+                parameters: [(name.to_string(), value.to_string())]
+                    .into_iter()
+                    .collect(),
+            })
+            .unwrap();
+    }
+
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
         self.client
             .connection_set_options_blocking(ConnectionSetOptionsRequest {
