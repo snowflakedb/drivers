@@ -1279,89 +1279,111 @@ behavior_differences:
       host, or subdomains without their parent.
 
   66:
-    name: "Malformed connection-string diagnostics redact the URL"
-    status: unknown
+    name: "getPropertyInfo on a malformed connection string omits the URL from the error message"
+    status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      `Driver.getPropertyInfo` includes the complete malformed JDBC URL in its
-      `Invalid Connect String: <url>.` exception message.
+      `Driver.getPropertyInfo` throws with `"Invalid Connect String:"` followed by the full JDBC
+      URL. `Driver.connect` uses the shorter sentence.
     new_driver_behavior: |
-      `Driver.getPropertyInfo` reports `Connection string is invalid. Unable to parse.` without
-      reproducing the malformed URL. SQLState `08000` and vendor code `200059` are unchanged.
+      `Driver.getPropertyInfo` reports `"Connection string is invalid. Unable to parse."` with no
+      URL. SQLSTATE `08000` and vendor code `200059` are unchanged.
     description: |
-      Omitting the URL prevents credentials and tokens in malformed query strings from appearing
-      in exception logs.
+      A tool that displays this exception, such as a connection dialog, shows different text and
+      no longer shows the URL. Code matching on the old sentence has to change; `connect`
+      already produced the shorter one.
+    status_rationale: |
+      Intentional fix. A JDBC URL can carry a password or a token, so echoing it into an
+      exception leaks the credential into logs; `connect` already withheld it.
   67:
-    name: "getPropertyInfo validates snake_case proxy alias types"
-    status: unknown
-    type: bugfix
+    name: "getPropertyInfo rejects a non-string proxy_host or proxy_port instead of passing it through"
+    status: allowed
+    type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      `Driver.getPropertyInfo` does not reject a non-String `proxy_host` or `proxy_port` value.
+      `proxy_host` and `proxy_port` are unrecognized, so `getPropertyInfo` does not type-check
+      them. `proxyHost` and `proxyPort` reject a non-string value with SQLSTATE `22023` and
+      vendor code `200033`.
     new_driver_behavior: |
-      `Driver.getPropertyInfo` rejects a non-String `proxy_host` or `proxy_port` with SQLState
-      `22023` and vendor code `200033`, matching the camelCase `proxyHost` / `proxyPort` checks.
+      `getPropertyInfo` rejects a non-string `proxy_host`, `proxy_port`, `proxyHost`, or
+      `proxyPort` with the same SQLSTATE `22023` and vendor code `200033`. `connect` applies no
+      such check, so an integer `proxy_port` still connects.
     description: |
-      Snake-case aliases are first-class names in this driver, so invalid types must fail the same
-      way as the canonical spellings.
+      Only a `Properties.put` of a non-`String` reaches this, because a URL query value is
+      always a string; such code sees `getPropertyInfo` throw where it used to succeed. The
+      camelCase spellings already behaved this way.
+    status_rationale: |
+      Accepted. The snake_case spellings are recognized proxy settings on the new driver, so
+      they type-check like every other recognized property; the old driver skipped the check
+      only because it did not know the names.
   68:
-    name: "getPropertyInfo treats an empty authenticator as Snowflake password auth"
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `Driver.getPropertyInfo` with `authenticator=""` reports no missing properties. Legacy
-      `isSnowflakeAuthenticator()` is false for the empty string, so `user` and `password` are
-      not requested.
-    new_driver_behavior: |
-      `Driver.getPropertyInfo` with `authenticator=""` reports missing `user` and `password`, the
-      same as an unspecified authenticator.
-    description: |
-      An empty authenticator is treated as the default Snowflake password flow rather than as a
-      distinct authenticator that needs no credentials.
-  69:
-    name: "getPropertyInfo reports user and password for USERNAME_PASSWORD_MFA"
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `Driver.getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports no missing
-      properties.
-    new_driver_behavior: |
-      `Driver.getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports missing `user`
-      and `password`, matching other username/password authenticators.
-    description: |
-      Username/password MFA still needs those credentials, so introspection asks for them.
-  70:
-    name: "GET of an encrypted GCS object reports DOWNLOADED while writing ciphertext"
-    status: todo
+    name: "getPropertyInfo reports user and password as missing when authenticator is the empty string"
+    status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      SQL GET from a client-side-encrypted GCS stage completes with STATUS = DOWNLOADED, but
-      the destination file contains the still-encrypted object bytes rather than the uploaded
-      payload.
+      `getPropertyInfo` with `authenticator=""` lists neither `user` nor `password` as missing.
+      `connect` takes the Okta path for that value, which requires both.
     new_driver_behavior: |
-      The same GET writes the decrypted payload to the destination, so the downloaded bytes
-      match what PUT uploaded.
+      `getPropertyInfo` with `authenticator=""` lists `user` and `password` as missing. `connect`
+      treats the empty string as password authentication and requires both.
     description: |
-      The old driver's GCS download path leaves ciphertext on disk while still reporting
-      DOWNLOADED. Tracked as SNOW-4143382 on the old driver. Drop the new-driver-only content
-      assertion in GcsVirtualUrlEnvTest when the reference driver is a release that decrypts.
+      A tool that builds its prompt from `getPropertyInfo` now asks for the two credentials that
+      login needs either way, so no working configuration changes.
+    status_rationale: |
+      Intentional fix. `java.sql.Driver.getPropertyInfo` is specified to report the properties
+      `connect` requires, and omitting credentials that `connect` then demands leaves a tool
+      prompting for too little.
+  69:
+    name: "getPropertyInfo reports user and password as missing for USERNAME_PASSWORD_MFA"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports no missing properties,
+      while `connect` rejects a missing username with vendor code `200011` and a missing password
+      with `200012`.
+    new_driver_behavior: |
+      `getPropertyInfo` lists `user` and `password` as missing when they are absent. With both
+      set, the list is empty on both drivers.
+    description: |
+      A tool that builds its prompt from `getPropertyInfo` asks for the credentials that MFA
+      login needs; the list grows only in cases where `connect` would already fail. Browser
+      login and OAuth are unchanged.
+    status_rationale: |
+      Intentional fix. `java.sql.Driver.getPropertyInfo` is specified to report the properties
+      `connect` requires, and this authenticator reported none of them.
+  70:
+    name: "GET from an encrypted GCS stage over virtual-host URLs writes decrypted bytes on both drivers"
+    status: fixed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      A GET from a client-side-encrypted GCS stage reached over virtual-host URLs writes the
+      decrypted payload and reports `DOWNLOADED`. S3, Azure, and the other GCS paths decrypt as
+      well.
+    new_driver_behavior: |
+      The same: the file on disk is plaintext and the status is `DOWNLOADED`.
+    description: |
+      Callers need no change. The ciphertext-on-disk result this entry recorded belongs to
+      snowflake-jdbc 4.3.4 and earlier on the virtual-URL path only. No test gates on this
+      entry.
+    status_rationale: |
+      No difference remains; the old driver decrypts this path as of 4.4.0.
   71:
-    name: "JDBC auto-configuration uses shared profile resolution"
-    status: unknown
+    name: "An auto-configuration profile resolves from config.toml and validates strictly, and six JDBC-only option spellings stop applying"
+    status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -1389,16 +1411,28 @@ behavior_differences:
       `Properties` are accepted. A missing profile keeps the old driver's message but reports
       SQLState `22023` and vendor code `200047`.
 
-      Profile option names, OAuth token files, configuration paths, and Unix file permissions
-      follow the shared configuration rules. As a result, some JDBC-only TOML aliases and the old
-      driver's default token path and permission-skip environment variable are not honored.
+      Six profile option spellings no longer apply: `disableQueryContextCache`,
+      `private_key_pwd`, `PRIVATE_KEY_PWD`, `PRIVATE_KEY_BASE64`, `wifHost`, and
+      `workloadIdentityHost`. `disable_query_context_cache`, `PRIVATE_KEY_FILE_PWD`, and
+      `workload_identity_host` still apply. There is no default token file at
+      `/snowflake/session/token`, and `SKIP_TOKEN_FILE_PERMISSIONS_VERIFICATION` is not read.
+      `SNOWFLAKE_HOME` is used only when that directory exists; otherwise the platform config
+      directory is used.
     description: |
-      JDBC auto URLs use the same profile resolution and validation rules as the shared
-      configuration layer while preserving JDBC `Properties` precedence and a classifiable
-      missing-profile error.
+      A profile written with the documented option names still connects. A profile relying on
+      one of the six dropped spellings silently loses that setting, a deployment relying on the
+      default token path or on a non-existent `SNOWFLAKE_HOME` has to supply them explicitly,
+      and code matching on `INVALID_CONNECTION_STRING` from `getPropertyInfo` has to accept
+      `INVALID_PARAMETER_VALUE`. The missing-profile message is unchanged but now carries a
+      SQLSTATE and vendor code, so it can be classified rather than string-matched.
+    status_rationale: |
+      Accepted. Profile resolution is shared with the other Snowflake drivers, so a
+      `connections.toml` or `config.toml` profile means the same thing in each of them; the
+      casualties are JDBC-only spellings and two implicit lookups, while JDBC `Properties`
+      precedence is preserved.
   72:
-    name: "Failed array-bind executeBatch throws BatchUpdateException"
-    status: unknown
+    name: "A failed array-bind executeBatch throws BatchUpdateException instead of SnowflakeSQLException"
+    status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
@@ -1406,127 +1440,143 @@ behavior_differences:
     old_driver_behavior: |
       A failed array-bind (single-RPC) `executeBatch()` INSERT throws `SnowflakeSQLException`.
     new_driver_behavior: |
-      The same failure throws `BatchUpdateException`. SQLSTATE is unchanged; a `catch` of only
-      `SnowflakeSQLException` does not see it. Per-row `Statement.executeBatch` and non-array-bind
-      prepared batches already throw `BatchUpdateException` on both drivers.
+      The same failure throws `BatchUpdateException` with unchanged SQLSTATE and vendor code,
+      reporting every submitted array-bind row as `EXECUTE_FAILED` (`-3`). Per-row
+      `Statement.executeBatch` and non-array-bind prepared batches throw `BatchUpdateException`
+      on both drivers.
     description: |
-      Aligns array-bind batch failures with the JDBC contract. Applications should catch
-      `SQLException` or `BatchUpdateException`.
+      Code that catches `SQLException` still handles the failure; code that catches only
+      `SnowflakeSQLException` no longer does and has to broaden its catch.
+    status_rationale: |
+      Intentional fix. `java.sql.Statement.executeBatch` specifies `BatchUpdateException` so the
+      caller can read per-row outcomes, and the old driver already used that type for row-by-row
+      batches — only the array-bind path differed.
   73:
-    name: "workloadIdentityAwsExternalId is not sent on AWS AssumeRole"
+    name: "workloadIdentityAwsExternalId always fails the connection instead of being sent as the STS ExternalId"
     status: todo
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      With authenticator=WORKLOAD_IDENTITY and workloadIdentityProvider=AWS, snowflake-jdbc
-      passes workloadIdentityAwsExternalId to STS AssumeRole as ExternalId when
-      SF_ENABLE_WIF_AWS_EXTERNAL_ID is true. When that variable is unset, a non-empty
-      workloadIdentityAwsExternalId fails the connection with WORKLOAD_IDENTITY_FLOW_ERROR
-      ("Connection property workloadIdentityAwsExternalId is not enabled"). For any other
-      authenticator or provider the property is ignored.
+      With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`,
+      `workloadIdentityAwsExternalId` is passed to STS `AssumeRole` as `ExternalId` on the last
+      hop when `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is true. With that variable unset, a non-empty
+      value fails the connection with `WORKLOAD_IDENTITY_FLOW_ERROR` and `"Connection property
+      workloadIdentityAwsExternalId is not enabled"`. Under any other authenticator or provider
+      the property is ignored.
     new_driver_behavior: |
-      sf_core's AWS AssumeRole call has no external-id field. With
-      authenticator=WORKLOAD_IDENTITY and workloadIdentityProvider=AWS, a non-empty
-      workloadIdentityAwsExternalId fails the connection ("Connection property
-      workloadIdentityAwsExternalId is not enabled"). The value is not sent. For any
-      other authenticator or provider it stays an unknown connection parameter and connect
-      continues.
+      With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`, a non-empty
+      `workloadIdentityAwsExternalId` fails the connection with `"Connection property
+      workloadIdentityAwsExternalId is not enabled"` whatever `SF_ENABLE_WIF_AWS_EXTERNAL_ID`
+      is set to, and the value is never sent. Under any other authenticator or provider a
+      non-empty value logs an unknown-parameter warning and the connection continues. An empty
+      value never fails.
     description: |
-      Role-chaining that depends on an STS external ID works on snowflake-jdbc when
-      SF_ENABLE_WIF_AWS_EXTERNAL_ID is set. The universal JDBC driver rejects a non-empty
-      value until sf_core can send ExternalId (SNOW-3575172).
+      Role chaining that needs an STS external ID cannot connect, where the old driver connects
+      once `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is set.
+    status_rationale: |
+      Still open. The `AssumeRole` call has no external-id field to populate, so the property is
+      rejected rather than silently dropped; sending it is tracked as SNOW-3575172.
   74:
-    name: "Azure workloadIdentityImpersonationPath of one service principal is accepted"
+    name: "An Azure workloadIdentityImpersonationPath naming one service principal is accepted instead of rejected"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      authenticator=WORKLOAD_IDENTITY with workloadIdentityProvider=AZURE and any non-empty
-      workloadIdentityImpersonationPath fails with WORKLOAD_IDENTITY_FLOW_ERROR
-      ("Identity impersonation is not available on Azure").
+      `authenticator=WORKLOAD_IDENTITY` with `workloadIdentityProvider=AZURE` and any non-empty
+      `workloadIdentityImpersonationPath` fails with `WORKLOAD_IDENTITY_FLOW_ERROR` and
+      `"Identity impersonation is not available on Azure"`.
     new_driver_behavior: |
-      sf_core accepts exactly one Azure service-principal client id in
-      workload_identity_impersonation_path and rejects any other hop count. JDBC follows
-      that shared behavior. A native AKS workload identity (AZURE_CLIENT_ID, AZURE_TENANT_ID,
-      and AZURE_FEDERATED_TOKEN_FILE injected by the Azure Workload Identity webhook) is
-      exchanged directly; impersonation is rejected in that environment.
+      Outside AKS, a non-empty path with exactly one comma-separated entry is accepted; the
+      entry is not validated as an Azure client id. Two or more entries fail. On AKS any path
+      fails and the injected identity is used directly.
     description: |
-      snowflake-jdbc rejects every Azure impersonation path. The universal driver uses the
-      sf_core implementation shared with the other wrappers, which allows a single Azure hop.
+      A configuration that connected on the old driver still connects; a single-hop Azure
+      impersonation that the old driver refused now works. The OIDC provider's rejection of a
+      path is BD#49.
+    status_rationale: |
+      Accepted addition. The one-hop Azure path is what the other Snowflake drivers already
+      allow, so the behavior is consistent across them and no previously working configuration
+      changes.
   75:
-    name: "Workload Identity connect failures omit SQLSTATE and vendor code"
+    name: "A local workload-identity connect failure reports a null SQLSTATE and vendor code 0 instead of 08000 and 200071"
     status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Client-local Workload Identity connect failures (missing or invalid provider, missing
-      OIDC token, malformed OIDC token, rejected AWS external id) throw
-      WORKLOAD_IDENTITY_FLOW_ERROR with SQLSTATE 08000 and vendor code 200071.
+      A client-local workload-identity connect failure throws `WORKLOAD_IDENTITY_FLOW_ERROR`
+      with SQLSTATE `08000` and vendor code `200071`. The cases are a missing or invalid
+      provider, a missing OIDC token, a malformed OIDC token, and a non-empty AWS external id
+      while `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is unset.
     new_driver_behavior: |
-      The same failures still throw SQLException with a message that identifies the bad
-      setting, but getSQLState() is null and getErrorCode() is 0. sf_core reports them as
-      ordinary missing or invalid parameters; JDBC does not remap them to
-      WORKLOAD_IDENTITY_FLOW_ERROR.
+      The same failures throw `SQLException` whose message names the offending setting, with
+      `getSQLState()` null and `getErrorCode()` `0`. A malformed token surfaces as an attestation
+      failure classified as an invalid parameter.
     description: |
-      snowflake-jdbc folds every local WIF connect rejection into one flow-error identity.
-      The universal driver keeps the shared sf_core parameter-validation kinds used by the
-      other wrappers.
+      Code that branches on SQLSTATE `08000` or vendor code `200071` to recognize a
+      workload-identity misconfiguration has to match on the message instead. The AWS
+      external-id rejection is BD#73.
+    status_rationale: |
+      Accepted. The underlying failures are distinct parameter-validation outcomes shared with
+      the other Snowflake drivers, and folding them back into one flow-error identity would
+      discard that distinction; carrying a discriminating code across the boundary is the open
+      part.
   76:
-    name: "Auto-compressed PUT does not store Content-Encoding gzip"
+    name: "An auto-compressed PUT leaves Content-Encoding unset instead of storing gzip"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      PUT of an auto-compressed file to GCS with GCS_USE_DOWNSCOPED_CREDENTIAL=true
-      stores Content-Encoding gzip on the object. PUT of an auto-compressed file to
-      S3 stores Content-Encoding gzip on the object. PUT through a GCS presigned URL
-      stores a blank Content-Encoding when the file is gzip.
+      A PUT of an auto-compressed file stores `Content-Encoding: gzip` on the object, on GCS
+      with `GCS_USE_DOWNSCOPED_CREDENTIAL=true` and on S3. A PUT through a GCS presigned URL
+      stores a blank `Content-Encoding` for the same gzip file. Azure omits the header.
     new_driver_behavior: |
-      A GCS PUT sends no Content-Encoding header, including a bearer-token upload of
-      a gzip payload. An S3 PUT sends no Content-Encoding. GET and COPY still treat
-      the file as gzip from its name and the compression recorded by PUT.
+      A GCS PUT sends no `Content-Encoding` header, bearer-token uploads of a gzip payload
+      included, and an S3 PUT sends none either. Azure omits the header as before. GET and COPY
+      still treat the file as gzip, from its name and the compression that PUT recorded.
     description: |
-      GCS decompressive transcoding returns a Content-Encoding gzip object
-      uncompressed to a client that does not send Accept-Encoding gzip. The old
-      driver's presigned-URL upload replaces gzip with a blank header value. The
-      new driver leaves the header off. Both leave the object unmarked as gzip.
-      S3 does not transcode. The old driver still stores gzip there. Downloading
-      that file does not decompress it again from that metadata. Clients that
-      honor Content-Encoding would decompress the body. The new driver omits the
-      header.
+      A third-party client that honors `Content-Encoding` no longer decompresses the body on
+      its own, and GCS no longer applies decompressive transcoding — which served a `.gz`
+      object's bytes uncompressed to any client that omitted `Accept-Encoding: gzip`. Snowflake
+      COPY and driver GET are unaffected, because both read the recorded compression rather than
+      the header.
     status_rationale: |
-      Storing gzip would make GCS serve uncompressed bytes for a .gz object and
-      would make some S3 clients do the same. The common GCS presigned path of the
-      old driver already stores a blank encoding. COPY and driver GET use the
-      compression registered with the file.
+      Intentional fix. Marking a stored `.gz` object as gzip-encoded makes the object serve
+      differently depending on the reader's `Accept-Encoding`, and the old driver's common GCS
+      presigned path already stored a blank value rather than `gzip`.
 
   77:
     name: "HTTP attempts use a 300-second wall-clock timeout instead of socket inactivity"
-    status: unknown
-    type: enhancement
+    status: allowed
+    type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      HTTP_CLIENT_SOCKET_TIMEOUT (default 300000 ms) is Apache HttpClient SO_TIMEOUT:
-      the gap between consecutive packets. A slow but active download can run longer
-      than 300 seconds.
+      `HTTP_CLIENT_SOCKET_TIMEOUT` defaults to 300000 ms and limits the wait for the next
+      packet, result-chunk downloads included, so a transfer runs past 300 seconds as long as
+      data keeps arriving.
     new_driver_behavior: |
-      retry_timeout defaults to 300 seconds and bounds each HTTP attempt from start
-      until the response body finishes. 0 removes the per-attempt limit. Result chunk
-      downloads do not use this policy.
+      `retry_timeout` defaults to 300 seconds and bounds each ordinary HTTP attempt from its
+      start until the response body finishes; arriving bytes do not extend it, and `0` removes
+      the limit. `HTTP_CLIENT_SOCKET_TIMEOUT` is its JDBC alias. Result-chunk downloads are not
+      bounded by it and have no read timeout of their own.
     description: |
-      The default duration matches the old JDBC socket timeout. The new timer does not
-      reset when bytes arrive, so a healthy download slower than size/300 throughput
-      can fail here.
+      A login or query attempt whose response body takes more than five minutes fails where it
+      previously completed, while a slow result chunk can now run indefinitely because the
+      per-packet timeout no longer covers it. The millisecond-to-second conversion of the alias
+      is BD#78.
+    status_rationale: |
+      Accepted. The default duration is the same on both drivers; what differs is the model — a
+      per-attempt wall-clock cap rather than an inactivity timer that resets on every packet —
+      and the new driver has no per-packet timer to reproduce.
 
   78:
     name: "Millisecond timeout properties apply in whole seconds"

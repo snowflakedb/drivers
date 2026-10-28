@@ -16,7 +16,7 @@ plugins {
 // ====================
 // Project metadata
 // ====================
-def oldJdbcVersion = '4.3.4'
+def oldJdbcVersion = '4.4.0'
 def slf4jVersion = '2.0.20'
 def lombokVersion = '1.18.48'
 // Stays on 2.x (Java 8); 3.x needs Java 17.

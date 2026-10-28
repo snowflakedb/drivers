@@ -22,7 +22,6 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.driver.SnowflakeDriver;
-import net.snowflake.jdbc.utils.DriverCompatibility;
 import net.snowflake.jdbc.utils.EnabledOnGCP;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -73,14 +72,8 @@ public class GcsVirtualUrlEnvTest {
 
     Path downloaded = downloadDir.resolve("virtual_url.txt");
     assertTrue(Files.exists(downloaded), "Expected the downloaded file on disk");
-
-    // TODO(SNOW-4143382): BD#70 — on this path the old driver writes the still-encrypted bytes
-    // and reports DOWNLOADED, so only the new driver is held to the round-trip. Drop the guard
-    // once the reference driver is bumped to a release carrying the fix.
-    if (DriverCompatibility.isNewDriver()) {
-      String contents = new String(Files.readAllBytes(downloaded), StandardCharsets.UTF_8).trim();
-      assertEquals(PAYLOAD, contents, "Unexpected downloaded content");
-    }
+    String contents = new String(Files.readAllBytes(downloaded), StandardCharsets.UTF_8).trim();
+    assertEquals(PAYLOAD, contents, "Unexpected downloaded content");
   }
 
   public static void main(String[] args) throws Exception {
