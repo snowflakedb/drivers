@@ -110,6 +110,7 @@ describe('Query Cancellation', () => {
       );
     } else {
       await expect(cancelStatementAsync(statement)).rejects.toMatchObject({
+        name: 'OperationFailedError',
         code: NOT_EXECUTING_CODE,
         sqlState: '01000',
       } satisfies Partial<SnowflakeError>);

@@ -21,7 +21,7 @@ describe('Query Binds', () => {
 
   async function expectStagePathNotUsed(connection: Connection): Promise<void> {
     await expect(executeAsync(connection, 'LIST @SYSTEM$BIND')).rejects.toMatchObject({
-      error: { message: expect.stringContaining('does not exist') },
+      error: { name: 'OperationFailedError', message: expect.stringContaining('does not exist') },
     });
   }
 
@@ -113,7 +113,10 @@ describe('Query Binds', () => {
       });
       if (isRunningNewDriverWithBD('BD#86')) {
         await expect(result).rejects.toMatchObject({
-          error: { message: "SQL compilation error:\nUnsupported data type 'VARIANT'." },
+          error: {
+            name: 'OperationFailedError',
+            message: "SQL compilation error:\nUnsupported data type 'VARIANT'.",
+          },
         });
       } else {
         const { rows } = await result;

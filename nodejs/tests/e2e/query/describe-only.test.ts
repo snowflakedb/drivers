@@ -185,6 +185,7 @@ describe('describeOnly', () => {
       const cancellation = cancelStatementAsync(statement);
 
       await expect(cancellation).rejects.toMatchObject({
+        name: 'OperationFailedError',
         code: '390413',
         message: expect.stringContaining('does not exist or not authorized'),
       } satisfies Partial<SnowflakeError>);

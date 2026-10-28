@@ -107,6 +107,7 @@ describe('openExternalBrowserCallback', () => {
     }) as Connection;
 
     await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'Error',
       // The new driver appends the thrown error's stack, so the path is not part of the
       // pinned text. The message starts with this exact prefix.
       message: isRunningNewDriverWithBD('BD#67')

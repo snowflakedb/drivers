@@ -329,6 +329,7 @@ describe('PUT GET source compression', () => {
         if (isRunningNewDriverWithBD('BD#32')) {
           await expect(execution).rejects.toMatchObject({
             error: {
+              name: 'Error',
               message: 'Failed to process query response: Failed to prepare file transfer data',
               cause: {
                 message: 'Invalid Snowflake response: Unknown source compression type: BR',

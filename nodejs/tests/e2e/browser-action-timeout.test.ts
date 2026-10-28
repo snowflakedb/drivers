@@ -86,6 +86,7 @@ describe('browserActionTimeout', () => {
           snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout }),
         ).toThrow(
           expect.objectContaining({
+            name: 'Error',
             code: undefined,
             message:
               "Invalid argument: [Error] browserActionTimeout: Expected type Int for parameter 'browserActionTimeout', got String",

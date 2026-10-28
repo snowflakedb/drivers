@@ -64,9 +64,7 @@ describe('PUT GET wildcards', () => {
       // The old Node driver expands only `*`, so it stats the literal `?` path and fails (BD#34).
       if (!isRunningNewDriverWithBD('BD#34')) {
         await expect(execution).rejects.toMatchObject({
-          error: {
-            code: 'ENOENT',
-          },
+          error: { name: 'Error', code: 'ENOENT' },
         });
         return;
       }

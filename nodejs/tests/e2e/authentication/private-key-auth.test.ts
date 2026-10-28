@@ -105,10 +105,11 @@ describe('SNOWFLAKE_JWT authentication', () => {
         const privateKeyPath = createTempKeyFile(await readFile(INVALID_RSA_KEY_PATH, 'utf8'));
         const connection = createJwtConnection({ privateKeyPath });
 
-        // TODO(SNOW-3894966): this does not pin `sqlState` or `name`.
+        // TODO(SNOW-3894966): this does not pin `sqlState`.
         //
         // When Trying to Connect
         await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+          name: 'OperationFailedError',
           message: JWT_TOKEN_INVALID_MESSAGE,
           code: '390144',
         });
@@ -125,10 +126,11 @@ describe('SNOWFLAKE_JWT authentication', () => {
           privateKeyPass: 'invalid',
         });
 
-        // TODO(SNOW-3894966): this does not pin `sqlState`, `name`, or `code`.
+        // TODO(SNOW-3894966): this does not pin `sqlState` or `code`.
         //
         // When Trying to Connect
         await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+          name: 'Error',
           message: isRunningNewDriverWithBD('BD#74')
             ? 'Failed to login: Authentication failed'
             : expect.stringMatching(
@@ -217,10 +219,11 @@ describe('SNOWFLAKE_JWT authentication', () => {
         // When Trying to Connect
         if (isRunningNewDriverWithBD('BD#73')) {
           const connection = snowflake.createConnection(options);
-          // TODO(SNOW-3894966): this does not pin `sqlState`, `name`, or `code`.
+          // TODO(SNOW-3894966): this does not pin `sqlState` or `code`.
           //
           // Then There is error returned
           await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+            name: 'InvalidParameterError',
             message:
               "Configuration error: Invalid value '(redacted)' for parameter 'private_key' - Could not decode base64 private key: Invalid padding",
           });
@@ -239,10 +242,11 @@ describe('SNOWFLAKE_JWT authentication', () => {
           privateKey: await readFile(INVALID_RSA_KEY_PATH, 'utf8'),
         });
 
-        // TODO(SNOW-3894966): this does not pin `sqlState` or `name`.
+        // TODO(SNOW-3894966): this does not pin `sqlState`.
         //
         // When Trying to Connect
         await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+          name: 'OperationFailedError',
           message: JWT_TOKEN_INVALID_MESSAGE,
           code: '390144',
         });
@@ -262,6 +266,7 @@ describe('SNOWFLAKE_JWT authentication', () => {
 
         // When Trying to Connect with no private file provided
         await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+          name: isRunningNewDriverWithBD('BD#76') ? 'InvalidParameterError' : 'Error',
           message: isRunningNewDriverWithBD('BD#76')
             ? "Configuration error: Configuration validation failed (1 issue(s)): private_key: Missing required parameter: 'private_key' or 'private_key_file'"
             : 'secretOrPrivateKey must have a value',

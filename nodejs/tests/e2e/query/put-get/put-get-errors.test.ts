@@ -66,6 +66,7 @@ describe('tests/definitions/shared/put_get/put_get_errors.feature', () => {
     if (isRunningNewDriverWithBD('BD#35')) {
       await expect(execution).rejects.toMatchObject({
         error: {
+          name: 'Error',
           message:
             'Failed to process query response: While getting file(s) there was an error: the file does not exist',
           cause: {

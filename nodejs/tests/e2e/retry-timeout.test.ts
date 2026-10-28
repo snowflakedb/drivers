@@ -24,6 +24,7 @@ describe('retryTimeout', () => {
         snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout: 1.5 }),
       ).toThrow(
         expect.objectContaining({
+          name: 'Error',
           code: undefined,
           message:
             "Invalid argument: [Error] retryTimeout: Expected type Int for parameter 'retryTimeout', got String",
@@ -42,6 +43,7 @@ describe('retryTimeout', () => {
           snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout }),
         ).toThrow(
           expect.objectContaining({
+            name: 'Error',
             code: undefined,
             message:
               "Invalid argument: [Error] retryTimeout: Expected type Int for parameter 'retryTimeout', got String",

@@ -329,6 +329,7 @@ export async function expectConnectionNotUp(
   expect(connection.isUp()).toBe(false);
   await expect(executeAsync(connection, 'SELECT 1')).rejects.toMatchObject({
     error: {
+      name: expected.name,
       code: expected.code,
       message: expected.message,
     },
