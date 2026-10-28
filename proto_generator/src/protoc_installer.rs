@@ -76,34 +76,24 @@ fn download_and_install(dest: &Path) {
     std::fs::create_dir_all(dest).expect("Failed to create protoc cache directory");
     let zip_path = dest.join("protoc.zip");
 
-    // Two layers of retry guard the build against transient GitHub Releases failures
-    // (recurring HTTP 5xx, slow connect, partial download):
+    // Two layers of retry guard the build against transient GitHub Releases
+    // failures (HTTP 5xx, 403 under `--fail`, slow connect, partial download):
     //
-    //   1. `curl --retry 5` already covers the failure mode we actually see —
-    //      curl's documented default treats HTTP 408/429/500/502/503/504 as
-    //      transient and retries them with its own backoff, so a 504 from
-    //      releases.githubusercontent.com is absorbed inside a single curl
-    //      invocation without any extra flags. We intentionally do NOT pass
-    //      `--retry-all-errors` (added in curl 7.71): the manylinux build
-    //      container ships an older curl that hard-errors on unknown options
-    //      (exit 2), which would push every attempt into the outer loop and
-    //      effectively disable retries. Sticking to flags supported back to
-    //      ~7.52 (`--retry`, `--retry-delay`, `--retry-max-time`, plus the
-    //      connect/total timeouts) keeps every CI runner (macOS-15, ubuntu-24,
-    //      Windows-2022, manylinux_2_*) on the same code path.
+    //   1. `curl --retry 5` covers curl's default retry set (408/429/5xx).
+    //      SNOW-4350375: a GitHub Releases 403 exits 22 under `--fail` and is
+    //      not in that set. `--retry-all-errors` (curl >= 7.71) covers it.
+    //      manylinux's older curl hard-errors on unknown options (exit 2), so
+    //      the flag is passed only when `curl --version` reports >= 7.71.
     //
-    //   2. An outer exponential-backoff loop (1s → 2s → 4s → 8s, 5 attempts total)
-    //      catches the failures curl's own retry doesn't: partial downloads that
-    //      leave a corrupt zip on disk, transient DNS/SSL handshake errors that
-    //      curl exits on without retrying, and any future failure class we
-    //      haven't enumerated. Each outer attempt starts by deleting the
-    //      previous zip so extract_zip never sees a half-written file.
-    //
-    // Total worst-case stall ≈ 1+2+4+8 = 15s of outer backoff plus curl's
-    // internal retry budget (capped by --retry-max-time at 120s) — well under
-    // any CI job budget, and far cheaper than rerunning the whole release
-    // pipeline on a 504.
+    //   2. An outer exponential-backoff loop (1s → 2s → 4s → 8s, 5 attempts)
+    //      catches partial downloads, DNS/SSL handshake errors, and 403s that
+    //      still exhaust curl's inner retry. Each outer attempt deletes the
+    //      previous zip so extract_zip never sees a half-written file. On
+    //      failure, response headers are printed so a rate-limit (or not) is
+    //      visible in the log.
     const MAX_ATTEMPTS: u32 = 5;
+    let retry_all_errors = curl_version_at_least_7_71();
+    let headers_path = dest.join("curl-headers.txt");
     let mut last_status = None;
     for attempt in 1..=MAX_ATTEMPTS {
         eprintln!(
@@ -113,23 +103,30 @@ fn download_and_install(dest: &Path) {
         // Best-effort cleanup of any partial download from the previous attempt.
         // A corrupt zip would otherwise survive into extract_zip() and fail there.
         let _ = std::fs::remove_file(&zip_path);
+        let _ = std::fs::remove_file(&headers_path);
 
-        let status = std::process::Command::new("curl")
-            .args([
-                "-sSL",
-                "--fail",
-                "--retry",
-                "5",
-                "--retry-delay",
-                "2",
-                "--retry-max-time",
-                "120",
-                "--connect-timeout",
-                "30",
-                "--max-time",
-                "300",
-                "-o",
-            ])
+        let mut curl = std::process::Command::new("curl");
+        curl.args([
+            "-sSL",
+            "--fail",
+            "--retry",
+            "5",
+            "--retry-delay",
+            "2",
+            "--retry-max-time",
+            "120",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "300",
+            "-D",
+        ]);
+        curl.arg(&headers_path);
+        if retry_all_errors {
+            curl.arg("--retry-all-errors");
+        }
+        let status = curl
+            .arg("-o")
             .arg(&zip_path)
             .arg(&url)
             .status()
@@ -140,6 +137,9 @@ fn download_and_install(dest: &Path) {
             break;
         }
         last_status = Some(status);
+        if let Ok(headers) = std::fs::read_to_string(&headers_path) {
+            eprintln!("curl response headers:\n{headers}");
+        }
 
         if attempt < MAX_ATTEMPTS {
             let backoff_ms = 1_000u64 * (1u64 << (attempt - 1));
@@ -171,7 +171,30 @@ fn download_and_install(dest: &Path) {
     }
 
     let _ = std::fs::remove_file(&zip_path);
+    let _ = std::fs::remove_file(&headers_path);
     eprintln!("protoc v{PROTOC_VERSION} installed to {}", dest.display());
+}
+
+fn curl_version_at_least_7_71() -> bool {
+    // `curl --help` on 8.x is a short summary and does not list
+    // `--retry-all-errors`. `curl --version` is stable on old and new curl.
+    let output = std::process::Command::new("curl").arg("--version").output();
+    let Ok(output) = output else {
+        return false;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // First line: `curl 8.5.0 (x86_64-pc-linux-gnu) ...`
+    let Some(version) = stdout.split_whitespace().nth(1) else {
+        return false;
+    };
+    let mut parts = version.split('.');
+    let Ok(major) = parts.next().unwrap_or("").parse::<u32>() else {
+        return false;
+    };
+    let Ok(minor) = parts.next().unwrap_or("0").parse::<u32>() else {
+        return false;
+    };
+    major > 7 || (major == 7 && minor >= 71)
 }
 
 #[cfg(unix)]

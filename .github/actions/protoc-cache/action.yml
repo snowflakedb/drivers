@@ -1,0 +1,49 @@
+name: Cache downloaded protoc
+description: >
+  Restore or save ~/.cache/protoc so proto_generator can skip GitHub Releases
+  (SNOW-4350375). Pair a restore at the start of the job with a save at the
+  end when the restore missed. Save only a tree that contains a protoc binary.
+
+inputs:
+  mode:
+    description: '"restore" to restore the cache, "save" to save it'
+    required: true
+  key:
+    description: Cache key; include a hash of proto_generator/src/protoc_installer.rs
+    required: true
+
+outputs:
+  cache-hit:
+    description: "'true' when the restore found a matching key"
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore protoc download cache
+      if: inputs.mode == 'restore'
+      id: restore
+      continue-on-error: true
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/protoc
+        key: ${{ inputs.key }}
+
+    - name: Confirm protoc binary
+      if: inputs.mode == 'save'
+      id: have-protoc
+      shell: bash
+      run: |
+        if find "$HOME/.cache/protoc" \( -name protoc -o -name protoc.exe \) -type f | grep -q .; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "present=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Save protoc download cache
+      if: inputs.mode == 'save' && steps.have-protoc.outputs.present == 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/protoc
+        key: ${{ inputs.key }}

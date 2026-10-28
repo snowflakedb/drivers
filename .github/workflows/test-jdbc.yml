@@ -130,6 +130,14 @@ jobs:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
+      - name: Restore protoc download cache
+        id: protoc-cache
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: restore
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud }}
         env:
@@ -216,6 +224,14 @@ jobs:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
+      - name: Save protoc download cache
+        if: success() && steps.protoc-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: save
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: Save Rust cache
         if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
         timeout-minutes: 20
@@ -294,6 +310,14 @@ jobs:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
+      - name: Restore protoc download cache
+        id: protoc-cache
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: restore
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: JDBC bridge cache
         id: jdbc-bridge-cache
         uses: ./.github/actions/jdbc-bridge-cache
@@ -352,6 +376,14 @@ jobs:
         with:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
+      - name: Save protoc download cache
+        if: success() && steps.protoc-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: save
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Save Rust cache
         if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
@@ -423,6 +455,14 @@ jobs:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
+      - name: Restore protoc download cache
+        id: protoc-cache
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: restore
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: JDBC bridge cache
         id: jdbc-bridge-cache
         uses: ./.github/actions/jdbc-bridge-cache
@@ -475,6 +515,14 @@ jobs:
         with:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
+      - name: Save protoc download cache
+        if: success() && steps.protoc-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: save
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Save Rust cache
         if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
@@ -660,6 +708,14 @@ jobs:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
 
+      - name: Restore protoc download cache
+        id: protoc-cache
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: restore
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
@@ -727,6 +783,14 @@ jobs:
         with:
           path: jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen
           key: jdbc-protobuf-gen-${{ hashFiles('protobuf/**', 'proto_generator/Cargo.toml', 'proto_generator/Cargo.lock', 'proto_generator/src/**', 'Cargo.lock') }}
+
+      - name: Save protoc download cache
+        if: success() && steps.protoc-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: ./.github/actions/protoc-cache
+        with:
+          mode: save
+          key: protoc-${{ hashFiles('proto_generator/src/protoc_installer.rs') }}-${{ runner.os }}-${{ runner.arch }}
 
       - name: Save Rust cache
         if: always() && steps.jdbc-bridge-cache.outputs.cache-hit != 'true'
