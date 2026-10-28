@@ -4,13 +4,20 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <chrono>
+#include <cstring>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "HandleWrapper.hpp"
 #include "WideString.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
+
+// Test-only. A cold CI login can exhaust the driver's HTTP retries and come
+// back as SQLSTATE 28000. That is not an authorization failure.
+struct RetryTransientHttpLogin {};
 
 class Connection {
  public:
@@ -23,6 +30,22 @@ class Connection {
     return env;
   }
 
+  static bool is_transient_http_login(SQLHDBC dbc) {
+    SQLCHAR state[8] = {};
+    SQLCHAR message[512] = {};
+    SQLINTEGER native = 0;
+    SQLSMALLINT message_len = 0;
+    const SQLRETURN diag =
+        SQLGetDiagRec(SQL_HANDLE_DBC, dbc, 1, state, &native, message, sizeof(message), &message_len);
+    if (diag != SQL_SUCCESS && diag != SQL_SUCCESS_WITH_INFO) {
+      return false;
+    }
+    if (std::strncmp(reinterpret_cast<const char*>(state), "28000", 5) != 0) {
+      return false;
+    }
+    return std::strstr(reinterpret_cast<const char*>(message), "HTTP request failed after retries") != nullptr;
+  }
+
   static ConnectionHandleWrapper initDbc(EnvironmentHandleWrapper& env, const std::string& connection_string) {
     ConnectionHandleWrapper dbc = env.createConnectionHandle();
     SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
@@ -30,11 +53,41 @@ class Connection {
     REQUIRE_ODBC(ret, dbc);
     return dbc;
   }
+
+  // Same connect as initDbc, but a 28000 whose diagnostic is "HTTP request
+  // failed after retries" is tried again. Any other 28000 fails immediately.
+  static ConnectionHandleWrapper initDbcRetryTransientHttp(EnvironmentHandleWrapper& env,
+                                                           const std::string& connection_string) {
+    constexpr int kMaxAttempts = 3;
+    ConnectionHandleWrapper dbc = env.createConnectionHandle();
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+      if (attempt > 0) {
+        // SNOW-4204470: fixed backoff before retrying a transient HTTP login
+        // failure; the delay itself is not under test.
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        dbc = env.createConnectionHandle();
+      }
+      const SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL,
+                                             0, NULL, SQL_DRIVER_NOPROMPT);
+      if (SQL_SUCCEEDED(ret)) {
+        return dbc;
+      }
+      if (attempt + 1 == kMaxAttempts || !is_transient_http_login(dbc.getHandle())) {
+        REQUIRE_ODBC(ret, dbc);
+      }
+    }
+    return dbc;
+  }
   // Constructor that initializes the connection string
   explicit Connection(std::string connection_string)
       : connection_string(std::move(connection_string)),
         env{initEnv()},
         dbc{initDbc(this->env, this->connection_string)} {}
+
+  Connection(std::string connection_string, RetryTransientHttpLogin)
+      : connection_string(std::move(connection_string)),
+        env{initEnv()},
+        dbc{initDbcRetryTransientHttp(this->env, this->connection_string)} {}
 
   Connection() : Connection(get_connection_string()) {}
   ~Connection() noexcept {

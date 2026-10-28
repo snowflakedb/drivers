@@ -61,10 +61,12 @@ TEST_CASE("Should connect and select with CRL enabled", "[e2e][tls]") {
   auto connection_string = get_connection_string();
   // And CRL is enabled
   connection_string += "CRL_MODE=ENABLED;";
+  // SNOW-4204470: macos-arm CI sometimes exhausts login HTTP retries and
+  // reports that as 28000. Retry only that diagnostic. CRL stays enabled.
 
   {
     // When Query "SELECT 1" is executed
-    Connection conn(connection_string);
+    Connection conn(connection_string, RetryTransientHttpLogin{});
     auto stmt = conn.execute_fetch("SELECT 1");
 
     // Then the request attempt should be successful
