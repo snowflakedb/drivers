@@ -242,11 +242,38 @@ jobs:
             -Arch ${{ matrix.arch }} `
             -BuildConfig ${{ matrix.config }}
 
+      - name: Build MSI upgrade fixture
+        shell: pwsh
+        run: >
+          .\odbc\installer\win\package.ps1
+          -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}"
+          -Arch ${{ matrix.arch }}
+          -BuildConfig ${{ matrix.config }}
+          -Version 0.0.1
+          -OutputDir build\upgrade-fixture
+
+      - name: Verify MSI driver-name lifecycle
+        shell: pwsh
+        run: |
+          $msi = @(Get-Item build\snowflake-odbc-*.msi)
+          $old = @(Get-Item build\upgrade-fixture\snowflake-odbc-*.msi)
+          if ($msi.Count -ne 1) { throw "expected one MSI in build\, found $($msi.Count)" }
+          if ($old.Count -ne 1) { throw "expected one upgrade fixture, found $($old.Count)" }
+          .\scripts\odbc\Test-OdbcMsiDriverName.ps1 `
+            -MsiPath $msi[0].FullName `
+            -UpgradeMsiPath $old[0].FullName `
+            -Arch ${{ matrix.arch }} `
+            -LogDir build\msi-driver-name-logs
+
       - name: Upload MSI
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-${{ matrix.config }}-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.msi
+          path: |
+            build/snowflake-odbc-*.msi
+            build/msi-driver-name-logs/
+          if-no-files-found: warn
 
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image

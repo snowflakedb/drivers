@@ -38,17 +38,42 @@
 		<!-- Driver name selection                                             -->
 		<!-- ================================================================ -->
 		<!--
-		    DRIVER_NAME is the name used to register the driver under
-		    SOFTWARE\ODBC\ODBCINST.INI. Default to the historical name so a
-		    quiet install (msiexec /quiet) without an explicit
-		    DRIVER_NAME=... command-line property produces the same registry
-		    layout this MSI has always produced. The DriverNameDlg below
-		    lets interactive installs choose between the two preset names or
-		    a custom value via a combo box.
+		    DRIVER_NAME is the name registered under
+		    SOFTWARE\ODBC\ODBCINST.INI. It has no Value: AppSearch reads the
+		    previously saved name into SAVED_DRIVER_NAME, and the
+		    SetProperty actions below choose DRIVER_NAME. Maintenance
+		    (repair, modify, uninstall, and the old product's removal during
+		    an upgrade) uses the saved name. A fresh install or the new
+		    product in an upgrade uses the command line or the driver-name
+		    dialog when one was given, then the saved name, then
+		    "Snowflake ODBC". A new name is a fresh install or an upgrade
+		    that passes DRIVER_NAME. A name containing "#" is rejected: a
+		    registry search returns an extra "#" when the stored value
+		    begins with that character.
 		-->
-		<Property Id="DRIVER_NAME" Value="Snowflake ODBC" Secure="yes" />
+		<Property Id="DRIVER_NAME" Secure="yes" />
+		<Property Id="SAVED_DRIVER_NAME">
+			<RegistrySearch Id="SavedDriverNameSearch"
+				Root="HKLM"
+				Key="Software\Snowflake\ODBCDriver\arm64"
+				Name="DriverName"
+				Type="raw" />
+		</Property>
 		<Property Id="DRIVER_NAME_CHOICE" Value="Snowflake ODBC" Secure="yes" />
 		<Property Id="DRIVER_NAME_CUSTOM" Value="Snowflake ODBC" Secure="yes" />
+		<SetProperty Id="DRIVER_NAME" Action="SetDriverNameFromSavedMaintenance" Value="[SAVED_DRIVER_NAME]"
+			After="AppSearch" Condition="Installed AND SAVED_DRIVER_NAME" />
+		<SetProperty Id="DRIVER_NAME" Action="SetDriverNameFromSaved" Value="[SAVED_DRIVER_NAME]"
+			After="SetDriverNameFromSavedMaintenance" Condition="NOT Installed AND NOT DRIVER_NAME AND SAVED_DRIVER_NAME" />
+		<SetProperty Id="DRIVER_NAME" Action="SetDriverNameDefault" Value="Snowflake ODBC"
+			After="SetDriverNameFromSaved" Condition="NOT DRIVER_NAME" />
+		<SetProperty Id="DRIVER_NAME_CHOICE" Action="PresetDriverNameChoice" Value="[DRIVER_NAME]" Sequence="ui"
+			After="SetDriverNameDefault" Condition='DRIVER_NAME = "Snowflake ODBC" OR DRIVER_NAME = "SnowflakeDSIIDriver"' />
+		<SetProperty Id="DRIVER_NAME_CHOICE" Action="PresetDriverNameChoiceCustom" Value="CUSTOM" Sequence="ui"
+			After="PresetDriverNameChoice" Condition='DRIVER_NAME &lt;&gt; "Snowflake ODBC" AND DRIVER_NAME &lt;&gt; "SnowflakeDSIIDriver"' />
+		<SetProperty Id="DRIVER_NAME_CUSTOM" Action="PresetDriverNameCustom" Value="[DRIVER_NAME]" Sequence="ui"
+			After="PresetDriverNameChoiceCustom" Condition='DRIVER_NAME_CHOICE = "CUSTOM"' />
+		<Launch Condition='NOT (DRIVER_NAME &gt;&lt; "#")' Message="The ODBC driver name cannot contain a # character." />
 
 		<UI>
 			<Dialog Id="DriverNameDlg" Width="370" Height="270" Title="[ProductName] Setup">
@@ -73,12 +98,16 @@
 				<Control Id="CustomEdit" Type="Edit" X="20" Y="140" Width="320" Height="18" Property="DRIVER_NAME_CUSTOM"
 					ShowCondition='DRIVER_NAME_CHOICE = "CUSTOM"'
 					HideCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM"' />
+				<Control Id="HashWarning" Type="Text" X="20" Y="165" Width="320" Height="28" NoPrefix="yes"
+					Text="The name cannot contain a # character."
+					ShowCondition='DRIVER_NAME_CHOICE = "CUSTOM" AND DRIVER_NAME_CUSTOM &gt;&lt; "#"'
+					HideCondition='NOT (DRIVER_NAME_CHOICE = "CUSTOM" AND DRIVER_NAME_CUSTOM &gt;&lt; "#")' />
 
 				<Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
-				<!-- Next is disabled when the user picked "Other..." but left the custom name empty. -->
+				<!-- Next is disabled when the custom name is empty or contains "#". -->
 				<Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)"
-					DisableCondition='DRIVER_NAME_CHOICE = "CUSTOM" AND (NOT DRIVER_NAME_CUSTOM OR DRIVER_NAME_CUSTOM = "")'
-					EnableCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM" OR (DRIVER_NAME_CUSTOM AND DRIVER_NAME_CUSTOM &lt;&gt; "")' />
+					DisableCondition='DRIVER_NAME_CHOICE = "CUSTOM" AND (NOT DRIVER_NAME_CUSTOM OR DRIVER_NAME_CUSTOM = "" OR DRIVER_NAME_CUSTOM &gt;&lt; "#")'
+					EnableCondition='DRIVER_NAME_CHOICE &lt;&gt; "CUSTOM" OR (DRIVER_NAME_CUSTOM AND DRIVER_NAME_CUSTOM &lt;&gt; "" AND NOT (DRIVER_NAME_CUSTOM &gt;&lt; "#"))' />
 				<Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
 					<Publish Event="SpawnDialog" Value="CancelDlg" />
 				</Control>
@@ -186,13 +215,12 @@
 		<!-- ODBC driver registration                                          -->
 		<!-- ================================================================ -->
 		<!--
-		    [DRIVER_NAME] is substituted by Windows Installer from the
-		    DRIVER_NAME property at install time (the property is captured
-		    via DriverNameDlg above, or supplied on the msiexec command
-		    line, and defaults to "Snowflake ODBC"). Both the
-		    "ODBC Drivers" index entry and the per-driver subkey share the
-		    same value so SQLDrivers() lists the driver under the chosen
-		    name and matches the subkey that follows.
+		    Uninstall formats [DRIVER_NAME] from the saved DriverName
+		    value. AppSearch reads that value into SAVED_DRIVER_NAME
+		    before these ODBCINST.INI keys are removed. The "ODBC Drivers"
+		    index entry and the per-driver subkey use the same name, so
+		    SQLDrivers() lists the driver under the chosen name and matches
+		    the subkey that follows.
 		-->
 		<Component Id="RegistryEntries" Directory="TARGETDIR" Guid="BC3B84E0-0AE0-47C5-ADC2-7B3D6BE62D7F">
 			<RegistryKey Root="HKLM"
@@ -213,6 +241,9 @@
 				<RegistryValue Type="string" Name="SQLLevel" Value="1" />
 				<RegistryValue Type="string" Name="FileUsage" Value="0" />
 				<RegistryValue Type="string" Name="CPTimeout" Value="60" />
+			</RegistryKey>
+			<RegistryKey Root="HKLM" Key="Software\Snowflake\ODBCDriver\arm64">
+				<RegistryValue Type="string" Name="DriverName" Value="[DRIVER_NAME]" />
 			</RegistryKey>
 		</Component>
 
