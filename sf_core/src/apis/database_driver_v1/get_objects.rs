@@ -25,6 +25,7 @@ use arrow::array::{
 };
 use arrow::buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
+use futures::{StreamExt, TryStreamExt};
 use snafu::{OptionExt, ResultExt};
 use tokio::sync::Mutex;
 
@@ -44,9 +45,11 @@ pub const DEPTH_CATALOGS: i32 = 1;
 pub const DEPTH_DB_SCHEMAS: i32 = 2;
 pub const DEPTH_TABLES: i32 = 3;
 pub const DEPTH_COLUMNS: i32 = 4; // deferred
-/// Most concurrent metadata SHOW requests per GetObjects level. Beyond this,
-/// a broader SHOW avoids excessive round trips.
-const MAX_METADATA_SCOPES: usize = 8;
+/// Live GetObjects(columns), before exact-table pushdown (2026-10-28):
+/// at 16 matching schemas, four in-flight SHOWs had a 13.88s median vs
+/// 18.84s sequential, 15.00s unbounded, and 35.50s for IN DATABASE.
+/// Bound requests, not the number of matched scopes.
+const MAX_CONCURRENT_METADATA_SHOWS: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Arrow field-name constants (public — wrapper flatten uses them to avoid drift)
@@ -357,18 +360,13 @@ async fn fetch_schemas(
     build_schemas_batch(schemas)
 }
 
-/// Scope schema discovery by resolved databases when affordable; otherwise
-/// retain the existing account-wide SHOW and client-side LIKE filtering.
+/// Scope schema discovery to every resolved database, not unrelated databases.
 fn schema_lookup_scopes(
     catalog_filter: Option<&str>,
     resolved_catalogs: Option<&[String]>,
 ) -> Vec<String> {
     if let Some(catalogs) = resolved_catalogs {
-        return if catalogs.len() <= MAX_METADATA_SCOPES {
-            catalogs.iter().map(|cat| database_scope(cat)).collect()
-        } else {
-            vec!["IN ACCOUNT".to_string()]
-        };
+        return catalogs.iter().map(|cat| database_scope(cat)).collect();
     }
     match catalog_filter
         .and_then(like_pattern::is_exact)
@@ -428,20 +426,49 @@ fn schema_scope(cat: &str, sch: &str) -> String {
     format!("IN SCHEMA \"{}\".\"{}\"", escape_dq(cat), escape_dq(sch))
 }
 
-/// Prefer one SHOW per matching schema, then one per matching database. No
-/// matching schemas means no deeper SHOW, even for an account-wide request.
-fn scopes_for_schemas(schemas: &BTreeMap<String, Vec<String>>) -> Vec<String> {
-    let count: usize = schemas.values().map(Vec::len).sum();
-    if count <= MAX_METADATA_SCOPES {
-        return schemas
-            .iter()
-            .flat_map(|(cat, names)| names.iter().map(move |sch| schema_scope(cat, sch)))
-            .collect();
+fn table_scope(cat: &str, sch: &str, tbl: &str) -> String {
+    format!(
+        "IN TABLE \"{}\".\"{}\".\"{}\"",
+        escape_dq(cat),
+        escape_dq(sch),
+        escape_dq(tbl)
+    )
+}
+
+/// Select the narrowest SHOW scope when catalog and schema names are exact.
+fn scope_for_exact_names(
+    catalog: Option<&str>,
+    schema: Option<&str>,
+    table: Option<&str>,
+) -> String {
+    match (
+        catalog.filter(|name| !name.is_empty()),
+        schema.filter(|name| !name.is_empty()),
+        table,
+    ) {
+        (Some(cat), Some(sch), Some(tbl)) => table_scope(cat, sch, tbl),
+        (Some(cat), Some(sch), _) => schema_scope(cat, sch),
+        (Some(cat), _, _) => database_scope(cat),
+        _ => "IN ACCOUNT".to_string(),
     }
-    if schemas.len() <= MAX_METADATA_SCOPES {
-        return schemas.keys().map(|cat| database_scope(cat)).collect();
-    }
-    vec!["IN ACCOUNT".to_string()]
+}
+
+/// Query only matching schemas; a database-wide SHOW would scan schemas the
+/// pattern excluded. An exact table can narrow each resolved SHOW COLUMNS.
+/// No matching schemas means no deeper SHOW.
+fn scopes_for_schemas(
+    schemas: &BTreeMap<String, Vec<String>>,
+    exact_table: Option<&str>,
+) -> Vec<String> {
+    schemas
+        .iter()
+        .flat_map(|(cat, names)| {
+            names.iter().map(move |sch| match exact_table {
+                Some(tbl) => table_scope(cat, sch, tbl),
+                None => schema_scope(cat, sch),
+            })
+        })
+        .collect()
 }
 
 async fn object_show_scopes(
@@ -459,24 +486,13 @@ async fn object_show_scopes(
         let schemas =
             fetch_schema_names(conn_ptr, catalog_filter, schema_filter, catalogs.as_deref())
                 .await?;
-        return Ok(scopes_for_schemas(&schemas));
+        return Ok(scopes_for_schemas(&schemas, exact_table));
     }
-    let scope = match (
-        exact_catalog.as_deref().filter(|s| !s.is_empty()),
-        exact_schema.as_deref().filter(|s| !s.is_empty()),
+    Ok(vec![scope_for_exact_names(
+        exact_catalog.as_deref(),
+        exact_schema.as_deref(),
         exact_table,
-    ) {
-        (Some(cat), Some(sch), Some(tbl)) => format!(
-            "IN TABLE \"{}\".\"{}\".\"{}\"",
-            escape_dq(cat),
-            escape_dq(sch),
-            escape_dq(tbl)
-        ),
-        (Some(cat), Some(sch), _) => schema_scope(cat, sch),
-        (Some(cat), _, _) => database_scope(cat),
-        _ => "IN ACCOUNT".to_string(),
-    };
-    Ok(vec![scope])
+    )])
 }
 
 // ---------------------------------------------------------------------------
@@ -610,20 +626,23 @@ fn format_show_sql(show_cmd: &str, like_clause: &str, scope: &str) -> String {
         format!("{show_cmd} {like_clause} {scope}")
     }
 }
-/// Join bounded SHOW requests concurrently. `try_join_all` preserves scope
-/// order, so each table's columns retain their original SHOW ordinal order.
-/// `execute_show` applies the same not-found/error handling to every scope.
+/// `buffered` limits in-flight requests while preserving scope order (including
+/// each table's column ordinals). `execute_show` skips not-found scopes; other
+/// errors still fail the whole GetObjects call.
 async fn execute_scoped_show(
     conn_ptr: &Arc<Mutex<Connection>>,
     show_cmd: &str,
     like_clause: &str,
     scopes: &[String],
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
-    let results = futures::future::try_join_all(scopes.iter().map(|scope| async move {
-        let sql = format_show_sql(show_cmd, like_clause, scope);
-        execute_show(conn_ptr, &sql).await
-    }))
-    .await?;
+    let results: Vec<_> = futures::stream::iter(0..scopes.len())
+        .map(|index| {
+            let sql = format_show_sql(show_cmd, like_clause, &scopes[index]);
+            async move { execute_show(conn_ptr, &sql).await }
+        })
+        .buffered(MAX_CONCURRENT_METADATA_SHOWS)
+        .try_collect()
+        .await?;
     Ok(results.into_iter().flatten().collect())
 }
 
@@ -1586,13 +1605,46 @@ mod tests {
     }
 
     #[test]
+    fn exact_names_select_the_narrowest_show_scope() {
+        assert_eq!(scope_for_exact_names(None, None, None), "IN ACCOUNT");
+        assert_eq!(
+            scope_for_exact_names(Some("DB"), None, None),
+            "IN DATABASE \"DB\""
+        );
+        assert_eq!(
+            scope_for_exact_names(Some("DB"), Some("SCH"), None),
+            "IN SCHEMA \"DB\".\"SCH\""
+        );
+        assert_eq!(
+            scope_for_exact_names(Some("D\"B"), Some("S\"CH"), Some("T\"BL")),
+            "IN TABLE \"D\"\"B\".\"S\"\"CH\".\"T\"\"BL\""
+        );
+        assert_eq!(
+            scope_for_exact_names(Some("DB"), None, Some("T")),
+            "IN DATABASE \"DB\""
+        );
+        assert_eq!(
+            scope_for_exact_names(None, Some("SCH"), Some("T")),
+            "IN ACCOUNT"
+        );
+        assert_eq!(
+            scope_for_exact_names(Some(""), Some("SCH"), None),
+            "IN ACCOUNT"
+        );
+    }
+
+    #[test]
     fn wildcard_names_resolve_to_schema_scoped_show_without_changing_matches() {
-        // `_` is a LIKE wildcard, not an exact identifier. Discovery keeps
-        // the same client-side filtering as an account-wide SHOW.
+        // `_` matches the X in ADBCXTESTING; both matching schemas need
+        // separate SHOW scopes, while OTHER.PUBLIC remains excluded.
         let rows = vec![
             vec![
                 ("database_name".to_string(), "ADBC_TESTING".to_string()),
                 ("name".to_string(), "ADBC_TESTING".to_string()),
+            ],
+            vec![
+                ("database_name".to_string(), "ADBCXTESTING".to_string()),
+                ("name".to_string(), "ADBCXTESTING".to_string()),
             ],
             vec![
                 ("database_name".to_string(), "OTHER".to_string()),
@@ -1603,72 +1655,98 @@ mod tests {
         let selected = schema_names_from_rows(&rows, Some("ADBC_TESTING"), Some("ADBC_TESTING"));
         assert_eq!(
             selected,
-            schema_names_from_rows(&rows[..1], Some("ADBC_TESTING"), Some("ADBC_TESTING"))
+            BTreeMap::from([
+                ("ADBC_TESTING".to_string(), vec!["ADBC_TESTING".to_string()]),
+                ("ADBCXTESTING".to_string(), vec!["ADBCXTESTING".to_string()]),
+            ])
+        );
+        let scopes = scopes_for_schemas(&selected, None);
+        assert_eq!(
+            scopes,
+            vec![
+                "IN SCHEMA \"ADBCXTESTING\".\"ADBCXTESTING\"",
+                "IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\"",
+            ]
         );
         assert_eq!(
-            scopes_for_schemas(&selected),
-            vec!["IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""]
+            format_show_sql("SHOW COLUMNS", "", &scopes[0]),
+            "SHOW COLUMNS IN SCHEMA \"ADBCXTESTING\".\"ADBCXTESTING\""
         );
         assert_eq!(
-            format_show_sql("SHOW COLUMNS", "", &scopes_for_schemas(&selected)[0]),
-            "SHOW COLUMNS IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""
-        );
-        assert_eq!(
-            format_show_sql(
-                "SHOW OBJECTS",
-                "LIKE 'T%'",
-                &scopes_for_schemas(&selected)[0]
-            ),
+            format_show_sql("SHOW OBJECTS", "LIKE 'T%'", &scopes[1]),
             "SHOW OBJECTS LIKE 'T%' IN SCHEMA \"ADBC_TESTING\".\"ADBC_TESTING\""
         );
     }
 
     #[test]
-    fn up_to_eight_schemas_keep_stable_scope_order() {
+    fn exact_table_in_resolved_schema_uses_table_scope_for_columns() {
+        let schemas =
+            BTreeMap::from([("ADBC_TESTING".to_string(), vec!["ADBCXTESTING".to_string()])]);
+        assert_eq!(
+            scopes_for_schemas(&schemas, Some("T\"BL")),
+            vec!["IN TABLE \"ADBC_TESTING\".\"ADBCXTESTING\".\"T\"\"BL\""]
+        );
+        assert_eq!(
+            scopes_for_schemas(&schemas, None),
+            vec!["IN SCHEMA \"ADBC_TESTING\".\"ADBCXTESTING\""]
+        );
+    }
+
+    #[test]
+    fn multiple_schemas_keep_stable_scope_order() {
         let schemas = BTreeMap::from([
             ("Z_DB".to_string(), vec!["B".to_string(), "C".to_string()]),
             (
                 "A_DB".to_string(),
-                (0..MAX_METADATA_SCOPES - 2)
-                    .map(|n| format!("S{n}"))
-                    .collect(),
+                (0..6).map(|n| format!("S{n}")).collect(),
             ),
         ]);
-        let scopes = scopes_for_schemas(&schemas);
-        assert_eq!(scopes.len(), MAX_METADATA_SCOPES);
+        let scopes = scopes_for_schemas(&schemas, None);
+        assert_eq!(scopes.len(), 8);
         assert_eq!(scopes[0], "IN SCHEMA \"A_DB\".\"S0\"");
-        assert_eq!(scopes[MAX_METADATA_SCOPES - 1], "IN SCHEMA \"Z_DB\".\"C\"");
+        assert_eq!(scopes[7], "IN SCHEMA \"Z_DB\".\"C\"");
     }
 
     #[test]
-    fn many_schemas_fall_back_to_database_scope() {
+    fn many_schemas_stay_scoped_instead_of_scanning_database() {
         let schemas = BTreeMap::from([(
             "MY_DB".to_string(),
-            (0..=MAX_METADATA_SCOPES)
-                .map(|n| format!("SCHEMA_{n}"))
-                .collect(),
+            (0..16).map(|n| format!("SCHEMA_{n:02}")).collect(),
         )]);
-        assert_eq!(scopes_for_schemas(&schemas), vec!["IN DATABASE \"MY_DB\""]);
+        assert_eq!(
+            scopes_for_schemas(&schemas, None),
+            (0..16)
+                .map(|n| format!("IN SCHEMA \"MY_DB\".\"SCHEMA_{n:02}\""))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
-    fn many_databases_fall_back_to_account_scope() {
-        let schemas = (0..=MAX_METADATA_SCOPES)
-            .map(|n| (format!("DB_{n}"), vec!["SCHEMA".to_string()]))
+    fn many_databases_stay_scoped_instead_of_scanning_account() {
+        let catalogs = (0..12).map(|n| format!("DB_{n:02}")).collect::<Vec<_>>();
+        let schemas = catalogs
+            .iter()
+            .map(|cat| (cat.clone(), vec!["SCHEMA".to_string()]))
             .collect();
-        assert_eq!(scopes_for_schemas(&schemas), vec!["IN ACCOUNT"]);
-        let catalogs = (0..=MAX_METADATA_SCOPES)
-            .map(|n| format!("DB_{n}"))
-            .collect::<Vec<_>>();
+        assert_eq!(
+            scopes_for_schemas(&schemas, None),
+            catalogs
+                .iter()
+                .map(|cat| format!("IN SCHEMA \"{cat}\".\"SCHEMA\""))
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             schema_lookup_scopes(Some("DB_%"), Some(&catalogs)),
-            vec!["IN ACCOUNT"]
+            catalogs
+                .iter()
+                .map(|cat| format!("IN DATABASE \"{cat}\""))
+                .collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn no_resolved_scopes_issue_no_deeper_show() {
-        assert!(scopes_for_schemas(&BTreeMap::new()).is_empty());
+        assert!(scopes_for_schemas(&BTreeMap::new(), None).is_empty());
         assert!(schema_lookup_scopes(Some("NO_MATCH%"), Some(&[])).is_empty());
     }
 
@@ -1723,6 +1801,49 @@ mod tests {
             map_execute_show_error(err, "SHOW TABLES", false)
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_show_scope_keeps_other_rows_but_unrelated_errors_fail() {
+        use snafu::IntoError;
+
+        let error = |sql_state: &str| {
+            QuerySnafu.into_error(RestError::QueryFailed {
+                message: "object does not exist or not authorized".to_string(),
+                code: Some(2003),
+                sql_state: Some(sql_state.to_string()),
+                query_context: None,
+                ids: QueryIds::default(),
+                location: snafu::Location::new("test", 1, 1),
+            })
+        };
+        let found = vec![vec![("name".to_string(), "SURVIVING_TABLE".to_string())]];
+        let missing = map_execute_show_error(
+            error("42S02"),
+            "SHOW COLUMNS IN SCHEMA \"DB\".\"DROPPED\"",
+            false,
+        );
+        let rows = futures::future::try_join_all([
+            std::future::ready(missing),
+            std::future::ready(Ok(found.clone())),
+        ])
+        .await
+        .unwrap();
+        assert_eq!(rows.into_iter().flatten().collect::<Vec<_>>(), found);
+
+        let other = map_execute_show_error(
+            error("42501"),
+            "SHOW COLUMNS IN SCHEMA \"DB\".\"NOT_PERMITTED\"",
+            false,
+        );
+        assert!(
+            futures::future::try_join_all([
+                std::future::ready(Ok(found)),
+                std::future::ready(other),
+            ])
+            .await
+            .is_err()
         );
     }
 
