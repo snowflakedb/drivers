@@ -565,7 +565,7 @@ impl DatabaseDriverV1 {
                     .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str())
                     .is_some())
         {
-            conn_arc.lock().await.statement_prefetch_by_query_id.insert(
+            conn_arc.lock().await.statement_prefetch_by_query_id.put(
                 descriptor.query_id.clone(),
                 reader_ctx.prefetch_config.clone(),
             );
