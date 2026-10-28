@@ -541,7 +541,7 @@ impl DatabaseDriverV1 {
         if !descriptor.query_id.is_empty()
             && PrefetchConfig::has_statement_overrides(&stmt.settings)
         {
-            conn_arc.lock().await.statement_prefetch_by_query_id.insert(
+            conn_arc.lock().await.statement_prefetch_by_query_id.put(
                 descriptor.query_id.clone(),
                 reader_ctx.prefetch_config.clone(),
             );
