@@ -17,9 +17,10 @@ use super::result_set::{
 };
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, is_unregistered_param,
-    resolve_options, validate_statement_option_write,
+    normalize_prefetch_option_write, resolve_options, validate_statement_option_write,
 };
 use crate::apis::operation_ctx::{OperationCtx, run_opt, with_cleanup_opt};
+use crate::chunks::PrefetchConfig;
 use crate::config::ParamStore;
 use crate::config::param_registry::{self, param_names};
 use crate::config::settings::Setting;
@@ -128,6 +129,7 @@ impl DatabaseDriverV1 {
                 let (canonical, def) =
                     canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_statement_option_write(def)?;
+                let value = normalize_prefetch_option_write(def, value)?;
                 stmt.settings.insert(canonical, value);
                 Ok(())
             }
@@ -510,6 +512,13 @@ impl DatabaseDriverV1 {
         if let Some(multi) =
             multistatement::try_into_multi_result(&data, descriptor.clone(), Some(request_id))
         {
+            if let ExecuteQueryResult::Multi { query_ids, .. } = &multi {
+                conn_arc
+                    .lock()
+                    .await
+                    .record_statement_prefetch(query_ids.iter().map(String::as_str), &stmt.settings)
+                    .await;
+            }
             return Ok(multi);
         }
 
@@ -525,7 +534,18 @@ impl DatabaseDriverV1 {
                 cwd,
             )
             .await?;
-        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        let mut reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        reader_ctx
+            .prefetch_config
+            .apply_statement_params(&stmt.settings);
+        if !descriptor.query_id.is_empty()
+            && PrefetchConfig::has_statement_overrides(&stmt.settings)
+        {
+            conn_arc.lock().await.statement_prefetch_by_query_id.insert(
+                descriptor.query_id.clone(),
+                reader_ctx.prefetch_config.clone(),
+            );
+        }
         Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, Some(request_id)))
     }
 
@@ -774,13 +794,11 @@ impl DatabaseDriverV1 {
                 }
             };
 
+            update_caches(&conn_arc, &query, &result.response).await;
+
             {
                 let mut conn = stmt.conn.lock().await;
-                conn.query_context_cache
-                    .update_query_context_cache(
-                        result.response.data.query_context.as_ref(),
-                        result.response.data.parameters.as_ref(),
-                    )
+                conn.record_statement_prefetch(std::iter::once(query_id.as_str()), &stmt.settings)
                     .await;
             }
 
@@ -825,6 +843,12 @@ impl DatabaseDriverV1 {
             if let Some(multi) =
                 multistatement::try_into_multi_result(&data, descriptor.clone(), None)
             {
+                if let ExecuteQueryResult::Multi { query_ids, .. } = &multi {
+                    conn_ptr
+                        .lock()
+                        .await
+                        .inherit_statement_prefetch(&query_id, query_ids);
+                }
                 return Ok(multi);
             }
 
@@ -858,7 +882,16 @@ impl DatabaseDriverV1 {
             let rowset_data = self
                 .extract_rowset_data(operation_ctx, &conn_ptr, data, refresh_sql, false, None, None, None)
                 .await?;
-            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            let mut reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            if let Some(config) = conn_ptr
+                .lock()
+                .await
+                .statement_prefetch_by_query_id
+                .get(&query_id)
+                .cloned()
+            {
+                reader_ctx.prefetch_config = config;
+            }
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
         }
         .instrument(crate::snowflake_op_span!(
@@ -1264,6 +1297,8 @@ mod tests {
     use super::*;
     use crate::rest::snowflake::query_request;
     use crate::rest::snowflake::query_response::Data;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn parse_bool_setting_accepts_native_bool_values() {
@@ -1314,6 +1349,20 @@ mod tests {
         .unwrap();
         ds.statement_release(sh).unwrap();
         ds.connection_release(ch).unwrap();
+    }
+
+    #[test]
+    fn prefetch_statement_options_never_become_query_parameters() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            param_names::CLIENT_PREFETCH_THREADS.as_str().to_owned(),
+            Setting::Int(8),
+        );
+        settings.insert(
+            param_names::CLIENT_RESULT_QUEUE_SIZE.as_str().to_owned(),
+            Setting::Int(16),
+        );
+        assert!(build_query_parameters(&settings).is_none());
     }
 
     #[test]
@@ -1428,7 +1477,7 @@ mod tests {
         let ch = ds.connection_new();
         let sh = ds.statement_new(ch).unwrap();
         let err = ds
-            .statement_set_option(sh, "client_prefetch_threads".into(), Setting::Int(8))
+            .statement_set_option(sh, "client_memory_limit".into(), Setting::Int(8))
             .await
             .unwrap_err();
         assert!(
@@ -1437,6 +1486,382 @@ mod tests {
         );
         ds.statement_release(sh).unwrap();
         ds.connection_release(ch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn statement_prefetch_options_are_canonicalized_and_validated_by_both_setters() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statement_set_option(
+            sh,
+            "client_prefetch_threads".into(),
+            Setting::String("6".into()),
+        )
+        .await
+        .unwrap();
+        ds.statement_set_options(
+            sh,
+            HashMap::from([(
+                "client_result_queue_size".into(),
+                Setting::String("12".into()),
+            )]),
+        )
+        .await
+        .unwrap();
+        let stmt_ptr = ds.statements.get_obj(sh).unwrap();
+        {
+            let stmt = stmt_ptr.lock().await;
+            assert_eq!(
+                stmt.settings
+                    .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+                Some(&Setting::Int(6)),
+            );
+            assert_eq!(
+                stmt.settings
+                    .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+                Some(&Setting::Int(12)),
+            );
+        }
+
+        for (key, max) in [
+            (
+                "client_prefetch_threads",
+                tokio::sync::Semaphore::MAX_PERMITS as i64,
+            ),
+            (
+                "client_result_queue_size",
+                (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64) as i64,
+            ),
+        ] {
+            for invalid in [
+                Setting::Int(0),
+                Setting::Int(-1),
+                Setting::Int(max + 1),
+                Setting::String("0".into()),
+                Setting::String("-1".into()),
+                Setting::String("1.5".into()),
+                Setting::String("9223372036854775808".into()),
+                Setting::Double(1.0),
+            ] {
+                assert!(
+                    ds.statement_set_option(sh, key.into(), invalid.clone())
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    ds.statement_set_options(sh, HashMap::from([(key.into(), invalid)]))
+                        .await
+                        .is_err()
+                );
+            }
+        }
+        let stmt = stmt_ptr.lock().await;
+        assert_eq!(
+            stmt.settings
+                .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+            Some(&Setting::Int(6)),
+        );
+        assert_eq!(
+            stmt.settings
+                .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+            Some(&Setting::Int(12)),
+        );
+        drop(stmt);
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
+    }
+
+    async fn statement_with_prefetch_overrides(
+        ds: &DatabaseDriverV1,
+        server: &MockServer,
+    ) -> (Handle, Handle) {
+        use crate::rest::snowflake::SessionTokens;
+
+        let ch = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(ch).unwrap();
+        {
+            let mut conn = conn_ptr.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.server_url = Some(server.uri());
+            conn.client_info =
+                Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+            *conn.tokens.write().await = Some(SessionTokens {
+                session_token: "test-session-token".into(),
+                master_token: "test-master-token".into(),
+                session_id: None,
+                session_expires_at: None,
+                master_expires_at: None,
+                master_validity: None,
+            });
+            conn.timeout_config.chunk_read_timeout = Some(std::time::Duration::from_secs(17));
+            conn.session_overrides
+                .insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(6));
+            conn.session_overrides
+                .insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(10));
+            let mut session = conn.session_parameters.write().await;
+            session.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+            session.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(512));
+        }
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statement_set_sql_query(sh, "SELECT 1".into())
+            .await
+            .unwrap();
+        ds.statement_set_options(
+            sh,
+            HashMap::from([
+                ("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8)),
+                ("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(16)),
+            ]),
+        )
+        .await
+        .unwrap();
+        (ch, sh)
+    }
+
+    fn prefetch_query_response(query_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "success": true,
+            "data": {
+                "queryId": query_id,
+                "queryResultFormat": "json",
+                "statementTypeId": 4096,
+                "rowtype": [{
+                    "name": "N", "type": "fixed", "nullable": false,
+                    "precision": 38, "scale": 0
+                }],
+                "rowset": [["1"]],
+                "total": 1,
+                "returned": 1
+            }
+        })
+    }
+
+    async fn change_live_prefetch_settings(ds: &DatabaseDriverV1, ch: Handle) {
+        let conn_ptr = ds.connections.get_obj(ch).unwrap();
+        let mut conn = conn_ptr.lock().await;
+        conn.timeout_config.chunk_read_timeout = Some(std::time::Duration::from_secs(23));
+        conn.session_overrides
+            .insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(2));
+        let mut session = conn.session_parameters.write().await;
+        session.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(2));
+        session.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(1024));
+    }
+
+    async fn assert_statement_prefetch_snapshot(ds: &DatabaseDriverV1, handle: Handle) {
+        let result_ptr = ds.results.get_obj(handle).unwrap();
+        let result = result_ptr.lock().await;
+        let config = &result.reader_ctx.prefetch_config;
+        assert_eq!(config.prefetch_threads, 8);
+        assert_eq!(config.result_queue_size, Some(16));
+        assert_eq!(config.memory_limit_mb, 512);
+        assert_eq!(
+            config.chunk_read_timeout,
+            Some(std::time::Duration::from_secs(17))
+        );
+    }
+
+    #[tokio::test]
+    async fn result_set_snapshots_statement_prefetch_over_session_settings() {
+        let server = MockServer::start().await;
+        let response = prefetch_query_response("prefetch-query");
+        Mock::given(method("POST"))
+            .and(path("/queries/v1/query-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/queries/prefetch-query/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .expect(4)
+            .mount(&server)
+            .await;
+
+        let ds = DatabaseDriverV1::new();
+        let (ch, sh) = statement_with_prefetch_overrides(&ds, &server).await;
+        let ExecuteQueryResult::Single { info, .. } = ds
+            .statement_execute_query(None, sh, None, None, None, None)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a single result");
+        };
+        assert_statement_prefetch_snapshot(&ds, info.handle).await;
+        ds.statement_release(sh).unwrap();
+        change_live_prefetch_settings(&ds, ch).await;
+        assert_statement_prefetch_snapshot(&ds, info.handle).await;
+        ds.result_set_release(info.handle).unwrap();
+
+        // Both query-ID APIs must retain the snapshot after the statement is
+        // released, including on repeated reads after live settings change.
+        for _ in 0..2 {
+            let ExecuteQueryResult::Single { info, .. } = ds
+                .connection_get_query_result(None, ch, "prefetch-query".into())
+                .await
+                .unwrap()
+            else {
+                panic!("expected a single result");
+            };
+            assert_statement_prefetch_snapshot(&ds, info.handle).await;
+            ds.result_set_release(info.handle).unwrap();
+            let info = ds
+                .create_result_set_from_sfqid(None, ch, "prefetch-query".into())
+                .await
+                .unwrap();
+            assert_statement_prefetch_snapshot(&ds, info.handle).await;
+            ds.result_set_release(info.handle).unwrap();
+        }
+        ds.connection_release(ch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_prefetch_snapshot_includes_submission_session_parameters() {
+        let server = MockServer::start().await;
+        let mut response = prefetch_query_response("async-prefetch");
+        response["data"]["parameters"] = serde_json::json!([
+            {"name": "CLIENT_PREFETCH_THREADS", "value": 11},
+            {"name": "CLIENT_MEMORY_LIMIT", "value": 768}
+        ]);
+        Mock::given(method("POST"))
+            .and(path("/queries/v1/query-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/queries/async-prefetch/result"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let ds = DatabaseDriverV1::new();
+        let (ch, sh) = statement_with_prefetch_overrides(&ds, &server).await;
+        {
+            let stmt_ptr = ds.statements.get_obj(sh).unwrap();
+            let mut stmt = stmt_ptr.lock().await;
+            stmt.settings = ParamStore::new();
+            stmt.settings
+                .insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(16));
+        }
+        let submitted = ds
+            .statement_execute_async(None, sh, None, None, None)
+            .await
+            .unwrap();
+        {
+            let conn_ptr = ds.connections.get_obj(ch).unwrap();
+            let mut conn = conn_ptr.lock().await;
+            let snapshot = conn
+                .statement_prefetch_by_query_id
+                .get(&submitted.query_id)
+                .unwrap();
+            assert_eq!(snapshot.prefetch_threads, 11);
+            assert_eq!(snapshot.memory_limit_mb, 768);
+            assert_eq!(snapshot.result_queue_size, Some(16));
+        }
+        ds.statement_release(sh).unwrap();
+        change_live_prefetch_settings(&ds, ch).await;
+        for _ in 0..2 {
+            let ExecuteQueryResult::Single { info, .. } = ds
+                .connection_get_query_result(None, ch, submitted.query_id.clone())
+                .await
+                .unwrap()
+            else {
+                panic!("expected a single result");
+            };
+            let result_ptr = ds.results.get_obj(info.handle).unwrap();
+            let result = result_ptr.lock().await;
+            let config = &result.reader_ctx.prefetch_config;
+            assert_eq!(config.prefetch_threads, 11);
+            assert_eq!(config.memory_limit_mb, 768);
+            assert_eq!(config.result_queue_size, Some(16));
+            drop(result);
+            ds.result_set_release(info.handle).unwrap();
+        }
+        ds.connection_release(ch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn multistatement_prefetch_snapshots_reach_child_readers() {
+        for async_execution in [false, true] {
+            let server = MockServer::start().await;
+            let response = serde_json::json!({
+                "success": true,
+                "data": {
+                    "queryId": "parent",
+                    "statementTypeId": 40960,
+                    "resultIds": "child-a,child-b",
+                    "resultTypes": "4096,4096"
+                }
+            });
+            Mock::given(method("POST"))
+                .and(path("/queries/v1/query-request"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+                .expect(1)
+                .mount(&server)
+                .await;
+            if async_execution {
+                Mock::given(method("GET"))
+                    .and(path("/queries/parent/result"))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+            }
+            for id in ["child-a", "child-b"] {
+                Mock::given(method("GET"))
+                    .and(path(format!("/queries/{id}/result")))
+                    .respond_with(
+                        ResponseTemplate::new(200).set_body_json(prefetch_query_response(id)),
+                    )
+                    .expect(2)
+                    .mount(&server)
+                    .await;
+            }
+            let ds = DatabaseDriverV1::new();
+            let (ch, sh) = statement_with_prefetch_overrides(&ds, &server).await;
+            ds.statement_set_sql_query(sh, "SELECT 1; SELECT 1".into())
+                .await
+                .unwrap();
+            let result = if async_execution {
+                let submitted = ds
+                    .statement_execute_async(None, sh, None, None, None)
+                    .await
+                    .unwrap();
+                assert_eq!(submitted.query_id, "parent");
+                change_live_prefetch_settings(&ds, ch).await;
+                ds.connection_get_query_result(None, ch, submitted.query_id)
+                    .await
+                    .unwrap()
+            } else {
+                let result = ds
+                    .statement_execute_query(None, sh, None, None, None, None)
+                    .await
+                    .unwrap();
+                change_live_prefetch_settings(&ds, ch).await;
+                result
+            };
+            ds.statement_release(sh).unwrap();
+            let ExecuteQueryResult::Multi { query_ids, .. } = result else {
+                panic!("expected a multi-statement result");
+            };
+            assert_eq!(query_ids, ["child-a", "child-b"]);
+            for id in query_ids {
+                let ExecuteQueryResult::Single { info, .. } = ds
+                    .connection_get_query_result(None, ch, id.clone())
+                    .await
+                    .unwrap()
+                else {
+                    panic!("expected a child result");
+                };
+                assert_statement_prefetch_snapshot(&ds, info.handle).await;
+                ds.result_set_release(info.handle).unwrap();
+                let info = ds.create_result_set_from_sfqid(None, ch, id).await.unwrap();
+                assert_statement_prefetch_snapshot(&ds, info.handle).await;
+                ds.result_set_release(info.handle).unwrap();
+            }
+            ds.connection_release(ch).unwrap();
+        }
     }
 
     #[test]

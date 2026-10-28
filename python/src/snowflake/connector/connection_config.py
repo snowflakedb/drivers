@@ -37,6 +37,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     """
 
     # -- Connection parameters --------------------------------------------------
+    client_result_queue_size: int | None = None
+    """Maximum number of decoded result batches handed to a reader but not yet read; a chunk with more batches is
+    delivered alone. Up to twice CLIENT_PREFETCH_THREADS further chunks may already be downloaded and decoded (bounded
+    by CLIENT_MEMORY_LIMIT). Client-only, never forwarded to GS.
+    """
+
     account: str | None = None
     """Snowflake account identifier. Required"""
 
@@ -461,7 +467,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Memory budget in MB for chunk prefetch buffer (0 = unlimited). Default: 1536"""
 
     client_prefetch_threads: int | None = None
-    """Number of concurrent chunk prefetch threads for result set downloading"""
+    """Number of concurrent chunk prefetch threads for result set downloading. A statement-level override applies only
+    to that statement's readers and is client-only, never forwarded to GS.
+    """
 
     client_session_keep_alive: bool | None = None
     """Keep the session alive with periodic heartbeat requests"""
@@ -522,6 +530,7 @@ class ConnectionConfig(ConnectionConfigMixin):
     _PYTHON_TO_RUST_NAME: ClassVar[dict[str, str]] = {
         "client_memory_limit": "CLIENT_MEMORY_LIMIT",
         "client_prefetch_threads": "CLIENT_PREFETCH_THREADS",
+        "client_result_queue_size": "CLIENT_RESULT_QUEUE_SIZE",
         "client_session_keep_alive": "CLIENT_SESSION_KEEP_ALIVE",
         "client_session_keep_alive_heartbeat_frequency": "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY",
         "passcode_in_password": "passcodeInPassword",
