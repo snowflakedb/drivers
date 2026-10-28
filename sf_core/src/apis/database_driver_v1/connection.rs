@@ -47,6 +47,8 @@ use crate::sensitive::SensitiveString;
 use crate::stage_binding::{AtomicStageState, StageState};
 use crate::tls::config::ProxyConfig;
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, Notify, OwnedMutexGuard, RwLock as AsyncRwLock};
@@ -55,6 +57,9 @@ use tracing::Instrument;
 /// Server session-parameter key for the JDBC PUT/GET disable switch. Read by
 /// [`Connection::enable_put_get`]; upstream uppercases session-parameter names.
 const JDBC_ENABLE_PUT_GET_SERVER_KEY: &str = "JDBC_ENABLE_PUT_GET";
+
+/// Query IDs whose statement prefetch overrides are remembered per connection.
+const STATEMENT_PREFETCH_SNAPSHOTS: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 
 impl DatabaseDriverV1 {
     /// Set autocommit on the given connection.
@@ -1302,10 +1307,12 @@ pub struct Connection {
     pub query_context_cache: QueryContextCacheAdapter,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
-    /// Prefetch snapshots for async query IDs and multi-statement children.
-    /// Retained until this connection is released so repeated and delayed
-    /// query-ID reads retain statement overrides.
-    pub(crate) statement_prefetch_by_query_id: HashMap<String, PrefetchConfig>,
+    /// Prefetch snapshots for query IDs produced with statement overrides, so
+    /// delayed and repeated query-ID reads keep them. Each snapshot also freezes
+    /// the memory limit, chunk read timeout, and chunk retry policy. Bounded to
+    /// the most recently used [`STATEMENT_PREFETCH_SNAPSHOTS`]; query IDs without
+    /// a retained snapshot use the connection's current settings.
+    pub(crate) statement_prefetch_by_query_id: LruCache<String, PrefetchConfig>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
     /// Where this connection is in its close lifecycle.
@@ -1408,7 +1415,11 @@ impl Connection {
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             query_context_cache: QueryContextCacheAdapter::new(),
             init_session_parameters: None,
-            statement_prefetch_by_query_id: HashMap::new(),
+            statement_prefetch_by_query_id: {
+                let mut snapshots = LruCache::unbounded();
+                snapshots.resize(STATEMENT_PREFETCH_SNAPSHOTS);
+                snapshots
+            },
             async_query_registry: AsyncQueryRegistry::new(),
             close_state: Arc::new(AtomicCloseState::new(CloseState::Open)),
             close_done: Arc::new(Notify::new()),
@@ -1442,13 +1453,7 @@ impl Connection {
         query_ids: impl IntoIterator<Item = &'a str>,
         settings: &ParamStore,
     ) {
-        if settings
-            .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str())
-            .is_none()
-            && settings
-                .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str())
-                .is_none()
-        {
+        if !PrefetchConfig::has_statement_overrides(settings) {
             return;
         }
         let mut config = self.prefetch_config().await;
@@ -1456,7 +1461,7 @@ impl Connection {
         for query_id in query_ids {
             if !query_id.is_empty() {
                 self.statement_prefetch_by_query_id
-                    .insert(query_id.to_owned(), config.clone());
+                    .put(query_id.to_owned(), config.clone());
             }
         }
     }
@@ -1469,7 +1474,7 @@ impl Connection {
         for child in children {
             if !child.is_empty() {
                 self.statement_prefetch_by_query_id
-                    .insert(child.clone(), config.clone());
+                    .put(child.clone(), config.clone());
             }
         }
     }
@@ -4139,11 +4144,7 @@ mod tests {
         conn.record_statement_prefetch(["parent"], &stmt).await;
         conn.record_statement_prefetch(["unrelated"], &ParamStore::new())
             .await;
-        assert!(
-            !conn
-                .statement_prefetch_by_query_id
-                .contains_key("unrelated")
-        );
+        assert!(!conn.statement_prefetch_by_query_id.contains("unrelated"));
 
         conn.session_parameters
             .write()
@@ -4158,6 +4159,28 @@ mod tests {
             assert_eq!(snapshot.chunk_read_timeout, Some(Duration::from_secs(17)));
         }
         assert_eq!(conn.statement_prefetch_by_query_id.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn statement_prefetch_snapshots_are_bounded_by_recent_use() {
+        let mut conn = Connection::new();
+        let mut stmt = ParamStore::new();
+        stmt.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8));
+        let cap = STATEMENT_PREFETCH_SNAPSHOTS.get();
+        conn.record_statement_prefetch(["first", "second"], &stmt)
+            .await;
+        let ids = (0..cap).map(|i| format!("q{i}")).collect::<Vec<_>>();
+        // Reading "first" keeps it; "second" is now the least recently used.
+        conn.record_statement_prefetch(ids[..cap - 2].iter().map(String::as_str), &stmt)
+            .await;
+        assert!(conn.statement_prefetch_by_query_id.get("first").is_some());
+        conn.record_statement_prefetch(ids[cap - 2..].iter().map(String::as_str), &stmt)
+            .await;
+
+        assert_eq!(conn.statement_prefetch_by_query_id.len(), cap);
+        assert!(!conn.statement_prefetch_by_query_id.contains("second"));
+        assert!(conn.statement_prefetch_by_query_id.contains("first"));
+        assert!(conn.statement_prefetch_by_query_id.contains(&ids[cap - 1]));
     }
 
     #[test]
