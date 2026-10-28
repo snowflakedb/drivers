@@ -3266,7 +3266,7 @@ fn catalog_num_prec_radix(
 fn catalog_type_is_session_sized(logical_type: &str) -> bool {
     matches!(
         logical_type.to_ascii_uppercase().as_str(),
-        "VARIANT" | "OBJECT" | "ARRAY" | "GEOGRAPHY" | "GEOMETRY"
+        "VARIANT" | "OBJECT" | "ARRAY" | "GEOGRAPHY" | "GEOMETRY" | "FILE"
     )
 }
 
@@ -5406,6 +5406,7 @@ mod procedure_columns_tests {
             "ARRAY",
             "GEOGRAPHY",
             "GEOMETRY",
+            "FILE",
             "INTERVAL",
         ] {
             assert!(
@@ -5491,6 +5492,7 @@ mod procedure_columns_tests {
             ("OBJECT", "STRUCT"),
             ("GEOGRAPHY", "GEOGRAPHY"),
             ("GEOMETRY", "GEOMETRY"),
+            ("FILE", "FILE"),
         ];
         for (logical, expected) in cases {
             assert_eq!(
@@ -5653,7 +5655,14 @@ mod procedure_columns_tests {
             catalog_char_octet_length("NOT_A_SNOWFLAKE_TYPE", &unmodelled, &ns),
             Some(400)
         );
-        for logical_type in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
+        for logical_type in [
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "GEOGRAPHY",
+            "GEOMETRY",
+            "FILE",
+        ] {
             assert!(
                 !catalog_uses_snowflake_text_byte_length(logical_type),
                 "{logical_type} must not use TEXT catalog byte-length rules"
@@ -5693,6 +5702,7 @@ mod procedure_columns_tests {
             "array",
             "geography",
             "geometry",
+            "file",
             "fixed",
             "date",
             "timestamp_ntz",
@@ -5715,7 +5725,14 @@ mod procedure_columns_tests {
     fn sqlcolumns_session_sized_types_equal_column_size_not_128m() {
         let ns = NumericSettings::default();
         const LEGACY_128M: i64 = 134_217_728;
-        for lt in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
+        for lt in [
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "GEOGRAPHY",
+            "GEOMETRY",
+            "FILE",
+        ] {
             let char_len = catalog_char_length_for_sqlcolumns(lt, Some(LEGACY_128M));
             let field = rehydrate_field(lt, None, None, char_len, Some(LEGACY_128M), true);
             let buf = catalog_buffer_length(lt, &field, &ns);
@@ -6150,7 +6167,14 @@ mod sqlcolumns_decode_tests {
 
     #[test]
     fn sqlcolumns_drops_show_columns_char_length_for_session_sized_types() {
-        for lt in ["VARIANT", "OBJECT", "ARRAY", "GEOGRAPHY", "GEOMETRY"] {
+        for lt in [
+            "VARIANT",
+            "OBJECT",
+            "ARRAY",
+            "GEOGRAPHY",
+            "GEOMETRY",
+            "FILE",
+        ] {
             assert_eq!(
                 catalog_char_length_for_sqlcolumns(lt, Some(134_217_728)),
                 None,
@@ -6165,7 +6189,7 @@ mod sqlcolumns_decode_tests {
 
     #[test]
     fn session_sized_classification_is_case_insensitive() {
-        for lt in ["geography", "Geometry", "VARIANT"] {
+        for lt in ["geography", "Geometry", "VARIANT", "file"] {
             assert!(catalog_type_is_session_sized(lt), "{lt}");
             assert_eq!(
                 catalog_char_length_for_sqlcolumns(lt, Some(134_217_728)),

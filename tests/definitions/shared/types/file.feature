@@ -31,8 +31,11 @@ Feature: FILE type support
   #                               Column metadata                               #
   # =========================================================================== #
 
-  # - ODBC reports FILE as SQL_VARCHAR via SQLDescribeCol. There is no dedicated
-  #   ODBC SQL type or Python type_code FILE on the result descriptor.
+  # - ODBC SQLDescribeCol reports SQL_VARCHAR. There is no ODBC SQL type for FILE.
+  #   SQLColAttribute(SQL_DESC_TYPE_NAME) reports FILE, which distinguishes a FILE
+  #   column from VARIANT. SQLDescribeCol stays SQL_VARCHAR when
+  #   ODBC_USE_CUSTOM_SQL_DATA_TYPES is enabled.
+  # - Python cursor.description[i].type_code reports FILE.
   # - Node returns file as "object"
   @python_e2e @odbc_not_needed @nodejs_e2e_not_needed
   Scenario: should report a FILE column with a dedicated type code
@@ -41,6 +44,58 @@ Feature: FILE type support
     Given Snowflake client is logged in
     When A FILE column is populated via TO_FILE and queried
     Then the column should report type code FILE
+
+  @odbc_e2e @python_not_needed
+  Scenario: should report FILE as the column type name
+    Given Snowflake client is logged in
+    When A FILE column is populated via TO_FILE and queried
+    Then SQLDescribeCol reports SQL_VARCHAR and SQL_DESC_TYPE_NAME reports FILE
+
+  @odbc_e2e @python_not_needed
+  Scenario Outline: should keep SQL_VARCHAR for FILE when ODBC_USE_CUSTOM_SQL_DATA_TYPES is <flag_state>
+    Given Snowflake client is logged in
+    And Session parameter ODBC_USE_CUSTOM_SQL_DATA_TYPES is <flag_state>
+    When A FILE column is populated via TO_FILE and queried
+    Then SQLDescribeCol reports SQL_VARCHAR and SQL_DESC_TYPE_NAME reports FILE
+
+    Examples:
+      | flag_state |
+      | FALSE      |
+      | TRUE       |
+
+  # =========================================================================== #
+  #                          ODBC value retrieval                               #
+  # =========================================================================== #
+
+  @odbc_e2e @python_not_needed
+  Scenario: should retrieve FILE data as SQL_C_WCHAR
+    Given Snowflake client is logged in
+    When A FILE column is populated via TO_FILE and queried
+    Then the FILE column should be returned as SQL_C_WCHAR with the expected JSON document
+
+  @odbc_e2e @python_not_needed
+  Scenario: should retrieve FILE data as SQL_C_BINARY
+    Given Snowflake client is logged in
+    When A FILE column is populated via TO_FILE and queried
+    Then the FILE column should be returned as SQL_C_BINARY with the expected JSON document
+
+  @odbc_e2e @python_not_needed
+  Scenario: should return SQL_NULL_DATA for NULL FILE as SQL_C_BINARY
+    Given Snowflake client is logged in
+    When Query "SELECT TO_FILE(NULL)" is executed
+    Then the indicator should be SQL_NULL_DATA
+
+  @odbc_e2e @python_not_needed
+  Scenario: should truncate FILE data when the character buffer is too short
+    Given Snowflake client is logged in
+    When A FILE column is populated via TO_FILE and queried
+    Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+
+  @odbc_e2e @python_not_needed
+  Scenario: should truncate FILE data as SQL_C_WCHAR when the buffer is too short
+    Given Snowflake client is logged in
+    When A FILE column is populated via TO_FILE and queried
+    Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
 
   # =========================================================================== #
   #                     SELECT with literals (no tables)                        #

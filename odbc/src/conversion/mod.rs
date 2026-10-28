@@ -1144,6 +1144,13 @@ fn is_geography_or_geometry(field: &Field) -> bool {
             .is_some_and(|name| is_geo_type_name(name))
 }
 
+fn is_file_external_type(field: &Field) -> bool {
+    field
+        .metadata()
+        .get("extTypeName")
+        .is_some_and(|name| name.eq_ignore_ascii_case("FILE"))
+}
+
 fn is_binary_column(field: &Field) -> bool {
     matches!(
         field.data_type(),
@@ -1194,6 +1201,7 @@ pub fn sql_type_from_field(
     }
     if numeric_settings.use_custom_sql_data_types
         && let SnowflakeFieldType::Varchar(varchar) = &field_type
+        && !is_file_external_type(field)
         && let Some(type_name) = varchar.semi_structured_type_name
         && let Some(code) = semi_structured_vendor_sql_type(type_name)
     {
@@ -1949,6 +1957,43 @@ mod unknown_logical_type_tests {
     }
 
     #[test]
+    fn file_external_type_name_preserves_variant_storage_type() {
+        let field = field_with_logical_type("VARIANT", &[("extTypeName", "FILE")]);
+        let settings = NumericSettings::default();
+        assert_eq!(
+            sql_type_from_field(&field, &settings).unwrap(),
+            sql::SqlDataType::VARCHAR
+        );
+        assert_eq!(type_name_from_field(&field, &settings).unwrap(), "FILE");
+    }
+
+    #[test]
+    fn file_external_type_stays_varchar_when_custom_sql_types_are_enabled() {
+        for ext_type_name in ["FILE", "file"] {
+            let field = field_with_logical_type("VARIANT", &[("extTypeName", ext_type_name)]);
+            let settings = NumericSettings {
+                use_custom_sql_data_types: true,
+                ..NumericSettings::default()
+            };
+            assert_eq!(
+                sql_type_from_field(&field, &settings).unwrap(),
+                sql::SqlDataType::VARCHAR,
+                "{ext_type_name}"
+            );
+            assert_eq!(
+                verbose_sql_type_from_field(&field, &settings).unwrap(),
+                sql::SqlDataType::VARCHAR,
+                "{ext_type_name}"
+            );
+            assert_eq!(
+                type_name_from_field(&field, &settings).unwrap(),
+                "FILE",
+                "{ext_type_name}"
+            );
+        }
+    }
+
+    #[test]
     fn invented_logical_type_maps_to_sql_varchar() {
         let field = field_with_logical_type("INTERVAL", &[]);
         assert_eq!(
@@ -2009,6 +2054,9 @@ pub fn type_name_from_field(
         }
         if type_name.eq_ignore_ascii_case("GEOMETRY") {
             return Ok("GEOMETRY");
+        }
+        if type_name.eq_ignore_ascii_case("FILE") {
+            return Ok("FILE");
         }
     }
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.type_name())

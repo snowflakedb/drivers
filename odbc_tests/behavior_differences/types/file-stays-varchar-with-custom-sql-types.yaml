@@ -1,0 +1,21 @@
+name: "FILE columns stay SQL_VARCHAR when ODBC_USE_CUSTOM_SQL_DATA_TYPES is enabled"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With ODBC_USE_CUSTOM_SQL_DATA_TYPES enabled, SQLDescribeCol,
+  SQL_DESC_CONCISE_TYPE, and SQL_DESC_TYPE on a FILE column report vendor
+  type 2004. SQL_DESC_TYPE_NAME remains
+  FILE. With the parameter disabled, the column reports SQL_VARCHAR.
+new_driver_behavior: |
+  A FILE column reports SQL_VARCHAR from SQLDescribeCol,
+  SQL_DESC_CONCISE_TYPE, and SQL_DESC_TYPE whether or not
+  ODBC_USE_CUSTOM_SQL_DATA_TYPES is enabled. SQL_DESC_TYPE_NAME is FILE.
+  FILE has no vendor SQL type.
+description: |
+  The old driver reuses the OBJECT vendor code for FILE when custom SQL
+  types are enabled. The new driver keeps SQL_VARCHAR, so a FILE column
+  is not reported as OBJECT. SQL_DESC_TYPE_NAME still distinguishes FILE
+  from VARCHAR and from VARIANT.

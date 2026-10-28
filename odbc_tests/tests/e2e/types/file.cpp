@@ -2,6 +2,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
 #include <optional>
 #include <string>
 
@@ -9,9 +10,14 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
+#include "WideString.hpp"
+#include "compatibility.hpp"
+#include "conversion_checks.hpp"
+#include "geo_test_helpers.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
+#include "sf_odbc.h"
 
 namespace {
 
@@ -32,9 +38,45 @@ void require_sql_varchar(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   REQUIRE(data_type == SQL_VARCHAR);
 }
 
+void require_type_name(const StatementHandleWrapper& stmt, SQLUSMALLINT col, const char* expected) {
+  SQLCHAR type_name[128] = {};
+  SQLSMALLINT name_len = 0;
+  SQLRETURN ret =
+      SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name), &name_len, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(std::string(reinterpret_cast<char*>(type_name), static_cast<std::size_t>(name_len)) == expected);
+}
+
+void require_varchar_descriptor(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  require_sql_varchar(stmt, col);
+
+  SQLLEN concise_type = 0;
+  SQLRETURN ret = SQLColAttribute(stmt.getHandle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &concise_type);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(concise_type == static_cast<SQLLEN>(SQL_VARCHAR));
+
+  SQLLEN desc_type = 0;
+  ret = SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE, nullptr, 0, nullptr, &desc_type);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(desc_type == static_cast<SQLLEN>(SQL_VARCHAR));
+}
+
 void require_file_doc(const std::string& json, const char* relative_path, const char* stage) {
   REQUIRE(json.find(relative_path) != std::string::npos);
   REQUIRE(json.find(stage) != std::string::npos);
+}
+
+void require_wide_file_doc(const std::u32string& json, const char* relative_path, const char* stage) {
+  const auto contains = [&json](const char* needle) {
+    std::u32string wide;
+    wide.reserve(std::strlen(needle));
+    for (const unsigned char* byte = reinterpret_cast<const unsigned char*>(needle); *byte != 0; ++byte) {
+      wide.push_back(static_cast<char32_t>(*byte));
+    }
+    return json.find(wide) != std::u32string::npos;
+  };
+  REQUIRE(contains(relative_path));
+  REQUIRE(contains(stage));
 }
 
 }  // namespace
@@ -48,7 +90,136 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should cast FILE values to appropriate type
 
   // Then the FILE column should be returned as appropriate type with the expected JSON document
   require_sql_varchar(stmt, 1);
+  require_type_name(stmt, 1, "FILE");
   require_file_doc(get_data<SQL_C_CHAR>(stmt, 1), "some_new_file.jpeg", "@myStage");
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should report FILE as the column type name", "[e2e][types][file]") {
+  // Given Snowflake client is logged in
+
+  // When A FILE column is populated via TO_FILE and queried
+  conn.execute(std::string("CREATE TEMPORARY TABLE file_type_name AS SELECT ") + kFileExpr + " AS file_col");
+  const auto stmt = conn.execute_fetch("SELECT file_col FROM file_type_name");
+
+  // Then SQLDescribeCol reports SQL_VARCHAR and SQL_DESC_TYPE_NAME reports FILE
+  require_sql_varchar(stmt, 1);
+  require_type_name(stmt, 1, "FILE");
+}
+
+TEST_CASE("should keep SQL_VARCHAR for FILE when ODBC_USE_CUSTOM_SQL_DATA_TYPES is flag_state", "[e2e][types][file]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  for (const char* flag_state : {"FALSE", "TRUE"}) {
+    INFO("ODBC_USE_CUSTOM_SQL_DATA_TYPES=" << flag_state);
+
+    // And Session parameter ODBC_USE_CUSTOM_SQL_DATA_TYPES is <flag_state>
+    conn.execute(std::string("ALTER SESSION SET ODBC_USE_CUSTOM_SQL_DATA_TYPES = ") + flag_state);
+
+    // When A FILE column is populated via TO_FILE and queried
+    const auto stmt = conn.execute_fetch(std::string("SELECT ") + kFileExpr);
+
+    // Then SQLDescribeCol reports SQL_VARCHAR and SQL_DESC_TYPE_NAME reports FILE
+    if (std::string(flag_state) == "TRUE") {
+      NEW_DRIVER_ONLY("BD#file-stays-varchar-with-custom-sql-types") { require_varchar_descriptor(stmt, 1); }
+      OLD_DRIVER_ONLY("BD#file-stays-varchar-with-custom-sql-types") { require_sql_type(stmt, 1, SQL_SF_OBJECT); }
+    } else {
+      require_varchar_descriptor(stmt, 1);
+    }
+    require_type_name(stmt, 1, "FILE");
+  }
+}
+
+TEST_CASE("should retrieve FILE data as SQL_C_WCHAR", "[e2e][types][file][conversion][wchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A FILE column is populated via TO_FILE and queried
+  const auto stmt = conn.execute_fetch(std::string("SELECT ") + kFileExpr);
+
+  // Then the FILE column should be returned as SQL_C_WCHAR with the expected JSON document
+  require_wide_file_doc(check_wchar_success(stmt, 1), "some_new_file.jpeg", "@myStage");
+}
+
+TEST_CASE("should retrieve FILE data as SQL_C_BINARY", "[e2e][types][file][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A FILE column is populated via TO_FILE and queried
+  const auto stmt = conn.execute_fetch(std::string("SELECT ") + kFileExpr);
+
+  // Then the FILE column should be returned as SQL_C_BINARY with the expected JSON document
+  SQLCHAR buffer[512];
+  std::memset(buffer, 0xFF, sizeof(buffer));
+  SQLLEN indicator = -1;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(indicator > 0);
+  REQUIRE(static_cast<std::size_t>(indicator) < sizeof(buffer));
+  require_file_doc(std::string(reinterpret_cast<char*>(buffer), static_cast<std::size_t>(indicator)),
+                   "some_new_file.jpeg", "@myStage");
+}
+
+TEST_CASE("should return SQL_NULL_DATA for NULL FILE as SQL_C_BINARY", "[e2e][types][file][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT TO_FILE(NULL)" is executed
+  const auto stmt = conn.execute_fetch("SELECT TO_FILE(NULL)");
+
+  // Then the indicator should be SQL_NULL_DATA
+  SQLCHAR buffer[64];
+  std::memset(buffer, 0xFF, sizeof(buffer));
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+  CHECK(buffer[0] == 0xFF);
+}
+
+TEST_CASE("should truncate FILE data when the character buffer is too short", "[e2e][types][file][conversion][char]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A FILE column is populated via TO_FILE and queried
+  const auto stmt = conn.execute_fetch(std::string("SELECT ") + kFileExpr + ", " + kFileExpr);
+
+  // Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  char buffer[10];
+  std::memset(buffer, 0xFF, sizeof(buffer));
+  SQLLEN indicator = -1;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  const std::string full = get_data<SQL_C_CHAR>(stmt, 2);
+  CHECK(buffer[sizeof(buffer) - 1] == '\0');
+  CHECK(std::string(buffer) == full.substr(0, sizeof(buffer) - 1));
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == static_cast<SQLLEN>(full.size())); }
+  OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == SQL_NO_TOTAL || indicator == static_cast<SQLLEN>(full.size()))); }
+}
+
+TEST_CASE("should truncate FILE data as SQL_C_WCHAR when the buffer is too short",
+          "[e2e][types][file][conversion][wchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A FILE column is populated via TO_FILE and queried
+  const auto stmt = conn.execute_fetch(std::string("SELECT ") + kFileExpr + ", " + kFileExpr);
+
+  // Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  SQLWCHAR buffer[6];
+  std::memset(buffer, 0xFF, sizeof(buffer));
+  SQLLEN indicator = -1;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  const std::u32string full = check_wchar_success(stmt, 2);
+  const std::size_t units = (sizeof(buffer) / sizeof(SQLWCHAR)) - 1;
+  CHECK(buffer[units] == 0);
+  const std::u32string truncated = sf::wide::decode_wide(buffer, units);
+  CHECK(full.compare(0, truncated.size(), truncated) == 0);
+  CHECK(truncated.size() == units);
+  const bool indicator_reports_full_length =
+      (indicator == SQL_NO_TOTAL) || (indicator > static_cast<SQLLEN>(sizeof(buffer)));
+  CHECK(indicator_reports_full_length);
 }
 
 TEST_CASE("should select a FILE value built by TO_FILE without a table", "[e2e][types][file]") {

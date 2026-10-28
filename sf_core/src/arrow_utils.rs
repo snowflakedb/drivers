@@ -252,6 +252,7 @@ pub fn create_field_with_type(
             // name, so this mirrors real wire behavior rather than inventing a label.
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            metadata.insert("extTypeName".to_string(), "FILE".to_string());
             metadata.insert("nullable".to_string(), nullable.to_string());
             Ok(
                 Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
@@ -1028,6 +1029,10 @@ mod tests {
         assert_eq!(
             field.metadata().get("logicalType"),
             Some(&"VARIANT".to_string())
+        );
+        assert_eq!(
+            field.metadata().get("extTypeName"),
+            Some(&"FILE".to_string())
         );
         assert_eq!(field.data_type(), &DataType::Utf8);
     }
