@@ -23,6 +23,7 @@ from snowflake.connector._internal.write_pandas_operation import (
     generate_temp_name,
     qualify_name,
     quote_identifier,
+    sql_column_identifier,
 )
 from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.pandas_tools import make_pd_writer, pd_writer
@@ -99,6 +100,39 @@ class TestQualifyName:
         assert qualify_name("d", "s", "t", True) == '"d"."s"."t"'
 
 
+class TestSqlColumnIdentifier:
+    def test_quoted_mode_doubles_internal_quotes(self):
+        assert sql_column_identifier('a"b', True) == '"a""b"'
+
+    def test_quoted_mode_basic(self):
+        assert sql_column_identifier("my_col", True) == '"my_col"'
+
+    def test_unquoted_valid_simple(self):
+        assert sql_column_identifier("A", False) == "A"
+
+    def test_unquoted_valid_with_digits_and_dollar(self):
+        assert sql_column_identifier("ok_col$1", False) == "ok_col$1"
+
+    def test_unquoted_underscore_start(self):
+        assert sql_column_identifier("_col", False) == "_col"
+
+    def test_unquoted_invalid_internal_quote_raises(self):
+        with pytest.raises(ProgrammingError):
+            sql_column_identifier('A"B', False)
+
+    def test_unquoted_invalid_space_raises(self):
+        with pytest.raises(ProgrammingError):
+            sql_column_identifier("A B", False)
+
+    def test_unquoted_invalid_leading_digit_raises(self):
+        with pytest.raises(ProgrammingError):
+            sql_column_identifier("1col", False)
+
+    def test_unquoted_invalid_trailing_newline_raises(self):
+        with pytest.raises(ProgrammingError):
+            sql_column_identifier("A\n", False)
+
+
 class TestEscapePathForSql:
     def test_backslash(self):
         assert escape_path_for_sql("C:\\Users\\data") == "C:\\\\Users\\\\data"
@@ -163,6 +197,14 @@ class TestConfigValidation:
     def test_should_respect_explicit_chunk_size(self):
         cfg = _make_cfg(chunk_size=5)
         assert cfg.chunk_size == 5
+
+    def test_should_raise_for_invalid_unquoted_column_name(self):
+        with pytest.raises(ProgrammingError, match="not a valid unquoted identifier"):
+            _make_cfg(df=_mock_df(columns=['A"B']), quote_identifiers=False)
+
+    def test_valid_unquoted_column_names_do_not_raise(self):
+        # Should construct without error
+        _make_cfg(df=_mock_df(columns=["A", "ok_col", "_x", "Y$1"]), quote_identifiers=False)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +396,11 @@ class TestBuildCopyIntoSql:
         assert '$1:"A" AS A' in result["operation"]
         assert '"A" AS "A"' not in result["operation"]
 
+    def test_no_quoting_valid_name_produces_unquoted_alias_and_quoted_parquet_path(self):
+        op: WritePandasOperation = _make_op(df=_mock_df(columns=["AB"]), quote_identifiers=False)
+        sql = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)["operation"]
+        assert '$1:"AB" AS AB' in sql
+
     def test_parquet_field_quotes_internal_double_quotes(self):
         op: WritePandasOperation = _make_op(df=_mock_df(columns=['has"quote']))
         result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
@@ -366,10 +413,10 @@ class TestBuildCopyIntoSql:
         assert '$1:"a"b"' not in sql
 
     def test_parquet_field_stays_quoted_when_quote_identifiers_is_false(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(columns=['A"B']), quote_identifiers=False)
-        result = op._build_copy_into_sql("@MY_STAGE", "MY_TABLE", None)
-        assert '$1:"A""B" AS A"B' in result["operation"]
-        assert '$1:"A"B"' not in result["operation"]
+        # A column name with an embedded double-quote is not a valid unquoted identifier;
+        # the check is enforced at config construction.
+        with pytest.raises(ProgrammingError):
+            _make_op(df=_mock_df(columns=['A"B']), quote_identifiers=False)
 
     def test_with_vectorized_scanner(self):
         op: WritePandasOperation = _make_op(use_vectorized_scanner=True)
@@ -499,6 +546,10 @@ class TestBuildCreateTableSql:
         sql = op._build_create_table_sql("MY_TABLE", None)["operation"]
         assert '"number" VARIANT' in sql
         assert '"Number" VARIANT' in sql
+
+    def test_invalid_unquoted_column_raises_at_config_construction(self):
+        with pytest.raises(ProgrammingError):
+            _make_op(df=_mock_df(columns=['A"B']), quote_identifiers=False)
 
 
 class TestBuildInferColumnTypesSql:

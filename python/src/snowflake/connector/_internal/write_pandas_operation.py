@@ -7,6 +7,7 @@ snowflake.connector.pandas_tools.
 
 from __future__ import annotations
 
+import re
 import secrets
 import warnings
 
@@ -53,6 +54,29 @@ ALLOWED_ICEBERG_CONFIGS: set[str] = {
 def quote_identifier(name: str) -> str:
     """Double-quote a SQL identifier, escaping internal double quotes."""
     return '"' + name.replace('"', '""') + '"'
+
+
+_UNQUOTED_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+def sql_column_identifier(col: str, quote_identifiers: bool) -> str:
+    """Return the SQL token for a column identifier.
+
+    When quote_identifiers is True, the name is double-quoted with internal
+    double quotes escaped. When False, the name must match the unquoted
+    identifier grammar (first character a letter or underscore; remaining
+    characters letters, digits, underscores, or dollar signs); any other name
+    raises ProgrammingError.
+    """
+    name = str(col)
+    if quote_identifiers:
+        return quote_identifier(name)
+    if not _UNQUOTED_IDENTIFIER_RE.fullmatch(name):
+        raise ProgrammingError(
+            msg=f"Column name {name!r} is not a valid unquoted identifier. "
+            "Use quote_identifiers=True to allow other names."
+        )
+    return name
 
 
 def qualify_name(
@@ -191,6 +215,9 @@ class WritePandasConfig:
                 raise ProgrammingError(
                     msg=f"Invalid iceberg configurations option(s) provided {', '.join(sorted(invalid))}"
                 )
+        if not self.quote_identifiers:
+            for col in self.df.columns:
+                sql_column_identifier(str(col), False)
 
     # -- Branching properties -----------------------------------------------
 
@@ -309,7 +336,7 @@ class WritePandasMixin:
         select_exprs: list[str] = []
 
         for col in cfg.df.columns:
-            col_name = quote_identifier(col) if cfg.quote_identifiers else col
+            col_name = sql_column_identifier(col, cfg.quote_identifiers)
             target_cols.append(col_name)
 
             # `$1:"field"` path syntax does not support IDENTIFIER(?) or ? bindings.
@@ -395,7 +422,7 @@ class WritePandasMixin:
         col_defs = []
         for col in cfg.df.columns:
             col_type = column_type_map.get(col.upper(), "VARIANT") if column_type_map else "VARIANT"
-            col_name = quote_identifier(col) if cfg.quote_identifiers else col
+            col_name = sql_column_identifier(col, cfg.quote_identifiers)
             col_defs.append(f"{col_name} {col_type}")
 
         table_type_clause = cfg.table_type.upper() + " " if cfg.table_type else ""
