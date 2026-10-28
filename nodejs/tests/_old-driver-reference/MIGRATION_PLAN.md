@@ -109,6 +109,17 @@ Deferred work — covered **last**, only once the corresponding feature support 
     [`authentication/testOauthSnowflakeWildcardsAuthorizationCode.js`](./authentication/testOauthSnowflakeWildcardsAuthorizationCode.js)
     — TODO(SNOW-4291607): implement when CI support lands for the external Okta
     authorization-code client and the wildcard Snowflake client with no redirect URI.
+  - [`authentication/testOkta.js`](./authentication/testOkta.js) stays. Native Okta is
+    `authenticator` set to an `https://` URL. Node already forwards `authenticator`.
+    This PR does not add a Node test that calls `createConnection` with that URL.
+    `Successful connection`, `Wrong credentials`, and `Wrong okta url` have core, Python,
+    JDBC, and ODBC Gherkin scenarios. Those scenarios do not call `createConnection`.
+    `Wrong credentials` replaces the username and the password and expects
+    `Request failed with status code 401`. The core e2e keeps the real user, changes the
+    password, and accepts any login error. `Wrong okta url` expects
+    `Cannot read properties of null (reading 'ssoUrl')` for
+    `https://testinvalidaccoount.com`. The core e2e uses `https://invalid.okta.com` and
+    accepts any login error.
 
 ## Integration tests (`integration/`), sorted by priority
 
@@ -234,18 +245,53 @@ sanity-check test that validates CRL works (and ideally one that validates CRL t
 
 Each of these depends on the corresponding auth provider landing in `sf_core` + the new driver:
 
-- `integration/wiremock/testOauthAuthorizationCode.js` — still in the snapshot. Authorization
-  Code is implemented, and the file is not migrated:
-  - Successful flow: live `oauth should authenticate using authorization code flow` plus core
+- `integration/wiremock/testOauthAuthorizationCode.js` — deleted. Per test:
+  - Successful flow: live `oauth should authenticate using authorization code flow` and core
     `should_login_with_authorization_code_through_injected_opener`.
-  - Empty scope: no assertion that the authorize URL omits `scope`. Core
-    `should_omit_oauth_scope_when_scope_and_role_are_absent` only checks the resolver.
-  - Redirect `invalid_scope`, invalid state, HTTP 400 invalid code, missing token, and occupied
-    port: no authorization-code test preserves those assertions. Unit `OAuthError::StateMismatch`
-    exists; the Node outer error and the old port-unavailable message are not covered.
-  - Single-use refresh: the old test only checks that connect does not throw. Core
-    `should_omit_single_use_refresh_flag_from_refresh_grant_body` checks the refresh body, which
-    that test did not.
+  - Empty scope: `should_omit_oauth_scope_when_scope_and_role_are_absent` covers a missing role
+    and a missing oauth_scope. `ac_token_exchange_omits_scope_when_config_scope_is_none` covers a
+    config whose scope is already `None`: the authorize URL has no `scope` parameter and the
+    token body has no `scope=`. `authorize_url_carries_pkce_client_id_scope_and_redirect_uri`
+    keeps scope set and checks that the authorize URL carries it. Node still rejects `oauthScope`.
+    These tests do not call `createConnection`, and they do not send the old fixture value
+    `session:role:ANALYST test-scope`.
+  - Redirect `invalid_scope`: `should_fail_connect_when_authorize_redirect_returns_invalid_scope`
+    checks the connect string. `idp_error_in_authorize_redirect_surfaces_idp_error` sends
+    `access_denied` and checks that error and description.
+  - Invalid state: `state_mismatch_in_redirect_surfaces_state_mismatch_variant`.
+    Node `should reject a redirect whose state does not match` checks the connect error.
+    The caller-visible error differs (BD#143).
+  - Invalid code and missing token: both old cases posted `code=invalidCode` and the token
+    endpoint returned HTTP 400 with an empty body.
+    `ac_token_exchange_fails_when_idp_returns_empty_400`.
+    Node `should reject an empty 400 from the token endpoint` checks the connect error.
+    The caller-visible error differs (BD#142).
+  - Single-use refresh: `refresh_response_without_refresh_token_evicts_cached_rt_when_rotation_enabled`
+    drops the cached refresh token when rotation is on and the refresh response omits one.
+    Node `should drop the cached refresh token when a refresh response omits one` sets
+    `oauthEnableSingleUseRefreshTokens: true` and logs in with the new access token.
+    The new driver drops the cached refresh token. The old driver keeps it (BD#144).
+  - Occupied port: `bind_on_an_already_occupied_explicit_port_surfaces_port_bind_error` checks
+    `AddrInUse`. `should_fail_connect_when_redirect_port_is_occupied` holds that port as
+    `oauth_redirect_uri`, checks the opener was not called, and checks the connect string
+    `Failed to login: OAuth flow failed: Failed to bind loopback listener for OAuth redirect`.
+- `integration/wiremock/testOauthRefreshToken.js` — deleted. Per test:
+  - Expired access token followed by the browser:
+    `should_evict_cached_access_token_and_open_browser_on_390318_without_refresh_token`.
+  - Save tokens after the browser login: `full_interactive_flow_drives_loopback_directly`
+    keeps storage off and returns `AT-FRESH` and `RT-FRESH`.
+    `full_interactive_flow_drives_loopback_and_stores_tokens` stores both tokens from an empty cache.
+  - Use refresh token: `should_login_with_authorization_code_using_cached_refresh_token`.
+  - Keep the cached refresh token when the response omits one:
+    `should_keep_cached_refresh_token_when_refresh_response_omits_it`.
+  - Expired access token with a refresh token:
+    `should_evict_cached_at_and_retry_via_refresh_token_on_390318`.
+  - Server `success=false` for the cached access token:
+    `should_evict_cached_at_and_retry_via_refresh_token_on_390303`.
+  - Refresh error restarts the browser flow:
+    `refresh_failure_restarts_browser_flow_and_stores_new_tokens`.
+  - Cached access token: `should_login_with_authorization_code_using_cached_access_token` and
+    live `oauth should reuse cached access token without browser interaction`.
 - `integration/wiremock/testOauthClientCredentials.js` — the four cases are covered
   separately. Successful connection and `SELECT 1` are the live Node test. Empty scope is
   `should omit scope from the client credentials token request when role and scope are unset`
@@ -258,8 +304,6 @@ Each of these depends on the corresponding auth provider landing in `sf_core` + 
   matcher.
 - `integration/wiremock/testOauthPat.js` — migrate once PAT is implemented in `sf_core` and the
   new Node driver.
-- `integration/wiremock/testOauthRefreshToken.js` — once all auth providers are in `sf_core`,
-  verify this case is covered there.
 - `integration/wiremock/testExternalBrowserSsoUrlError.ts` — runnable case replaced by the
   comment in that file pointing at `nodejs/tests/e2e/authentication/external-browser.test.ts`
   (`should fail when authenticator-request reports SSO URL generation failure`).
@@ -442,6 +486,12 @@ called out explicitly.
   Node `createConnection`.
   `getAuthenticator()` table row `oauth` → `AuthOauth` is retired with that
   class. The public authenticator is the string that unit test forwards.
+  The `okta authentication` describe stays. That is the thenable `authenticate`, the SAML
+  body, reauthenticate, the timeout, the max retry, the prefix and postback failures, a
+  login body with no `AUTHENTICATOR`, the 14 `validateURLs` cases, and
+  `getAuthenticator()` → `AuthOkta`. Core wiremock covers a SAML login, a 401, an origin
+  mismatch, and a postback mismatch. It does not call `createConnection`, and it does not
+  cover that table.
 
 ### Agent (CRL / OCSP)
 

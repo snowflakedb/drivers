@@ -8,13 +8,16 @@ import {
   destroyConnectionAsync,
   IS_RUNNING_FOR_OLD_DRIVER,
   isRunningNewDriverWithBD,
+  resetGlobalConfig,
   snowflake,
 } from '../utils/index.js';
 import { verifySimpleQuery } from '../utils/query.js';
 import {
   clientCredentialsTokenStubs,
+  jsonResponse,
   loginSuccess,
   logoutSuccess,
+  type StubMapping,
   WiremockServer,
 } from '../utils/wiremock/index.js';
 import {
@@ -902,6 +905,219 @@ it(
     );
   },
 );
+
+describe('authorization code against wiremock', () => {
+  const SINGLE_USE_REFRESH_STUBS: StubMapping[] = [
+    {
+      scenarioName: 'single-use refresh',
+      requiredScenarioState: 'Started',
+      newScenarioState: 'refresh token stored',
+      request: {
+        method: 'POST',
+        urlPathPattern: '/oauth/token-request.*',
+        bodyPatterns: [{ contains: 'grant_type=authorization_code' }],
+      },
+      response: jsonResponse(200, {
+        access_token: 'AT-FIRST',
+        refresh_token: 'RT-FIRST',
+        token_type: 'Bearer',
+        expires_in: 600,
+      }),
+    },
+    {
+      scenarioName: 'single-use refresh',
+      requiredScenarioState: 'refresh token stored',
+      request: {
+        method: 'POST',
+        urlPathPattern: '/oauth/token-request.*',
+        bodyPatterns: [{ contains: 'grant_type=refresh_token' }],
+      },
+      response: jsonResponse(200, {
+        access_token: 'AT-NEW',
+        token_type: 'Bearer',
+        expires_in: 600,
+      }),
+    },
+    {
+      scenarioName: 'single-use login',
+      requiredScenarioState: 'Started',
+      newScenarioState: 'access token expired',
+      request: { method: 'POST', urlPathPattern: '/session/v1/login-request.*' },
+      response: jsonResponse(200, {
+        success: false,
+        code: '390318',
+        message: 'OAuth access token has expired.',
+      }),
+    },
+    {
+      ...loginSuccess(),
+      scenarioName: 'single-use login',
+      requiredScenarioState: 'access token expired',
+      newScenarioState: 'logged in, refresh token dropped',
+    },
+    logoutSuccess(),
+  ];
+
+  const EMPTY_TOKEN_RESPONSE_STUB: StubMapping = {
+    request: {
+      method: 'POST',
+      urlPathPattern: '/oauth/token-request.*',
+      bodyPatterns: [{ contains: 'code=invalidCode' }],
+    },
+    response: {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: '',
+    },
+  };
+
+  function createLoopbackRedirect(options: {
+    code: string;
+    state?: string;
+  }): (authorizeUrl: string) => Promise<void> {
+    return async (authorizeUrl) => {
+      const authorize = new URL(authorizeUrl);
+      const redirectUri = authorize.searchParams.get('redirect_uri');
+      const state = options.state ?? authorize.searchParams.get('state');
+      if (!redirectUri || !state) {
+        throw new Error('authorize URL missing redirect_uri or state');
+      }
+      const redirect = new URL(redirectUri);
+      redirect.searchParams.set('code', options.code);
+      redirect.searchParams.set('state', state);
+      const response = await fetch(redirect);
+      if (!response.ok) {
+        throw new Error(`loopback redirect failed: ${response.status}`);
+      }
+    };
+  }
+
+  const AUTHORIZATION_CODE_WIREMOCK_BASE = {
+    account: 'testaccount',
+    username: 'alice',
+    authenticator: 'OAUTH_AUTHORIZATION_CODE' as const,
+    oauthClientId: 'test-oauth-client-id',
+    oauthClientSecret: 'test-oauth-client-secret',
+    oauthAuthorizationUrl: 'https://account.snowflakecomputing.com/oauth/authorize',
+  };
+
+  let wiremock: WiremockServer;
+
+  beforeEach(async () => {
+    wiremock = await WiremockServer.spawn();
+    onTestFinished(() => wiremock.destroy());
+  });
+
+  it('should drop the cached refresh token when a refresh response omits one', async () => {
+    onTestFinished(() => resetGlobalConfig());
+    const tokens = new Map<string, string>();
+    const removedRefreshTokens: string[] = [];
+    snowflake.configure({
+      customCredentialManager: {
+        read(key) {
+          return tokens.get(key) ?? null;
+        },
+        write(key, token) {
+          tokens.set(key, token);
+        },
+        remove(key) {
+          if (key.includes('OauthRefreshToken')) {
+            removedRefreshTokens.push(tokens.get(key) ?? '');
+          }
+          tokens.delete(key);
+        },
+      },
+    });
+    await wiremock.stub(SINGLE_USE_REFRESH_STUBS);
+
+    const connection = snowflake.createConnection({
+      ...AUTHORIZATION_CODE_WIREMOCK_BASE,
+      oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
+      // BD#141: the old driver rejects an http token URL unless this testing option is set.
+      ...(isRunningNewDriverWithBD('BD#141') ? {} : { oauthHttpAllowed: true }),
+      oauthEnableSingleUseRefreshTokens: true,
+      clientStoreTemporaryCredential: true,
+      openExternalBrowserCallback: createLoopbackRedirect({ code: 'THE-CODE' }),
+      ...wiremock.connectionOptions,
+    });
+    onTestFinished(() => destroyConnectionAsync(connection));
+
+    await connection.connectAsync();
+
+    const loginRequests = await wiremock.findRequests('/session/v1/login-request.*');
+    expect(JSON.parse(loginRequests[0].body).data.TOKEN).toBe('AT-FIRST');
+    expect(JSON.parse(loginRequests[1].body).data.TOKEN).toBe('AT-NEW');
+    const refreshTokenStillCached = [...tokens.entries()].some(
+      ([key, value]) => key.includes('OauthRefreshToken') && value === 'RT-FIRST',
+    );
+    // BD#144: a successful refresh that omits the refresh token deletes it only on the new driver.
+    if (isRunningNewDriverWithBD('BD#144')) {
+      expect(removedRefreshTokens).toEqual(['RT-FIRST']);
+      expect(refreshTokenStillCached).toBe(false);
+    } else {
+      expect(removedRefreshTokens).toEqual([]);
+      expect(refreshTokenStillCached).toBe(true);
+    }
+  });
+
+  it('should reject a redirect whose state does not match', async () => {
+    const connection = snowflake.createConnection({
+      ...AUTHORIZATION_CODE_WIREMOCK_BASE,
+      oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
+      openExternalBrowserCallback: createLoopbackRedirect({
+        code: 'THE-CODE',
+        state: 'invalidState',
+      }),
+      ...wiremock.connectionOptions,
+    });
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject(
+      isRunningNewDriverWithBD('BD#143')
+        ? {
+            name: 'Error',
+            code: undefined,
+            message:
+              'Failed to login: OAuth flow failed: Identity Provider did not provide expected state parameter! It might indicate an XSS attack.',
+          }
+        : {
+            name: 'OperationProcessingError',
+            code: 'OAUTH_INVALID_RESPONSE',
+            message: 'unexpected "state" response parameter value',
+          },
+    );
+    expect(await wiremock.findRequests('/oauth/token-request.*')).toEqual([]);
+    expect(await wiremock.findRequests('/session/v1/login-request.*')).toEqual([]);
+  });
+
+  it('should reject an empty 400 from the token endpoint', async () => {
+    await wiremock.stub(EMPTY_TOKEN_RESPONSE_STUB);
+    const connection = snowflake.createConnection({
+      ...AUTHORIZATION_CODE_WIREMOCK_BASE,
+      oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
+      // BD#141: the old driver rejects an http token URL unless this testing option is set.
+      ...(isRunningNewDriverWithBD('BD#141') ? {} : { oauthHttpAllowed: true }),
+      openExternalBrowserCallback: createLoopbackRedirect({ code: 'invalidCode' }),
+      ...wiremock.connectionOptions,
+    });
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject(
+      isRunningNewDriverWithBD('BD#142')
+        ? {
+            name: 'Error',
+            code: undefined,
+            message:
+              'Failed to login: OAuth flow failed: Identity Provider responded with error: unknown: server returned empty error response',
+          }
+        : {
+            name: 'AxiosError',
+            code: 'ERR_BAD_REQUEST',
+            message: 'Request failed with status code 400',
+          },
+    );
+    expect(await wiremock.findRequests('/oauth/token-request.*')).toHaveLength(1);
+    expect(await wiremock.findRequests('/session/v1/login-request.*')).toEqual([]);
+  });
+});
 
 describe('sfRetryMaxLoginRetries', () => {
   it('should reject sfRetryMaxLoginRetries as an unknown option', () => {

@@ -242,6 +242,13 @@ pub(crate) fn unique_user(prefix: &str) -> String {
     format!("{prefix}_{nanos}")
 }
 
+fn count_login_requests(mock: &MockServerWithTls) -> usize {
+    mock.received_requests()
+        .iter()
+        .filter(|r| r.url.path() == "/session/v1/login-request" && r.method.as_str() == "POST")
+        .count()
+}
+
 pub(crate) fn count_token_endpoint_requests(mock: &MockServerWithTls) -> usize {
     mock.received_requests()
         .iter()
@@ -255,6 +262,69 @@ fn token_endpoint_bodies(mock: &MockServerWithTls) -> Vec<String> {
         .filter(|r| r.url.path() == "/oauth/token-request" && r.method.as_str() == "POST")
         .map(|r| String::from_utf8_lossy(&r.body).to_string())
         .collect()
+}
+
+fn assert_username_mismatch_leaves_connection_down(
+    fixture: &OAuthTestFixture,
+    result: Result<(), String>,
+) {
+    let error = result.expect_err("username mismatch must fail connect");
+    let mismatch = "Login error: The user you were trying to authenticate as differs from the user tied to the access token., code: 390309";
+    assert!(
+        error.contains(mismatch),
+        "expected the full mismatch error, got: {error}"
+    );
+    assert_eq!(
+        count_login_requests(&fixture.mock),
+        1,
+        "390309 must not be retried"
+    );
+    assert_eq!(
+        count_token_endpoint_requests(&fixture.mock),
+        0,
+        "390309 must not refresh"
+    );
+    let query = fixture
+        .client
+        .execute_query_no_unwrap("SELECT 1")
+        .expect_err("query must fail when login never completed");
+    assert!(
+        query.contains("not initialized"),
+        "expected an uninitialized connection, got: {query}"
+    );
+}
+
+#[test]
+fn should_reject_a_mismatched_username_for_a_pre_acquired_token() {
+    // Given Authentication is set to a pre-acquired token with a username that is not the user tied to the access token
+    let user = unique_user("oauth_legacy_390309");
+    let fixture = OAuthTestFixture::with_legacy_oauth(&user, "legacy-mismatched-user-token");
+    fixture
+        .mock
+        .mount(oauth::snowflake_login_oauth_username_mismatch_390309());
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Connection fails with "The user you were trying to authenticate as differs from the user tied to the access token."
+    assert_username_mismatch_leaves_connection_down(&fixture, result);
+}
+
+#[test]
+fn should_reject_a_mismatched_username_for_authorization_code() {
+    // Given Authentication is set to authorization code with a username that is not the user tied to the access token
+    let user = unique_user("oauth_ac_390309");
+    let fixture = OAuthTestFixture::with_authorization_code(&user);
+    fixture.seed_access_token("ac-mismatched-user-access-token");
+    fixture
+        .mock
+        .mount(oauth::snowflake_login_oauth_username_mismatch_390309());
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Connection fails with "The user you were trying to authenticate as differs from the user tied to the access token."
+    assert_username_mismatch_leaves_connection_down(&fixture, result);
 }
 
 // =============================================================================
@@ -372,6 +442,87 @@ async fn should_login_with_authorization_code_through_injected_opener() {
     );
 }
 
+#[tokio::test]
+async fn should_fail_connect_when_authorize_redirect_returns_invalid_scope() {
+    let server = MockServer::start().await;
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let opener = opener_recording(Arc::clone(&seen), |url| {
+        let parsed = Url::parse(url).expect("authorize url");
+        let redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("redirect_uri");
+        std::thread::spawn(move || {
+            let mut loopback = Url::parse(&redirect).expect("redirect url");
+            loopback.set_query(Some(
+                "error=invalid_scope&error_description=One%20or%20more%20scopes%20are%20not%20configured%20for%20the%20authorization%20server%20resource.",
+            ));
+            get_loopback(&loopback).expect("oauth loopback");
+        });
+    });
+
+    let err = connect_with_opener(
+        &server,
+        &[
+            ("authenticator", "OAUTH_AUTHORIZATION_CODE"),
+            ("oauth_client_id", "test-oauth-client-id"),
+            ("oauth_client_secret", "test-oauth-client-secret"),
+            (
+                "oauth_authorization_url",
+                "https://idp.snowflake.com/oauth/authorize",
+            ),
+            ("oauth_scope", "session:role:test_role"),
+        ],
+        opener,
+    )
+    .await
+    .expect_err("invalid_scope redirect must fail connect");
+
+    assert_eq!(
+        err,
+        "Failed to login: OAuth flow failed: Identity Provider responded with error: invalid_scope: One or more scopes are not configured for the authorization server resource."
+    );
+}
+
+#[tokio::test]
+async fn should_fail_connect_when_redirect_port_is_occupied() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").expect("hold a port");
+    let port = held.local_addr().expect("held port").port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/cb");
+    let server = MockServer::start().await;
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let opener = opener_recording(Arc::clone(&seen), |_| {});
+
+    let err = connect_with_opener(
+        &server,
+        &[
+            ("authenticator", "OAUTH_AUTHORIZATION_CODE"),
+            ("oauth_client_id", "test-oauth-client-id"),
+            ("oauth_client_secret", "test-oauth-client-secret"),
+            (
+                "oauth_authorization_url",
+                "https://idp.snowflake.com/oauth/authorize",
+            ),
+            ("oauth_redirect_uri", redirect_uri.as_str()),
+            ("oauth_scope", "session:role:test_role"),
+        ],
+        opener,
+    )
+    .await
+    .expect_err("occupied redirect port must fail connect");
+
+    assert_eq!(
+        err,
+        "Failed to login: OAuth flow failed: Failed to bind loopback listener for OAuth redirect"
+    );
+    assert!(
+        seen.lock().expect("seen").is_none(),
+        "browser opener must not run when the redirect port is taken"
+    );
+    drop(held);
+}
+
 // =============================================================================
 // Authorization Code — cache short-circuit (preferred happy path)
 // =============================================================================
@@ -428,6 +579,13 @@ fn should_login_with_authorization_code_using_cached_refresh_token() {
         1,
         "expected exactly one IdP refresh request"
     );
+    let bodies = token_endpoint_bodies(&fixture.mock);
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body.contains("refresh_token=ac-cached-refresh-token")),
+        "refresh grant must send the cached refresh token, got {bodies:?}"
+    );
     let stored_at = fixture.cached_access_token();
     assert_eq!(
         stored_at.as_deref(),
@@ -439,6 +597,39 @@ fn should_login_with_authorization_code_using_cached_refresh_token() {
         stored_rt.as_deref(),
         Some("ac-refresh-token-rotated"),
         "rotated refresh token must replace the cached one"
+    );
+}
+
+#[test]
+fn should_keep_cached_refresh_token_when_refresh_response_omits_it() {
+    let user = unique_user("oauth_ac_keep_rt");
+    let fixture = OAuthTestFixture::with_authorization_code(&user);
+    let cached_refresh_token = "ac-cached-refresh-token";
+    // Given only a refresh token is cached
+    fixture.seed_refresh_token(cached_refresh_token);
+    // And the IdP refresh response has no refresh_token
+    fixture
+        .mock
+        .mount(oauth::idp_token_endpoint_refresh_omits_refresh_token());
+    fixture.mock.mount(oauth::snowflake_login_success_oauth(
+        "ac-access-token-refreshed",
+    ));
+
+    // When Trying to Connect
+    let result = fixture.connect();
+
+    // Then Login succeeds
+    OAuthTestFixture::assert_success(result, "refresh without a new refresh token to succeed");
+    // And the cached refresh token is unchanged
+    assert_eq!(
+        fixture.cached_refresh_token().as_deref(),
+        Some(cached_refresh_token),
+        "omitted refresh_token must leave the cached refresh token in place"
+    );
+    assert_eq!(
+        fixture.cached_access_token().as_deref(),
+        Some("ac-access-token-refreshed"),
+        "fresh access token must be persisted to the cache"
     );
 }
 
@@ -480,6 +671,31 @@ fn should_evict_cached_at_and_retry_via_refresh_token_on_390303() {
         Some("ac-access-token-refreshed"),
         "fresh access token must be persisted after the retry"
     );
+    let stored_rt = fixture.cached_refresh_token();
+    assert_eq!(
+        stored_rt.as_deref(),
+        Some("ac-refresh-token-rotated"),
+        "rotated refresh token must replace the cached one"
+    );
+
+    let login_tokens: Vec<String> = fixture
+        .mock
+        .received_requests()
+        .iter()
+        .filter(|r| r.url.path() == "/session/v1/login-request")
+        .filter_map(|r| {
+            serde_json::from_slice::<serde_json::Value>(&r.body)
+                .ok()?
+                .pointer("/data/TOKEN")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(login_tokens.first().map(String::as_str), Some(stale_at));
+    assert_eq!(
+        login_tokens.get(1).map(String::as_str),
+        Some("ac-access-token-refreshed")
+    );
 }
 
 #[test]
@@ -513,6 +729,117 @@ fn should_evict_cached_at_and_retry_via_refresh_token_on_390318() {
         stored_at.as_deref(),
         Some("ac-access-token-refreshed"),
         "fresh access token must be persisted after the retry"
+    );
+    let stored_rt = fixture.cached_refresh_token();
+    assert_eq!(
+        stored_rt.as_deref(),
+        Some("ac-refresh-token-rotated"),
+        "rotated refresh token must replace the cached one"
+    );
+
+    let login_tokens: Vec<String> = fixture
+        .mock
+        .received_requests()
+        .iter()
+        .filter(|r| r.url.path() == "/session/v1/login-request")
+        .filter_map(|r| {
+            serde_json::from_slice::<serde_json::Value>(&r.body)
+                .ok()?
+                .pointer("/data/TOKEN")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(login_tokens.first().map(String::as_str), Some(stale_at));
+    assert_eq!(
+        login_tokens.get(1).map(String::as_str),
+        Some("ac-access-token-refreshed")
+    );
+}
+
+#[tokio::test]
+async fn should_evict_cached_access_token_and_open_browser_on_390318_without_refresh_token() {
+    let server = MockServer::start().await;
+    oauth::idp_token_endpoint_success_authorization_code()
+        .mount(&server)
+        .await;
+    oauth::snowflake_login_oauth_then_success("390318")
+        .mount(&server)
+        .await;
+
+    let user = unique_user("oauth_ac_390318_browser");
+    let token_url = format!("{}/oauth/token-request", server.uri());
+    let cache = KeyringTokenCache::new().expect("token cache should be available");
+    let access_key = CacheKey {
+        token_type: TokenType::OAuthAccessToken,
+        idp: normalize_url(&token_url),
+        snowflake: normalize_url(&server.uri()),
+        username: normalize_identifier(&user),
+        role: normalize_identifier(""),
+    };
+    cache
+        .add_token(&access_key, "expired_token")
+        .expect("seed OAuth access token");
+    let refresh_key = CacheKey {
+        token_type: TokenType::OAuthRefreshToken,
+        ..access_key.clone()
+    };
+    defer! {
+        let _ = cache.remove_token(&access_key);
+        let _ = cache.remove_token(&refresh_key);
+    }
+
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let opener = opener_recording(Arc::clone(&seen), |url| {
+        let parsed = Url::parse(url).expect("authorize url");
+        let redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("redirect_uri");
+        let state = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let mut loopback = Url::parse(&redirect).expect("redirect url");
+            loopback.set_query(Some(&format!("code=test-code&state={state}")));
+            get_loopback(&loopback).expect("oauth loopback");
+        });
+    });
+
+    connect_with_opener(
+        &server,
+        &[
+            ("authenticator", "OAUTH_AUTHORIZATION_CODE"),
+            ("oauth_client_id", "test-oauth-client-id"),
+            ("oauth_client_secret", "test-oauth-client-secret"),
+            (
+                "oauth_authorization_url",
+                "https://idp.snowflake.com/oauth/authorize",
+            ),
+            ("oauth_token_request_url", token_url.as_str()),
+            ("user", user.as_str()),
+            ("oauth_scope", "session:role:test_role"),
+            ("client_store_temporary_credential", "true"),
+        ],
+        opener,
+    )
+    .await
+    .expect("expired access token without a refresh token should retry through the browser");
+
+    let seen_url = seen.lock().expect("seen").clone().expect("opener called");
+    assert!(
+        seen_url.starts_with("https://idp.snowflake.com/oauth/authorize?"),
+        "opener must receive the authorize URL, got {seen_url}"
+    );
+    assert_eq!(
+        cache
+            .get_token(&access_key)
+            .expect("get OAuth access token")
+            .as_deref(),
+        Some("ac-access-token-success")
     );
 }
 

@@ -1383,6 +1383,165 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_failure_restarts_browser_flow_and_stores_new_tokens() {
+        const CACHED_REFRESH_TOKEN: &str = "ac-cached-refresh-token";
+        const AUTHORIZATION_CODE: &str = "ac-authorization-code";
+        const NEW_ACCESS_TOKEN: &str = "ac-access-token-from-browser";
+        const NEW_REFRESH_TOKEN: &str = "ac-refresh-token-from-browser";
+        let server = MockServer::start().await;
+        // And the refresh grant returns invalid_client
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=ac-cached-refresh-token"))
+            .respond_with(ResponseTemplate::new(400).set_body_raw(
+                r#"{"error":"invalid_client","error_description":"The client secret supplied for a confidential client is invalid."}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        // And the code exchange returns a new access token and refresh token
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    r#"{{"access_token":"{NEW_ACCESS_TOKEN}","refresh_token":"{NEW_REFRESH_TOKEN}","token_type":"Bearer","expires_in":600}}"#
+                ),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+        // Given a refresh token is cached
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            CACHED_REFRESH_TOKEN,
+            Some(cache.clone()),
+        )
+        .await;
+
+        let mut config = cfg_with_token_url(token_url.clone());
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        let client = reqwest::Client::new();
+        // When Trying to Connect and the browser completes the redirect
+        let acquired = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            Some(cache.clone()),
+            loopback_redirect_with(AUTHORIZATION_CODE),
+            false,
+            None,
+        )
+        .await
+        .expect("browser login after refresh failure");
+
+        // Then Login succeeds and both cached tokens are the new ones
+        assert_eq!(acquired.access_token.reveal(), NEW_ACCESS_TOKEN);
+        assert_eq!(
+            acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
+            Some(NEW_REFRESH_TOKEN)
+        );
+        let token_bodies: Vec<String> = server
+            .received_requests()
+            .await
+            .expect("mock server records requests")
+            .into_iter()
+            .filter(|request| request.url.path() == "/oauth/token")
+            .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+            .collect();
+        let refresh_bodies: Vec<&String> = token_bodies
+            .iter()
+            .filter(|body| body.contains("grant_type=refresh_token"))
+            .collect();
+        assert_eq!(
+            refresh_bodies.len(),
+            1,
+            "refresh must be attempted once before the browser login, got {token_bodies:?}"
+        );
+        assert!(
+            refresh_bodies[0].contains("refresh_token=ac-cached-refresh-token"),
+            "refresh grant must send the cached refresh token, got {token_bodies:?}"
+        );
+        let stored_at = token::try_get_cached_oauth_access_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await
+        .map(|s| s.reveal().to_string());
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await
+        .map(|s| s.reveal().to_string());
+        assert_eq!(stored_at.as_deref(), Some(NEW_ACCESS_TOKEN));
+        assert_eq!(stored_rt.as_deref(), Some(NEW_REFRESH_TOKEN));
+    }
+
+    #[tokio::test]
+    async fn ac_token_exchange_fails_when_idp_returns_empty_400() {
+        const AUTHORIZATION_CODE: &str = "invalidCode";
+        let server = MockServer::start().await;
+        // Given the token endpoint returns HTTP 400 with an empty body
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains(format!("code={AUTHORIZATION_CODE}")))
+            .respond_with(
+                ResponseTemplate::new(400).insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+
+        let client = reqwest::Client::new();
+        // When Trying to Connect and the redirect carries an authorization code
+        let err = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            loopback_redirect_with(AUTHORIZATION_CODE),
+            false,
+            None,
+        )
+        .await
+        .expect_err("empty HTTP 400 from the token endpoint must fail the code exchange");
+        // Then Login fails with the empty token-error response
+        assert!(
+            matches!(
+                err,
+                OAuthError::IdpError { ref error, ref description, .. }
+                    if error == "unknown" && description == "server returned empty error response"
+            ),
+            "empty 400 must surface the empty token-error response, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn full_interactive_flow_drives_loopback_directly() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1402,32 +1561,6 @@ mod tests {
             Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
         config.client_store_temporary_credential = false;
 
-        let launch: BrowserLaunchFn = Box::new(|authorize_url, redirect_uri| {
-            Box::pin(async move {
-                let state = authorize_url
-                    .query_pairs()
-                    .find(|(k, _)| k == "state")
-                    .map(|(_, v)| v.into_owned())
-                    .unwrap_or_default();
-                let mut s = tokio::net::TcpStream::connect((
-                    redirect_uri.host_str().unwrap(),
-                    redirect_uri.port().unwrap(),
-                ))
-                .await
-                .expect("connect loopback");
-                use tokio::io::AsyncWriteExt;
-                let req = format!(
-                    "GET /?code=THE-CODE&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
-                );
-                let _ = s.write_all(req.as_bytes()).await;
-                // Hold the stream open long enough for the server to flush
-                // its response. Dropping immediately after write_all can
-                // race with axum's handler invocation.
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
-            })
-        });
-
         let client = reqwest::Client::new();
         let acquired = run_authorization_code_flow(
             &client,
@@ -1436,7 +1569,7 @@ mod tests {
             &config,
             "",
             None,
-            launch,
+            loopback_redirect_with("THE-CODE"),
             false,
             None,
         )
@@ -1445,6 +1578,69 @@ mod tests {
         assert_eq!(acquired.access_token.reveal(), "AT-FRESH");
         assert_eq!(
             acquired.refresh_token.as_ref().map(|s| s.reveal().as_str()),
+            Some("RT-FRESH")
+        );
+    }
+
+    #[tokio::test]
+    async fn full_interactive_flow_drives_loopback_and_stores_tokens() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains("code=THE-CODE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-FRESH","refresh_token":"RT-FRESH","token_type":"Bearer","expires_in":600}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = true;
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+
+        let client = reqwest::Client::new();
+        run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            Some(cache.clone()),
+            loopback_redirect_with("THE-CODE"),
+            false,
+            None,
+        )
+        .await
+        .expect("interactive flow succeeds");
+        let idp_url = config.token_url_raw.clone().expect("token url");
+        let snowflake = server_url();
+        let cached_at = token::try_get_cached_oauth_access_token(
+            &idp_url,
+            snowflake.as_str(),
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await;
+        let cached_rt = token::try_get_cached_oauth_refresh_token(
+            &idp_url,
+            snowflake.as_str(),
+            "alice",
+            "",
+            Some(cache),
+        )
+        .await;
+        assert_eq!(
+            cached_at.as_ref().map(|s| s.reveal().as_str()),
+            Some("AT-FRESH")
+        );
+        assert_eq!(
+            cached_rt.as_ref().map(|s| s.reveal().as_str()),
             Some("RT-FRESH")
         );
     }
@@ -1714,7 +1910,13 @@ mod tests {
             Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
         config.client_store_temporary_credential = false;
 
-        let launch: BrowserLaunchFn = Box::new(|_authorize_url, redirect_uri| {
+        const DESCRIPTION: &str = "The resource owner or authorization server denied the request.";
+        let req = format!(
+            "GET /?error=access_denied&error_description={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            DESCRIPTION.replace(' ', "%20")
+        );
+        let launch: BrowserLaunchFn = Box::new(move |_authorize_url, redirect_uri| {
+            let req = req.clone();
             Box::pin(async move {
                 let mut s = tokio::net::TcpStream::connect((
                     redirect_uri.host_str().unwrap(),
@@ -1723,7 +1925,6 @@ mod tests {
                 .await
                 .expect("connect loopback");
                 use tokio::io::AsyncWriteExt;
-                let req = "GET /?error=access_denied&error_description=denied HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 Ok(())
@@ -1743,7 +1944,14 @@ mod tests {
         )
         .await
         .expect_err("must fail with IdpError");
-        assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
+        assert!(
+            matches!(
+                err,
+                OAuthError::IdpError { ref error, ref description, .. }
+                    if error == "access_denied" && description == DESCRIPTION
+            ),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -1835,8 +2043,19 @@ mod tests {
     /// URL the flow generated). Used by tests that need the interactive
     /// branch to complete deterministically.
     fn loopback_redirect_with(code: &'static str) -> BrowserLaunchFn {
+        loopback_redirect_observing(code, None)
+    }
+
+    fn loopback_redirect_observing(
+        code: &'static str,
+        authorize_url_out: Option<Arc<Mutex<Option<Url>>>>,
+    ) -> BrowserLaunchFn {
         Box::new(move |authorize_url, redirect_uri| {
+            let authorize_url_out = authorize_url_out.clone();
             Box::pin(async move {
+                if let Some(slot) = &authorize_url_out {
+                    *slot.lock().expect("authorize url") = Some(authorize_url.clone());
+                }
                 let state = authorize_url
                     .query_pairs()
                     .find(|(k, _)| k == "state")
@@ -1855,7 +2074,7 @@ mod tests {
                 // Hold the stream open long enough for the server to flush
                 // its response. Dropping immediately after write_all can
                 // race with axum's handler invocation (mirrors the same
-                // guard in `full_interactive_flow_drives_loopback_directly`).
+                // guard in `full_interactive_flow_drives_loopback_and_stores_tokens`).
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 Ok(())
             })
@@ -2247,6 +2466,7 @@ mod tests {
         // explicit None — already the cfg_with_token_url default but
         // re-asserted here for clarity of intent.
         config.scope = None;
+        let authorize_url = Arc::new(Mutex::new(None));
 
         let client = reqwest::Client::new();
         let acquired = run_authorization_code_flow(
@@ -2256,13 +2476,19 @@ mod tests {
             &config,
             "",
             None,
-            loopback_redirect_with("CODE"),
+            loopback_redirect_observing("CODE", Some(authorize_url.clone())),
             false,
             None,
         )
         .await
         .expect("scope-less AC succeeds");
         assert_eq!(acquired.access_token.reveal(), "AT-SCOPELESS");
+        let seen = authorize_url.lock().expect("authorize url").clone();
+        let seen = seen.expect("browser launch must receive the authorize URL");
+        assert!(
+            !seen.query_pairs().any(|(key, _)| key == "scope"),
+            "authorize URL must omit scope when config.scope is none, got {seen}"
+        );
     }
 
     #[tokio::test]

@@ -24,6 +24,7 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   oauthRedirectUri: 'oauth_redirect_uri',
   oauthAuthorizationUrl: 'oauth_authorization_url',
   oauthTokenRequestUrl: 'oauth_token_request_url',
+  oauthEnableSingleUseRefreshTokens: 'oauth_enable_single_use_refresh_tokens',
   privateKey: 'private_key',
   privateKeyPath: 'private_key_file',
   privateKeyPass: 'private_key_password',

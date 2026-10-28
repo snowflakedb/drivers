@@ -79,6 +79,19 @@ pub fn idp_token_endpoint_success_refresh() -> Mock {
         })))
 }
 
+/// Refresh exchange that returns an access token and no refresh token.
+/// The cached refresh token stays in place unless single-use rotation is on.
+pub fn idp_token_endpoint_refresh_omits_refresh_token() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"^/oauth/token-request$"))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "ac-access-token-refreshed",
+            "token_type": "Bearer",
+            "expires_in": 599
+        })))
+}
+
 // ─── IdP token endpoint — error variants ────────────────────────────────────
 
 /// IdP returns 400 with an `invalid_scope` body. Mirrors ODBC's

@@ -2722,3 +2722,75 @@ behavior_differences:
       A driver should not run code it receives in query results, even from a trusted service, and
       JSON.parse() is much faster than new Function(). Users who need these tokens set
       STRICT_JSON_OUTPUT=TRUE or pass their own jsonColumnVariantParser to snowflake.configure().
+
+  141:
+    name: 'oauthHttpAllowed is not accepted; http OAuth token URLs are allowed without it'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      `oauthHttpAllowed` is a testing-only connection option. An `http://` OAuth token
+      URL is rejected with "only requests to HTTPS are allowed" unless the option is true.
+    new_driver_behavior: |
+      `oauthHttpAllowed` is an unknown connection option and createConnection throws.
+      An `http://` token URL is accepted without that option.
+    description: |
+      The option existed so tests could point the token endpoint at an http WireMock.
+      The new driver does not keep the testing switch.
+
+  142:
+    name: 'An empty HTTP 400 from the OAuth token endpoint is a core IdP error, not an Axios status'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When the token endpoint returns HTTP 400 with an empty body, connect fails as
+      AxiosError with code ERR_BAD_REQUEST and message "Request failed with status code 400".
+    new_driver_behavior: |
+      The same response fails as Error with no code and message "Failed to login: OAuth
+      flow failed: Identity Provider responded with error: unknown: server returned empty
+      error response".
+    description: |
+      The new driver reports the core IdP error. It does not surface the HTTP client
+      library's status text.
+
+  143:
+    name: 'An OAuth redirect with the wrong state is a core state-mismatch error'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A loopback redirect whose state does not match fails as OperationProcessingError
+      with code OAUTH_INVALID_RESPONSE and message 'unexpected "state" response parameter value'.
+    new_driver_behavior: |
+      The same redirect fails as Error with no code and message "Failed to login: OAuth
+      flow failed: Identity Provider did not provide expected state parameter! It might
+      indicate an XSS attack."
+    description: |
+      The new driver reports the core state-mismatch text. Callers that matched the
+      oauth4webapi sentence see a different error.
+
+  144:
+    name: 'A successful single-use refresh that omits the refresh token deletes the cached one'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With `oauthEnableSingleUseRefreshTokens` true, a refresh grant that succeeds
+      without a `refresh_token` field leaves the previously cached refresh token in
+      place. The old driver removes that cache entry only when the refresh request throws.
+    new_driver_behavior: |
+      The same response deletes the cached refresh token. Both drivers still log in
+      with the new access token.
+    description: |
+      Single-use refresh tokens are consumed by the IdP. The new driver drops the
+      cached copy when the refresh response does not replace it. The old driver
+      keeps that copy until a later refresh fails.

@@ -514,6 +514,14 @@ export type ConnectionOptions = {
   oauthTokenRequestUrl?: string;
 
   /**
+   * When true, the authorization-code token request includes
+   * `enable_single_use_refresh_tokens=true`. Snowflake as the IdP only.
+   *
+   * @default false
+   */
+  oauthEnableSingleUseRefreshTokens?: boolean;
+
+  /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and
    * `OAUTH_AUTHORIZATION_CODE`. The driver still binds the loopback
    * listener and waits for the IdP redirect; this function only receives
