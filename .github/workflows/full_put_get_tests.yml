@@ -257,11 +257,8 @@ jobs:
       - name: Install snowflake ud driver from wheel
         working-directory: python
         run: |
-          WHEELS=(dist/*.whl)
-          if [[ ${#WHEELS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${WHEELS[0]}"
+          export WHEEL_PATH
+          WHEEL_PATH="$(python3 ../scripts/ci/select_connector_wheel.py dist 3.13)"
           hatch run test.py3.13:install-wheel
 
       # `hatch run env:<cmd>` falls through to executing <cmd> in the env when

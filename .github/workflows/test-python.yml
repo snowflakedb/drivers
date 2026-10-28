@@ -636,11 +636,8 @@ jobs:
         if: runner.os != 'Windows' && matrix.wheel_artifact
         working-directory: python
         run: |
-          WHEELS=(dist/*.whl)
-          if [[ ${#WHEELS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${WHEELS[0]}"
+          export WHEEL_PATH
+          WHEEL_PATH="$(python3 ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}")"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
@@ -663,11 +660,8 @@ jobs:
         working-directory: python
         shell: pwsh
         run: |
-          $wheels = @(Get-ChildItem dist/*.whl)
-          if ($wheels.Count -ne 1) {
-            Write-Error "Expected exactly 1 wheel, found $($wheels.Count)"; Get-ChildItem dist/; exit 1
-          }
-          $env:WHEEL_PATH = $wheels[0].FullName
+          $env:WHEEL_PATH = python ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
       - name: Install snowflake ud driver from sdist (Windows)
@@ -1025,11 +1019,8 @@ jobs:
       - name: Install snowflake ud driver from wheel
         working-directory: python
         run: |
-          WHEELS=(dist/*.whl)
-          if [[ ${#WHEELS[@]} -ne 1 ]]; then
-            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
-          fi
-          export WHEEL_PATH="${WHEELS[0]}"
+          export WHEEL_PATH
+          WHEEL_PATH="$(python3 ../scripts/ci/select_connector_wheel.py dist 3.13)"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run test.py3.13:install-wheel
 
