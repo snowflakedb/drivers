@@ -35,8 +35,33 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install --yes gcc-13 g++-13
+        # GitHub-hosted ubuntu images enable packages.microsoft.com; that
+        # mirror 403s (SNOW-4342752) and fails `apt-get update` before gcc-13
+        # installs. FIPS builds do not need those packages.
+        sudo rm -f /etc/apt/sources.list.d/*microsoft*.list \
+          /etc/apt/sources.list.d/*microsoft*.sources
+        for attempt in 1 2 3; do
+          if sudo apt-get update; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "apt-get update exhausted 3 attempts" >&2
+            exit 1
+          fi
+          echo "apt-get update failed (attempt ${attempt}/3); retrying..." >&2
+          sleep $((15 * attempt))
+        done
+        for attempt in 1 2 3; do
+          if sudo apt-get install --yes gcc-13 g++-13; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "apt-get install exhausted 3 attempts" >&2
+            exit 1
+          fi
+          echo "apt-get install failed (attempt ${attempt}/3); retrying..." >&2
+          sleep $((15 * attempt))
+        done
         echo "CC=gcc-13" >> "$GITHUB_ENV"
         echo "CXX=g++-13" >> "$GITHUB_ENV"
         # GCC's aarch64 jump tables contain `.word (label - label) / 4`.
