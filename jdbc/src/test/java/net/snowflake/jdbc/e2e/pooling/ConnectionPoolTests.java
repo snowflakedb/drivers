@@ -259,8 +259,8 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
       }
     }
 
-    // Snowflake does no statement pooling, so statement-event listeners are accepted no-ops on both
-    // drivers (BD#39): a registered listener must never receive a callback.
+    // Snowflake does no statement pooling, so a registered listener receives no callback on
+    // either driver.
     // Then No statement events should be fired and the listener can be removed
     assertEquals(0, statementListener.closedEvents.size());
     assertEquals(0, statementListener.errorEvents.size());

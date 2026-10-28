@@ -42,9 +42,8 @@ public final class PoolingTestCompat {
 
   /**
    * Asserts the network timeout observed after {@code setNetworkTimeout(setValue)}. The universal
-   * driver has not yet wired connection network timeout to sf_core, so its {@code
-   * getNetworkTimeout()} is a no-op returning 0; the legacy snowflake-jdbc driver implements it and
-   * returns the configured value (BD#41).
+   * driver returns 0. The legacy driver returns the value stored on the connection (BD#41). HTTP
+   * does not read that field on either driver.
    */
   public static void assertNetworkTimeoutAfterSet(Connection connection, int setValue)
       throws SQLException {
@@ -97,11 +96,8 @@ public final class PoolingTestCompat {
 
   /**
    * Asserts that an operation on a closed logical handle is rejected with {@code
-   * CONNECTION_CLOSED}. The universal driver uniformly enforces closed-state on every {@link
-   * Connection} method (BD#37), with the individually-documented client-info and unwrap cases in
-   * BD#29 and BD#33. {@code isValid} returns false on both drivers (BD#34). The legacy reference
-   * driver does not uniformly enforce closed-state, so this assertion runs on the universal driver
-   * only.
+   * CONNECTION_CLOSED}. Methods that differ on the legacy driver are client info (BD#29), unwrap
+   * and isWrapperFor (BD#33), and abort (BD#40). This helper runs on the universal driver only.
    */
   public static void assertThrowsConnectionClosed(SqlRunnable action) {
     if (isUniversalDriverPooling()) {

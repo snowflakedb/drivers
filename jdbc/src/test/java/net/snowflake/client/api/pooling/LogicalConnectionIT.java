@@ -57,10 +57,8 @@ public class LogicalConnectionIT extends PoolingTestBase {
     PooledConnection pooledConnection = trackPooledConnection(poolDataSource.getPooledConnection());
     try (Connection logicalConnection = pooledConnection.getConnection()) {
       assertEquals(0, logicalConnection.getNetworkTimeout());
-      // The universal driver has not yet wired connection network timeout to sf_core:
-      // SnowflakeConnectionImpl.setNetworkTimeout is a no-op and getNetworkTimeout returns 0. The
-      // legacy reference driver implements it and returns the set value (BD#41), so the post-set
-      // assertion is gated per driver.
+      // getNetworkTimeout returns the value stored on the connection on the legacy driver and
+      // 0 on the universal driver (BD#41). HTTP does not read that field on either driver.
       logicalConnection.setNetworkTimeout(null, 200);
       assertNetworkTimeoutAfterSet(logicalConnection, 200);
     }

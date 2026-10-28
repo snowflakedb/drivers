@@ -360,47 +360,35 @@ behavior_differences:
       A successful GET produces the same file on both drivers. Callers that delete a truncated
       destination file after a failed GET no longer need that cleanup.
   40:
-    name: "LogicalConnection.abort() closes the logical handle and notifies the pool"
+    name: "abort() on a pooled handle marks it closed and fires connectionErrorOccurred instead of leaving isClosed() false"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
-    impact: medium
+    impact: low
     old_driver_behavior: |
-      LogicalConnection.abort(Executor) delegates to the physical connection's abort() but leaves
-      the logical handle's isClosed flag false and fires no ConnectionEventListener callback. After
-      abort, isClosed() returns false and the PooledConnection's listeners are never told the
-      physical connection is gone, so a pool manager may keep handing out a dead connection. A
-      stale logical handle can also abort a physical connection that was already returned to the
-      pool by a prior close().
+      `abort()` aborts the physical connection and leaves `isClosed()` false on the logical
+      handle. `connectionErrorOccurred` fires only if the physical abort throws, and no event
+      fires on success. After a successful abort, `close()` on that handle and
+      `PooledConnection.getConnection()` throw with vendor code `200052` and SQLSTATE `08003`.
+      A handle that is already closed can still abort the physical connection after the session
+      was returned to the pool.
     new_driver_behavior: |
-      The logical handle is claimed closed via compareAndSet before the physical connection is
-      touched, closing a race with a concurrent close(). abort() on an already-closed logical handle
-      is a no-op. A successful abort() leaves the handle closed and fires connectionErrorOccurred so
-      the pool manager EVICTS the now-dead physical connection. connectionClosed is deliberately not
-      used: in the javax.sql pooling contract connectionClosed means the logical handle was closed
-      normally and the physical connection is idle and reusable, so firing it after abort would leave
-      a standard pool handing out a dead connection on every subsequent borrow; only
-      connectionErrorOccurred instructs the pool to discard the connection. There are two outcomes if
-      the physical abort() throws:
-        - SQLFeatureNotSupportedException: the physical connection was left untouched, so the handle
-          is reopened (isClosed() returns false again) and no pool event fires.
-        - any other SQLException: the physical connection is now dead, so the handle stays closed,
-          connectionErrorOccurred fires (never connectionClosed), and a subsequent close() is a no-op
-          so the dead connection cannot be recycled into the pool.
-      Concurrency note: the reopen on an unsupported abort (isClosed flipped back to false) is
-      best-effort; JDBC Connections are not required to be thread-safe, so concurrently invoking
-      abort() and close() on the same logical handle is undefined.
+      `abort()` marks the logical handle closed before touching the physical connection, so
+      `isClosed()` returns true, `close()` returns, and a second `abort()` returns immediately.
+      Success fires `connectionErrorOccurred` and fires no `connectionClosed`.
+      `PooledConnection.getConnection()` throws vendor code `200052` and SQLSTATE `08003`. If
+      the physical abort throws, the caller gets that same vendor code and SQLSTATE and the
+      listener receives the original exception.
     description: |
-      Aligns LogicalConnection with the JDBC Connection.abort() contract ("the connection will be
-      marked as closed") and with javax.sql pooling lifecycle expectations, while preventing a
-      concurrent close() from recycling a connection that abort() is tearing down.
+      A caller that aborts a borrowed handle sees it closed immediately, and the pool is told to
+      discard the physical connection rather than discovering it on the next failing borrow. The
+      abort-then-close sequence is asserted on the new driver only.
     status_rationale: |
-      Intentional correctness fix. Pool managers rely on close/error events to reclaim physical
-      connections; the old behavior could leak or hand out aborted connections. A successful abort
-      signals connectionErrorOccurred (not connectionClosed) because the javax.sql contract only
-      evicts a pooled connection on an error event - a close event would mark the dead connection
-      reusable.
+      Intentional fix. `java.sql.Connection.abort()` requires the connection to be marked closed,
+      and an aborted session must not be handed out again. Neither driver checks
+      `SQLPermission("callAbort")`, validates the executor, or aborts asynchronously. Only callers
+      of the pooled-connection API that also call `abort()` observe this.
   26:
     name: "SQLFeatureNotSupportedException from a pooled connection no longer fires connectionErrorOccurred"
     status: allowed
@@ -434,15 +422,15 @@ behavior_differences:
     impact: low
     old_driver_behavior: |
       After `SnowflakePooledConnection.close()`, `getConnection()` throws an unchecked
-      `NullPointerException`. After a logical `abort()`, `getConnection()` returns a new logical
-      handle.
+      `NullPointerException`.
     new_driver_behavior: |
-      After `PooledConnection.close()`, and after a logical `abort()`, `getConnection()` throws
-      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
+      After `PooledConnection.close()`, `getConnection()` throws `SnowflakeSQLException` with
+      vendor code `200052` and SQLSTATE `08003`.
     description: |
       A pool manager or application that borrows from an already-closed `PooledConnection` catches
       a checked `SQLException` on the new driver; code that catches `NullPointerException` there no
-      longer reaches that handler. The pool events `abort()` fires are BD#40.
+      longer reaches that handler. A borrow after a logical `abort()` throws vendor code `200052`
+      and SQLSTATE `08003` on both drivers. The handle and pool events `abort()` fires are BD#40.
     status_rationale: |
       `javax.sql.PooledConnection.getConnection()` declares `SQLException`, so a closed pooled
       connection reporting an unchecked `NullPointerException` is outside the method's contract.
@@ -629,165 +617,210 @@ behavior_differences:
       Intentional fix to avoid spurious pool eviction and churn when applications probe wrapper
       types on a pooled logical connection.
   36:
-    name: "PooledConnection.getConnection() invalidates the previously returned logical handle"
+    name: "PooledConnection.getConnection() invalidates the previously returned logical handle instead of leaving it open"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: medium
     old_driver_behavior: |
-      SnowflakePooledConnection.getConnection() minted a new LogicalConnection on each call without
-      tracking or invalidating any previously returned, still-open handle, so two logical handles
-      could simultaneously drive the same physical session. When the stale handle was later closed it
-      fired connectionClosed, signalling the pool that the physical connection was idle while the
-      second handle was still using it.
+      `getConnection()` returns a new logical handle and leaves any earlier handle open. Both
+      handles work against the same physical session. Closing the older handle fires
+      `connectionClosed` while the newer handle is still in use.
     new_driver_behavior: |
-      getConnection() tracks the currently-issued logical handle and, when a new handle is borrowed
-      while a prior one is still open, silently invalidates the prior handle (marks it closed without
-      firing connectionClosed, since this is internal reclamation rather than an application close).
-      Subsequent operations on the invalidated handle fail with CONNECTION_CLOSED. This honors the
-      javax.sql.PooledConnection contract that at most one active logical handle exists per pooled
-      connection at a time.
+      `getConnection()` marks the previously returned handle closed and fires no
+      `connectionClosed`. On that handle, operations needing a live connection such as
+      `createStatement()` throw `SnowflakeSQLException` with vendor code `200052` and SQLSTATE
+      `08003`, `isClosed()` returns true, `isValid()` returns false, and `close()` and `abort()`
+      return their closed-state results.
     description: |
-      Prevents two logical handles from sharing one physical session and the resulting spurious
-      pool lifecycle signals.
+      A caller that borrows twice without closing in between keeps only the newest handle usable;
+      code holding the older one starts seeing closed-connection errors. The cross-driver test
+      asserts the vendor code on the new driver only, because the old driver leaves the handle
+      open.
     status_rationale: |
-      Intentional correctness fix aligning with the javax.sql pooling contract.
+      Intentional fix. The `javax.sql` pooling contract gives one logical handle per borrow, and
+      two live handles over a single session — plus a close event fired while the newer handle is
+      still working — leave the pool's idle bookkeeping wrong.
   37:
-    name: "LogicalConnection uniformly enforces closed-state on all Connection methods; legacy does not"
-    status: allowed
+    name: "A closed logical connection rejects statement, metadata, and transaction calls on both drivers"
+    status: fixed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      A closed logical handle does not reject every call. `createStatement`, `prepareStatement`,
-      and `getMetaData` throw `SnowflakeSQLException` with vendor code `200052`. The calls that
-      still reach the pooled physical connection are `setClientInfo` (both overloads),
-      `getClientInfo(String)`, `unwrap`, `isWrapperFor`, and `abort`. The no-argument
-      `getClientInfo()` throws vendor code `200052` (BD#29), and `isValid` returns false (BD#34).
+      After `close()`, the statement factories, metadata accessors, transaction methods, and the
+      getters other than `isClosed()`, `isValid()`, and `getClientInfo(String)` throw with vendor
+      code `200052` and SQLSTATE `08003`. `isClosed()` returns true and `isValid()` returns false.
     new_driver_behavior: |
-      Nearly every operational `java.sql.Connection` method on a closed logical handle throws
-      `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`. `close()`,
-      `isClosed()`, and `abort()` are idempotent no-ops.
+      The same methods throw the same vendor code and SQLSTATE. `isClosed()` returns true and
+      `isValid()` returns false.
     description: |
-      The methods whose closed-state behavior the JDBC contract fixes are documented separately:
-      `isValid()` returns false on both drivers (BD#34), `setClientInfo()` throws
-      `SQLClientInfoException` carrying the same vendor code (BD#29), and `unwrap`/`isWrapperFor`
-      is BD#33. Because the old driver does not enforce closed-state uniformly, the cross-driver
-      reference tests assert the vendor code on the new driver only;
-      `PoolingTestCompat.assertThrowsConnectionClosed` is a no-op on the old driver.
+      Callers need no change. The closed-handle methods that do still differ have their own
+      entries: both `setClientInfo` overloads and `getClientInfo(String)` are BD#29, `unwrap` and
+      `isWrapperFor` are BD#33, and `abort` is BD#40. No test gates on this entry.
     status_rationale: |
-      Intentional correctness fix; a logically-closed handle must not reach the pooled physical
-      connection. Matches the JDBC Connection closed-state contract.
+      No difference remains for these methods; this entry originally asserted that the old driver
+      kept serving getters and statement factories from a closed handle, which it does not. The
+      key stays because JDBC entries are never removed.
   38:
-    name: "Pooled DataSource is not JNDI Referenceable; legacy exposed a JNDI ObjectFactory"
-    status: unknown
+    name: "A pooled DataSource cannot be rebuilt from a JNDI Reference on either driver"
+    status: fixed
     type: api_incompatibility
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The legacy snowflake-jdbc shipped a JNDI ObjectFactory (SnowflakeConnectionPoolDataSourceFactory)
-      and Referenceable DataSources, so a pooled DataSource could be bound into a JNDI naming context
-      and reconstructed from a javax.naming.Reference.
+      `SnowflakeConnectionPoolDataSourceFactory` is a static factory that does not implement
+      `javax.naming.spi.ObjectFactory`. The pooled `DataSource` types do not implement
+      `javax.naming.Referenceable` and expose no `getReference()`.
     new_driver_behavior: |
-      The universal driver's SnowflakeConnectionPoolDataSourceFactory is a plain static factory (not a
-      javax.naming.spi.ObjectFactory), and the DataSources do not implement Referenceable, so a pooled
-      DataSource cannot be bound/reconstructed via a JNDI Reference. Applications that relied on JNDI
-      binding must construct and configure the DataSource programmatically.
+      The same: no `ObjectFactory`, no `Referenceable`, no `getReference()`.
     description: |
-      Tracks the loss of JNDI Referenceable/ObjectFactory support for the pooled DataSource.
+      Callers need no change; JNDI rebinding of a pooled DataSource was never available. No test
+      gates on this entry.
     status_rationale: |
-      Not yet reviewed. The JNDI surface reduction is a deliberate simplification, but whether JNDI
-      binding must be restored for compatibility needs an explicit decision.
+      No difference remains; this entry originally recorded the absence as new, but the old
+      driver lacks `Referenceable` and `ObjectFactory` as well. The key stays because JDBC
+      entries are never removed.
   39:
-    name: "PooledConnection statement-event listeners are accepted but never invoked (parity with legacy)"
-    status: allowed
+    name: "PooledConnection accepts statement-event listeners and never invokes them on either driver"
+    status: fixed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      The legacy snowflake-jdbc SnowflakePooledConnection accepts StatementEventListener registrations
-      but never emits statementClosed/statementErrorOccurred events, because Snowflake does no
-      statement pooling and does not wrap PreparedStatements to fire statement events.
+      `addStatementEventListener` and `removeStatementEventListener` are accepted and return
+      normally. `statementClosed` and `statementErrorOccurred` never fire.
     new_driver_behavior: |
-      addStatementEventListener / removeStatementEventListener are accepted as no-ops and no statement
-      events are ever fired. Observable behavior is identical to the legacy driver (a registered
-      StatementEventListener never receives a callback on either driver).
+      The same: both registration calls succeed and a registered `StatementEventListener`
+      receives no callback.
     description: |
-      Documents that statement-event listeners are a no-op, matching legacy behavior, so the divergence
-      from the full javax.sql.PooledConnection surface is explicit.
+      Callers need no change; neither driver pools statements, so there is nothing to report.
+      No test gates on this entry.
     status_rationale: |
-      Behaviorally equivalent to legacy; documented for completeness of the pooling behavioral surface.
+      No difference remains; this entry originally recorded the silent acceptance as new, but the
+      old driver fires no statement events either. The key stays because JDBC entries are never
+      removed.
   41:
-    name: "Connection.getNetworkTimeout() returns 0; the old driver returns the value passed to setNetworkTimeout"
+    name: "Connection.getNetworkTimeout() returns 0 instead of the value passed to setNetworkTimeout"
     status: unknown
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Legacy snowflake-jdbc implements the network timeout: setNetworkTimeout(executor, millis) stores
-      the value and getNetworkTimeout() returns it (e.g. after setNetworkTimeout(null, 200),
-      getNetworkTimeout() returns 200).
+      `setNetworkTimeout` stores the millisecond value on the connection and `getNetworkTimeout`
+      returns it, on a pooled logical connection as well. The stored value does not change any
+      HTTP timeout.
     new_driver_behavior: |
-      The new driver's setNetworkTimeout is a no-op and getNetworkTimeout() always returns 0,
-      including on a pooled logical connection. The networkTimeout connection property is
-      separate (entry 78).
+      `setNetworkTimeout` returns without storing anything and `getNetworkTimeout` returns `0`,
+      on a pooled logical connection as well.
     description: |
-      Documents that connection network timeout is not yet implemented in the new driver, so the
-      getter returns 0 regardless of setNetworkTimeout, unlike the old driver. The old setter
-      stores a connection-local value that HTTP never reads. LogicalConnection delegates directly.
-      Cross-driver reference tests gate the post-set assertion via
-      PoolingTestCompat.assertNetworkTimeoutAfterSet (0 on the new driver, the set value on the old).
+      Code that reads back its own `setNetworkTimeout` value gets `0`. Neither driver applies the
+      value to requests, so no timeout changes. The separate `networkTimeout` connection property
+      is BD#78 and per-attempt HTTP timing is BD#77.
     status_rationale: |
-      Not yet reviewed. The getter stays 0 because no HTTP timeout reads the setter's value in
-      either driver. HTTP timeout behavior is covered by entries 77 and 78.
+      Not yet reviewed. `java.sql.Connection.getNetworkTimeout()` is specified to return the
+      limit `setNetworkTimeout` installed, which argues for echoing the value; against that, the
+      old driver's echo advertises a limit that no request honors.
   42:
-    name: "Linux legacy external-browser id-token cache requires CLIENT_STORE_TEMPORARY_CREDENTIAL session param"
-    status: unknown
-    type: api_incompatibility
+    name: "On Linux the ID-token cache honors clientStoreTemporaryCredential instead of only the session parameter"
+    status: allowed
+    type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
+    old_driver_behavior: |
+      On Linux, external-browser login reads and writes the ID-token cache only when the
+      `CLIENT_STORE_TEMPORARY_CREDENTIAL` session parameter is true; setting
+      `clientStoreTemporaryCredential=true` alone leaves the cache unused. On macOS and Windows
+      the property is copied into the session parameter.
+    new_driver_behavior: |
+      `clientStoreTemporaryCredential` and `CLIENT_STORE_TEMPORARY_CREDENTIAL` resolve to one
+      setting. When true, the external-browser ID-token cache is read and written on Linux,
+      macOS, and Windows alike.
+    description: |
+      A Linux caller that sets only the documented property now gets the cached ID token, so
+      repeat logins stop opening a browser. Nothing was removed; the session parameter still
+      works.
     status_rationale: |
-      Legacy snowflake-jdbc on Linux ignores clientStoreTemporaryCredential for id-token cache I/O unless
-      CLIENT_STORE_TEMPORARY_CREDENTIAL is also set; universal driver does not.
+      Intentional fix. The property is the documented switch and is platform-independent by
+      design, so requiring a second spelling of it on one platform only is a defect.
   43:
-    name: "HttpHeadersCustomizer is not ported"
+    name: "HttpHeadersCustomizer and its DataSource setter do not exist on the new driver"
     status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
+    old_driver_behavior: |
+      `SnowflakeDataSource.setHttpHeadersCustomizers` takes a list of `HttpHeadersCustomizer`
+      objects — Java instances, not a connection-string property. The callbacks run on REST
+      requests and on result and cloud-storage downloads, and can rebuild headers on retry.
+    new_driver_behavior: |
+      Neither the `HttpHeadersCustomizer` interface nor the setter exists, and there is no
+      substitute. A customizer cannot be registered and silently ignored.
+    description: |
+      Code that registers its own HTTP headers on the DataSource does not compile against the
+      new driver; callers that never set a customizer are unaffected.
     status_rationale: |
-      Legacy snowflake-jdbc exposes HttpHeadersCustomizer / setHttpHeadersCustomizers for custom REST
-      headers. sf_core has no equivalent hook, so the universal driver omits the surface rather than
-      accepting customizers that would be ignored.
+      Accepted omission. The surface is a Java-object DataSource setter rather than a connection
+      property, and the new driver has no request-building hook for the callbacks to run in.
   44:
-    name: "DataSource.getProperties() returns a copy, not the live map"
+    name: "DataSource.getProperties() returns a copy instead of the live map"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
+    old_driver_behavior: |
+      `getProperties()` returns the DataSource's own map, so editing it changes later
+      connections. `getConnection(user, password)` writes both into that map, and a later
+      `getProperties()` reads the password back. A no-argument `getConnection()` uses the
+      DataSource's own user and password fields, not those leftover entries.
+    new_driver_behavior: |
+      `getProperties()` returns a copy, so editing it leaves the DataSource unchanged. A user
+      and password passed to `getConnection(user, password)` apply to that call only and do not
+      appear in a later `getProperties()`.
+    description: |
+      Code that configured a DataSource by mutating the returned map has to call the setters
+      instead, and a password passed per call no longer stays readable on the DataSource.
     status_rationale: |
-      Legacy getProperties() returns the live internal map; mutating it changes DataSource state, and
-      getConnection(user, password) persists credentials into that shared map. The universal driver
-      returns a defensive copy so per-call credentials are not stored on the DataSource.
+      Intentional fix. `javax.sql.DataSource` exposes configuration through setters, so handing
+      out the live map makes every reader a writer; leaving a per-call password in it is a
+      credential-exposure defect on top of that.
   45:
-    name: "DataSource.getConnection does not require a username up front"
+    name: "DataSource.getConnection() rejects a missing username at connect time instead of up front"
     status: allowed
     type: bugfix
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
+    old_driver_behavior: |
+      `getConnection()` rejects a null username with `"Cannot create connection because username
+      is missing in DataSource properties."`, no SQLSTATE, and vendor code `0`, unless
+      `setAuthenticator` was called with `OAUTH` or `WORKLOAD_IDENTITY`. The same authenticator
+      given in the URL or in properties does not exempt the call, and
+      `PROGRAMMATIC_ACCESS_TOKEN`, `OAUTH_AUTHORIZATION_CODE`, and `OAUTH_CLIENT_CREDENTIALS`
+      are never exempt. An empty-string username passes the check.
+    new_driver_behavior: |
+      A null username reaches the login. Password, key-pair, external-browser, Okta, and MFA
+      logins fail at connect with `"Missing required parameter: user"`. `PROGRAMMATIC_ACCESS_TOKEN`,
+      `OAUTH_AUTHORIZATION_CODE`, `OAUTH_CLIENT_CREDENTIALS`, and OAuth or workload identity
+      supplied outside `setAuthenticator` connect with no username at all. An empty string counts
+      as missing.
+    description: |
+      Token-identified logins that the old driver refused now connect. Logins that do need a
+      username still fail, but later and with different message text, so code matching on the
+      old message has to change.
     status_rationale: |
-      The old driver's getConnection(username, password) rejects a missing username for most
-      authenticators. The new driver passes the credentials through and lets connect-time
-      validation decide whether a username is required.
+      Intentional fix. Which credentials a login needs is a property of the authenticator, so
+      the check belongs where the authenticator is resolved — an up-front DataSource check
+      cannot see an authenticator set through the URL or properties, and rejects flows that
+      identify the user by token.
   46:
     name: "OCSP revocation checking and setOcspFailOpen do not exist on the new driver"
     status: allowed
