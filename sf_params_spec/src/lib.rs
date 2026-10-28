@@ -94,6 +94,7 @@ pub mod param_names {
     pub const PRIVATE_KEY: ParamKey = ParamKey("private_key");
     pub const PRIVATE_KEY_FILE: ParamKey = ParamKey("private_key_file");
     pub const PRIVATE_KEY_PASSWORD: ParamKey = ParamKey("private_key_password");
+    pub const JWT_TIMEOUT: ParamKey = ParamKey("jwt_timeout");
     pub const TOKEN: ParamKey = ParamKey("token");
     pub const TOKEN_FILE_PATH: ParamKey = ParamKey("token_file_path");
     pub const EXTERNAL_SESSION_ID: ParamKey = ParamKey("external_session_id");
@@ -369,6 +370,7 @@ pub const DEFAULT_PUT_GET_MAX_ATTEMPTS: u32 = 6;
 
 /// Default `login_timeout` in seconds (mirrors the `ParamDef`).
 pub const DEFAULT_LOGIN_TIMEOUT_SECS: u64 = 120;
+pub const DEFAULT_JWT_TIMEOUT_SECS: i64 = 120;
 
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 60;
 
@@ -1256,6 +1258,16 @@ static PARAM_DEFS: &[ParamDef] = &[
         .description("When true, appends retryReason (the HTTP status code that triggered \
                       the retry, or 0 for transport errors with no HTTP response) \
                       alongside retryCount on retried query requests.")
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::JWT_TIMEOUT.as_str())
+        .value_type(ValueType::Int)
+        .default(DefaultValue::Int(DEFAULT_JWT_TIMEOUT_SECS))
+        .sensitive(false)
+        .auth(true)
+        .description("Lifetime in seconds for each key-pair authentication JWT (must be positive)")
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),
@@ -2934,6 +2946,7 @@ mod tests {
             ("ROLE", "role"),
             ("AUTHENTICATOR", "authenticator"),
             ("TOKEN", "token"),
+            ("JWT_TIMEOUT", "jwt_timeout"),
             ("TOKEN_FILE_PATH", "token_file_path"),
             ("PASSCODE", "passcode"),
             ("OAUTH_CLIENT_ID", "oauth_client_id"),
@@ -3694,6 +3707,18 @@ mod tests {
 
         // Canonical name also resolves.
         assert!(r.resolve("disable_parallel_user_prompt").is_some());
+    }
+
+    #[test]
+    fn jwt_timeout_is_connection_scoped_with_two_minute_default() {
+        let def = registry()
+            .resolve_for(Wrapper::Python, "JWT_TIMEOUT")
+            .expect("case-insensitive canonical name should resolve");
+        assert_eq!(def.canonical_name, param_names::JWT_TIMEOUT.as_str());
+        assert_eq!(def.value_type, ValueType::Int);
+        assert_eq!(def.default, Some(DefaultValue::Int(120)));
+        assert_eq!(def.scopes, &[ParamScope::Connection]);
+        assert!(!def.mutable_after_connect);
     }
 
     #[test]

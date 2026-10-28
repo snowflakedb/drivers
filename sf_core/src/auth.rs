@@ -5,7 +5,7 @@ use aws_lc_rs::signature::{KeyPair, RsaKeyPair};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 use serde::Serialize;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
 use crate::sensitive::SensitiveString;
@@ -69,6 +69,7 @@ pub(crate) struct KeyPairJwt {
     key: RsaKeyPair,
     sub: String,
     iss: String,
+    jwt_timeout_secs: i64,
 }
 
 impl KeyPairJwt {
@@ -77,6 +78,7 @@ impl KeyPairJwt {
         username: &str,
         private_key: &str,
         passphrase: Option<&str>,
+        jwt_timeout_secs: i64,
     ) -> Result<Self, AuthError> {
         let key = crate::crypto::private_key::load_rsa_key(private_key.as_bytes(), passphrase)
             .context(InvalidPrivateKeyFormatSnafu)?;
@@ -91,7 +93,12 @@ impl KeyPairJwt {
             username.to_uppercase()
         );
         let iss = format!("{sub}.SHA256:{}", BASE64.encode(fingerprint.as_ref()));
-        Ok(Self { key, sub, iss })
+        Ok(Self {
+            key,
+            sub,
+            iss,
+            jwt_timeout_secs,
+        })
     }
 
     pub(crate) fn sign(&self) -> Result<SensitiveString, AuthError> {
@@ -103,7 +110,9 @@ impl KeyPairJwt {
             sub: &self.sub,
             iss: &self.iss,
             iat: now_secs,
-            exp: now_secs + 120,
+            exp: now_secs
+                .checked_add(self.jwt_timeout_secs)
+                .context(JWTExpirationOverflowSnafu)?,
         };
 
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
@@ -131,6 +140,7 @@ pub(crate) async fn load_key_pair_jwt(
         username,
         private_key,
         passphrase,
+        jwt_timeout_secs,
     } = &login_parameters.login_method
     else {
         return Ok(None);
@@ -139,12 +149,14 @@ pub(crate) async fn load_key_pair_jwt(
     let username = username.clone();
     let private_key = private_key.clone();
     let passphrase = passphrase.clone();
+    let jwt_timeout_secs = *jwt_timeout_secs;
     tokio::task::spawn_blocking(move || {
         let key_pair_jwt = KeyPairJwt::load(
             &account,
             &username,
             private_key.reveal(),
             passphrase.as_ref().map(|p| p.reveal().as_str()),
+            jwt_timeout_secs,
         )?;
         key_pair_jwt.sign()?;
         Ok(key_pair_jwt)
@@ -261,6 +273,11 @@ pub enum AuthError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("JWT expiration exceeds the supported timestamp range"))]
+    JWTExpirationOverflow {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to serialize JWT claims"))]
     JWTSerialize {
         source: serde_json::Error,
@@ -296,9 +313,54 @@ mod tests {
         private_key: &str,
         passphrase: Option<&str>,
     ) -> Result<String, AuthError> {
-        KeyPairJwt::load(account, username, private_key, passphrase)?
+        generate_jwt_token_with_timeout(
+            account,
+            username,
+            private_key,
+            passphrase,
+            crate::config::rest_parameters::DEFAULT_JWT_TIMEOUT_SECS,
+        )
+    }
+
+    fn generate_jwt_token_with_timeout(
+        account: &str,
+        username: &str,
+        private_key: &str,
+        passphrase: Option<&str>,
+        jwt_timeout_secs: i64,
+    ) -> Result<String, AuthError> {
+        KeyPairJwt::load(account, username, private_key, passphrase, jwt_timeout_secs)?
             .sign()
             .map(|token| token.reveal().to_string())
+    }
+
+    #[test]
+    fn jwt_expiration_matches_configured_and_default_lifetime() {
+        use crate::config::param_names::JWT_TIMEOUT;
+        use crate::config::param_store::ParamStore;
+        use crate::config::settings::Setting;
+
+        let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+        let pem = String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap();
+        let mut settings = ParamStore::with_registry_defaults();
+        for (configured, expected) in [(None, 120), (Some(3600), 3600)] {
+            if let Some(seconds) = configured {
+                settings.insert(JWT_TIMEOUT.to_string(), Setting::Int(seconds));
+            }
+            let seconds = crate::config::rest_parameters::jwt_timeout_secs(&settings).unwrap();
+            let token = generate_jwt_token_with_timeout("acct", "user", &pem, None, seconds)
+                .expect("JWT signing succeeds");
+            let claims: serde_json::Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(token.split('.').nth(1).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                claims["exp"].as_i64().unwrap() - claims["iat"].as_i64().unwrap(),
+                expected
+            );
+        }
     }
 
     #[tokio::test]

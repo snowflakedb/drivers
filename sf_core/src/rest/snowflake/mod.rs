@@ -4978,6 +4978,7 @@ mod tests {
                     username: "testuser".to_string(),
                     private_key: pem.into(),
                     passphrase: None,
+                    jwt_timeout_secs: 345,
                 },
                 ..test_login_params()
             };
@@ -5026,12 +5027,12 @@ mod tests {
                 "retry after a timeout must carry a later iat: {first} vs {second}"
             );
             assert_eq!(
-                first["exp"].as_i64().unwrap(),
-                first["iat"].as_i64().unwrap() + 120
+                first["exp"].as_i64().unwrap() - first["iat"].as_i64().unwrap(),
+                345
             );
             assert_eq!(
-                second["exp"].as_i64().unwrap(),
-                second["iat"].as_i64().unwrap() + 120
+                second["exp"].as_i64().unwrap() - second["iat"].as_i64().unwrap(),
+                345
             );
             assert_eq!(
                 first["iss"].as_str().unwrap(),
@@ -5056,6 +5057,7 @@ mod tests {
                     username: "testuser".to_string(),
                     private_key: "not a pem".to_string().into(),
                     passphrase: None,
+                    jwt_timeout_secs: crate::config::rest_parameters::DEFAULT_JWT_TIMEOUT_SECS,
                 },
                 ..test_login_params()
             };

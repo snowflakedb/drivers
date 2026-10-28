@@ -87,6 +87,7 @@ fn should_refresh_session_proactively() {
                     .private_key_password
                     .clone()
                     .map(SensitiveString::from),
+                jwt_timeout_secs: sf_core::config::rest_parameters::DEFAULT_JWT_TIMEOUT_SECS,
             },
             database: parameters.database.clone(),
             schema: parameters.schema.clone(),
