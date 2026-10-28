@@ -19,12 +19,9 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * Cross-driver behavior for WIF-only connection params supplied under a non-WIF authenticator.
  *
- * <p>BD#48 (jdbc/BehaviorDifferences.yaml): legacy snowflake-jdbc copies workloadIdentityProvider /
- * workloadIdentityEntraResource / workloadIdentityImpersonationPath into SFLoginInput regardless of
- * authenticator and never reads them unless authenticator=WORKLOAD_IDENTITY, so the params are
- * silently ignored and the connection succeeds. The universal driver's sf_core::validate_settings
- * rejects the combination (ConflictingParameters, Error) — matching legacy
- * snowflake-connector-python's long-standing rejection (ProgrammingError errno 251017).
+ * <p>BD#48: a non-empty workload-identity setting with an authenticator other than
+ * WORKLOAD_IDENTITY is ignored by snowflake-jdbc 4.4.0 and rejected here with
+ * ConflictingWifParameters before any network call.
  */
 @RequiresNoMfa
 class WorkloadIdentityCrossParamTests implements WithQueryUtils, WithConnect {
@@ -49,7 +46,7 @@ class WorkloadIdentityCrossParamTests implements WithQueryUtils, WithConnect {
       // sf_core rejects the cross-param combination before any network I/O (BD#48). Core
       // config-validation errors carry no SQLSTATE / vendor code, so assert on the message.
       // Anchor on both the offending param name AND the distinguishing rejection phrase
-      // ("was not set to workload_identity") — the exact text sf_core's ConflictingParameters
+      // ("was not set to workload_identity") — the phrase the ConflictingWifParameters
       // check emits — so this can't be satisfied by an unrelated error that merely mentions
       // the param name in passing (e.g. a network or attestation failure).
       Executable connect = () -> connect(props);

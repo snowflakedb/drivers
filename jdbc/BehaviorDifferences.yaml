@@ -789,128 +789,168 @@ behavior_differences:
       authenticators. The new driver passes the credentials through and lets connect-time
       validation decide whether a username is required.
   46:
-    name: "OCSP is not supported"
+    name: "OCSP revocation checking and setOcspFailOpen do not exist on the new driver"
     status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
-    impact: high
+    impact: medium
+    old_driver_behavior: |
+      OCSP is off until `ocspFailOpen` is set, where true is fail-open and false is fail-closed;
+      `disableOCSPChecks=true` and `insecureMode=true` keep it off even then.
+      `setOcspFailOpen` stores the property. CRL is a separate setting and is off by default.
+    new_driver_behavior: |
+      There is no OCSP checking and no `setOcspFailOpen`. Certificate revocation runs only when
+      `crl_check_mode` is `ENABLED` or `ADVISORY`. An `ocspFailOpen` property is accepted but is
+      not a TLS setting; it is forwarded as a login session parameter.
+    description: |
+      A connection that never opted into OCSP loses no revocation check, and CRL covers the
+      opt-in case. A caller that set `ocspFailOpen=false` to get fail-closed revocation connects
+      where the old driver would reject the certificate, so such a caller has to move to
+      `crl_check_mode`.
     status_rationale: |
-      Legacy snowflake-jdbc performs OCSP revocation checking and exposes setOcspFailOpen. The
-      universal driver does not support OCSP or expose that setter; revocation is CRL-based only
-      (disabled by default via crl_check_mode).
+      Accepted omission. OCSP is off by default on the old driver, so the gap is the missing
+      opt-in rather than a weaker default, and CRL provides the replacement opt-in.
   47:
-    name: "GCS PUT OVERWRITE=TRUE on matching content re-uploads instead of skipping"
-    status: allowed
-    type: bugfix
+    name: "A GCS PUT with OVERWRITE=TRUE re-uploads matching content on both drivers"
+    status: fixed
+    type: bug
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Against a GCS stage, a PUT with OVERWRITE=TRUE whose local payload matched the remote object's
-      stored x-goog-meta-sfc-digest was skipped: the PUT result set STATUS column reported SKIPPED and
-      no upload occurred. This was a universal-driver-only quirk (GCS skipped content matches
-      unconditionally); legacy snowflake-jdbc re-uploads.
+      A GCS PUT with `OVERWRITE=TRUE` re-uploads even when the local digest matches the remote
+      object, and reports status `UPLOADED`.
     new_driver_behavior: |
-      GCS re-uploads a content-matching PUT with OVERWRITE=TRUE (STATUS = UPLOADED), matching legacy
-      snowflake-jdbc. The content-match skip is gated behind the opt-in skip_upload_on_content_match
-      flag in sf_core, which JDBC does not set, so the skip never fires by default.
+      The same: the upload runs and the status is `UPLOADED`. The content-match skip that
+      reported `SKIPPED` happens only when `skip_upload_on_content_match` is set, which JDBC
+      does not set.
     description: |
-      GCS now honors the opt-in skip_upload_on_content_match flag like S3 and Azure instead of skipping
-      matching content unconditionally, restoring legacy parity for the default PUT OVERWRITE=TRUE path.
+      Callers need no change; a PUT that overwrites always transfers the file. No test gates on
+      this entry.
+    status_rationale: |
+      No difference remains. The skip this entry recorded is now behind an opt-in the JDBC
+      wrapper does not request.
 
   48:
-    name: "Connecting with WIF-only params set but authenticator != WORKLOAD_IDENTITY now fails; legacy silently ignored"
+    name: "A workload-identity setting under another authenticator fails the connection instead of being ignored"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
+    old_driver_behavior: |
+      `workloadIdentityProvider`, `workloadIdentityEntraResource`, and
+      `workloadIdentityImpersonationPath` are accepted and then ignored unless the authenticator
+      is `WORKLOAD_IDENTITY`. A password login that also sets `workloadIdentityProvider=AWS`
+      connects.
+    new_driver_behavior: |
+      With any other authenticator, including none, a non-empty `workload_identity_provider`,
+      `workload_identity_entra_resource`, `workload_identity_azure_client_id`,
+      `workload_identity_impersonation_path`, or `wif_host` — or
+      `workload_identity_aws_use_outbound_token` set true — fails before any network call with
+      `ConflictingWifParameters`, null SQLSTATE, and vendor code `0`. The message names the
+      setting and states that the authenticator was not `WORKLOAD_IDENTITY`.
+    description: |
+      A login that carried leftover workload-identity settings alongside another authenticator
+      used to connect and now fails at connect, so such a configuration has to drop the unused
+      settings. The AWS external-id check is a separate property.
     status_rationale: |
-      Verified in snowflakedb/snowflake-jdbc: SFSessionProperty declares workloadIdentityProvider /
-      workloadIdentityEntraResource / workloadIdentityImpersonationPath optional, and SFSession.open()
-      copies all three into SFLoginInput unconditionally, regardless of authenticator — so
-      authenticator=snowflake with workloadIdentityProvider=AWS connects and the WIF props are never
-      read. (The lone WIF guard, checkAwsExternalIdEnabled, gates a different property,
-      workloadIdentityAwsExternalId, and no-ops unless authenticator=WORKLOAD_IDENTITY.) The universal
-      driver's sf_core::validate_settings rejects any of the three params under a non-WIF authenticator
-      (ConflictingParameters, Error). Allowed as a bugfix: it matches legacy snowflake-connector-python's
-      long-standing rejection (ProgrammingError errno=251017) and enforces it uniformly across wrappers;
-      no JDBC caller relies on the params being silently ignored.
+      Intentional fix. A setting that selects a credential source cannot be silently discarded:
+      the caller's intent is ambiguous, and ignoring it authenticates as someone other than the
+      configured workload.
   49:
-    name: "workload_identity_impersonation_path with provider=OIDC now fails; legacy silently ignored it"
+    name: "An impersonation path with the OIDC workload-identity provider fails instead of being ignored"
     status: allowed
     type: bugfix
     reviewed: false
     is_breaking_change: true
     impact: low
+    old_driver_behavior: |
+      With `authenticator=WORKLOAD_IDENTITY` and provider `OIDC`, an impersonation path is
+      accepted and never read; the login uses the token as-is. `AWS` and `GCP` do use the path.
+    new_driver_behavior: |
+      A non-empty path with provider `OIDC` fails before any network call with
+      `ConflictingWifParameters`, null SQLSTATE, vendor code `0`, and the message
+      `"workload_identity_impersonation_path is currently only supported for GCP, AWS, and
+      AZURE"`. `AWS` and `GCP` still accept the path.
+    description: |
+      An OIDC login that set an impersonation path used to connect as the unimpersonated
+      identity and now fails at connect. Azure's rejection of every non-empty path is BD#74.
     status_rationale: |
-      Verified in snowflakedb/snowflake-jdbc: OidcIdentityAttestationCreator.createAttestation() only
-      reads the token, never workloadIdentityImpersonationPath, so that param is silently discarded
-      today. Legacy snowflake-connector-python/nodejs/.NET all reject this combination client-side;
-      legacy JDBC never did. sf_core::validate_settings now rejects it uniformly (ConflictingParameters,
-      Error). Unlike entry 48, this is a genuine new rejection for JDBC, not a relocated one — allowed as
-      a bugfix since silently accepting a no-op param combination is itself a latent bug.
+      Intentional fix. Accepting a path that is never applied reports success for an
+      impersonation that did not happen, which is the more dangerous of the two outcomes.
 
   50:
-    name: "CSE KeyWrappingMetadata.EncryptionLibrary: UD self-identifies as \"Rust(OpenSSL)\""
+    name: "Azure and GCS client-side-encryption metadata records EncryptionLibrary as Rust(OpenSSL) instead of Java 5.3.0"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Azure/GCS `encryptiondata` JSON: legacy snowflake-jdbc hardcodes
-      `KeyWrappingMetadata.EncryptionLibrary = "Java 5.3.0"` on both clouds.
+      An Azure or GCS client-side-encrypted upload stores `EncryptionLibrary` as `"Java 5.3.0"`
+      in the object metadata. Download reads the IV and the wrapped key and ignores that field.
+      S3 carries `x-amz-key` and `x-amz-iv` and has no such field.
     new_driver_behavior: |
-      UD emits `"Rust(OpenSSL)"` for the same field on both clouds -- an honest
-      self-identification, not an oversight. Confirmed no reader anywhere consumes this value:
-      not the four legacy drivers' decrypt paths, not UD's own, and not GS's own server-side
-      parser, which validates several sibling fields but never reads `EncryptionLibrary`. GS's
-      own internal C++ encryption library independently emits `"OpenSSL 1.0.1e-fips"` rather
-      than `"Java 5.3.0"` on its GCS path --
-      the same self-identify-honestly pattern UD follows. Kept deliberately: matching
-      "Java 5.3.0" would misidentify which implementation produced the blob, valuable for
-      diagnostics during the mixed-fleet rollout period.
+      The same uploads store `EncryptionLibrary` as `"Rust(OpenSSL)"`. Download reads the IV and
+      the wrapped key and ignores the field. S3 is unchanged.
+    description: |
+      A GET of a file either driver uploaded still decrypts, because neither reads the field.
+      The value identifies the library that encrypted the file, so leaving it at `"Java 5.3.0"`
+      would be false.
+    status_rationale: |
+      Accepted. The field is informational on the download paths of both drivers. Whether other
+      Snowflake drivers or any server-side parser read it has not been established, so the risk
+      is confined to a consumer outside these two drivers.
   51:
-    name: "secondary_roles connection parameter is now accepted (no legacy JDBC equivalent)"
+    name: "secondary_roles is a recognized property sent as a top-level SECONDARY_ROLES login field"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Legacy snowflake-jdbc's `SFSessionProperty` enum has no `secondary_roles` (or similarly named)
-      property. A user relying on secondary-role activation must either rely on the user's
-      `DEFAULT_SECONDARY_ROLES` setting or run `USE SECONDARY ROLES` after connecting.
+      There is no `secondary_roles` connection property and no top-level `SECONDARY_ROLES` login
+      field. The value is forwarded as an unrecognized entry inside `SESSION_PARAMETERS`;
+      whether the server activates secondary roles from that nested form has not been
+      established.
     new_driver_behavior: |
-      Because `secondary_roles` is registered as a shared `sf_core` connection parameter (added for
-      Python parity with snowflake-connector-python#2750 / SNOW-2853586), and JDBC forwards unrecognized
-      connection properties/URL parameters through unfiltered, a JDBC caller can now also set
-      `secondary_roles=ALL` or `secondary_roles=NONE` to control secondary-role activation at login,
-      sent as `SECONDARY_ROLES` in the login-request body. This is a net-new, opt-in capability with no
-      legacy JDBC counterpart — not a fix of a prior gap — so it is filed as `allowed`, not `fixed`.
+      `secondary_roles` is recognized and sent as a top-level `SECONDARY_ROLES` field, uppercased
+      when non-empty and omitted when empty. An invalid value is rejected by the server, not by
+      the driver.
+    description: |
+      A connection that sets `secondary_roles` activates them through the dedicated login field
+      rather than the generic session-parameter bag; `ALL` and `NONE` are the expected values.
+      A connection that never sets it is unaffected.
+    status_rationale: |
+      Accepted addition. The property is opt-in and the server owns value validation, so no
+      existing login changes.
 
   52:
-    name: "Plaintext PEM string accepted for private_key (JDBC)"
+    name: "private_key accepts a plaintext PEM string instead of being an unrecognized property"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Legacy snowflake-jdbc's SFSessionProperty recognizes only three ways to supply a JWT
-      private key: privateKey (a java.security.PrivateKey object), private_key_file (a path), and
-      private_key_base64 (a base64-encoded key). There is no private_key property carrying a
-      plaintext PEM string. Setting one is silently ignored: SessionUtilKeyPair.buildPrivateKey()
-      falls through to the (absent) privateKey object, yielding null, and the constructor then
-      throws SnowflakeSQLLoggedException(INVALID_OR_UNSUPPORTED_PRIVATE_KEY, "Use
-      java.security.interfaces.RSAPrivateCrtKey.class for the private key").
+      A JWT key is a `java.security.PrivateKey` object (`privateKey`), a file path
+      (`private_key_file`), or base64 key bytes (`private_key_base64`). There is no
+      `private_key` property: with `authenticator=SNOWFLAKE_JWT` and only a `private_key`
+      string, login throws `"Use java.security.interfaces.RSAPrivateCrtKey.class for the private
+      key"` because no key material was recognized.
     new_driver_behavior: |
-      sf_core's param_registry defines private_key as a canonical parameter accepting a plaintext
-      PEM string (optionally decrypted with private_key_password), consistent with the
-      plaintext-PEM support added for the other wrappers in this PR stack. Purely additive:
-      private_key_file and private_key_base64 continue to work unchanged on both drivers.
+      `private_key` accepts a PEM string beginning `-----BEGIN`, decrypted with
+      `private_key_password` when that is set. A malformed PEM fails with `"Invalid private key
+      format"`, and setting both `private_key` and `private_key_file` is rejected. A
+      `java.security.PrivateKey` object, `private_key_file`, and `private_key_base64` still work.
+    description: |
+      A PEM string is a fourth way to supply a key; the three existing forms are unchanged, so
+      no working configuration breaks.
+    status_rationale: |
+      Accepted addition. The property is additive and the old driver's key-class error reflected
+      having no usable key material rather than rejecting the PEM form on purpose.
   53:
     name: "GEOGRAPHY/GEOMETRY WKB/EWKB ResultSetMetaData reports VARCHAR instead of BINARY"
     status: todo
@@ -919,48 +959,73 @@ behavior_differences:
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When GEOGRAPHY_OUTPUT_FORMAT (or GEOMETRY_OUTPUT_FORMAT) is WKB or EWKB, Snowflake sends
-      row metadata with underlying type "binary" and extTypeName "GEOGRAPHY"/"GEOMETRY". Legacy
-      snowflake-jdbc maps the raw type field to JDBC Types.BINARY, so getColumnType() returns
-      BINARY and isCaseSensitive() is false while getObject() still returns byte[].
+      For `WKB` or `EWKB` output, `getColumnType()` is `BINARY`, `getColumnTypeName()` is
+      `GEOGRAPHY` or `GEOMETRY`, and `isCaseSensitive()` is false. `getObject()` returns
+      `byte[]`.
     new_driver_behavior: |
-      sf_core row_types_to_columns prefers extTypeName over the raw type when building column
-      metadata, and udt_output_type is populated only when the server sends outputType. When
-      outputType is absent, the JDBC wrapper defaults GEOGRAPHY/GEOMETRY metadata to VARCHAR.
-      Values are still decoded as byte[]; only ResultSetMetaData getColumnType() /
-      isCaseSensitive() differ from legacy. Planned fix: propagate binary output representation
-      into udt_output_type (or equivalent) in sf_core so JDBC reports BINARY like legacy.
+      `getColumnType()` is `VARCHAR` and `getColumnClassName()` is `java.lang.String`, while
+      `getObject()` and `getBytes()` still return the bytes. `getColumnTypeName()` is `GEOGRAPHY`
+      or `GEOMETRY`.
+    description: |
+      A tool that reads the column type and then treats the value as text can mangle the bytes,
+      even though the value itself is unchanged. `GeoJSON` and `WKT` output is `VARCHAR` on both
+      drivers. The metadata assertion is split per driver in the geography and geometry tests.
+    status_rationale: |
+      Still open. The server omits `outputType` for these columns, and the JDBC layer falls back
+      to `VARCHAR` instead of deriving the type from the binary wire type that is already
+      present.
   54:
     name: "PUT/GET size columns report BIGINT instead of DECIMAL"
     status: allowed
     type: bugfix
     reviewed: false
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Legacy hard-codes the PUT/GET size columns (source_size, target_size, size) to Types.DECIMAL,
-      ignoring JDBC_TREAT_DECIMAL_AS_INT. This contradicts its own rule for ordinary scale-0 columns,
-      which report BIGINT under the default JDBC_TREAT_DECIMAL_AS_INT=true.
+      PUT `source_size` and `target_size`, and GET `size`, are `DECIMAL` with precision 10,
+      scale 0, and display size 12, and `getObject()` returns `BigDecimal`. The session flag
+      `JDBC_TREAT_DECIMAL_AS_INT` does not affect these columns. `status` and `message` are
+      `VARCHAR` with declared length 20480.
     new_driver_behavior: |
-      The new driver builds the PUT/GET rowset through the standard metadata path, so the size
-      columns follow the normal scale-0 rule and report BIGINT. Column counts, names, and values are
-      at full parity; only the size columns' JDBC type differs. Matching legacy's DECIMAL would mean
-      leaking a JDBC-only quirk into the shared metadata format.
+      Under the default `JDBC_TREAT_DECIMAL_AS_INT=true` those columns are `BIGINT`, type name
+      `NUMBER`, precision 64, display size 65, and `getObject()` returns `Long`. Setting the flag
+      false reports `DECIMAL`, and `getObject()` stays `Long` unless
+      `JDBC_ARROW_TREAT_DECIMAL_AS_INT` is also false. `getLong`, `getString`, and
+      `getBigDecimal` return the same integer either way. `status` and `message` are `VARCHAR`
+      with declared length 10000.
+    description: |
+      Code that casts `getObject()` on a size column to `BigDecimal` throws `ClassCastException`;
+      reading through `getLong`, `getString`, or `getBigDecimal` is unaffected. The PUT/GET test
+      asserts the type per driver.
+    status_rationale: |
+      Accepted. These columns are scale-0 integers and follow the same rule as every other
+      scale-0 column; precision 10 cannot describe a file of 10 GB or more, and pinning
+      `DECIMAL` here would push a JDBC-only exception into the shared row metadata.
   55:
-    name: "Concurrent interactive auth prompts are serialized (DISABLE_PARALLEL_USER_PROMPT)"
+    name: "Concurrent interactive logins sharing a token-cache key raise one prompt instead of one each"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When multiple connections are opened concurrently for the same user and host and interactive
-      authentication is required, each connection runs its own interactive flow.
+      Concurrent logins for the same user and host each raise their own browser or MFA prompt
+      when the token cache misses. There is no `DISABLE_PARALLEL_USER_PROMPT` property.
     new_driver_behavior: |
-      Interactive auths are serialized by a process-global lock, so the first connection runs
-      the interactive flow and caches the token. Connections that arrive while it holds the lock
-      wait and then reuse the cached token, so the user sees only one prompt.
-      Locking engages only when `DISABLE_PARALLEL_USER_PROMPT=true` (the default).
+      With `clientStoreTemporaryCredential` true and `DISABLE_PARALLEL_USER_PROMPT` true — its
+      default — concurrent interactive logins that share a token-cache key produce one prompt;
+      the first stores the token and the rest reuse it. A first flow that fails or times out
+      does not suppress the others' prompts. External browser and MFA key on user and host, and
+      OAuth authorization-code adds the identity provider and role, so different accounts never
+      wait on each other.
+    description: |
+      An application opening several connections at once gets one browser window or MFA
+      challenge instead of one per connection. Setting `DISABLE_PARALLEL_USER_PROMPT` false
+      restores a prompt per connection. The behavior is asserted on the new driver only.
+    status_rationale: |
+      Accepted addition. Serializing on the cache key removes duplicate prompts without ever
+      blocking a login that would have a different credential, and the old behavior is still
+      reachable through the property.
   56:
     name: "A GET-downloaded file is mode 0600 on Unix instead of following the process umask"
     status: allowed
