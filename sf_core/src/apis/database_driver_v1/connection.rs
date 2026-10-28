@@ -14,7 +14,8 @@ use super::query_submit::{
 use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key,
-    collect_login_session_parameters, normalize_host_underscores, resolve_options,
+    collect_login_session_parameters, extract_client_session_parameters,
+    normalize_host_underscores, normalize_prefetch_option_write, resolve_options,
     validate_connection_seed_write, validate_session_override_write,
 };
 use super::{Setting, WrapperPresets, logout};
@@ -425,7 +426,19 @@ impl DatabaseDriverV1 {
                     // then drop the lock before calling resolve/build. Those paths can do
                     // synchronous disk I/O and private-key parsing, which currently extends the
                     // connection mutex critical section and can block the async runtime thread.
-                    let effective_seed = conn.effective_seed(&database_seed);
+                    let mut effective_seed = conn.effective_seed(&database_seed);
+                    let init_params = conn
+                        .init_session_parameters
+                        .clone()
+                        .map(|parameters| {
+                            extract_client_session_parameters(
+                                self.wrapper_presets.configuration_flavor,
+                                parameters,
+                                &mut effective_seed,
+                                false,
+                            )
+                        })
+                        .transpose()?;
                     let mut resolved = resolver::resolve_for_wrapper_with_connections_file(
                         &effective_seed,
                         conn.no_connection_details,
@@ -449,7 +462,6 @@ impl DatabaseDriverV1 {
                     let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
                     client_info.os_details = self.os_details().cloned();
-                    let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 
                     let login_session_params =
@@ -865,6 +877,7 @@ impl DatabaseDriverV1 {
                 let (canonical, def) =
                     canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_connection_seed_write(post, def)?;
+                let value = normalize_prefetch_option_write(def, value)?;
                 conn.connection_seed.insert(canonical, value);
                 Ok(())
             }
@@ -958,6 +971,12 @@ impl DatabaseDriverV1 {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 if conn.is_post_connect() {
+                    let parameters = extract_client_session_parameters(
+                        self.wrapper_presets.configuration_flavor,
+                        parameters,
+                        &mut conn.session_overrides,
+                        true,
+                    )?;
                     let mut cache = conn.session_parameters.write().await;
                     for (k, v) in parameters {
                         cache.insert(k.to_uppercase(), Setting::String(v));
@@ -998,6 +1017,7 @@ impl DatabaseDriverV1 {
                 let (canonical, def) =
                     canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_session_override_write(def)?;
+                let value = normalize_prefetch_option_write(def, value)?;
                 conn.session_overrides.insert(canonical, value);
                 Ok(())
             }
@@ -1282,6 +1302,10 @@ pub struct Connection {
     pub query_context_cache: QueryContextCacheAdapter,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
+    /// Prefetch snapshots for async query IDs and multi-statement children.
+    /// Retained until this connection is released so repeated and delayed
+    /// query-ID reads retain statement overrides.
+    pub(crate) statement_prefetch_by_query_id: HashMap<String, PrefetchConfig>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
     /// Where this connection is in its close lifecycle.
@@ -1384,6 +1408,7 @@ impl Connection {
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             query_context_cache: QueryContextCacheAdapter::new(),
             init_session_parameters: None,
+            statement_prefetch_by_query_id: HashMap::new(),
             async_query_registry: AsyncQueryRegistry::new(),
             close_state: Arc::new(AtomicCloseState::new(CloseState::Open)),
             close_done: Arc::new(Notify::new()),
@@ -1410,6 +1435,43 @@ impl Connection {
 
     pub(crate) fn xp_backend_arc(&self) -> Result<Option<Arc<dyn SnowflakeBackend>>, RestError> {
         Ok(self.xp_slot.active()?.cloned())
+    }
+
+    pub(crate) async fn record_statement_prefetch<'a>(
+        &mut self,
+        query_ids: impl IntoIterator<Item = &'a str>,
+        settings: &ParamStore,
+    ) {
+        if settings
+            .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str())
+            .is_none()
+            && settings
+                .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str())
+                .is_none()
+        {
+            return;
+        }
+        let mut config = self.prefetch_config().await;
+        config.apply_statement_params(settings);
+        for query_id in query_ids {
+            if !query_id.is_empty() {
+                self.statement_prefetch_by_query_id
+                    .insert(query_id.to_owned(), config.clone());
+            }
+        }
+    }
+
+    /// Copy an async multi-statement parent's snapshot to its child query IDs.
+    pub(crate) fn inherit_statement_prefetch(&mut self, parent_id: &str, children: &[String]) {
+        let Some(config) = self.statement_prefetch_by_query_id.get(parent_id).cloned() else {
+            return;
+        };
+        for child in children {
+            if !child.is_empty() {
+                self.statement_prefetch_by_query_id
+                    .insert(child.clone(), config.clone());
+            }
+        }
     }
 
     /// `true` after a successful [`Connection::initialize`] (post-login transport is ready).
@@ -1670,7 +1732,13 @@ impl Connection {
         PrefetchConfig {
             chunk_read_timeout: self.timeout_config.chunk_read_timeout,
             chunk_retry_policy: RetryPolicy::chunk_download(&settings),
-            ..PrefetchConfig::from_session_params(&session_params)
+            ..PrefetchConfig::from_connection_params(
+                &session_params,
+                self.resolved_connect
+                    .as_ref()
+                    .unwrap_or(&self.connection_seed),
+                &self.session_overrides,
+            )
         }
     }
 
@@ -3801,6 +3869,295 @@ mod tests {
         assert_eq!(conn.connections_file_path, None);
         drop(conn);
         ds.connection_release(handle).unwrap();
+    }
+
+    async fn connect_with_explicit_prefetch_parameters(
+        parameters: HashMap<String, String>,
+    ) -> (DatabaseDriverV1, Handle, wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/v1/login-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "success": true,
+                "data": {"token": "session", "masterToken": "master", "sessionId": 1}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::python(),
+            ..Default::default()
+        });
+        let db = ds.database_new();
+        ds.database_init(db).unwrap();
+        let handle = ds.connection_new();
+        ds.connection_set_options(
+            handle,
+            HashMap::from([
+                ("account".into(), Setting::String("testaccount".into())),
+                ("user".into(), Setting::String("testuser".into())),
+                ("password".into(), Setting::String("testpassword".into())),
+                ("server_url".into(), Setting::String(server.uri())),
+                ("disable_platform_detection".into(), Setting::Bool(true)),
+                ("client_result_queue_size".into(), Setting::Int(4)),
+            ]),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        ds.connection_set_session_parameters(handle, parameters)
+            .await
+            .unwrap();
+        ds.connection_init(None, handle, db).await.unwrap();
+        ds.database_release(db).unwrap();
+        (ds, handle, server)
+    }
+
+    #[tokio::test]
+    async fn explicit_session_map_keeps_client_prefetch_settings_out_of_login_and_cache() {
+        let (ds, handle, server) = connect_with_explicit_prefetch_parameters(HashMap::from([
+            ("client_result_queue_size".into(), "16".into()),
+            ("CLIENT_MEMORY_LIMIT".into(), "256".into()),
+            ("client_prefetch_threads".into(), "8".into()),
+            ("QUERY_TAG".into(), "explicit-tag".into()),
+            ("CUSTOM_SESSION_PARAMETER".into(), "custom-value".into()),
+        ]))
+        .await;
+        let requests = server.received_requests().await.unwrap();
+        let login = requests
+            .iter()
+            .find(|request| request.url.path() == "/session/v1/login-request")
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&login.body).unwrap();
+        let params = body["data"]["SESSION_PARAMETERS"].as_object().unwrap();
+        assert!(!params.contains_key("CLIENT_RESULT_QUEUE_SIZE"));
+        assert!(!params.contains_key("CLIENT_MEMORY_LIMIT"));
+        assert_eq!(params["CLIENT_PREFETCH_THREADS"], "8");
+        assert_eq!(params["QUERY_TAG"], "explicit-tag");
+        assert_eq!(params["CUSTOM_SESSION_PARAMETER"], "custom-value");
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        {
+            let conn = conn_ptr.lock().await;
+            let cache = conn.session_parameters.read().await;
+            assert!(!cache.contains_key("CLIENT_RESULT_QUEUE_SIZE"));
+            assert!(!cache.contains_key("CLIENT_MEMORY_LIMIT"));
+            drop(cache);
+            let config = conn.prefetch_config().await;
+            assert_eq!(config.result_queue_size, Some(16));
+            assert_eq!(config.memory_limit_mb, 256);
+            assert_eq!(config.prefetch_threads, 8);
+        }
+        ds.connection_set_session_option(
+            handle,
+            "CLIENT_RESULT_QUEUE_SIZE".into(),
+            Setting::Int(3),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_session_option(handle, "CLIENT_MEMORY_LIMIT".into(), Setting::Int(128))
+            .await
+            .unwrap();
+        let config = conn_ptr.lock().await.prefetch_config().await;
+        assert_eq!(config.result_queue_size, Some(3));
+        assert_eq!(config.memory_limit_mb, 128);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_session_map_rejects_invalid_client_prefetch_settings_before_login() {
+        let ds = DatabaseDriverV1::new();
+        let db = ds.database_new();
+        ds.database_init(db).unwrap();
+        for (key, value) in [
+            ("CLIENT_RESULT_QUEUE_SIZE", "0"),
+            ("client_result_queue_size", "-1"),
+            ("CLIENT_RESULT_QUEUE_SIZE", "1.5"),
+            ("CLIENT_RESULT_QUEUE_SIZE", "9223372036854775808"),
+            ("CLIENT_MEMORY_LIMIT", "not-an-integer"),
+        ] {
+            let handle = ds.connection_new();
+            ds.connection_set_session_parameters(
+                handle,
+                HashMap::from([(key.into(), value.into())]),
+            )
+            .await
+            .unwrap();
+            let err = ds.connection_init(None, handle, db).await.unwrap_err();
+            assert!(
+                err.to_string().to_uppercase().contains(&key.to_uppercase()),
+                "expected validation of {key}, got {err}"
+            );
+            ds.connection_release(handle).unwrap();
+        }
+        ds.database_release(db).unwrap();
+    }
+
+    #[tokio::test]
+    async fn prefetch_limits_are_validated_by_connection_and_session_setters() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "client_prefetch_threads".into(),
+            Setting::String("6".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_options(
+            handle,
+            HashMap::from([(
+                "client_result_queue_size".into(),
+                Setting::String("12".into()),
+            )]),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        {
+            let conn = conn_ptr.lock().await;
+            assert_eq!(
+                conn.connection_seed
+                    .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+                Some(&Setting::Int(6)),
+            );
+            assert_eq!(
+                conn.connection_seed
+                    .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+                Some(&Setting::Int(12)),
+            );
+        }
+
+        for (key, max) in [
+            (
+                "client_prefetch_threads",
+                tokio::sync::Semaphore::MAX_PERMITS as i64,
+            ),
+            (
+                "client_result_queue_size",
+                (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64) as i64,
+            ),
+        ] {
+            for invalid in [
+                Setting::Int(0),
+                Setting::Int(-1),
+                Setting::Int(max + 1),
+                Setting::String("0".into()),
+                Setting::String("-1".into()),
+                Setting::String("1.5".into()),
+                Setting::String("9223372036854775808".into()),
+                Setting::Double(1.0),
+            ] {
+                assert!(
+                    ds.connection_set_option(handle, key.into(), invalid.clone())
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    ds.connection_set_options(
+                        handle,
+                        HashMap::from([(key.into(), invalid)]),
+                        false,
+                        None,
+                    )
+                    .await
+                    .is_err()
+                );
+            }
+        }
+
+        conn_ptr.lock().await.http_client = Some(reqwest::Client::new());
+        ds.connection_set_session_option(
+            handle,
+            "client_result_queue_size".into(),
+            Setting::String("16".into()),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_session_option(handle, "client_prefetch_threads".into(), Setting::Int(9))
+            .await
+            .unwrap();
+        for (key, max) in [
+            (
+                "client_prefetch_threads",
+                tokio::sync::Semaphore::MAX_PERMITS as i64,
+            ),
+            (
+                "client_result_queue_size",
+                (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64) as i64,
+            ),
+        ] {
+            for invalid in [
+                Setting::Int(0),
+                Setting::Int(-1),
+                Setting::Int(max + 1),
+                Setting::String("0".into()),
+                Setting::String("-1".into()),
+                Setting::String("1.5".into()),
+            ] {
+                assert!(
+                    ds.connection_set_session_option(handle, key.into(), invalid)
+                        .await
+                        .is_err()
+                );
+            }
+        }
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.session_overrides
+                .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+            Some(&Setting::Int(9)),
+        );
+        assert_eq!(
+            conn.session_overrides
+                .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+            Some(&Setting::Int(16)),
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn statement_prefetch_snapshots_inherit_to_children_and_remain_repeatable() {
+        let mut conn = Connection::new();
+        conn.timeout_config.chunk_read_timeout = Some(Duration::from_secs(17));
+        {
+            let mut params = conn.session_parameters.write().await;
+            params.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+            params.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(10));
+            params.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(512));
+        }
+        let mut stmt = ParamStore::new();
+        stmt.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8));
+        stmt.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(16));
+        conn.record_statement_prefetch(["parent"], &stmt).await;
+        conn.record_statement_prefetch(["unrelated"], &ParamStore::new())
+            .await;
+        assert!(
+            !conn
+                .statement_prefetch_by_query_id
+                .contains_key("unrelated")
+        );
+
+        conn.session_parameters
+            .write()
+            .await
+            .insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(1024));
+        conn.inherit_statement_prefetch("parent", &["child-a".into(), "child-b".into()]);
+        for id in ["parent", "child-a", "child-b"] {
+            let snapshot = conn.statement_prefetch_by_query_id.get(id).unwrap();
+            assert_eq!(snapshot.prefetch_threads, 8);
+            assert_eq!(snapshot.result_queue_size, Some(16));
+            assert_eq!(snapshot.memory_limit_mb, 512);
+            assert_eq!(snapshot.chunk_read_timeout, Some(Duration::from_secs(17)));
+        }
+        assert_eq!(conn.statement_prefetch_by_query_id.len(), 3);
     }
 
     #[test]
@@ -6520,6 +6877,99 @@ mod tests {
                 .get("AUTOCOMMIT")
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn post_connect_session_map_keeps_client_prefetch_settings_out_of_server_cache() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        conn_ptr.lock().await.http_client = Some(reqwest::Client::new());
+        ds.connection_set_session_parameters(
+            handle,
+            HashMap::from([
+                ("client_result_queue_size".into(), "16".into()),
+                ("client_memory_limit".into(), "256".into()),
+                ("client_prefetch_threads".into(), "8".into()),
+                ("service_name".into(), "cluster-x".into()),
+            ]),
+        )
+        .await
+        .unwrap();
+        {
+            let conn = conn_ptr.lock().await;
+            let cache = conn.session_parameters.read().await;
+            assert!(!cache.contains_key("CLIENT_RESULT_QUEUE_SIZE"));
+            assert!(!cache.contains_key("CLIENT_MEMORY_LIMIT"));
+            assert_eq!(
+                cache.get("CLIENT_PREFETCH_THREADS"),
+                Some(&Setting::String("8".into()))
+            );
+            assert_eq!(
+                cache.get("SERVICE_NAME"),
+                Some(&Setting::String("cluster-x".into()))
+            );
+            drop(cache);
+            assert_eq!(
+                conn.session_overrides.get_any("CLIENT_RESULT_QUEUE_SIZE"),
+                Some(&Setting::Int(16))
+            );
+            assert_eq!(
+                conn.session_overrides.get_any("CLIENT_MEMORY_LIMIT"),
+                Some(&Setting::Int(256))
+            );
+            let config = conn.prefetch_config().await;
+            assert_eq!(config.result_queue_size, Some(16));
+            assert_eq!(config.memory_limit_mb, 256);
+        }
+        ds.connection_set_session_option(
+            handle,
+            "CLIENT_RESULT_QUEUE_SIZE".into(),
+            Setting::Int(2),
+        )
+        .await
+        .unwrap();
+        ds.connection_set_session_option(handle, "CLIENT_MEMORY_LIMIT".into(), Setting::Int(128))
+            .await
+            .unwrap();
+        let config = conn_ptr.lock().await.prefetch_config().await;
+        assert_eq!(config.result_queue_size, Some(2));
+        assert_eq!(config.memory_limit_mb, 128);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn post_connect_session_map_rejects_invalid_client_settings_atomically() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        conn_ptr.lock().await.http_client = Some(reqwest::Client::new());
+        for (key, value) in [
+            ("CLIENT_RESULT_QUEUE_SIZE", "0"),
+            ("client_result_queue_size", "-1"),
+            ("CLIENT_RESULT_QUEUE_SIZE", "1.5"),
+            ("CLIENT_RESULT_QUEUE_SIZE", "9223372036854775808"),
+            ("CLIENT_MEMORY_LIMIT", "not-an-integer"),
+        ] {
+            let err = ds
+                .connection_set_session_parameters(
+                    handle,
+                    HashMap::from([
+                        (key.into(), value.into()),
+                        ("service_name".into(), "must-not-be-cached".into()),
+                    ]),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().to_uppercase().contains(&key.to_uppercase()),
+                "expected validation of {key}, got {err}"
+            );
+            let conn = conn_ptr.lock().await;
+            assert!(conn.session_parameters.read().await.is_empty());
+            assert!(conn.session_overrides.iter().next().is_none());
+        }
+        ds.connection_release(handle).unwrap();
     }
 
     #[tokio::test]

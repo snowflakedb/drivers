@@ -1,6 +1,7 @@
 mod arrow_parser;
 mod async_arrow_batch_fetcher;
 mod backend_downloader;
+mod batch_budget;
 mod error;
 mod http_downloader;
 mod json_parser;
@@ -17,8 +18,9 @@ use std::time::Duration;
 use backend_downloader::ChunkTransport;
 
 use crate::apis::database_driver_v1::Setting;
+use crate::config::ParamStore;
+use crate::config::param_registry::param_names;
 use crate::config::retry::RetryPolicy;
-use crate::config::settings::Settings;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry, next_delay_ms};
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
@@ -59,6 +61,12 @@ pub struct PrefetchConfig {
     /// Retry policy for HTTP chunk downloads. Chunks fetched through an XP
     /// backend do not use it.
     pub chunk_retry_policy: RetryPolicy,
+    /// Maximum number of decoded result batches handed to a reader but not yet
+    /// read; a chunk with more batches is delivered alone. Up to
+    /// CLIENT_PREFETCH_THREADS further chunks may already be downloaded and
+    /// decoded (bounded by CLIENT_MEMORY_LIMIT). Client-only, never forwarded to GS.
+    /// `None` or zero leaves the batch handoff unlimited.
+    pub result_queue_size: Option<u32>,
 }
 
 impl Default for PrefetchConfig {
@@ -68,27 +76,96 @@ impl Default for PrefetchConfig {
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
             chunk_read_timeout: None,
             chunk_retry_policy: RetryPolicy::default(),
+            result_queue_size: None,
         }
     }
 }
 
+fn setting_u64(setting: Option<&Setting>) -> Option<u64> {
+    match setting? {
+        Setting::Int(value) => u64::try_from(*value).ok(),
+        Setting::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn prefetch_threads(setting: Option<&Setting>) -> Option<usize> {
+    setting_u64(setting)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|&value| value > 0 && value <= tokio::sync::Semaphore::MAX_PERMITS)
+}
+
+fn result_queue_size(setting: Option<&Setting>) -> Option<u32> {
+    setting_u64(setting)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|&value| value > 0 && value as usize <= tokio::sync::Semaphore::MAX_PERMITS)
+}
+
 impl PrefetchConfig {
+    fn apply_session_params(&mut self, params: &HashMap<String, Setting>) {
+        if let Some(value) =
+            prefetch_threads(params.get(param_names::CLIENT_PREFETCH_THREADS.as_str()))
+        {
+            self.prefetch_threads = value;
+        }
+        if let Some(value) = setting_u64(params.get(param_names::CLIENT_MEMORY_LIMIT.as_str()))
+            .and_then(|value| u32::try_from(value).ok())
+        {
+            self.memory_limit_mb = value;
+        }
+        if let Some(value) =
+            result_queue_size(params.get(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()))
+        {
+            self.result_queue_size = Some(value);
+        }
+    }
+
+    fn apply_connection_params(&mut self, settings: &ParamStore) {
+        self.apply_statement_params(settings);
+        if let Some(value) = setting_u64(settings.get(param_names::CLIENT_MEMORY_LIMIT))
+            .and_then(|value| u32::try_from(value).ok())
+        {
+            self.memory_limit_mb = value;
+        }
+    }
+
     /// Resolve from a session parameters map, falling back to defaults for
-    /// missing or unparseable values.
+    /// missing or invalid values.
     pub fn from_session_params(params: &HashMap<String, Setting>) -> Self {
-        let prefetch_threads = params
-            .get_u64("CLIENT_PREFETCH_THREADS")
-            .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(DEFAULT_PREFETCH_THREADS);
-        let memory_limit_mb = params
-            .get_u64("CLIENT_MEMORY_LIMIT")
-            .and_then(|v| u32::try_from(v).ok())
-            .unwrap_or(DEFAULT_MEMORY_LIMIT_MB);
-        Self {
-            prefetch_threads,
-            memory_limit_mb,
-            chunk_read_timeout: None,
-            chunk_retry_policy: RetryPolicy::default(),
+        let mut config = Self::default();
+        config.apply_session_params(params);
+        config
+    }
+
+    /// Resolve connection settings, post-connect session overrides, then server
+    /// session values (in ascending precedence, matching connection getters).
+    pub(crate) fn from_connection_params(
+        params: &HashMap<String, Setting>,
+        connection: &ParamStore,
+        overrides: &ParamStore,
+    ) -> Self {
+        let mut config = Self::default();
+        config.apply_connection_params(connection);
+        config.apply_connection_params(overrides);
+        config.apply_session_params(params);
+        config
+    }
+
+    pub(crate) fn has_statement_overrides(settings: &ParamStore) -> bool {
+        settings.get(param_names::CLIENT_PREFETCH_THREADS).is_some()
+            || settings
+                .get(param_names::CLIENT_RESULT_QUEUE_SIZE)
+                .is_some()
+    }
+
+    /// Override this reader's session configuration with settings on its statement.
+    pub fn apply_statement_params(&mut self, settings: &ParamStore) {
+        if let Some(value) = prefetch_threads(settings.get(param_names::CLIENT_PREFETCH_THREADS)) {
+            self.prefetch_threads = value;
+        }
+        if let Some(value) = result_queue_size(settings.get(param_names::CLIENT_RESULT_QUEUE_SIZE))
+        {
+            self.result_queue_size = Some(value);
         }
     }
 }
@@ -882,6 +959,7 @@ mod tests {
         let config = PrefetchConfig::from_session_params(&HashMap::new());
         assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
         assert_eq!(config.memory_limit_mb, DEFAULT_MEMORY_LIMIT_MB);
+        assert_eq!(config.result_queue_size, None);
     }
 
     #[test]
@@ -889,10 +967,12 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(8));
         params.insert("CLIENT_MEMORY_LIMIT".to_string(), Setting::Int(2048));
+        params.insert("CLIENT_RESULT_QUEUE_SIZE".to_string(), Setting::Int(25));
 
         let config = PrefetchConfig::from_session_params(&params);
         assert_eq!(config.prefetch_threads, 8);
         assert_eq!(config.memory_limit_mb, 2048);
+        assert_eq!(config.result_queue_size, Some(25));
     }
 
     #[test]
@@ -907,9 +987,14 @@ mod tests {
             Setting::String("2048".to_string()),
         );
 
+        params.insert(
+            "CLIENT_RESULT_QUEUE_SIZE".to_string(),
+            Setting::String("17".to_string()),
+        );
         let config = PrefetchConfig::from_session_params(&params);
         assert_eq!(config.prefetch_threads, 8);
         assert_eq!(config.memory_limit_mb, 2048);
+        assert_eq!(config.result_queue_size, Some(17));
     }
 
     #[test]
@@ -920,10 +1005,107 @@ mod tests {
             Setting::String("not-a-number".to_string()),
         );
         params.insert("CLIENT_MEMORY_LIMIT".to_string(), Setting::Int(-1));
+        params.insert("CLIENT_RESULT_QUEUE_SIZE".to_string(), Setting::Int(0));
 
         let config = PrefetchConfig::from_session_params(&params);
         assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
         assert_eq!(config.memory_limit_mb, DEFAULT_MEMORY_LIMIT_MB);
+        assert_eq!(config.result_queue_size, None);
+    }
+
+    #[test]
+    fn prefetch_config_statement_values_override_only_their_own_session_values() {
+        let session = HashMap::from([
+            ("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(8)),
+            ("CLIENT_MEMORY_LIMIT".to_string(), Setting::Int(64)),
+            ("CLIENT_RESULT_QUEUE_SIZE".to_string(), Setting::Int(25)),
+        ]);
+        let mut statement = ParamStore::new();
+        statement.insert("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(2));
+        statement.insert("CLIENT_RESULT_QUEUE_SIZE".to_string(), Setting::Int(3));
+
+        let mut config = PrefetchConfig::from_session_params(&session);
+        config.apply_statement_params(&statement);
+        assert_eq!(config.prefetch_threads, 2);
+        assert_eq!(config.result_queue_size, Some(3));
+        assert_eq!(config.memory_limit_mb, 64);
+
+        let session_only = PrefetchConfig::from_session_params(&session);
+        assert_eq!(session_only.prefetch_threads, 8);
+        assert_eq!(session_only.result_queue_size, Some(25));
+    }
+
+    #[test]
+    fn invalid_session_sizes_fall_back_without_turning_off_defaults() {
+        let session = HashMap::from([
+            ("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(0)),
+            (
+                "CLIENT_RESULT_QUEUE_SIZE".to_string(),
+                Setting::Int(u32::MAX as i64 + 1),
+            ),
+        ]);
+        let config = PrefetchConfig::from_session_params(&session);
+        assert_eq!(config.prefetch_threads, DEFAULT_PREFETCH_THREADS);
+        assert_eq!(config.result_queue_size, None);
+    }
+
+    #[test]
+    fn connection_and_session_queue_limits_apply_without_server_echo() {
+        let mut connection = ParamStore::new();
+        connection.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+        connection.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(7));
+        connection.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(64));
+        let mut session_overrides = ParamStore::new();
+        let mut session = HashMap::new();
+
+        let from_connection =
+            PrefetchConfig::from_connection_params(&session, &connection, &session_overrides);
+        assert_eq!(from_connection.prefetch_threads, 3);
+        assert_eq!(from_connection.result_queue_size, Some(7));
+        assert_eq!(from_connection.memory_limit_mb, 64);
+
+        session.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(5));
+        session.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(10));
+        let from_session =
+            PrefetchConfig::from_connection_params(&session, &connection, &session_overrides);
+        assert_eq!(from_session.prefetch_threads, 5);
+        assert_eq!(from_session.result_queue_size, Some(10));
+
+        session_overrides.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8));
+        session_overrides.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(2));
+        let from_override =
+            PrefetchConfig::from_connection_params(&session, &connection, &session_overrides);
+        assert_eq!(from_override.prefetch_threads, 5);
+        assert_eq!(from_override.result_queue_size, Some(10));
+    }
+
+    #[test]
+    fn server_session_values_override_session_options_but_not_statement_options() {
+        let mut connection = ParamStore::new();
+        connection.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+        connection.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(128));
+        connection.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(7));
+        let mut overrides = ParamStore::new();
+        overrides.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8));
+        overrides.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(64));
+        overrides.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(2));
+        let session = HashMap::from([
+            ("CLIENT_PREFETCH_THREADS".into(), Setting::Int(5)),
+            ("CLIENT_MEMORY_LIMIT".into(), Setting::Int(32)),
+        ]);
+
+        let mut config = PrefetchConfig::from_connection_params(&session, &connection, &overrides);
+        assert_eq!(config.prefetch_threads, 5);
+        assert_eq!(config.memory_limit_mb, 32);
+        assert_eq!(config.result_queue_size, Some(2));
+
+        let mut statement = ParamStore::new();
+        statement.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(9));
+        statement.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(4));
+        config.apply_statement_params(&statement);
+        assert_eq!(config.prefetch_threads, 9);
+        assert_eq!(config.result_queue_size, Some(4));
+        assert_eq!(config.memory_limit_mb, 32);
     }
 
     #[test]

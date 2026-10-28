@@ -201,10 +201,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.
-            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
-                sent to Snowflake with this query only. Never persisted on the
-                cursor; forwarded as query-request parameters, so they tag only
-                this query without mutating session state.
+            _statement_params: Extra options for this statement only, never
+                persisted on the cursor or applied to session state. Server
+                parameters such as ``QUERY_TAG`` are forwarded with the query.
+                Registered client-only statement options, including
+                ``CLIENT_PREFETCH_THREADS`` and ``CLIENT_RESULT_QUEUE_SIZE``,
+                apply locally to this statement's result readers.
             file_stream: When set, ``operation`` must be a PUT statement with
                 a ``file://`` path (only the basename is used as the
                 destination filename). Its contents come from this stream
@@ -1146,8 +1148,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             command: SQL statement to execute.
             params: Parameters for the operation (sequence or dict).
             num_statements: Number of statements in a multistatement query.
-            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
-                sent to Snowflake with this query only. Never persisted on the cursor.
+            _statement_params: Extra options for this statement only, never
+                persisted on the cursor or applied to session state. Server
+                parameters such as ``QUERY_TAG`` are forwarded with the query.
+                Registered client-only statement options, including
+                ``CLIENT_PREFETCH_THREADS`` and ``CLIENT_RESULT_QUEUE_SIZE``,
+                apply locally to this statement's result readers.
 
         Returns:
             dict with a ``queryId`` key containing the Snowflake Query ID.
