@@ -962,209 +962,223 @@ behavior_differences:
       wait and then reuse the cached token, so the user sees only one prompt.
       Locking engages only when `DISABLE_PARALLEL_USER_PROMPT=true` (the default).
   56:
-    name: "GET-downloaded files are restricted to the owner by default on Unix"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    status_rationale: |
-      Downloaded stage files often contain sensitive query data. The universal driver protects them
-      by default so a file is not left readable by other users on a shared machine; this hardening
-      is intentional and accepted.
-    old_driver_behavior: |
-      On Unix, a GET download is readable by other users by default (owner-only permissions were
-      opt-in via a connection property).
-    new_driver_behavior: |
-      On Unix, a GET download is restricted to the owner by default. Callers who need the previous
-      broader access can opt out with the unsafe_file_write connection property.
-  57:
-    name: "PUT resolves relative source paths to absolute canonical form before upload"
+    name: "A GET-downloaded file is mode 0600 on Unix instead of following the process umask"
     status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: true
     impact: low
-    status_rationale: |
-      Legacy JDBC's `SnowflakeFileTransferAgent.expandFileNames` only calls `getCanonicalPath()`
-      in the glob-wildcard branch; a literal (non-glob) source path is CWD-resolved by string
-      concatenation and added to the result set verbatim, so `..` segments and symlinks are left
-      unresolved for literal paths. The universal driver canonicalizes every matched path,
-      literal or glob, via `dunce::canonicalize`. The two are indistinguishable for the common
-      case (no `..`, no symlink); for a literal symlinked source the stage object name changes
-      from the symlink's own basename to the resolved target's basename, which legacy JDBC does
-      not do. Impact is low because literal (non-glob) symlinked PUT sources are believed to be
-      rare, but this is a genuine behavior change, not the exact parity this entry previously
-      claimed.
     old_driver_behavior: |
-      Legacy JDBC's `expandFileNames`: a source path containing no glob metacharacter (`*`, `?`,
-      `[...]`) is CWD-resolved by string concatenation and added to the result set unchanged —
-      `..` segments and symlinks are NOT resolved for this branch. Only a glob-matched path is
-      canonicalized via `file.getCanonicalPath()`. So a literal symlinked source (e.g. `link.csv`
-      pointing at `real.csv`) reports the stage object as `link.csv`, the symlink's own name —
-      not the resolved target.
+      On Unix a downloaded file keeps whatever mode the process umask produces — `0644` under a
+      common umask of `022`, `0600` under `077`. `ownerOnlyStageFilePermissionsEnabled` defaults
+      to false and makes the file owner-only when set true. Windows is unaffected.
     new_driver_behavior: |
-      The universal driver's `ValidatedFilePath::new` calls `dunce::canonicalize` on every
-      matched path, whether or not the original pattern contained a glob metacharacter. A
-      literal symlinked source therefore reports the stage object as the *target's* basename
-      (`real.csv`), diverging from legacy JDBC's `link.csv` for this specific literal-symlink
-      case. Glob-matched symlinked sources — the branch legacy JDBC does canonicalize — are
-      unaffected: both drivers report the target's basename there.
+      On Unix a downloaded file is mode `0600`, unless `unsafe_file_write` is true, which
+      restores the process umask. Windows is unaffected.
     description: |
-      Reference: legacy JDBC `SnowflakeFileTransferAgent.expandFileNames`
-      (github.com/snowflakedb/snowflake-jdbc): canonicalization happens only in the
-      wildcard-glob branch (`result.add(file.getCanonicalPath())`); the literal-path branch
-      (`result.add(path)`) is CWD-resolved but not canonicalized. Verified directly against the
-      legacy driver source — this entry previously claimed "exact parity", which only holds for
-      glob-matched sources. See also odbc_tests/BehaviorDifferences.yaml (BD#131) and
-      python/BehaviorDifferences.yaml (BD#81) for the per-surface notes.
+      A second local account or a group that could read downloaded stage files loses access
+      unless the deployment sets `unsafe_file_write`.
+    status_rationale: |
+      Accepted. A downloaded stage file holds query data, so owner-only is the safe default; the
+      old driver's opt-in meant the common umask published that data to every local account.
+  57:
+    name: "PUT canonicalizes a literal source path, so a named symlink is staged under its target's name"
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A source path with no glob character is joined to the working directory and kept as
+      written, so `..` and a symlink survive into the reported path and `link.csv` pointing at
+      `real.csv` is staged as `link.csv`. A glob match is canonicalized.
+    new_driver_behavior: |
+      Every matched path is canonicalized, including a literal one: `link.csv` pointing at
+      `real.csv` is staged as `real.csv`, and a `..` in the path is collapsed in the reported
+      path. A glob match is canonicalized as before.
+    description: |
+      The stage object name changes only when a symlink's target has a different final component
+      than the link, so ordinary files and wildcard uploads keep the name they had. Code that
+      expected the link's own name to appear on the stage has to change.
+    status_rationale: |
+      Accepted. Canonicalizing uniformly removes the split between the literal and glob paths,
+      and uploading a named symlink is the only case whose stage name moves.
   58:
-    name: "getUpdateCount() after a result-set-producing executeQuery (PUT/GET/REMOVE/SELECT/...)"
+    name: "getUpdateCount() after executeQuery returns -1 instead of the previous statement's count"
     status: allowed
     type: bugfix
     reviewed: false
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      getUpdateCount() returns the update count left by the PREVIOUS statement, because legacy
-      executeQuery never resets it. E.g. after CREATE TABLE then PUT it returns 0; after COPY
-      then GET it returns 2 — a stale, sequence-dependent value, not a property of the PUT/GET.
+      `executeQuery` leaves the previous statement's update count in place: after `CREATE TABLE`
+      then `PUT`, `getUpdateCount()` is still `0`, and after `COPY` then `GET` it is still `2`.
+      An `execute()` that returns a result set sets the count to `-1`. `executeUpdate` of a
+      `SELECT` is rejected.
     new_driver_behavior: |
-      getUpdateCount() returns -1 (the JDBC-spec value for "current result is a ResultSet") after
-      any statement that produces a result set, including PUT/GET/REMOVE. We accept this rather
-      than replicate legacy's stale-value quirk.
+      `getUpdateCount()` returns `-1` after `executeQuery` of any result-set statement, including
+      `SELECT`, `PUT`, `GET`, and `REMOVE`. `executeUpdate` of a `SELECT` is rejected.
+    description: |
+      Code that read the count after a query gets `-1` rather than a number that belonged to an
+      earlier command.
+    status_rationale: |
+      Intentional fix. `java.sql.Statement.getUpdateCount()` specifies `-1` when the current
+      result is a result set, and the old driver already returned `-1` on the `execute()` path,
+      so only `executeQuery` was inconsistent.
   59:
-    name: "Query context cache displaces an existing entry when a new ID has the same priority"
+    name: "A new query-context ID at an occupied priority displaces the existing entry on both drivers"
     status: fixed
     type: bugfix
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When a new entry ID arrives with a priority that already exists in the cache,
-      the existing entry at that priority is displaced.
+      When a query-context entry arrives with an ID the cache has not seen and a priority another
+      ID already holds, the entry at that priority is dropped and the new one takes its place.
     new_driver_behavior: |
-      When a new entry ID arrives with a priority that already exists in the cache,
-      the existing entry at that priority is displaced.
+      The same: the cache keeps one entry per priority and the newcomer displaces the incumbent.
     description: |
-      The driver retains one entry per priority.
+      Callers need no change; the cache is internal to query submission. The case of an ID the
+      cache already holds moving onto an occupied priority is not covered by this entry. No test
+      gates on it.
+    status_rationale: |
+      No difference remains for a newly seen ID at an occupied priority.
   60:
-    name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT applies when the backend returns JSON"
+    name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT changes JSON results instead of applying to Arrow results only"
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      With JDBC_QUERY_RESULT_FORMAT=JSON, JDBC_TREAT_DECIMAL_AS_INT=false, and
-      JDBC_ARROW_TREAT_DECIMAL_AS_INT=true, getObject() returns BigDecimal for a scale-0 number.
+      With `JDBC_QUERY_RESULT_FORMAT=JSON`, `JDBC_TREAT_DECIMAL_AS_INT=false`, and
+      `JDBC_ARROW_TREAT_DECIMAL_AS_INT=true`, `getObject()` on a scale-0 number returns
+      `BigDecimal`; the Arrow flag reaches Arrow results only. Metadata follows
+      `JDBC_TREAT_DECIMAL_AS_INT`.
     new_driver_behavior: |
-      With the same settings, getObject() returns Long. Setting
-      JDBC_ARROW_TREAT_DECIMAL_AS_INT=false makes getObject() return BigDecimal.
+      The same settings make `getObject()` return `Long` for a scale-0 `FIXED` value, while any
+      other scale stays `BigDecimal`. Metadata still follows `JDBC_TREAT_DECIMAL_AS_INT`, so the
+      SQL type can be `DECIMAL` while `getObject()` returns `Long`. Both flags false yields
+      `BigDecimal`.
     description: |
-      The new driver converts backend JSON results to Arrow before exposing them through JDBC.
-      It therefore applies the Arrow conversion property to every result, regardless of the
-      backend result format.
+      Both flags default to true, so only a connection that turns `JDBC_TREAT_DECIMAL_AS_INT`
+      off and requests JSON results sees this; such code can get `Long` where it expected
+      `BigDecimal` from a column its own metadata calls `DECIMAL`. The new driver converts JSON
+      results to Arrow, which is what brings the Arrow flag into play.
+    status_rationale: |
+      Not yet reviewed. The question is whether a JSON-format result should ignore an
+      Arrow-named flag — `todo` if it should, `allowed` if a single conversion path with one
+      flag is the intended shape. Either answer keeps the JSON-to-Arrow conversion.
   61:
-    name: "GET warns when multiple files share a destination basename"
-    status: unknown
+    name: "A GET whose files share a destination basename logs a warning instead of staying silent"
+    status: allowed
     type: enhancement
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      A GET that downloads multiple stage files which reduce to the same local destination
-      basename (e.g. files from different stage subdirectories) completes with no warning; the
-      later file's write silently overwrites the earlier file at the shared destination path.
+      A GET of stage files that collapse to the same local basename succeeds with no warning and
+      leaves one file, chosen by hash order rather than list order. Downloads run one at a time.
     new_driver_behavior: |
-      When a GET batch's destination basenames collide, the new driver logs one WARN-level
-      message per batch: "Downloading multiple files with the same name could cause failures.
-      File names with multiple entries: [...]", naming every colliding basename. The download
-      outcome is unchanged; the log message is the only new observable effect.
+      The same GET logs one `WARNING` naming every colliding basename, still succeeds, and still
+      leaves one file. With `parallel` greater than 1 the colliding downloads can share one
+      temporary file.
     description: |
-      SNOW-3704981. The old Python connector already logs this exact message
-      (`file_transfer_agent.py`'s `basename_counts` check); the new driver now emits it for every
-      wrapper, including JDBC, which previously had no such warning.
+      A caller with `WARNING` logging enabled sees the collision it previously could not detect;
+      the GET's result status and the surviving file are unchanged, so nothing else has to adapt.
+    status_rationale: |
+      Accepted addition. The other Snowflake drivers log this collision, and warning is the
+      smallest useful change — failing the GET or renaming the files would break callers that
+      rely on today's silent overwrite.
   62:
-    name: "putGetMaxRetries / put_get_max_attempts has no upper-bound clamp"
-    status: unknown
+    name: "putGetMaxRetries has no upper bound on either driver"
+    status: fixed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      Legacy PUT/GET retry-count settings are clamped to an upper bound, so a configured
-      value such as 101 is not used as-is.
+      `putGetMaxRetries` takes any integer with no upper bound; a configured `101` is used as
+      `101`.
     new_driver_behavior: |
-      `put_get_max_attempts` (JDBC alias `putGetMaxRetries`) accepts any positive integer
-      including 101. Values <= 0 fall back to the default of 6; there is no upper clamp.
+      The same, under `put_get_max_attempts` with `putGetMaxRetries` as its JDBC alias: `101` is
+      used as `101`.
     description: |
-      Pinned by sf_core `put_get_max_attempts_has_no_upper_bound_unlike_old_drivers_clamp`.
-      Callers who set a count above the legacy cap get more PUT/GET attempts than before.
+      Callers need no change; no configured value is clamped. An unset, zero, or negative value
+      is BD#79. No test gates on this entry.
+    status_rationale: |
+      No difference remains; the clamp this entry recorded does not exist on either driver. The
+      key stays because JDBC entries are never removed.
   63:
-    name: "Native Okta authenticator-request logical failures drop the Snowflake message"
+    name: "An Okta authenticator-request rejection carries the server message on both drivers"
     status: fixed
     type: bug
     reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      When Snowflake rejects `authenticator-request` with HTTP 200 and `success: false`, the
+      server `message` — for example `"not accepted by your Snowflake account configuration"` or
+      `"is not supported"` — appears in the connection error.
+    new_driver_behavior: |
+      The same: the server `message` appears in the connection error.
+    description: |
+      Code that reads the exception message to tell an unsupported authenticator from a
+      misconfigured account gets the server's wording again. The server's numeric code and
+      SQLSTATE are still missing from the error, which this entry does not cover. No test gates
+      on this entry.
     status_rationale: |
-      Restores parity: the 4.x driver includes the GS message in the
-      connection error Display string.
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
-      GS `message` (e.g. "not accepted by your Snowflake account configuration" or
-      "is not supported") is included in the connection error.
-    new_driver_behavior: |
-      When Snowflake rejects authenticator-request with HTTP 200 and `success: false`, the
-      GS `message` is included in the connection error.
-    description: |
-      Regression fixed. Applications again see the GS authenticator-request rejection
-      message in the connection error, matching the legacy driver.
+      No difference remains in the message text. This entry recorded a regression that dropped
+      the server message, and the message is present again.
   64:
-    name: "JVM SOCKS system properties are not honored"
+    name: "The JVM SOCKS system properties do not route the new driver's connections"
     status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      With `disableSocksProxy` unset or false, `-DsocksProxyHost` /
-      `-DsocksProxyPort` apply to the driver's HTTP sockets. `disableSocksProxy=true`
-      (or `on`) opens those sockets with no SOCKS proxy.
+      With `disableSocksProxy` unset or false, `-DsocksProxyHost` and `-DsocksProxyPort` apply to
+      the driver's HTTP sockets. `disableSocksProxy=true` (or `on`) opens those sockets with no
+      SOCKS proxy.
     new_driver_behavior: |
-      `-DsocksProxyHost` / `-DsocksProxyPort` have no effect. `disableSocksProxy`
-      is accepted on the DataSource and as a connection property and does not
-      change routing.
+      `-DsocksProxyHost` and `-DsocksProxyPort` have no effect, and `disableSocksProxy` is
+      accepted without changing routing. `useProxy`, `proxyHost`, and `proxyPort` configure an
+      HTTP or HTTPS proxy, and the JVM's `http.proxyHost` and `https.proxyHost` apply only when
+      `-Dhttp.useProxy=true`.
     description: |
-      Snowflake HTTP in the new driver does not use `java.net.Socket`, so JVM
-      SOCKS settings cannot apply. This is not a missing wire-up; there is no
-      SOCKS path to enable. `disableSocksProxy=true` already matches the old
-      driver. The only divergent case is the old default (`false`) plus a
-      configured SOCKS proxy. Callers that need a proxy use `useProxy` /
-      `proxyHost` / `proxyPort` or the JVM `http.proxy*` / `https.proxy*`
-      properties.
+      A deployment that reached Snowflake only through a SOCKS proxy cannot connect until it is
+      pointed at an HTTP or HTTPS proxy; the HTTP proxy properties are not a substitute for a
+      proxy that speaks SOCKS alone.
+    status_rationale: |
+      Accepted omission. SOCKS support is not implemented, and an HTTP or HTTPS proxy — which
+      the explicit properties already cover — is the common deployment.
   65:
-    name: "nonProxyHosts matching is broader than the old driver's globs"
+    name: "A nonProxyHosts domain entry bypasses the apex and its subdomains instead of matching as a Java glob"
     status: allowed
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      `nonProxyHosts=*.foo.com` bypasses `bar.foo.com` and does not bypass
-      `foo.com`. `nonProxyHosts=foo.com` bypasses only the exact host
-      `foo.com`.
+      `*.foo.com` bypasses subdomains but not `foo.com`; `foo.com` bypasses that host alone;
+      `.foo.com` bypasses only the literal host `.foo.com`. `*` bypasses every host, IP addresses
+      included. `192.168.*` and `10.*` are prefix globs, `10.0.0.0/8` matches no real host, and
+      `foo.*.com` and `*foo.com` treat `*` as a wildcard. Matching is case-insensitive.
     new_driver_behavior: |
-      `nonProxyHosts=*.foo.com` and `nonProxyHosts=foo.com` both bypass
-      `foo.com` and every subdomain (`bar.foo.com`, `a.b.foo.com`).
+      `*.foo.com`, `foo.com`, and `.foo.com` all bypass that host and every subdomain. `*`
+      bypasses domains but not IP addresses. `192.168.*` and `10.*` are not IP patterns, so those
+      addresses stay on the proxy, while `10.0.0.0/8` is a CIDR whose subnet bypasses.
+      `foo.*.com` and `*foo.com` match almost nothing. Matching is case-sensitive.
+      `notfoo.com` does not match `foo.com` on either driver.
     description: |
-      The native `no_proxy` matcher has no exact-only form and no
-      subdomain-only form: a domain entry always matches that host and its
-      subdomains. The `*.foo.com` → `.foo.com` rewrite is required so the
-      glob matches anything at all; leaving `*.foo.com` literal would match
-      almost nothing. This is not a missing JDBC property. Closing it needs
-      a Java-glob matcher in the native transport.
+      A domain entry now covers more hosts than it did, while a bare `*` and the IP prefix globs
+      cover fewer — a deployment relying on `192.168.*` or on `*.foo.com` excluding the apex has
+      to rewrite the entry. `*.snowflakecomputing.com` still bypasses the account hosts.
+    status_rationale: |
+      Accepted. The matcher is shared with the other Snowflake drivers, so `nonProxyHosts` means
+      the same thing across them; a Java-glob matcher would only serve a caller needing an exact
+      host, or subdomains without their parent.
 
   66:
     name: "Malformed connection-string diagnostics redact the URL"
@@ -1435,3 +1449,24 @@ behavior_differences:
       The properties are JDBC-scoped aliases for connect_timeout, retry_timeout, and
       request_timeout, and the JDBC wrapper converts milliseconds to seconds. request_timeout
       covers non-query requests only. retry_timeout is a per-attempt wall clock (entry 77).
+
+  79:
+    name: "Unset putGetMaxRetries retries 6 times"
+    status: unknown
+    type: bug
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When putGetMaxRetries is absent, PUT and GET retry 25 times. A zero or
+      negative value is kept.
+    new_driver_behavior: |
+      When put_get_max_attempts is absent, zero, or negative, PUT and GET
+      retry 6 times. A positive value such as 101 is used as given.
+    description: |
+      A transfer that is not given a retry count stops sooner. Setting a
+      positive count still uses that count. The claimed upper clamp is
+      entry 62.
+    status_rationale: |
+      Status stays unknown until the default of 6 versus 25 is accepted or
+      changed. This is not an upper bound.
