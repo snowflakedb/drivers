@@ -218,6 +218,7 @@ pub mod param_names {
     pub const APPLICATION: ParamKey = ParamKey("application");
     // Prefetch configuration
     pub const CLIENT_PREFETCH_THREADS: ParamKey = ParamKey("CLIENT_PREFETCH_THREADS");
+    pub const CLIENT_RESULT_QUEUE_SIZE: ParamKey = ParamKey("CLIENT_RESULT_QUEUE_SIZE");
     pub const CLIENT_MEMORY_LIMIT: ParamKey = ParamKey("CLIENT_MEMORY_LIMIT");
     // PUT/GET — S3 regional endpoint override. Server pushes this as the
     // session parameter `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1`; the
@@ -2205,9 +2206,22 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description("Number of concurrent chunk prefetch threads for result set downloading")
-        .scopes(&[ParamScope::Session])
+        .scopes(&[ParamScope::Session, ParamScope::Statement])
         .mutable_after_connect(true)
         .send_as_session_parameter(SendAsSessionParameter::Exact)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str())
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description("Maximum number of result batches buffered by a reader (unset retains the chunk-only limit)")
+        .scopes(&[
+            ParamScope::Connection,
+            ParamScope::Session,
+            ParamScope::Statement,
+        ])
+        .mutable_after_connect(true)
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_MEMORY_LIMIT.as_str())
@@ -3742,6 +3756,44 @@ mod tests {
         assert_eq!(freq.value_type, ValueType::Int);
         assert_eq!(freq.scopes, &[ParamScope::Session]);
         assert!(freq.default.is_none());
+    }
+
+    #[test]
+    fn client_prefetch_options_have_statement_scope_and_only_expected_forwarding() {
+        let threads = registry()
+            .resolve("client_prefetch_threads")
+            .expect("prefetch threads should resolve");
+        assert_eq!(threads.canonical_name, "CLIENT_PREFETCH_THREADS");
+        assert_eq!(threads.value_type, ValueType::Int);
+        assert!(threads.default.is_none());
+        assert_eq!(
+            threads.scopes,
+            &[ParamScope::Session, ParamScope::Statement]
+        );
+        assert!(threads.mutable_after_connect);
+        assert_eq!(
+            threads.send_as_session_parameter,
+            Some(SendAsSessionParameter::Exact)
+        );
+        assert!(!threads.send_as_query_parameter);
+
+        let queue = registry()
+            .resolve("client_result_queue_size")
+            .expect("result queue size should resolve");
+        assert_eq!(queue.canonical_name, "CLIENT_RESULT_QUEUE_SIZE");
+        assert_eq!(queue.value_type, ValueType::Int);
+        assert!(queue.default.is_none());
+        assert_eq!(
+            queue.scopes,
+            &[
+                ParamScope::Connection,
+                ParamScope::Session,
+                ParamScope::Statement
+            ]
+        );
+        assert!(queue.mutable_after_connect);
+        assert!(!queue.is_sent_as_session_parameter());
+        assert!(!queue.send_as_query_parameter);
     }
 
     #[test]

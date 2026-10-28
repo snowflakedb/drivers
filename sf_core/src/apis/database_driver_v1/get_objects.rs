@@ -581,7 +581,13 @@ async fn execute_show(
         let query_parameters = conn.query_transport_parameters()?;
         let retry_policy = conn.retry_policy.clone();
         let session_params = conn.session_parameters.read().await;
-        let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+        let prefetch_config = PrefetchConfig::from_connection_params(
+            &session_params,
+            conn.resolved_connect
+                .as_ref()
+                .unwrap_or(&conn.connection_seed),
+            &conn.session_overrides,
+        );
         (
             query_parameters,
             http_client,

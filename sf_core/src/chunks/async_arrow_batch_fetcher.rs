@@ -221,6 +221,7 @@ mod tests {
         PrefetchConfig {
             prefetch_threads: 1,
             memory_limit_mb: 0,
+            result_queue_size: None,
         }
     }
 
