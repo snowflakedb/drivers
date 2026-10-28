@@ -365,9 +365,39 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@11
 
+      # Download cache only (tarballs). No lockfile, so node_modules is not
+      # cached: that would pin the first resolved tree across runs.
+      - name: Get npm cache directory
+        id: npm-cache-dir
+        shell: bash
+        run: echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache npm download cache
+        continue-on-error: true
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: npm-fips-artifacts-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('nodejs/package.json') }}
+
       - name: Install Node.js dependencies
         working-directory: nodejs
-        run: npm install
+        shell: bash
+        # SNOW-4350373: registry lag (ETARGET on unpublished @aws-sdk/types)
+        # is transient; retry with backoff. Do not cache node_modules: this
+        # job has no lockfile, so a cache would pin the first resolved tree.
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm install; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "npm install exhausted 3 attempts" >&2
+              exit 1
+            fi
+            echo "npm install failed (attempt ${attempt}/3); retrying..." >&2
+            sleep $((15 * attempt))
+          done
 
       - name: Configure release artifact paths
         shell: python {0}
