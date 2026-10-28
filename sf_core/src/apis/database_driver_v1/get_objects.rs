@@ -51,7 +51,7 @@ use crate::rest::snowflake::{
 pub const DEPTH_CATALOGS: i32 = 1;
 pub const DEPTH_DB_SCHEMAS: i32 = 2;
 pub const DEPTH_TABLES: i32 = 3;
-pub const DEPTH_COLUMNS: i32 = 4; // deferred
+pub const DEPTH_COLUMNS: i32 = 4;
 /// Live GetObjects(columns), before exact-table pushdown (2026-10-28):
 /// at 16 matching schemas, four in-flight SHOWs had a 13.88s median vs
 /// 18.84s sequential, 15.00s unbounded, and 35.50s for IN DATABASE.
