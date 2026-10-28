@@ -28,6 +28,15 @@ impl ParseChunk for ArrowChunkParser {
             }
         }
         decoder.finish()?;
+        // `finish` accepts a decoder still waiting for its first message, so an
+        // empty body would otherwise yield no batches and no schema. A real
+        // zero-row chunk still carries a schema message; reject the empty
+        // stream as `StreamReader` (and the other language drivers) do.
+        if decoder.schema().is_none() {
+            return Err(ArrowError::IpcError(
+                "Expected schema message, found empty stream.".to_string(),
+            ));
+        }
         Ok(batches)
     }
 }
@@ -105,5 +114,14 @@ mod tests {
         let mut data = ipc_stream(&[batch(vec![Some(1)], vec![Some("a")])]);
         data.truncate(data.len() - 16);
         assert!(ArrowChunkParser.parse_chunk(data).is_err());
+    }
+
+    #[test]
+    fn empty_stream_is_an_error() {
+        let error = ArrowChunkParser.parse_chunk(Vec::new()).unwrap_err();
+        assert!(
+            error.to_string().contains("found empty stream"),
+            "unexpected error: {error}"
+        );
     }
 }
