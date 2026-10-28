@@ -43,7 +43,7 @@ use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_quer
 pub const DEPTH_CATALOGS: i32 = 1;
 pub const DEPTH_DB_SCHEMAS: i32 = 2;
 pub const DEPTH_TABLES: i32 = 3;
-pub const DEPTH_COLUMNS: i32 = 4; // deferred
+pub const DEPTH_COLUMNS: i32 = 4;
 
 // ---------------------------------------------------------------------------
 // Arrow field-name constants (public — wrapper flatten uses them to avoid drift)
