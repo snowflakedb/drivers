@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+from typing import get_type_hints, is_typeddict
+
 import pytest
 
+from snowflake.connector._internal.connection.connection import ConnectionMixin
+from snowflake.connector._internal.cursor.base import CursorBaseMixin
 from snowflake.connector._internal.errorhandler import (
     ErrorHandlerMixin,
     _errorhandler_active,
     route_exception,
     simplified_error_handling,
 )
-from snowflake.connector.errors import Error, ErrorValue, InterfaceError, ProgrammingError
+from snowflake.connector.errors import (
+    Error,
+    ErrorDetails,
+    ErrorValue,
+    InterfaceError,
+    ProgrammingError,
+    StructuredErrorHandler,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +126,19 @@ class TestErrorHandlerMixinBasics:
         with pytest.raises(ValueError, match="not a snowflake error"):
             conn.do_something_else()
         assert len(conn.messages) == 0
+
+    def test_generic_exception_is_not_passed_to_structured_handler(self):
+        """A non-Error exception propagates and does not call the error handler.
+
+        BD#generic-exceptions-not-routed-to-errorhandler
+        """
+        conn = _FakeConnection()
+        seen: list[type[BaseException]] = []
+        conn.errorhandler = lambda c, cur, cls, val: seen.append(cls)
+        with pytest.raises(ValueError, match="not a snowflake error"):
+            conn.do_something_else()
+        assert seen == []
+        assert conn.messages == []
 
     def test_cursor_error_records_on_both(self):
         conn = _FakeConnection()
@@ -416,3 +440,26 @@ class TestRouteException:
         assert val["sfqid"] == "qid-123"
         assert val["query"] == "SELECT 1"
         assert val["request_id"] == "rid-456"
+
+
+def _unwrap(func):
+    seen: set[int] = set()
+    while hasattr(func, "__wrapped__") and id(func) not in seen:
+        seen.add(id(func))
+        func = func.__wrapped__
+    return func
+
+
+def test_structured_error_handler_is_protocol():
+    assert getattr(StructuredErrorHandler, "_is_protocol", False) is True
+    assert is_typeddict(ErrorDetails)
+    assert ErrorValue is ErrorDetails
+
+    connection_hints = get_type_hints(_unwrap(ConnectionMixin.errorhandler.fget))
+    cursor_hints = get_type_hints(_unwrap(CursorBaseMixin.errorhandler.fget))
+    assert connection_hints["return"] is StructuredErrorHandler
+    assert cursor_hints["return"] is StructuredErrorHandler
+    connection_setter = get_type_hints(_unwrap(ConnectionMixin.errorhandler.fset))
+    cursor_setter = get_type_hints(_unwrap(CursorBaseMixin.errorhandler.fset))
+    assert connection_setter["value"] == StructuredErrorHandler | None
+    assert cursor_setter["value"] == StructuredErrorHandler | None

@@ -1,0 +1,21 @@
+name: "Exceptions outside the PEP 249 Error hierarchy are re-raised and skip the error handler"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `Error.errorhandler_wrapper_from_ready_exception` passes every exception to the
+  connection or cursor error handler. When the class is not a subclass of `Error`,
+  the handler value is `exception.args`. `Error.errorhandler_make_exception` then
+  returns `error_class(error_value)`, and the default handler raises that instance.
+new_driver_behavior: |
+  The error handler receives only subclasses of PEP 249 `Error`, with a details
+  dict of `msg`, `errno`, `sqlstate`, and the other `Error` fields. Any other
+  exception is re-raised unchanged. It is not appended to `messages` and it is
+  not passed to `errorhandler`. `Error.errorhandler_make_exception` constructs
+  only an `Error`.
+description: |
+  PEP 249 defines database errors as the `Error` hierarchy. Its optional error
+  handler instantiates that error class with the handler value and raises it.
+  A generic exception such as `ValueError` is outside that hierarchy.

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import warnings
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from ._internal.backward_compatibility import install_backward_compatibility_getattr
 from ._internal.decorators import backward_compatibility
@@ -51,7 +51,29 @@ if TYPE_CHECKING:
     from .connection import Connection
     from .cursor import SnowflakeCursorBase
 
-ErrorValue = dict[str, Any]
+
+class ErrorDetails(TypedDict, total=False):
+    msg: str
+    errno: int
+    sqlstate: str | None
+    sfqid: str | None
+    query: str | None
+    request_id: str | None
+    parameter: str | None
+    validation_code: int | None
+
+
+class StructuredErrorHandler(Protocol):
+    def __call__(
+        self,
+        connection: Connection | AsyncConnection | None,
+        cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
+        error_class: type[Error],
+        error_value: ErrorDetails,
+    ) -> None: ...
+
+
+ErrorValue = ErrorDetails
 
 # ---------------------------------------------------------------------------
 # PEP 249 exception hierarchy (active — raised at runtime)
@@ -126,10 +148,10 @@ class Error(Exception):
 
     @staticmethod
     def errorhandler_wrapper(
-        connection: Connection | None,
+        connection: Connection | AsyncConnection | None,
         cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
-        error_class: type[Error] | type[Exception],
-        error_value: ErrorValue,
+        error_class: type[Error],
+        error_value: ErrorDetails,
     ) -> None:
         """Raise an error through the error-handler chain.
 
@@ -149,8 +171,8 @@ class Error(Exception):
     def hand_to_other_handler(
         connection: Connection | AsyncConnection | None,
         cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
-        error_class: type[Error] | type[Exception],
-        error_value: ErrorValue,
+        error_class: type[Error],
+        error_value: ErrorDetails,
     ) -> bool:
         """Try to delegate the error to a connection's or cursor's error handler.
 
@@ -174,32 +196,30 @@ class Error(Exception):
 
     @staticmethod
     def errorhandler_make_exception(
-        error_class: type[Error] | type[Exception],
-        error_value: ErrorValue,
-    ) -> Error | Exception:
+        error_class: type[Error],
+        error_value: ErrorDetails,
+    ) -> Error:
         """Create an exception instance from *error_class* and *error_value*.
 
         Used as a fallback when no connection/cursor handler is available.
         """
-        if issubclass(error_class, Error):
-            return error_class(
-                msg=error_value.get("msg", ""),
-                errno=error_value.get("errno", -1),
-                sqlstate=error_value.get("sqlstate"),
-                sfqid=error_value.get("sfqid"),
-                query=error_value.get("query"),
-                request_id=error_value.get("request_id"),
-                parameter=error_value.get("parameter"),
-                validation_code=error_value.get("validation_code"),
-            )
-        return error_class(error_value)
+        return error_class(
+            msg=error_value.get("msg", ""),
+            errno=error_value.get("errno", -1),
+            sqlstate=error_value.get("sqlstate"),
+            sfqid=error_value.get("sfqid"),
+            query=error_value.get("query"),
+            request_id=error_value.get("request_id"),
+            parameter=error_value.get("parameter"),
+            validation_code=error_value.get("validation_code"),
+        )
 
     @staticmethod
     def default_errorhandler(
-        connection: Connection | None,
+        connection: Connection | AsyncConnection | None,
         cursor: SnowflakeCursorBase | AsyncSnowflakeCursorBase | None,
-        error_class: type[Error] | type[Exception],
-        error_value: ErrorValue,
+        error_class: type[Error],
+        error_value: ErrorDetails,
     ) -> None:
         """Default error handler that simply raises the error.
 

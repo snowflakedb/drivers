@@ -27,7 +27,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 
-from ..errors import Error
+from ..errors import Error, ErrorDetails
 from .decorators import _schedule_async_telemetry, _telemetry_client_if_enabled
 from .logging import get_logger
 
@@ -264,7 +264,7 @@ def _wrap_async_method(method: Callable) -> Callable:
     return wrapper
 
 
-def _error_to_value(exc: Error) -> dict[str, Any]:
+def _error_to_value(exc: Error) -> ErrorDetails:
     """Deconstruct an ``Error`` into the dict expected by ``hand_to_other_handler``."""
     return {
         "msg": exc.raw_msg,

@@ -8,12 +8,20 @@ import re
 import uuid
 import warnings
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..._common.extras import check_dependency, pandas, pyarrow
 from ...constants import SessionParameterName, StatementParameterName
-from ...errors import Error, ErrorValue, InterfaceError, NotSupportedError, OperationalError, ProgrammingError
+from ...errors import (
+    Error,
+    ErrorDetails,
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+    StructuredErrorHandler,
+)
 from ..api_client.client_api import core_driver
 from ..binding_converters import (
     BindingConverterBase,
@@ -51,8 +59,8 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     # Set by subclass ``__init__`` before ``super().__init__()``.
     _connection: Connection | AsyncConnection
     _closed: bool
-    _messages: list[tuple[type[Exception], ErrorValue]]
-    _errorhandler: Callable[..., None]
+    _messages: list[tuple[type[Error], ErrorDetails]]
+    _errorhandler: StructuredErrorHandler
     _arraysize: int
     _query_result: QueryResult
     _rownumber: int
@@ -157,13 +165,13 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     @property
     @pep249
     @api_telemetry
-    def messages(self) -> list[tuple[type[Exception], ErrorValue]]:
+    def messages(self) -> list[tuple[type[Error], ErrorDetails]]:
         """List of (exception class, exception value) tuples received from the database."""
         return self._messages
 
     @messages.setter
     @api_telemetry
-    def messages(self, value: list[tuple[type[Exception], ErrorValue]]) -> None:
+    def messages(self, value: list[tuple[type[Error], ErrorDetails]]) -> None:
         self._messages = value
 
     # ------------------------------------------------------------------
@@ -695,13 +703,13 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     @property
     @pep249
     @api_telemetry
-    def errorhandler(self) -> Callable:
+    def errorhandler(self) -> StructuredErrorHandler:
         """PEP 249 error handler for this cursor."""
         return self._errorhandler
 
     @errorhandler.setter
     @api_telemetry
-    def errorhandler(self, value: Callable | None) -> None:
+    def errorhandler(self, value: StructuredErrorHandler | None) -> None:
         if value is None:
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
