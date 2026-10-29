@@ -1,7 +1,7 @@
 name: "A nonProxyHosts domain entry bypasses the apex and its subdomains instead of matching as a Java glob"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

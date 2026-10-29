@@ -1,7 +1,7 @@
 name: "private_key accepts a plaintext PEM string instead of being an unrecognized property"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

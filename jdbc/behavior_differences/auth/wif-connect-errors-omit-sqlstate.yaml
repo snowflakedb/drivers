@@ -1,7 +1,7 @@
 name: "A local workload-identity connect failure reports a null SQLSTATE and vendor code 0 instead of 08000 and 200071"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

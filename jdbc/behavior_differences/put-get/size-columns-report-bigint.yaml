@@ -1,7 +1,7 @@
 name: "PUT/GET size columns report BIGINT instead of DECIMAL"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

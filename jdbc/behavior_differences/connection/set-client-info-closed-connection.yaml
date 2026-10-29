@@ -1,7 +1,7 @@
 name: "setClientInfo on a closed connection throws SQLClientInfoException with CONNECTION_CLOSED on both drivers"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

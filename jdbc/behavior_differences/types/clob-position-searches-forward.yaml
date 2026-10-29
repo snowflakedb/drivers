@@ -1,7 +1,7 @@
 name: "SnowflakeClob.position searches forward; old driver searches backward"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

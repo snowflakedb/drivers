@@ -1,7 +1,7 @@
 name: "A GET whose files share a destination basename logs a warning instead of staying silent"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

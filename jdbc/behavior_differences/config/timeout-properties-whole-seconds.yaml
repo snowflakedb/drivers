@@ -1,7 +1,7 @@
 name: "Millisecond timeout properties apply in whole seconds"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |
@@ -16,4 +16,8 @@ description: |
   The properties are JDBC-scoped aliases for connect_timeout, retry_timeout, and
   request_timeout, and the JDBC wrapper converts milliseconds to seconds. request_timeout
   covers non-query requests only. retry_timeout is a per-attempt wall clock (entry 77).
+status_rationale: |
+  Accepted. The core timeouts are whole seconds, so the JDBC aliases round a positive
+  millisecond value up to at least one second. networkTimeout maps to retry_timeout, a
+  per-attempt wall clock, and does not bound retries of query requests.
 legacy_id: 78

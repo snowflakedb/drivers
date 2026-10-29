@@ -1,7 +1,7 @@
 name: "Azure and GCS client-side-encryption metadata records EncryptionLibrary as Rust(OpenSSL) instead of Java 5.3.0"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

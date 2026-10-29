@@ -1,7 +1,7 @@
 name: "A listener handling connectionClosed observes isClosed() true instead of false"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

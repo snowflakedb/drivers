@@ -1,7 +1,7 @@
 name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: high
 status_rationale: |

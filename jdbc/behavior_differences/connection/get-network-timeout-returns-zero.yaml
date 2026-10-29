@@ -1,7 +1,7 @@
 name: "Connection.getNetworkTimeout() returns 0 instead of the value passed to setNetworkTimeout"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

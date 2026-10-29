@@ -1,7 +1,7 @@
 name: "An auto-compressed PUT leaves Content-Encoding unset instead of storing gzip"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

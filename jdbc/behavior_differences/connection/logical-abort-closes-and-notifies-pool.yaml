@@ -1,7 +1,7 @@
 name: "abort() on a pooled handle marks it closed and fires connectionErrorOccurred instead of leaving isClosed() false"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

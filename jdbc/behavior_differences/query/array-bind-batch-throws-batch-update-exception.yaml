@@ -1,7 +1,7 @@
 name: "A failed array-bind executeBatch throws BatchUpdateException instead of SnowflakeSQLException"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: medium
 old_driver_behavior: |

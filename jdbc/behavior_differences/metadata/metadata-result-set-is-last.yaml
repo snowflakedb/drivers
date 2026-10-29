@@ -1,7 +1,7 @@
 name: "ResultSet.isLast() on a query-backed DatabaseMetaData result set returns a boolean instead of throwing"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

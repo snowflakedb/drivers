@@ -1,7 +1,7 @@
 name: "SQLFeatureNotSupportedException from a pooled connection no longer fires connectionErrorOccurred"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: medium
 old_driver_behavior: |

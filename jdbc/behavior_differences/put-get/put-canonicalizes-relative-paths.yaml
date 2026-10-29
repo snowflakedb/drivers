@@ -1,7 +1,7 @@
 name: "PUT canonicalizes a literal source path, so a named symlink is staged under its target's name"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

@@ -1,7 +1,7 @@
 name: "GET from an encrypted GCS stage over virtual-host URLs writes decrypted bytes on both drivers"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

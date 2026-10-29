@@ -1,7 +1,7 @@
 name: "getPropertyInfo rejects a non-string proxy_host or proxy_port instead of passing it through"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

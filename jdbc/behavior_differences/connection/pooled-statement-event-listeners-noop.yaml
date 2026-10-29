@@ -1,7 +1,7 @@
 name: "PooledConnection accepts statement-event listeners and never invokes them on either driver"
 status: fixed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

@@ -1,7 +1,7 @@
 name: "A new query-context ID at an occupied priority displaces the existing entry on both drivers"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

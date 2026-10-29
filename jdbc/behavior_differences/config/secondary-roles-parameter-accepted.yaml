@@ -1,7 +1,7 @@
 name: "secondary_roles is a recognized property sent as a top-level SECONDARY_ROLES login field"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

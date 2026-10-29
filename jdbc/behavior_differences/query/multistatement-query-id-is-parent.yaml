@@ -1,7 +1,7 @@
 name: "Statement.getQueryID() after a synchronous multistatement returns the parent query ID instead of the first child's"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

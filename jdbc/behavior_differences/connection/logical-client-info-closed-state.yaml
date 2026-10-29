@@ -1,7 +1,7 @@
 name: "Client-info access on a closed pooled handle throws CONNECTION_CLOSED instead of reaching the physical session"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

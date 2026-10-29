@@ -1,7 +1,7 @@
 name: "PooledConnection.getConnection() invalidates the previously returned logical handle instead of leaving it open"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: medium
 old_driver_behavior: |

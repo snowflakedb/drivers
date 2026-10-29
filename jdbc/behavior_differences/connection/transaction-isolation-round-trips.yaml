@@ -1,11 +1,11 @@
-name: "Connection.getTransactionIsolation() always returns READ_COMMITTED; legacy round-trips the set value and defaults to NONE"
+name: "Connection.getTransactionIsolation() always returns READ_COMMITTED; the old driver round-trips the set value and defaults to NONE"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |
-  Restored legacy snowflake-jdbc semantics: transactionIsolation defaults to TRANSACTION_NONE,
+  Restored the old driver's semantics: transactionIsolation defaults to TRANSACTION_NONE,
   setTransactionIsolation stores NONE or READ_COMMITTED, and getTransactionIsolation returns the
   cached value.
 legacy_id: 18

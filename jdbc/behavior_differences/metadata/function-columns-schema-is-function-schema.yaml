@@ -1,7 +1,7 @@
 name: "getFunctionColumns FUNCTION_SCHEM is the function schema; old driver echoes the schema pattern"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

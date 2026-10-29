@@ -1,7 +1,7 @@
 name: "A GET-downloaded file is mode 0600 on Unix instead of following the process umask"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

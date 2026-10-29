@@ -1,7 +1,7 @@
 name: "getPropertyInfo on a malformed connection string omits the URL from the error message"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

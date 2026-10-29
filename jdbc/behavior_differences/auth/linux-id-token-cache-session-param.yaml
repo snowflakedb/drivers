@@ -1,7 +1,7 @@
 name: "On Linux the ID-token cache honors clientStoreTemporaryCredential instead of only the session parameter"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

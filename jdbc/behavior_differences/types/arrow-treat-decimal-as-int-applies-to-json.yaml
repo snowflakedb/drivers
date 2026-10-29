@@ -1,7 +1,7 @@
 name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT changes JSON results instead of applying to Arrow results only"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

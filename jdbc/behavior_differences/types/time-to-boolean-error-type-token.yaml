@@ -1,7 +1,7 @@
 name: "TIME->boolean conversion error uses lowercase type token for INT-backed TIME"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

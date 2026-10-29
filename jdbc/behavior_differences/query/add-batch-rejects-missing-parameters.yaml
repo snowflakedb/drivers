@@ -1,7 +1,7 @@
 name: "addBatch rejects rows with missing placeholder values"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

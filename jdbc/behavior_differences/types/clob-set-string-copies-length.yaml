@@ -1,7 +1,7 @@
 name: "SnowflakeClob.setString copies len characters; old driver uses len as an end index"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

@@ -1,7 +1,7 @@
 name: "getFunctionColumns FUNCTION_CAT stays null until a session flag fills it"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

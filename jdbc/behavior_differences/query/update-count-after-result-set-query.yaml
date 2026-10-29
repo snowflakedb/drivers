@@ -1,7 +1,7 @@
 name: "getUpdateCount() after executeQuery returns -1 instead of the previous statement's count"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

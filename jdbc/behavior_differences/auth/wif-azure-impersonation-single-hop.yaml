@@ -1,7 +1,7 @@
 name: "An Azure workloadIdentityImpersonationPath naming one service principal is accepted instead of rejected"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

@@ -1,7 +1,7 @@
 name: "HttpHeadersCustomizer and its DataSource setter do not exist on the new driver"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

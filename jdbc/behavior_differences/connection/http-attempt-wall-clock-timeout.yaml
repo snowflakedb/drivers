@@ -1,7 +1,7 @@
 name: "HTTP attempts use a 300-second wall-clock timeout instead of socket inactivity"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

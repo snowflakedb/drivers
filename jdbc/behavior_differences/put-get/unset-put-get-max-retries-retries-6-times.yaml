@@ -1,7 +1,7 @@
 name: "Unset putGetMaxRetries retries 6 times"
 status: allowed
 type: bug
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

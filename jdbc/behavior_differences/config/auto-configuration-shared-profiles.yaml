@@ -1,7 +1,7 @@
 name: "An auto-configuration profile resolves from config.toml and validates strictly, and six JDBC-only option spellings stop applying"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: medium
 old_driver_behavior: |

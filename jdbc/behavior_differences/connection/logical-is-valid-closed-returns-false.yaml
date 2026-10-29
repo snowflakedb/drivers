@@ -1,7 +1,7 @@
 name: "isValid() on a closed pooled handle returns false without probing the physical connection on both drivers"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

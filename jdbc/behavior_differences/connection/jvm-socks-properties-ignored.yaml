@@ -1,7 +1,7 @@
 name: "The JVM SOCKS system properties do not route the new driver's connections"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

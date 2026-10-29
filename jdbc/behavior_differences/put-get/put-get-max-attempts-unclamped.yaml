@@ -1,7 +1,7 @@
 name: "putGetMaxRetries has no upper bound on either driver"
 status: fixed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

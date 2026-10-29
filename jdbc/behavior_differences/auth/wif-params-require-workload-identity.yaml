@@ -1,7 +1,7 @@
 name: "A workload-identity setting under another authenticator fails the connection instead of being ignored"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

@@ -1,7 +1,7 @@
 name: "executeBatch clears getUpdateCount on return"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: medium
 status_rationale: |

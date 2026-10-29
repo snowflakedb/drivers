@@ -1,7 +1,7 @@
 name: "unwrap/isWrapperFor on a closed pooled handle throws CONNECTION_CLOSED instead of returning the physical connection"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 old_driver_behavior: |

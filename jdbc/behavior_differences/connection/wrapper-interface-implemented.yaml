@@ -1,7 +1,7 @@
 name: "JDBC wrapper interface is correctly implemented"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 impact: low
 is_breaking_change: false
 status_rationale: |

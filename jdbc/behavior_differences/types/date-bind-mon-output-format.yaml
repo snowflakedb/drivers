@@ -1,7 +1,7 @@
-name: "DATE bind tolerates MON-bearing DATE_OUTPUT_FORMAT (legacy throws at prepare)"
+name: "DATE bind tolerates MON-bearing DATE_OUTPUT_FORMAT (the old driver throws at prepare)"
 status: fixed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

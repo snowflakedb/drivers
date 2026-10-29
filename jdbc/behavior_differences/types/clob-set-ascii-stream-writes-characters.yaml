@@ -1,7 +1,7 @@
 name: "SnowflakeClob.setAsciiStream writes characters; old driver writes decimal text"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

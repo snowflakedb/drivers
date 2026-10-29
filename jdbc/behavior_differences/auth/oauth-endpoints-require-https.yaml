@@ -1,7 +1,7 @@
 name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
 status: allowed
 type: enhancement
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 status_rationale: |

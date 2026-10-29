@@ -1,7 +1,7 @@
 name: "A failed GET leaves an existing destination file intact instead of truncating or deleting it"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

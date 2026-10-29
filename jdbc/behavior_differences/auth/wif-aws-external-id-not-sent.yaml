@@ -1,7 +1,7 @@
 name: "workloadIdentityAwsExternalId always fails the connection instead of being sent as the STS ExternalId"
 status: allowed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |

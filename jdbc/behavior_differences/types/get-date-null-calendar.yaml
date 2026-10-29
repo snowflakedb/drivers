@@ -1,7 +1,7 @@
-name: "getDate(int, Calendar) tolerates a null Calendar (legacy NPEs)"
+name: "getDate(int, Calendar) tolerates a null Calendar (the old driver throws NullPointerException)"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: false
 impact: low
 status_rationale: |

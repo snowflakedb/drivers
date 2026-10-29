@@ -1,7 +1,7 @@
 name: "An impersonation path with the OIDC workload-identity provider fails instead of being ignored"
 status: allowed
 type: bugfix
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: low
 old_driver_behavior: |
