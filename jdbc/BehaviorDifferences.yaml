@@ -22,17 +22,6 @@
 #  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.
 
 behavior_differences:
-  1:
-    name: "DataSource rejects PAT authentication without password"
-    status: fixed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    status_rationale: |
-      Fixed against snowflake-jdbc 4.3.4. Both drivers connect a DataSource PAT login
-      that has a token and no password. The old driver rejected that case in 4.3.1
-      through 4.3.3.
   2:
     name: "Statement.executeBatch update-count int overflow"
     status: unknown
@@ -66,32 +55,6 @@ behavior_differences:
     status_rationale: |
       After executeBatch, getResultSet() is null on both drivers. getUpdateCount()
       returns the last count on the old driver and -1 on the new driver.
-  5:
-    name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: high
-    status_rationale: |
-      The old driver has clientRequestMfaToken for MFA caching and
-      clientStoreTemporaryCredential for browser and OAuth caching. The new driver has
-      only clientStoreTemporaryCredential, which controls all three. The old name is
-      ignored with a log warning; connect still succeeds. setEnableClientRequestMfaToken
-      does not exist. Both switches default to true.
-  6:
-    name: "OAUTH_CLIENT_CREDENTIALS missing-parameter error text"
-    status: unknown
-    type: enhancement
-    reviewed: false
-    impact: low
-    is_breaking_change: true
-    status_rationale: |
-      Both drivers reject a missing client id, secret, or token URL at connect. The old
-      driver reports the first gap as vendor 200001 ("passing oauthClientId is required").
-      The new driver names every missing oauth_client_id, oauth_client_secret, and
-      oauth_token_request_url in one error. An empty string fails locally on the new
-      driver and is sent to the token endpoint on the old driver.
   7:
     name: "DATE bind tolerates MON-bearing DATE_OUTPUT_FORMAT (legacy throws at prepare)"
     status: fixed
@@ -124,17 +87,6 @@ behavior_differences:
     status_rationale: |
       getBoolean on TIME scale 0-4 throws vendor 200038 on both drivers. The old driver
       says type:Boolean; the new driver says type:boolean. Scale 5-9 already matches.
-  10:
-    name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    status_rationale: |
-      A non-loopback http oauthTokenRequestUrl or oauthAuthorizationUrl is warned about
-      and then used on the old driver. The new driver rejects it at connect. Loopback
-      http and the redirect URI still work on both. Tracked under SNOW-3663588.
   11:
     name: "addBatch rejects rows with missing placeholder values"
     status: unknown
@@ -337,58 +289,6 @@ behavior_differences:
       `getChildQueryIds()` gets the children of the whole call on the new driver and one id on the
       old driver, which is why `shouldReturnChildQueryIdsForMultistatementQuery` is
       `@SkipOldDriver("BD#24")`; `getChildQueryIds` itself agrees given the same query id.
-  25:
-    name: "A failed GET leaves an existing destination file intact instead of truncating or deleting it"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    status_rationale: |
-      A GET that fails must not destroy data already at the destination. Staging into a temporary
-      file and renaming on success is what keeps the destination path either the previous file or
-      the complete new one.
-    old_driver_behavior: |
-      The old driver writes straight to the destination path and truncates it when the download
-      starts. On S3 and GCS a failed transfer leaves the partial file there; on Azure the path is
-      deleted. A decryption failure can leave an unusable file at the destination.
-    new_driver_behavior: |
-      The new driver writes `<dst>.part` and renames it onto the destination only after the
-      transfer succeeds. A failed GET removes `<dst>.part` and leaves any existing destination file
-      unchanged. A hard process kill can leave a `<dst>.part` file behind.
-    description: |
-      A successful GET produces the same file on both drivers. Callers that delete a truncated
-      destination file after a failed GET no longer need that cleanup.
-  40:
-    name: "abort() on a pooled handle marks it closed and fires connectionErrorOccurred instead of leaving isClosed() false"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `abort()` aborts the physical connection and leaves `isClosed()` false on the logical
-      handle. `connectionErrorOccurred` fires only if the physical abort throws, and no event
-      fires on success. After a successful abort, `close()` on that handle and
-      `PooledConnection.getConnection()` throw with vendor code `200052` and SQLSTATE `08003`.
-      A handle that is already closed can still abort the physical connection after the session
-      was returned to the pool.
-    new_driver_behavior: |
-      `abort()` marks the logical handle closed before touching the physical connection, so
-      `isClosed()` returns true, `close()` returns, and a second `abort()` returns immediately.
-      Success fires `connectionErrorOccurred` and fires no `connectionClosed`.
-      `PooledConnection.getConnection()` throws vendor code `200052` and SQLSTATE `08003`. If
-      the physical abort throws, the caller gets that same vendor code and SQLSTATE and the
-      listener receives the original exception.
-    description: |
-      A caller that aborts a borrowed handle sees it closed immediately, and the pool is told to
-      discard the physical connection rather than discovering it on the next failing borrow. The
-      abort-then-close sequence is asserted on the new driver only.
-    status_rationale: |
-      Intentional fix. `java.sql.Connection.abort()` requires the connection to be marked closed,
-      and an aborted session must not be handed out again. Neither driver checks
-      `SQLPermission("callAbort")`, validates the executor, or aborts asynchronously. Only callers
-      of the pooled-connection API that also call `abort()` observe this.
   26:
     name: "SQLFeatureNotSupportedException from a pooled connection no longer fires connectionErrorOccurred"
     status: allowed
@@ -505,33 +405,6 @@ behavior_differences:
       `java.sql.Connection.isClosed()` must report a connection closed once `close()` has been
       called, and the `javax.sql` pooling contract delivers `connectionClosed` for a handle that is
       already back in the pool, so the flag belongs before the event.
-  31:
-    name: "Nine DataSource setters present on the old driver do not exist on the new driver"
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    status_rationale: |
-      Not yet reviewed. Dropping a setter instead of keeping it as a silent no-op is deliberate,
-      but whether any of the nine names must be restored for source compatibility needs an
-      explicit decision.
-    old_driver_behavior: |
-      `SnowflakeBasicDataSource` and `SnowflakeConnectionPoolDataSource` declare
-      `setNetworkTimeout`, `setEnablePutGet`, `setClientConfigFile`,
-      `setDisableGcsDefaultCredentials`, `setStringsQuotedForColumnDef`,
-      `setEnableClientRequestMfaToken`, `setEnableClientStoreTemporaryCredential`,
-      `setOcspFailOpen`, and `setHttpHeadersCustomizers`.
-    new_driver_behavior: |
-      Those nine setters are absent: a call to one does not compile, and reflection reports no such
-      method. `setEnableClientStoreTemporaryCredential` is present under the name
-      `setClientStoreTemporaryCredential`. Every setter the new driver declares is applied at
-      connect time; none is a silent no-op.
-    description: |
-      Callers must drop or rename these calls. `enablePutGet` and `STRINGS_QUOTED_FOR_COLUMN_DEF`
-      are still settable as connection properties, so that configuration survives the move.
-      `setEnableClientRequestMfaToken` is BD#5, `setOcspFailOpen` is BD#46, and
-      `setHttpHeadersCustomizers` is BD#43.
   32:
     name: "A setClientInfo failure on an open pooled handle no longer fires connectionErrorOccurred"
     status: allowed
@@ -664,26 +537,6 @@ behavior_differences:
       No difference remains for these methods; this entry originally asserted that the old driver
       kept serving getters and statement factories from a closed handle, which it does not. The
       key stays because JDBC entries are never removed.
-  38:
-    name: "A pooled DataSource cannot be rebuilt from a JNDI Reference on either driver"
-    status: fixed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `SnowflakeConnectionPoolDataSourceFactory` is a static factory that does not implement
-      `javax.naming.spi.ObjectFactory`. The pooled `DataSource` types do not implement
-      `javax.naming.Referenceable` and expose no `getReference()`.
-    new_driver_behavior: |
-      The same: no `ObjectFactory`, no `Referenceable`, no `getReference()`.
-    description: |
-      Callers need no change; JNDI rebinding of a pooled DataSource was never available. No test
-      gates on this entry.
-    status_rationale: |
-      No difference remains; this entry originally recorded the absence as new, but the old
-      driver lacks `Referenceable` and `ObjectFactory` as well. The key stays because JDBC
-      entries are never removed.
   39:
     name: "PooledConnection accepts statement-event listeners and never invokes them on either driver"
     status: fixed
@@ -704,6 +557,36 @@ behavior_differences:
       No difference remains; this entry originally recorded the silent acceptance as new, but the
       old driver fires no statement events either. The key stays because JDBC entries are never
       removed.
+  40:
+    name: "abort() on a pooled handle marks it closed and fires connectionErrorOccurred instead of leaving isClosed() false"
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      `abort()` aborts the physical connection and leaves `isClosed()` false on the logical
+      handle. `connectionErrorOccurred` fires only if the physical abort throws, and no event
+      fires on success. After a successful abort, `close()` on that handle and
+      `PooledConnection.getConnection()` throw with vendor code `200052` and SQLSTATE `08003`.
+      A handle that is already closed can still abort the physical connection after the session
+      was returned to the pool.
+    new_driver_behavior: |
+      `abort()` marks the logical handle closed before touching the physical connection, so
+      `isClosed()` returns true, `close()` returns, and a second `abort()` returns immediately.
+      Success fires `connectionErrorOccurred` and fires no `connectionClosed`.
+      `PooledConnection.getConnection()` throws vendor code `200052` and SQLSTATE `08003`. If
+      the physical abort throws, the caller gets that same vendor code and SQLSTATE and the
+      listener receives the original exception.
+    description: |
+      A caller that aborts a borrowed handle sees it closed immediately, and the pool is told to
+      discard the physical connection rather than discovering it on the next failing borrow. The
+      abort-then-close sequence is asserted on the new driver only.
+    status_rationale: |
+      Intentional fix. `java.sql.Connection.abort()` requires the connection to be marked closed,
+      and an aborted session must not be handed out again. Neither driver checks
+      `SQLPermission("callAbort")`, validates the executor, or aborts asynchronously. Only callers
+      of the pooled-connection API that also call `abort()` observe this.
   41:
     name: "Connection.getNetworkTimeout() returns 0 instead of the value passed to setNetworkTimeout"
     status: unknown
@@ -726,101 +609,6 @@ behavior_differences:
       Not yet reviewed. `java.sql.Connection.getNetworkTimeout()` is specified to return the
       limit `setNetworkTimeout` installed, which argues for echoing the value; against that, the
       old driver's echo advertises a limit that no request honors.
-  42:
-    name: "On Linux the ID-token cache honors clientStoreTemporaryCredential instead of only the session parameter"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      On Linux, external-browser login reads and writes the ID-token cache only when the
-      `CLIENT_STORE_TEMPORARY_CREDENTIAL` session parameter is true; setting
-      `clientStoreTemporaryCredential=true` alone leaves the cache unused. On macOS and Windows
-      the property is copied into the session parameter.
-    new_driver_behavior: |
-      `clientStoreTemporaryCredential` and `CLIENT_STORE_TEMPORARY_CREDENTIAL` resolve to one
-      setting. When true, the external-browser ID-token cache is read and written on Linux,
-      macOS, and Windows alike.
-    description: |
-      A Linux caller that sets only the documented property now gets the cached ID token, so
-      repeat logins stop opening a browser. Nothing was removed; the session parameter still
-      works.
-    status_rationale: |
-      Intentional fix. The property is the documented switch and is platform-independent by
-      design, so requiring a second spelling of it on one platform only is a defect.
-  43:
-    name: "HttpHeadersCustomizer and its DataSource setter do not exist on the new driver"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `SnowflakeDataSource.setHttpHeadersCustomizers` takes a list of `HttpHeadersCustomizer`
-      objects — Java instances, not a connection-string property. The callbacks run on REST
-      requests and on result and cloud-storage downloads, and can rebuild headers on retry.
-    new_driver_behavior: |
-      Neither the `HttpHeadersCustomizer` interface nor the setter exists, and there is no
-      substitute. A customizer cannot be registered and silently ignored.
-    description: |
-      Code that registers its own HTTP headers on the DataSource does not compile against the
-      new driver; callers that never set a customizer are unaffected.
-    status_rationale: |
-      Accepted omission. The surface is a Java-object DataSource setter rather than a connection
-      property, and the new driver has no request-building hook for the callbacks to run in.
-  44:
-    name: "DataSource.getProperties() returns a copy instead of the live map"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `getProperties()` returns the DataSource's own map, so editing it changes later
-      connections. `getConnection(user, password)` writes both into that map, and a later
-      `getProperties()` reads the password back. A no-argument `getConnection()` uses the
-      DataSource's own user and password fields, not those leftover entries.
-    new_driver_behavior: |
-      `getProperties()` returns a copy, so editing it leaves the DataSource unchanged. A user
-      and password passed to `getConnection(user, password)` apply to that call only and do not
-      appear in a later `getProperties()`.
-    description: |
-      Code that configured a DataSource by mutating the returned map has to call the setters
-      instead, and a password passed per call no longer stays readable on the DataSource.
-    status_rationale: |
-      Intentional fix. `javax.sql.DataSource` exposes configuration through setters, so handing
-      out the live map makes every reader a writer; leaving a per-call password in it is a
-      credential-exposure defect on top of that.
-  45:
-    name: "DataSource.getConnection() rejects a missing username at connect time instead of up front"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `getConnection()` rejects a null username with `"Cannot create connection because username
-      is missing in DataSource properties."`, no SQLSTATE, and vendor code `0`, unless
-      `setAuthenticator` was called with `OAUTH` or `WORKLOAD_IDENTITY`. The same authenticator
-      given in the URL or in properties does not exempt the call, and
-      `PROGRAMMATIC_ACCESS_TOKEN`, `OAUTH_AUTHORIZATION_CODE`, and `OAUTH_CLIENT_CREDENTIALS`
-      are never exempt. An empty-string username passes the check.
-    new_driver_behavior: |
-      A null username reaches the login. Password, key-pair, external-browser, Okta, and MFA
-      logins fail at connect with `"Missing required parameter: user"`. `PROGRAMMATIC_ACCESS_TOKEN`,
-      `OAUTH_AUTHORIZATION_CODE`, `OAUTH_CLIENT_CREDENTIALS`, and OAuth or workload identity
-      supplied outside `setAuthenticator` connect with no username at all. An empty string counts
-      as missing.
-    description: |
-      Token-identified logins that the old driver refused now connect. Logins that do need a
-      username still fail, but later and with different message text, so code matching on the
-      old message has to change.
-    status_rationale: |
-      Intentional fix. Which credentials a login needs is a property of the authenticator, so
-      the check belongs where the authenticator is resolved — an up-front DataSource check
-      cannot see an authenticator set through the URL or properties, and rejects flows that
-      identify the user by token.
   46:
     name: "OCSP revocation checking and setOcspFailOpen do not exist on the new driver"
     status: allowed
@@ -844,146 +632,6 @@ behavior_differences:
     status_rationale: |
       Accepted omission. OCSP is off by default on the old driver, so the gap is the missing
       opt-in rather than a weaker default, and CRL provides the replacement opt-in.
-  47:
-    name: "A GCS PUT with OVERWRITE=TRUE re-uploads matching content on both drivers"
-    status: fixed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A GCS PUT with `OVERWRITE=TRUE` re-uploads even when the local digest matches the remote
-      object, and reports status `UPLOADED`.
-    new_driver_behavior: |
-      The same: the upload runs and the status is `UPLOADED`. The content-match skip that
-      reported `SKIPPED` happens only when `skip_upload_on_content_match` is set, which JDBC
-      does not set.
-    description: |
-      Callers need no change; a PUT that overwrites always transfers the file. No test gates on
-      this entry.
-    status_rationale: |
-      No difference remains. The skip this entry recorded is now behind an opt-in the JDBC
-      wrapper does not request.
-
-  48:
-    name: "A workload-identity setting under another authenticator fails the connection instead of being ignored"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `workloadIdentityProvider`, `workloadIdentityEntraResource`, and
-      `workloadIdentityImpersonationPath` are accepted and then ignored unless the authenticator
-      is `WORKLOAD_IDENTITY`. A password login that also sets `workloadIdentityProvider=AWS`
-      connects.
-    new_driver_behavior: |
-      With any other authenticator, including none, a non-empty `workload_identity_provider`,
-      `workload_identity_entra_resource`, `workload_identity_azure_client_id`,
-      `workload_identity_impersonation_path`, or `wif_host` — or
-      `workload_identity_aws_use_outbound_token` set true — fails before any network call with
-      `ConflictingWifParameters`, null SQLSTATE, and vendor code `0`. The message names the
-      setting and states that the authenticator was not `WORKLOAD_IDENTITY`.
-    description: |
-      A login that carried leftover workload-identity settings alongside another authenticator
-      used to connect and now fails at connect, so such a configuration has to drop the unused
-      settings. The AWS external-id check is a separate property.
-    status_rationale: |
-      Intentional fix. A setting that selects a credential source cannot be silently discarded:
-      the caller's intent is ambiguous, and ignoring it authenticates as someone other than the
-      configured workload.
-  49:
-    name: "An impersonation path with the OIDC workload-identity provider fails instead of being ignored"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      With `authenticator=WORKLOAD_IDENTITY` and provider `OIDC`, an impersonation path is
-      accepted and never read; the login uses the token as-is. `AWS` and `GCP` do use the path.
-    new_driver_behavior: |
-      A non-empty path with provider `OIDC` fails before any network call with
-      `ConflictingWifParameters`, null SQLSTATE, vendor code `0`, and the message
-      `"workload_identity_impersonation_path is currently only supported for GCP, AWS, and
-      AZURE"`. `AWS` and `GCP` still accept the path.
-    description: |
-      An OIDC login that set an impersonation path used to connect as the unimpersonated
-      identity and now fails at connect. Azure's rejection of every non-empty path is BD#74.
-    status_rationale: |
-      Intentional fix. Accepting a path that is never applied reports success for an
-      impersonation that did not happen, which is the more dangerous of the two outcomes.
-
-  50:
-    name: "Azure and GCS client-side-encryption metadata records EncryptionLibrary as Rust(OpenSSL) instead of Java 5.3.0"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      An Azure or GCS client-side-encrypted upload stores `EncryptionLibrary` as `"Java 5.3.0"`
-      in the object metadata. Download reads the IV and the wrapped key and ignores that field.
-      S3 carries `x-amz-key` and `x-amz-iv` and has no such field.
-    new_driver_behavior: |
-      The same uploads store `EncryptionLibrary` as `"Rust(OpenSSL)"`. Download reads the IV and
-      the wrapped key and ignores the field. S3 is unchanged.
-    description: |
-      A GET of a file either driver uploaded still decrypts, because neither reads the field.
-      The value identifies the library that encrypted the file, so leaving it at `"Java 5.3.0"`
-      would be false.
-    status_rationale: |
-      Accepted. The field is informational on the download paths of both drivers. Whether other
-      Snowflake drivers or any server-side parser read it has not been established, so the risk
-      is confined to a consumer outside these two drivers.
-  51:
-    name: "secondary_roles is a recognized property sent as a top-level SECONDARY_ROLES login field"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      There is no `secondary_roles` connection property and no top-level `SECONDARY_ROLES` login
-      field. The value is forwarded as an unrecognized entry inside `SESSION_PARAMETERS`;
-      whether the server activates secondary roles from that nested form has not been
-      established.
-    new_driver_behavior: |
-      `secondary_roles` is recognized and sent as a top-level `SECONDARY_ROLES` field, uppercased
-      when non-empty and omitted when empty. An invalid value is rejected by the server, not by
-      the driver.
-    description: |
-      A connection that sets `secondary_roles` activates them through the dedicated login field
-      rather than the generic session-parameter bag; `ALL` and `NONE` are the expected values.
-      A connection that never sets it is unaffected.
-    status_rationale: |
-      Accepted addition. The property is opt-in and the server owns value validation, so no
-      existing login changes.
-
-  52:
-    name: "private_key accepts a plaintext PEM string instead of being an unrecognized property"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A JWT key is a `java.security.PrivateKey` object (`privateKey`), a file path
-      (`private_key_file`), or base64 key bytes (`private_key_base64`). There is no
-      `private_key` property: with `authenticator=SNOWFLAKE_JWT` and only a `private_key`
-      string, login throws `"Use java.security.interfaces.RSAPrivateCrtKey.class for the private
-      key"` because no key material was recognized.
-    new_driver_behavior: |
-      `private_key` accepts a PEM string beginning `-----BEGIN`, decrypted with
-      `private_key_password` when that is set. A malformed PEM fails with `"Invalid private key
-      format"`, and setting both `private_key` and `private_key_file` is rejected. A
-      `java.security.PrivateKey` object, `private_key_file`, and `private_key_base64` still work.
-    description: |
-      A PEM string is a fourth way to supply a key; the three existing forms are unchanged, so
-      no working configuration breaks.
-    status_rationale: |
-      Accepted addition. The property is additive and the old driver's key-class error reflected
-      having no usable key material rather than rejecting the PEM form on purpose.
   53:
     name: "GEOGRAPHY/GEOMETRY WKB/EWKB ResultSetMetaData reports VARCHAR instead of BINARY"
     status: todo
@@ -1007,100 +655,6 @@ behavior_differences:
       Still open. The server omits `outputType` for these columns, and the JDBC layer falls back
       to `VARCHAR` instead of deriving the type from the binary wire type that is already
       present.
-  54:
-    name: "PUT/GET size columns report BIGINT instead of DECIMAL"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      PUT `source_size` and `target_size`, and GET `size`, are `DECIMAL` with precision 10,
-      scale 0, and display size 12, and `getObject()` returns `BigDecimal`. The session flag
-      `JDBC_TREAT_DECIMAL_AS_INT` does not affect these columns. `status` and `message` are
-      `VARCHAR` with declared length 20480.
-    new_driver_behavior: |
-      Under the default `JDBC_TREAT_DECIMAL_AS_INT=true` those columns are `BIGINT`, type name
-      `NUMBER`, precision 64, display size 65, and `getObject()` returns `Long`. Setting the flag
-      false reports `DECIMAL`, and `getObject()` stays `Long` unless
-      `JDBC_ARROW_TREAT_DECIMAL_AS_INT` is also false. `getLong`, `getString`, and
-      `getBigDecimal` return the same integer either way. `status` and `message` are `VARCHAR`
-      with declared length 10000.
-    description: |
-      Code that casts `getObject()` on a size column to `BigDecimal` throws `ClassCastException`;
-      reading through `getLong`, `getString`, or `getBigDecimal` is unaffected. The PUT/GET test
-      asserts the type per driver.
-    status_rationale: |
-      Accepted. These columns are scale-0 integers and follow the same rule as every other
-      scale-0 column; precision 10 cannot describe a file of 10 GB or more, and pinning
-      `DECIMAL` here would push a JDBC-only exception into the shared row metadata.
-  55:
-    name: "Concurrent interactive logins sharing a token-cache key raise one prompt instead of one each"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Concurrent logins for the same user and host each raise their own browser or MFA prompt
-      when the token cache misses. There is no `DISABLE_PARALLEL_USER_PROMPT` property.
-    new_driver_behavior: |
-      With `clientStoreTemporaryCredential` true and `DISABLE_PARALLEL_USER_PROMPT` true — its
-      default — concurrent interactive logins that share a token-cache key produce one prompt;
-      the first stores the token and the rest reuse it. A first flow that fails or times out
-      does not suppress the others' prompts. External browser and MFA key on user and host, and
-      OAuth authorization-code adds the identity provider and role, so different accounts never
-      wait on each other.
-    description: |
-      An application opening several connections at once gets one browser window or MFA
-      challenge instead of one per connection. Setting `DISABLE_PARALLEL_USER_PROMPT` false
-      restores a prompt per connection. The behavior is asserted on the new driver only.
-    status_rationale: |
-      Accepted addition. Serializing on the cache key removes duplicate prompts without ever
-      blocking a login that would have a different credential, and the old behavior is still
-      reachable through the property.
-  56:
-    name: "A GET-downloaded file is mode 0600 on Unix instead of following the process umask"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      On Unix a downloaded file keeps whatever mode the process umask produces — `0644` under a
-      common umask of `022`, `0600` under `077`. `ownerOnlyStageFilePermissionsEnabled` defaults
-      to false and makes the file owner-only when set true. Windows is unaffected.
-    new_driver_behavior: |
-      On Unix a downloaded file is mode `0600`, unless `unsafe_file_write` is true, which
-      restores the process umask. Windows is unaffected.
-    description: |
-      A second local account or a group that could read downloaded stage files loses access
-      unless the deployment sets `unsafe_file_write`.
-    status_rationale: |
-      Accepted. A downloaded stage file holds query data, so owner-only is the safe default; the
-      old driver's opt-in meant the common umask published that data to every local account.
-  57:
-    name: "PUT canonicalizes a literal source path, so a named symlink is staged under its target's name"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      A source path with no glob character is joined to the working directory and kept as
-      written, so `..` and a symlink survive into the reported path and `link.csv` pointing at
-      `real.csv` is staged as `link.csv`. A glob match is canonicalized.
-    new_driver_behavior: |
-      Every matched path is canonicalized, including a literal one: `link.csv` pointing at
-      `real.csv` is staged as `real.csv`, and a `..` in the path is collapsed in the reported
-      path. A glob match is canonicalized as before.
-    description: |
-      The stage object name changes only when a symlink's target has a different final component
-      than the link, so ordinary files and wildcard uploads keep the name they had. Code that
-      expected the link's own name to appear on the stage has to change.
-    status_rationale: |
-      Accepted. Canonicalizing uniformly removes the split between the literal and glob paths,
-      and uploading a named symlink is the only case whose stage name moves.
   58:
     name: "getUpdateCount() after executeQuery returns -1 instead of the previous statement's count"
     status: allowed
@@ -1149,67 +703,6 @@ behavior_differences:
       Not yet reviewed. The question is whether a JSON-format result should ignore an
       Arrow-named flag — `todo` if it should, `allowed` if a single conversion path with one
       flag is the intended shape. Either answer keeps the JSON-to-Arrow conversion.
-  61:
-    name: "A GET whose files share a destination basename logs a warning instead of staying silent"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A GET of stage files that collapse to the same local basename succeeds with no warning and
-      leaves one file, chosen by hash order rather than list order. Downloads run one at a time.
-    new_driver_behavior: |
-      The same GET logs one `WARNING` naming every colliding basename, still succeeds, and still
-      leaves one file. With `parallel` greater than 1 the colliding downloads can share one
-      temporary file.
-    description: |
-      A caller with `WARNING` logging enabled sees the collision it previously could not detect;
-      the GET's result status and the surviving file are unchanged, so nothing else has to adapt.
-    status_rationale: |
-      Accepted addition. The other Snowflake drivers log this collision, and warning is the
-      smallest useful change — failing the GET or renaming the files would break callers that
-      rely on today's silent overwrite.
-  62:
-    name: "putGetMaxRetries has no upper bound on either driver"
-    status: fixed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `putGetMaxRetries` takes any integer with no upper bound; a configured `101` is used as
-      `101`.
-    new_driver_behavior: |
-      The same, under `put_get_max_attempts` with `putGetMaxRetries` as its JDBC alias: `101` is
-      used as `101`.
-    description: |
-      Callers need no change; no configured value is clamped. An unset, zero, or negative value
-      is BD#79. No test gates on this entry.
-    status_rationale: |
-      No difference remains; the clamp this entry recorded does not exist on either driver. The
-      key stays because JDBC entries are never removed.
-  63:
-    name: "An Okta authenticator-request rejection carries the server message on both drivers"
-    status: fixed
-    type: bug
-    reviewed: true
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      When Snowflake rejects `authenticator-request` with HTTP 200 and `success: false`, the
-      server `message` — for example `"not accepted by your Snowflake account configuration"` or
-      `"is not supported"` — appears in the connection error.
-    new_driver_behavior: |
-      The same: the server `message` appears in the connection error.
-    description: |
-      Code that reads the exception message to tell an unsupported authenticator from a
-      misconfigured account gets the server's wording again. The server's numeric code and
-      SQLSTATE are still missing from the error, which this entry does not cover. No test gates
-      on this entry.
-    status_rationale: |
-      No difference remains in the message text. This entry recorded a regression that dropped
-      the server message, and the message is present again.
   64:
     name: "The JVM SOCKS system properties do not route the new driver's connections"
     status: allowed
@@ -1260,158 +753,6 @@ behavior_differences:
       the same thing across them; a Java-glob matcher would only serve a caller needing an exact
       host, or subdomains without their parent.
 
-  66:
-    name: "getPropertyInfo on a malformed connection string omits the URL from the error message"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `Driver.getPropertyInfo` throws with `"Invalid Connect String:"` followed by the full JDBC
-      URL. `Driver.connect` uses the shorter sentence.
-    new_driver_behavior: |
-      `Driver.getPropertyInfo` reports `"Connection string is invalid. Unable to parse."` with no
-      URL. SQLSTATE `08000` and vendor code `200059` are unchanged.
-    description: |
-      A tool that displays this exception, such as a connection dialog, shows different text and
-      no longer shows the URL. Code matching on the old sentence has to change; `connect`
-      already produced the shorter one.
-    status_rationale: |
-      Intentional fix. A JDBC URL can carry a password or a token, so echoing it into an
-      exception leaks the credential into logs; `connect` already withheld it.
-  67:
-    name: "getPropertyInfo rejects a non-string proxy_host or proxy_port instead of passing it through"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      `proxy_host` and `proxy_port` are unrecognized, so `getPropertyInfo` does not type-check
-      them. `proxyHost` and `proxyPort` reject a non-string value with SQLSTATE `22023` and
-      vendor code `200033`.
-    new_driver_behavior: |
-      `getPropertyInfo` rejects a non-string `proxy_host`, `proxy_port`, `proxyHost`, or
-      `proxyPort` with the same SQLSTATE `22023` and vendor code `200033`. `connect` applies no
-      such check, so an integer `proxy_port` still connects.
-    description: |
-      Only a `Properties.put` of a non-`String` reaches this, because a URL query value is
-      always a string; such code sees `getPropertyInfo` throw where it used to succeed. The
-      camelCase spellings already behaved this way.
-    status_rationale: |
-      Accepted. The snake_case spellings are recognized proxy settings on the new driver, so
-      they type-check like every other recognized property; the old driver skipped the check
-      only because it did not know the names.
-  68:
-    name: "getPropertyInfo reports user and password as missing when authenticator is the empty string"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `getPropertyInfo` with `authenticator=""` lists neither `user` nor `password` as missing.
-      `connect` takes the Okta path for that value, which requires both.
-    new_driver_behavior: |
-      `getPropertyInfo` with `authenticator=""` lists `user` and `password` as missing. `connect`
-      treats the empty string as password authentication and requires both.
-    description: |
-      A tool that builds its prompt from `getPropertyInfo` now asks for the two credentials that
-      login needs either way, so no working configuration changes.
-    status_rationale: |
-      Intentional fix. `java.sql.Driver.getPropertyInfo` is specified to report the properties
-      `connect` requires, and omitting credentials that `connect` then demands leaves a tool
-      prompting for too little.
-  69:
-    name: "getPropertyInfo reports user and password as missing for USERNAME_PASSWORD_MFA"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `getPropertyInfo` with `authenticator=USERNAME_PASSWORD_MFA` reports no missing properties,
-      while `connect` rejects a missing username with vendor code `200011` and a missing password
-      with `200012`.
-    new_driver_behavior: |
-      `getPropertyInfo` lists `user` and `password` as missing when they are absent. With both
-      set, the list is empty on both drivers.
-    description: |
-      A tool that builds its prompt from `getPropertyInfo` asks for the credentials that MFA
-      login needs; the list grows only in cases where `connect` would already fail. Browser
-      login and OAuth are unchanged.
-    status_rationale: |
-      Intentional fix. `java.sql.Driver.getPropertyInfo` is specified to report the properties
-      `connect` requires, and this authenticator reported none of them.
-  70:
-    name: "GET from an encrypted GCS stage over virtual-host URLs writes decrypted bytes on both drivers"
-    status: fixed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A GET from a client-side-encrypted GCS stage reached over virtual-host URLs writes the
-      decrypted payload and reports `DOWNLOADED`. S3, Azure, and the other GCS paths decrypt as
-      well.
-    new_driver_behavior: |
-      The same: the file on disk is plaintext and the status is `DOWNLOADED`.
-    description: |
-      Callers need no change. The ciphertext-on-disk result this entry recorded belongs to
-      snowflake-jdbc 4.3.4 and earlier on the virtual-URL path only. No test gates on this
-      entry.
-    status_rationale: |
-      No difference remains; the old driver decrypts this path as of 4.4.0.
-  71:
-    name: "An auto-configuration profile resolves from config.toml and validates strictly, and six JDBC-only option spellings stop applying"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      Profiles are read only from `connections.toml`. The exact, case-sensitive `connectionName`
-      URL key overrides `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, then falls back to `default`.
-      Auto URL queries are parsed loosely, and duplicate aliases in JDBC `Properties` are rejected
-      even when their values agree. A missing profile reports
-      `The Connection <name> not found in connections.toml file.` with no SQLState and vendor code
-      zero.
-    new_driver_behavior: |
-      Profiles can also come from `[connections.<name>]` in `config.toml`, with
-      `connections.toml` taking precedence. JDBC `Properties` override URL options and selectors;
-      `connectionName` and `connection_name` are matched case-insensitively. Selection then falls
-      back through `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, `config.toml`'s
-      `default_connection_name`, and `default`.
-      A direct `url` entry in JDBC `Properties` supplies the auto URL when the public JDBC URL
-      argument is blank; inherited `Properties` defaults do not.
-
-      Auto URL queries and selector types are validated strictly. Malformed queries, fragments,
-      duplicate aliases, and non-string JDBC `Properties` selectors report
-      `INVALID_PARAMETER_VALUE`. `Driver.getPropertyInfo` uses the same fail-closed auto URL parse
-      as `connect` instead of reporting `INVALID_CONNECTION_STRING`. Equal alias values in JDBC
-      `Properties` are accepted. A missing profile keeps the old driver's message but reports
-      SQLState `22023` and vendor code `200047`.
-
-      Six profile option spellings no longer apply: `disableQueryContextCache`,
-      `private_key_pwd`, `PRIVATE_KEY_PWD`, `PRIVATE_KEY_BASE64`, `wifHost`, and
-      `workloadIdentityHost`. `disable_query_context_cache`, `PRIVATE_KEY_FILE_PWD`, and
-      `workload_identity_host` still apply. There is no default token file at
-      `/snowflake/session/token`, and `SKIP_TOKEN_FILE_PERMISSIONS_VERIFICATION` is not read.
-      `SNOWFLAKE_HOME` is used only when that directory exists; otherwise the platform config
-      directory is used.
-    description: |
-      A profile written with the documented option names still connects. A profile relying on
-      one of the six dropped spellings silently loses that setting, a deployment relying on the
-      default token path or on a non-existent `SNOWFLAKE_HOME` has to supply them explicitly,
-      and code matching on `INVALID_CONNECTION_STRING` from `getPropertyInfo` has to accept
-      `INVALID_PARAMETER_VALUE`. The missing-profile message is unchanged but now carries a
-      SQLSTATE and vendor code, so it can be classified rather than string-matched.
-    status_rationale: |
-      Accepted. Profile resolution is shared with the other Snowflake drivers, so a
-      `connections.toml` or `config.toml` profile means the same thing in each of them; the
-      casualties are JDBC-only spellings and two implicit lookups, while JDBC `Properties`
-      precedence is preserved.
   72:
     name: "A failed array-bind executeBatch throws BatchUpdateException instead of SnowflakeSQLException"
     status: allowed
@@ -1433,107 +774,6 @@ behavior_differences:
       Intentional fix. `java.sql.Statement.executeBatch` specifies `BatchUpdateException` so the
       caller can read per-row outcomes, and the old driver already used that type for row-by-row
       batches — only the array-bind path differed.
-  73:
-    name: "workloadIdentityAwsExternalId always fails the connection instead of being sent as the STS ExternalId"
-    status: todo
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`,
-      `workloadIdentityAwsExternalId` is passed to STS `AssumeRole` as `ExternalId` on the last
-      hop when `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is true. With that variable unset, a non-empty
-      value fails the connection with `WORKLOAD_IDENTITY_FLOW_ERROR` and `"Connection property
-      workloadIdentityAwsExternalId is not enabled"`. Under any other authenticator or provider
-      the property is ignored.
-    new_driver_behavior: |
-      With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`, a non-empty
-      `workloadIdentityAwsExternalId` fails the connection with `"Connection property
-      workloadIdentityAwsExternalId is not enabled"` whatever `SF_ENABLE_WIF_AWS_EXTERNAL_ID`
-      is set to, and the value is never sent. Under any other authenticator or provider a
-      non-empty value logs an unknown-parameter warning and the connection continues. An empty
-      value never fails.
-    description: |
-      Role chaining that needs an STS external ID cannot connect, where the old driver connects
-      once `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is set.
-    status_rationale: |
-      Still open. The `AssumeRole` call has no external-id field to populate, so the property is
-      rejected rather than silently dropped; sending it is tracked as SNOW-3575172.
-  74:
-    name: "An Azure workloadIdentityImpersonationPath naming one service principal is accepted instead of rejected"
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      `authenticator=WORKLOAD_IDENTITY` with `workloadIdentityProvider=AZURE` and any non-empty
-      `workloadIdentityImpersonationPath` fails with `WORKLOAD_IDENTITY_FLOW_ERROR` and
-      `"Identity impersonation is not available on Azure"`.
-    new_driver_behavior: |
-      Outside AKS, a non-empty path with exactly one comma-separated entry is accepted; the
-      entry is not validated as an Azure client id. Two or more entries fail. On AKS any path
-      fails and the injected identity is used directly.
-    description: |
-      A configuration that connected on the old driver still connects; a single-hop Azure
-      impersonation that the old driver refused now works. The OIDC provider's rejection of a
-      path is BD#49.
-    status_rationale: |
-      Accepted addition. The one-hop Azure path is what the other Snowflake drivers already
-      allow, so the behavior is consistent across them and no previously working configuration
-      changes.
-  75:
-    name: "A local workload-identity connect failure reports a null SQLSTATE and vendor code 0 instead of 08000 and 200071"
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      A client-local workload-identity connect failure throws `WORKLOAD_IDENTITY_FLOW_ERROR`
-      with SQLSTATE `08000` and vendor code `200071`. The cases are a missing or invalid
-      provider, a missing OIDC token, a malformed OIDC token, and a non-empty AWS external id
-      while `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is unset.
-    new_driver_behavior: |
-      The same failures throw `SQLException` whose message names the offending setting, with
-      `getSQLState()` null and `getErrorCode()` `0`. A malformed token surfaces as an attestation
-      failure classified as an invalid parameter.
-    description: |
-      Code that branches on SQLSTATE `08000` or vendor code `200071` to recognize a
-      workload-identity misconfiguration has to match on the message instead. The AWS
-      external-id rejection is BD#73.
-    status_rationale: |
-      Accepted. The underlying failures are distinct parameter-validation outcomes shared with
-      the other Snowflake drivers, and folding them back into one flow-error identity would
-      discard that distinction; carrying a discriminating code across the boundary is the open
-      part.
-  76:
-    name: "An auto-compressed PUT leaves Content-Encoding unset instead of storing gzip"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A PUT of an auto-compressed file stores `Content-Encoding: gzip` on the object, on GCS
-      with `GCS_USE_DOWNSCOPED_CREDENTIAL=true` and on S3. A PUT through a GCS presigned URL
-      stores a blank `Content-Encoding` for the same gzip file. Azure omits the header.
-    new_driver_behavior: |
-      A GCS PUT sends no `Content-Encoding` header, bearer-token uploads of a gzip payload
-      included, and an S3 PUT sends none either. Azure omits the header as before. GET and COPY
-      still treat the file as gzip, from its name and the compression that PUT recorded.
-    description: |
-      A third-party client that honors `Content-Encoding` no longer decompresses the body on
-      its own, and GCS no longer applies decompressive transcoding — which served a `.gz`
-      object's bytes uncompressed to any client that omitted `Accept-Encoding: gzip`. Snowflake
-      COPY and driver GET are unaffected, because both read the recorded compression rather than
-      the header.
-    status_rationale: |
-      Intentional fix. Marking a stored `.gz` object as gzip-encoded makes the object serve
-      differently depending on the reader's `Accept-Encoding`, and the old driver's common GCS
-      presigned path already stored a blank value rather than `gzip`.
-
   77:
     name: "HTTP attempts use a 300-second wall-clock timeout instead of socket inactivity"
     status: allowed
@@ -1559,26 +799,6 @@ behavior_differences:
       Accepted. The default duration is the same on both drivers; what differs is the model — a
       per-attempt wall-clock cap rather than an inactivity timer that resets on every packet —
       and the new driver has no per-packet timer to reproduce.
-
-  78:
-    name: "Millisecond timeout properties apply in whole seconds"
-    status: unknown
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      HTTP_CLIENT_CONNECTION_TIMEOUT and HTTP_CLIENT_SOCKET_TIMEOUT are milliseconds.
-      networkTimeout is the retry budget for transient failures, including query
-      requests, in milliseconds divided down to seconds.
-    new_driver_behavior: |
-      The three properties take milliseconds and apply in whole seconds, rounded up, so a
-      positive value below 1000 ms becomes 1 second. networkTimeout does not bound retries
-      of query requests.
-    description: |
-      The properties are JDBC-scoped aliases for connect_timeout, retry_timeout, and
-      request_timeout, and the JDBC wrapper converts milliseconds to seconds. request_timeout
-      covers non-query requests only. retry_timeout is a per-attempt wall clock (entry 77).
 
   79:
     name: "Unset putGetMaxRetries retries 6 times"

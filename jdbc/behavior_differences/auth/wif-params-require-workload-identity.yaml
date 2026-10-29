@@ -1,0 +1,27 @@
+name: "A workload-identity setting under another authenticator fails the connection instead of being ignored"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `workloadIdentityProvider`, `workloadIdentityEntraResource`, and
+  `workloadIdentityImpersonationPath` are accepted and then ignored unless the authenticator
+  is `WORKLOAD_IDENTITY`. A password login that also sets `workloadIdentityProvider=AWS`
+  connects.
+new_driver_behavior: |
+  With any other authenticator, including none, a non-empty `workload_identity_provider`,
+  `workload_identity_entra_resource`, `workload_identity_azure_client_id`,
+  `workload_identity_impersonation_path`, or `wif_host` — or
+  `workload_identity_aws_use_outbound_token` set true — fails before any network call with
+  `ConflictingWifParameters`, null SQLSTATE, and vendor code `0`. The message names the
+  setting and states that the authenticator was not `WORKLOAD_IDENTITY`.
+description: |
+  A login that carried leftover workload-identity settings alongside another authenticator
+  used to connect and now fails at connect, so such a configuration has to drop the unused
+  settings. The AWS external-id check is a separate property.
+status_rationale: |
+  Intentional fix. A setting that selects a credential source cannot be silently discarded:
+  the caller's intent is ambiguous, and ignoring it authenticates as someone other than the
+  configured workload.
+legacy_id: 48

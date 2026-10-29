@@ -1,0 +1,23 @@
+name: "On Linux the ID-token cache honors clientStoreTemporaryCredential instead of only the session parameter"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  On Linux, external-browser login reads and writes the ID-token cache only when the
+  `CLIENT_STORE_TEMPORARY_CREDENTIAL` session parameter is true; setting
+  `clientStoreTemporaryCredential=true` alone leaves the cache unused. On macOS and Windows
+  the property is copied into the session parameter.
+new_driver_behavior: |
+  `clientStoreTemporaryCredential` and `CLIENT_STORE_TEMPORARY_CREDENTIAL` resolve to one
+  setting. When true, the external-browser ID-token cache is read and written on Linux,
+  macOS, and Windows alike.
+description: |
+  A Linux caller that sets only the documented property now gets the cached ID token, so
+  repeat logins stop opening a browser. Nothing was removed; the session parameter still
+  works.
+status_rationale: |
+  Intentional fix. The property is the documented switch and is platform-independent by
+  design, so requiring a second spelling of it on one platform only is a defect.
+legacy_id: 42

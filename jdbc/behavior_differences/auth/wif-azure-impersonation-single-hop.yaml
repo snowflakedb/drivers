@@ -1,0 +1,23 @@
+name: "An Azure workloadIdentityImpersonationPath naming one service principal is accepted instead of rejected"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `authenticator=WORKLOAD_IDENTITY` with `workloadIdentityProvider=AZURE` and any non-empty
+  `workloadIdentityImpersonationPath` fails with `WORKLOAD_IDENTITY_FLOW_ERROR` and
+  `"Identity impersonation is not available on Azure"`.
+new_driver_behavior: |
+  Outside AKS, a non-empty path with exactly one comma-separated entry is accepted; the
+  entry is not validated as an Azure client id. Two or more entries fail. On AKS any path
+  fails and the injected identity is used directly.
+description: |
+  A configuration that connected on the old driver still connects; a single-hop Azure
+  impersonation that the old driver refused now works. The OIDC provider's rejection of a
+  path is BD#49.
+status_rationale: |
+  Accepted addition. The one-hop Azure path is what the other Snowflake drivers already
+  allow, so the behavior is consistent across them and no previously working configuration
+  changes.
+legacy_id: 74

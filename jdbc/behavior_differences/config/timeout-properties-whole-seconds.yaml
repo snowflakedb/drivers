@@ -1,0 +1,19 @@
+name: "Millisecond timeout properties apply in whole seconds"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  HTTP_CLIENT_CONNECTION_TIMEOUT and HTTP_CLIENT_SOCKET_TIMEOUT are milliseconds.
+  networkTimeout is the retry budget for transient failures, including query
+  requests, in milliseconds divided down to seconds.
+new_driver_behavior: |
+  The three properties take milliseconds and apply in whole seconds, rounded up, so a
+  positive value below 1000 ms becomes 1 second. networkTimeout does not bound retries
+  of query requests.
+description: |
+  The properties are JDBC-scoped aliases for connect_timeout, retry_timeout, and
+  request_timeout, and the JDBC wrapper converts milliseconds to seconds. request_timeout
+  covers non-query requests only. retry_timeout is a per-attempt wall clock (entry 77).
+legacy_id: 78

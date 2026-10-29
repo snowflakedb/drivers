@@ -1,0 +1,19 @@
+name: "putGetMaxRetries has no upper bound on either driver"
+status: fixed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `putGetMaxRetries` takes any integer with no upper bound; a configured `101` is used as
+  `101`.
+new_driver_behavior: |
+  The same, under `put_get_max_attempts` with `putGetMaxRetries` as its JDBC alias: `101` is
+  used as `101`.
+description: |
+  Callers need no change; no configured value is clamped. An unset, zero, or negative value
+  is BD#79. No test gates on this entry.
+status_rationale: |
+  No difference remains; the clamp this entry recorded does not exist on either driver. The
+  key stays because JDBC entries are never removed.
+legacy_id: 62

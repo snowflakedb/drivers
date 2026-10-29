@@ -1,0 +1,23 @@
+name: "secondary_roles is a recognized property sent as a top-level SECONDARY_ROLES login field"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  There is no `secondary_roles` connection property and no top-level `SECONDARY_ROLES` login
+  field. The value is forwarded as an unrecognized entry inside `SESSION_PARAMETERS`;
+  whether the server activates secondary roles from that nested form has not been
+  established.
+new_driver_behavior: |
+  `secondary_roles` is recognized and sent as a top-level `SECONDARY_ROLES` field, uppercased
+  when non-empty and omitted when empty. An invalid value is rejected by the server, not by
+  the driver.
+description: |
+  A connection that sets `secondary_roles` activates them through the dedicated login field
+  rather than the generic session-parameter bag; `ALL` and `NONE` are the expected values.
+  A connection that never sets it is unaffected.
+status_rationale: |
+  Accepted addition. The property is opt-in and the server owns value validation, so no
+  existing login changes.
+legacy_id: 51

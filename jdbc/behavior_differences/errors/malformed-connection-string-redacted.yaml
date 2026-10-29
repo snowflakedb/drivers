@@ -1,0 +1,20 @@
+name: "getPropertyInfo on a malformed connection string omits the URL from the error message"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `Driver.getPropertyInfo` throws with `"Invalid Connect String:"` followed by the full JDBC
+  URL. `Driver.connect` uses the shorter sentence.
+new_driver_behavior: |
+  `Driver.getPropertyInfo` reports `"Connection string is invalid. Unable to parse."` with no
+  URL. SQLSTATE `08000` and vendor code `200059` are unchanged.
+description: |
+  A tool that displays this exception, such as a connection dialog, shows different text and
+  no longer shows the URL. Code matching on the old sentence has to change; `connect`
+  already produced the shorter one.
+status_rationale: |
+  Intentional fix. A JDBC URL can carry a password or a token, so echoing it into an
+  exception leaks the credential into logs; `connect` already withheld it.
+legacy_id: 66

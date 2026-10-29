@@ -1,0 +1,22 @@
+name: "Azure and GCS client-side-encryption metadata records EncryptionLibrary as Rust(OpenSSL) instead of Java 5.3.0"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  An Azure or GCS client-side-encrypted upload stores `EncryptionLibrary` as `"Java 5.3.0"`
+  in the object metadata. Download reads the IV and the wrapped key and ignores that field.
+  S3 carries `x-amz-key` and `x-amz-iv` and has no such field.
+new_driver_behavior: |
+  The same uploads store `EncryptionLibrary` as `"Rust(OpenSSL)"`. Download reads the IV and
+  the wrapped key and ignores the field. S3 is unchanged.
+description: |
+  A GET of a file either driver uploaded still decrypts, because neither reads the field.
+  The value identifies the library that encrypted the file, so leaving it at `"Java 5.3.0"`
+  would be false.
+status_rationale: |
+  Accepted. The field is informational on the download paths of both drivers. Whether other
+  Snowflake drivers or any server-side parser read it has not been established, so the risk
+  is confined to a consumer outside these two drivers.
+legacy_id: 50

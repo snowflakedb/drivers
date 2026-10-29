@@ -14,14 +14,14 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Guards {@link SnowflakeDataSource} against drift from the pinned snowflake-jdbc setter surface
- * (see BehaviorDifferences.yaml BD#31).
+ * (see jdbc/behavior_differences/config/datasource-trimmed-setters.yaml, BD#31).
  */
 class SnowflakeDataSourceReferenceParityTest {
 
   /**
    * Setter names the universal {@link SnowflakeDataSource} commits to. The surface covers
    * sf_core-supported connection parameters plus JDBC client-side knobs the wrapper already honors
-   * (see BehaviorDifferences.yaml BD#31).
+   * (see jdbc/behavior_differences/config/datasource-trimmed-setters.yaml, BD#31).
    *
    * <p>Intentionally absent setters: OCSP ({@code setOcspFailOpen}, BD#46), HTTP header customizers
    * ({@code setHttpHeadersCustomizers}, BD#43), {@code setClientConfigFile}, {@code

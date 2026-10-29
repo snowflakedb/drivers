@@ -1,0 +1,20 @@
+name: "A GET-downloaded file is mode 0600 on Unix instead of following the process umask"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  On Unix a downloaded file keeps whatever mode the process umask produces — `0644` under a
+  common umask of `022`, `0600` under `077`. `ownerOnlyStageFilePermissionsEnabled` defaults
+  to false and makes the file owner-only when set true. Windows is unaffected.
+new_driver_behavior: |
+  On Unix a downloaded file is mode `0600`, unless `unsafe_file_write` is true, which
+  restores the process umask. Windows is unaffected.
+description: |
+  A second local account or a group that could read downloaded stage files loses access
+  unless the deployment sets `unsafe_file_write`.
+status_rationale: |
+  Accepted. A downloaded stage file holds query data, so owner-only is the safe default; the
+  old driver's opt-in meant the common umask published that data to every local account.
+legacy_id: 56

@@ -1,0 +1,25 @@
+name: "Concurrent interactive logins sharing a token-cache key raise one prompt instead of one each"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Concurrent logins for the same user and host each raise their own browser or MFA prompt
+  when the token cache misses. There is no `DISABLE_PARALLEL_USER_PROMPT` property.
+new_driver_behavior: |
+  With `clientStoreTemporaryCredential` true and `DISABLE_PARALLEL_USER_PROMPT` true — its
+  default — concurrent interactive logins that share a token-cache key produce one prompt;
+  the first stores the token and the rest reuse it. A first flow that fails or times out
+  does not suppress the others' prompts. External browser and MFA key on user and host, and
+  OAuth authorization-code adds the identity provider and role, so different accounts never
+  wait on each other.
+description: |
+  An application opening several connections at once gets one browser window or MFA
+  challenge instead of one per connection. Setting `DISABLE_PARALLEL_USER_PROMPT` false
+  restores a prompt per connection. The behavior is asserted on the new driver only.
+status_rationale: |
+  Accepted addition. Serializing on the cache key removes duplicate prompts without ever
+  blocking a login that would have a different credential, and the old behavior is still
+  reachable through the property.
+legacy_id: 55

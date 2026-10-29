@@ -1,0 +1,23 @@
+name: "DataSource.getProperties() returns a copy instead of the live map"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `getProperties()` returns the DataSource's own map, so editing it changes later
+  connections. `getConnection(user, password)` writes both into that map, and a later
+  `getProperties()` reads the password back. A no-argument `getConnection()` uses the
+  DataSource's own user and password fields, not those leftover entries.
+new_driver_behavior: |
+  `getProperties()` returns a copy, so editing it leaves the DataSource unchanged. A user
+  and password passed to `getConnection(user, password)` apply to that call only and do not
+  appear in a later `getProperties()`.
+description: |
+  Code that configured a DataSource by mutating the returned map has to call the setters
+  instead, and a password passed per call no longer stays readable on the DataSource.
+status_rationale: |
+  Intentional fix. `javax.sql.DataSource` exposes configuration through setters, so handing
+  out the live map makes every reader a writer; leaving a per-call password in it is a
+  credential-exposure defect on top of that.
+legacy_id: 44

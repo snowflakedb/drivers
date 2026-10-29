@@ -9,8 +9,9 @@ import javax.sql.DataSource;
  * Snowflake JDBC connections.
  *
  * <p>The setter surface covers sf_core connection parameters plus JDBC client-side knobs the
- * wrapper already honors (see {@code BehaviorDifferences.yaml} BD#31). Legacy DataSource setters
- * without a corresponding parameter remain intentionally unported.
+ * wrapper already honors (see jdbc/behavior_differences/config/datasource-trimmed-setters.yaml,
+ * BD#31). Legacy DataSource setters without a corresponding parameter remain intentionally
+ * unported.
  *
  * <p>Use {@link SnowflakeDataSourceFactory} to create instances of this interface.
  */

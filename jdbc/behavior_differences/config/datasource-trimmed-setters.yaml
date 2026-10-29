@@ -1,0 +1,27 @@
+name: "Nine DataSource setters present on the old driver do not exist on the new driver"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  Not yet reviewed. Dropping a setter instead of keeping it as a silent no-op is deliberate,
+  but whether any of the nine names must be restored for source compatibility needs an
+  explicit decision.
+old_driver_behavior: |
+  `SnowflakeBasicDataSource` and `SnowflakeConnectionPoolDataSource` declare
+  `setNetworkTimeout`, `setEnablePutGet`, `setClientConfigFile`,
+  `setDisableGcsDefaultCredentials`, `setStringsQuotedForColumnDef`,
+  `setEnableClientRequestMfaToken`, `setEnableClientStoreTemporaryCredential`,
+  `setOcspFailOpen`, and `setHttpHeadersCustomizers`.
+new_driver_behavior: |
+  Those nine setters are absent: a call to one does not compile, and reflection reports no such
+  method. `setEnableClientStoreTemporaryCredential` is present under the name
+  `setClientStoreTemporaryCredential`. Every setter the new driver declares is applied at
+  connect time; none is a silent no-op.
+description: |
+  Callers must drop or rename these calls. `enablePutGet` and `STRINGS_QUOTED_FOR_COLUMN_DEF`
+  are still settable as connection properties, so that configuration survives the move.
+  `setEnableClientRequestMfaToken` is BD#5, `setOcspFailOpen` is BD#46, and
+  `setHttpHeadersCustomizers` is BD#43.
+legacy_id: 31

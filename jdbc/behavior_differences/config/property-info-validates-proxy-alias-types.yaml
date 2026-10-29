@@ -1,0 +1,23 @@
+name: "getPropertyInfo rejects a non-string proxy_host or proxy_port instead of passing it through"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `proxy_host` and `proxy_port` are unrecognized, so `getPropertyInfo` does not type-check
+  them. `proxyHost` and `proxyPort` reject a non-string value with SQLSTATE `22023` and
+  vendor code `200033`.
+new_driver_behavior: |
+  `getPropertyInfo` rejects a non-string `proxy_host`, `proxy_port`, `proxyHost`, or
+  `proxyPort` with the same SQLSTATE `22023` and vendor code `200033`. `connect` applies no
+  such check, so an integer `proxy_port` still connects.
+description: |
+  Only a `Properties.put` of a non-`String` reaches this, because a URL query value is
+  always a string; such code sees `getPropertyInfo` throw where it used to succeed. The
+  camelCase spellings already behaved this way.
+status_rationale: |
+  Accepted. The snake_case spellings are recognized proxy settings on the new driver, so
+  they type-check like every other recognized property; the old driver skipped the check
+  only because it did not know the names.
+legacy_id: 67

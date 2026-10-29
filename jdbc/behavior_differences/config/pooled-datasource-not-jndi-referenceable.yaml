@@ -1,0 +1,20 @@
+name: "A pooled DataSource cannot be rebuilt from a JNDI Reference on either driver"
+status: fixed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `SnowflakeConnectionPoolDataSourceFactory` is a static factory that does not implement
+  `javax.naming.spi.ObjectFactory`. The pooled `DataSource` types do not implement
+  `javax.naming.Referenceable` and expose no `getReference()`.
+new_driver_behavior: |
+  The same: no `ObjectFactory`, no `Referenceable`, no `getReference()`.
+description: |
+  Callers need no change; JNDI rebinding of a pooled DataSource was never available. No test
+  gates on this entry.
+status_rationale: |
+  No difference remains; this entry originally recorded the absence as new, but the old
+  driver lacks `Referenceable` and `ObjectFactory` as well. The key stays because JDBC
+  entries are never removed.
+legacy_id: 38

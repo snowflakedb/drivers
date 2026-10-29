@@ -1,0 +1,20 @@
+name: "HttpHeadersCustomizer and its DataSource setter do not exist on the new driver"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `SnowflakeDataSource.setHttpHeadersCustomizers` takes a list of `HttpHeadersCustomizer`
+  objects — Java instances, not a connection-string property. The callbacks run on REST
+  requests and on result and cloud-storage downloads, and can rebuild headers on retry.
+new_driver_behavior: |
+  Neither the `HttpHeadersCustomizer` interface nor the setter exists, and there is no
+  substitute. A customizer cannot be registered and silently ignored.
+description: |
+  Code that registers its own HTTP headers on the DataSource does not compile against the
+  new driver; callers that never set a customizer are unaffected.
+status_rationale: |
+  Accepted omission. The surface is a Java-object DataSource setter rather than a connection
+  property, and the new driver has no request-building hook for the callbacks to run in.
+legacy_id: 43

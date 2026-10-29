@@ -1,0 +1,27 @@
+name: "workloadIdentityAwsExternalId always fails the connection instead of being sent as the STS ExternalId"
+status: todo
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`,
+  `workloadIdentityAwsExternalId` is passed to STS `AssumeRole` as `ExternalId` on the last
+  hop when `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is true. With that variable unset, a non-empty
+  value fails the connection with `WORKLOAD_IDENTITY_FLOW_ERROR` and `"Connection property
+  workloadIdentityAwsExternalId is not enabled"`. Under any other authenticator or provider
+  the property is ignored.
+new_driver_behavior: |
+  With `authenticator=WORKLOAD_IDENTITY` and `workloadIdentityProvider=AWS`, a non-empty
+  `workloadIdentityAwsExternalId` fails the connection with `"Connection property
+  workloadIdentityAwsExternalId is not enabled"` whatever `SF_ENABLE_WIF_AWS_EXTERNAL_ID`
+  is set to, and the value is never sent. Under any other authenticator or provider a
+  non-empty value logs an unknown-parameter warning and the connection continues. An empty
+  value never fails.
+description: |
+  Role chaining that needs an STS external ID cannot connect, where the old driver connects
+  once `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is set.
+status_rationale: |
+  Still open. The `AssumeRole` call has no external-id field to populate, so the property is
+  rejected rather than silently dropped; sending it is tracked as SNOW-3575172.
+legacy_id: 73

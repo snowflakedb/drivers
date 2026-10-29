@@ -1,0 +1,25 @@
+name: "An auto-compressed PUT leaves Content-Encoding unset instead of storing gzip"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A PUT of an auto-compressed file stores `Content-Encoding: gzip` on the object, on GCS
+  with `GCS_USE_DOWNSCOPED_CREDENTIAL=true` and on S3. A PUT through a GCS presigned URL
+  stores a blank `Content-Encoding` for the same gzip file. Azure omits the header.
+new_driver_behavior: |
+  A GCS PUT sends no `Content-Encoding` header, bearer-token uploads of a gzip payload
+  included, and an S3 PUT sends none either. Azure omits the header as before. GET and COPY
+  still treat the file as gzip, from its name and the compression that PUT recorded.
+description: |
+  A third-party client that honors `Content-Encoding` no longer decompresses the body on
+  its own, and GCS no longer applies decompressive transcoding — which served a `.gz`
+  object's bytes uncompressed to any client that omitted `Accept-Encoding: gzip`. Snowflake
+  COPY and driver GET are unaffected, because both read the recorded compression rather than
+  the header.
+status_rationale: |
+  Intentional fix. Marking a stored `.gz` object as gzip-encoded makes the object serve
+  differently depending on the reader's `Accept-Encoding`, and the old driver's common GCS
+  presigned path already stored a blank value rather than `gzip`.
+legacy_id: 76

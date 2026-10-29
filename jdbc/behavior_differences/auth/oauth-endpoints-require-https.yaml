@@ -1,0 +1,11 @@
+name: "OAuth token/authorization endpoint URLs must use HTTPS (non-loopback http rejected)"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  A non-loopback http oauthTokenRequestUrl or oauthAuthorizationUrl is warned about
+  and then used on the old driver. The new driver rejects it at connect. Loopback
+  http and the redirect URI still work on both. Tracked under SNOW-3663588.
+legacy_id: 10

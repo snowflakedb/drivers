@@ -1,0 +1,21 @@
+name: "An Okta authenticator-request rejection carries the server message on both drivers"
+status: fixed
+type: bug
+reviewed: true
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When Snowflake rejects `authenticator-request` with HTTP 200 and `success: false`, the
+  server `message` — for example `"not accepted by your Snowflake account configuration"` or
+  `"is not supported"` — appears in the connection error.
+new_driver_behavior: |
+  The same: the server `message` appears in the connection error.
+description: |
+  Code that reads the exception message to tell an unsupported authenticator from a
+  misconfigured account gets the server's wording again. The server's numeric code and
+  SQLSTATE are still missing from the error, which this entry does not cover. No test gates
+  on this entry.
+status_rationale: |
+  No difference remains in the message text. This entry recorded a regression that dropped
+  the server message, and the message is present again.
+legacy_id: 63

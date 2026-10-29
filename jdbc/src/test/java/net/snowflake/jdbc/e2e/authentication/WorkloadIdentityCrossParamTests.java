@@ -19,9 +19,9 @@ import org.junit.jupiter.api.function.Executable;
 /**
  * Cross-driver behavior for WIF-only connection params supplied under a non-WIF authenticator.
  *
- * <p>BD#48: a non-empty workload-identity setting with an authenticator other than
- * WORKLOAD_IDENTITY is ignored by snowflake-jdbc 4.4.0 and rejected here with
- * ConflictingWifParameters before any network call.
+ * <p>BD#48 (jdbc/behavior_differences/auth/wif-params-require-workload-identity.yaml): a non-empty
+ * workload-identity setting with an authenticator other than WORKLOAD_IDENTITY is ignored by
+ * snowflake-jdbc 4.4.0 and rejected here with ConflictingWifParameters before any network call.
  */
 @RequiresNoMfa
 class WorkloadIdentityCrossParamTests implements WithQueryUtils, WithConnect {

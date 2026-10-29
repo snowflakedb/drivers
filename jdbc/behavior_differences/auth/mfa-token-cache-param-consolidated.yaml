@@ -1,0 +1,13 @@
+name: "MFA token caching parameter consolidated; clientRequestMfaToken removed"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: high
+status_rationale: |
+  The old driver has clientRequestMfaToken for MFA caching and
+  clientStoreTemporaryCredential for browser and OAuth caching. The new driver has
+  only clientStoreTemporaryCredential, which controls all three. The old name is
+  ignored with a log warning; connect still succeeds. setEnableClientRequestMfaToken
+  does not exist. Both switches default to true.
+legacy_id: 5

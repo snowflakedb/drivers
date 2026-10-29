@@ -1,0 +1,22 @@
+name: "PUT canonicalizes a literal source path, so a named symlink is staged under its target's name"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A source path with no glob character is joined to the working directory and kept as
+  written, so `..` and a symlink survive into the reported path and `link.csv` pointing at
+  `real.csv` is staged as `link.csv`. A glob match is canonicalized.
+new_driver_behavior: |
+  Every matched path is canonicalized, including a literal one: `link.csv` pointing at
+  `real.csv` is staged as `real.csv`, and a `..` in the path is collapsed in the reported
+  path. A glob match is canonicalized as before.
+description: |
+  The stage object name changes only when a symlink's target has a different final component
+  than the link, so ordinary files and wildcard uploads keep the name they had. Code that
+  expected the link's own name to appear on the stage has to change.
+status_rationale: |
+  Accepted. Canonicalizing uniformly removes the split between the literal and glob paths,
+  and uploading a named symlink is the only case whose stage name moves.
+legacy_id: 57

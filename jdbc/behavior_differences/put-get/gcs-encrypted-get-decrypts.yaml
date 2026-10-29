@@ -1,0 +1,19 @@
+name: "GET from an encrypted GCS stage over virtual-host URLs writes decrypted bytes on both drivers"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A GET from a client-side-encrypted GCS stage reached over virtual-host URLs writes the
+  decrypted payload and reports `DOWNLOADED`. S3, Azure, and the other GCS paths decrypt as
+  well.
+new_driver_behavior: |
+  The same: the file on disk is plaintext and the status is `DOWNLOADED`.
+description: |
+  Callers need no change. The ciphertext-on-disk result this entry recorded belongs to
+  snowflake-jdbc 4.3.4 and earlier on the virtual-URL path only. No test gates on this
+  entry.
+status_rationale: |
+  No difference remains; the old driver decrypts this path as of 4.4.0.
+legacy_id: 70

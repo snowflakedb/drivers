@@ -1,0 +1,29 @@
+name: "DataSource.getConnection() rejects a missing username at connect time instead of up front"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `getConnection()` rejects a null username with `"Cannot create connection because username
+  is missing in DataSource properties."`, no SQLSTATE, and vendor code `0`, unless
+  `setAuthenticator` was called with `OAUTH` or `WORKLOAD_IDENTITY`. The same authenticator
+  given in the URL or in properties does not exempt the call, and
+  `PROGRAMMATIC_ACCESS_TOKEN`, `OAUTH_AUTHORIZATION_CODE`, and `OAUTH_CLIENT_CREDENTIALS`
+  are never exempt. An empty-string username passes the check.
+new_driver_behavior: |
+  A null username reaches the login. Password, key-pair, external-browser, Okta, and MFA
+  logins fail at connect with `"Missing required parameter: user"`. `PROGRAMMATIC_ACCESS_TOKEN`,
+  `OAUTH_AUTHORIZATION_CODE`, `OAUTH_CLIENT_CREDENTIALS`, and OAuth or workload identity
+  supplied outside `setAuthenticator` connect with no username at all. An empty string counts
+  as missing.
+description: |
+  Token-identified logins that the old driver refused now connect. Logins that do need a
+  username still fail, but later and with different message text, so code matching on the
+  old message has to change.
+status_rationale: |
+  Intentional fix. Which credentials a login needs is a property of the authenticator, so
+  the check belongs where the authenticator is resolved — an up-front DataSource check
+  cannot see an authenticator set through the URL or properties, and rejects flows that
+  identify the user by token.
+legacy_id: 45

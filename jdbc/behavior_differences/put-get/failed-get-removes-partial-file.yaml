@@ -1,0 +1,22 @@
+name: "A failed GET leaves an existing destination file intact instead of truncating or deleting it"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  A GET that fails must not destroy data already at the destination. Staging into a temporary
+  file and renaming on success is what keeps the destination path either the previous file or
+  the complete new one.
+old_driver_behavior: |
+  The old driver writes straight to the destination path and truncates it when the download
+  starts. On S3 and GCS a failed transfer leaves the partial file there; on Azure the path is
+  deleted. A decryption failure can leave an unusable file at the destination.
+new_driver_behavior: |
+  The new driver writes `<dst>.part` and renames it onto the destination only after the
+  transfer succeeds. A failed GET removes `<dst>.part` and leaves any existing destination file
+  unchanged. A hard process kill can leave a `<dst>.part` file behind.
+description: |
+  A successful GET produces the same file on both drivers. Callers that delete a truncated
+  destination file after a failed GET no longer need that cleanup.
+legacy_id: 25

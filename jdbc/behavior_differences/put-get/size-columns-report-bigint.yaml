@@ -1,0 +1,27 @@
+name: "PUT/GET size columns report BIGINT instead of DECIMAL"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  PUT `source_size` and `target_size`, and GET `size`, are `DECIMAL` with precision 10,
+  scale 0, and display size 12, and `getObject()` returns `BigDecimal`. The session flag
+  `JDBC_TREAT_DECIMAL_AS_INT` does not affect these columns. `status` and `message` are
+  `VARCHAR` with declared length 20480.
+new_driver_behavior: |
+  Under the default `JDBC_TREAT_DECIMAL_AS_INT=true` those columns are `BIGINT`, type name
+  `NUMBER`, precision 64, display size 65, and `getObject()` returns `Long`. Setting the flag
+  false reports `DECIMAL`, and `getObject()` stays `Long` unless
+  `JDBC_ARROW_TREAT_DECIMAL_AS_INT` is also false. `getLong`, `getString`, and
+  `getBigDecimal` return the same integer either way. `status` and `message` are `VARCHAR`
+  with declared length 10000.
+description: |
+  Code that casts `getObject()` on a size column to `BigDecimal` throws `ClassCastException`;
+  reading through `getLong`, `getString`, or `getBigDecimal` is unaffected. The PUT/GET test
+  asserts the type per driver.
+status_rationale: |
+  Accepted. These columns are scale-0 integers and follow the same rule as every other
+  scale-0 column; precision 10 cannot describe a file of 10 GB or more, and pinning
+  `DECIMAL` here would push a JDBC-only exception into the shared row metadata.
+legacy_id: 54

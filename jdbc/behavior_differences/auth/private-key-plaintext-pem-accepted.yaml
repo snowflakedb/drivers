@@ -1,0 +1,24 @@
+name: "private_key accepts a plaintext PEM string instead of being an unrecognized property"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A JWT key is a `java.security.PrivateKey` object (`privateKey`), a file path
+  (`private_key_file`), or base64 key bytes (`private_key_base64`). There is no
+  `private_key` property: with `authenticator=SNOWFLAKE_JWT` and only a `private_key`
+  string, login throws `"Use java.security.interfaces.RSAPrivateCrtKey.class for the private
+  key"` because no key material was recognized.
+new_driver_behavior: |
+  `private_key` accepts a PEM string beginning `-----BEGIN`, decrypted with
+  `private_key_password` when that is set. A malformed PEM fails with `"Invalid private key
+  format"`, and setting both `private_key` and `private_key_file` is rejected. A
+  `java.security.PrivateKey` object, `private_key_file`, and `private_key_base64` still work.
+description: |
+  A PEM string is a fourth way to supply a key; the three existing forms are unchanged, so
+  no working configuration breaks.
+status_rationale: |
+  Accepted addition. The property is additive and the old driver's key-class error reflected
+  having no usable key material rather than rejecting the PEM form on purpose.
+legacy_id: 52

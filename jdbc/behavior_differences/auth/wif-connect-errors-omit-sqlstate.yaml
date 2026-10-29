@@ -1,0 +1,25 @@
+name: "A local workload-identity connect failure reports a null SQLSTATE and vendor code 0 instead of 08000 and 200071"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A client-local workload-identity connect failure throws `WORKLOAD_IDENTITY_FLOW_ERROR`
+  with SQLSTATE `08000` and vendor code `200071`. The cases are a missing or invalid
+  provider, a missing OIDC token, a malformed OIDC token, and a non-empty AWS external id
+  while `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is unset.
+new_driver_behavior: |
+  The same failures throw `SQLException` whose message names the offending setting, with
+  `getSQLState()` null and `getErrorCode()` `0`. A malformed token surfaces as an attestation
+  failure classified as an invalid parameter.
+description: |
+  Code that branches on SQLSTATE `08000` or vendor code `200071` to recognize a
+  workload-identity misconfiguration has to match on the message instead. The AWS
+  external-id rejection is BD#73.
+status_rationale: |
+  Accepted. The underlying failures are distinct parameter-validation outcomes shared with
+  the other Snowflake drivers, and folding them back into one flow-error identity would
+  discard that distinction; carrying a discriminating code across the boundary is the open
+  part.
+legacy_id: 75

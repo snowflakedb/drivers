@@ -1,0 +1,21 @@
+name: "An impersonation path with the OIDC workload-identity provider fails instead of being ignored"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With `authenticator=WORKLOAD_IDENTITY` and provider `OIDC`, an impersonation path is
+  accepted and never read; the login uses the token as-is. `AWS` and `GCP` do use the path.
+new_driver_behavior: |
+  A non-empty path with provider `OIDC` fails before any network call with
+  `ConflictingWifParameters`, null SQLSTATE, vendor code `0`, and the message
+  `"workload_identity_impersonation_path is currently only supported for GCP, AWS, and
+  AZURE"`. `AWS` and `GCP` still accept the path.
+description: |
+  An OIDC login that set an impersonation path used to connect as the unimpersonated
+  identity and now fails at connect. Azure's rejection of every non-empty path is BD#74.
+status_rationale: |
+  Intentional fix. Accepting a path that is never applied reports success for an
+  impersonation that did not happen, which is the more dangerous of the two outcomes.
+legacy_id: 49

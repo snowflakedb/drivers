@@ -1,0 +1,20 @@
+name: "getPropertyInfo reports user and password as missing when authenticator is the empty string"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `getPropertyInfo` with `authenticator=""` lists neither `user` nor `password` as missing.
+  `connect` takes the Okta path for that value, which requires both.
+new_driver_behavior: |
+  `getPropertyInfo` with `authenticator=""` lists `user` and `password` as missing. `connect`
+  treats the empty string as password authentication and requires both.
+description: |
+  A tool that builds its prompt from `getPropertyInfo` now asks for the two credentials that
+  login needs either way, so no working configuration changes.
+status_rationale: |
+  Intentional fix. `java.sql.Driver.getPropertyInfo` is specified to report the properties
+  `connect` requires, and omitting credentials that `connect` then demands leaves a tool
+  prompting for too little.
+legacy_id: 68

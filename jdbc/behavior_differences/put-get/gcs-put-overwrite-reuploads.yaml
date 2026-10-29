@@ -1,0 +1,20 @@
+name: "A GCS PUT with OVERWRITE=TRUE re-uploads matching content on both drivers"
+status: fixed
+type: bug
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A GCS PUT with `OVERWRITE=TRUE` re-uploads even when the local digest matches the remote
+  object, and reports status `UPLOADED`.
+new_driver_behavior: |
+  The same: the upload runs and the status is `UPLOADED`. The content-match skip that
+  reported `SKIPPED` happens only when `skip_upload_on_content_match` is set, which JDBC
+  does not set.
+description: |
+  Callers need no change; a PUT that overwrites always transfers the file. No test gates on
+  this entry.
+status_rationale: |
+  No difference remains. The skip this entry recorded is now behind an opt-in the JDBC
+  wrapper does not request.
+legacy_id: 47

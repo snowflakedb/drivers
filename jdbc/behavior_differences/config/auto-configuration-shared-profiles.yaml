@@ -1,0 +1,49 @@
+name: "An auto-configuration profile resolves from config.toml and validates strictly, and six JDBC-only option spellings stop applying"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  Profiles are read only from `connections.toml`. The exact, case-sensitive `connectionName`
+  URL key overrides `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, then falls back to `default`.
+  Auto URL queries are parsed loosely, and duplicate aliases in JDBC `Properties` are rejected
+  even when their values agree. A missing profile reports
+  `The Connection <name> not found in connections.toml file.` with no SQLState and vendor code
+  zero.
+new_driver_behavior: |
+  Profiles can also come from `[connections.<name>]` in `config.toml`, with
+  `connections.toml` taking precedence. JDBC `Properties` override URL options and selectors;
+  `connectionName` and `connection_name` are matched case-insensitively. Selection then falls
+  back through `SNOWFLAKE_DEFAULT_CONNECTION_NAME`, `config.toml`'s
+  `default_connection_name`, and `default`.
+  A direct `url` entry in JDBC `Properties` supplies the auto URL when the public JDBC URL
+  argument is blank; inherited `Properties` defaults do not.
+
+  Auto URL queries and selector types are validated strictly. Malformed queries, fragments,
+  duplicate aliases, and non-string JDBC `Properties` selectors report
+  `INVALID_PARAMETER_VALUE`. `Driver.getPropertyInfo` uses the same fail-closed auto URL parse
+  as `connect` instead of reporting `INVALID_CONNECTION_STRING`. Equal alias values in JDBC
+  `Properties` are accepted. A missing profile keeps the old driver's message but reports
+  SQLState `22023` and vendor code `200047`.
+
+  Six profile option spellings no longer apply: `disableQueryContextCache`,
+  `private_key_pwd`, `PRIVATE_KEY_PWD`, `PRIVATE_KEY_BASE64`, `wifHost`, and
+  `workloadIdentityHost`. `disable_query_context_cache`, `PRIVATE_KEY_FILE_PWD`, and
+  `workload_identity_host` still apply. There is no default token file at
+  `/snowflake/session/token`, and `SKIP_TOKEN_FILE_PERMISSIONS_VERIFICATION` is not read.
+  `SNOWFLAKE_HOME` is used only when that directory exists; otherwise the platform config
+  directory is used.
+description: |
+  A profile written with the documented option names still connects. A profile relying on
+  one of the six dropped spellings silently loses that setting, a deployment relying on the
+  default token path or on a non-existent `SNOWFLAKE_HOME` has to supply them explicitly,
+  and code matching on `INVALID_CONNECTION_STRING` from `getPropertyInfo` has to accept
+  `INVALID_PARAMETER_VALUE`. The missing-profile message is unchanged but now carries a
+  SQLSTATE and vendor code, so it can be classified rather than string-matched.
+status_rationale: |
+  Accepted. Profile resolution is shared with the other Snowflake drivers, so a
+  `connections.toml` or `config.toml` profile means the same thing in each of them; the
+  casualties are JDBC-only spellings and two implicit lookups, while JDBC `Properties`
+  precedence is preserved.
+legacy_id: 71

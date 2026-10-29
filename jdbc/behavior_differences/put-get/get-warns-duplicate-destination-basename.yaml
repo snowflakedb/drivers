@@ -1,0 +1,21 @@
+name: "A GET whose files share a destination basename logs a warning instead of staying silent"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A GET of stage files that collapse to the same local basename succeeds with no warning and
+  leaves one file, chosen by hash order rather than list order. Downloads run one at a time.
+new_driver_behavior: |
+  The same GET logs one `WARNING` naming every colliding basename, still succeeds, and still
+  leaves one file. With `parallel` greater than 1 the colliding downloads can share one
+  temporary file.
+description: |
+  A caller with `WARNING` logging enabled sees the collision it previously could not detect;
+  the GET's result status and the surviving file are unchanged, so nothing else has to adapt.
+status_rationale: |
+  Accepted addition. The other Snowflake drivers log this collision, and warning is the
+  smallest useful change — failing the GET or renaming the files would break callers that
+  rely on today's silent overwrite.
+legacy_id: 61
