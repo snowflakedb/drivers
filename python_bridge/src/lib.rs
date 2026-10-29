@@ -262,6 +262,34 @@ fn native_arrow_enabled() -> bool {
     cfg!(feature = "native-arrow")
 }
 
+/// Split a SQL script into statements.
+///
+/// Each item is the statement text and a PUT/GET flag: `True` for `PUT` and
+/// `GET`, `False` for other statements and `!` commands, and `None` when the
+/// text is empty or comment-only. The delimiter is rewritten as `;`.
+///
+/// An unterminated quote, block comment, or dollar quote keeps the rest of
+/// the script in that statement. An empty delimiter raises `ValueError`.
+#[pyfunction]
+fn split_sql_script(
+    sql: &str,
+    delimiter: &str,
+    remove_comments: bool,
+) -> PyResult<Vec<(String, Option<bool>)>> {
+    let options = sf_core::sql_script::SplitOptions {
+        delimiter: delimiter.to_owned(),
+        remove_comments,
+    };
+    sf_core::sql_script::split_sql_script(sql, &options)
+        .map(|spans| {
+            spans
+                .into_iter()
+                .map(|span| (span.text, span.is_file_transfer))
+                .collect()
+        })
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+}
+
 #[pymodule(gil_used = false)]
 fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(init, m)?)?;
@@ -272,6 +300,7 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_perf_data, m)?)?;
     m.add_function(wrap_pyfunction!(reset_perf_metrics, m)?)?;
     m.add_function(wrap_pyfunction!(native_arrow_enabled, m)?)?;
+    m.add_function(wrap_pyfunction!(split_sql_script, m)?)?;
     #[cfg(feature = "native-arrow")]
     m.add_class::<ArrowStreamIterator>()?;
     #[cfg(feature = "native-arrow")]

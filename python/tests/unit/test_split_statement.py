@@ -3,7 +3,7 @@ from textwrap import dedent
 
 import pytest
 
-from snowflake.connector._internal.text_utils import split_statements
+from snowflake.connector._internal.text_utils import SQLDelimiter, split_statements
 
 
 @pytest.mark.parametrize("comment_prefix", ["--", "//"])
@@ -42,3 +42,33 @@ def test_split_with_comment(comment_prefix, remove_comments):
 )
 def test_double_slash_in_url_is_not_comment(query):
     assert list(split_statements(StringIO(query), remove_comments=True)) == [(query, False)]
+
+
+def test_quotes_dollar_quotes_and_commands():
+    script = "select 'a;b'; select $$x;y$$;\n!quit\n"
+    assert list(split_statements(StringIO(script))) == [
+        ("select 'a;b';", False),
+        ("select $$x;y$$;", False),
+        ("!quit", False),
+    ]
+
+
+def test_put_and_custom_delimiter():
+    assert list(split_statements(StringIO("PUT file://a @stage;"))) == [("PUT file://a @stage;", True)]
+    statements = list(split_statements(StringIO("select 1 GO\nselect 2 GO"), delimiter=SQLDelimiter("GO")))
+    assert statements == [("select 1 ;", False), ("select 2 ;", False)]
+
+
+def test_unterminated_quote_keeps_the_rest_of_the_script():
+    assert list(split_statements(StringIO("select 'a;b\nselect 2;"))) == [("select 'a;b\nselect 2;", False)]
+
+
+def test_repeated_word_character_delimiter():
+    assert list(split_statements(StringIO("AA"), delimiter=SQLDelimiter("A"))) == [("A;", None)]
+    assert list(split_statements(StringIO("0__"), delimiter=SQLDelimiter("_"))) == [("0_;", False)]
+    assert list(split_statements(StringIO("AAB"), delimiter=SQLDelimiter("A"))) == [("AAB", False)]
+
+
+def test_empty_delimiter():
+    with pytest.raises(ValueError, match="SQL delimiter must not be empty"):
+        list(split_statements(StringIO("select 1;"), delimiter=SQLDelimiter("")))

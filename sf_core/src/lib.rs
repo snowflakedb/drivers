@@ -27,6 +27,7 @@ pub mod query_types;
 pub mod refresh;
 pub mod rest;
 pub mod sensitive;
+pub mod sql_script;
 pub mod stage_binding;
 pub mod telemetry;
 pub mod tls;

@@ -65,3 +65,15 @@ def native_arrow_enabled() -> bool:
     """
     ...
 
+def split_sql_script(sql: str, delimiter: str, remove_comments: bool) -> list[tuple[str, bool | None]]:
+    """Split a SQL script into statements.
+
+    Each item is the statement text and a PUT/GET flag: `True` for `PUT` and
+    `GET`, `False` for other statements and `!` commands, and `None` when the
+    text is empty or comment-only. The delimiter is rewritten as `;`.
+
+    An unterminated quote, block comment, or dollar quote keeps the rest of
+    the script in that statement. An empty delimiter raises `ValueError`.
+    """
+    ...
+
