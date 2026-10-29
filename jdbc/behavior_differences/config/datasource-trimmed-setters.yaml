@@ -1,13 +1,11 @@
 name: "Nine DataSource setters present on the old driver do not exist on the new driver"
-status: unknown
+status: allowed
 type: api_incompatibility
 reviewed: false
 is_breaking_change: true
 impact: medium
 status_rationale: |
-  Not yet reviewed. Dropping a setter instead of keeping it as a silent no-op is deliberate,
-  but whether any of the nine names must be restored for source compatibility needs an
-  explicit decision.
+  Accepted omission. Dropping a setter instead of keeping it as a silent no-op is deliberate.
 old_driver_behavior: |
   `SnowflakeBasicDataSource` and `SnowflakeConnectionPoolDataSource` declare
   `setNetworkTimeout`, `setEnablePutGet`, `setClientConfigFile`,

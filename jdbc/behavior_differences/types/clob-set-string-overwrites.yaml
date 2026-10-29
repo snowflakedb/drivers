@@ -1,5 +1,5 @@
 name: "SnowflakeClob.setString overwrites in place; old driver inserts"
-status: unknown
+status: allowed
 type: bugfix
 reviewed: false
 is_breaking_change: true

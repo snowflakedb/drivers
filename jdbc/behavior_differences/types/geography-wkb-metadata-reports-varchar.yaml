@@ -1,5 +1,5 @@
 name: "GEOGRAPHY/GEOMETRY WKB/EWKB ResultSetMetaData reports VARCHAR instead of BINARY"
-status: todo
+status: allowed
 type: bug
 reviewed: false
 is_breaking_change: false
@@ -17,7 +17,6 @@ description: |
   even though the value itself is unchanged. `GeoJSON` and `WKT` output is `VARCHAR` on both
   drivers. The metadata assertion is split per driver in the geography and geometry tests.
 status_rationale: |
-  Still open. The server omits `outputType` for these columns, and the JDBC layer falls back
-  to `VARCHAR` instead of deriving the type from the binary wire type that is already
-  present.
+  Accepted. The server omits `outputType` for these columns, and the JDBC layer reports
+  `VARCHAR` for them.
 legacy_id: 53

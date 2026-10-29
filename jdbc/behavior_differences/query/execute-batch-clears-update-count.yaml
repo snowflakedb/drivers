@@ -1,5 +1,5 @@
 name: "executeBatch clears getUpdateCount on return"
-status: unknown
+status: allowed
 type: bugfix
 reviewed: false
 is_breaking_change: true

@@ -1,5 +1,5 @@
 name: "Millisecond timeout properties apply in whole seconds"
-status: unknown
+status: allowed
 type: enhancement
 reviewed: false
 is_breaking_change: true

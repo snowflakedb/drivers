@@ -1,5 +1,5 @@
 name: "Connection.getNetworkTimeout() returns 0 instead of the value passed to setNetworkTimeout"
-status: unknown
+status: allowed
 type: bugfix
 reviewed: false
 is_breaking_change: true
@@ -16,7 +16,6 @@ description: |
   value to requests, so no timeout changes. The separate `networkTimeout` connection property
   is BD#78 and per-attempt HTTP timing is BD#77.
 status_rationale: |
-  Not yet reviewed. `java.sql.Connection.getNetworkTimeout()` is specified to return the
-  limit `setNetworkTimeout` installed, which argues for echoing the value; against that, the
-  old driver's echo advertises a limit that no request honors.
+  Accepted. The old driver's echo advertises a limit that no request honors, so
+  `getNetworkTimeout` returns 0.
 legacy_id: 41

@@ -1,5 +1,5 @@
 name: "Statement.executeBatch update-count int overflow"
-status: unknown
+status: allowed
 type: bugfix
 reviewed: false
 is_breaking_change: true

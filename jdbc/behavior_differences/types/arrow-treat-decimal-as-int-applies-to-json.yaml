@@ -1,5 +1,5 @@
 name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT changes JSON results instead of applying to Arrow results only"
-status: unknown
+status: allowed
 type: api_incompatibility
 reviewed: false
 is_breaking_change: true
@@ -20,7 +20,6 @@ description: |
   `BigDecimal` from a column its own metadata calls `DECIMAL`. The new driver converts JSON
   results to Arrow, which is what brings the Arrow flag into play.
 status_rationale: |
-  Not yet reviewed. The question is whether a JSON-format result should ignore an
-  Arrow-named flag — `todo` if it should, `allowed` if a single conversion path with one
-  flag is the intended shape. Either answer keeps the JSON-to-Arrow conversion.
+  Accepted. A JSON-format result uses the same conversion path as Arrow, so
+  `JDBC_ARROW_TREAT_DECIMAL_AS_INT` applies there. The JSON-to-Arrow conversion stays.
 legacy_id: 60

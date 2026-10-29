@@ -1,0 +1,20 @@
+name: "Unset putGetMaxRetries retries 6 times"
+status: allowed
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  When putGetMaxRetries is absent, PUT and GET retry 25 times. A zero or
+  negative value is kept.
+new_driver_behavior: |
+  When put_get_max_attempts is absent, zero, or negative, PUT and GET
+  retry 6 times. A positive value such as 101 is used as given.
+description: |
+  A transfer that is not given a retry count stops sooner. Setting a
+  positive count still uses that count. The claimed upper clamp is
+  entry 62.
+status_rationale: |
+  Accepted. An absent, zero, or negative putGetMaxRetries retries 6 times
+  rather than 25. This is not an upper bound.
+legacy_id: 79

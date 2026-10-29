@@ -1,5 +1,5 @@
 name: "getBatchQueryIDs positional alignment with updateCounts"
-status: unknown
+status: allowed
 type: enhancement
 reviewed: false
 is_breaking_change: true

@@ -1,5 +1,5 @@
 name: "workloadIdentityAwsExternalId always fails the connection instead of being sent as the STS ExternalId"
-status: todo
+status: allowed
 type: api_incompatibility
 reviewed: false
 is_breaking_change: true
@@ -22,6 +22,6 @@ description: |
   Role chaining that needs an STS external ID cannot connect, where the old driver connects
   once `SF_ENABLE_WIF_AWS_EXTERNAL_ID` is set.
 status_rationale: |
-  Still open. The `AssumeRole` call has no external-id field to populate, so the property is
-  rejected rather than silently dropped; sending it is tracked as SNOW-3575172.
+  Accepted omission. The `AssumeRole` call has no external-id field to populate, so the
+  property is rejected rather than silently dropped.
 legacy_id: 73

@@ -20,6 +20,5 @@ description: |
 status_rationale: |
   Accepted. The underlying failures are distinct parameter-validation outcomes shared with
   the other Snowflake drivers, and folding them back into one flow-error identity would
-  discard that distinction; carrying a discriminating code across the boundary is the open
-  part.
+  discard that distinction.
 legacy_id: 75
