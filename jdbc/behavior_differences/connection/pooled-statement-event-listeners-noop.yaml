@@ -1,0 +1,20 @@
+name: "PooledConnection accepts statement-event listeners and never invokes them on either driver"
+status: fixed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `addStatementEventListener` and `removeStatementEventListener` are accepted and return
+  normally. `statementClosed` and `statementErrorOccurred` never fire.
+new_driver_behavior: |
+  The same: both registration calls succeed and a registered `StatementEventListener`
+  receives no callback.
+description: |
+  Callers need no change; neither driver pools statements, so there is nothing to report.
+  No test gates on this entry.
+status_rationale: |
+  No difference remains; this entry originally recorded the silent acceptance as new, but the
+  old driver fires no statement events either. The key stays because JDBC entries are never
+  removed.
+legacy_id: 39

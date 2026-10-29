@@ -1,0 +1,24 @@
+name: "setClientInfo(null) on an open connection returns instead of throwing NullPointerException"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  `java.sql.Connection.setClientInfo(Properties)` documents no behavior for a null argument,
+  and the old driver dereferences it before any validation, so the failure a caller sees is an
+  unchecked `NullPointerException` rather than the `SQLClientInfoException` the method declares.
+old_driver_behavior: |
+  On an open connection, `setClientInfo(null)` throws `NullPointerException`, and an empty
+  `Properties` throws `SQLClientInfoException`. On a closed connection, `setClientInfo(null)`
+  still throws `NullPointerException`.
+new_driver_behavior: |
+  On an open connection, `setClientInfo(null)` returns, and an empty `Properties` returns. On a
+  closed connection, `setClientInfo(null)` throws
+  `SQLClientInfoException("The connection is not opened.")`.
+description: |
+  Neither driver stores client info, so `getClientInfo()` stays empty after the call, and a
+  named property fails on both. A caller that catches `NullPointerException` around a null or
+  empty property set no longer reaches that handler on an open connection. The closed-connection
+  exception is BD#22.
+legacy_id: 23

@@ -1,0 +1,22 @@
+name: "setClientInfo on a closed connection throws SQLClientInfoException with CONNECTION_CLOSED on both drivers"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  No difference remains. `java.sql.Connection.setClientInfo` reports failure as
+  `SQLClientInfoException`, and on a closed connection both drivers throw it with the same
+  message and the same `CONNECTION_CLOSED` code.
+old_driver_behavior: |
+  `setClientInfo(String, String)` and `setClientInfo(Properties)` on a closed connection throw
+  `SQLClientInfoException("The connection is not opened.")` with SQLSTATE `08003` and vendor
+  code `200052`, with `failedProperties` carrying `REASON_UNKNOWN_PROPERTY` for every property
+  named in the call.
+new_driver_behavior: |
+  The same: `SQLClientInfoException("The connection is not opened.")`, SQLSTATE `08003`,
+  vendor code `200052`, and the same `failedProperties` entries.
+description: |
+  Callers need no change. `setClientInfo(null)` on an open connection is BD#23, and a closed
+  pooled handle is BD#29. No test gates on this entry.
+legacy_id: 22

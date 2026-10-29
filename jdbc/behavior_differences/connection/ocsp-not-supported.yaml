@@ -1,0 +1,23 @@
+name: "OCSP revocation checking and setOcspFailOpen do not exist on the new driver"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  OCSP is off until `ocspFailOpen` is set, where true is fail-open and false is fail-closed;
+  `disableOCSPChecks=true` and `insecureMode=true` keep it off even then.
+  `setOcspFailOpen` stores the property. CRL is a separate setting and is off by default.
+new_driver_behavior: |
+  There is no OCSP checking and no `setOcspFailOpen`. Certificate revocation runs only when
+  `crl_check_mode` is `ENABLED` or `ADVISORY`. An `ocspFailOpen` property is accepted but is
+  not a TLS setting; it is forwarded as a login session parameter.
+description: |
+  A connection that never opted into OCSP loses no revocation check, and CRL covers the
+  opt-in case. A caller that set `ocspFailOpen=false` to get fail-closed revocation connects
+  where the old driver would reject the certificate, so such a caller has to move to
+  `crl_check_mode`.
+status_rationale: |
+  Accepted omission. OCSP is off by default on the old driver, so the gap is the missing
+  opt-in rather than a weaker default, and CRL provides the replacement opt-in.
+legacy_id: 46

@@ -1,0 +1,22 @@
+name: "A closed logical connection rejects statement, metadata, and transaction calls on both drivers"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After `close()`, the statement factories, metadata accessors, transaction methods, and the
+  getters other than `isClosed()`, `isValid()`, and `getClientInfo(String)` throw with vendor
+  code `200052` and SQLSTATE `08003`. `isClosed()` returns true and `isValid()` returns false.
+new_driver_behavior: |
+  The same methods throw the same vendor code and SQLSTATE. `isClosed()` returns true and
+  `isValid()` returns false.
+description: |
+  Callers need no change. The closed-handle methods that do still differ have their own
+  entries: both `setClientInfo` overloads and `getClientInfo(String)` are BD#29, `unwrap` and
+  `isWrapperFor` are BD#33, and `abort` is BD#40. No test gates on this entry.
+status_rationale: |
+  No difference remains for these methods; this entry originally asserted that the old driver
+  kept serving getters and statement factories from a closed handle, which it does not. The
+  key stays because JDBC entries are never removed.
+legacy_id: 37

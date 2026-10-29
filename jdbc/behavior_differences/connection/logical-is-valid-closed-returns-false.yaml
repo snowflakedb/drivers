@@ -1,0 +1,19 @@
+name: "isValid() on a closed pooled handle returns false without probing the physical connection on both drivers"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After `close()` returns, `isValid(int)` returns false and the physical connection is not
+  called. A negative timeout on an already-closed handle also returns false.
+new_driver_behavior: |
+  The same: `isValid(int)` returns false with no call to the physical connection, and a
+  negative timeout on an already-closed handle returns false.
+description: |
+  Callers need no change, and `assertIsValidFalseOnClosedHandle` asserts this on both drivers
+  without a driver guard.
+status_rationale: |
+  No difference remains. `java.sql.Connection.isValid()` requires false for a closed
+  connection and forbids throwing, and both drivers short-circuit on the closed flag.
+legacy_id: 34

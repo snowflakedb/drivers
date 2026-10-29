@@ -1,0 +1,25 @@
+name: "HTTP attempts use a 300-second wall-clock timeout instead of socket inactivity"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `HTTP_CLIENT_SOCKET_TIMEOUT` defaults to 300000 ms and limits the wait for the next
+  packet, result-chunk downloads included, so a transfer runs past 300 seconds as long as
+  data keeps arriving.
+new_driver_behavior: |
+  `retry_timeout` defaults to 300 seconds and bounds each ordinary HTTP attempt from its
+  start until the response body finishes; arriving bytes do not extend it, and `0` removes
+  the limit. `HTTP_CLIENT_SOCKET_TIMEOUT` is its JDBC alias. Result-chunk downloads are not
+  bounded by it and have no read timeout of their own.
+description: |
+  A login or query attempt whose response body takes more than five minutes fails where it
+  previously completed, while a slow result chunk can now run indefinitely because the
+  per-packet timeout no longer covers it. The millisecond-to-second conversion of the alias
+  is BD#78.
+status_rationale: |
+  Accepted. The default duration is the same on both drivers; what differs is the model — a
+  per-attempt wall-clock cap rather than an inactivity timer that resets on every packet —
+  and the new driver has no per-packet timer to reproduce.
+legacy_id: 77

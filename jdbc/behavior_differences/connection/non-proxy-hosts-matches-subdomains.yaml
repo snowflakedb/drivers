@@ -1,0 +1,26 @@
+name: "A nonProxyHosts domain entry bypasses the apex and its subdomains instead of matching as a Java glob"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `*.foo.com` bypasses subdomains but not `foo.com`; `foo.com` bypasses that host alone;
+  `.foo.com` bypasses only the literal host `.foo.com`. `*` bypasses every host, IP addresses
+  included. `192.168.*` and `10.*` are prefix globs, `10.0.0.0/8` matches no real host, and
+  `foo.*.com` and `*foo.com` treat `*` as a wildcard. Matching is case-insensitive.
+new_driver_behavior: |
+  `*.foo.com`, `foo.com`, and `.foo.com` all bypass that host and every subdomain. `*`
+  bypasses domains but not IP addresses. `192.168.*` and `10.*` are not IP patterns, so those
+  addresses stay on the proxy, while `10.0.0.0/8` is a CIDR whose subnet bypasses.
+  `foo.*.com` and `*foo.com` match almost nothing. Matching is case-sensitive.
+  `notfoo.com` does not match `foo.com` on either driver.
+description: |
+  A domain entry now covers more hosts than it did, while a bare `*` and the IP prefix globs
+  cover fewer — a deployment relying on `192.168.*` or on `*.foo.com` excluding the apex has
+  to rewrite the entry. `*.snowflakecomputing.com` still bypasses the account hosts.
+status_rationale: |
+  Accepted. The matcher is shared with the other Snowflake drivers, so `nonProxyHosts` means
+  the same thing across them; a Java-glob matcher would only serve a caller needing an exact
+  host, or subdomains without their parent.
+legacy_id: 65

@@ -1,0 +1,21 @@
+name: "PooledConnection.getConnection() after close() throws SQLException instead of NullPointerException"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After `SnowflakePooledConnection.close()`, `getConnection()` throws an unchecked
+  `NullPointerException`.
+new_driver_behavior: |
+  After `PooledConnection.close()`, `getConnection()` throws `SnowflakeSQLException` with
+  vendor code `200052` and SQLSTATE `08003`.
+description: |
+  A pool manager or application that borrows from an already-closed `PooledConnection` catches
+  a checked `SQLException` on the new driver; code that catches `NullPointerException` there no
+  longer reaches that handler. A borrow after a logical `abort()` throws vendor code `200052`
+  and SQLSTATE `08003` on both drivers. The handle and pool events `abort()` fires are BD#40.
+status_rationale: |
+  `javax.sql.PooledConnection.getConnection()` declares `SQLException`, so a closed pooled
+  connection reporting an unchecked `NullPointerException` is outside the method's contract.
+legacy_id: 27

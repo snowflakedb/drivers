@@ -1,0 +1,26 @@
+name: "PooledConnection.getConnection() invalidates the previously returned logical handle instead of leaving it open"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  `getConnection()` returns a new logical handle and leaves any earlier handle open. Both
+  handles work against the same physical session. Closing the older handle fires
+  `connectionClosed` while the newer handle is still in use.
+new_driver_behavior: |
+  `getConnection()` marks the previously returned handle closed and fires no
+  `connectionClosed`. On that handle, operations needing a live connection such as
+  `createStatement()` throw `SnowflakeSQLException` with vendor code `200052` and SQLSTATE
+  `08003`, `isClosed()` returns true, `isValid()` returns false, and `close()` and `abort()`
+  return their closed-state results.
+description: |
+  A caller that borrows twice without closing in between keeps only the newest handle usable;
+  code holding the older one starts seeing closed-connection errors. The cross-driver test
+  asserts the vendor code on the new driver only, because the old driver leaves the handle
+  open.
+status_rationale: |
+  Intentional fix. The `javax.sql` pooling contract gives one logical handle per borrow, and
+  two live handles over a single session — plus a close event fired while the newer handle is
+  still working — leave the pool's idle bookkeeping wrong.
+legacy_id: 36

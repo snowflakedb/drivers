@@ -1,0 +1,23 @@
+name: "unwrap/isWrapperFor on a closed pooled handle throws CONNECTION_CLOSED instead of returning the physical connection"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  After the logical handle is closed, `unwrap` returns the live physical connection and
+  `isWrapperFor` reports the Snowflake types, so the caller can keep running statements on the
+  pooled session.
+new_driver_behavior: |
+  `unwrap` and `isWrapperFor` for `SnowflakeConnection` and the other Snowflake types throw
+  `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
+  `unwrap(Connection.class)` returns the closed logical handle itself and never the physical
+  connection.
+description: |
+  A closed handle can no longer reach the pooled physical connection, which another borrower
+  may already hold. `unwrap` of a type neither driver supports is BD#35.
+status_rationale: |
+  `java.sql.Connection` requires a closed connection to reject its methods, and the
+  `javax.sql` pooling contract hands the physical connection back to the pool on logical
+  close, so exposing it through `unwrap` afterwards breaks checkout isolation.
+legacy_id: 33

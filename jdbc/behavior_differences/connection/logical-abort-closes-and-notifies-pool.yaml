@@ -1,0 +1,30 @@
+name: "abort() on a pooled handle marks it closed and fires connectionErrorOccurred instead of leaving isClosed() false"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `abort()` aborts the physical connection and leaves `isClosed()` false on the logical
+  handle. `connectionErrorOccurred` fires only if the physical abort throws, and no event
+  fires on success. After a successful abort, `close()` on that handle and
+  `PooledConnection.getConnection()` throw with vendor code `200052` and SQLSTATE `08003`.
+  A handle that is already closed can still abort the physical connection after the session
+  was returned to the pool.
+new_driver_behavior: |
+  `abort()` marks the logical handle closed before touching the physical connection, so
+  `isClosed()` returns true, `close()` returns, and a second `abort()` returns immediately.
+  Success fires `connectionErrorOccurred` and fires no `connectionClosed`.
+  `PooledConnection.getConnection()` throws vendor code `200052` and SQLSTATE `08003`. If
+  the physical abort throws, the caller gets that same vendor code and SQLSTATE and the
+  listener receives the original exception.
+description: |
+  A caller that aborts a borrowed handle sees it closed immediately, and the pool is told to
+  discard the physical connection rather than discovering it on the next failing borrow. The
+  abort-then-close sequence is asserted on the new driver only.
+status_rationale: |
+  Intentional fix. `java.sql.Connection.abort()` requires the connection to be marked closed,
+  and an aborted session must not be handed out again. Neither driver checks
+  `SQLPermission("callAbort")`, validates the executor, or aborts asynchronously. Only callers
+  of the pooled-connection API that also call `abort()` observe this.
+legacy_id: 40

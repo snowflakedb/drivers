@@ -1,0 +1,24 @@
+name: "SQLFeatureNotSupportedException from a pooled connection no longer fires connectionErrorOccurred"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: medium
+old_driver_behavior: |
+  Every `SQLException` a delegated `java.sql.Connection` method throws on a pooled logical
+  handle, `SQLFeatureNotSupportedException` included, fires
+  `ConnectionEventListener.connectionErrorOccurred` on the owning `PooledConnection` before the
+  exception reaches the caller.
+new_driver_behavior: |
+  `SQLFeatureNotSupportedException` reaches the caller without firing
+  `connectionErrorOccurred`. Any other `SQLException` from the underlying connection still
+  fires it.
+description: |
+  `connectionErrorOccurred` signals a broken physical connection, and pool managers typically
+  evict the connection when they receive it. Probing for an unsupported JDBC feature is a
+  caller mistake, not a connection failure, so a pool no longer discards a healthy connection
+  over it. Client-info failures are BD#32 and `unwrap` of an unsupported type is BD#35.
+status_rationale: |
+  Intentional fix to avoid spurious pool eviction and churn when applications probe JDBC
+  capabilities on a pooled logical connection.
+legacy_id: 26

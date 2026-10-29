@@ -1,0 +1,22 @@
+name: "A listener handling connectionClosed observes isClosed() true instead of false"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `LogicalConnection.close()` fires `connectionClosed` and sets the closed flag afterwards, so
+  a listener callback sees `isClosed()` false and can still create statements on the handle.
+  A listener that calls `close()` again re-enters the dispatch until the stack overflows.
+new_driver_behavior: |
+  `close()` sets the closed flag before firing `connectionClosed`, so a listener callback sees
+  `isClosed()` true. A `close()` from inside the callback is a no-op and the event fires once.
+description: |
+  Neither driver closes the physical connection on a logical `close()`. A listener that used
+  the callback to run a last statement on the handle now gets the closed-connection error
+  instead.
+status_rationale: |
+  `java.sql.Connection.isClosed()` must report a connection closed once `close()` has been
+  called, and the `javax.sql` pooling contract delivers `connectionClosed` for a handle that is
+  already back in the pool, so the flag belongs before the event.
+legacy_id: 30

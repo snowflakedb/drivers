@@ -1,0 +1,22 @@
+name: "Connection.getNetworkTimeout() returns 0 instead of the value passed to setNetworkTimeout"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `setNetworkTimeout` stores the millisecond value on the connection and `getNetworkTimeout`
+  returns it, on a pooled logical connection as well. The stored value does not change any
+  HTTP timeout.
+new_driver_behavior: |
+  `setNetworkTimeout` returns without storing anything and `getNetworkTimeout` returns `0`,
+  on a pooled logical connection as well.
+description: |
+  Code that reads back its own `setNetworkTimeout` value gets `0`. Neither driver applies the
+  value to requests, so no timeout changes. The separate `networkTimeout` connection property
+  is BD#78 and per-attempt HTTP timing is BD#77.
+status_rationale: |
+  Not yet reviewed. `java.sql.Connection.getNetworkTimeout()` is specified to return the
+  limit `setNetworkTimeout` installed, which argues for echoing the value; against that, the
+  old driver's echo advertises a limit that no request honors.
+legacy_id: 41

@@ -1,0 +1,12 @@
+name: "JDBC wrapper interface is correctly implemented"
+status: unknown
+type: enhancement
+reviewed: false
+impact: low
+is_breaking_change: false
+status_rationale: |
+  unwrap on Connection, Statement, and ResultSet already works on both drivers. The
+  old driver throws from DatabaseMetaData.isWrapperFor, returns null from
+  DataSource.unwrap, and has no unwrap on createClob() or PooledConnection. The new
+  driver implements those. getClob() still has no unwrap on either driver.
+legacy_id: 12

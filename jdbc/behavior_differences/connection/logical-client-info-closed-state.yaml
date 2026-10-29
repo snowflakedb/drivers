@@ -1,0 +1,26 @@
+name: "Client-info access on a closed pooled handle throws CONNECTION_CLOSED instead of reaching the physical session"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  On a closed logical handle, `setClientInfo` and `getClientInfo(String)` delegate to the still
+  open physical connection: `setClientInfo` throws `SQLClientInfoException` reporting the
+  property as not settable and fires `connectionErrorOccurred`, and `getClientInfo(String)`
+  returns the property value. The no-argument `getClientInfo()` throws
+  `SnowflakeSQLException` with vendor code `200052` and SQLSTATE `08003`.
+new_driver_behavior: |
+  On a closed logical handle, `setClientInfo` throws `SQLClientInfoException` and both
+  `getClientInfo` methods throw `SnowflakeSQLException`, all carrying vendor code `200052` and
+  SQLSTATE `08003`, and none of them reaches the physical connection. `setClientInfo` does not
+  fire `connectionErrorOccurred`.
+description: |
+  Closing a pooled handle leaves the physical connection open on both drivers, so on the old
+  driver a returned handle can still read and write client info on a session another borrower
+  may hold. `java.sql.Connection` requires a closed connection to reject these calls. The
+  physical connection's own closed-state client-info behavior is BD#22.
+status_rationale: |
+  Intentional fix for closed-handle correctness, consistent with the other closed-state checks
+  on a logical connection.
+legacy_id: 29

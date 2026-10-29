@@ -1,0 +1,21 @@
+name: "A setClientInfo failure on an open pooled handle no longer fires connectionErrorOccurred"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  On an open pooled handle, a `setClientInfo` call that raises `SQLClientInfoException` fires
+  `ConnectionEventListener.connectionErrorOccurred` on the owning `PooledConnection` before the
+  exception reaches the caller.
+new_driver_behavior: |
+  The `SQLClientInfoException` reaches the caller and `connectionErrorOccurred` does not fire.
+description: |
+  `connectionErrorOccurred` signals a dead physical connection and typically triggers pool
+  eviction, which a rejected client-info property must not cause. `getClientInfo` raises no
+  `SQLClientInfoException` on either driver. `setClientInfo(null)` and an empty property set
+  are BD#23; a closed handle is BD#29.
+status_rationale: |
+  Intentional fix to avoid spurious pool eviction and churn when applications set client-info
+  properties on a pooled logical connection.
+legacy_id: 32

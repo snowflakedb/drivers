@@ -1,0 +1,21 @@
+name: "unwrap to an unsupported type on an open pooled handle no longer fires connectionErrorOccurred"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  On an open pooled handle, `unwrap` to a type the connection does not support throws
+  `SQLException` and fires `connectionErrorOccurred` on the owning `PooledConnection`.
+  `isWrapperFor` for that type returns false and fires no event.
+new_driver_behavior: |
+  `unwrap` to an unsupported type throws `SQLException`, with different message text, and
+  `connectionErrorOccurred` does not fire. `isWrapperFor` returns false.
+description: |
+  `connectionErrorOccurred` signals a dead physical connection and typically triggers pool
+  eviction, which a caller asking for an unsupported wrapper type must not cause. A closed
+  handle is BD#33.
+status_rationale: |
+  Intentional fix to avoid spurious pool eviction and churn when applications probe wrapper
+  types on a pooled logical connection.
+legacy_id: 35

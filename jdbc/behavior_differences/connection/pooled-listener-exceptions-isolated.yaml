@@ -1,0 +1,23 @@
+name: "A listener RuntimeException no longer stops event dispatch or escapes close()"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When one registered `ConnectionEventListener` throws a `RuntimeException`, the remaining
+  listeners receive no callback. On `close()` that `RuntimeException` propagates to the caller
+  and the logical handle stays open.
+new_driver_behavior: |
+  The `RuntimeException` is logged and the remaining listeners still receive the callback.
+  `close()` completes, and a `SQLException` raised by the close path itself is still thrown.
+  An `Error` from a listener propagates on both drivers.
+description: |
+  One misbehaving `ConnectionEventListener` can no longer break pool bookkeeping or an
+  application's close path. An application that relied on a listener exception aborting
+  `close()` sees the handle closed instead.
+status_rationale: |
+  `javax.sql.ConnectionEventListener` callbacks are notifications, and the pooling contract
+  gives a listener no way to veto a close, so dispatch is best-effort and isolated per
+  listener.
+legacy_id: 28

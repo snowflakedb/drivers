@@ -1,0 +1,23 @@
+name: "The JVM SOCKS system properties do not route the new driver's connections"
+status: allowed
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With `disableSocksProxy` unset or false, `-DsocksProxyHost` and `-DsocksProxyPort` apply to
+  the driver's HTTP sockets. `disableSocksProxy=true` (or `on`) opens those sockets with no
+  SOCKS proxy.
+new_driver_behavior: |
+  `-DsocksProxyHost` and `-DsocksProxyPort` have no effect, and `disableSocksProxy` is
+  accepted without changing routing. `useProxy`, `proxyHost`, and `proxyPort` configure an
+  HTTP or HTTPS proxy, and the JVM's `http.proxyHost` and `https.proxyHost` apply only when
+  `-Dhttp.useProxy=true`.
+description: |
+  A deployment that reached Snowflake only through a SOCKS proxy cannot connect until it is
+  pointed at an HTTP or HTTPS proxy; the HTTP proxy properties are not a substitute for a
+  proxy that speaks SOCKS alone.
+status_rationale: |
+  Accepted omission. SOCKS support is not implemented, and an HTTP or HTTPS proxy — which
+  the explicit properties already cover — is the common deployment.
+legacy_id: 64
