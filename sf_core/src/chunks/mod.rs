@@ -479,7 +479,7 @@ pub async fn get_chunk_data(
     let policy = RetryPolicy::default();
     let http_ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
 
-    let response = match execute_with_retry(
+    let mut response = match execute_with_retry(
         || client.get(url.clone()).headers(headers.clone()),
         &http_ctx,
         &policy,
@@ -516,30 +516,112 @@ pub async fn get_chunk_data(
         .fail()?;
     }
 
-    let body = response.bytes().await.context(CommunicationSnafu)?;
-    let bytes = body.to_vec();
+    let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
+    // One buffer for the body. reqwest drops `content_length()` after it
+    // inflates `Content-Encoding: gzip`, so the reservation falls back to
+    // `uncompressed_size`. A raw gzip body (GCS) still reports its compressed
+    // length. Both figures are advertisements: the reservation is capped, the
+    // read stops at `MAX_CHUNK_BYTES`, and spare capacity is released before
+    // return because the Arrow decoder keeps the allocation.
+    if let Some(len) = response.content_length() {
+        ensure_chunk_content_length(len)?;
+    }
+    let capacity = chunk_reservation(
+        response
+            .content_length()
+            .and_then(|len| usize::try_from(len).ok())
+            .unwrap_or(uncompressed_size),
+    );
+    let mut bytes = Vec::with_capacity(capacity);
+    while let Some(frame) = response.chunk().await.context(CommunicationSnafu)? {
+        append_chunk_bytes(&mut bytes, &frame)?;
+    }
     // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
     // body doesn't stall this runtime worker.
-    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes))
+    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
         .await
         .context(SpawnBlockingSnafu)?
 }
 
+/// First allocation taken from an advertised length. Larger bodies grow from
+/// here up to [`MAX_CHUNK_BYTES`].
+const MAX_CHUNK_RESERVATION: usize = 8 * 1024 * 1024;
+
+/// Largest chunk body accepted on the wire and after gzip inflate.
+const MAX_CHUNK_BYTES: usize = 1024 * 1024 * 1024;
+
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
-fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
-    if data.len() >= 2 && data[..2] == GZIP_MAGIC {
-        use flate2::bufread::GzDecoder;
-        use std::io::Read as _;
-        let mut decoder = GzDecoder::new(&data[..]);
-        let mut decompressed = Vec::new();
-        decoder
-            .read_to_end(&mut decompressed)
-            .context(ChunkDecompressionSnafu)?;
-        Ok(decompressed)
+fn chunk_reservation(advertised: usize) -> usize {
+    advertised.min(MAX_CHUNK_RESERVATION)
+}
+
+fn ensure_chunk_content_length(len: u64) -> Result<(), ChunkError> {
+    if len > MAX_CHUNK_BYTES as u64 {
+        ChunkTooLargeSnafu {
+            size: len,
+            max_size: MAX_CHUNK_BYTES,
+        }
+        .fail()
     } else {
+        Ok(())
+    }
+}
+
+fn append_chunk_bytes(buf: &mut Vec<u8>, frame: &[u8]) -> Result<(), ChunkError> {
+    append_limited(buf, frame, MAX_CHUNK_BYTES)
+}
+
+fn append_limited(buf: &mut Vec<u8>, frame: &[u8], max_bytes: usize) -> Result<(), ChunkError> {
+    let new_len = buf.len().saturating_add(frame.len());
+    if new_len > max_bytes {
+        return ChunkTooLargeSnafu {
+            size: new_len as u64,
+            max_size: max_bytes,
+        }
+        .fail();
+    }
+    buf.extend_from_slice(frame);
+    Ok(())
+}
+
+/// `Buffer::from_vec` retains this allocation for the life of the record batches.
+fn release_excess_capacity(buf: &mut Vec<u8>) {
+    let len = buf.len();
+    let spare = buf.capacity().saturating_sub(len);
+    if spare > len.max(64 * 1024) {
+        buf.shrink_to_fit();
+    }
+}
+
+fn maybe_decompress_gzip(
+    mut data: Vec<u8>,
+    uncompressed_size: usize,
+) -> Result<Vec<u8>, ChunkError> {
+    if data.len() >= 2 && data[..2] == GZIP_MAGIC {
+        inflate_gzip(&data, chunk_reservation(uncompressed_size), MAX_CHUNK_BYTES)
+    } else {
+        release_excess_capacity(&mut data);
         Ok(data)
     }
+}
+
+fn inflate_gzip(data: &[u8], reservation: usize, max_bytes: usize) -> Result<Vec<u8>, ChunkError> {
+    use flate2::bufread::GzDecoder;
+    use std::io::Read as _;
+
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = Vec::with_capacity(reservation.min(max_bytes));
+    let mut tmp = [0u8; 64 * 1024];
+    loop {
+        let n = decoder.read(&mut tmp).context(ChunkDecompressionSnafu)?;
+        if n == 0 {
+            break;
+        }
+        append_limited(&mut decompressed, &tmp[..n], max_bytes)?;
+    }
+    release_excess_capacity(&mut decompressed);
+    Ok(decompressed)
 }
 
 #[cfg(test)]
@@ -666,7 +748,8 @@ mod tests {
     #[test]
     fn maybe_decompress_gzip_leaves_plain_bytes_unchanged() {
         let plain = b"plain chunk body".to_vec();
-        let decompressed = maybe_decompress_gzip(plain.clone()).expect("plain bytes should pass");
+        let decompressed =
+            maybe_decompress_gzip(plain.clone(), plain.len()).expect("plain bytes should pass");
         assert_eq!(decompressed, plain);
     }
 
@@ -674,9 +757,66 @@ mod tests {
     fn maybe_decompress_gzip_inflates_gzip_payload() {
         let plain = b"[ \"1\" ], [ \"2\" ]";
         let compressed = gzip_compress(plain);
-        let decompressed =
-            maybe_decompress_gzip(compressed).expect("gzip payload should decompress");
+        // The size hint only pre-allocates; a wrong hint must not change output.
+        for hint in [0, 1, plain.len(), plain.len() * 4] {
+            let decompressed = maybe_decompress_gzip(compressed.clone(), hint)
+                .expect("gzip payload should decompress");
+            assert_eq!(decompressed, plain);
+        }
+    }
+
+    #[test]
+    fn chunk_reservation_caps_an_advertised_length() {
+        assert_eq!(chunk_reservation(0), 0);
+        assert_eq!(chunk_reservation(1024), 1024);
+        assert_eq!(chunk_reservation(usize::MAX), MAX_CHUNK_RESERVATION);
+    }
+
+    #[test]
+    fn ensure_chunk_content_length_rejects_an_advertised_length_over_the_ceiling() {
+        let err = ensure_chunk_content_length(MAX_CHUNK_BYTES as u64 + 1).unwrap_err();
+        assert!(matches!(
+            err,
+            ChunkError::ChunkTooLarge { max_size, .. } if max_size == MAX_CHUNK_BYTES
+        ));
+        assert!(ensure_chunk_content_length(MAX_CHUNK_BYTES as u64).is_ok());
+    }
+
+    #[test]
+    fn append_limited_rejects_a_frame_past_the_max() {
+        let mut buf = vec![0u8; 4];
+        let err = append_limited(&mut buf, &[1, 2], 5).unwrap_err();
+        assert!(matches!(
+            err,
+            ChunkError::ChunkTooLarge {
+                size: 6,
+                max_size: 5,
+                ..
+            }
+        ));
+        assert_eq!(buf.len(), 4);
+    }
+
+    #[test]
+    fn inflate_gzip_rejects_output_past_the_max() {
+        let plain = vec![b'a'; 8 * 1024];
+        let compressed = gzip_compress(&plain);
+        let err = inflate_gzip(&compressed, plain.len(), 64).unwrap_err();
+        assert!(matches!(err, ChunkError::ChunkTooLarge { .. }));
+    }
+
+    #[test]
+    fn maybe_decompress_gzip_releases_spare_capacity_from_a_high_hint() {
+        let plain = vec![b'x'; 64 * 1024];
+        let compressed = gzip_compress(&plain);
+        let decompressed = maybe_decompress_gzip(compressed, plain.len() * 8)
+            .expect("gzip payload should decompress");
         assert_eq!(decompressed, plain);
+        assert!(
+            decompressed.capacity() <= decompressed.len().saturating_mul(2),
+            "retained capacity {}",
+            decompressed.capacity()
+        );
     }
 
     #[test]
@@ -870,6 +1010,56 @@ mod tests {
             .expect("spawn_blocking should join");
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 2);
+    }
+
+    /// Each body shape must arrive intact whatever the reported size. A high
+    /// hint pre-allocates and is released; it does not stay in the returned buffer.
+    #[tokio::test]
+    async fn get_chunk_data_reads_plain_encoded_and_raw_gzip_bodies() {
+        // Large enough to arrive in several frames.
+        let plain: Vec<u8> = (0..300_000u32).flat_map(|i| i.to_le_bytes()).collect();
+        let compressed = gzip_compress(&plain);
+        let bodies = [
+            (
+                "plain",
+                ResponseTemplate::new(200).set_body_bytes(plain.clone()),
+            ),
+            (
+                "content-encoding gzip",
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Encoding", "gzip")
+                    .set_body_bytes(compressed.clone()),
+            ),
+            (
+                "raw gzip",
+                ResponseTemplate::new(200).set_body_bytes(compressed.clone()),
+            ),
+        ];
+        for (name, response) in bodies {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            for uncompressed_size in [0, 1, plain.len() as i64, plain.len() as i64 * 4] {
+                let chunk = ChunkDownloadData {
+                    url: server.uri(),
+                    row_count: 1,
+                    uncompressed_size,
+                    compressed_size: compressed.len() as i64,
+                    headers: HashMap::new(),
+                };
+                let bytes = get_chunk_data(Client::new(), chunk)
+                    .await
+                    .unwrap_or_else(|e| panic!("{name}: download failed: {e:?}"));
+                assert_eq!(bytes, plain, "{name} with size {uncompressed_size}");
+                assert!(
+                    bytes.capacity() <= bytes.len().saturating_mul(2),
+                    "{name} with size {uncompressed_size} retained capacity {}",
+                    bytes.capacity()
+                );
+            }
+        }
     }
 
     #[tokio::test]

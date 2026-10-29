@@ -54,6 +54,13 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Chunk of {size} bytes exceeds the {max_size} byte limit"))]
+    ChunkTooLarge {
+        size: u64,
+        max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Background chunk-decompression task failed to join"))]
     SpawnBlocking {
         source: tokio::task::JoinError,
