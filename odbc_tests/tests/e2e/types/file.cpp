@@ -38,15 +38,6 @@ void require_sql_varchar(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   REQUIRE(data_type == SQL_VARCHAR);
 }
 
-void require_type_name(const StatementHandleWrapper& stmt, SQLUSMALLINT col, const char* expected) {
-  SQLCHAR type_name[128] = {};
-  SQLSMALLINT name_len = 0;
-  SQLRETURN ret =
-      SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name), &name_len, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(std::string(reinterpret_cast<char*>(type_name), static_cast<std::size_t>(name_len)) == expected);
-}
-
 void require_varchar_descriptor(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   require_sql_varchar(stmt, col);
 
@@ -90,7 +81,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should cast FILE values to appropriate type
 
   // Then the FILE column should be returned as appropriate type with the expected JSON document
   require_sql_varchar(stmt, 1);
-  require_type_name(stmt, 1, "FILE");
+  require_sql_type_name(stmt, 1, "FILE");
   require_file_doc(get_data<SQL_C_CHAR>(stmt, 1), "some_new_file.jpeg", "@myStage");
 }
 
@@ -103,7 +94,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should report FILE as the column type name"
 
   // Then SQLDescribeCol reports SQL_VARCHAR and SQL_DESC_TYPE_NAME reports FILE
   require_sql_varchar(stmt, 1);
-  require_type_name(stmt, 1, "FILE");
+  require_sql_type_name(stmt, 1, "FILE");
 }
 
 TEST_CASE("should keep SQL_VARCHAR for FILE when ODBC_USE_CUSTOM_SQL_DATA_TYPES is flag_state", "[e2e][types][file]") {
@@ -126,7 +117,7 @@ TEST_CASE("should keep SQL_VARCHAR for FILE when ODBC_USE_CUSTOM_SQL_DATA_TYPES 
     } else {
       require_varchar_descriptor(stmt, 1);
     }
-    require_type_name(stmt, 1, "FILE");
+    require_sql_type_name(stmt, 1, "FILE");
   }
 }
 
@@ -217,9 +208,9 @@ TEST_CASE("should truncate FILE data as SQL_C_WCHAR when the buffer is too short
   const std::u32string truncated = sf::wide::decode_wide(buffer, units);
   CHECK(full.compare(0, truncated.size(), truncated) == 0);
   CHECK(truncated.size() == units);
-  const bool indicator_reports_full_length =
-      (indicator == SQL_NO_TOTAL) || (indicator > static_cast<SQLLEN>(sizeof(buffer)));
-  CHECK(indicator_reports_full_length);
+  const SQLLEN wide_bytes = static_cast<SQLLEN>(full.size() * sizeof(SQLWCHAR));
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == wide_bytes); }
+  OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == SQL_NO_TOTAL || indicator == wide_bytes)); }
 }
 
 TEST_CASE("should select a FILE value built by TO_FILE without a table", "[e2e][types][file]") {
