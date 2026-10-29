@@ -27209,6 +27209,11 @@ static inline int org_apache_arrow_flatbuf_Tensor_verify_as_root_with_type_hash(
 #include <stdio.h>
 #include <string.h>
 
+// FreeBSD errno.h has no ENODATA (nanoarrow uses 120).
+#ifndef ENODATA
+#define ENODATA 120
+#endif
+
 // For thread safe shared buffers we need C11 + stdatomic.h
 // Can compile with -DNANOARROW_IPC_USE_STDATOMIC=0 or 1 to override
 // automatic detection
