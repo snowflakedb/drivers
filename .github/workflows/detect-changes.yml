@@ -186,6 +186,7 @@ jobs:
               - 'thrift/**'
               - 'tests/definitions/core/**'
               - '.github/workflows/test-rust-core.yml'
+              - '.github/actions/ensure-rust-toolchain/**'
               - '.github/actions/setup-fips-build-env/**'
               - '.github/actions/setup-msvc/**'
               - '.github/actions/setup-windows-openssl/**'

@@ -6,7 +6,9 @@ description: >
   reports a binary conflict and leaves the toolchain half-installed.
   macOS ARM images can fail that same implicit install while downloading
   clippy, after which rustc and cargo are missing. A failed install removes
-  the toolchain and tries once more.
+  the toolchain — both via rustup and by deleting the toolchain directory,
+  since the conflicting bin/cargo-clippy is untracked by rustup and survives
+  `toolchain uninstall` — and tries once more.
 
 runs:
   using: composite
@@ -28,5 +30,12 @@ runs:
         if ! toolchain_ready; then
           echo "rustup left a partial '$channel' toolchain — removing and retrying"
           rustup toolchain uninstall "$channel" || true
+          # `toolchain uninstall` only removes files rustup tracks. The stray
+          # bin/cargo-clippy that triggers "detected conflict" is untracked, so
+          # delete the toolchain directory outright before reinstalling.
+          # Names are <channel>-<host>. Skip `rustup show`: the pinned toolchain
+          # is already gone, so it fails. `show home` falls back if it fails too.
+          rustup_home=$(rustup show home 2>/dev/null || echo "${RUSTUP_HOME:-$HOME/.rustup}")
+          rm -rf "$rustup_home/toolchains/${channel}-"* || true
           toolchain_ready
         fi
