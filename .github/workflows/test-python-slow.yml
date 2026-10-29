@@ -1,0 +1,165 @@
+name: Python Slow Tests
+
+# @pytest.mark.slow Python end-to-end tests. This workflow is separate from
+# test-python.yml. On a pull request the jobs run when the `ci:python-slow` label is
+# present. `labeled` is included so applying the label starts the lane without
+# a new push and without re-running Driver CI. workflow_dispatch runs the lane
+# on the selected ref, for one cloud or for all three.
+#
+# Ubuntu and Python 3.13 only, one job per cloud (aws, azure, gcp). The wheel
+# build is the manylinux CPython 3.13 wheel those jobs install.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      cloud_provider:
+        description: Cloud provider
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - aws
+          - azure
+          - gcp
+
+concurrency:
+  # PR number for PRs; unique run ID for dispatch so two manual runs cannot
+  # cancel each other (github.ref is refs/heads/main for every main run).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # uv defaults to 3 HTTP retries / 30s timeout. Match test-python.yml so a
+  # stalled index does not fail the lane after three short attempts.
+  UV_HTTP_RETRIES: "6"
+  UV_HTTP_TIMEOUT: "300"
+
+jobs:
+  build_wheel:
+    # Other PR events (including unrelated label changes) skip the job.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'ci:python-slow'))
+    uses: ./.github/workflows/_build-python-wheels.yml
+    with:
+      targets: '{"linux_x86":["3.13"]}'
+
+  python_slow_tests:
+    needs: build_wheel
+    if: >-
+      needs.build_wheel.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'ci:python-slow'))) &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.cloud_provider == 'all' ||
+       matrix.cloud_provider == inputs.cloud_provider)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        cloud_provider: [aws, azure, gcp]
+    name: python_slow_tests (ubuntu-latest, py3.13, ${{ matrix.cloud_provider }})
+    steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.13.5"
+
+      - name: Restore uv cache
+        id: uv-cache-slow
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: /tmp/.uv-cache
+          key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-ubuntu-latest-3.13-test-
+            uv-ubuntu-latest-3.13-
+            uv-ubuntu-latest-
+
+      - name: Set up Python 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
+
+      - name: Download wheel
+        uses: ./.github/actions/download-artifact-retry
+        with:
+          name: manylinux_x86_64_py3.13
+          path: python/dist
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+        shell: bash
+
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
+        shell: bash
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Install snowflake ud driver from wheel
+        working-directory: python
+        run: |
+          WHEELS=(dist/*.whl)
+          if [[ ${#WHEELS[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 wheel, found ${#WHEELS[@]}"; ls -la dist/; exit 1
+          fi
+          export WHEEL_PATH="${WHEELS[0]}"
+          echo "Installing wheel: $WHEEL_PATH"
+          hatch run test.py3.13:install-wheel
+
+      - name: Run slow tests
+        working-directory: python
+        # Exit code 5 means "no tests collected". The lane is opt-in and a
+        # PR can carry ci:python-slow before any test is marked slow.
+        run: |
+          set +e
+          hatch run test.py3.13:e2e \
+            -m "slow and not flaky and not requires_no_mfa" \
+            -n 0 \
+            --reruns 0 \
+            --timeout=3600 \
+            --no-cov
+          status=$?
+          if [[ $status -eq 5 ]]; then
+            echo "::notice::No tests marked @pytest.mark.slow — skipping."
+            exit 0
+          fi
+          exit $status
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
+      - name: Prune uv cache
+        if: always()
+        shell: bash
+        run: uv cache prune --ci
+
+      - name: Save uv cache
+        if: always() && steps.uv-cache-slow.outputs.cache-hit != 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          ZSTD_NBTHREADS: '2'
+        uses: actions/cache/save@v6
+        with:
+          path: /tmp/.uv-cache
+          key: uv-ubuntu-latest-3.13-test-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}

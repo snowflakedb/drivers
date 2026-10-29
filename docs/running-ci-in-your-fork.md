@@ -86,6 +86,12 @@ runs in *your* fork, using the trigger above.
   job are scheduled/dispatch-only.
 - The **SPCS** end-to-end suite runs only when a pull request carries the
   `ci:spcs` label, and needs SPCS provisioning on your account.
+- **Python slow tests** (`@pytest.mark.slow`) run from their own workflow,
+  the same way as SPCS: only when a pull request carries the `ci:python-slow` label.
+  Applying the label starts that workflow and leaves Driver CI alone. The
+  lane is Ubuntu and Python 3.13, once per cloud (`aws`, `azure`, `gcp`), so
+  all three parameter secrets are required. `workflow_dispatch` runs it on
+  the selected ref for one cloud (`aws`, `azure`, or `gcp`) or for all three.
 
 ## Troubleshooting
 
