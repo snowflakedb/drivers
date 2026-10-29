@@ -101,6 +101,38 @@ class StatementTypeClassifierTest {
         "Non-DML statements should return zero update count");
   }
 
+  @Test
+  void testKnownDmlWithoutRowsAffectedReportsZeroUpdateCount() {
+    ResultSetDescriptor descriptor =
+        ResultSetDescriptor.newBuilder().setStatementTypeId(INSERT_TYPE_ID).build();
+
+    assertFalse(StatementTypeClassifier.producesResultSet(descriptor));
+    assertEquals(0L, StatementTypeClassifier.getUpdateCount(descriptor));
+  }
+
+  // Only SCL, TCL and DDL fall back to their category; every other unmapped id is UNKNOWN.
+  @ParameterizedTest
+  @ValueSource(longs = {0x4FFFL, 0x5FFFL, 0x6FFFL})
+  void testLastIdInFallbackCategoriesStaysInCategory(long statementTypeId) {
+    ResultSetDescriptor descriptor = descriptor(statementTypeId, 17L);
+
+    assertFalse(StatementTypeClassifier.producesResultSet(descriptor));
+    assertEquals(0L, StatementTypeClassifier.getUpdateCount(descriptor));
+  }
+
+  // These IDs sit outside every mapped type and every non-result category fallback. Result-set
+  // outcomes for nearby bands (SELECT/EXPLAIN/stage-file) would still pass if a category
+  // fallback were added there, so they are not used here.
+  @ParameterizedTest
+  @ValueSource(longs = {-1L, 0x3FFFL, 0x8000L})
+  void testIdsOutsideMappedTypesAndFallbackCategoriesBehaveLikeUnknown(long statementTypeId) {
+    ResultSetDescriptor descriptor = descriptor(statementTypeId, 19L);
+
+    assertTrue(StatementTypeClassifier.producesResultSet(descriptor));
+    assertTrue(StatementTypeClassifier.producesResultSet(statementTypeId));
+    assertEquals(-1L, StatementTypeClassifier.getUpdateCount(descriptor));
+  }
+
   private static ResultSetDescriptor descriptor(long statementTypeId, long rowsAffected) {
     return ResultSetDescriptor.newBuilder()
         .setStatementTypeId(statementTypeId)

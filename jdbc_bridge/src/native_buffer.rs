@@ -126,4 +126,51 @@ mod tests {
             .allocate(vec![4, 5])
             .expect("allocation fits after release");
     }
+
+    #[test]
+    fn allocate_accepts_exactly_the_byte_limit() {
+        let registry = NativeBufferRegistry::with_limit(4);
+        registry
+            .allocate(vec![1, 2, 3, 4])
+            .expect("allocation equal to the limit");
+        assert_eq!(registry.allocated_bytes(), 4);
+        let error = registry
+            .allocate(vec![5])
+            .expect_err("one byte over the limit");
+        assert_eq!(
+            error,
+            "Native binding buffer limit exceeded: allocated=4, requested=1, limit=4"
+        );
+        assert_eq!(registry.allocated_bytes(), 4);
+    }
+
+    #[test]
+    fn zero_length_buffers_get_distinct_handles_and_count_no_bytes() {
+        // Empty Box<[u8]> uses the dangling alignment pointer (address 1 for u8), so
+        // every zero-length allocation shares that address. The handle is the identity.
+        let registry = NativeBufferRegistry::with_limit(0);
+        let (first, first_address) = registry.allocate(Vec::new()).expect("empty buffer");
+        let (second, second_address) = registry.allocate(Vec::new()).expect("empty buffer");
+        assert_ne!(first, 0);
+        assert_ne!(first, second);
+        assert_ne!(first_address, 0);
+        assert_ne!(second_address, 0);
+        assert_eq!(registry.allocated_bytes(), 0);
+        registry.release(first);
+        registry.release(second);
+        assert_eq!(registry.allocated_bytes(), 0);
+    }
+
+    #[test]
+    fn release_ignores_unknown_and_already_released_handles() {
+        let registry = NativeBufferRegistry::new();
+        let (handle, _) = registry.allocate(vec![1, 2]).expect("buffer allocates");
+        let (other, other_address) = registry.allocate(vec![3]).expect("buffer allocates");
+        registry.release(0);
+        registry.release(u64::MAX);
+        registry.release(handle);
+        registry.release(handle);
+        assert_eq!(registry.allocated_bytes(), 1);
+        assert_eq!(registry.address_of(other), Some(other_address));
+    }
 }

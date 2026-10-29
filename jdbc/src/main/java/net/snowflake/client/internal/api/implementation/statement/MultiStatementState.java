@@ -51,13 +51,13 @@ class MultiStatementState {
    * if available.
    */
   boolean producesResultSet(int index) {
-    if (index < childStatementTypeIds.size()) {
+    if (hasStatementTypeFor(index)) {
       return StatementTypeClassifier.producesResultSet(childStatementTypeIds.get(index));
     }
     return false;
   }
 
   boolean hasStatementTypeFor(int index) {
-    return index < childStatementTypeIds.size();
+    return index >= 0 && index < childStatementTypeIds.size();
   }
 }

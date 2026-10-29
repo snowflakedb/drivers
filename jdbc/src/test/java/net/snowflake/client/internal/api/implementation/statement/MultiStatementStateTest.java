@@ -71,6 +71,74 @@ class MultiStatementStateTest {
 
     assertFalse(state.hasMore());
     assertNull(state.advance());
+    assertEquals(2, state.currentIndex(), "Advancing past the end must not move the cursor");
+  }
+
+  @Test
+  void currentIndexBeforeFirstAdvanceHasNoStatementType() {
+    MultiStatementResult multi =
+        MultiStatementResult.newBuilder()
+            .setParent(ResultSetDescriptor.newBuilder().setQueryId("p"))
+            .addQueryIds("q1")
+            .addStatementTypeIds(0x1000L)
+            .build();
+
+    MultiStatementState state = MultiStatementState.from(multi);
+
+    assertEquals(-1, state.currentIndex());
+    assertFalse(state.hasStatementTypeFor(state.currentIndex()));
+    assertFalse(state.producesResultSet(state.currentIndex()));
+  }
+
+  @Test
+  void negativeIndexHasNoStatementTypeWhenTypesAreEmpty() {
+    MultiStatementResult multi =
+        MultiStatementResult.newBuilder()
+            .setParent(ResultSetDescriptor.newBuilder().setQueryId("p"))
+            .build();
+
+    MultiStatementState state = MultiStatementState.from(multi);
+
+    assertFalse(state.hasStatementTypeFor(-1));
+    assertFalse(state.producesResultSet(-1));
+  }
+
+  @Test
+  void childWithoutStatementTypeReportsNoTypeAndNoResultSet() {
+    MultiStatementResult multi =
+        MultiStatementResult.newBuilder()
+            .setParent(ResultSetDescriptor.newBuilder().setQueryId("p"))
+            .addQueryIds("q1")
+            .addQueryIds("q2")
+            .addStatementTypeIds(0x1000L)
+            .build();
+
+    MultiStatementState state = MultiStatementState.from(multi);
+
+    assertEquals("q1", state.advance());
+    assertTrue(state.producesResultSet(state.currentIndex()));
+    assertEquals("q2", state.advance());
+    assertFalse(
+        state.hasStatementTypeFor(state.currentIndex()),
+        "Callers must fall back to the child descriptor when the server sent fewer types");
+    assertFalse(state.producesResultSet(state.currentIndex()));
+  }
+
+  @Test
+  void extraStatementTypesBeyondChildrenDoNotExtendNavigation() {
+    MultiStatementResult multi =
+        MultiStatementResult.newBuilder()
+            .setParent(ResultSetDescriptor.newBuilder().setQueryId("p"))
+            .addQueryIds("q1")
+            .addStatementTypeIds(0x3100L)
+            .addStatementTypeIds(0x1000L)
+            .build();
+
+    MultiStatementState state = MultiStatementState.from(multi);
+
+    assertEquals("q1", state.advance());
+    assertFalse(state.hasMore());
+    assertNull(state.advance());
   }
 
   @Test
@@ -107,6 +175,32 @@ class MultiStatementStateTest {
 
     assertTrue(state.producesResultSet(0));
     assertFalse(state.producesResultSet(1));
+  }
+
+  @Test
+  void producesResultSetReflectsCopyUnloadAndPartitionedUnloadStatementTypes() {
+    MultiStatementResult multi =
+        MultiStatementResult.newBuilder()
+            .setParent(ResultSetDescriptor.newBuilder().setQueryId("p"))
+            .addQueryIds("copy-child")
+            .addQueryIds("unload-child")
+            .addQueryIds("partitioned-unload-child")
+            .addStatementTypeIds(0x3600L)
+            .addStatementTypeIds(0x3700L)
+            .addStatementTypeIds(0x3701L)
+            .build();
+
+    MultiStatementState state = MultiStatementState.from(multi);
+
+    assertFalse(
+        state.producesResultSet(0),
+        "COPY child should follow JDBC execute() semantics without a result set");
+    assertFalse(
+        state.producesResultSet(1),
+        "Plain UNLOAD child should follow JDBC execute() semantics without a result set");
+    assertTrue(
+        state.producesResultSet(2),
+        "Partitioned unload subtypes stay unmapped and expose result-set semantics");
   }
 
   @Test
