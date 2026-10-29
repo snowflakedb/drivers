@@ -184,6 +184,13 @@ jobs:
           go-version: 'stable'
           cache: false
 
+      # ubuntu-24.04-arm ships a rustup toolchain that already contains
+      # cargo-fmt. The first cargo invocation installs the toolchain from
+      # rust-toolchain.toml, reports a binary conflict, and leaves that
+      # toolchain half-installed. Install it explicitly before cargo test.
+      - name: Ensure Rust toolchain is cleanly installed
+        uses: ./.github/actions/ensure-rust-toolchain
+
       - name: Run SPCS e2e test
         env:
           SPCS_PROBE_IMAGE: ${{ steps.repo.outputs.image_path }}
