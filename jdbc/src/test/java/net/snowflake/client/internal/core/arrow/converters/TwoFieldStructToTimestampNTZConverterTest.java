@@ -48,6 +48,33 @@ public class TwoFieldStructToTimestampNTZConverterTest extends BaseConverterTest
   }
 
   @Test
+  public void shouldReadReloadedStructFieldsWithoutRebuildingConverter() throws Exception {
+    try (ColumnBatch root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
+      Column vector = root.column("col");
+      TwoFieldStructToTimestampNTZConverter converter =
+          new TwoFieldStructToTimestampNTZConverter(vector, 0, noClientTzShift(), 9);
+
+      Timestamp firstBatch = new Timestamp(EPOCH_SECONDS * 1_000L);
+      firstBatch.setNanos(FRACTION_NANOS);
+      assertEquals(firstBatch, converter.toTimestamp(0, null));
+
+      long reloadedEpoch = EPOCH_SECONDS + 86_400L;
+      int reloadedFraction = 987_654_321;
+      ColumnBuilder.set(
+          vector.child(AbstractArrowVectorConverter.FIELD_NAME_EPOCH), 0, reloadedEpoch);
+      ColumnBuilder.set(
+          vector.child(AbstractArrowVectorConverter.FIELD_NAME_FRACTION), 0, reloadedFraction);
+
+      Timestamp reloaded = new Timestamp(reloadedEpoch * 1_000L);
+      reloaded.setNanos(reloadedFraction);
+      assertEquals(
+          reloaded,
+          converter.toTimestamp(0, null),
+          "converter must observe in-place struct reloads on the reused vector");
+    }
+  }
+
+  @Test
   public void shouldReturnNullForNullStructRow() throws Exception {
     try (ColumnBatch root = twoFieldRoot(EPOCH_SECONDS, FRACTION_NANOS)) {
       Column vector = root.column("col");

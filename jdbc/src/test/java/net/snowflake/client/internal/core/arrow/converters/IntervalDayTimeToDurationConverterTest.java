@@ -136,4 +136,23 @@ public class IntervalDayTimeToDurationConverterTest extends BaseConverterTest {
       vector.close();
     }
   }
+
+  @Test
+  public void shouldReadReloadedNanosWithoutRebuildingConverter() throws Exception {
+    Column vector = createVector(2L * NANOS_IN_SECOND);
+    try {
+      IntervalDayTimeToDurationConverter converter =
+          new IntervalDayTimeToDurationConverter(vector, 0, this);
+      assertEquals(Duration.ofSeconds(2), converter.toDuration(0));
+
+      ColumnBuilder.set(vector, 0, -(5L * NANOS_IN_SECOND + 125_000_000L));
+      assertEquals(
+          Duration.ofSeconds(5, 125_000_000L).negated(),
+          converter.toDuration(0),
+          "interval day-time converter must observe in-place vector reloads between batches");
+      assertEquals("PT-5.125S", converter.toString(0));
+    } finally {
+      vector.close();
+    }
+  }
 }

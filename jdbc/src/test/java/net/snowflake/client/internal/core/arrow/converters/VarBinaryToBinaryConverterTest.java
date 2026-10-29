@@ -126,4 +126,24 @@ public class VarBinaryToBinaryConverterTest extends BaseConverterTest {
   public void shouldDefaultToHexWhenSessionParameterIsAbsent() {
     assertEquals(BinaryOutputFormat.HEX, new BaseConverterTest().getBinaryOutputFormat());
   }
+
+  @Test
+  public void shouldReadReloadedBinaryBytesWithoutRebuildingConverter() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "BINARY");
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.BINARY, customFieldMeta);
+    try {
+      ColumnBuilder.set(vector, 0, new byte[] {0x0A, 0x0B});
+      ColumnBuilder.setValueCount(vector, 1);
+
+      VarBinaryToBinaryConverter converter = new VarBinaryToBinaryConverter(vector, 0, this);
+      assertEquals("0A0B", converter.toString(0));
+
+      ColumnBuilder.set(vector, 0, new byte[] {(byte) 0xFE, 0x01});
+      assertEquals("FE01", converter.toString(0));
+      assertArrayEquals(new byte[] {(byte) 0xFE, 0x01}, converter.toBytes(0));
+    } finally {
+      vector.close();
+    }
+  }
 }

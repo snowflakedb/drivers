@@ -132,6 +132,24 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
   }
 
   @Test
+  public void shouldReadReloadedMonthsWithoutRebuildingConverter() throws Exception {
+    Column vector = createSmallIntVector((short) 12);
+    try {
+      IntervalYearMonthToPeriodConverter converter =
+          new IntervalYearMonthToPeriodConverter(vector, 0, this);
+      assertEquals(Period.of(1, 0, 0), converter.toPeriod(0));
+
+      ColumnBuilder.set(vector, 0, (short) 25);
+      assertEquals(
+          Period.of(2, 1, 0),
+          converter.toPeriod(0),
+          "interval converter must observe in-place vector reloads between batches");
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
   public void shouldReturnNullForNullInterval() throws Exception {
     Column vector = createSmallIntVector((short) 12, null);
     try {
@@ -141,6 +159,23 @@ public class IntervalYearMonthToPeriodConverterTest extends BaseConverterTest {
       assertNull(converter.toPeriod(1));
       assertNull(converter.toObject(1));
       assertNull(converter.toString(1));
+    } finally {
+      vector.close();
+    }
+  }
+
+  @Test
+  public void shouldConvertTinyIntMonthsToPeriodAndDispatchViaUtil() throws Exception {
+    Column vector =
+        ColumnBuilder.of("col_interval_ym_sb1", Column.PhysicalKind.INT8, intervalFieldMeta());
+    try {
+      ColumnBuilder.set(vector, 0, (byte) -15);
+      ColumnBuilder.setValueCount(vector, 1);
+
+      ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
+      assertInstanceOf(IntervalYearMonthToPeriodConverter.class, converter);
+      assertEquals(Period.of(-1, -3, 0), converter.toPeriod(0));
+      assertEquals("P-1Y-3M", converter.toString(0));
     } finally {
       vector.close();
     }

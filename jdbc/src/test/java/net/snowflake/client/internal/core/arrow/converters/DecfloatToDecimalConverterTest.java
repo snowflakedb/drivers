@@ -75,6 +75,13 @@ public class DecfloatToDecimalConverterTest extends BaseConverterTest {
       TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toLong(4));
       TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBytes(0));
       TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
+
+      ColumnBuilder.set(significand, 0, new BigInteger("42").toByteArray());
+      ColumnBuilder.set(exponent, 0, (short) 0);
+      assertEquals(new BigDecimal("42"), converter.toBigDecimal(0));
+      assertEquals((short) 42, converter.toShort(0));
+      assertEquals(42, converter.toInt(0));
+      assertEquals(42L, converter.toLong(0));
     }
   }
 

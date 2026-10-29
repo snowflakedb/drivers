@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.util.ArrayList;
@@ -115,6 +116,53 @@ public class VarCharConverterTest extends BaseConverterTest {
         invalidConversionErrorCode, () -> converter.toDate(2, TimeZone.getDefault(), false));
 
     vector.close();
+  }
+
+  @Test
+  public void shouldConvertTextToNumericTypesAndReloadInPlace() throws Exception {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "TEXT");
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.UTF8, customFieldMeta);
+    try {
+      ColumnBuilder.set(vector, 0, "123".getBytes(StandardCharsets.UTF_8));
+      ColumnBuilder.set(vector, 1, "45.67".getBytes(StandardCharsets.UTF_8));
+      ColumnBuilder.set(vector, 2, "TRUE".getBytes(StandardCharsets.UTF_8));
+      ColumnBuilder.set(vector, 3, "False".getBytes(StandardCharsets.UTF_8));
+      ColumnBuilder.set(vector, 4, "not_a_number".getBytes(StandardCharsets.UTF_8));
+      ColumnBuilder.setNull(vector, 5);
+      ColumnBuilder.setValueCount(vector, 6);
+
+      VarCharConverter converter = new VarCharConverter(vector, 0, this);
+
+      assertEquals((short) 123, converter.toShort(0));
+      assertEquals(123, converter.toInt(0));
+      assertEquals(123L, converter.toLong(0));
+      assertEquals(45.67f, converter.toFloat(1), 0.001f);
+      assertEquals(45.67d, converter.toDouble(1), 0.001d);
+      assertEquals(new BigDecimal("45.67"), converter.toBigDecimal(1));
+      assertTrue(converter.toBoolean(2));
+      assertFalse(converter.toBoolean(3));
+
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toShort(4));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toInt(4));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toLong(4));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toFloat(4));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toDouble(4));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBigDecimal(4));
+
+      assertEquals((short) 0, converter.toShort(5));
+      assertEquals(0, converter.toInt(5));
+      assertEquals(0L, converter.toLong(5));
+      assertEquals(0.0f, converter.toFloat(5));
+      assertEquals(0.0d, converter.toDouble(5));
+      assertNull(converter.toBigDecimal(5));
+
+      ColumnBuilder.set(vector, 0, "987".getBytes(StandardCharsets.UTF_8));
+      assertEquals("987", converter.toString(0));
+      assertEquals(987, converter.toInt(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @ParameterizedTest

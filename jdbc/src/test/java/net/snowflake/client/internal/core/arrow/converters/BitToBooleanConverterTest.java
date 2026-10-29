@@ -73,4 +73,38 @@ public class BitToBooleanConverterTest extends BaseConverterTest {
     }
     ColumnBuilder.clear(vector);
   }
+
+  @Test
+  public void shouldReadReloadedBitsAcrossByteBoundariesWithoutRebuildingConverter() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "BOOLEAN");
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.BOOL, customFieldMeta);
+    try {
+      ColumnBuilder.set(vector, 0, 1);
+      ColumnBuilder.set(vector, 7, 0);
+      ColumnBuilder.set(vector, 8, 0);
+      ColumnBuilder.set(vector, 9, 1);
+      ColumnBuilder.setValueCount(vector, 10);
+
+      BitToBooleanConverter converter = new BitToBooleanConverter(vector, 0, this);
+      assertTrue(converter.toBoolean(0));
+      assertFalse(converter.toBoolean(7));
+      assertFalse(converter.toBoolean(8));
+      assertTrue(converter.toBoolean(9));
+
+      ColumnBuilder.set(vector, 0, 0);
+      ColumnBuilder.set(vector, 7, 1);
+      ColumnBuilder.set(vector, 8, 1);
+      ColumnBuilder.set(vector, 9, 0);
+
+      assertFalse(converter.toBoolean(0));
+      assertTrue(converter.toBoolean(7));
+      assertTrue(converter.toBoolean(8));
+      assertFalse(converter.toBoolean(9));
+      assertEquals("TRUE", converter.toString(8));
+      assertEquals("FALSE", converter.toString(9));
+    } finally {
+      vector.close();
+    }
+  }
 }

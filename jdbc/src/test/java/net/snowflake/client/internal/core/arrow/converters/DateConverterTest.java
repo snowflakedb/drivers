@@ -362,4 +362,23 @@ public class DateConverterTest extends BaseConverterTest {
       vector.close();
     }
   }
+
+  @Test
+  public void shouldReadReloadedEpochDaysWithoutRebuildingConverter() throws Exception {
+    int initialDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
+    int reloadedDay = (int) LocalDate.of(2026, 10, 23).toEpochDay();
+    Column vector = createVector(initialDay);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
+      assertEquals("2024-01-15", converter.toString(0));
+      assertEquals(initialDay, converter.toInt(0));
+
+      ColumnBuilder.set(vector, 0, reloadedDay);
+      assertEquals("2026-10-23", converter.toString(0));
+      assertEquals(reloadedDay, converter.toInt(0));
+      assertEquals(Date.valueOf("2026-10-23"), converter.toDate(0, null, false));
+    } finally {
+      vector.close();
+    }
+  }
 }

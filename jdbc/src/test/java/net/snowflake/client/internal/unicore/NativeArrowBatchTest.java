@@ -70,4 +70,61 @@ class NativeArrowBatchTest {
 
     assertEquals("Native Arrow buffer must be direct", failure.getMessage());
   }
+
+  @Test
+  void shouldConvertNestedChildArraysAndPreserveNativeByteOrder() {
+    ByteBuffer parentValidity = ByteBuffer.allocateDirect(1);
+    ByteBuffer childValues = ByteBuffer.allocateDirect(8);
+    Object child = new Object[] {null, null, childValues, new Object[0]};
+    Object parent = new Object[] {parentValidity, null, null, new Object[] {child}};
+    NativeArrowBatch batch = NativeArrowBatch.fromNative(new Object[] {2, new Object[] {parent}});
+
+    assertEquals(2, batch.getRowCount());
+    NativeArrowBatch.NativeArrowArray parentArray = batch.getColumns()[0];
+    assertSame(parentValidity, parentArray.getValidity());
+    assertEquals(ByteOrder.nativeOrder(), parentArray.getValidity().order());
+    assertEquals(1, parentArray.getChildren().length);
+
+    NativeArrowBatch.NativeArrowArray childArray = parentArray.getChildren()[0];
+    assertSame(childValues, childArray.getValues());
+    assertEquals(ByteOrder.nativeOrder(), childArray.getValues().order());
+  }
+
+  @Test
+  void shouldRejectMalformedNativeBatchShapes() {
+    assertThrows(IllegalStateException.class, () -> NativeArrowBatch.fromNative("not an array"));
+    assertThrows(IllegalStateException.class, () -> NativeArrowBatch.fromNative(new Object[] {1}));
+    assertThrows(
+        IllegalStateException.class,
+        () -> NativeArrowBatch.fromNative(new Object[] {"not an int", new Object[0]}));
+    assertThrows(
+        IllegalStateException.class,
+        () -> NativeArrowBatch.fromNative(new Object[] {1, "not an Object[]"}));
+  }
+
+  @Test
+  void shouldRejectMalformedNativeColumnAndNonDirectBuffers() {
+    assertThrows(
+        IllegalStateException.class,
+        () -> NativeArrowBatch.fromNative(new Object[] {1, new Object[] {"not an array"}}));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            NativeArrowBatch.fromNative(
+                new Object[] {1, new Object[] {new Object[] {null, null, null}}}));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            NativeArrowBatch.fromNative(
+                new Object[] {
+                  1, new Object[] {new Object[] {null, null, "not a buffer", new Object[0]}}
+                }));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            NativeArrowBatch.fromNative(
+                new Object[] {
+                  1, new Object[] {new Object[] {null, null, ByteBuffer.allocate(4), new Object[0]}}
+                }));
+  }
 }

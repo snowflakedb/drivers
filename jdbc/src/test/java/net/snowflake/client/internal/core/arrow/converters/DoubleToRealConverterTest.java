@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -77,5 +78,36 @@ public class DoubleToRealConverterTest extends BaseConverterTest {
       }
     }
     ColumnBuilder.clear(vector);
+  }
+
+  @Test
+  public void shouldConvertDoubleToIntegralAndBigDecimalAndReloadInPlace() throws Exception {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "REAL");
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.FLOAT64, customFieldMeta);
+    try {
+      ColumnBuilder.set(vector, 0, 42.75d);
+      ColumnBuilder.setNull(vector, 1);
+      ColumnBuilder.setValueCount(vector, 2);
+
+      DoubleToRealConverter converter = new DoubleToRealConverter(vector, 0, this);
+
+      assertEquals((short) 42, converter.toShort(0));
+      assertEquals(42, converter.toInt(0));
+      assertEquals(42L, converter.toLong(0));
+      assertEquals(BigDecimal.valueOf(42.75d), converter.toBigDecimal(0));
+
+      assertEquals((short) 0, converter.toShort(1));
+      assertEquals(0, converter.toInt(1));
+      assertEquals(0L, converter.toLong(1));
+      assertNull(converter.toBigDecimal(1));
+
+      ColumnBuilder.set(vector, 0, -12.5d);
+      assertEquals(-12.5d, converter.toDouble(0));
+      assertEquals(-12, converter.toInt(0));
+      assertEquals(BigDecimal.valueOf(-12.5d), converter.toBigDecimal(0));
+    } finally {
+      vector.close();
+    }
   }
 }

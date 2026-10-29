@@ -305,4 +305,24 @@ public class TimeConverterTest extends BaseConverterTest {
       vector.close();
     }
   }
+
+  @Test
+  public void shouldReadReloadedTimeUnitsAndRawIntBytesWithoutRebuildingConverter()
+      throws Exception {
+    Column vector = createIntVector(0, 45_296);
+    try {
+      TimeConverter converter = new TimeConverter(vector, 0, this, 0);
+      assertEquals("12:34:56", converter.toString(0));
+      assertArrayEquals(
+          ByteBuffer.allocate(Integer.BYTES).putInt(45_296).array(), converter.toBytes(0));
+
+      ColumnBuilder.set(vector, 0, 3_661);
+      assertEquals("01:01:01", converter.toString(0));
+      assertEquals(new Time(3_661_000L), converter.toTime(0));
+      assertArrayEquals(
+          ByteBuffer.allocate(Integer.BYTES).putInt(3_661).array(), converter.toBytes(0));
+    } finally {
+      vector.close();
+    }
+  }
 }
