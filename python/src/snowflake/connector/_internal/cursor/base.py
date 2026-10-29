@@ -706,6 +706,11 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
             raise ProgrammingError("Invalid errorhandler is specified")
         self._errorhandler = value
 
+    def _resolve_force_microsecond_precision(self, override: bool | None) -> bool:
+        if override is None:
+            return bool(self._connection.force_microsecond_precision)
+        return bool(override)
+
     # ------------------------------------------------------------------
     # Optional dependency checks
     # ------------------------------------------------------------------

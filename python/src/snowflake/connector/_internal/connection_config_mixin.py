@@ -70,6 +70,13 @@ class ConnectionConfigMixin:
     arrow_number_to_decimal: bool | None = None
     """Convert Arrow NUMBER columns to Python Decimal."""
 
+    force_microsecond_precision: bool | None = None
+    """When true, ``fetch_arrow_*`` and ``fetch_pandas_*`` truncate timestamps to microseconds.
+
+    Those methods use this value when the call omits ``force_microsecond_precision``.
+    A per-call argument overrides it. An unset value is false.
+    """
+
     paramstyle: str | None = None
     """PEP 249 parameter binding style."""
 
@@ -153,6 +160,7 @@ class ConnectionConfigMixin:
             "session_parameters",
             "numpy",
             "arrow_number_to_decimal",
+            "force_microsecond_precision",
             "paramstyle",
             "autocommit",
             "mfa_callback",

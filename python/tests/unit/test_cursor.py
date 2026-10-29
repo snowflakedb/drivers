@@ -1598,6 +1598,7 @@ class TestFetchArrowBatches:
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
         mock_connection.config.use_core_arrow = False
+        mock_connection.force_microsecond_precision = False
         return mock_connection
 
     @pytest.fixture
@@ -1674,6 +1675,7 @@ class TestFetchArrowAll:
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
         mock_connection.config.use_core_arrow = False
+        mock_connection.force_microsecond_precision = False
         return mock_connection
 
     @pytest.fixture
@@ -1767,6 +1769,7 @@ class TestFetchPandasBatches:
     def mock_connection(self):
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
+        mock_connection.force_microsecond_precision = False
         return mock_connection
 
     @pytest.fixture
@@ -1824,6 +1827,7 @@ class TestFetchPandasAll:
     def mock_connection(self):
         mock_connection = MagicMock()
         mock_connection.is_closed.return_value = False
+        mock_connection.force_microsecond_precision = False
         return mock_connection
 
     @pytest.fixture
@@ -1881,6 +1885,26 @@ class TestFetchPandasAll:
             cursor.fetch_pandas_all(force_microsecond_precision=True)
 
         mock_fetch.assert_called_once_with(force_return_table=True, force_microsecond_precision=True)
+
+
+class TestResolveForceMicrosecondPrecision:
+    """A call argument wins. An omitted argument uses the connection value."""
+
+    @pytest.mark.parametrize(
+        ("connection_value", "override", "expected"),
+        [
+            (None, None, False),
+            (False, None, False),
+            (True, None, True),
+            (True, False, False),
+            (False, True, True),
+        ],
+    )
+    def test_merges_connection_and_call(self, connection_value, override, expected):
+        connection = MagicMock()
+        connection.force_microsecond_precision = connection_value
+        cursor = SnowflakeCursor(connection)
+        assert cursor._resolve_force_microsecond_precision(override) is expected
 
 
 class TestReset:
@@ -4359,6 +4383,7 @@ class TestAsyncFetchPandasKwargs:
     def mock_connection(self):
         conn = MagicMock()
         conn.is_closed = MagicMock(return_value=False)
+        conn.force_microsecond_precision = False
         return conn
 
     @pytest.fixture

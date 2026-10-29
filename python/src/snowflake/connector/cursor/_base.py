@@ -914,9 +914,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     @with_prefetch_hook
     def fetch_arrow_batches(
         self,
-        force_microsecond_precision: bool = False,
+        force_microsecond_precision: bool | None = None,
     ) -> Iterator[Table]:
-        """Fetch Arrow Tables in batches."""
+        """Fetch Arrow Tables in batches.
+
+        Timestamp values stay at nanosecond precision unless
+        ``force_microsecond_precision`` is true. When the argument is omitted,
+        the connection's ``force_microsecond_precision`` is used.
+        """
+        force_microsecond_precision = self._resolve_force_microsecond_precision(force_microsecond_precision)
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
@@ -935,9 +941,15 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def fetch_arrow_all(
         self,
         force_return_table: bool = False,
-        force_microsecond_precision: bool = False,
+        force_microsecond_precision: bool | None = None,
     ) -> Table | None:
-        """Fetch all results as a single Arrow Table."""
+        """Fetch all results as a single Arrow Table.
+
+        Timestamp values stay at nanosecond precision unless
+        ``force_microsecond_precision`` is true. When the argument is omitted,
+        the connection's ``force_microsecond_precision`` is used.
+        """
+        force_microsecond_precision = self._resolve_force_microsecond_precision(force_microsecond_precision)
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
@@ -958,11 +970,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches.
 
-        ``force_microsecond_precision`` (if present) governs the Arrow
-        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``
-        (e.g. ``split_blocks``), matching snowflake-connector-python.
+        ``force_microsecond_precision`` overrides the connection setting for
+        the Arrow conversion when the caller passes it, and is taken from the
+        connection when omitted. Every other kwarg is forwarded to
+        ``pyarrow.Table.to_pandas`` (for example ``split_blocks``).
         """
-        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        force_microsecond_precision = self._resolve_force_microsecond_precision(
+            kwargs.pop("force_microsecond_precision", None)
+        )
         for table in self.fetch_arrow_batches(force_microsecond_precision=force_microsecond_precision):
             yield table.to_pandas(**kwargs)
 
@@ -972,10 +987,14 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame.
 
-        ``force_microsecond_precision`` (if present) governs the Arrow
-        conversion; all other kwargs are forwarded to ``pyarrow.Table.to_pandas``.
+        ``force_microsecond_precision`` overrides the connection setting for
+        the Arrow conversion when the caller passes it, and is taken from the
+        connection when omitted. Every other kwarg is forwarded to
+        ``pyarrow.Table.to_pandas``.
         """
-        force_microsecond_precision = kwargs.pop("force_microsecond_precision", False)
+        force_microsecond_precision = self._resolve_force_microsecond_precision(
+            kwargs.pop("force_microsecond_precision", None)
+        )
         table: Table = self.fetch_arrow_all(
             force_return_table=True, force_microsecond_precision=force_microsecond_precision
         )

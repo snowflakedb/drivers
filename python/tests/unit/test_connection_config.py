@@ -36,6 +36,7 @@ class TestConnectionConfigDefaults:
         assert config.numpy is None
         assert config.use_core_arrow is None
         assert config.arrow_number_to_decimal is None
+        assert config.force_microsecond_precision is None
         # enable_connection_diag must default to None (not False) so that a
         # connections.toml profile setting `enable_connection_diag = true` is
         # not silently overridden by a Python-side False forwarded as Layer 1.
@@ -590,6 +591,7 @@ class TestToOptions:
             user="u",
             numpy=True,
             arrow_number_to_decimal=True,
+            force_microsecond_precision=True,
             timezone="UTC",
             interpolate_empty_sequences=True,
             reuse_results=True,
@@ -597,6 +599,7 @@ class TestToOptions:
         opts = config.to_options()
         assert "numpy" not in opts
         assert "arrow_number_to_decimal" not in opts
+        assert "force_microsecond_precision" not in opts
         assert "timezone" not in opts
         assert "interpolate_empty_sequences" not in opts
         assert "reuse_results" not in opts
@@ -803,6 +806,7 @@ class TestClassVariables:
         assert "numpy" in ConnectionConfig._PYTHON_ONLY
         assert "use_core_arrow" not in ConnectionConfig._PYTHON_ONLY
         assert "arrow_number_to_decimal" in ConnectionConfig._PYTHON_ONLY
+        assert "force_microsecond_precision" in ConnectionConfig._PYTHON_ONLY
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
         assert "mfa_callback" in ConnectionConfig._PYTHON_ONLY

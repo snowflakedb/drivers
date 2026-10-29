@@ -1657,6 +1657,45 @@ class TestConnectionArrowProperties:
         assert "arrow_number_to_decimal" not in request.options
 
 
+class TestConnectionForceMicrosecondPrecision:
+    """Connection default for Arrow timestamp truncation."""
+
+    def test_default_is_false(self, connection):
+        assert connection.force_microsecond_precision is False
+
+    def test_setter_enables_and_disables(self, connection):
+        connection.force_microsecond_precision = True
+        assert connection.force_microsecond_precision is True
+        connection.force_microsecond_precision = False
+        assert connection.force_microsecond_precision is False
+
+    def test_setter_coerces_to_bool(self, connection):
+        connection.force_microsecond_precision = 1
+        assert connection.force_microsecond_precision is True
+        connection.force_microsecond_precision = 0
+        assert connection.force_microsecond_precision is False
+
+    def test_true_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", force_microsecond_precision=True)
+        assert conn.force_microsecond_precision is True
+
+    def test_false_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        conn = Connection(user="u", account="a", force_microsecond_precision=False)
+        assert conn.force_microsecond_precision is False
+
+    def test_not_leaked_to_rust_core(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        Connection(user="u", account="a", force_microsecond_precision=True)
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert "force_microsecond_precision" not in request.options
+
+
 class TestGetQueryStatus:
     """Unit tests for Connection.get_query_status."""
 

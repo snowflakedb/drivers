@@ -496,6 +496,21 @@ class ConnectionMixin(ErrorHandlerMixin):
 
     @property
     @api_telemetry
+    def force_microsecond_precision(self) -> bool:
+        """Whether ``fetch_arrow_*`` and ``fetch_pandas_*`` truncate timestamps to microseconds.
+
+        Those methods use this value when the call omits ``force_microsecond_precision``.
+        A per-call argument overrides it.
+        """
+        return bool(self.config.force_microsecond_precision)
+
+    @force_microsecond_precision.setter
+    @api_telemetry
+    def force_microsecond_precision(self, value: bool) -> None:
+        self.config.force_microsecond_precision = bool(value)
+
+    @property
+    @api_telemetry
     def validate_default_parameters(self) -> bool:
         """Whether to validate default connection parameters at connect time."""
         return bool(self.config.validate_default_parameters)
