@@ -79,6 +79,10 @@ fn get_test_private_key_contents() -> Vec<String> {
     key_content.lines().map(|s| s.to_string()).collect()
 }
 
+pub fn private_key_file_from_pem(pem: &str) -> Result<PrivateKeyFile, String> {
+    PrivateKeyFile::temp(&[pem.trim_end().to_string()])
+}
+
 pub fn get_test_private_key_file() -> Result<PrivateKeyFile, String> {
     let key_contents = get_test_private_key_contents();
     PrivateKeyFile::temp(&key_contents)

@@ -286,7 +286,7 @@ mod tests {
         // handed to.
         assert!(openssl::pkey::PKey::private_key_from_pem(pem.reveal().as_bytes()).is_ok());
         assert!(
-            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), None).is_ok(),
+            crate::crypto::private_key::load_signing_key(pem.reveal().as_bytes(), None).is_ok(),
             "armoured DER must load through the production key loader"
         );
     }
@@ -311,9 +311,33 @@ mod tests {
         );
         assert!(PKey::private_key_from_pem(pem.reveal().as_bytes()).is_ok());
         assert!(
-            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), None).is_ok(),
+            crate::crypto::private_key::load_signing_key(pem.reveal().as_bytes(), None).is_ok(),
             "armoured DER must load through the production key loader"
         );
+    }
+
+    /// SEC1 EC DER must be armoured with the `EC PRIVATE KEY` label, or the
+    /// loader would hand it to the PKCS#8 parser and reject a valid key.
+    #[test]
+    fn sec1_ec_der_is_armoured_with_the_ec_label() {
+        use openssl::ec::{EcGroup, EcKey};
+        use openssl::nid::Nid;
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).expect("group");
+        let der = EcKey::generate(&group)
+            .expect("ec keygen")
+            .private_key_to_der()
+            .expect("sec1 der");
+
+        let settings = settings_with(&[("private_key", Setting::Bytes(der))]);
+        let pem = read_private_key(&settings).expect("armour SEC1 DER");
+        assert!(
+            pem.reveal().starts_with("-----BEGIN EC PRIVATE KEY-----"),
+            "unexpected armour: {}",
+            pem.reveal().lines().next().unwrap_or_default()
+        );
+        let loaded = crate::crypto::private_key::load_signing_key(pem.reveal().as_bytes(), None)
+            .expect("armoured SEC1 DER must load through the production key loader");
+        assert_eq!(loaded.jwt_algorithm(), "ES256");
     }
 
     /// Encrypted DER must be armoured with the ENCRYPTED label, or the loader
@@ -336,7 +360,8 @@ mod tests {
             "encrypted DER must not be labelled as a plain private key"
         );
         assert!(
-            crate::crypto::private_key::load_rsa_key(pem.reveal().as_bytes(), Some(PASS)).is_ok(),
+            crate::crypto::private_key::load_signing_key(pem.reveal().as_bytes(), Some(PASS))
+                .is_ok(),
             "armoured encrypted DER must load with its passphrase"
         );
     }

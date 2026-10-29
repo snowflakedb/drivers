@@ -6,7 +6,7 @@ import pytest
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
 from snowflake.connector.errors import ProgrammingError
@@ -64,6 +64,20 @@ class TestPrivateKeyConversion:
         result = normalize_private_key(private_key)
 
         # Then the serialized DER bytes are returned
+        assert result == expected_der
+        assert isinstance(result, bytes)
+
+    def test_normalize_private_key_from_ec_object(self):
+        """Test that EllipticCurvePrivateKey object is serialized to bytes."""
+        private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+        expected_der = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+
+        result = normalize_private_key(private_key)
+
         assert result == expected_der
         assert isinstance(result, bytes)
 

@@ -73,6 +73,18 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then the raw GS code surfaces in the error
 
+  @core_int @python_int
+  Scenario: should sign JWT with the algorithm matching the ECDSA key curve
+    Given Authentication is set to JWT and an ECDSA private key file is provided
+    When Trying to Connect
+    Then The login request carries a JWT signed with the curve's algorithm that verifies under the public key
+
+  @python_int
+  Scenario: should authenticate using private_key as EllipticCurvePrivateKey object
+    Given Authentication is set to JWT and private key is provided as EllipticCurvePrivateKey object
+    When Trying to Connect
+    Then The login request carries a JWT signed with the curve's algorithm that verifies under the public key
+
   @nodejs_int
   Scenario: should fail JWT authentication when private_key is not PEM or base64
     Given Authentication is set to JWT and private_key is not PEM or base64

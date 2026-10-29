@@ -26,6 +26,28 @@ pub fn login_failure_jwt_token_invalid() -> Mock {
         })))
 }
 
+/// Successful JWT (key-pair) login, as a `Mock` for `MockServerWithTls::mount`.
+pub fn login_success_jwt() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "SNOWFLAKE_JWT"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "token": "mock_token",
+                "masterToken": "mock_master_token",
+                "sessionId": 12345,
+                "parameters": [
+                    {"name": "CLIENT_TELEMETRY_ENABLED", "value": false}
+                ]
+            }
+        })))
+}
+
 /// Mount a successful JWT authentication response.
 ///
 /// Matches POST requests to `/session/v1/login-request.*` with SNOWFLAKE_JWT authenticator.

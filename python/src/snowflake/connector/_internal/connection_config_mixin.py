@@ -514,8 +514,8 @@ class ConnectionConfigMixin:
         identity; missing identity fields still receive the same defaults as
         kwargs ``connect()``.
 
-        * ``private_key`` - normalises RSAPrivateKey / bytes / str via
-          :func:`normalize_private_key`.
+        * ``private_key`` - normalises RSAPrivateKey / EllipticCurvePrivateKey /
+          bytes / str via :func:`normalize_private_key`.
         * ``application`` - validates against ``_APPLICATION_RE``. When omitted,
           auto-detected from ``SF_PARTNER`` or imported modules (streamlit,
           Jupyter, snowbooks), else ``_APPLICATION_NAME``. Forwarded to the

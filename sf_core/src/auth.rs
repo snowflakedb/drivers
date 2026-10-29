@@ -1,7 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aws_lc_rs::encoding::AsDer;
-use aws_lc_rs::signature::{KeyPair, RsaKeyPair};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD};
 use serde::Serialize;
@@ -66,7 +64,7 @@ struct Claim<'a> {
 }
 
 pub(crate) struct KeyPairJwt {
-    key: RsaKeyPair,
+    key: crate::crypto::private_key::SigningKey,
     sub: String,
     iss: String,
 }
@@ -78,11 +76,10 @@ impl KeyPairJwt {
         private_key: &str,
         passphrase: Option<&str>,
     ) -> Result<Self, AuthError> {
-        let key = crate::crypto::private_key::load_rsa_key(private_key.as_bytes(), passphrase)
+        let key = crate::crypto::private_key::load_signing_key(private_key.as_bytes(), passphrase)
             .context(InvalidPrivateKeyFormatSnafu)?;
         let spki = key
-            .public_key()
-            .as_der()
+            .public_key_spki_der()
             .context(PublicKeyExtractionSnafu)?;
         let fingerprint = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, spki.as_ref());
         let sub = format!(
@@ -106,18 +103,16 @@ impl KeyPairJwt {
             exp: now_secs + 120,
         };
 
-        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
+        let header = URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"alg":"{}","typ":"JWT"}}"#,
+            self.key.jwt_algorithm()
+        ));
         let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claim).context(JWTSerializeSnafu)?);
         let signing_input = format!("{header}.{claims}");
 
-        let mut signature = vec![0u8; self.key.public_modulus_len()];
-        self.key
-            .sign(
-                &aws_lc_rs::signature::RSA_PKCS1_SHA256,
-                &aws_lc_rs::rand::SystemRandom::new(),
-                signing_input.as_bytes(),
-                &mut signature,
-            )
+        let signature = self
+            .key
+            .sign(signing_input.as_bytes())
             .context(JWTSignSnafu)?;
 
         Ok(format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(&signature)).into())
@@ -411,6 +406,52 @@ mod tests {
                 .unwrap(),
             "RS256 signature must verify under OpenSSL"
         );
+    }
+
+    /// An EC key signs with the JWS algorithm of its curve, the signature
+    /// verifies under OpenSSL, and `iss` carries the SPKI SHA-256 fingerprint
+    /// Snowflake recomputes from the registered EC public key.
+    #[test]
+    fn ecdsa_jwt_uses_curve_algorithm_and_spki_fingerprint() {
+        use openssl::ec::{EcGroup, EcKey};
+        use openssl::nid::Nid;
+
+        for (nid, alg) in [
+            (Nid::X9_62_PRIME256V1, "ES256"),
+            (Nid::SECP384R1, "ES384"),
+            (Nid::SECP521R1, "ES512"),
+        ] {
+            let group = EcGroup::from_curve_name(nid).unwrap();
+            let pkey = openssl::pkey::PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+            let pem = String::from_utf8(pkey.private_key_to_pem_pkcs8().unwrap()).unwrap();
+
+            let token = generate_jwt_token("myaccount.us-east-1", "myuser", &pem, None).unwrap();
+            let parts: Vec<&str> = token.split('.').collect();
+            assert_eq!(parts.len(), 3, "JWT must have three segments");
+
+            let header: serde_json::Value =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+            assert_eq!(header["alg"], alg);
+            assert_eq!(header["typ"], "JWT");
+
+            assert!(
+                crate::crypto::private_key::test_support::verify_jws_signature(
+                    &pkey,
+                    alg,
+                    format!("{}.{}", parts[0], parts[1]).as_bytes(),
+                    &URL_SAFE_NO_PAD.decode(parts[2]).unwrap(),
+                ),
+                "{alg} signature must verify under OpenSSL"
+            );
+
+            let claims: serde_json::Value =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+            let expected = BASE64.encode(openssl::sha::sha256(&pkey.public_key_to_der().unwrap()));
+            assert_eq!(
+                claims["iss"].as_str().unwrap(),
+                format!("MYACCOUNT.MYUSER.SHA256:{expected}")
+            );
+        }
     }
 
     /// PBES2 3DES (`openssl pkcs8 -topk8 -v2 des3`) unwraps to the same key as

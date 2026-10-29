@@ -1029,7 +1029,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         .required(Required::WhenAuthMethod("SNOWFLAKE_JWT"))
         .sensitive(true)
         .auth(true)
-        .description("Private key for key-pair authentication (base64-encoded or PEM)")
+        .description(
+            "Private key for key-pair authentication (PEM or base64 text, DER bytes, or an RSAPrivateKey or EllipticCurvePrivateKey)",
+        )
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),

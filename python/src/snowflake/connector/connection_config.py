@@ -259,7 +259,11 @@ class ConnectionConfig(ConnectionConfigMixin):
     """Preserve underscores in the hostname derived from the account name. Default: False"""
 
     private_key: Any | None = None
-    """Private key for key-pair authentication (base64-encoded or PEM). Required when authenticator=SNOWFLAKE_JWT"""
+    """Private key for key-pair authentication (PEM or base64 text, DER bytes, or an RSAPrivateKey or
+    EllipticCurvePrivateKey).
+
+    Required when authenticator=SNOWFLAKE_JWT
+    """
 
     private_key_file: str | None = None
     """Path to private key file for key-pair authentication"""
