@@ -1,0 +1,10 @@
+name: "SnowflakeClob.setAsciiStream writes characters; old driver writes decimal text"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  setCharacterStream appends on flush on both drivers. Writing 'a' then 'b' through
+  setAsciiStream yields "98" on the old driver and "ab" on the new driver.
+legacy_id: 14

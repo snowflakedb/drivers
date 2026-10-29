@@ -1,0 +1,11 @@
+name: "getDate(int, Calendar) tolerates a null Calendar (legacy NPEs)"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  getDate(column, null) throws NullPointerException on the old driver and returns
+  the stored calendar day on the new driver. The new driver does not apply the JVM
+  default timezone.
+legacy_id: 8

@@ -1,0 +1,22 @@
+name: "getUpdateCount() after executeQuery returns -1 instead of the previous statement's count"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `executeQuery` leaves the previous statement's update count in place: after `CREATE TABLE`
+  then `PUT`, `getUpdateCount()` is still `0`, and after `COPY` then `GET` it is still `2`.
+  An `execute()` that returns a result set sets the count to `-1`. `executeUpdate` of a
+  `SELECT` is rejected.
+new_driver_behavior: |
+  `getUpdateCount()` returns `-1` after `executeQuery` of any result-set statement, including
+  `SELECT`, `PUT`, `GET`, and `REMOVE`. `executeUpdate` of a `SELECT` is rejected.
+description: |
+  Code that read the count after a query gets `-1` rather than a number that belonged to an
+  earlier command.
+status_rationale: |
+  Intentional fix. `java.sql.Statement.getUpdateCount()` specifies `-1` when the current
+  result is a result set, and the old driver already returned `-1` on the `execute()` path,
+  so only `executeQuery` was inconsistent.
+legacy_id: 58

@@ -1,0 +1,10 @@
+name: "TIME->boolean conversion error uses lowercase type token for INT-backed TIME"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  getBoolean on TIME scale 0-4 throws vendor 200038 on both drivers. The old driver
+  says type:Boolean; the new driver says type:boolean. Scale 5-9 already matches.
+legacy_id: 9

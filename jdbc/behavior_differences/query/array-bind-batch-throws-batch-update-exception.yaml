@@ -1,0 +1,21 @@
+name: "A failed array-bind executeBatch throws BatchUpdateException instead of SnowflakeSQLException"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  A failed array-bind (single-RPC) `executeBatch()` INSERT throws `SnowflakeSQLException`.
+new_driver_behavior: |
+  The same failure throws `BatchUpdateException` with unchanged SQLSTATE and vendor code,
+  reporting every submitted array-bind row as `EXECUTE_FAILED` (`-3`). Per-row
+  `Statement.executeBatch` and non-array-bind prepared batches throw `BatchUpdateException`
+  on both drivers.
+description: |
+  Code that catches `SQLException` still handles the failure; code that catches only
+  `SnowflakeSQLException` no longer does and has to broaden its catch.
+status_rationale: |
+  Intentional fix. `java.sql.Statement.executeBatch` specifies `BatchUpdateException` so the
+  caller can read per-row outcomes, and the old driver already used that type for row-by-row
+  batches — only the array-bind path differed.
+legacy_id: 72

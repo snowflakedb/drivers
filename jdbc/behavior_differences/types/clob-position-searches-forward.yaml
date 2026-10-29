@@ -1,0 +1,10 @@
+name: "SnowflakeClob.position searches forward; old driver searches backward"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  position("world", 1) on "hello world" returns 7 on the new driver and -1 on the old
+  driver. The old driver searches backward and counts from 0.
+legacy_id: 16

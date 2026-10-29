@@ -1,0 +1,10 @@
+name: "getFunctionColumns FUNCTION_SCHEM is the function schema; old driver echoes the schema pattern"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  FUNCTION_SCHEM is the function's schema on the new driver. The old driver copies the
+  schema pattern, so % or null appears in the column. An exact schema name matches.
+legacy_id: 20

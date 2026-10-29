@@ -1,0 +1,11 @@
+name: "DATE bind tolerates MON-bearing DATE_OUTPUT_FORMAT (legacy throws at prepare)"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  Fixed against snowflake-jdbc 4.3.4. Both drivers prepare and bind when
+  DATE_OUTPUT_FORMAT contains MON. The prepare-time crash existed in 3.27.0
+  through 4.0.2.
+legacy_id: 7

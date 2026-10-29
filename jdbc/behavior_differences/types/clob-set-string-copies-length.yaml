@@ -1,0 +1,10 @@
+name: "SnowflakeClob.setString copies len characters; old driver uses len as an end index"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  setString(1, "XXhelloYY", 2, 5) writes "hello" on the new driver and "hel" on the old
+  driver. An offset of 0 matches.
+legacy_id: 17

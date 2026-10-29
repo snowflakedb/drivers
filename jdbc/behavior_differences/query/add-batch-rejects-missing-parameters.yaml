@@ -1,0 +1,12 @@
+name: "addBatch rejects rows with missing placeholder values"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  After clearParameters, a later addBatch row that omits an index bound on the first
+  row throws "Missing value for parameter index: N" on the new driver. The old driver
+  keeps the row. setNull counts as a value. An index missing from every row, including
+  the first, is accepted on both.
+legacy_id: 11

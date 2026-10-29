@@ -1,0 +1,12 @@
+name: "SnowflakeClob.setString overwrites in place; old driver inserts"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  setString into existing text inserts and shifts the tail on the old driver and
+  overwrites on the new driver. "hello world" plus setString(1, "HELLO") is
+  "HELLOhello world" versus "HELLO world". An empty Clob, or a write at length + 1,
+  matches on both.
+legacy_id: 13

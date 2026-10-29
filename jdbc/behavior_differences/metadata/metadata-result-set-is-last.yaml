@@ -1,0 +1,23 @@
+name: "ResultSet.isLast() on a query-backed DatabaseMetaData result set returns a boolean instead of throwing"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  `java.sql.ResultSet.isLast()` and `isAfterLast()` carry no exemption for metadata result
+  sets, so returning a boolean is the interface contract and the throw is the divergence.
+old_driver_behavior: |
+  `isLast()` and `isAfterLast()` on a query-backed `DatabaseMetaData` result set
+  (`getSchemas`, `getTables`, and the other SHOW-backed calls) throw
+  `SnowflakeLoggedFeatureNotSupportedException`, a `SQLFeatureNotSupportedException`
+  subclass. An empty in-memory metadata result reports `isLast()` false before the first
+  `next()`.
+new_driver_behavior: |
+  `isLast()` and `isAfterLast()` return a boolean on every metadata result set. An empty
+  in-memory metadata result reports `isLast()` true before the first `next()`.
+description: |
+  `isFirst()` and `isBeforeFirst()` already agree on both drivers, and callers that iterate
+  with `next()` alone see no change. A caller that catches `SQLFeatureNotSupportedException`
+  around `isLast()` no longer reaches that handler.
+legacy_id: 21

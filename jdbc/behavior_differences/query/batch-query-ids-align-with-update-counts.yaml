@@ -1,0 +1,12 @@
+name: "getBatchQueryIDs positional alignment with updateCounts"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: high
+status_rationale: |
+  Row-at-a-time batches: the old driver omits failed entries from getBatchQueryIDs(),
+  so the list is shorter than updateCounts. The new driver keeps one slot per
+  statement (the failed query id, or null). Array bind: the old driver records no
+  id; the new driver records one id for the whole batch.
+legacy_id: 3

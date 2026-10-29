@@ -1,0 +1,24 @@
+name: "Statement.getQueryID() after a synchronous multistatement returns the parent query ID instead of the first child's"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  The parent `SYSTEM$MULTISTMT` id is the only id that names the whole call and stays stable
+  across iteration; the old driver's first-child id leaves the parent unreachable. The new
+  driver matches the Python wrapper the multistatement state model was ported from.
+old_driver_behavior: |
+  After a successful synchronous multistatement `execute()`, `getQueryID()` returns the first
+  child's query id, and `getMoreResults()` does not change it. For an async query that has
+  already finished, `getQueryID()` returns the first child's id.
+new_driver_behavior: |
+  `getQueryID()` returns the parent query id, and `getMoreResults()` does not change it. For an
+  async query that has already finished, it stays on the submit id.
+description: |
+  A single-statement `execute()` returns the same id on both drivers, as does an async query
+  that is still running (the parent id). A caller that feeds `getQueryID()` to
+  `getChildQueryIds()` gets the children of the whole call on the new driver and one id on the
+  old driver, which is why `shouldReturnChildQueryIdsForMultistatementQuery` is
+  `@SkipOldDriver("BD#24")`; `getChildQueryIds` itself agrees given the same query id.
+legacy_id: 24

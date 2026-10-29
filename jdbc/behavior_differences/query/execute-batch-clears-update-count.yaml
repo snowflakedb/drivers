@@ -1,0 +1,10 @@
+name: "executeBatch clears getUpdateCount on return"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: medium
+status_rationale: |
+  After executeBatch, getResultSet() is null on both drivers. getUpdateCount()
+  returns the last count on the old driver and -1 on the new driver.
+legacy_id: 4

@@ -1,0 +1,11 @@
+name: "Statement.executeBatch update-count int overflow"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: high
+status_rationale: |
+  Sequential executeBatch, count above Integer.MAX_VALUE: the old driver throws
+  BatchUpdateException (vendor 200058); the new driver returns SUCCESS_NO_INFO (-2).
+  Array bind does not throw on either driver.
+legacy_id: 2

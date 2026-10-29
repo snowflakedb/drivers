@@ -1,0 +1,11 @@
+name: "SnowflakeClob.free invalidates the handle; old driver keeps it usable"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+status_rationale: |
+  free() leaves an empty usable Clob on the old driver. The new driver rejects later
+  calls. A second free() is a no-op on the new driver. createClob() throws
+  SQLException; getClob() throws an unchecked exception with the same message.
+legacy_id: 15

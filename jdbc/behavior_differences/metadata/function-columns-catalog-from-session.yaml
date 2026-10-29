@@ -1,0 +1,11 @@
+name: "getFunctionColumns FUNCTION_CAT stays null until a session flag fills it"
+status: allowed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+status_rationale: |
+  A null catalog stays null in FUNCTION_CAT on both drivers. When a session-metadata flag
+  replaces that null, the new driver stores the session database and the old driver stores
+  null.
+legacy_id: 19

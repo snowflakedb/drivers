@@ -1,0 +1,23 @@
+name: "GEOGRAPHY/GEOMETRY WKB/EWKB ResultSetMetaData reports VARCHAR instead of BINARY"
+status: todo
+type: bug
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  For `WKB` or `EWKB` output, `getColumnType()` is `BINARY`, `getColumnTypeName()` is
+  `GEOGRAPHY` or `GEOMETRY`, and `isCaseSensitive()` is false. `getObject()` returns
+  `byte[]`.
+new_driver_behavior: |
+  `getColumnType()` is `VARCHAR` and `getColumnClassName()` is `java.lang.String`, while
+  `getObject()` and `getBytes()` still return the bytes. `getColumnTypeName()` is `GEOGRAPHY`
+  or `GEOMETRY`.
+description: |
+  A tool that reads the column type and then treats the value as text can mangle the bytes,
+  even though the value itself is unchanged. `GeoJSON` and `WKT` output is `VARCHAR` on both
+  drivers. The metadata assertion is split per driver in the geography and geometry tests.
+status_rationale: |
+  Still open. The server omits `outputType` for these columns, and the JDBC layer falls back
+  to `VARCHAR` instead of deriving the type from the binary wire type that is already
+  present.
+legacy_id: 53

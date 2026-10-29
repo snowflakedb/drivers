@@ -1,0 +1,26 @@
+name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT changes JSON results instead of applying to Arrow results only"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With `JDBC_QUERY_RESULT_FORMAT=JSON`, `JDBC_TREAT_DECIMAL_AS_INT=false`, and
+  `JDBC_ARROW_TREAT_DECIMAL_AS_INT=true`, `getObject()` on a scale-0 number returns
+  `BigDecimal`; the Arrow flag reaches Arrow results only. Metadata follows
+  `JDBC_TREAT_DECIMAL_AS_INT`.
+new_driver_behavior: |
+  The same settings make `getObject()` return `Long` for a scale-0 `FIXED` value, while any
+  other scale stays `BigDecimal`. Metadata still follows `JDBC_TREAT_DECIMAL_AS_INT`, so the
+  SQL type can be `DECIMAL` while `getObject()` returns `Long`. Both flags false yields
+  `BigDecimal`.
+description: |
+  Both flags default to true, so only a connection that turns `JDBC_TREAT_DECIMAL_AS_INT`
+  off and requests JSON results sees this; such code can get `Long` where it expected
+  `BigDecimal` from a column its own metadata calls `DECIMAL`. The new driver converts JSON
+  results to Arrow, which is what brings the Arrow flag into play.
+status_rationale: |
+  Not yet reviewed. The question is whether a JSON-format result should ignore an
+  Arrow-named flag — `todo` if it should, `allowed` if a single conversion path with one
+  flag is the intended shape. Either answer keeps the JSON-to-Arrow conversion.
+legacy_id: 60
