@@ -1123,24 +1123,6 @@ behavior_differences:
       Intentional fix. `java.sql.Statement.getUpdateCount()` specifies `-1` when the current
       result is a result set, and the old driver already returned `-1` on the `execute()` path,
       so only `executeQuery` was inconsistent.
-  59:
-    name: "A new query-context ID at an occupied priority displaces the existing entry on both drivers"
-    status: fixed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      When a query-context entry arrives with an ID the cache has not seen and a priority another
-      ID already holds, the entry at that priority is dropped and the new one takes its place.
-    new_driver_behavior: |
-      The same: the cache keeps one entry per priority and the newcomer displaces the incumbent.
-    description: |
-      Callers need no change; the cache is internal to query submission. The case of an ID the
-      cache already holds moving onto an occupied priority is not covered by this entry. No test
-      gates on it.
-    status_rationale: |
-      No difference remains for a newly seen ID at an occupied priority.
   60:
     name: "JDBC_ARROW_TREAT_DECIMAL_AS_INT changes JSON results instead of applying to Arrow results only"
     status: unknown

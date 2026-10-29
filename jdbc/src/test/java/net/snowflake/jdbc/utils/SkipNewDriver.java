@@ -8,7 +8,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Skips the annotated test when running against the new (universal) JDBC driver. Use this for tests
- * that verify old-driver-specific behavior documented in jdbc/BehaviorDifferences.yaml.
+ * that verify old-driver-specific behavior documented in jdbc/behavior_differences/ (or a numbered
+ * entry in jdbc/BehaviorDifferences.yaml).
  *
  * <p>Usage:
  *

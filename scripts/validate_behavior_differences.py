@@ -6,16 +6,16 @@ Monolith file shape (every driver):
     <positive_int_id>:
       <fields...>
 
-Python and ODBC also accept one file per entry under
-``<driver>/behavior_differences/<area>/<slug>.yaml`` (``python/behavior_differences`` or
-``odbc_tests/behavior_differences``). The file body is the entry itself (no
-behavior_differences wrapper). The slug is the id. A new Python or ODBC integer key in
-the monolith is rejected. Deleting an existing Python or ODBC integer key is allowed
-only when exactly one of those files sets legacy_id to that key, and the key is no
-longer in the monolith. That legacy_id stays valid after the deletion is in the
-baseline. The baseline is HEAD locally and BD_BASE_SHA in CI (the pull-request base),
-because ``pre-commit run --all-files`` checks out a tree that already contains the change.
-JDBC and Node.js stay integer-only; removals there are still forbidden.
+Python, ODBC, and JDBC also accept one file per entry under
+``<driver>/behavior_differences/<area>/<slug>.yaml`` (``python/behavior_differences``,
+``odbc_tests/behavior_differences``, or ``jdbc/behavior_differences``). The file body is
+the entry itself (no behavior_differences wrapper). The slug is the id. A new Python,
+ODBC, or JDBC integer key in the monolith is rejected. Deleting an existing integer key
+there is allowed only when exactly one of those files sets legacy_id to that key, and
+the key is no longer in the monolith. That legacy_id stays valid after the deletion is
+in the baseline. The baseline is HEAD locally and BD_BASE_SHA in CI (the pull-request
+base), because ``pre-commit run --all-files`` checks out a tree that already contains
+the change. Node.js stays integer-only; removals there are still forbidden.
 
 Per-entry schema:
 
@@ -35,12 +35,12 @@ Per-entry schema:
     description (str) — extra context, migration notes, spec links.
     old_driver_behavior (str) — behavior of the legacy/reference driver.
     new_driver_behavior (str) — behavior of the universal driver.
-    legacy_id (int) — Python and ODBC files only. The monolith integer this file
-      replaces. Required when that integer is removed versus the baseline, and
+    legacy_id (int) — Python, ODBC, and JDBC files only. The monolith integer this
+      file replaces. Required when that integer is removed versus the baseline, and
       rejected while the integer is still a key in the monolith. It stays set after
       the baseline itself no longer has the key, so BD#<integer> keeps resolving.
 
-  ODBC-only rule:
+  ODBC and JDBC rule:
     When reviewed is true, status_rationale must be a non-empty string.
 
   Conventions for new entries (not auto-filled by this script):
@@ -54,10 +54,10 @@ Per-entry schema:
     - The raw ID-line count must equal the number of unique parsed entries; a
       mismatch means a duplicate key silently dropped an entry on load.
     - Only the fields listed above are allowed (no unknown keys). legacy_id is
-      allowed on Python and ODBC per-file entries only.
-    - Entries must not be removed versus the baseline, except a Python or ODBC
-      integer key replaced by a file whose legacy_id is that key. The file keeps
-      legacy_id after that deletion is committed.
+      allowed on Python, ODBC, and JDBC per-file entries only.
+    - Entries must not be removed versus the baseline, except a Python, ODBC, or
+      JDBC integer key replaced by a file whose legacy_id is that key. The file
+      keeps legacy_id after that deletion is committed.
 """
 
 from __future__ import annotations
@@ -155,9 +155,15 @@ _MAX_SLUG_LEN = 64
 GATED_FILE_DIRS: dict[str, str] = {
     "python/BehaviorDifferences.yaml": "python/behavior_differences",
     "odbc_tests/BehaviorDifferences.yaml": "odbc_tests/behavior_differences",
+    "jdbc/BehaviorDifferences.yaml": "jdbc/behavior_differences",
 }
 
-ODBC_BD_RELPATH = "odbc_tests/BehaviorDifferences.yaml"
+# Monolith paths whose entries, and per-file entries, need a non-empty
+# status_rationale once reviewed is true.
+STATUS_RATIONALE_REQUIRED = frozenset({
+    "odbc_tests/BehaviorDifferences.yaml",
+    "jdbc/BehaviorDifferences.yaml",
+})
 
 DEFAULT_IMPACT = BDImpact.HIGH
 DEFAULT_IS_BREAKING_CHANGE = True
@@ -417,7 +423,7 @@ def check_monolith_text(
                 prefix,
                 entry,
                 known_fields=KNOWN_FIELDS,
-                require_status_rationale=git_relpath == ODBC_BD_RELPATH,
+                require_status_rationale=git_relpath in STATUS_RATIONALE_REQUIRED,
             )
         )
 
@@ -463,7 +469,7 @@ def check_bd_files(
     """Validate per-file entries.
 
     ``files`` is ``(path relative to dir_label, YAML text)`` using forward
-    slashes, each expected to be ``<area>/<slug>.yaml``. ODBC passes
+    slashes, each expected to be ``<area>/<slug>.yaml``. ODBC and JDBC pass
     ``require_status_rationale`` so a reviewed entry still needs a non-empty
     ``status_rationale``.
     """
@@ -601,7 +607,7 @@ def validate() -> list[str]:
         file_check = check_bd_files(
             gated_file_dir,
             _read_bd_dir(dir_path),
-            require_status_rationale=git_relpath == ODBC_BD_RELPATH,
+            require_status_rationale=git_relpath in STATUS_RATIONALE_REQUIRED,
         )
         errors.extend(file_check.errors)
         errors.extend(

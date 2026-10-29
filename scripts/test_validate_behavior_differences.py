@@ -24,6 +24,9 @@ LEGACY_PATH = f"{GATED_DIR}/auth/private-key-password-renamed.yaml"
 ODBC_BD = "odbc_tests/BehaviorDifferences.yaml"
 ODBC_DIR = "odbc_tests/behavior_differences"
 ODBC_LEGACY_PATH = f"{ODBC_DIR}/put-get/put-expands-leading-tilde.yaml"
+JDBC_BD = "jdbc/BehaviorDifferences.yaml"
+JDBC_DIR = "jdbc/behavior_differences"
+JDBC_LEGACY_PATH = f"{JDBC_DIR}/session/query-context-cache-same-priority.yaml"
 
 
 def _load():
@@ -149,9 +152,40 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
         )
         self.assertEqual(present.errors, [])
 
-    def test_jdbc_removal_is_an_error(self) -> None:
+    def test_new_jdbc_integer_key_is_rejected(self) -> None:
         result = self.mod.check_monolith_text(
-            "jdbc/BehaviorDifferences.yaml",
+            JDBC_BD,
+            _monolith(1, 99),
+            {1},
+            gated_file_dir=JDBC_DIR,
+        )
+        self.assertTrue(
+            any("BD-99" in err and "new entries must be a file" in err for err in result.errors)
+        )
+        self.assertEqual(result.removed, set())
+
+    def test_jdbc_removal_is_reported_for_legacy_id_pairing(self) -> None:
+        result = self.mod.check_monolith_text(
+            JDBC_BD,
+            _monolith(1),
+            {1, 59},
+            gated_file_dir=JDBC_DIR,
+        )
+        self.assertEqual(result.removed, {59})
+        self.assertFalse(any("removed" in err for err in result.errors))
+
+    def test_jdbc_legacy_id_pairs_with_a_removal(self) -> None:
+        errors = self.mod.check_migration(JDBC_BD, {1}, {59}, {59: JDBC_LEGACY_PATH})
+        self.assertEqual(errors, [])
+
+    def test_jdbc_reviewed_monolith_entry_requires_status_rationale(self) -> None:
+        text = _monolith(1).replace("reviewed: false", "reviewed: true")
+        result = self.mod.check_monolith_text(JDBC_BD, text, {1}, gated_file_dir=JDBC_DIR)
+        self.assertTrue(any("status_rationale" in err for err in result.errors))
+
+    def test_nodejs_removal_is_an_error(self) -> None:
+        result = self.mod.check_monolith_text(
+            "nodejs/BehaviorDifferences.yaml",
             _monolith(1),
             {1, 5},
         )
@@ -233,7 +267,7 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
             self.assertEqual(self.mod._baseline_rev(), "HEAD")
 
     def test_committed_ids_reads_the_given_revision(self) -> None:
-        for relpath in (PYTHON_BD, ODBC_BD):
+        for relpath in (PYTHON_BD, ODBC_BD, JDBC_BD):
             ids = self.mod._committed_ids(relpath, "HEAD")
             self.assertIsNotNone(ids)
             assert ids is not None

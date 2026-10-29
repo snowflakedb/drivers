@@ -1,0 +1,18 @@
+name: "A new query-context ID at an occupied priority displaces the existing entry on both drivers"
+status: fixed
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When a query-context entry arrives with an ID the cache has not seen and a priority another
+  ID already holds, the entry at that priority is dropped and the new one takes its place.
+new_driver_behavior: |
+  The same: the cache keeps one entry per priority and the newcomer displaces the incumbent.
+description: |
+  Callers need no change; the cache is internal to query submission. The case of an ID the
+  cache already holds moving onto an occupied priority is not covered by this entry. No test
+  gates on it.
+status_rationale: |
+  No difference remains for a newly seen ID at an occupied priority.
+legacy_id: 59

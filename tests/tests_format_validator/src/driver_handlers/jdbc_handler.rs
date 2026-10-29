@@ -1,5 +1,6 @@
 use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMethod};
 use crate::behavior_differences_utils::compile_bd_regex;
+use crate::behavior_differences_utils::load_behavior_difference_files;
 use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -61,19 +62,27 @@ impl BaseDriverHandler for JdbcHandler {
     }
 
     fn parse_behavior_differences_descriptions(&self) -> Result<HashMap<String, String>> {
+        let mut descriptions = HashMap::new();
         let behavior_difference_file_path = self.get_behavior_differences_file_path();
-        if !behavior_difference_file_path.exists() {
-            return Ok(HashMap::new());
+        if behavior_difference_file_path.exists() {
+            let content =
+                fs::read_to_string(&behavior_difference_file_path).with_context(|| {
+                    format!(
+                        "Failed to read Behavior Difference file: {}",
+                        behavior_difference_file_path.display()
+                    )
+                })?;
+            descriptions.extend(parse_behavior_differences_descriptions_util(&content)?);
         }
 
-        let content = fs::read_to_string(&behavior_difference_file_path).with_context(|| {
-            format!(
-                "Failed to read Behavior Difference file: {}",
-                behavior_difference_file_path.display()
-            )
-        })?;
-
-        parse_behavior_differences_descriptions_util(&content)
+        let files_dir = self
+            .workspace_root
+            .join("jdbc")
+            .join("behavior_differences");
+        for (id, description) in load_behavior_difference_files(&files_dir)? {
+            descriptions.entry(id).or_insert(description);
+        }
+        Ok(descriptions)
     }
 
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
@@ -350,5 +359,35 @@ mod tests {
         assert!(ASSUME_NEW_DRIVER_REGEX.is_match(r#"assumeTrue(isNewDriver(), "BD#24 differs");"#,));
         assert!(ASSUME_NEW_DRIVER_REGEX
             .is_match(r#"assumeTrue(isNewDriver(), "BD#private-key-password-renamed differs");"#,));
+    }
+
+    #[test]
+    fn loads_monolith_key_and_legacy_id_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let jdbc = dir.path().join("jdbc");
+        let area = jdbc.join("behavior_differences").join("session");
+        fs::create_dir_all(&area).unwrap();
+        fs::write(
+            jdbc.join("BehaviorDifferences.yaml"),
+            "behavior_differences:\n  1:\n    name: \"Still in the monolith\"\n",
+        )
+        .unwrap();
+        fs::write(
+            area.join("query-context-cache-same-priority.yaml"),
+            "name: \"Query context cache displaces same priority\"\ntype: bugfix\nlegacy_id: 59\n",
+        )
+        .unwrap();
+
+        let descriptions = JdbcHandler::new(dir.path().to_path_buf())
+            .parse_behavior_differences_descriptions()
+            .unwrap();
+        assert!(descriptions
+            .get("BD#1")
+            .is_some_and(|text| text.contains("Still in the monolith")));
+        let from_slug = descriptions
+            .get("BD#query-context-cache-same-priority")
+            .cloned();
+        assert_eq!(descriptions.get("BD#59").cloned(), from_slug);
+        assert!(from_slug.is_some_and(|text| text.contains("Query context cache displaces")));
     }
 }

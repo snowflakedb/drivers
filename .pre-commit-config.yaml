@@ -158,7 +158,7 @@ repos:
         entry: python3 scripts/validate_behavior_differences.py
         pass_filenames: false
         additional_dependencies: ['pyyaml']
-        files: ^(odbc_tests|python|jdbc|nodejs)/BehaviorDifferences\.yaml$|^(python|odbc_tests)/behavior_differences/.+\.yaml$|^scripts/validate_behavior_differences\.py$
+        files: ^(odbc_tests|python|jdbc|nodejs)/BehaviorDifferences\.yaml$|^(python|odbc_tests|jdbc)/behavior_differences/.+\.yaml$|^scripts/validate_behavior_differences\.py$
         language: python
     -   id: behavior-differences-validator-test
         name: Behavioral Differences validator tests
@@ -214,7 +214,7 @@ repos:
             | tests/tests_format_validator/.*\.(rs|toml|lock|sh)
             | (sf_core/tests|jdbc/src/test|odbc_tests|python/tests|dotnet/tests|nodejs/tests)/.*\.(rs|java|cpp|hpp|py|cs|ts|js)
             | (odbc_tests|python|jdbc|nodejs|dotnet)/BehaviorDifferences\.yaml
-            | python/behavior_differences/.*\.yaml
+            | (python|odbc_tests|jdbc)/behavior_differences/.*\.yaml
           )$
         language: system
     -   id: ai-rules-sync
