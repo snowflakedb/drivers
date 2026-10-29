@@ -31,6 +31,15 @@ public final class SchemaState {
   private int[] columnScales;
   private ArrowVectorConverter[] converterCache;
 
+  /**
+   * The batch {@link #converterCache} was built against. A converter holds the {@link Column} it
+   * reads, so the cache survives only as long as the root does. The native reader rebinds one tree
+   * for the whole result set, so this stays the same instance and the converters are built once;
+   * readers that hand out a fresh root per batch drop the cache instead of returning a converter
+   * pointed at the previous batch.
+   */
+  private ColumnBatch cachedRoot;
+
   public SchemaState(ColumnBatch root) {
     this(root, EMPTY_CONTEXT);
   }
@@ -101,6 +110,10 @@ public final class SchemaState {
     if (index < 0 || index >= converterCache.length) {
       throw SFSQLException.fromErrorCode(INTERNAL_ERROR, "Invalid column index: " + columnIndex);
     }
+    if (cachedRoot != root) {
+      clearConverterCache();
+      cachedRoot = root;
+    }
     ArrowVectorConverter cached = converterCache[index];
     if (cached != null) {
       return cached;
@@ -123,10 +136,6 @@ public final class SchemaState {
     }
   }
 
-  void resetConverterCache() {
-    clearConverterCache();
-  }
-
   boolean hasCachedConverter(int columnIndex) {
     int index = columnIndex - 1;
     return converterCache != null
@@ -137,6 +146,7 @@ public final class SchemaState {
 
   public void reset() {
     clearConverterCache();
+    cachedRoot = null;
     converterCache = null;
     columnNames = null;
     columnTypes = null;

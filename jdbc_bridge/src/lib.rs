@@ -410,39 +410,128 @@ pub extern "system" fn Java_net_snowflake_client_internal_unicore_NativeArrowStr
     })
 }
 
+/// `nativeNextBatch` returns this instead of a row count when the stream is drained.
+const ARROW_END_OF_STREAM: jint = -1;
+
+/// Buffer slots each Arrow node occupies in the flat hand-off array, in this order:
+/// validity, offsets, values. Matches `Column.BUFFERS_PER_NODE`.
+const BUFFERS_PER_NODE: i32 = 3;
+
+/// Fills `slots` with the next batch's buffers and returns its row count, or
+/// [`ARROW_END_OF_STREAM`] at the end of the stream.
+///
+/// `slots` is allocated once per result set by `NativeBatchReader` and holds
+/// [`BUFFERS_PER_NODE`] entries per Arrow node. Reusing it keeps the per-batch JNI
+/// cost to the direct buffers themselves — no boxed row count, and no nested
+/// `Object[]` graph for Java to walk and validate.
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "system" fn Java_net_snowflake_client_internal_unicore_NativeArrowStream_nativeNextBatch(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
-) -> jobject {
+    slots: JObjectArray,
+) -> jint {
     ffi_catch(|| {
         let export_result = JDBC_BRIDGE
             .arrow_streams
             .export_next_batch(handle as u64, |batch| {
                 let Some(batch) = batch else {
-                    return Ok(std::ptr::null_mut());
+                    return Ok(ARROW_END_OF_STREAM);
                 };
-                // TODO(SNOW-4248904): delete each column local ref after set_object_array_element.
-                env.with_local_frame_returning_local(32, |env| {
-                    batch_to_java(env, batch).map_err(JniExportError::from)
-                })
-                .map(|object| object.into_raw())
-                .map_err(|JniExportError(message)| message)
+                fill_buffer_slots(&mut env, &slots, batch)
+                    .map(|()| batch.row_count)
+                    .map_err(|JniExportError(message)| message)
             });
         match export_result {
-            Ok(object) => object,
+            Ok(row_count) => row_count,
             Err(error) => {
                 throw_arrow_stream_error(&mut env, &error);
-                std::ptr::null_mut()
+                ARROW_END_OF_STREAM
             }
         }
     })
     .unwrap_or_else(|| {
         throw_jni_panic(&mut env);
-        std::ptr::null_mut()
+        ARROW_END_OF_STREAM
     })
+}
+
+/// Writes every buffer of `batch` into `slots`, walking the columns and their
+/// children in the same pre-order `Column.bind` walks the decoded schema: each node
+/// takes [`BUFFERS_PER_NODE`] slots, a parent before its children.
+///
+/// The slot count is derived from the schema on both sides, so a mismatch means the
+/// batch does not have the shape the schema promised; that is an error rather than a
+/// partial fill, because Java would otherwise bind one node's buffers onto another.
+fn fill_buffer_slots(
+    env: &mut JNIEnv,
+    slots: &JObjectArray,
+    batch: &arrow_stream::BatchRef,
+) -> Result<(), JniExportError> {
+    let capacity = env.get_array_length(slots)?;
+    let mut next = 0;
+    for column in &batch.columns {
+        next = fill_array_slots(env, slots, capacity, next, column)?;
+    }
+    if next != capacity {
+        return Err(JniExportError(format!(
+            "Arrow batch filled {next} of {capacity} buffer slots"
+        )));
+    }
+    Ok(())
+}
+
+fn fill_array_slots(
+    env: &mut JNIEnv,
+    slots: &JObjectArray,
+    capacity: i32,
+    base: i32,
+    array: &arrow_stream::ArrayRef,
+) -> Result<i32, JniExportError> {
+    if base > capacity - BUFFERS_PER_NODE {
+        return Err(JniExportError(format!(
+            "Arrow batch needs more than {capacity} buffer slots"
+        )));
+    }
+    // Null every role first: a role this batch does not carry must not be left holding
+    // the previous batch's freed buffer.
+    for offset in 0..BUFFERS_PER_NODE {
+        env.set_object_array_element(slots, base + offset, JObject::null())?;
+    }
+    let mut seen = 0u8;
+    for buffer in &array.buffers {
+        let offset = match buffer.role {
+            arrow_stream::BUFFER_VALIDITY => 0,
+            arrow_stream::BUFFER_OFFSETS => 1,
+            arrow_stream::BUFFER_VALUES => 2,
+            other => {
+                return Err(JniExportError(format!("unknown Arrow buffer role {other}")));
+            }
+        };
+        if seen & (1 << offset) != 0 {
+            return Err(JniExportError(format!(
+                "duplicate Arrow buffer role {} on column export",
+                buffer.role
+            )));
+        }
+        seen |= 1 << offset;
+        if buffer.length == 0 {
+            // An empty buffer has no address to export; the slot stays null and Java
+            // binds its own empty buffer.
+            continue;
+        }
+        let direct = wrap_buffer(env, buffer)?;
+        env.set_object_array_element(slots, base + offset, &direct)?;
+        // `slots` is the owning reference now. Releasing the local keeps the frame flat
+        // for a wide batch instead of accumulating one reference per buffer.
+        env.delete_local_ref(direct)?;
+    }
+    let mut next = base + BUFFERS_PER_NODE;
+    for child in &array.children {
+        next = fill_array_slots(env, slots, capacity, next, child)?;
+    }
+    Ok(next)
 }
 
 fn throw_arrow_stream_error(env: &mut JNIEnv, error: &arrow_stream::ArrowStreamError) {
@@ -463,102 +552,27 @@ impl From<jni::errors::Error> for JniExportError {
     }
 }
 
-fn objects<'local>(env: &mut JNIEnv<'local>, len: i32) -> Result<JObjectArray<'local>, String> {
-    env.new_object_array(len, "java/lang/Object", JObject::null())
-        .map_err(|error| error.to_string())
-}
-
-fn put<'local>(
-    env: &mut JNIEnv<'local>,
-    array: &JObjectArray<'local>,
-    index: i32,
-    value: JObject<'local>,
-) -> Result<(), String> {
-    env.set_object_array_element(array, index, value)
-        .map_err(|error| error.to_string())
-}
-
-fn batch_to_java<'local>(
-    env: &mut JNIEnv<'local>,
-    batch: &arrow_stream::BatchRef,
-) -> Result<JObject<'local>, String> {
-    let columns = objects(env, batch.columns.len() as i32)?;
-    for (index, column) in batch.columns.iter().enumerate() {
-        let column_object = array_to_java(env, column)?;
-        put(env, &columns, index as i32, column_object)?;
-    }
-    let row_count = env
-        .new_object("java/lang/Integer", "(I)V", &[JValue::Int(batch.row_count)])
-        .map_err(|error| error.to_string())?;
-    let result = objects(env, 2)?;
-    put(env, &result, 0, row_count)?;
-    put(env, &result, 1, JObject::from(columns))?;
-    Ok(JObject::from(result))
-}
-
-fn array_to_java<'local>(
-    env: &mut JNIEnv<'local>,
-    array: &arrow_stream::ArrayRef,
-) -> Result<JObject<'local>, String> {
-    let mut validity: Option<JObject<'local>> = None;
-    let mut offsets: Option<JObject<'local>> = None;
-    let mut values: Option<JObject<'local>> = None;
-    for buffer in &array.buffers {
-        let slot = match buffer.role {
-            arrow_stream::BUFFER_VALIDITY => &mut validity,
-            arrow_stream::BUFFER_OFFSETS => &mut offsets,
-            arrow_stream::BUFFER_VALUES => &mut values,
-            other => return Err(format!("unknown Arrow buffer role {other}")),
-        };
-        if slot.is_some() {
-            return Err(format!(
-                "duplicate Arrow buffer role {} on column export",
-                buffer.role
-            ));
-        }
-        *slot = Some(wrap_buffer(env, buffer)?);
-    }
-    let validity = validity.unwrap_or(JObject::null());
-    let offsets = offsets.unwrap_or(JObject::null());
-    let values = values.unwrap_or(JObject::null());
-    let children = objects(env, array.children.len() as i32)?;
-    for (index, child) in array.children.iter().enumerate() {
-        let child_object = array_to_java(env, child)?;
-        put(env, &children, index as i32, child_object)?;
-    }
-    let result = objects(env, 4)?;
-    put(env, &result, 0, validity)?;
-    put(env, &result, 1, offsets)?;
-    put(env, &result, 2, values)?;
-    put(env, &result, 3, JObject::from(children))?;
-    Ok(JObject::from(result))
-}
-
 fn wrap_buffer<'local>(
     env: &mut JNIEnv<'local>,
     buffer: &arrow_stream::BufferRef,
-) -> Result<JObject<'local>, String> {
-    if buffer.length == 0 {
-        return Ok(JObject::null());
-    }
+) -> Result<JObject<'local>, JniExportError> {
     if buffer.address == 0 {
-        return Err("arrow buffer has a null address".to_string());
+        return Err(JniExportError(
+            "arrow buffer has a null address".to_string(),
+        ));
     }
     // Java `ByteBuffer.capacity()` is a signed `int`. A buffer whose length does not fit becomes
     // an error here, not a silently truncated direct view.
     if i32::try_from(buffer.length).is_err() {
-        return Err(format!(
+        return Err(JniExportError(format!(
             "Arrow buffer length {} exceeds Java ByteBuffer capacity",
             buffer.length
-        ));
+        )));
     }
     // SAFETY: `buffer.address` is non-null and points into the `RecordBatch` that `StreamState`
     // owns for this handle. `export_next_batch` holds the stream mutex for this call. The direct
     // buffer aliases that memory until the next `next_batch` or `close` on this stream.
-    let direct = unsafe {
-        env.new_direct_byte_buffer(buffer.address as *mut u8, buffer.length)
-            .map_err(|error| error.to_string())?
-    };
+    let direct = unsafe { env.new_direct_byte_buffer(buffer.address as *mut u8, buffer.length)? };
     Ok(JObject::from(direct))
 }
 

@@ -7,12 +7,10 @@ import net.snowflake.client.internal.core.arrow.vector.ColumnBatch;
 public final class ArrowBatchManager {
   private final CursorState cursor;
   private final ArrowResources resources;
-  private final SchemaState schema;
 
-  public ArrowBatchManager(CursorState cursor, ArrowResources resources, SchemaState schema) {
+  public ArrowBatchManager(CursorState cursor, ArrowResources resources) {
     this.cursor = cursor;
     this.resources = resources;
-    this.schema = schema;
   }
 
   public boolean fetchNextRow() {
@@ -41,7 +39,8 @@ public final class ArrowBatchManager {
   }
 
   private boolean advanceToNextBatch() throws IOException {
-    schema.resetConverterCache();
+    // The reader rebinds one column tree per batch instead of rebuilding it, so the
+    // converters built against that tree stay valid and the cache is not reset here.
     ColumnBatch nextRoot = loadNextNonEmptyBatch();
     if (nextRoot == null) {
       cursor.setAfterLast();

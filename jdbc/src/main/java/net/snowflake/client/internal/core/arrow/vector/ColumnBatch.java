@@ -17,8 +17,6 @@ import net.snowflake.client.internal.core.arrow.vector.Column.Field;
 import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
-import net.snowflake.client.internal.unicore.NativeArrowBatch;
-import net.snowflake.client.internal.unicore.NativeArrowBatch.NativeArrowArray;
 
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ColumnBatch implements AutoCloseable {
@@ -42,21 +40,56 @@ public final class ColumnBatch implements AutoCloseable {
     return new ColumnBatch(fields, columnsFrom(fields), 0);
   }
 
-  public static ColumnBatch view(List<Field> fields, NativeArrowBatch batch) {
-    NativeArrowArray[] arrays = batch.getColumns();
-    if (fields.size() != arrays.length) {
-      throw new IllegalArgumentException(
-          "Schema field count "
-              + fields.size()
-              + " does not match batch column count "
-              + arrays.length);
+  /**
+   * Allocates the flat buffer hand-off array for this batch's shape: {@link
+   * Column#BUFFERS_PER_NODE} entries per Arrow node, in the pre-order {@link #bind} walks. A reader
+   * allocates one per result set and hands the same array to every {@code nativeNextBatch}.
+   */
+  public ByteBuffer[] newSlots() {
+    int slots = 0;
+    for (Column column : columns) {
+      slots += column.slotCount();
     }
-    List<Column> columns = columnsFrom(fields);
-    for (int index = 0; index < columns.size(); index++) {
-      columns.get(index).bind(arrays[index], batch.getRowCount());
+    return new ByteBuffer[slots];
+  }
+
+  /**
+   * Rebinds this batch's columns to {@code rowCount} rows of the buffers in {@code slots}, which
+   * {@code jdbc_bridge} filled for the current native batch.
+   *
+   * <p>The column tree is reused across batches, so converters built against it stay valid for the
+   * life of the result set. Call {@link #clear()} before the native batch behind the previous
+   * binding is freed.
+   *
+   * <p>A failure part-way through the walk leaves this batch cleared rather than holding the
+   * columns it had already bound, so a caller that swallows the exception cannot read buffers the
+   * native stream frees next.
+   */
+  public void bind(ByteBuffer[] slots, int rowCount) {
+    try {
+      int next = 0;
+      for (Column column : columns) {
+        next = column.bind(slots, next, rowCount);
+      }
+      if (next != slots.length) {
+        throw new IllegalArgumentException(
+            "Schema needs " + next + " buffer slots but the batch supplied " + slots.length);
+      }
+      this.rowCount = rowCount;
+    } catch (RuntimeException failure) {
+      clear();
+      throw failure;
     }
-    logger.debug("view: rows={} columns={}", batch.getRowCount(), columns.size());
-    return new ColumnBatch(fields, columns, batch.getRowCount());
+    logger.debug("bind: rows={} columns={}", rowCount, columns.size());
+  }
+
+  /**
+   * Drops every reference to the current native batch without closing the columns, so this batch
+   * can be rebound to the next one. Unlike {@link #close()} it is not terminal.
+   */
+  public void clear() {
+    rowCount = 0;
+    columns.forEach(Column::clearWithChildren);
   }
 
   public List<Field> fields() {

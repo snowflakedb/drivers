@@ -40,7 +40,7 @@ class ArrowRowReader implements RowReader {
     this.resourcesCleaner = CoreHandleCleaner.register(this, resources::closeAll);
     this.cursor = new CursorState();
     this.schema = new SchemaState(resources.getActiveRoot(), conversionContext);
-    this.batchManager = new ArrowBatchManager(cursor, resources, schema);
+    this.batchManager = new ArrowBatchManager(cursor, resources);
     this.totalRowCount = totalRowCount;
   }
 

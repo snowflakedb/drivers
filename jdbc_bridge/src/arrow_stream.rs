@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use arrow::array::{Array, RecordBatch, RecordBatchReader};
 use arrow::datatypes::{DataType, Field, Schema};
@@ -29,11 +30,21 @@ pub(crate) const BUFFER_VALUES: u8 = 3;
 
 struct Registry {
     next_handle: u64,
-    streams: HashMap<u64, Arc<Mutex<StreamState>>>,
+    streams: HashMap<u64, Arc<Stream>>,
 }
 
 pub(crate) struct ArrowStreamRegistry {
     inner: Mutex<Registry>,
+}
+
+/// One open stream. `closing` lives outside `state` so `close` can detach the stream
+/// without waiting for a `reader.next()` that is already in flight.
+struct Stream {
+    /// Set by `close` before it tries for `state`. An export that is already inside
+    /// `reader.next()` re-reads this when the read returns and discards the batch
+    /// instead of publishing it.
+    closing: AtomicBool,
+    state: Mutex<StreamState>,
 }
 
 struct StreamState {
@@ -56,10 +67,9 @@ enum Phase {
         error: ArrowStreamError,
         published: Option<BatchRef>,
     },
-    /// Set by `close` while it holds the stream mutex, before this state is dropped.
-    /// An export that has already cloned the handle, but has not locked yet, observes
-    /// this and returns [`ArrowStreamError::MissingHandle`] instead of publishing
-    /// buffer addresses.
+    /// Set by whichever of `close` or an in-flight export first takes the stream
+    /// mutex after `close` detaches the stream, before this state is dropped. It
+    /// drops any retained batch at that point rather than at the last `Arc` drop.
     Closed,
 }
 
@@ -199,21 +209,24 @@ impl ArrowStreamRegistry {
         // `None`), so dropping the box frees it and does not run a release callback.
         unsafe { drop(Box::from_raw(raw)) };
         let reader = reader.context(ArrowSnafu)?;
-        let state = Arc::new(Mutex::new(StreamState {
-            reader,
-            phase: Phase::Open {
-                replay: None,
-                published: None,
-            },
-        }));
+        let stream = Arc::new(Stream {
+            closing: AtomicBool::new(false),
+            state: Mutex::new(StreamState {
+                reader,
+                phase: Phase::Open {
+                    replay: None,
+                    published: None,
+                },
+            }),
+        });
         let mut registry = self.inner.lock_recover();
         let handle = registry.next_handle;
         registry.next_handle = registry.next_handle.wrapping_add(1);
-        registry.streams.insert(handle, state);
+        registry.streams.insert(handle, stream);
         Ok(handle)
     }
 
-    fn stream(&self, handle: u64) -> Result<Arc<Mutex<StreamState>>, ArrowStreamError> {
+    fn stream(&self, handle: u64) -> Result<Arc<Stream>, ArrowStreamError> {
         self.inner
             .lock_recover()
             .streams
@@ -223,25 +236,48 @@ impl ArrowStreamRegistry {
     }
 
     pub(crate) fn schema(&self, handle: u64) -> Result<Vec<u8>, ArrowStreamError> {
-        let state = self.stream(handle)?;
-        let state = state.lock_recover();
+        let stream = self.stream(handle)?;
+        if stream.closing.load(Ordering::SeqCst) {
+            return Err(MissingHandleSnafu { handle }.build());
+        }
+        let mut state = stream.state.lock_recover();
         if matches!(state.phase, Phase::Closed) {
             return Err(MissingHandleSnafu { handle }.build());
         }
-        encode_schema(state.reader.schema().as_ref())
+        let encoded = encode_schema(state.reader.schema().as_ref());
+        if self.detached(handle, &stream, &mut state, &mut None) {
+            return Err(MissingHandleSnafu { handle }.build());
+        }
+        encoded
     }
 
     /// `export` runs while this stream's mutex is held. A callback that calls back
     /// into this registry on the same handle deadlocks. This stream keeps the
     /// returned batch until the next successful export or `close`. A [`BatchRef`]
     /// cloned from the callback keeps its own buffers alive after both.
+    ///
+    /// A concurrent [`Self::close`] does not wait for this call. One observed by
+    /// either `closing` check — before the read or after the callback — makes this
+    /// return [`ArrowStreamError::MissingHandle`], discard the batch, and remove the
+    /// registry entry that `close` left behind.
+    ///
+    /// A `close` that lands after the second load took the
+    /// [`TryLockError::WouldBlock`] path while this call held the stream mutex, so it
+    /// left the registry entry in place. That entry, not this call's `Arc`, is the
+    /// batch's last owner, so the batch this call publishes stays alive for the
+    /// caller about to read it. Nothing reclaims the stream afterwards: a `close`
+    /// racing a fetch that way leaks one reader and one batch rather than freeing
+    /// memory the caller holds addresses into.
     pub(crate) fn export_next_batch<T>(
         &self,
         handle: u64,
         export: impl FnOnce(Option<&BatchRef>) -> Result<T, String>,
     ) -> Result<T, ArrowStreamError> {
-        let state = self.stream(handle)?;
-        let mut state = state.lock_recover();
+        let stream = self.stream(handle)?;
+        if stream.closing.load(Ordering::SeqCst) {
+            return Err(MissingHandleSnafu { handle }.build());
+        }
+        let mut state = stream.state.lock_recover();
         if matches!(state.phase, Phase::Closed) {
             return Err(MissingHandleSnafu { handle }.build());
         }
@@ -270,7 +306,17 @@ impl ArrowStreamRegistry {
                 }
             },
         };
+        let mut described = described;
+        if self.detached(handle, &stream, &mut state, &mut described) {
+            return Err(MissingHandleSnafu { handle }.build());
+        }
         let exported = export(described.as_ref());
+        // Re-checked: `close` may have landed while the callback was running, in which
+        // case nothing retains these buffers once this call returns, so the export has
+        // to fail rather than report a batch the caller may still read.
+        if self.detached(handle, &stream, &mut state, &mut described) {
+            return Err(MissingHandleSnafu { handle }.build());
+        }
         if let Phase::Open { replay, published } = &mut state.phase {
             if exported.is_err() {
                 *replay = described;
@@ -281,12 +327,67 @@ impl ArrowStreamRegistry {
         exported.context(ExportSnafu)
     }
 
+    /// Detaches `handle` and returns without waiting for an in-flight export. The
+    /// exporting thread observes `closing` and discards its batch.
+    ///
+    /// Whichever of the two holds the stream mutex owns the registry entry: this call
+    /// removes it when `try_lock` succeeds, and the lock holder removes it in
+    /// [`Self::detached`] when it does not. Leaving the entry in place on the
+    /// [`TryLockError::WouldBlock`] path is what keeps the batch an in-flight export
+    /// is about to publish alive — that entry outlives the export, where the
+    /// exporting thread's `Arc` does not.
     pub(crate) fn close(&self, handle: u64) {
-        let state = self.inner.lock_recover().streams.remove(&handle);
-        if let Some(state) = state {
-            let mut state = state.lock_recover();
-            state.phase = Phase::Closed;
+        let Ok(stream) = self.stream(handle) else {
+            return;
+        };
+        stream.closing.store(true, Ordering::SeqCst);
+        match stream.state.try_lock() {
+            Ok(mut state) => {
+                state.phase = Phase::Closed;
+                drop(state);
+                self.remove(handle);
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                tracing::error!(
+                    handle,
+                    "recovered a poisoned Arrow stream mutex while closing (a thread \
+                     previously panicked while holding it)",
+                );
+                poisoned.into_inner().phase = Phase::Closed;
+                self.remove(handle);
+            }
+            // An export or a `schema` call holds the stream and owns the removal.
+            Err(TryLockError::WouldBlock) => {}
         }
+    }
+
+    /// `true` when `close` detached this stream while the caller held its mutex. The
+    /// phase moves to [`Phase::Closed`], `described` is dropped, and the registry
+    /// entry `close` left to the lock holder is removed, so the caller never hands
+    /// out addresses nothing keeps alive.
+    fn detached(
+        &self,
+        handle: u64,
+        stream: &Stream,
+        state: &mut StreamState,
+        described: &mut Option<BatchRef>,
+    ) -> bool {
+        if !stream.closing.load(Ordering::SeqCst) {
+            return false;
+        }
+        state.phase = Phase::Closed;
+        *described = None;
+        self.remove(handle);
+        true
+    }
+
+    fn remove(&self, handle: u64) {
+        self.inner.lock_recover().streams.remove(&handle);
+    }
+
+    #[cfg(test)]
+    fn open_handles(&self) -> usize {
+        self.inner.lock_recover().streams.len()
     }
 }
 
@@ -552,10 +653,40 @@ fn describe_struct(field: &Field, array: &dyn Array) -> Result<ArrayRef, ArrowSt
     }
     let mut children = Vec::with_capacity(child_fields.len());
     for (child_field, child) in child_fields.iter().zip(data.child_data()) {
-        let child_array = arrow::array::make_array(child.clone());
+        // `StructArray` holds no logical offset of its own: both `Array::slice` and
+        // `From<ArrayData>` narrow the children instead, so `data.offset()` is 0 here
+        // and this is a no-op. It is applied anyway so a child that does arrive
+        // unnarrowed still describes the rows the validity bits above cover, and so an
+        // inconsistent length is reported rather than panicking in `ArrayData::slice`.
+        let sliced = slice_child(name, child, data.offset(), data.len())?;
+        let child_array = arrow::array::make_array(sliced);
         children.push(describe_array(child_field.as_ref(), child_array.as_ref())?);
     }
     Ok(ArrayRef { buffers, children })
+}
+
+/// Narrow `child` to the `len` elements at `offset`, rejecting a range past its end.
+/// [`arrow::array::ArrayData::slice`] panics there, and a panic must not cross the
+/// JNI boundary.
+fn slice_child(
+    name: &str,
+    child: &arrow::array::ArrayData,
+    offset: usize,
+    len: usize,
+) -> Result<arrow::array::ArrayData, ArrowStreamError> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| unsupported(name, "child slice overflows".to_string()))?;
+    if end > child.len() {
+        return Err(unsupported(
+            name,
+            format!(
+                "child slice [{offset}, {end}) exceeds child length {}",
+                child.len()
+            ),
+        ));
+    }
+    Ok(child.slice(offset, len))
 }
 
 fn describe_fixed_list(field: &Field, array: &dyn Array) -> Result<ArrayRef, ArrowStreamError> {
@@ -565,17 +696,36 @@ fn describe_fixed_list(field: &Field, array: &dyn Array) -> Result<ArrayRef, Arr
     if let Some(validity) = describe_validity(name, &data)? {
         buffers.push(validity);
     }
-    let DataType::FixedSizeList(child_field, _) = field.data_type() else {
+    let DataType::FixedSizeList(child_field, list_size) = field.data_type() else {
         return Err(unsupported(
             name,
             "fixed-size list array has no list field".to_string(),
         ));
     };
+    snafu::ensure!(
+        *list_size >= 0,
+        UnsupportedTypeSnafu {
+            column: name.to_string(),
+            detail: format!("negative list size {list_size}"),
+        }
+    );
+    let list_size = *list_size as usize;
     let child = data
         .child_data()
         .first()
         .ok_or_else(|| unsupported(name, "fixed-size list missing child".to_string()))?;
-    let child_array = arrow::array::make_array(child.clone());
+    // Same no-op-by-construction translation as `describe_struct`, scaled by the list
+    // width: element `i` occupies child positions `[i * list_size, (i+1) * list_size)`.
+    let child_offset = data
+        .offset()
+        .checked_mul(list_size)
+        .ok_or_else(|| unsupported(name, "child offset overflows".to_string()))?;
+    let child_len = data
+        .len()
+        .checked_mul(list_size)
+        .ok_or_else(|| unsupported(name, "child length overflows".to_string()))?;
+    let sliced = slice_child(name, child, child_offset, child_len)?;
+    let child_array = arrow::array::make_array(sliced);
     Ok(ArrayRef {
         buffers,
         children: vec![describe_array(child_field.as_ref(), child_array.as_ref())?],
@@ -722,13 +872,14 @@ fn write_i32(output: &mut Vec<u8>, value: i32) {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
     use arrow::array::{
-        Array, BooleanArray, Int64Array, RecordBatch, RecordBatchIterator, StringArray,
-        StructArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+        Array, BooleanArray, FixedSizeListArray, Int64Array, RecordBatch, RecordBatchIterator,
+        StringArray, StructArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
     };
     use arrow::buffer::BooleanBuffer;
     use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -1051,6 +1202,7 @@ mod tests {
         assert!(read_batch(&streams, handle).expect("batch reads").is_some());
         assert!(read_batch(&streams, handle).expect("end reads").is_none());
         streams.close(handle);
+        assert_eq!(streams.open_handles(), 0);
         assert!(matches!(
             read_batch(&streams, handle),
             Err(ArrowStreamError::MissingHandle { handle: missing, .. }) if missing == handle
@@ -1370,13 +1522,32 @@ mod tests {
         streams.close(ready);
     }
 
+    /// Runs `close` on its own thread and returns once it has finished, failing if it
+    /// takes longer than a read blocked on a gate would.
+    fn close_without_waiting(streams: &Arc<ArrowStreamRegistry>, handle: u64) {
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_flag = Arc::clone(&finished);
+        let closing_streams = Arc::clone(streams);
+        let closing = thread::spawn(move || {
+            closing_streams.close(handle);
+            finished_flag.store(true, Ordering::SeqCst);
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !finished.load(Ordering::SeqCst) {
+            assert!(
+                Instant::now() < deadline,
+                "close blocked behind the in-flight export"
+            );
+            thread::yield_now();
+        }
+        closing.join().expect("close");
+    }
+
     #[test]
-    fn close_waits_for_in_flight_next_batch() {
+    fn close_detaches_from_in_flight_next_batch() {
         let streams = Arc::new(ArrowStreamRegistry::new());
         let gate = Gate::new();
-        let (schema, numbers, batch) = int_batch(42);
-        let expected = numbers.to_data().buffers()[0].as_ptr() as u64;
-        drop(numbers);
+        let (schema, _, batch) = int_batch(42);
         let handle = open_reader(
             &streams,
             Box::new(BlockingReader {
@@ -1390,44 +1561,18 @@ mod tests {
         let reading = thread::spawn(move || read_batch(&reading_streams, handle));
         gate.wait_until_entered();
 
-        let close_entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let close_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let close_entered_flag = Arc::clone(&close_entered);
-        let close_finished_flag = Arc::clone(&close_finished);
-        let closing_streams = Arc::clone(&streams);
-        let closing = thread::spawn(move || {
-            close_entered_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-            closing_streams.close(handle);
-            close_finished_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while !close_entered.load(std::sync::atomic::Ordering::SeqCst) {
-            assert!(Instant::now() < deadline, "close did not start");
-            thread::yield_now();
-        }
-        let observed = Instant::now();
-        while !close_finished.load(std::sync::atomic::Ordering::SeqCst)
-            && observed.elapsed() < Duration::from_millis(200)
-        {
-            thread::yield_now();
-        }
-        assert!(
-            !close_finished.load(std::sync::atomic::Ordering::SeqCst),
-            "close finished while next_batch was still inside reader.next"
-        );
+        // `reader.next` still holds the stream mutex. `close` must not wait for it.
+        close_without_waiting(&streams, handle);
 
         gate.release();
-        let described = reading
-            .join()
-            .expect("next_batch")
-            .expect("batch reads")
-            .expect("batch is present");
-        closing.join().expect("close");
-        assert_eq!(described.retained.num_rows(), 1);
-        assert_eq!(value_address(&described), expected);
-        // SAFETY: `described` retains the buffer after `close` drops the stream.
-        let stored = unsafe { *(value_address(&described) as *const i64) };
-        assert_eq!(stored, 42);
+        // The batch arrived after the stream was detached, so nothing retains its
+        // buffers past this call and the read reports the handle as gone instead of
+        // handing the addresses out.
+        let read = reading.join().expect("next_batch");
+        assert!(matches!(
+            read,
+            Err(ArrowStreamError::MissingHandle { handle: missing, .. }) if missing == handle
+        ));
         assert!(matches!(
             read_batch(&streams, handle),
             Err(ArrowStreamError::MissingHandle { handle: missing, .. }) if missing == handle
@@ -1435,7 +1580,7 @@ mod tests {
     }
 
     #[test]
-    fn close_waits_until_buffer_export_finishes() {
+    fn close_detaches_during_buffer_export() {
         let streams = Arc::new(ArrowStreamRegistry::new());
         let gate = Gate::new();
         let (schema, numbers, batch) = int_batch(42);
@@ -1447,44 +1592,128 @@ mod tests {
         );
         let export_gate = Arc::clone(&gate);
         let exporting_streams = Arc::clone(&streams);
+        let handles_while_exporting = Arc::new(AtomicUsize::new(usize::MAX));
+        let observed_handles = Arc::clone(&handles_while_exporting);
         let exporting = thread::spawn(move || {
             exporting_streams.export_next_batch(handle, |described| {
                 let address = value_address(described.expect("batch"));
-                export_gate.enter_and_wait();
-                // SAFETY: `described` retains this buffer until the callback returns, and
-                // `close` cannot take the stream lock until then.
+                // SAFETY: `described` retains this buffer for the whole callback; a
+                // concurrent `close` detaches the stream but does not drop the batch
+                // the exporting thread still holds.
                 let stored = unsafe { *(address as *const i64) };
                 assert_eq!(stored, 42);
                 assert_eq!(address, expected);
+                export_gate.enter_and_wait();
+                observed_handles.store(exporting_streams.open_handles(), Ordering::SeqCst);
                 Ok(())
             })
         });
         gate.wait_until_entered();
 
-        let close_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let close_finished_flag = Arc::clone(&close_finished);
-        let closing_streams = Arc::clone(&streams);
-        let closing = thread::spawn(move || {
-            closing_streams.close(handle);
-            close_finished_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        let observed = Instant::now();
-        while !close_finished.load(std::sync::atomic::Ordering::SeqCst)
-            && observed.elapsed() < Duration::from_millis(200)
-        {
-            thread::yield_now();
-        }
-        assert!(
-            !close_finished.load(std::sync::atomic::Ordering::SeqCst),
-            "close finished while buffer export still held the stream"
-        );
+        // The export callback still holds the stream mutex. `close` must not wait.
+        close_without_waiting(&streams, handle);
 
         gate.release();
-        exporting.join().expect("export").expect("batch exports");
-        closing.join().expect("close");
+        // The callback succeeded, but the export still fails: after `close` nothing
+        // keeps the exported addresses alive, so reporting success would hand the
+        // caller a dangling batch.
+        assert!(matches!(
+            exporting.join().expect("export"),
+            Err(ArrowStreamError::MissingHandle { handle: missing, .. }) if missing == handle
+        ));
+        // `close` ran to completion while the export held the stream mutex and left the
+        // registry entry behind: that entry, not the exporting thread's `Arc`, is what
+        // keeps a batch alive across the end of an export that does publish one.
+        assert_eq!(handles_while_exporting.load(Ordering::SeqCst), 1);
+        // The export that observed `closing` owns the removal `close` skipped.
+        assert_eq!(streams.open_handles(), 0);
         assert!(matches!(
             read_batch(&streams, handle),
             Err(ArrowStreamError::MissingHandle { handle: missing, .. }) if missing == handle
         ));
+    }
+
+    const I64_BYTES: usize = std::mem::size_of::<i64>();
+
+    fn child_values_buffer(described: &ArrayRef) -> &BufferRef {
+        described.children[0]
+            .buffers
+            .iter()
+            .find(|buffer| buffer.role == BUFFER_VALUES)
+            .expect("child values")
+    }
+
+    #[test]
+    fn sliced_struct_describes_children_from_the_slice_origin() {
+        let child = Int64Array::from(vec![10, 20, 30, 40]);
+        let child_values = child.to_data().buffers()[0].as_ptr() as u64;
+        let child_field = Arc::new(field("N", "FIXED", DataType::Int64));
+        let full = StructArray::from(vec![(
+            Arc::clone(&child_field),
+            Arc::new(child) as Arc<dyn Array>,
+        )]);
+        let sliced = full.slice(2, 2);
+        // A `StructArray` carries no logical offset of its own: both `slice` and
+        // `From<ArrayData>` push the parent offset down into the children, so
+        // `describe_struct` only ever sees offset 0 and the children are already
+        // positioned. `slice_child` below is the no-op that keeps that true.
+        assert_eq!(sliced.to_data().offset(), 0);
+
+        let struct_field = Field::new("S", DataType::Struct(vec![child_field].into()), true);
+        let described = describe_array(&struct_field, &sliced).expect("sliced struct describes");
+
+        let values = child_values_buffer(&described);
+        assert_eq!(values.length, 2 * I64_BYTES);
+        assert_eq!(values.address, child_values + 2 * I64_BYTES as u64);
+        // SAFETY: the address aliases `full`, which this test keeps alive.
+        assert_eq!(unsafe { *(values.address as *const i64) }, 30);
+    }
+
+    #[test]
+    fn sliced_fixed_size_list_describes_the_child_scaled_by_the_list_width() {
+        const LIST_SIZE: i32 = 3;
+        let child_field = Arc::new(field("E", "FIXED", DataType::Int64));
+        let child = Int64Array::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let child_values = child.to_data().buffers()[0].as_ptr() as u64;
+        let full = FixedSizeListArray::new(
+            Arc::clone(&child_field),
+            LIST_SIZE,
+            Arc::new(child) as Arc<dyn Array>,
+            None,
+        );
+        let sliced = full.slice(1, 2);
+        // Same invariant as the struct above, scaled by the list width: the child was
+        // already narrowed to [1 * LIST_SIZE, 3 * LIST_SIZE).
+        assert_eq!(sliced.to_data().offset(), 0);
+
+        let list_field = Field::new(
+            "V",
+            DataType::FixedSizeList(Arc::clone(&child_field), LIST_SIZE),
+            true,
+        );
+        let described = describe_array(&list_field, &sliced).expect("sliced list describes");
+
+        let values = child_values_buffer(&described);
+        assert_eq!(values.length, 6 * I64_BYTES);
+        assert_eq!(values.address, child_values + 3 * I64_BYTES as u64);
+        // SAFETY: the address aliases `full`, which this test keeps alive.
+        assert_eq!(unsafe { *(values.address as *const i64) }, 4);
+    }
+
+    #[test]
+    fn slice_child_rejects_a_range_past_the_child() {
+        let child = Int64Array::from(vec![1, 2]).to_data();
+        // `ArrayData::slice` panics on an out-of-range slice. A nested array whose
+        // declared length runs past its child must surface the column name instead,
+        // because a panic here would unwind across the JNI boundary.
+        let error = slice_child("S", &child, 1, 4).expect_err("range past the child");
+        assert!(
+            matches!(
+                &error,
+                ArrowStreamError::UnsupportedType { column, detail, .. }
+                    if column == "S" && detail.contains("exceeds child length")
+            ),
+            "{error}"
+        );
     }
 }

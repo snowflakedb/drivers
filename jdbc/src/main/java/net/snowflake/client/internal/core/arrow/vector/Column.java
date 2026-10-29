@@ -15,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.Value;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
-import net.snowflake.client.internal.unicore.NativeArrowBatch.NativeArrowArray;
 
 public final class Column implements AutoCloseable {
   /**
@@ -66,6 +65,16 @@ public final class Column implements AutoCloseable {
     int scale;
     int listSize;
   }
+
+  /**
+   * Buffer slots each Arrow node occupies in a {@link #bind} hand-off array. Matches {@code
+   * BUFFERS_PER_NODE} in {@code jdbc_bridge/src/lib.rs}; change both together.
+   */
+  static final int BUFFERS_PER_NODE = 3;
+
+  private static final int VALIDITY_SLOT = 0;
+  private static final int OFFSETS_SLOT = 1;
+  private static final int VALUES_SLOT = 2;
 
   @Getter private final Field field;
   private final List<Column> children;
@@ -193,25 +202,41 @@ public final class Column implements AutoCloseable {
     }
   }
 
-  void bind(NativeArrowArray array, int rows) {
+  /**
+   * Binds this column and its children to {@code rows} rows of the batch described by {@code
+   * slots}, starting at {@code slot}. Returns the first slot after this subtree.
+   *
+   * <p>{@code slots} is the flat hand-off {@code jdbc_bridge} fills: {@value #BUFFERS_PER_NODE}
+   * entries per node in pre-order (validity, offsets, values), a parent before its children. Both
+   * sides derive that walk from the same encoded schema, so the slot of every node is fixed for the
+   * life of the result set and this column tree is rebound rather than rebuilt per batch.
+   */
+  int bind(ByteBuffer[] slots, int slot, int rows) {
     checkOpen();
-    validity = array.getValidity() == null ? null : littleEndian(array.getValidity());
-    values = array.getValues() == null ? emptyBuffer() : littleEndian(array.getValues());
+    validity = readOnly(slots[slot + VALIDITY_SLOT]);
+    ByteBuffer boundValues = readOnly(slots[slot + VALUES_SLOT]);
+    values = boundValues == null ? emptyValues() : boundValues;
     if (field.physicalKind.isVariableWidth()) {
-      offsets = array.getOffsets() == null ? emptyBuffer() : littleEndian(array.getOffsets());
+      ByteBuffer boundOffsets = readOnly(slots[slot + OFFSETS_SLOT]);
+      offsets = boundOffsets == null ? emptyOffsets() : boundOffsets;
       filledThrough = rows;
     }
     valueCount = rows;
     nativeBound = true;
-    NativeArrowArray[] childArrays = array.getChildren();
-    for (int index = 0; index < children.size(); index++) {
-      Column child = children.get(index);
-      if (index >= childArrays.length || childArrays[index] == null) {
-        child.clear();
-      } else {
-        child.bind(childArrays[index], childRows(rows));
-      }
+    int next = slot + BUFFERS_PER_NODE;
+    for (Column child : children) {
+      next = child.bind(slots, next, childRows(rows));
     }
+    return next;
+  }
+
+  /** Slots this column and its children occupy in a {@link #bind} hand-off array. */
+  int slotCount() {
+    int count = BUFFERS_PER_NODE;
+    for (Column child : children) {
+      count += child.slotCount();
+    }
+    return count;
   }
 
   void setValueCountWithChildren(int count) {
@@ -243,7 +268,7 @@ public final class Column implements AutoCloseable {
     }
     closed = true;
     clear();
-    offsets = emptyBuffer();
+    offsets = emptyValues();
     children.forEach(Column::close);
   }
 
@@ -301,13 +326,25 @@ public final class Column implements AutoCloseable {
     }
   }
 
+  /**
+   * Drops every reference to native batch memory and resets the counts. Unlike {@link #close()}
+   * this column stays usable, so a reader can clear the tree before the native batch behind it is
+   * freed and then rebind it to the next one.
+   */
   void clear() {
     valueCount = 0;
     validity = null;
     nativeBound = false;
-    values = emptyBuffer();
+    values = emptyValues();
     filledThrough = 0;
-    offsets = field.physicalKind.isVariableWidth() ? emptyBuffer(Integer.BYTES) : emptyBuffer();
+    offsets = field.physicalKind.isVariableWidth() ? emptyOffsets() : emptyValues();
+  }
+
+  void clearWithChildren() {
+    clear();
+    for (Column child : children) {
+      child.clearWithChildren();
+    }
   }
 
   void checkOpen() {
@@ -345,10 +382,37 @@ public final class Column implements AutoCloseable {
         listSize);
   }
 
-  private static ByteBuffer littleEndian(ByteBuffer buffer) {
-    ByteBuffer view = buffer.duplicate();
+  /**
+   * Returns a read-only little-endian view of a buffer handed over by {@code jdbc_bridge}, or
+   * {@code null} when the role is absent. The batch memory belongs to the native stream, so Java
+   * only ever reads it.
+   */
+  private static ByteBuffer readOnly(ByteBuffer buffer) {
+    if (buffer == null) {
+      return null;
+    }
+    ByteBuffer view = buffer.asReadOnlyBuffer();
     view.clear();
+    // On Java 8 asReadOnlyBuffer() resets the byte order to big-endian, so this has to
+    // run after the conversion, not before it. Arrow C data is little-endian.
     return view.order(ByteOrder.LITTLE_ENDIAN);
+  }
+
+  /**
+   * Shared stand-ins for an absent values or offsets buffer. Every read through them is absolute
+   * and bounds-checked, and they are read-only, so one instance is safe for every cleared column.
+   * This keeps a rebound batch from allocating per column per batch.
+   */
+  private static final ByteBuffer EMPTY_VALUES = readOnly(emptyBuffer(0));
+
+  private static final ByteBuffer EMPTY_OFFSETS = readOnly(emptyBuffer(Integer.BYTES));
+
+  private static ByteBuffer emptyValues() {
+    return EMPTY_VALUES;
+  }
+
+  private static ByteBuffer emptyOffsets() {
+    return EMPTY_OFFSETS;
   }
 
   static ByteBuffer emptyBuffer() {

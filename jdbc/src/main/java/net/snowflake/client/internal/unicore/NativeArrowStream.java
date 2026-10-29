@@ -1,21 +1,32 @@
 package net.snowflake.client.internal.unicore;
 
+import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 
 /**
- * Owns an Arrow C stream inside {@code jdbc_bridge}. Direct buffers from {@link #nextBatch()} alias
- * the current native {@code RecordBatch} and are invalid after the next {@link #nextBatch()} or
- * {@link #close()}.
+ * Owns an Arrow C stream inside {@code jdbc_bridge}. Direct buffers from {@link
+ * #nextBatch(ByteBuffer[])} alias the current native {@code RecordBatch} and are invalid after the
+ * next {@code nextBatch} or {@link #close()}.
  *
- * <p>TODO(SNOW-4248904): {@code nextBatch}, {@code schema}, and {@code close} are unsynchronized.
+ * <p>{@link #close()} does not wait for an in-flight {@link #nextBatch(ByteBuffer[])}: it detaches
+ * the native stream without waiting for the download, and the racing fetch either fails or returns
+ * buffers the native side still keeps alive. That covers a concurrent fetch only. Buffers an
+ * earlier fetch already handed out are freed by {@code close()} with no synchronization against a
+ * reader, so reading cells on one thread while another closes this stream reads freed memory.
  */
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NativeArrowStream implements AutoCloseable {
-  private long handle;
+  /** Returned by {@link #nextBatch(ByteBuffer[])} when the stream is drained. */
+  public static final int END_OF_STREAM = -1;
+
+  /** Zero once closed, so the native handle is released exactly once. */
+  private final AtomicLong handle;
+
+  private NativeArrowStream(long handle) {
+    this.handle = new AtomicLong(handle);
+  }
 
   /**
    * Registers {@code pointer}. The caller passes {@code 0} or the result of {@code Box::into_raw}
@@ -38,30 +49,46 @@ public final class NativeArrowStream implements AutoCloseable {
    * struct, or fixed-size list payload. These bytes are not an Arrow IPC message.
    */
   public byte[] schema() {
-    if (handle == 0) {
-      throw closedStream();
-    }
-    return wrap(() -> nativeSchema(handle));
+    final long open = openHandle();
+    return wrap(() -> nativeSchema(open));
   }
 
-  public NativeArrowBatch nextBatch() {
-    if (handle == 0) {
-      throw closedStream();
+  /**
+   * Fills {@code slots} with the next batch's buffers and returns its row count, or {@link
+   * #END_OF_STREAM} once the stream is drained. A zero row count is a legal batch.
+   *
+   * <p>{@code slots} holds {@code Column.BUFFERS_PER_NODE} entries per Arrow node and is reused for
+   * every batch, so the buffers it held before this call become invalid whether or not it succeeds.
+   */
+  public int nextBatch(ByteBuffer[] slots) {
+    // Not routed through wrap(): a Supplier would box the row count on every batch,
+    // which is the cost the flat slot hand-off exists to remove.
+    try {
+      return nativeNextBatch(openHandle(), slots);
+    } catch (IllegalStateException failure) {
+      throw arrowFailure(failure);
     }
-    return wrap(
-        () -> {
-          Object raw = nativeNextBatch(handle);
-          return raw == null ? null : NativeArrowBatch.fromNative(raw);
-        });
   }
 
   @Override
   public void close() {
-    if (handle == 0) {
-      return;
+    long open = handle.getAndSet(0);
+    if (open != 0) {
+      nativeClose(open);
     }
-    nativeClose(handle);
-    handle = 0;
+  }
+
+  /**
+   * Returns the native handle, or throws when this stream is already closed. A {@link #close()}
+   * landing after this read is not an error here: the native registry has dropped the handle, so
+   * the call fails with a closed-stream exception instead of touching freed memory.
+   */
+  private long openHandle() {
+    long open = handle.get();
+    if (open == 0) {
+      throw closedStream();
+    }
+    return open;
   }
 
   private static <T> T wrap(Supplier<T> action) {
@@ -76,7 +103,7 @@ public final class NativeArrowStream implements AutoCloseable {
 
   private static native byte[] nativeSchema(long handle);
 
-  private static native Object nativeNextBatch(long handle);
+  private static native int nativeNextBatch(long handle, ByteBuffer[] slots);
 
   private static native void nativeClose(long handle);
 

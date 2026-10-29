@@ -15,8 +15,7 @@ public class ArrowBatchManagerTest {
             new int[] {}, new int[] {10, 20}, new int[] {}, new int[] {30})) {
       ArrowResources resources = resourcesHolder.getResources();
       CursorState cursor = new CursorState();
-      SchemaState schema = new SchemaState(resources.getActiveRoot());
-      ArrowBatchManager manager = new ArrowBatchManager(cursor, resources, schema);
+      ArrowBatchManager manager = new ArrowBatchManager(cursor, resources);
 
       assertTrue(manager.fetchNextRow());
       assertEquals(0, cursor.getCurrentRowInBatch());

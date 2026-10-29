@@ -21,26 +21,33 @@ import java.util.Map;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.vector.Column.PhysicalKind;
-import net.snowflake.client.internal.unicore.NativeArrowBatch;
-import net.snowflake.client.internal.unicore.NativeArrowBatch.NativeArrowArray;
 import org.junit.jupiter.api.Test;
 
 class NativeVectorBatchTest {
 
-  @Test
-  void shouldViewPhysicalIntAndStructColumns() {
-    ByteBuffer numbers = direct(8).putLong(0, 42);
-    ByteBuffer epoch = direct(8).putLong(0, 7);
-    NativeArrowBatch batch =
-        new NativeArrowBatch(1, new NativeArrowArray[] {array(numbers), array(null, array(epoch))});
+  /** Mirrors {@code Column.BUFFERS_PER_NODE} and the values role's position within a node. */
+  private static final int BUFFERS_PER_NODE = 3;
 
+  private static final int OFFSETS_SLOT = 1;
+
+  private static final int VALUES_SLOT = 2;
+
+  @Test
+  void shouldBindPhysicalIntAndStructColumns() {
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(
             schemaBytes(
                 field("n", PhysicalKind.INT64, null),
                 field("ts", PhysicalKind.STRUCT, field("epoch", PhysicalKind.INT64, null), 1)));
 
-    ColumnBatch root = ColumnBatch.view(schema, batch);
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    // Three slots per node, pre-order: n, ts, then ts's epoch child.
+    assertEquals(9, slots.length);
+    slots[VALUES_SLOT] = direct(8).putLong(0, 42);
+    slots[2 * BUFFERS_PER_NODE + VALUES_SLOT] = direct(8).putLong(0, 7);
+    root.bind(slots, 1);
+
     Column number = root.column("n");
     Column timestamp = root.column("ts");
     Column epochVector = timestamp.child("epoch");
@@ -146,7 +153,7 @@ class NativeVectorBatchTest {
   }
 
   @Test
-  void shouldMaterializeStructElementValuesAndClearMissingChildArrays() {
+  void shouldMaterializeStructElementValues() {
     Column boolChild = ColumnBuilder.of("b", PhysicalKind.BOOL, null);
     Column i8Child = ColumnBuilder.of("i8", PhysicalKind.INT8, null);
     Column i16Child = ColumnBuilder.of("i16", PhysicalKind.INT16, null);
@@ -188,11 +195,6 @@ class NativeVectorBatchTest {
       assertEquals(2, ((byte[]) row0.get("bin")).length);
       assertEquals(new BigDecimal("42.50"), row0.get("dec"));
       assertNull(structCol.getObject(1));
-
-      structCol.bind(new NativeArrowArray(null, null, null, new NativeArrowArray[0]), 1);
-      Map<?, ?> clearedRow = (Map<?, ?>) structCol.getObject(0);
-      assertNull(clearedRow.get("i64"));
-      assertNull(clearedRow.get("dec"));
     }
   }
 
@@ -205,19 +207,21 @@ class NativeVectorBatchTest {
   }
 
   @Test
-  void shouldViewDecimalWithoutCopyingUnscaledBytesUntilRead() {
+  void shouldBindDecimalWithoutCopyingUnscaledBytesUntilRead() {
     BigDecimal value = new BigDecimal("1.00");
     ByteBuffer data = direct(16);
     byte[] unscaled = value.unscaledValue().toByteArray();
     for (int index = 0; index < unscaled.length; index++) {
       data.put(index, unscaled[unscaled.length - 1 - index]);
     }
-    NativeArrowBatch batch = new NativeArrowBatch(1, new NativeArrowArray[] {array(data)});
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(
             schemaBytes(field("d", PhysicalKind.DECIMAL128, null, 10, value.scale())));
-    Column vector = ColumnBatch.view(schema, batch).column("d");
-    assertEquals(value, vector.getDecimal(0));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    slots[VALUES_SLOT] = data;
+    root.bind(slots, 1);
+    assertEquals(value, root.column("d").getDecimal(0));
   }
 
   @Test
@@ -231,15 +235,25 @@ class NativeVectorBatchTest {
   }
 
   @Test
-  void shouldViewUtf8ColumnThroughNativeOffsetsWithoutCopyingValues() {
-    NativeArrowBatch batch =
-        new NativeArrowBatch(2, new NativeArrowArray[] {utf8Array("ab", "cdef")});
+  void shouldBindUtf8ColumnThroughNativeOffsets() {
+    ByteBuffer offsets = direct(3 * Integer.BYTES);
+    offsets.putInt(0, 0);
+    offsets.putInt(Integer.BYTES, 2);
+    offsets.putInt(2 * Integer.BYTES, 6);
+    ByteBuffer values = direct(6);
+    values.put("ab".getBytes(StandardCharsets.UTF_8));
+    values.put("cdef".getBytes(StandardCharsets.UTF_8));
+
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(schemaBytes(field("label", PhysicalKind.UTF8, null)));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    slots[OFFSETS_SLOT] = offsets;
+    slots[VALUES_SLOT] = values;
+    root.bind(slots, 2);
 
-    ColumnBatch viewed = ColumnBatch.view(schema, batch);
-    assertEquals(2, viewed.getRowCount());
-    Column label = viewed.column("label");
+    Column label = root.column("label");
+    assertEquals(2, root.getRowCount());
     assertArrayEquals("ab".getBytes(StandardCharsets.UTF_8), label.getBytes(0));
     assertArrayEquals("cdef".getBytes(StandardCharsets.UTF_8), label.getBytes(1));
     assertFalse(label.isNull(0));
@@ -247,12 +261,15 @@ class NativeVectorBatchTest {
   }
 
   @Test
-  void shouldViewStructWithBoolAndUtf8ChildrenFromNativeBuffers() {
+  void shouldBindStructWithBoolAndUtf8Children() {
     ByteBuffer boolValues = direct(1);
     boolValues.put(0, (byte) 1);
-    NativeArrowBatch batch =
-        new NativeArrowBatch(
-            1, new NativeArrowArray[] {structArray(array(boolValues), utf8Array("xy"))});
+    ByteBuffer nameOffsets = direct(2 * Integer.BYTES);
+    nameOffsets.putInt(0, 0);
+    nameOffsets.putInt(Integer.BYTES, 2);
+    ByteBuffer nameValues = direct(2);
+    nameValues.put("xy".getBytes(StandardCharsets.UTF_8));
+
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(
             schemaBytes(
@@ -260,9 +277,15 @@ class NativeVectorBatchTest {
                     "row",
                     field("active", PhysicalKind.BOOL, null),
                     field("name", PhysicalKind.UTF8, null))));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    // Pre-order: the struct node, then active, then name.
+    slots[BUFFERS_PER_NODE + VALUES_SLOT] = boolValues;
+    slots[2 * BUFFERS_PER_NODE + OFFSETS_SLOT] = nameOffsets;
+    slots[2 * BUFFERS_PER_NODE + VALUES_SLOT] = nameValues;
+    root.bind(slots, 1);
 
-    Column root = ColumnBatch.view(schema, batch).column("row");
-    Map<?, ?> value = (Map<?, ?>) root.getObject(0);
+    Map<?, ?> value = (Map<?, ?>) root.column("row").getObject(0);
     assertEquals(true, value.get("active"));
     assertArrayEquals("xy".getBytes(StandardCharsets.UTF_8), (byte[]) value.get("name"));
   }
@@ -281,15 +304,16 @@ class NativeVectorBatchTest {
   }
 
   @Test
-  void shouldRejectViewWhenSchemaColumnCountDiffersFromBatch() {
-    NativeArrowBatch batch =
-        new NativeArrowBatch(1, new NativeArrowArray[] {array(direct(8).putLong(0, 1))});
+  void shouldRejectBindWhenSlotCountDiffersFromSchema() {
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(
             schemaBytes(
                 field("a", PhysicalKind.INT64, null), field("b", PhysicalKind.INT64, null)));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = new ByteBuffer[BUFFERS_PER_NODE * 3];
+    slots[VALUES_SLOT] = direct(8).putLong(0, 1);
 
-    assertThrows(IllegalArgumentException.class, () -> ColumnBatch.view(schema, batch));
+    assertThrows(IllegalArgumentException.class, () -> root.bind(slots, 1));
   }
 
   @Test
@@ -303,8 +327,6 @@ class NativeVectorBatchTest {
 
   @Test
   void shouldRejectFixedSizeListLengthThatOverflowsInt() {
-    NativeArrowBatch batch =
-        new NativeArrowBatch(2, new NativeArrowArray[] {array(null, array(direct(8)))});
     List<Column.Field> schema =
         ColumnBatch.decodeSchema(
             schemaBytes(
@@ -314,37 +336,45 @@ class NativeVectorBatchTest {
                     field("item", PhysicalKind.INT64, null),
                     Integer.MAX_VALUE)));
 
-    SFSQLException failure =
-        assertThrows(SFSQLException.class, () -> ColumnBatch.view(schema, batch));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    slots[BUFFERS_PER_NODE + VALUES_SLOT] = direct(8);
+
+    SFSQLException failure = assertThrows(SFSQLException.class, () -> root.bind(slots, 2));
 
     SQLException sql = failure.toSQLException();
     assertEquals(ErrorCode.INTERNAL_ERROR.getMessageCode(), sql.getErrorCode());
     assertEquals("Arrow list column exceeds the supported row count", failure.getMessage());
     assertSame(ArithmeticException.class, failure.getCause().getClass());
+    // The list node binds before its child's row count overflows, so the batch has to drop that
+    // binding on the way out; the native stream frees those buffers at the next fetch.
+    assertEquals(0, root.getRowCount());
+    assertFalse(root.column("v").nativeBound);
+    assertTrue(root.column("v").isNull(0));
   }
 
-  private static NativeArrowArray array(ByteBuffer values, NativeArrowArray... children) {
-    return new NativeArrowArray(null, null, values, children);
+  private static ByteBuffer direct(int bytes) {
+    return ByteBuffer.allocateDirect(bytes).order(ByteOrder.LITTLE_ENDIAN);
   }
 
-  private static NativeArrowArray structArray(NativeArrowArray... children) {
-    return new NativeArrowArray(null, null, null, children);
+  private static byte[] schemaBytes(byte[]... fields) {
+    ByteBuffer encoded = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN);
+    encoded.putInt(fields.length);
+    Arrays.stream(fields).forEach(encoded::put);
+    return Arrays.copyOf(encoded.array(), encoded.position());
   }
 
-  private static NativeArrowArray utf8Array(String... values) {
-    int rowCount = values.length;
-    ByteBuffer offsets = direct((rowCount + 1) * Integer.BYTES);
-    int length = 0;
-    for (String value : values) {
-      offsets.putInt(length);
-      length += value.getBytes(StandardCharsets.UTF_8).length;
+  /** Encodes a nullable field without metadata; {@code params} precede the optional child. */
+  private static byte[] field(String name, PhysicalKind kind, byte[] child, int... params) {
+    byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
+    ByteBuffer encoded = ByteBuffer.allocate(128).order(ByteOrder.LITTLE_ENDIAN);
+    encoded.putInt(nameBytes.length).put(nameBytes).putInt(0).put((byte) 1);
+    encoded.put((byte) kind.getTag());
+    Arrays.stream(params).forEach(encoded::putInt);
+    if (child != null) {
+      encoded.put(child);
     }
-    offsets.putInt(length);
-    ByteBuffer data = direct(length);
-    for (String value : values) {
-      data.put(value.getBytes(StandardCharsets.UTF_8));
-    }
-    return new NativeArrowArray(null, offsets, data, new NativeArrowArray[0]);
+    return Arrays.copyOf(encoded.array(), encoded.position());
   }
 
   private static byte[] structField(String name, byte[]... children) {
@@ -376,30 +406,6 @@ class NativeVectorBatchTest {
     byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
     ByteBuffer encoded = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
     encoded.putInt(nameBytes.length).put(nameBytes).putInt(0).put((byte) 1).put((byte) tag);
-    return Arrays.copyOf(encoded.array(), encoded.position());
-  }
-
-  private static ByteBuffer direct(int bytes) {
-    return ByteBuffer.allocateDirect(bytes).order(ByteOrder.LITTLE_ENDIAN);
-  }
-
-  private static byte[] schemaBytes(byte[]... fields) {
-    ByteBuffer encoded = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN);
-    encoded.putInt(fields.length);
-    Arrays.stream(fields).forEach(encoded::put);
-    return Arrays.copyOf(encoded.array(), encoded.position());
-  }
-
-  /** Encodes a nullable field without metadata; {@code params} precede the optional child. */
-  private static byte[] field(String name, PhysicalKind kind, byte[] child, int... params) {
-    byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
-    ByteBuffer encoded = ByteBuffer.allocate(128).order(ByteOrder.LITTLE_ENDIAN);
-    encoded.putInt(nameBytes.length).put(nameBytes).putInt(0).put((byte) 1);
-    encoded.put((byte) kind.getTag());
-    Arrays.stream(params).forEach(encoded::putInt);
-    if (child != null) {
-      encoded.put(child);
-    }
     return Arrays.copyOf(encoded.array(), encoded.position());
   }
 }
