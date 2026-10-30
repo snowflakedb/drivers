@@ -86,6 +86,19 @@ bytes = "1"
 # panics ("No provider set"), which is why every client construction path calls
 # `tls::ensure_crypto_provider()` first.
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-native-roots-no-provider", "rustls-tls-webpki-roots-no-provider", "gzip", "stream", "http2", "charset", "macos-system-configuration"] }
+# Exact pin. reqwest's `http2` feature pulls `h2` transitively, and result
+# chunks from GCS download over HTTP/2. GCS pads its DATA frames today and
+# often sends frames that carry only padding.
+# - h2 0.4.12 leaves padding out of the connection flow-control window, so
+#   after about 0.5 GB on one connection it stops sending WINDOW_UPDATE and
+#   the download stalls until GCS resets the stream.
+# - From 0.4.19, h2 counts a padding-only frame as an empty DATA frame and
+#   closes the connection with GOAWAY(ENHANCE_YOUR_CALM,
+#   "too_many_data_frames") after 100 of them. The count never resets and
+#   no builder option changes the limit.
+# 0.4.18 has neither problem. A later release, including a security update,
+# keeps the empty-frame limit unless upstream changes it.
+h2 = "=0.4.18"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
