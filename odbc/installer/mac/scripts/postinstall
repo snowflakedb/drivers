@@ -1,7 +1,9 @@
 #!/bin/bash
 #
 # Post-install script for the Snowflake ODBC Driver macOS pkg.
-# Registers the driver and a default DSN with the iODBC Driver Manager.
+# Registers the driver in /Library/ODBC/odbcinst.ini (system-wide) and
+# ~/Library/ODBC/odbcinst.ini (installing user), and writes a default DSN
+# to the user's odbc.ini.
 #
 # Driver registration and DSN content live in ini section templates installed
 # alongside this script. odbc/installer/mac/package.sh substitutes
@@ -33,9 +35,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_DRIVER_NAME="Snowflake ODBC"
 ALT_DRIVER_NAME="SnowflakeDSIIDriver"
 
-# pkg postinstall scripts run as root. Resolve the invoking user's home and
-# UID so the driver and DSN land in the per-user iODBC config
-# (~/Library/ODBC/) and ownership is restored correctly afterwards.
+# pkg postinstall scripts run as root. This resolves the invoking user's
+# home and UID so the per-user driver registration and DSN land in
+# ~/Library/ODBC/ and that directory is owned by the user afterwards.
 #
 # Resolution order:
 #   1. SUDO_USER / SUDO_UID set by sudo (sudo installer ... on the CLI)
@@ -67,6 +69,8 @@ fi
 ODBC_DIR="$USER_HOME/Library/ODBC"
 ODBCINST_FILE="$ODBC_DIR/odbcinst.ini"
 ODBC_FILE="$ODBC_DIR/odbc.ini"
+SYSTEM_ODBC_DIR="/Library/ODBC"
+SYSTEM_ODBCINST_FILE="$SYSTEM_ODBC_DIR/odbcinst.ini"
 
 if [ -z "${SF_ACCOUNT:-}" ]; then
     echo "[WARN] SF_ACCOUNT is not set, please manually update $ODBC_FILE after installation"
@@ -135,6 +139,7 @@ fi
 echo "Registering ODBC driver as: $DRIVER_NAME (source: $_DRIVER_NAME_SOURCE)"
 
 mkdir -p "$ODBC_DIR"
+mkdir -p "$SYSTEM_ODBC_DIR"
 
 parse_section_header() {
     head -n 1 "$1" | sed -e 's/^\[//' -e 's/\]$//'
@@ -240,8 +245,17 @@ upsert_ini_kv() {
 
 # Always upsert the driver registration - safe to overwrite on upgrade
 # because we only touch our own [DriverName] section and the index.
-write_ini_section "$ODBCINST_FILE" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
-upsert_ini_kv "$ODBCINST_FILE" "ODBC Drivers" "$DRIVER_NAME" "Installed"
+register_driver() {
+    local target_file="$1"
+    write_ini_section "$target_file" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
+    upsert_ini_kv "$target_file" "ODBC Drivers" "$DRIVER_NAME" "Installed"
+}
+
+register_driver "$SYSTEM_ODBCINST_FILE"
+chmod 644 "$SYSTEM_ODBCINST_FILE"
+chown root:wheel "$SYSTEM_ODBCINST_FILE"
+
+register_driver "$ODBCINST_FILE"
 
 # Write the default DSN only if this exact DSN section is not already present.
 if ! grep -q "^\[$DSN_NAME\]" "$ODBC_FILE" 2>/dev/null; then
@@ -263,4 +277,4 @@ if [ -n "${INSTALL_UID:-}" ]; then
     chown -R "$INSTALL_UID":"${INSTALL_GID:-$INSTALL_UID}" "$ODBC_DIR"
 fi
 
-echo "Driver '$DRIVER_NAME' registered in $ODBCINST_FILE"
+echo "Driver '$DRIVER_NAME' registered in $SYSTEM_ODBCINST_FILE and $ODBCINST_FILE"
