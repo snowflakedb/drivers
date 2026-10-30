@@ -70,7 +70,8 @@ done
 
 STAGE_DIR=$(mktemp -d)
 SCRIPTS_STAGE_DIR=$(mktemp -d)
-trap 'rm -rf "$STAGE_DIR" "$SCRIPTS_STAGE_DIR"' EXIT
+EXPAND_PARENT=$(mktemp -d)
+trap 'rm -rf "$STAGE_DIR" "$SCRIPTS_STAGE_DIR" "$EXPAND_PARENT"' EXIT
 
 echo "=== Creating universal binary ==="
 mkdir -p "$STAGE_DIR$INSTALL_DIR/lib"
@@ -106,6 +107,14 @@ pkgbuild \
     --install-location "$INSTALL_DIR" \
     --root "$STAGE_DIR$INSTALL_DIR" \
     --scripts "$SCRIPTS_STAGE_DIR" \
+    --ownership recommended \
     "$BUILD_DIR/$PKG_NAME"
+
+pkgutil --expand "$BUILD_DIR/$PKG_NAME" "$EXPAND_PARENT/pkg"
+if lsbom -p u "$EXPAND_PARENT/pkg/Bom" | grep -qvx '0'; then
+    echo "Payload BOM records a non-root uid:"
+    lsbom -p Mugf "$EXPAND_PARENT/pkg/Bom"
+    exit 1
+fi
 
 echo "=== Successfully created pkg at $BUILD_DIR/$PKG_NAME ==="
