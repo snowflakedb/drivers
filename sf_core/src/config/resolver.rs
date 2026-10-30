@@ -1310,6 +1310,7 @@ connection_diag_allowlist_path = "/var/snowflake/allowlist.json"
             DiagnosticConfig::Enabled {
                 log_path,
                 allowlist_path,
+                ..
             } => {
                 assert_eq!(log_path, Some("/var/log/sfdiag".into()));
                 assert_eq!(allowlist_path, Some("/var/snowflake/allowlist.json".into()));
@@ -1350,6 +1351,49 @@ password = "mypassword"
         let config = ConnectionConfig::build(&resolved).unwrap();
 
         assert!(matches!(config.diagnostic, DiagnosticConfig::Disabled));
+    }
+
+    #[test_case(None, false ; "absent")]
+    #[test_case(Some(Setting::Bool(true)), true ; "bool true")]
+    #[test_case(Some(Setting::Bool(false)), false ; "bool false")]
+    #[test_case(Some(Setting::String("true".to_owned())), true ; "string true")]
+    #[test_case(Some(Setting::String("false".to_owned())), false ; "string false")]
+    fn diagnostic_config_reads_preserve_underscores_in_hostname(
+        value: Option<Setting>,
+        expected: bool,
+    ) {
+        use crate::config::connection_config::{ConnectionConfig, DiagnosticConfig};
+
+        let temp_dir = TempDir::new().unwrap();
+        let paths = make_paths(&temp_dir);
+
+        let mut explicit = ParamStore::new();
+        for (key, setting) in [
+            (param_names::ACCOUNT, "myaccount"),
+            (param_names::USER, "myuser"),
+            (param_names::PASSWORD, "mypassword"),
+        ] {
+            explicit.insert(key.into(), Setting::String(setting.to_owned()));
+        }
+        explicit.insert(
+            param_names::ENABLE_CONNECTION_DIAG.into(),
+            Setting::Bool(true),
+        );
+        if let Some(value) = value {
+            explicit.insert(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.into(), value);
+        }
+
+        let resolved = resolve_with_paths(&explicit, &paths, false).unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        let DiagnosticConfig::Enabled {
+            preserve_underscores_in_hostname,
+            ..
+        } = config.diagnostic
+        else {
+            panic!("enable_connection_diag = true must produce DiagnosticConfig::Enabled");
+        };
+        assert_eq!(preserve_underscores_in_hostname, expected);
     }
 
     /// `connections.toml` with a `[testconn]` profile carrying `extra`.

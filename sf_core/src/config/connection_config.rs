@@ -52,7 +52,24 @@ pub enum DiagnosticConfig {
         /// Path to a pre-fetched `allowlist.json`; if absent the driver fetches
         /// the allowlist live via `system$allowlist()`.
         allowlist_path: Option<PathBuf>,
+        preserve_underscores_in_hostname: bool,
     },
+}
+
+impl DiagnosticConfig {
+    pub(crate) fn enabled_from_settings(
+        settings: &ParamStore,
+        log_path: Option<PathBuf>,
+        allowlist_path: Option<PathBuf>,
+    ) -> Self {
+        DiagnosticConfig::Enabled {
+            log_path,
+            allowlist_path,
+            preserve_underscores_in_hostname: settings
+                .get_bool(PRESERVE_UNDERSCORES_IN_HOSTNAME)
+                .unwrap_or(false),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -468,14 +485,15 @@ impl ConnectionConfig {
             proxy,
             disable_parallel_user_prompt,
             diagnostic: if settings.get_bool(ENABLE_CONNECTION_DIAG).unwrap_or(false) {
-                DiagnosticConfig::Enabled {
-                    log_path: settings
+                DiagnosticConfig::enabled_from_settings(
+                    settings,
+                    settings
                         .get_string(CONNECTION_DIAG_LOG_PATH)
                         .map(PathBuf::from),
-                    allowlist_path: settings
+                    settings
                         .get_string(CONNECTION_DIAG_ALLOWLIST_PATH)
                         .map(PathBuf::from),
-                }
+                )
             } else {
                 DiagnosticConfig::Disabled
             },

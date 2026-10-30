@@ -84,6 +84,7 @@ pub struct DiagnosticRunner {
     /// `crl_max_download_size` connection parameter). Bounds the diagnostic's
     /// raw CRL fetch so both paths honor the same user-configured cap.
     crl_max_download_size: u64,
+    preserve_underscores_in_hostname: bool,
 }
 
 impl DiagnosticRunner {
@@ -101,6 +102,7 @@ impl DiagnosticRunner {
         let DiagnosticConfig::Enabled {
             log_path,
             allowlist_path,
+            preserve_underscores_in_hostname,
         } = config
         else {
             unreachable!("DiagnosticRunner::new called with DiagnosticConfig::Disabled");
@@ -201,6 +203,7 @@ impl DiagnosticRunner {
             allowlist_sections: Vec::new(),
             allowlist_sections_seen: HashSet::new(),
             crl_max_download_size,
+            preserve_underscores_in_hostname,
         }
     }
 
@@ -230,17 +233,17 @@ impl DiagnosticRunner {
             let tls_config = Arc::clone(&self.tls_client_config);
             let proxy_config = self.proxy_config.clone();
             let crl_max_download_size = self.crl_max_download_size;
+            let preserve_underscores_in_hostname = self.preserve_underscores_in_hostname;
             for entry in entries {
                 let host_type = entry
                     .get("type")
                     .and_then(|v| v.as_str())
                     .unwrap_or("UNKNOWN")
                     .to_string();
-                let host = entry
-                    .get("host")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                let host = probe_host_name(
+                    entry.get("host").and_then(|v| v.as_str()).unwrap_or(""),
+                    preserve_underscores_in_hostname,
+                );
                 let port: u16 = entry.get("port").and_then(|v| v.as_u64()).unwrap_or(443) as u16;
 
                 // Track section order for the report (seen-set gives O(1) dedup).
@@ -467,6 +470,16 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
         std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_multicast(),
+    }
+}
+
+fn probe_host_name(host: &str, preserve_underscores_in_hostname: bool) -> String {
+    if preserve_underscores_in_hostname
+        || !host.to_ascii_lowercase().contains(".snowflakecomputing.")
+    {
+        host.to_string()
+    } else {
+        host.replace('_', "-")
     }
 }
 
@@ -1228,7 +1241,7 @@ fn collect_proxy_env() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{crl_sig_label, http_get_binary};
+    use super::{crl_sig_label, http_get_binary, probe_host_name};
     use rcgen::{
         BasicConstraints, CertificateParams, CertificateRevocationListParams, IsCa, KeyPair,
         KeyUsagePurpose, SerialNumber,
@@ -1338,5 +1351,70 @@ mod tests {
         let url = serve_once(body.clone());
         let got = http_get_binary(&url, cap).expect("within-cap body must be returned");
         assert_eq!(got, body);
+    }
+
+    #[test]
+    fn should_probe_hyphenated_name_for_underscored_snowflake_host() {
+        assert_eq!(
+            probe_host_name("account_name.snowflakecomputing.com", false),
+            "account-name.snowflakecomputing.com"
+        );
+        assert_eq!(
+            probe_host_name("org-account_name.snowflakecomputing.com", false),
+            "org-account-name.snowflakecomputing.com"
+        );
+        assert_eq!(
+            probe_host_name("snowsql_repo.snowflakecomputing.com", false),
+            "snowsql-repo.snowflakecomputing.com"
+        );
+        assert_eq!(
+            probe_host_name(
+                "sfcogsops-snowhouse_aws_us_west_2.snowflakecomputing.com",
+                false
+            ),
+            "sfcogsops-snowhouse-aws-us-west-2.snowflakecomputing.com"
+        );
+        assert_eq!(
+            probe_host_name("account_name.privatelink.snowflakecomputing.cn", false),
+            "account-name.privatelink.snowflakecomputing.cn"
+        );
+        assert_eq!(
+            probe_host_name("account_name.SnowflakeComputing.COM", false),
+            "account-name.SnowflakeComputing.COM"
+        );
+    }
+
+    #[test]
+    fn should_leave_snowflake_host_without_underscores_unchanged() {
+        for host in [
+            "account.snowflakecomputing.com",
+            "snowhouse.snowflakecomputing.com",
+            "abc.us-east-1.snowflakecomputing.com",
+            "account.privatelink.snowflakecomputing.com",
+        ] {
+            assert_eq!(probe_host_name(host, false), host);
+        }
+    }
+
+    #[test]
+    fn should_keep_underscored_name_when_preserve_underscores_is_set() {
+        assert_eq!(
+            probe_host_name("account_name.snowflakecomputing.com", true),
+            "account_name.snowflakecomputing.com"
+        );
+    }
+
+    #[test]
+    fn should_leave_non_snowflake_host_unchanged() {
+        for host in [
+            "duo_security.duosecurity.com",
+            "snowsight_deployment.snowflake.com",
+            "stage_bucket.s3.amazonaws.com",
+            "ocsp.r2m01.amazontrust.com",
+            "o.ss2.us",
+            "",
+        ] {
+            assert_eq!(probe_host_name(host, false), host);
+        }
     }
 }

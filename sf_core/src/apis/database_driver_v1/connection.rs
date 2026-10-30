@@ -380,16 +380,15 @@ impl DatabaseDriverV1 {
                     DiagnosticConfig::Enabled {
                         ref log_path,
                         ref allowlist_path,
+                        preserve_underscores_in_hostname,
                     } => Some(DiagnosticConfig::Enabled {
                         log_path: log_path.clone().or_else(|| ts_path.clone()),
                         allowlist_path: allowlist_path.clone(),
+                        preserve_underscores_in_hostname,
                     }),
-                    DiagnosticConfig::Disabled if ts_path.is_some() => {
-                        Some(DiagnosticConfig::Enabled {
-                            log_path: ts_path,
-                            allowlist_path: None,
-                        })
-                    }
+                    DiagnosticConfig::Disabled if ts_path.is_some() => Some(
+                        DiagnosticConfig::enabled_from_settings(&resolved_snapshot, ts_path, None),
+                    ),
                     _ => None,
                 };
 
