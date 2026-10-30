@@ -12,7 +12,8 @@ import type { RowStatement } from './RowStatement.js';
 // enum still accept those string literals as input before converting.
 export type RowMode = 'array' | 'object' | 'object_with_renamed_duplicated_columns';
 
-export function renamesDuplicateColumns(rowMode: RowMode): boolean {
+// TODO: move this check into the bridge, so it decides from the row mode itself.
+export function shouldRenameDuplicateColumns(rowMode: RowMode): boolean {
   return rowMode === 'object_with_renamed_duplicated_columns';
 }
 

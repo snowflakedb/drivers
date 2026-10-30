@@ -1,14 +1,14 @@
 import { Readable } from 'node:stream';
 import type { CoreStatementInstance } from '../core/index.js';
 import { createRowFormatter } from './cell-mapping.js';
-import { renamesDuplicateColumns, type RowOptions } from './types.js';
+import { shouldRenameDuplicateColumns, type RowOptions } from './types.js';
 
 export async function collectRows(
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
 ): Promise<unknown[]> {
   try {
-    const columns = coreStatement.getColumns(renamesDuplicateColumns(rowOptions.rowMode))!;
+    const columns = coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!;
     const sessionParameters = coreStatement.getSessionParametersSnapshot();
     const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
 
@@ -30,7 +30,7 @@ export function createRowStream(
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
 ): Readable {
-  const columns = coreStatement.getColumns(renamesDuplicateColumns(rowOptions.rowMode))!;
+  const columns = coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!;
   const sessionParameters = coreStatement.getSessionParametersSnapshot();
   const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
 

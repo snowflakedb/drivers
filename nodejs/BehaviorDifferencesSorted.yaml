@@ -6,26 +6,6 @@
 # - The original BehaviorDifferences.yaml stays until tests run against both the new and the old driver.
 # - The last entry included in this snapshot is 136.
 behavior_differences:
-  1:
-    name: 'object_with_renamed_duplicated_columns row mode does not rename Column metadata'
-    status: fixed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      Duplicate column names are renamed on the rowtype metadata before Column objects are
-      constructed (result.js:93-96), so Column.getName() and getColumn('NAME_2') reflect the
-      rename.
-    new_driver_behavior: |
-      Same as the old driver: in object_with_renamed_duplicated_columns row mode,
-      Column.getName() returns the renamed name, getColumn('NAME_2') finds the renamed column
-      and getColumn('NAME') finds the first one. Other row modes keep the original names.
-    status_rationale: |
-      Row keys and Column metadata used to take their names from two places: the rename ran only
-      when building row objects. The rename now happens where Column objects are created, so both
-      use the same names.
-
   2:
     name: 'ConnectionOptions is not a properly typed interface'
     status: todo

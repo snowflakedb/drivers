@@ -45,7 +45,7 @@ describe('Query Row Mode', () => {
     it.each(ROW_MODES)('should name columns according to rowMode = %s', async (rowMode) => {
       const connection = await createLiveConnection();
       const { statement } = await executeAsync(connection, SQL, { rowMode });
-      expect(statement.getColumns()?.map((column) => column.getName())).toEqual(
+      expect(statement.getColumns()!.map((column) => column.getName())).toEqual(
         COLUMN_NAMES_BY_MODE[rowMode],
       );
     });
@@ -55,8 +55,8 @@ describe('Query Row Mode', () => {
       const { statement } = await executeAsync(connection, SQL, {
         rowMode: 'object_with_renamed_duplicated_columns',
       });
-      expect(statement.getColumn('NAME_2')?.getIndex()).toBe(2);
-      expect(statement.getColumn('NAME')?.getIndex()).toBe(1);
+      expect(statement.getColumn('NAME_2')!.getIndex()).toBe(2);
+      expect(statement.getColumn('NAME')!.getIndex()).toBe(1);
     });
   });
 

@@ -26,7 +26,7 @@ behavior_differences:
     name: 'object_with_renamed_duplicated_columns row mode does not rename Column metadata'
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
