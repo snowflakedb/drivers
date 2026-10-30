@@ -18,9 +18,11 @@
 #        sudo -E SF_DRIVER_NAME=MyDriver SF_ACCOUNT=myaccount installer \
 #             -pkg snowflake-odbc-*.universal.pkg -target /
 #   2. An interactive AppleScript dropdown shown to the logged-in console
-#      user when the pkg is launched from Installer.app
-#   3. The default "Snowflake ODBC Driver" when neither of the above is
-#      available (e.g. fully non-interactive install with no console user).
+#      user when the pkg is launched from Installer.app. The prompt is
+#      skipped when COMMAND_LINE_INSTALL is set: installer(8) injects that
+#      variable for installs started with the installer command.
+#   3. The default "Snowflake ODBC" when neither of the above is available
+#      (command-line installs, or a GUI install with no console user).
 #
 
 INSTALL_DIR="/opt/snowflake/snowflakeodbc"
@@ -75,10 +77,8 @@ fi
 #
 # Returns the picked name on stdout. Returns empty on failure (no console
 # user, no AppleScript GUI, user cancelled, etc.) so the caller can fall back
-# to the default. Errors are intentionally swallowed because this is a
-# best-effort interactive prompt: install must still succeed when the
-# package is run headless (no GUI session) or via `sudo installer` from a
-# terminal where AppleScript can't display a dialog.
+# to the default. Errors are swallowed so a failed prompt does not fail the
+# install. The caller skips this function when COMMAND_LINE_INSTALL is set.
 prompt_driver_name() {
     local console_user console_uid script picked
 
@@ -116,7 +116,9 @@ OSA
 
 DRIVER_NAME="${SF_DRIVER_NAME:-}"
 _DRIVER_NAME_SOURCE="default"
-if [ -z "$DRIVER_NAME" ]; then
+# installer(8) sets COMMAND_LINE_INSTALL when the install is started with
+# the installer command. Installer.app leaves it unset.
+if [ -z "$DRIVER_NAME" ] && [ -z "${COMMAND_LINE_INSTALL:-}" ]; then
     DRIVER_NAME=$(prompt_driver_name)
     if [ -n "$DRIVER_NAME" ]; then
         _DRIVER_NAME_SOURCE="interactive prompt"
