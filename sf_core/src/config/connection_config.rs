@@ -2221,10 +2221,15 @@ mod tests {
             ("private_key", Setting::String(pem.into())),
             ("host", Setting::String("h.com".into())),
         ];
-        for (configured, expected) in [(None, 120), (Some(600), 600)] {
+        for (configured, expected) in [
+            (None, 120),
+            (Some(Setting::Int(600)), 600),
+            (Some(Setting::Int(0)), 120),
+            (Some(Setting::String("0".into())), 120),
+        ] {
             let mut settings = settings_from(&base);
-            if let Some(seconds) = configured {
-                settings.insert(JWT_TIMEOUT.to_string(), Setting::Int(seconds));
+            if let Some(value) = configured {
+                settings.insert(JWT_TIMEOUT.to_string(), value);
             }
             let config = ConnectionConfig::build(&settings).unwrap();
             let method = login_method_from_auth_config(&config.auth);
@@ -2237,8 +2242,8 @@ mod tests {
     #[test]
     fn invalid_jwt_timeout_returns_validation_error() {
         for invalid in [
-            Setting::Int(0),
             Setting::Int(-1),
+            Setting::String("-5".into()),
             Setting::String("1.5".into()),
             Setting::String("not-an-integer".into()),
             Setting::Bool(true),
@@ -2255,7 +2260,7 @@ mod tests {
                     if issues.iter().any(|issue|
                         issue.parameter == JWT_TIMEOUT.as_str()
                             && issue.code == ValidationCode::InvalidValue
-                            && issue.message.contains("positive integer"))),
+                            && issue.message.contains("non-negative integer"))),
                 "expected jwt_timeout validation error for {invalid:?}: {err:?}"
             );
         }

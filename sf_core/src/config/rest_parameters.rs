@@ -327,11 +327,12 @@ pub(crate) fn jwt_timeout_secs(settings: &dyn Settings) -> Result<i64, ConfigErr
         _ => None,
     };
     match seconds {
+        Some(0) => Ok(DEFAULT_JWT_TIMEOUT_SECS),
         Some(seconds) if seconds > 0 => Ok(seconds),
         _ => InvalidParameterValueSnafu {
             parameter: param_names::JWT_TIMEOUT.as_str(),
             value: value.to_wire_string(),
-            explanation: "must be a positive integer number of seconds",
+            explanation: "must be a non-negative integer number of seconds",
         }
         .fail(),
     }

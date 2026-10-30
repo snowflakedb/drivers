@@ -1266,8 +1266,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_JWT_TIMEOUT_SECS))
         .sensitive(false)
-        .auth(true)
-        .description("Lifetime in seconds for each key-pair authentication JWT (must be positive)")
+        .auth(false)
+        .description(
+            "Lifetime in seconds for each key-pair authentication JWT (0 uses the default; must not be negative)",
+        )
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),
@@ -4420,6 +4422,8 @@ mod tests {
             "warehouse",
             "crl_check_mode",
             "proxy_password",
+            "jwt_timeout",
+            "JWT_TIMEOUT",
             "totally_unknown_key",
         ] {
             assert!(
