@@ -4,6 +4,7 @@ use std::path::Path;
 use snafu::OptionExt;
 
 use crate::config::param_names::{TOKEN, TOKEN_FILE_PATH};
+use crate::config::path_resolver::expand_tilde;
 use crate::config::settings::Settings;
 use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
 use crate::config::{ConfigError, InvalidParameterValueSnafu, MissingEitherParameterSnafu};
@@ -68,6 +69,14 @@ fn read_token_file(
     token_file_path: &str,
     settings: &dyn Settings,
 ) -> Result<SensitiveString, ConfigError> {
+    read_token_file_with_home(token_file_path, settings, dirs::home_dir().as_deref())
+}
+
+fn read_token_file_with_home(
+    token_file_path: &str,
+    settings: &dyn Settings,
+    home_dir: Option<&Path>,
+) -> Result<SensitiveString, ConfigError> {
     let permission_check =
         if settings.get_bool("unsafe_skip_config_file_permissions_check") == Some(true) {
             FilePermissionCheck::UnsafeDisabled
@@ -75,14 +84,16 @@ fn read_token_file(
             FilePermissionCheck::Enabled
         };
 
-    let path = Path::new(token_file_path);
+    // `~/.snowflake/pat.token` in `connections.toml` resolves against the
+    // user's home, like `private_key_file` and `connections_file`.
+    let path = expand_tilde(token_file_path, home_dir);
     // Same order as `private_key_file` / `load_toml_file`: only permission-check
     // files that exist so a missing path surfaces a token-file read error.
     if path.try_exists().unwrap_or(false) {
-        check_file_permissions(path, permission_check)?;
+        check_file_permissions(&path, permission_check)?;
     }
 
-    let contents = fs::read_to_string(path).map_err(|err| {
+    let contents = fs::read_to_string(&path).map_err(|err| {
         InvalidParameterValueSnafu {
             parameter: String::from(TOKEN_FILE_PATH),
             value: token_file_path.to_string(),
@@ -258,5 +269,63 @@ mod tests {
             } if parameter == TOKEN.as_str() && value == "****"
         ));
         assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn read_token_file_expands_tilde_to_home() {
+        let home = tempfile::tempdir().expect("temp home");
+        fs::create_dir(home.path().join(".snowflake")).expect("create .snowflake");
+        let token_path = home.path().join(".snowflake").join("pat.token");
+        fs::write(&token_path, "tilde-tok\n").expect("write token");
+        // Pin the mode so the permission gate does not depend on the umask.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&token_path, fs::Permissions::from_mode(0o600))
+                .expect("set permissions");
+        }
+        let settings = settings_with(&[]);
+
+        let token =
+            read_token_file_with_home("~/.snowflake/pat.token", &settings, Some(home.path()))
+                .unwrap();
+
+        assert_eq!(token.reveal(), "tilde-tok");
+    }
+
+    #[test]
+    fn read_token_file_missing_tilde_path_reports_path_as_given() {
+        let home = tempfile::tempdir().expect("temp home");
+        let settings = settings_with(&[]);
+
+        let err =
+            read_token_file_with_home("~/missing.token", &settings, Some(home.path())).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidParameterValue { ref parameter, ref value, .. }
+                if parameter == TOKEN_FILE_PATH.as_str() && value == "~/missing.token"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_token_file_checks_permissions_of_expanded_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().expect("temp home");
+        let token_path = home.path().join("pat.token");
+        fs::write(&token_path, "tok").expect("write token");
+        fs::set_permissions(&token_path, fs::Permissions::from_mode(0o666))
+            .expect("set permissions");
+        let settings = settings_with(&[]);
+
+        let err =
+            read_token_file_with_home("~/pat.token", &settings, Some(home.path())).unwrap_err();
+
+        assert!(
+            matches!(err, ConfigError::InsecurePermissions { .. }),
+            "Expected InsecurePermissions, got: {err:?}"
+        );
     }
 }
