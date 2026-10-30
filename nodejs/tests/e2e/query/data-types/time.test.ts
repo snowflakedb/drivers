@@ -323,11 +323,7 @@ describe('TIME data type', () => {
       const { rows } = await executeAsync(connection, 'SELECT NULL::TIME', {
         fetchAsString: ['String'],
       });
-      if (isRunningNewDriverWithBD('BD#14')) {
-        expect(Object.values(rows[0])).toEqual([null]);
-      } else {
-        expect(Object.values(rows[0])).toEqual(['NULL']);
-      }
+      expect(Object.values(rows[0])).toEqual(['NULL']);
     });
 
     it('should render a NULL TIME cell as null when representNullAsStringNull is disabled', async () => {

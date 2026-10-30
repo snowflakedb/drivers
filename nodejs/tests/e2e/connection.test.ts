@@ -1,23 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, onTestFinished } from 'vitest';
 import { createConnection } from './utils/fixtures.js';
-import {
-  createTestConnection,
-  destroyConnectionAsync,
-  isRunningNewDriverWithBD,
-  snowflake,
-} from './utils/index.js';
+import { destroyConnectionAsync, isRunningNewDriverWithBD, snowflake } from './utils/index.js';
 
 describe('Connection', () => {
-  it('.connect() connects on valid parameters', async () => {
-    const connection = createTestConnection();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        connection.connect((err) => (err ? reject(err) : resolve()));
-      });
-      expect(connection.isUp()).toBe(true);
-    } finally {
+  it('should connect with .connect() on valid parameters', async () => {
+    const connection = createConnection();
+    onTestFinished(async () => {
       await destroyConnectionAsync(connection);
-    }
+    });
+    await new Promise<void>((resolve, reject) => {
+      const returned = connection.connect((err) => (err ? reject(err) : resolve()));
+      expect(returned).toBe(connection);
+    });
+    expect(connection.isUp()).toBe(true);
   });
 
   it('should surface a rejected login through the .connect() callback', async () => {
@@ -34,15 +29,15 @@ describe('Connection', () => {
     });
   });
 
-  it('.connectAsync() connects on valid parameters', async () => {
-    const connection = createTestConnection();
-    try {
-      await connection.connectAsync();
-      expect(connection.isUp()).toBe(true);
-    } finally {
+  it('should connect with .connectAsync() on valid parameters', async () => {
+    const connection = createConnection();
+    onTestFinished(async () => {
       await destroyConnectionAsync(connection);
-    }
+    });
+    await expect(connection.connectAsync()).resolves.toBe(connection);
+    expect(connection.isUp()).toBe(true);
   });
+
   it('should surface a rejected login from .connectAsync()', async () => {
     const connection = createConnection({
       username: 'incorrect-username',
@@ -84,7 +79,7 @@ describe('Connection', () => {
   });
 
   it('destroys the connection and transitions to a disconnected state', async () => {
-    const connection = createTestConnection();
+    const connection = createConnection();
     await connection.connectAsync();
     await destroyConnectionAsync(connection);
     expect(connection.isUp()).toBe(false);
@@ -92,7 +87,7 @@ describe('Connection', () => {
 
   describe('isValidAsync', () => {
     it('should report a connection as valid after connect', async () => {
-      const connection = createTestConnection();
+      const connection = createConnection();
       try {
         await connection.connectAsync();
         await expect(connection.isValidAsync()).resolves.toBe(true);
@@ -102,7 +97,7 @@ describe('Connection', () => {
     });
 
     it('should report a connection as invalid after destroy', async () => {
-      const connection = createTestConnection();
+      const connection = createConnection();
       await connection.connectAsync();
       await destroyConnectionAsync(connection);
       await expect(connection.isValidAsync()).resolves.toBe(false);

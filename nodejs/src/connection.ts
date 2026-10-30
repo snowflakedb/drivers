@@ -159,7 +159,7 @@ export class Connection {
     });
   }
 
-  connect(callback?: ConnectionCallback) {
+  connect(callback?: ConnectionCallback): Connection {
     this.connectAsync()
       .then(() => {
         callback?.(undefined, this);
@@ -167,10 +167,12 @@ export class Connection {
       .catch((err) => {
         callback?.(err, this);
       });
+    return this;
   }
 
-  connectAsync(): Promise<void> {
-    return this.#core.connect();
+  async connectAsync(): Promise<Connection> {
+    await this.#core.connect();
+    return this;
   }
 
   serialize(): string {

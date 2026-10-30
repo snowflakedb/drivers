@@ -27,6 +27,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   boolean: { asValue: null, asString: () => booleanAsStringConverter },
   binary: { asValue: null, asString: () => binaryAsStringConverter },
   date: { asValue: null, asString: () => temporalAsStringConverter },
+  time: { asValue: null, asString: () => textAsStringConverter },
   timestamp_tz: { asValue: null, asString: () => temporalAsStringConverter },
   timestamp_ltz: { asValue: null, asString: () => temporalAsStringConverter },
   timestamp_ntz: { asValue: null, asString: () => temporalAsStringConverter },
@@ -37,7 +38,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
 };
 
 const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
-  String: ['text', 'decfloat', 'interval_year_month', 'interval_day_time'],
+  String: ['text', 'time', 'decfloat', 'interval_year_month', 'interval_day_time'],
   Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],

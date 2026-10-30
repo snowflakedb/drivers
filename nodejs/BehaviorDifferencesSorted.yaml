@@ -6,89 +6,6 @@
 # - The original BehaviorDifferences.yaml stays until tests run against both the new and the old driver.
 # - The last entry included in this snapshot is 136.
 behavior_differences:
-  2:
-    name: 'ConnectionOptions is not a properly typed interface'
-    status: todo
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      index.d.ts types connection options as real fields (e.g. rowMode?: RowMode), so a
-      TypeScript caller who typos a connection option gets a compile-time error.
-    new_driver_behavior: |
-      ConnectionOptions (index.ts) is Record<string, string> & { rowMode?: RowMode } -- rowMode
-      is now typed to match the old driver, so a typo'd rowMode is caught at compile time same as
-      the old driver. Every other connection option is still an untyped string, so a typo there compiles
-      fine and either fails at runtime (if the field is used) or silently passes through
-      (if not). No runtime behavior differs for valid input on any option -- both drivers behave
-      identically at runtime -- so this is a compile-time type-safety/DX gap, not an execution
-      difference. Tracked inline via index.ts's pre-existing "TODO: implement ConnectionOptions
-      like in old driver" comment.
-
-  3:
-    name: 'fetchResult now inherits the connection-level rowMode default'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      execute() inherits the connection-level rowMode default (createStatementPreExec falls back
-      to connectionConfig.getRowMode(), statement.js:480), but fetchResult() does not
-      (createStatementPostExec assigns statementOptions.rowMode directly with no fallback,
-      statement.js:202) -- unset rowMode on fetchResult always resolves to object-shaped rows,
-      regardless of the connection's configured rowMode.
-    new_driver_behavior: |
-      fetchResult() and execute() share the same precedence chain (statement rowMode > connection
-      default > 'object'), so a connection configured with a non-default rowMode now gets
-      consistent shaping from both methods. Legacy's asymmetry is treated as a bug here, not a
-      contract worth preserving -- a connection-level rowMode setting silently being ignored by
-      exactly one of two entry points is surprising behavior, not an intentional feature.
-
-  9:
-    name: 'FLOAT special values NaN/inf/-inf are all collapsed to NaN by the old driver'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      Querying FLOAT special values (NaN, inf, -inf) does not work as documented; all three come
-      back as NaN. The server spells infinity `inf` / `-inf`, but the old driver converts REAL
-      cells with JavaScript's Number(), whose numeric grammar only accepts the spelling `Infinity`
-      -- so `Number('inf')` and `Number('-inf')` both yield NaN, indistinguishable from a genuine
-      NaN cell.
-    new_driver_behavior: |
-      Returns the real values: `inf` as `Infinity`, `-inf` as `-Infinity`, `NaN` as `NaN`.
-    status_rationale: |
-      Callers can now tell an overflow from a genuine NaN and recover its sign, which the old
-      driver's collapse made impossible. This is a real, intentional behavior change: code that
-      relied on comparing against NaN, or on isNaN() being true for an overflow, will now see
-      infinities instead -- hence is_breaking_change: true, though the old behavior was itself the
-      bug being fixed.
-
-  11:
-    name: 'connectAsync rejects on failure instead of delivering the error only via callback'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      connectAsync(callback) returns a Promise that still resolves on auth/connect failure; the
-      error is delivered only through the optional callback. Callers who await the promise without
-      a callback never see the error.
-    new_driver_behavior: |
-      connectAsync() takes no callback. On failure the returned Promise rejects (throws when
-      awaited), so the error is observed via try/catch or .catch().
-    description: |
-      The old driver's connectAsync mixed callback and Promise error channels: some failures were
-      passed to the callback while the Promise still resolved, and a TODO in the old driver parked
-      making it throw until a 3.x breaking change. The new driver takes the 3.x shape — no callback
-      parameter, Promise rejection on failure. .connect() is unaffected: it still routes success
-      and failure through its callback on both drivers.
-
   13:
     name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
     status: unknown
@@ -120,47 +37,6 @@ behavior_differences:
       getColumn/getNumRows/getQueryId map core FFI null to undefined; getSqlText is stored in
       the TypeScript wrapper and is unset when fetchResult does not receive sqlText. Tests that
       call getColumn() after execute use getRowStatementColumn (BD#13).
-
-  14:
-    name: "TIME column NULL returns real null, not the old driver's 'NULL' string"
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      The old driver stringifies a NULL TIME cell to the literal 'NULL' by default
-      (isRepresentNullAsStringNull=true, a process-global config knob), while every other
-      type — including the old driver's own DATE — returns real null.
-    new_driver_behavior: |
-      The universal driver returns real null for every type uniformly.
-    description: |
-      A TIME-only anomaly in the old driver, not a contract. The universal driver returns.
-      real null. Verified live against both drivers.
-
-  17:
-    name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"
-    status: todo
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      The server sends every FLOAT in the JSON response as text, and the old driver returns that
-      text unchanged. The server writes an exponent for numbers under 0.0001 and for numbers from
-      1e15 up, so `1e-5::FLOAT` arrives as `1e-05` and `1e15::FLOAT` as `1e+15`.
-    new_driver_behavior: |
-      There is no server text to return. The new driver reads results in Arrow format, where a FLOAT
-      is always a 64-bit float and never text, so how it is written is the driver's decision. The
-      string is built from the value with JavaScript's String(). JavaScript writes an exponent only
-      under 1e-7 and from 1e21 up, so numbers in between look different: `1e-5::FLOAT` gives
-      `0.00001` and `1e15::FLOAT` gives `1000000000000000`. Everything outside that range is the
-      same in both drivers, including `1e+300`, `1e-300`, `inf`, `-inf` and `NaN`.
-    status_rationale: |
-      Both spellings mean the same number and read back as the same value, so nothing breaks, but a
-      caller who asked for text does not get the same string as before. Matching it would mean
-      copying the server's number formatting into the driver, which is separate work -- and with
-      Arrow results there is no server string to copy, only a rule to imitate.
 
   18:
     name: "fetchAsString renders NULL as 'NULL' for every type"
@@ -303,32 +179,6 @@ behavior_differences:
       resolution reads the current session-parameter value from sf_core's per-connection cache (see
       BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
       connection option and the stage path is chosen by the ALTER'd value instead.
-
-  29:
-    name: 'VECTOR columns decode to a native number[] instead of the raw server string'
-    status: todo
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Column does not define VECTOR and has no isVector(). Construction in column.js never matches
-      an is*() check, so it falls through to the final else ("column is of type string, so leave
-      value as is") and convert is a no-op. The cell is whatever string the server returned, e.g.
-      '[1,2,3]' or '[1.500000,2.500000,3.500000]'. getType() is still 'vector'.
-    new_driver_behavior: |
-      - Native value: a VECTOR cell is a number[] ([1, 2, 3] / [1.5, 2.5, 3.5]). VECTOR(FLOAT)
-        elements use the f32's shortest decimal so a stored 1.8 is the JS number 1.8, not
-        1.7999999523162842. getType() remains 'vector'.
-      - isVector(): Column.isVector() is added and returns true for these columns.
-      - fetchAsString: ['Number'] stringifies that array (JSON, e.g. '[1,2,3]' / '[1.5,2.5,3.5]')
-        and renders a NULL cell as the string 'NULL', same as FIXED and REAL.
-    description: |
-      Public-facing docs should now list VECTOR as a supported Node.js type. The old string was
-      the fallback for an unrecognized type, not a chosen format. Callers that parsed that string
-      now get a number[]. fetchAsString Number is the way to get a string back; the old driver
-      still ignores that token for VECTOR because the type is unrecognized, so the cell stays the
-      server text (and a NULL stays null).
 
   30:
     name: 'PUT of a symlinked source reports the target basename'
@@ -678,24 +528,6 @@ behavior_differences:
       describeOnly on a multi-statement query does not work: the server does not return child
       query IDs, so there is no per-statement metadata to describe anyway.
 
-  57:
-    name: 'getSessionState returns a typed SessionState'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      RowStatement.getSessionState() is typed as object | undefined. At runtime it is still an
-      object of getters (getCurrentDatabase, getCurrentSchema, getCurrentWarehouse,
-      getCurrentRole, and getCurrentDatabaseProvider) after a successful complete.
-    new_driver_behavior: |
-      RowStatement.getSessionState() is typed as SessionState | undefined. SessionState is a
-      class that provides the same getters as the old driver.
-    status_rationale: |
-      Runtime for the session-name getters is the same. SessionState is the honest
-      TypeScript type; object was not.
-
   59:
     name: 'browserActionTimeout still accepted (ms) but bounds core authentication_timeout'
     status: allowed
@@ -767,19 +599,6 @@ behavior_differences:
       "Not connected, so nothing to destroy."
     new_driver_behavior: |
       The same call rejects with code 406502 and message "Already disconnected."
-
-  63:
-    name: 'disableConsoleLogin is not supported'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection accepts disableConsoleLogin (boolean; default true).
-    new_driver_behavior: |
-      disableConsoleLogin is rejected as an unknown connection option
-      (InvalidParameterError, see BD#102). The key is not going to be added.
 
   64:
     name: 'EXTERNALBROWSER authenticator-request uses connection protocol and port'
@@ -862,25 +681,6 @@ behavior_differences:
       "Failed to login: External browser SSO failed: " plus the thrown error's
       string, including its stack. HTTP 403 is BD#65. The browser timeout is BD#59.
       A codeless error.code is BD#66.
-
-  68:
-    name: 'a statement QUERY_TAG overrides the connection queryTag'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      execute({ parameters: { QUERY_TAG: 'stmt' } }) on a connection with queryTag 'conn'
-      makes SELECT CURRENT_QUERY_TAG() return 'conn'. The connection tag overwrites the
-      statement parameter.
-    new_driver_behavior: |
-      The same call returns 'stmt'. The session tag stays 'conn' for a later execute with
-      no parameters. A plain execute with only the connection queryTag returns 'conn' on
-      both drivers.
-    status_rationale: |
-      Python, JDBC, and core do the same: a statement QUERY_TAG overrides the connection
-      tag for that query. The statement is the more specific level, so its value wins.
 
   71:
     name: 'deserializeConnection either restores the session or throws 408003'

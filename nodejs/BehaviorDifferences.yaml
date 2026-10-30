@@ -46,7 +46,7 @@ behavior_differences:
     name: 'ConnectionOptions is not a properly typed interface'
     status: fixed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -213,8 +213,8 @@ behavior_differences:
     name: 'FLOAT special values NaN/inf/-inf are all collapsed to NaN by the old driver'
     status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       Querying FLOAT special values (NaN, inf, -inf) does not work as documented; all three come
@@ -225,11 +225,9 @@ behavior_differences:
     new_driver_behavior: |
       Returns the real values: `inf` as `Infinity`, `-inf` as `-Infinity`, `NaN` as `NaN`.
     status_rationale: |
-      Callers can now tell an overflow from a genuine NaN and recover its sign, which the old
-      driver's collapse made impossible. This is a real, intentional behavior change: code that
-      relied on comparing against NaN, or on isNaN() being true for an overflow, will now see
-      infinities instead -- hence is_breaking_change: true, though the old behavior was itself the
-      bug being fixed.
+      The old driver's NaN for `inf` / `-inf` was a bug, not a contract: the FLOAT docs list
+      infinity as a valid value. Returning `Infinity` / `-Infinity` lets callers tell an overflow
+      from a real NaN and see its sign. It ships as a bugfix, not a breaking change.
 
   10:
     name: 'snowflake.STRING/BOOLEAN/NUMBER/DATE/OBJECT/ARRAY/MAP/JSON module constants are dropped'
@@ -254,7 +252,7 @@ behavior_differences:
     name: 'connectAsync rejects on failure instead of delivering the error only via callback'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -270,6 +268,11 @@ behavior_differences:
       making it throw until a 3.x breaking change. The new driver takes the 3.x shape — no callback
       parameter, Promise rejection on failure. .connect() is unaffected: it still routes success
       and failure through its callback on both drivers.
+    status_rationale: |
+      The split error delivery was a bug: login failures reached only the callback while setup
+      errors rejected the promise. One rejection path fixes it. It is still a breaking change,
+      because the callback parameter is gone from the typed signature and a callback passed at
+      runtime is never called.
 
   12:
     name: 'BINARY columns come back as a plain Buffer without toStringSf/getFormat'
@@ -334,7 +337,7 @@ behavior_differences:
     name: "TIME column NULL returns real null, not the old driver's 'NULL' string"
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -342,9 +345,14 @@ behavior_differences:
       (isRepresentNullAsStringNull=true, a process-global config knob), while every other
       type — including the old driver's own DATE — returns real null.
     new_driver_behavior: |
-      The universal driver returns real null for every type uniformly.
+      The new driver returns real null for every type uniformly. Under
+      fetchAsString: ['String'] a NULL TIME is 'NULL', the same as the other types that
+      the driver returns as a JavaScript string (TEXT, DECFLOAT, and the INTERVAL types) (BD#18).
+    status_rationale: |
+      The old driver's 'NULL' string for TIME was an anomaly, not a contract: no other type
+      returns it outside fetchAsString. Returning real null makes TIME match every other type.
     description: |
-      A TIME-only anomaly in the old driver, not a contract. The universal driver returns.
+      A TIME-only anomaly in the old driver, not a contract. The new driver returns
       real null. Verified live against both drivers.
 
   15:
@@ -387,9 +395,9 @@ behavior_differences:
 
   17:
     name: "fetchAsString: ['Number'] can spell a FLOAT differently than the server did"
-    status: todo
+    status: allowed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -404,10 +412,12 @@ behavior_differences:
       `0.00001` and `1e15::FLOAT` gives `1000000000000000`. Everything outside that range is the
       same in both drivers, including `1e+300`, `1e-300`, `inf`, `-inf` and `NaN`.
     status_rationale: |
-      Both spellings mean the same number and read back as the same value, so nothing breaks, but a
-      caller who asked for text does not get the same string as before. Matching it would mean
-      copying the server's number formatting into the driver, which is separate work -- and with
-      Arrow results there is no server string to copy, only a rule to imitate.
+      Not planned to match, and not listed in the changelog. Both spellings mean the same number
+      and parse back to the same value. Only FLOAT values from 1e-7 to 1e-4 and from 1e15 to 1e21
+      are affected, and only under fetchAsString: ['Number']. NUMBER columns, the main reason to
+      use fetchAsString, still return every digit exactly. With Arrow results there is
+      no server string to copy, so matching would mean imitating the server's formatting rule in
+      the driver for a cosmetic difference.
 
   18:
     name: "fetchAsString renders NULL as 'NULL' for every type"
@@ -617,9 +627,9 @@ behavior_differences:
 
   29:
     name: 'VECTOR columns decode to a native number[] instead of the raw server string'
-    status: todo
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -634,6 +644,10 @@ behavior_differences:
       - isVector(): Column.isVector() is added and returns true for these columns.
       - fetchAsString: ['Number'] stringifies that array (JSON, e.g. '[1,2,3]' / '[1.5,2.5,3.5]')
         and renders a NULL cell as the string 'NULL', same as FIXED and REAL.
+    status_rationale: |
+      The old driver returned the server text only because it did not know the VECTOR type.
+      A number[] is the natural JavaScript value. Users who need text can use
+      fetchAsString: ['Number'].
     description: |
       Public-facing docs should now list VECTOR as a supported Node.js type. The old string was
       the fallback for an unrecognized type, not a chosen format. Callers that parsed that string
@@ -1148,7 +1162,7 @@ behavior_differences:
     name: 'getSessionState returns a typed SessionState'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1157,10 +1171,12 @@ behavior_differences:
       getCurrentRole, and getCurrentDatabaseProvider) after a successful complete.
     new_driver_behavior: |
       RowStatement.getSessionState() is typed as SessionState | undefined. SessionState is a
-      class that provides the same getters as the old driver.
+      class with getCurrentDatabase, getCurrentSchema, getCurrentWarehouse and getCurrentRole,
+      each returning string | null. getCurrentDatabaseProvider is removed (BD#58).
     status_rationale: |
-      Runtime for the session-name getters is the same. SessionState is the honest
-      TypeScript type; object was not.
+      The four getCurrent* getters behave the same at runtime. SessionState can be assigned to
+      object, so code written against the old type still compiles; only a direct `as` cast to a
+      hand-written type with no matching members fails.
 
   58:
     name: 'SessionState has no getCurrentDatabaseProvider'
@@ -1253,7 +1269,7 @@ behavior_differences:
     name: 'disableConsoleLogin is not supported'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1261,6 +1277,15 @@ behavior_differences:
     new_driver_behavior: |
       disableConsoleLogin is rejected as an unknown connection option
       (InvalidParameterError, see BD#102). The key is not going to be added.
+    status_rationale: |
+      Dropped in all drivers unless someone asks for it back. Setting it to false opened
+      /console/login so a user could pick one of several identity providers. The server makes
+      that choice already:
+      - ENABLE_IDENTIFIER_FIRST_LOGIN on: authenticator-request returns the same /console/login
+        URL (login_name, proof_key, redirect port), and the login page offers the providers.
+      - ENABLE_IDENTIFIER_FIRST_LOGIN off (the production default today): the server allows only
+        one enabled SSO integration per account, so authenticator-request returns that provider.
+      Python removed disable_console_login the same way.
 
   64:
     name: 'EXTERNALBROWSER authenticator-request uses connection protocol and port'
@@ -1346,9 +1371,9 @@ behavior_differences:
 
   68:
     name: 'a statement QUERY_TAG overrides the connection queryTag'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
