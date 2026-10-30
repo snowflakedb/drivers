@@ -40,6 +40,10 @@ fn main() {
         // loads regardless of the host driver manager (iODBC or unixODBC)
         // and needs no RPATH for it.
         println!("cargo:rustc-link-arg=-Wl,-dead_strip_dylibs");
+        // The install name is the path the macOS package installs.
+        println!(
+            "cargo:rustc-cdylib-link-arg=-Wl,-install_name,/opt/snowflake/snowflakeodbc/lib/libsfodbc.dylib"
+        );
     }
 
     // On Windows, use a .def file to limit DLL exports to only ODBC API functions.
