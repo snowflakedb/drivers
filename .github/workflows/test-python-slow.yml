@@ -1,17 +1,19 @@
 name: Python Slow Tests
 
 # @pytest.mark.slow Python end-to-end tests. This workflow is separate from
-# test-python.yml. On a pull request the jobs run when the `ci:python-slow` label is
-# present. `labeled` is included so applying the label starts the lane without
-# a new push and without re-running Driver CI. workflow_dispatch runs the lane
+# test-python.yml. A pull request starts it only when the `ci:python-slow`
+# label is applied. Opening or updating a pull request does not, and applying
+# a different label does not re-run the lane. workflow_dispatch runs the lane
 # on the selected ref, for one cloud or for all three.
 #
 # Ubuntu and Python 3.13 only, one job per cloud (aws, azure, gcp). The wheel
 # build is the manylinux CPython 3.13 wheel those jobs install.
+# A manual run can pass pytest arguments to select tests. A path or node id
+# replaces tests/e2e; -k filters that suite. Label-triggered runs ignore it.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
   workflow_dispatch:
     inputs:
       cloud_provider:
@@ -24,12 +26,21 @@ on:
           - aws
           - azure
           - gcp
+      pytest_args:
+        description: >
+          Extra pytest arguments. A path or node id selects those tests;
+          -k filters tests/e2e. Example:
+          tests/e2e/query/test_wide_result_chunk_download.py::test_name
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # PR number for PRs; unique run ID for dispatch so two manual runs cannot
   # cancel each other (github.ref is refs/heads/main for every main run).
+  # A different label must not cancel a ci:python-slow run already in progress.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.label.name == 'ci:python-slow' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,31 +51,48 @@ env:
 
 jobs:
   build_wheel:
-    # Other PR events (including unrelated label changes) skip the job.
+    # `labeled` fires for every label. Only ci:python-slow starts the lane.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'ci:python-slow'))
+      (github.event.action == 'labeled' && github.event.label.name == 'ci:python-slow')
     uses: ./.github/workflows/_build-python-wheels.yml
     with:
       targets: '{"linux_x86":["3.13"]}'
+      # This lane installs the manylinux wheel. The sdist artifact is unused.
+      build_sdist: false
+
+  # `matrix` is not valid in a job `if`. A dispatch that names one cloud
+  # narrows this list; a labeled pull request keeps all three.
+  select_clouds:
+    needs: build_wheel
+    if: needs.build_wheel.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      clouds: ${{ steps.clouds.outputs.clouds }}
+    steps:
+      - id: clouds
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CLOUD: ${{ inputs.cloud_provider }}
+        run: |
+          case "${EVENT_NAME}:${CLOUD}" in
+            workflow_dispatch:aws) echo 'clouds=["aws"]' >> "$GITHUB_OUTPUT" ;;
+            workflow_dispatch:azure) echo 'clouds=["azure"]' >> "$GITHUB_OUTPUT" ;;
+            workflow_dispatch:gcp) echo 'clouds=["gcp"]' >> "$GITHUB_OUTPUT" ;;
+            *) echo 'clouds=["aws","azure","gcp"]' >> "$GITHUB_OUTPUT" ;;
+          esac
 
   python_slow_tests:
-    needs: build_wheel
+    needs: [build_wheel, select_clouds]
     if: >-
       needs.build_wheel.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'pull_request' &&
-        contains(github.event.pull_request.labels.*.name, 'ci:python-slow'))) &&
-      (github.event_name != 'workflow_dispatch' ||
-       inputs.cloud_provider == 'all' ||
-       matrix.cloud_provider == inputs.cloud_provider)
+      needs.select_clouds.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        cloud_provider: [aws, azure, gcp]
+        cloud_provider: ${{ fromJSON(needs.select_clouds.outputs.clouds) }}
     name: python_slow_tests (ubuntu-latest, py3.13, ${{ matrix.cloud_provider }})
     steps:
       - name: Set UV cache dir
@@ -129,24 +157,63 @@ jobs:
 
       - name: Run slow tests
         working-directory: python
-        # Exit code 5 means "no tests collected". The lane is opt-in and a
-        # PR can carry ci:python-slow before any test is marked slow.
+        # Exit code 5 means "no tests collected". A labeled run may carry
+        # ci:python-slow before any test is marked slow, so that is a skip.
+        # A manual selection that collects nothing is a failed dispatch.
+        # A path or node id replaces tests/e2e. Other arguments are appended.
         run: |
-          set +e
-          hatch run test.py3.13:e2e \
-            -m "slow and not flaky and not requires_no_mfa" \
-            -n 0 \
-            --reruns 0 \
-            --timeout=3600 \
+          set -euo pipefail
+          extra=()
+          if [[ -n "${PYTEST_ARGS}" ]]; then
+            while IFS= read -r -d '' arg; do
+              extra+=("$arg")
+            done < <(python3 -c 'import os,shlex,sys; args=shlex.split(os.environ.get("PYTEST_ARGS","")); data=b"\0".join(a.encode() for a in args); sys.stdout.buffer.write(data+(b"\0" if args else b""))')
+          fi
+          # A file or node id replaces tests/e2e. Options such as -k keep that
+          # directory and stay in the order they were typed.
+          has_selector=0
+          if [[ ${#extra[@]} -gt 0 ]]; then
+            for arg in "${extra[@]}"; do
+              case "$arg" in
+                tests/*|*.py|*::*) has_selector=1 ;;
+              esac
+            done
+          fi
+          cmd=(
+            hatch -e test.py3.13 run pytest
+            --ignore=tests/e2e/pandas
+            --ignore=tests/e2e/numpy
+            -m "slow and not flaky and not requires_no_mfa"
+            -n 0
+            --reruns 0
+            --timeout=3600
             --no-cov
+          )
+          if [[ $has_selector -eq 0 ]]; then
+            cmd+=(tests/e2e)
+          fi
+          if [[ ${#extra[@]} -gt 0 ]]; then
+            cmd+=("${extra[@]}")
+          fi
+          printf 'pytest command:'
+          printf ' %q' "${cmd[@]}"
+          echo
+          set +e
+          "${cmd[@]}"
           status=$?
+          set -e
           if [[ $status -eq 5 ]]; then
+            if [[ -n "${PYTEST_ARGS}" ]]; then
+              echo "::error::pytest collected no tests for the manual selection"
+              exit 1
+            fi
             echo "::notice::No tests marked @pytest.mark.slow — skipping."
             exit 0
           fi
           exit $status
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          PYTEST_ARGS: ${{ github.event_name == 'workflow_dispatch' && inputs.pytest_args || '' }}
 
       - name: Prune uv cache
         if: always()

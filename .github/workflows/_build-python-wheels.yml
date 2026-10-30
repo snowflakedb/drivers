@@ -17,6 +17,13 @@ on:
         description: >
           When true, skip Rust/vcpkg/rustup cache restores so wheel builds
           exercise cold (first-build / empty-mirror-cache) paths.
+      build_sdist:
+        type: boolean
+        required: false
+        default: true
+        description: >
+          Build and upload the platform-independent sdist. Callers that only
+          install a wheel pass false.
 
 env:
   CARGO_TERM_COLOR: always
@@ -194,6 +201,7 @@ jobs:
 
   # ── Build source distribution (platform-independent, runs once) ────
   build_sdist:
+    if: inputs.build_sdist
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
