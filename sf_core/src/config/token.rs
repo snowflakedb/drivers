@@ -4,6 +4,7 @@ use std::path::Path;
 use snafu::OptionExt;
 
 use crate::config::param_names::{TOKEN, TOKEN_FILE_PATH};
+use crate::config::path_resolver::expand_tilde;
 use crate::config::settings::Settings;
 use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
 use crate::config::{ConfigError, InvalidParameterValueSnafu, MissingEitherParameterSnafu};
@@ -22,15 +23,23 @@ pub(super) fn has_bearer_token(settings: &dyn Settings) -> bool {
 /// Resolve an optional bearer token from `token` / `token_file_path`.
 ///
 /// When `token_file_path` is set, the file is read and used even if `token` is
-/// also present — matching legacy snowflake-connector-python.
+/// also present — matching legacy snowflake-connector-python. A leading `~`
+/// or `~/` in that path expands to the home directory.
 pub(super) fn read_optional_bearer_token(
     settings: &dyn Settings,
+) -> Result<Option<SensitiveString>, ConfigError> {
+    read_optional_bearer_token_with_home(settings, dirs::home_dir().as_deref())
+}
+
+fn read_optional_bearer_token_with_home(
+    settings: &dyn Settings,
+    home_dir: Option<&Path>,
 ) -> Result<Option<SensitiveString>, ConfigError> {
     if let Some(path) = settings
         .get_string(TOKEN_FILE_PATH.as_str())
         .filter(|value| !value.is_empty())
     {
-        return Ok(Some(read_token_file(&path, settings)?));
+        return Ok(Some(read_token_file(&path, settings, home_dir)?));
     }
 
     Ok(settings
@@ -67,6 +76,7 @@ pub(super) fn read_required_header_bearer_token(
 fn read_token_file(
     token_file_path: &str,
     settings: &dyn Settings,
+    home_dir: Option<&Path>,
 ) -> Result<SensitiveString, ConfigError> {
     let permission_check =
         if settings.get_bool("unsafe_skip_config_file_permissions_check") == Some(true) {
@@ -75,14 +85,14 @@ fn read_token_file(
             FilePermissionCheck::Enabled
         };
 
-    let path = Path::new(token_file_path);
+    let path = expand_tilde(token_file_path, home_dir);
     // Same order as `private_key_file` / `load_toml_file`: only permission-check
     // files that exist so a missing path surfaces a token-file read error.
     if path.try_exists().unwrap_or(false) {
-        check_file_permissions(path, permission_check)?;
+        check_file_permissions(&path, permission_check)?;
     }
 
-    let contents = fs::read_to_string(path).map_err(|err| {
+    let contents = fs::read_to_string(&path).map_err(|err| {
         InvalidParameterValueSnafu {
             parameter: String::from(TOKEN_FILE_PATH),
             value: token_file_path.to_string(),
@@ -258,5 +268,32 @@ mod tests {
             } if parameter == TOKEN.as_str() && value == "****"
         ));
         assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn read_optional_expands_leading_tilde_in_token_file_path() {
+        let home = tempfile::TempDir::new().expect("temp home");
+        let token_dir = home.path().join(".snowflake");
+        std::fs::create_dir_all(&token_dir).expect("token dir");
+        let token_path = token_dir.join("pat.token");
+        std::fs::write(&token_path, "tilde-tok\n").expect("write token");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))
+                .expect("restrict token file mode");
+        }
+
+        let settings = settings_with(&[(
+            "token_file_path",
+            Setting::String("~/.snowflake/pat.token".into()),
+        )]);
+        assert_eq!(
+            read_optional_bearer_token_with_home(&settings, Some(home.path()))
+                .expect("expanded token file")
+                .expect("token present")
+                .reveal(),
+            "tilde-tok"
+        );
     }
 }
