@@ -87,6 +87,9 @@ pub struct QueryParameters {
     /// When set, query requests use Bearer PAT auth plus
     /// `X-Snowflake-External-Session-ID` instead of a Snowflake session token.
     pub external_session_id: Option<SensitiveString>,
+    /// `SERVICE_NAME` session parameter echoed back as the `X-Snowflake-Service`
+    /// request header so the proxy routes to the correct HTAP cluster.
+    pub service_name: Option<String>,
 }
 
 impl QueryParameters {
@@ -103,6 +106,7 @@ impl QueryParameters {
             log_query_parameters: resolve_log_query_parameters(settings),
             include_retry_reason: resolve_include_retry_reason(settings),
             external_session_id: None,
+            service_name: None,
         })
     }
 

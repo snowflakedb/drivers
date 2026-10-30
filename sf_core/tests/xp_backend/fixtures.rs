@@ -37,6 +37,7 @@ pub fn query_parameters() -> QueryParameters {
         log_query_parameters: false,
         include_retry_reason: false,
         external_session_id: None,
+        service_name: None,
     }
 }
 

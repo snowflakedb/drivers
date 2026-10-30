@@ -1244,6 +1244,7 @@ fn stub_ctx() -> StageInfoRefreshContext {
             log_query_parameters: false,
             include_retry_reason: false,
             external_session_id: None,
+            service_name: None,
         },
         conn: Arc::new(Mutex::new(Connection::new())),
     }

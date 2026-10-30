@@ -448,12 +448,16 @@ class ConnectionMixin(ErrorHandlerMixin):
     @api_telemetry
     def service_name(self) -> str | None:
         """The Snowflake service name for the connection, used for service discovery."""
-        raise NotImplementedError("service_name is not yet implemented")
+        return cast("str | None", self._session_parameters._get_string("SERVICE_NAME"))
 
     @service_name.setter
     @api_telemetry
     def service_name(self, value: str | None) -> None:
-        raise NotImplementedError("service_name is not yet implemented")
+        if self.conn_handle is None:
+            return
+        if value is None:
+            value = ""
+        core_driver.connection_set_session_parameters(conn_handle=self.conn_handle, parameters={"SERVICE_NAME": value})
 
     @property
     @api_telemetry

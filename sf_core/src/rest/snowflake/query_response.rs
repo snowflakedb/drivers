@@ -1162,6 +1162,15 @@ pub fn read_use_s3_regional_url_session_param(
     }
 }
 
+/// Reads the `SERVICE_NAME` session parameter, used as the `X-Snowflake-Service`
+/// request header so the proxy routes to the correct HTAP cluster.
+pub fn read_service_name(session_parameters: &HashMap<String, Setting>) -> Option<String> {
+    match session_parameters.get("SERVICE_NAME") {
+        Some(Setting::String(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
 struct StagePlacement {
     bucket: String,
     key_prefix: String,
@@ -3133,5 +3142,32 @@ mod tests {
             false,
         );
         assert!(upload.stage_info.use_s3_regional_url);
+    }
+
+    #[test]
+    fn read_service_name_returns_string_value() {
+        let mut params = HashMap::new();
+        params.insert("SERVICE_NAME".into(), Setting::String("my-cluster".into()));
+        assert_eq!(read_service_name(&params), Some("my-cluster".into()));
+    }
+
+    #[test]
+    fn read_service_name_returns_none_when_absent() {
+        let params = HashMap::new();
+        assert_eq!(read_service_name(&params), None);
+    }
+
+    #[test]
+    fn read_service_name_returns_none_for_empty_string() {
+        let mut params = HashMap::new();
+        params.insert("SERVICE_NAME".into(), Setting::String(String::new()));
+        assert_eq!(read_service_name(&params), None);
+    }
+
+    #[test]
+    fn read_service_name_returns_none_for_non_string_setting() {
+        let mut params = HashMap::new();
+        params.insert("SERVICE_NAME".into(), Setting::Bool(true));
+        assert_eq!(read_service_name(&params), None);
     }
 }

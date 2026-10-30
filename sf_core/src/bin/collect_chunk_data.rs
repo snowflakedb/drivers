@@ -387,6 +387,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_query_parameters: false,
         include_retry_reason: false,
         external_session_id,
+        service_name: None,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 

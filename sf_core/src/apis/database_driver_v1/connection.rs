@@ -613,7 +613,7 @@ impl DatabaseDriverV1 {
                             return Ok(());
                         };
 
-                        let query_parameters = conn.query_transport_parameters()?;
+                        let query_parameters = conn.query_transport_parameters().await?;
                         let exporter_session = Arc::new(ExporterSession {
                             client: http_client,
                             query_parameters,
@@ -805,7 +805,14 @@ impl DatabaseDriverV1 {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
-                conn.init_session_parameters = Some(parameters);
+                if conn.is_post_connect() {
+                    let mut cache = conn.session_parameters.write().await;
+                    for (k, v) in parameters {
+                        cache.insert(k.to_uppercase(), Setting::String(v));
+                    }
+                } else {
+                    conn.init_session_parameters = Some(parameters);
+                }
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -1381,8 +1388,13 @@ impl Connection {
             .unwrap_or_default()
     }
 
+    async fn resolve_service_name(&self) -> Option<String> {
+        let params = self.session_parameters.read().await;
+        snowflake::query_response::read_service_name(&params)
+    }
+
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
-    pub(crate) fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
+    pub(crate) async fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
         let empty = ParamStore::new();
         let settings = self.resolved_connect.as_ref().unwrap_or(&empty);
 
@@ -1400,6 +1412,7 @@ impl Connection {
             log_query_parameters: resolve_log_query_parameters(settings),
             include_retry_reason: resolve_include_retry_reason(settings),
             external_session_id: self.external_session_id.clone(),
+            service_name: self.resolve_service_name().await,
         })
     }
 
@@ -2353,7 +2366,7 @@ impl DatabaseDriverV1 {
                     conn.http_client
                         .clone()
                         .context(ConnectionNotInitializedSnafu)?,
-                    conn.query_transport_parameters()?,
+                    conn.query_transport_parameters().await?,
                     conn.retry_policy.clone(),
                     conn.xp_backend_arc().context(QuerySnafu)?,
                 )
@@ -5555,5 +5568,85 @@ mod tests {
             Setting::Bool(false),
         )])));
         assert!(ds.lock_session_if_needed(&conn).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_session_parameters_pre_connect_stages_in_init() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        let mut params = HashMap::new();
+        params.insert("AUTOCOMMIT".into(), "true".into());
+        ds.connection_set_session_parameters(handle, params)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(!conn.is_post_connect());
+        assert_eq!(
+            conn.init_session_parameters
+                .as_ref()
+                .unwrap()
+                .get("AUTOCOMMIT"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            conn.session_parameters
+                .read()
+                .await
+                .get("AUTOCOMMIT")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn set_session_parameters_post_connect_writes_live_cache() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        let mut params = HashMap::new();
+        params.insert("SERVICE_NAME".into(), "cluster-x".into());
+        ds.connection_set_session_parameters(handle, params)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(conn.is_post_connect());
+        assert!(conn.init_session_parameters.is_none());
+        assert_eq!(
+            conn.session_parameters.read().await.get("SERVICE_NAME"),
+            Some(&Setting::String("cluster-x".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn set_session_parameters_post_connect_uppercases_keys() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+        }
+
+        let mut params = HashMap::new();
+        params.insert("service_name".into(), "cluster-y".into());
+        ds.connection_set_session_parameters(handle, params)
+            .await
+            .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.session_parameters.read().await.get("SERVICE_NAME"),
+            Some(&Setting::String("cluster-y".into()))
+        );
     }
 }

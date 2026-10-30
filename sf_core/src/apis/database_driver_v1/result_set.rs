@@ -462,7 +462,7 @@ pub(super) async fn fetch_query_response_data(
     let (query_parameters, http_client, retry_policy, xp_backend) = {
         let conn = conn_ptr.lock().await;
         (
-            conn.query_transport_parameters()?,
+            conn.query_transport_parameters().await?,
             conn.http_client
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,

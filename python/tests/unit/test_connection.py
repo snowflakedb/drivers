@@ -1508,6 +1508,27 @@ class TestDisableRequestPoolingRemoved:
             _ = connection.disable_request_pooling
 
 
+class TestServiceName:
+    """Unit tests for Connection.service_name."""
+
+    def test_returns_none_when_parameter_unset(self, connection):
+        assert connection.service_name is None
+
+    def test_reads_service_name_from_session_parameters(self, connection, mock_db_api):
+        mock_db_api.connection_get_parameter.return_value = make_parameter_response("my-cluster")
+        assert connection.service_name == "my-cluster"
+
+    def test_setter_calls_set_session_parameters(self, connection, mock_db_api):
+        connection.service_name = "cluster-b"
+        request = mock_db_api.connection_set_session_parameters.call_args[0][0]
+        assert request.parameters["SERVICE_NAME"] == "cluster-b"
+
+    def test_setter_sends_empty_string_for_none(self, connection, mock_db_api):
+        connection.service_name = None
+        request = mock_db_api.connection_set_session_parameters.call_args[0][0]
+        assert request.parameters["SERVICE_NAME"] == ""
+
+
 class TestLogMaxQueryLength:
     """Unit tests for Connection.log_max_query_length and _format_query_for_log."""
 

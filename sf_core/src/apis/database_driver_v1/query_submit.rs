@@ -221,7 +221,7 @@ pub(super) async fn query_context(
         return ConnectionClosedSnafu {}.fail();
     }
     Ok(QueryTransport {
-        query_parameters: conn.query_transport_parameters()?,
+        query_parameters: conn.query_transport_parameters().await?,
         http_client: conn
             .http_client
             .clone()

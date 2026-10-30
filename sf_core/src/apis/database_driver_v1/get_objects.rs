@@ -697,7 +697,7 @@ async fn execute_show(
             .http_client
             .clone()
             .context(ConnectionNotInitializedSnafu)?;
-        let query_parameters = conn.query_transport_parameters()?;
+        let query_parameters = conn.query_transport_parameters().await?;
         let retry_policy = conn.retry_policy.clone();
         let session_params = conn.session_parameters.read().await;
         let prefetch_config = PrefetchConfig::from_session_params(&session_params);

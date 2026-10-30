@@ -49,6 +49,7 @@ pub async fn send_heartbeat_with_timeout(
         client_info,
         session_token,
         external_session_header.as_ref(),
+        None,
     )
     .timeout(timeout.unwrap_or(DEFAULT_HEARTBEAT_TIMEOUT))
     .build()

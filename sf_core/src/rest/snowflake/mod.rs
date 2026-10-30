@@ -2380,6 +2380,7 @@ async fn execute_sync_query<'a>(
     let send_start = Instant::now();
     let external_session_header =
         parse_external_session_header(query_parameters.external_session_id_str())?;
+    let service_name_header = parse_service_name_header(query_parameters.service_name.as_deref())?;
     let build_request = |state: &RetryState| {
         let mut params = base_query_params.clone();
         let mut retry_params = get_retry_params(state, query_parameters);
@@ -2389,6 +2390,7 @@ async fn execute_sync_query<'a>(
             &query_parameters.client_info,
             session_token,
             external_session_header.as_ref(),
+            service_name_header.as_ref(),
         ))
         .query(&params)
         .json(&query_request)
@@ -2576,16 +2578,18 @@ pub async fn get_query_status(
     let token_str = session_token.reveal();
     let external_session_header =
         parse_external_session_header(query_parameters.external_session_id_str())?;
+    let service_name_header = parse_service_name_header(query_parameters.service_name.as_deref())?;
     let build_request = || {
         apply_query_headers(
             client.get(url.clone()),
             &query_parameters.client_info,
             token_str.as_ref(),
             external_session_header.as_ref(),
+            service_name_header.as_ref(),
         )
         .query(&[
-            ("requestId", uuid::Uuid::new_v4().to_string()),
-            ("request_guid", uuid::Uuid::new_v4().to_string()),
+            ("requestId", Uuid::new_v4().to_string()),
+            ("request_guid", Uuid::new_v4().to_string()),
         ])
     };
 
@@ -3022,6 +3026,7 @@ pub(crate) fn json_header_value() -> header::HeaderValue {
 }
 
 const EXTERNAL_SESSION_ID_HEADER: &str = "X-Snowflake-External-Session-ID";
+const SERVICE_NAME_HEADER: &str = "X-Snowflake-Service";
 
 pub(crate) fn parse_external_session_header(
     external_session_id: Option<&str>,
@@ -3035,11 +3040,24 @@ pub(crate) fn parse_external_session_header(
         .transpose()
 }
 
+pub(crate) fn parse_service_name_header(
+    service_name: Option<&str>,
+) -> Result<Option<header::HeaderValue>, RestError> {
+    service_name
+        .map(|id| {
+            header::HeaderValue::from_str(id).context(InvalidHeaderValueSnafu {
+                name: SERVICE_NAME_HEADER,
+            })
+        })
+        .transpose()
+}
+
 pub(crate) fn apply_query_headers(
     builder: reqwest::RequestBuilder,
     client_info: &ClientInfo,
     session_token: &str,
     external_session_header: Option<&header::HeaderValue>,
+    service_name_header: Option<&header::HeaderValue>,
 ) -> reqwest::RequestBuilder {
     let builder = builder
         .header(
@@ -3048,8 +3066,12 @@ pub(crate) fn apply_query_headers(
         )
         .header(header::ACCEPT, json_header_value())
         .header("User-Agent", user_agent(client_info));
-    match external_session_header {
+    let builder = match external_session_header {
         Some(value) => builder.header(EXTERNAL_SESSION_ID_HEADER, value.clone()),
+        None => builder,
+    };
+    match service_name_header {
+        Some(value) => builder.header(SERVICE_NAME_HEADER, value.clone()),
         None => builder,
     }
 }
@@ -3061,11 +3083,13 @@ pub(crate) fn apply_query_auth(
 ) -> Result<reqwest::RequestBuilder, RestError> {
     let external_session_header =
         parse_external_session_header(query_parameters.external_session_id_str())?;
+    let service_name_header = parse_service_name_header(query_parameters.service_name.as_deref())?;
     Ok(apply_query_headers(
         builder,
         &query_parameters.client_info,
         session_token,
         external_session_header.as_ref(),
+        service_name_header.as_ref(),
     ))
 }
 
@@ -3761,6 +3785,7 @@ mod tests {
             log_query_parameters: false,
             include_retry_reason: false,
             external_session_id: None,
+            service_name: None,
         }
     }
 
@@ -4701,6 +4726,32 @@ mod tests {
     }
 
     #[test]
+    fn apply_query_headers_includes_service_name_when_present() {
+        let builder = reqwest::Client::new().get("http://snowflake.com/test");
+        let service_name_header = header::HeaderValue::from_str("my-cluster");
+        let result = apply_query_headers(
+            builder,
+            &test_client_info(),
+            "token",
+            None,
+            service_name_header.as_ref().ok(),
+        );
+        let request = result.build().unwrap();
+        assert_eq!(
+            request.headers().get(SERVICE_NAME_HEADER).unwrap(),
+            "my-cluster"
+        );
+    }
+
+    #[test]
+    fn apply_query_headers_omits_service_name_when_absent() {
+        let builder = reqwest::Client::new().get("http://snowflake.com/test");
+        let result = apply_query_headers(builder, &test_client_info(), "token", None, None);
+        let request = result.build().unwrap();
+        assert!(request.headers().get(SERVICE_NAME_HEADER).is_none());
+    }
+
+    #[test]
     fn pat_with_external_session_skips_login_and_uses_caller_session_names() {
         let login_params = LoginParameters {
             login_method: LoginMethod::PatWithExternalSession {
@@ -4763,8 +4814,8 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
-                crate::tls::RootStoreProvider::new(),
+                CrlManager::new(),
+                RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -5791,6 +5842,7 @@ mod tests {
                 log_query_parameters: false,
                 include_retry_reason: true,
                 external_session_id: None,
+                service_name: None,
             }
         }
 
@@ -5930,6 +5982,7 @@ mod tests {
                 log_query_parameters: false,
                 include_retry_reason: false,
                 external_session_id: None,
+                service_name: None,
             }
         }
 
@@ -6128,6 +6181,7 @@ mod tests {
                 log_query_parameters: false,
                 include_retry_reason,
                 external_session_id: None,
+                service_name: None,
             }
         }
 
@@ -6189,6 +6243,7 @@ mod tests {
                 log_query_parameters: params,
                 include_retry_reason: retry_reason,
                 external_session_id: None,
+                service_name: None,
             }
         }
 
@@ -6327,6 +6382,7 @@ mod tests {
                 log_query_parameters: false,
                 include_retry_reason: false,
                 external_session_id: None,
+                service_name: None,
             };
             let query_input = QueryInput::new("SELECT 1");
 
