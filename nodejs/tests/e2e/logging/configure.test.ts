@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createConsoleCapture } from '../../utils/fixtures.js';
 import { createTempDir } from '../utils/fixtures.js';
 import { resetGlobalConfig, snowflake } from '../utils/index.js';
 
@@ -28,21 +29,6 @@ function waitForConfigureMessages(filePath: string, count: number): Promise<stri
     },
     { timeout: 2000 },
   );
-}
-
-// winston writes through `console._stdout`, which Vitest replaces with its own stream.
-function createStdoutCapture(): string[] {
-  const writes: string[] = [];
-  const consoleStdout = (console as unknown as { _stdout?: NodeJS.WriteStream })._stdout;
-  const streams = new Set([process.stdout, consoleStdout ?? process.stdout]);
-  for (const stream of streams) {
-    const spy = vi.spyOn(stream, 'write').mockImplementation((chunk) => {
-      writes.push(String(chunk));
-      return true;
-    });
-    onTestFinished(() => spy.mockRestore());
-  }
-  return writes;
 }
 
 function waitForStdout(stdout: string[], pattern: RegExp): Promise<boolean> {
@@ -91,7 +77,7 @@ describe('configure logging', () => {
   });
 
   it('should write only to stdout when logFilePath is STDOUT', async () => {
-    const stdout = createStdoutCapture();
+    const stdout = createConsoleCapture();
     const cwdFiles = fs.readdirSync(process.cwd());
 
     snowflake.configure({ logLevel: 'INFO', logFilePath: 'STDOUT' });
@@ -101,7 +87,7 @@ describe('configure logging', () => {
   });
 
   it('should also write to stdout when additionalLogToConsole is true', async () => {
-    const stdout = createStdoutCapture();
+    const stdout = createConsoleCapture();
     const filePath = createTempLogPath();
 
     snowflake.configure({
@@ -115,7 +101,7 @@ describe('configure logging', () => {
   });
 
   it('should send records to customLogger instead of stdout', async () => {
-    const stdout = createStdoutCapture();
+    const stdout = createConsoleCapture();
     const customLogger = {
       error: vi.fn(),
       warn: vi.fn(),

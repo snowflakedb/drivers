@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { resetGlobalConfig, updateGlobalConfig } from '../../../src/global-config.js';
 import { logger } from '../../../src/logging/logger.js';
-import { createStreamCapture } from './fixtures.js';
+import { createConsoleCapture } from '../../utils/fixtures.js';
 
 function createTempLogPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-log-'));
@@ -52,7 +52,7 @@ describe('configure logging', () => {
   });
 
   it('should keep earlier logging options when a later configure call sets only one', () => {
-    const stdout = createStreamCapture(process.stdout);
+    const stdout = createConsoleCapture();
     const filePath = createTempLogPath();
     updateGlobalConfig({
       logLevel: 'WARN',
@@ -98,19 +98,21 @@ describe('configure logging', () => {
   });
 
   it('should not throw from log calls when the default log file cannot be opened', () => {
-    const stderr = createStreamCapture(process.stderr);
-    createStreamCapture(process.stdout);
+    const stdout = createConsoleCapture();
     const openSync = vi.spyOn(fs, 'openSync').mockImplementation(() => {
       throw new Error('EACCES: permission denied');
     });
     onTestFinished(() => openSync.mockRestore());
 
     expect(() => logger.error('no file')).not.toThrow();
-    expect(stderr.join('')).toMatch(/cannot write log file snowflake\.log/);
+    expect(stdout.map((line) => JSON.parse(line))).toContainEqual({
+      level: 'ERROR',
+      message: expect.stringMatching(/cannot write log file snowflake\.log/),
+    });
   });
 
   it('should keep customLogger until it is set back to undefined', () => {
-    const stdout = createStreamCapture(process.stdout);
+    const stdout = createConsoleCapture();
     const customLogger = {
       error: vi.fn(),
       warn: vi.fn(),

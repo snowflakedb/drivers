@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { resetGlobalConfig, updateGlobalConfig } from '../../../src/global-config.js';
 import { formatLogLine } from '../../../src/logging/default-logger.js';
 import { logger } from '../../../src/logging/logger.js';
-import { createStreamCapture } from './fixtures.js';
+import { createConsoleCapture } from '../../utils/fixtures.js';
 
 function toMessages(writes: string[]): string[] {
   return writes.map((line) =>
@@ -19,7 +19,7 @@ describe('Logger', () => {
   });
 
   it('should loop records back to the default logger when the native bridge is not attached', () => {
-    const writes = createStreamCapture(process.stdout);
+    const writes = createConsoleCapture();
     updateGlobalConfig({ logFilePath: 'STDOUT' });
 
     logger.info('value %j', { a: 1 });
@@ -35,7 +35,7 @@ describe('Logger', () => {
       process.chdir(cwd);
       fs.rmSync(dir, { recursive: true, force: true });
     });
-    const writes = createStreamCapture(process.stdout);
+    const writes = createConsoleCapture();
 
     logger.info('wrapper info');
     logger.debug('wrapper debug');
