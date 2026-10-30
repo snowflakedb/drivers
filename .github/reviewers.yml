@@ -106,6 +106,7 @@ rules:
     - michal-hofman_snow
     - maxymilian-kowalski_snow
     - marcin-erbel_snow
+    - patryk-czajka_snow
   gosnowflake:
     - piotr-fus_snow
     - bartosz-oler_snow
@@ -126,7 +127,6 @@ rules:
     #- michal-lorenc-cepiga_snow
   odbc:
     - michal-hofman_snow
-    - jakub-szczerbinski_snow
     - devansh-das_snow
     - maxymilian-kowalski_snow
     - piotr-bulawa_snow
