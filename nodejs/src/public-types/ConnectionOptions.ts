@@ -54,6 +54,9 @@ export type ConnectionOptions = {
    * * `OAUTH_CLIENT_CREDENTIALS` - OAuth client credentials flow for service-to-service auth
    * * `WORKLOAD_IDENTITY` - Workload identity authentication
    * * `https://<okta_account_name>.okta.com` - Native SSO authentication through Okta
+   *
+   * When omitted, the driver uses `SNOWFLAKE_JWT` if {@link privateKey} or {@link privateKeyPath}
+   * is set, and `SNOWFLAKE` otherwise.
    */
   authenticator?: string;
 
@@ -78,7 +81,10 @@ export type ConnectionOptions = {
   role?: string;
 
   /**
-   * When authenticator=SNOWFLAKE_JWT, specifies the private key (in PEM format).
+   * When authenticator=SNOWFLAKE_JWT, specifies the private key, either as a PEM string or as a
+   * base64-encoded DER key.
+   *
+   * When {@link authenticator} is omitted, setting this option selects `SNOWFLAKE_JWT`.
    *
    * If the key is encrypted, use {@link privateKeyPass} to provide the passphrase.
    */
@@ -87,6 +93,8 @@ export type ConnectionOptions = {
   /**
    * When authenticator=SNOWFLAKE_JWT, specifies the local path to the private key file (in PEM
    * format).
+   *
+   * When {@link authenticator} is omitted, setting this option selects `SNOWFLAKE_JWT`.
    *
    * If the key is encrypted, use {@link privateKeyPass} to provide the passphrase.
    */

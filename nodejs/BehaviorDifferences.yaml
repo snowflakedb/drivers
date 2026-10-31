@@ -64,7 +64,7 @@ behavior_differences:
     name: 'fetchResult and getResultsFromQueryId apply the statement and connection rowMode'
     status: fixed
     type: bug
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -111,7 +111,9 @@ behavior_differences:
       the reported column type, which is correct for semi-structured columns. Structured-type support
       (typed OBJECT/ARRAY/MAP distinguished via `fields`, returning a real JS `Map` for MAP) is a
       separate initiative tracked in SNOW-3445814. Until then, the old driver's opt-in structured
-      MAP (isMap() true, value is a JS `Map`) has no new-driver equivalent.
+      MAP (isMap() true, value is a JS `Map`) has no new-driver equivalent. Structured types are a
+      work-in-progress feature and are not public, so that MAP difference is not listed in the
+      changelog.
 
   5:
     name: 'Column.isVariant ignores structured `fields` metadata'
@@ -147,7 +149,7 @@ behavior_differences:
     name: 'Column gains an isDecfloat() predicate with no old-driver equivalent'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -159,10 +161,8 @@ behavior_differences:
       pattern of every other is*() predicate. Purely additive: no existing method's behavior
       changes, and callers who never call isDecfloat() see no difference.
     status_rationale: |
-      Closes the gap called out in BCR_LOG.md's "statement.getColumn() API" section ("decfloat is
-      not covered by any is* method"). Since old driver has no equivalent method at all, tests that
-      exercise this predicate branch on isRunningNewDriverWithBD('BD#6') rather than asserting a
-      false/absent value for old driver.
+      A new method. The old driver has no isDecfloat(), so no existing code changes. Listed under
+      New Features.
 
   7:
     name: 'DECFLOAT above the documented exponent range loses its server-canonical spelling'
@@ -234,7 +234,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
       The old driver exports module-level constants snowflake.STRING, .BOOLEAN, .NUMBER, .DATE,
@@ -279,7 +279,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
       A BINARY column is returned as a Buffer that the old driver monkey-patches with own-property
@@ -338,7 +338,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       The old driver stringifies a NULL TIME cell to the literal 'NULL' by default
@@ -424,7 +424,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       Under fetchAsString a NULL cell becomes the string 'NULL' (representNullAsStringNull, on by
@@ -505,7 +505,7 @@ behavior_differences:
     name: 'PUT reports the encrypted file size in targetSize'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -527,7 +527,7 @@ behavior_differences:
     name: 'PUT reports sourceCompression as a token instead of null'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -546,7 +546,7 @@ behavior_differences:
     name: 'PUT/GET report an empty message on success'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -559,8 +559,7 @@ behavior_differences:
       Preset-controlled behavior; it can be changed easily via presets (ODBC emits a "SKIPPED"
       message for skipped uploads).
     status_rationale: |
-      An empty message on success is the unified default behavior of the new driver: Python,
-      JDBC and Node.js all use it, and only ODBC's skip case differs via its preset.
+      No changelog entry. We don't consider this return value a contract of the driver.
 
   26:
     name: 'A connection-level arrayBindingThreshold no longer overrides a later ALTER SESSION of CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'
@@ -657,7 +656,7 @@ behavior_differences:
 
   30:
     name: 'PUT of a symlinked source reports the target basename'
-    status: allowed
+    status: unknown
     type: bugfix
     reviewed: false
     is_breaking_change: true
@@ -666,18 +665,20 @@ behavior_differences:
       The PUT result `target` uses the symlink's own name (e.g. `link.csv`).
     new_driver_behavior: |
       The PUT result `target` uses the real name of the object the symlink points to
-      (e.g. `real.csv`).
+      (e.g. `real.csv`), and the file is stored in the stage under that name.
     description: |
       Matches the Python (BD#81) and JDBC (BD#57) new-driver behavior for the same scenario.
-    status_rationale: |
-      Canonicalizing the source is the unified default behavior of the new driver: Python, JDBC and
-      Node.js all report the symlink target's basename via shared `sf_core`.
+      To investigate: this looks like a bug to fix, not a difference to keep. The stage file gets
+      the target's name, so code that reads the file back by the name it uploaded no longer
+      works. For example, when `link.csv` points to `real.csv`, after
+      `PUT file:///data/link.csv @stage` the stage has `real.csv`, and
+      `GET @stage/link.csv file:///out/` fails because the file does not exist.
 
   31:
     name: 'PUT expands a leading ~ in the source path'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -692,9 +693,9 @@ behavior_differences:
 
   32:
     name: 'PUT honors SOURCE_COMPRESSION=BROTLI'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -707,12 +708,15 @@ behavior_differences:
       The old driver matches SOURCE_COMPRESSION against mime-subtypes; BROTLI's subtype is `BR`, so
       the canonical name misses the table. The new driver keys off the canonical codec name, matching
       Python, JDBC and Snowflake PUT documentation.
+    status_rationale: |
+      `BROTLI` is the name in the Snowflake PUT docs and in the Python and JDBC drivers. `BR` is
+      the old driver's mime-subtype spelling and is not documented, so it is not kept as an alias.
 
   33:
     name: 'PUT honors SOURCE_COMPRESSION=AUTO_DETECT and NONE'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -725,12 +729,15 @@ behavior_differences:
     description: |
       AUTO_DETECT and NONE are not mime-subtypes, so they miss the old driver's lookup table. The new
       driver honors both, matching Python and JDBC.
+    status_rationale: |
+      `AUTO_DETECT` and `NONE` are documented SOURCE_COMPRESSION values. The old driver failed on
+      them with a TypeError, so honoring them only fixes a crash.
 
   34:
     name: 'PUT expands the ? wildcard in the source path'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -746,10 +753,10 @@ behavior_differences:
 
   35:
     name: 'GET of a nonexistent staged file raises instead of returning an empty result set'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       A GET whose path matches no staged object resolves with an empty result set and downloads
@@ -758,17 +765,18 @@ behavior_differences:
       A GET whose path matches no staged object rejects with an error whose message contains
       `the file does not exist`.
     description: |
-      JDBC returns an empty result set for a missing GET target, so the same approach can be used
-      for the Node.js driver if we want to keep the same old behavior.
+      JDBC returns an empty result set for a missing GET target.
     status_rationale: |
-      Raising on a missing GET target is the unified behavior of the new driver: Python and core
-      raise an error for a missing GET target.
+      An empty result for a file that does not exist hides a mistake in the path, so the old
+      driver's behavior is a bug. Raising matches the Python driver and the core. JDBC keeps the
+      empty result, and the Node.js driver does not copy that. We treat it as a bugfix: the old
+      driver failed silently, so code that reached this case already had a wrong path.
 
   36:
     name: 'put_get_max_attempts has no upper-bound clamp'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -780,6 +788,10 @@ behavior_differences:
     description: |
       Pinned by sf_core `put_get_max_attempts_has_no_upper_bound_unlike_old_drivers_clamp`.
       Callers who set a count above the legacy cap get more PUT/GET attempts than before.
+    status_rationale: |
+      Node.js users cannot set `put_get_max_attempts`: it is not a Node.js connection option, and
+      unknown options are rejected. The old Node.js driver also used a fixed retry count, so
+      there is nothing a user can observe.
 
   37:
     name: 'Native Okta authenticator-request logical failures drop the Snowflake message'
@@ -806,7 +818,7 @@ behavior_differences:
     name: 'Added isIntervalYearMonth() and isIntervalDayTime() to Column'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -822,7 +834,7 @@ behavior_differences:
     status_rationale: |
       The old driver never implemented INTERVAL, so the missing predicates are
       leftover handling of an unknown type, not a documented contract. The two is*
-      helpers are additive and do not change any existing cell value.
+      helpers are additive and do not change any existing cell value. Listed under New Features.
 
   39:
     name: 'clientStoreTemporaryCredential defaults true and is always overridable'
@@ -970,7 +982,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       getQueryStatusThrowIfError for a query that failed server-side rejects with
@@ -1035,7 +1047,7 @@ behavior_differences:
     name: 'Multi-statement navigation methods are on RowStatement'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1045,6 +1057,11 @@ behavior_differences:
     new_driver_behavior: |
       Every query returns RowStatement. RowStatement exposes `hasNext()` and `NextResult()`, and
       there is no separate FileAndStageBindStatement type.
+    status_rationale: |
+      `hasNext()` and `NextResult()` are for multi-statement queries and were never related to
+      files or stages, so declaring them only on FileAndStageBindStatement was a mistake in the
+      old types. Moving them to RowStatement fixes that. For a single statement `hasNext()`
+      returns false, so code that checks it works the same for every query.
 
   51:
     name: 'isTokenValid is not implemented'
@@ -1313,7 +1330,7 @@ behavior_differences:
     name: 'EXTERNALBROWSER authenticator-request HTTP failure is a plain Error whose message includes status and body'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1327,13 +1344,16 @@ behavior_differences:
       "Failed to login: External browser SSO failed: HTTP <status> <reason> from Snowflake during Snowflake authenticator-request: <body>".
       For the shared 403 stub that is
       'Failed to login: External browser SSO failed: HTTP 403 Forbidden from Snowflake during Snowflake authenticator-request: {"success":false,"message":"Forbidden"}'.
+    status_rationale: |
+      Only the error text and class change, and the new message has more detail. No changelog
+      entry: the changelog already says that error messages and codes differ in the new driver.
 
   66:
     name: 'A codeless error still has an own code property set to undefined'
-    status: unknown
+    status: allowed
     type: unknown
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A plain Error thrown for a failure that has no Snowflake code, such as an
@@ -1345,6 +1365,9 @@ behavior_differences:
       driver or server code, that property is present and its value is
       `undefined`. Reading `error.code` is still `undefined`, but
       `'code' in error` is true.
+    status_rationale: |
+      Not a breaking change. Reading `error.code` gives `undefined` on both drivers, and only
+      an own-property check can tell the difference. No changelog entry.
 
   67:
     name: 'EXTERNALBROWSER connect failures reject with the full new-driver message'
@@ -1377,7 +1400,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       execute({ parameters: { QUERY_TAG: 'stmt' } }) on a connection with queryTag 'conn'
@@ -1396,7 +1419,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createConnection throws InvalidParameterError 404063 when queryTag is longer than
@@ -1408,7 +1431,8 @@ behavior_differences:
       Login rejects a SESSION_PARAMETERS.QUERY_TAG string longer than 2000 characters with
       001008 (invalid value for parameter 'QUERY_TAG'). The new driver does not repeat that
       check. QUERY_TAG on a statement is not checked by the old driver either.
-      The query request keeps a long string and cuts the job tag at 2000.
+      The query request keeps a long string and cuts the job tag at 2000. Listed under Internal
+      in the changelog.
 
   70:
     name: 'Login request omits CLIENT_ENVIRONMENT.PLATFORM'
@@ -1491,7 +1515,7 @@ behavior_differences:
     name: 'non-PEM privateKey is rejected with a core base64-decode error instead of the old PKCS8 PEM message'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1504,6 +1528,10 @@ behavior_differences:
       A non-PEM string is forwarded to sf_core as base64-encoded key material.
       After the failed connect the connection is not up; a follow-up `SELECT 1`
       fails as a terminated connection.
+    status_rationale: |
+      Both drivers reject the key. The error class and code are covered by the changelog entry
+      about connection option errors. The move from createConnection() to connect() is tracked
+      in BD#101. No separate changelog entry.
 
   74:
     name: 'wrong private-key passphrase error message'
@@ -1520,6 +1548,10 @@ behavior_differences:
       connect rejects with `Failed to login: Authentication failed`. The
       passphrase detail stays on an intermediate error the Node binding does
       not put on Error.message.
+    description: |
+      The error needs to be improved in core. The core knows the key could not be
+      decrypted, but its `Authentication failed` error does not include that cause
+      in its message. So the user gets no hint that the passphrase is wrong.
 
   75:
     name: 'JWT login rejection message includes the GS code'
@@ -1539,9 +1571,9 @@ behavior_differences:
 
   76:
     name: 'JWT without privateKey or privateKeyPath reports a named missing-parameter error'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1550,20 +1582,27 @@ behavior_differences:
     new_driver_behavior: |
       connect fails with
       "Configuration error: Configuration validation failed (1 issue(s)): private_key: Missing required parameter: 'private_key' or 'private_key_file'".
+    status_rationale: |
+      Both drivers fail at connect. The new message names the missing option. The changelog
+      entry about connection option errors already covers this, so there is no separate entry.
 
   77:
-    name: 'privateKey accepts standard-base64 unencrypted PKCS8 DER in addition to PEM'
-    status: unknown
+    name: 'privateKey accepts a base64-encoded DER key in addition to PEM'
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createConnection rejects a non-PEM privateKey string with
       `Invalid private key. The specified value must be a PEM-formatted private key.`
     new_driver_behavior: |
-      The same standard-base64 PKCS8 DER string is forwarded to sf_core, which
-      decodes it and completes JWT login. Connect succeeds and SELECT 1 returns 1.
+      A privateKey string that is not PEM is decoded as base64. The decoded key can be PKCS#8 DER,
+      encrypted PKCS#8 DER (decrypted with privateKeyPass), PKCS#1 DER, or PEM text. JWT login then
+      works the same as with a PEM key.
+    status_rationale: |
+      A new accepted key format. A PEM string works as before, and the old driver rejected
+      every other string, so no working code changes. Listed under New Features.
 
   78:
     name: 'privateKey or privateKeyPath without authenticator infers SNOWFLAKE_JWT'
@@ -1579,6 +1618,17 @@ behavior_differences:
     new_driver_behavior: |
       The same options set AUTHENTICATOR to SNOWFLAKE_JWT. Login succeeds when
       the key is valid.
+    description: |
+      Issue: there is no way to keep password login while a key is set.
+      - With a `password` and a key but no authenticator, the old driver logs in with the
+        password and ignores the key. The new driver logs in with the key.
+      - Setting `authenticator: 'SNOWFLAKE'` does not help. sf_core rejects the basic
+        authenticator together with `private_key` or `private_key_file`: "Cannot specify basic
+        authenticator together with private key parameters; use 'SNOWFLAKE_JWT' or remove the
+        private key parameters".
+      - So code that sets `authenticator: 'SNOWFLAKE'`, a `password` and a key connects with
+        the old driver and fails at connect with the new one. The only way to keep password
+        login is to remove the key options.
 
   79:
     name: 'NetworkError message is the catalog text and the transport detail is on cause'
@@ -1693,7 +1743,7 @@ behavior_differences:
     name: 'A deserialized connection serializes without token expiration times'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -1713,6 +1763,10 @@ behavior_differences:
       So a missing time changes nothing for the driver.
 
       We should consider removing the expiration times from the payload completely.
+    status_rationale: |
+      The serialize() docs say its format is not stable and can change between driver
+      versions. A string is only guaranteed to work with deserializeConnection() on the same
+      driver version, so a format change is allowed. Listed under Internal in the changelog.
 
   85:
     name: 'deserializeConnection without account and host throws InvalidParameterError with no code'
@@ -1925,9 +1979,9 @@ behavior_differences:
 
   97:
     name: 'A refused OAuth connect is NetworkError 401001 with the catalog message'
-    status: unknown
+    status: allowed
     type: unknown
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1937,6 +1991,10 @@ behavior_differences:
       The same refusal fails as NetworkError. error.code is 401001 and the message
       is "Network error. Could not reach Snowflake." The transport detail is on
       cause. This is the catalog network error, not a wrapped login error.
+    status_rationale: |
+      The error name and code match the old driver. Only the message text changes. The
+      transport detail, which the old driver put in the message, is now on `cause`. No
+      changelog entry.
 
   98:
     name: 'A mismatched OAuth username is reported as a wrapped login error'
@@ -2357,7 +2415,7 @@ behavior_differences:
     new_driver_behavior: |
       clientStoreTemporaryCredential controls MFA token caching as well as ID and OAuth
       token caching, and defaults to true (BD#39). clientRequestMFAToken is removed.
-      Passing it throws an unknown-option error, which is tracked as a bug in BD#102.
+      Passing it throws the unknown-option error of BD#102.
     description: |
       If this difference blocks users, the driver could follow
       Python and accept clientRequestMFAToken as an alias that maps to
@@ -2425,7 +2483,9 @@ behavior_differences:
     status_rationale: |
       The options stay global and are set through configure(), as in the old driver, so no code
       needs to change. Reading them when a connection is created, the rounding to seconds and the
-      new default cache directory are too small for a changelog entry.
+      new default cache directory are too small for a changelog entry. crlDownloadTimeout 0 was
+      never documented to mean no timeout, so the old driver's behavior for 0 is a bug and the new
+      behavior gets no changelog entry either.
 
   124:
     name: 'toCoreConnectionOptions stringifies null'
@@ -2452,7 +2512,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       Login failure 390100 is OperationFailedError. error.code is the string
@@ -2501,7 +2561,7 @@ behavior_differences:
     name: 'empty PAT token file fails at connect with Token file is empty'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2524,7 +2584,7 @@ behavior_differences:
     name: 'missing PAT token file fails at connect with Could not read token file'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2592,6 +2652,14 @@ behavior_differences:
       Chunks are downloaded by the Rust core, which does not hand the HTTP response to Node.
       The status is the part of that response that tells the application what went wrong.
 
+      The public types changed too, for every error, not only this one:
+      - The old `index.d.ts` declares `data`, `response`, `responseBody` and `externalize()` on
+        `SnowflakeError`. The new `SnowflakeError` type declares only `code`, `sqlState` and
+        `isFatal`.
+      - The `SnowflakeErrorExternal` type, returned by `externalize()`, no longer exists.
+      - TypeScript code that reads `err.response` or calls `err.externalize()` no longer
+        compiles.
+
   131:
     name: 'An expired result chunk URL fails the query instead of being refreshed'
     status: todo
@@ -2638,7 +2706,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A configure call that sets logLevel, logFilePath or customLogger resets the omitted
@@ -2661,7 +2729,7 @@ behavior_differences:
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      configure({ logLevel }) with an unknown level throws an Error with code 403001
+      configure({ logLevel }) with an unknown level throws an InvalidParameterError with code 403001
       (ERR_GLOBAL_CONFIGURE_INVALID_LOG_LEVEL) and the message "Invalid logLevel. The specified
       value must be one of these five levels: error, warn, debug, info and trace."
     new_driver_behavior: |

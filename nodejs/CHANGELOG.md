@@ -39,7 +39,7 @@ You may need to adjust your setup if you:
   - The `useConnectionConfigProxyForOCSP` connection option.
   - The `connection.setupOcspPrivateLink()` method.
   - The `snowflake.ocspModes` export and the `OcspModes` type.
-- Changed `connection.connectAsync()` to report every error by rejecting the returned promise, and removed its callback parameter. Before, errors went to two different places: login errors, such as a wrong password, went only to the callback while the promise still resolved, and setup errors, such as an unsupported `authenticator`, rejected the promise. Handle all errors with `try`/`catch` around `await connection.connectAsync()` or with `.catch()`.
+- Changed `connection.connectAsync()` to report every error by rejecting the returned promise, and removed its callback parameter. Before, errors went to two different places: login errors, such as a wrong password, went only to the callback while the promise still resolved, and setup errors, such as an invalid `clientConfigFile`, rejected the promise. Handle all errors with `try`/`catch` around `await connection.connectAsync()` or with `.catch()`.
 - Data Types
   - Changed integer columns to return a native JavaScript `BigInt` instead of a `big-integer` object when the `jsTreatIntegerAsBigInt` connection option or the `JS_TREAT_INTEGER_AS_BIGINT` session parameter is enabled. `BigInt` is built into JavaScript and needs no extra package. Both types hold the same values and work mostly the same way. The difference is that `big-integer` adds its own helper methods on top. If you use them, for example `.equals()`, `.add()` or `BigInteger.isInstance()`, switch to `BigInt` operators such as `===` and `+`, and to `typeof value === 'bigint'`.
   - Changed `BINARY` columns to return a plain `Buffer`. Before, the driver added two undocumented methods, `toStringSf()` and `getFormat()`, to every `Buffer` it returned. These methods were removed. To get the value as text, use `buffer.toString('hex').toUpperCase()` or `buffer.toString('base64')`.
@@ -53,25 +53,28 @@ You may need to adjust your setup if you:
   - Changed the error for a query that fails because its session expired or no longer exists. It is now an `OperationFailedError` with the Snowflake error code (`'390114'` or `'390111'`) and `sqlState` `'08001'`, instead of a `ClientError` with code `407002` and `sqlState` `'08003'`. `isFatal` is still `true`, and later queries on the same connection still fail with `407002`. If your code reconnects after a `407002` error, check `isFatal` instead.
   - Changed connecting to fail with an `InvalidParameterError` when `workloadIdentityProvider`, `workloadIdentityAzureEntraIdResource`, `workloadIdentityImpersonationPath` or `workloadIdentityAwsUseOutboundToken` is set but `authenticator` is not `WORKLOAD_IDENTITY`. Before, the driver ignored these options and logged in with the other authenticator, which hid a mistake in the connection settings. Remove these options, or set `authenticator` to `WORKLOAD_IDENTITY`.
   - Changed connecting to fail with an `InvalidParameterError` when `authenticator` is not a supported value, for example because of a typo. Before, the driver logged a warning and fell back to password login, so the typo could go unnoticed when a `password` was also set.
+- Changed the `clientStoreTemporaryCredential` connection option to default to `true`. External browser and OAuth authorization code logins now cache their tokens unless you set it to `false`, so users are asked to log in less often. To keep the old behavior, set `clientStoreTemporaryCredential: false`.
+- Removed the `clientRequestMFAToken` connection option. MFA token caching is now controlled by `clientStoreTemporaryCredential`, the same option that controls caching for external browser and OAuth logins. Because that option defaults to `true`, MFA tokens are now cached by default when your account allows it. To turn MFA token caching off, set `clientStoreTemporaryCredential: false`.
+- Removed the `disableConsoleLogin` connection option. It is no longer needed because Snowflake already chooses the right login page. External browser login always opens the URL that Snowflake returns, as it did with the default value `true`:
+  - If the account has the `ENABLE_IDENTIFIER_FIRST_LOGIN` parameter turned on, Snowflake returns its login page, where the user picks one of the account's identity providers.
+  - Otherwise the account can have only one identity provider, and the browser goes straight to it.
+- Removed the `FileAndStageBindStatement` type and moved its `hasNext()` and `NextResult()` methods to `RowStatement`, which every query returns. These methods step through the results of a multi-statement query and have nothing to do with files or stages, so declaring them only on `FileAndStageBindStatement` was a mistake in the types. For a single statement, `hasNext()` returns `false`. If your code uses `FileAndStageBindStatement`, replace it with `RowStatement`.
+- Removed support for `SOURCE_COMPRESSION=BR` in `PUT`. Use `BROTLI`, the name in the Snowflake docs, which now works. Before, `BR` was the only way to upload Brotli files, because `BROTLI` failed.
 - Removed undocumented APIs. They were never meant to be public and were not part of the TypeScript types:
   - The `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. No public API used them.
   - The `connection.isTokenValid()` method.
   - The `getCurrentDatabaseProvider()` method on the object returned by `statement.getSessionState()`. It always returned `null`.
   - The `sessionToken`, `masterToken`, `sessionTokenExpirationTime` and `masterTokenExpirationTime` options of `snowflake.createConnection()`. They were not part of `ConnectionOptions`. To reuse a session, use `connection.serialize()` and `snowflake.deserializeConnection()`.
-- Removed the `disableConsoleLogin` connection option. It is no longer needed because Snowflake already chooses the right login page. External browser login always opens the URL that Snowflake returns, as it did with the default value `true`:
-  - If the account has the `ENABLE_IDENTIFIER_FIRST_LOGIN` parameter turned on, Snowflake returns its login page, where the user picks one of the account's identity providers.
-  - Otherwise the account can have only one identity provider, and the browser goes straight to it.
-- Changed the `clientStoreTemporaryCredential` connection option to default to `true`. External browser and OAuth authorization code logins now cache their tokens unless you set it to `false`, so users are asked to log in less often. To keep the old behavior, set `clientStoreTemporaryCredential: false`.
-- Removed the `clientRequestMFAToken` connection option. MFA token caching is now controlled by `clientStoreTemporaryCredential`, the same option that controls caching for external browser and OAuth logins. Because that option defaults to `true`, MFA tokens are now cached by default when your account allows it. To turn MFA token caching off, set `clientStoreTemporaryCredential: false`.
 
 ### New Features
 
-- Added utils for missing data types on a `Column` class: `isDecfloat()`, `isIntervalYearMonth()`, `isIntervalDayTime()` and `isVector()`.
+- Added `isDecfloat()`, `isIntervalYearMonth()`, `isIntervalDayTime()` and `isVector()` to `Column`, for data types that had no such check.
 - Added the `SnowflakeDate` export, the class of the values returned for `DATE` and `TIMESTAMP` columns. It extends `Date` and adds `getEpochSeconds()`, `getNanoSeconds()`, `getScale()`, `getTimezone()` and `getFormat()`. These methods existed before but had no types, so TypeScript code can now use them after a `value instanceof SnowflakeDate` check instead of a hand-written type.
 - Added the `SessionState` type. `statement.getSessionState()` now returns `SessionState | undefined` instead of `object | undefined`, so TypeScript code can call `getCurrentDatabase()`, `getCurrentSchema()`, `getCurrentWarehouse()` and `getCurrentRole()` without a cast. Each method returns `string | null`.
 - Added the `connectionName` connection option, which chooses a connection profile by name. You can pass other connection options next to it. The driver starts from the profile and replaces only the options you pass, for example to use a different `warehouse` than the profile sets. Without it, a profile is read only when `createConnection()` gets no options, as before.
 - Added support for connection profiles in [`config.toml`](https://docs.snowflake.com/en/developer-guide/snowflake-cli/connecting/configure-cli), the configuration file that other Snowflake tools also use. Profiles go under `[connections.<name>]`, and the `default_connection_name` key sets the profile used when `createConnection()` gets no options.
 - Added support for `workloadIdentityImpersonationPath` with the `AZURE` workload identity provider. The path must contain exactly one service principal client ID.
+- Added support for a base64-encoded DER key in the `privateKey` connection option. Before, only a PEM string was accepted.
 - Added storing cached login tokens in the system keyring, such as the macOS Keychain, Windows Credential Manager or a Linux keyring. When a keyring is available, the driver now uses it by default instead of a JSON file on disk. The JSON file is still used when no keyring is available.
 - Added `sqlState` `'28000'` to errors for logins that Snowflake rejects because of wrong credentials, such as a wrong password or an invalid key-pair token.
 
@@ -88,10 +91,16 @@ You may need to adjust your setup if you:
 - Fixed `FLOAT` columns returning `NaN` for the values `inf` and `-inf`. They now return `Infinity` and `-Infinity`, so they can be told apart from a real `NaN`.
 - Fixed `snowflake.configure()` dropping an earlier `customLogger` or `additionalLogToConsole` value when a later call sets another logging option, such as `logLevel`. Logging options now keep their earlier values, like every other `configure()` option, and a call that sets only `additionalLogToConsole` now takes effect.
 - Fixed `snowflake.deserializeConnection()` ignoring the `clientSessionKeepAlive` option.
+- Fixed `PUT` failing with a `TypeError` when `SOURCE_COMPRESSION` is `BROTLI`, `AUTO_DETECT` or `NONE`.
+- Fixed `sourceCompression` in `PUT` results always being `null`. It now shows the compression type of the source file, such as `'NONE'` or `'GZIP'`.
+- Fixed `targetSize` in `PUT` results not matching the size of the file stored in the stage. On stages with client-side encryption, it was the size before encryption. It is now the size after encryption, which is a little larger.
+- Fixed `PUT` failing when the source path starts with `~` or contains the `?` wildcard. `~` now means your home directory, and `?` matches any single character.
+- Fixed `GET` returning an empty result and downloading nothing when no file in the stage matches the path. It now fails with an error that says the file does not exist.
 
 ### Internal
 
 - Removed the client-side length check for the `queryTag` connection option. Snowflake still checks it when you connect, so an invalid `queryTag` can still fail when `connect()` or `connectAsync()` is called.
 - Removed the format check for the `application` connection option. Any string is now accepted, because Snowflake does not check this value.
+- Changed the format of the string returned by `connection.serialize()`. As documented, this format can change between driver versions, so pass the string to `snowflake.deserializeConnection()` on the same driver version only.
 - Changed how `ISA` is reported in telemetry to be consistent with other drivers.
 - Changed when `PLATFORM` is reported in telemetry, so it no longer blocks the first connection request.
