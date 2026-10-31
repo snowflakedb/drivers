@@ -19,8 +19,15 @@ export interface CustomCredentialManager {
 
 export interface ConfigureOptions {
   /**
-   * Log verbosity for driver and core records, in any letter case. `TRACE` logs the same
-   * records as `DEBUG`, and `OFF` logs nothing.
+   * How much the driver logs. Any letter case works.
+   *
+   * - `OFF`: nothing.
+   * - `ERROR`: errors only.
+   * - `WARN`: errors and warnings.
+   * - `INFO`: errors, warnings and info messages.
+   * - `DEBUG`: everything.
+   * - `TRACE`: same as `DEBUG`. The driver doesn't produce trace-level logs, but `TRACE` is
+   *   kept for backward compatibility with older driver versions.
    *
    * @default 'INFO'
    */

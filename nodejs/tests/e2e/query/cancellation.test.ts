@@ -103,7 +103,7 @@ describe('Query Cancellation', () => {
 
   it('should cancel a finished query when the server says it is not running', async () => {
     const { statement } = await executeAsync(connection, 'select 1');
-    if (isRunningNewDriverWithBD('BD#104')) {
+    if (isRunningNewDriverWithBD('BD#116')) {
       await cancelStatementAsync(statement);
       expect(await connectionGetQueryStatusWithBD(connection, statement.getQueryId()!)).toBe(
         'SUCCESS',

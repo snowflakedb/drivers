@@ -826,9 +826,9 @@ behavior_differences:
 
   39:
     name: 'clientStoreTemporaryCredential defaults true and is always overridable'
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -840,6 +840,9 @@ behavior_differences:
     description: |
       Callers that omitted the option now cache ID and OAuth tokens. Set
       clientStoreTemporaryCredential=false to keep the old opt-in behavior.
+    status_rationale: |
+      Caching by default means users log in less often. The change is listed under breaking
+      changes in the changelog.
 
   40:
     name: 'fetchAsString Number does not emit a precision-loss warning or telemetry'
@@ -1958,13 +1961,14 @@ behavior_differences:
     name: 'Unknown AUTHENTICATOR values are rejected before login'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Given OAUTH_AUTHORIZATION_TYPO as AUTHENTICATOR, the old driver does not reject the value as an
-      unknown authenticator. It proceeds to a login attempt and reports the resulting login/connect
-      error through the connection callback.
+      An unknown AUTHENTICATOR, such as OAUTH_AUTHORIZATION_TYPO, is not rejected. The old driver
+      logs the warning "No authenticator found for '<value>'. Using default authenticator as a
+      fallback" and logs in with username and password. With a password set, the login succeeds;
+      without one, the login fails on the server.
     new_driver_behavior: |
       Any value outside the allowed authenticator set fails before login. For
       OAUTH_AUTHORIZATION_TYPO the message is "Invalid authenticator 'OAUTH_AUTHORIZATION_TYPO'".
@@ -2074,20 +2078,12 @@ behavior_differences:
       reported is covered by BD#101.
 
   104:
+    # Duplicate of BD#116. Kept only because the pre-commit validator does not allow removing Node.js entries.
     name: 'Cancel of a finished query succeeds'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
     impact: low
-    old_driver_behavior: |
-      statement.cancel() on a finished query throws 000605
-      ("Identified SQL statement is not currently executing."), SQLSTATE 01000.
-    new_driver_behavior: |
-      statement.cancel() on a finished query succeeds and leaves the statement result as it is.
-      The abort request is still sent, and its response, including 000605, is ignored.
-    status_rationale: |
-      Cancelling after the query has already finished should not be an error.
+    is_breaking_change: false
 
   105:
     name: 'Cancelled query fails with a plain Error'
@@ -2135,7 +2131,7 @@ behavior_differences:
     name: 'Malformed OIDC WIF tokens are rejected before a network call'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2145,12 +2141,16 @@ behavior_differences:
     new_driver_behavior: |
       A non-JWT OIDC token is rejected with
       `OIDC token is not a valid JWT (expected header.payload.signature)`.
+    status_rationale: |
+      Both drivers fail to connect with a malformed OIDC token. The new driver fails before any
+      network call and its message names the problem. The changelog already says that error
+      messages differ in the new driver, so this gets no entry of its own.
 
   108:
     name: 'WIF-only connection options are rejected unless authenticator is WORKLOAD_IDENTITY'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -2161,6 +2161,9 @@ behavior_differences:
     new_driver_behavior: |
       Each of those options errors with `{param} was set but authenticator was not set to
       WORKLOAD_IDENTITY`, citing the snake_case parameter name.
+    status_rationale: |
+      Ignoring these options hides a mistake in the connection settings, so failing is
+      better. Listed under breaking changes in the changelog.
 
   121:
     name: 'credentialCacheDir is not a connection option; the system keyring is used when present'
@@ -2258,44 +2261,40 @@ behavior_differences:
       - `*.snowflakecomputing.com`, `account.*.com`, and `acc*.*.com` do not match, so the login is still sent through the proxy.
 
   114:
-    name: 'Proxying an HTTP account URL is fixed'
+    name: 'A proxy works when the account URL uses http'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      When the account URL protocol is `http`, the old driver uses Node's `HttpAgent`
-      for the proxy:
-      1. The default `proxyProtocol` is `http`, so `HttpAgent` rejects the login.
-         Shown in tests.
-      2. `proxyUser` and `proxyPassword`, and credentials in `HTTP_PROXY`, are not
-         sent as `Proxy-Authorization`. Shown in tests.
-      3. The request line carries only the path, not the full target URL a forward
-         proxy expects. Not shown in tests.
-      4. `proxyProtocol: 'https'` throws before the proxy is contacted. Not shown
-         in tests.
-      5. S3 and GCS requests use `HttpAgent` for `https` endpoints. Not shown in
-         tests.
+      The account URL uses `http` when the connection sets `protocol: 'http'` or an
+      `http://` accessUrl. With such a URL and a proxy, the old driver sends requests with
+      Node's plain `http.Agent`, which does not know how to talk to a proxy:
+      - With the default `proxyProtocol: 'http'`, the login fails.
+      - The proxy credentials (`proxyUser`, `proxyPassword`, or the user and password in
+        `HTTP_PROXY`) are not sent to the proxy.
+      - Requests do not carry the full target URL, which a proxy needs.
+      - `proxyProtocol: 'https'` throws before the proxy is contacted.
+      - S3 and GCS file transfers also use `http.Agent`, even though their URLs are `https`.
     new_driver_behavior: |
-      When the account URL protocol is `http`, the new driver sends the login
-      through the proxy:
-      1. The login is sent. The driver does not reject it.
-      2. The login request carries `Proxy-Authorization`.
-      3. The request line carries the full target URL.
-      4. `proxyProtocol: 'https'` opens TLS to the proxy.
-      5. S3 and GCS requests use the HTTPS proxy path.
+      A proxy works the same way for `http` and `https` account URLs. The login and file
+      transfers go through the proxy with the proxy credentials, and
+      `proxyProtocol: 'https'` opens a TLS connection to the proxy.
     description: |
-      These differences are one entry because each has low impact. Users almost
-      always connect over HTTPS. An HTTP account URL is used in these tests.
+      Real Snowflake accounts accept only HTTPS, so customers do not connect with an `http`
+      account URL. This fix is useful only for tests that run against a mock server over
+      `http` through a proxy.
     status_rationale: |
-      These are bugs in the old driver. The new driver fixes them.
+      These are bugs in the old driver, and the new driver fixes them. The fix does not
+      deserve a changelog entry, because it does not affect customers, only tests with mock
+      servers.
 
   115:
     name: 'A query that loses its session fails with the server error and isFatal, not ClientError 407002'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -2311,18 +2310,23 @@ behavior_differences:
     description: |
       The server code tells the application why the session was lost, which 407002 does not.
       isFatal keeps the signal the old driver gives to reconnect.
+    status_rationale: |
+      The server code is more useful than 407002, and isFatal still tells the application to
+      reconnect. SQL state 08001 is the one sf_core uses for every lost session, as the other
+      new drivers do. Listed under breaking changes in the changelog.
 
   116:
     name: 'statement.cancel() does not report the abort result'
-    status: allowed
-    type: api_incompatibility
+    status: todo
+    type: bug
     reviewed: false
     is_breaking_change: true
-    impact: low
+    impact: high
     old_driver_behavior: |
       `statement.cancel()` sends the abort request and calls back when that abort request finishes.
       An abort rejected by server fails `cancel()` with "RequestFailedError 401002".
       `execute()` finishes when its own query request finishes on the server, and if the abort succeeded it returns with "SQL execution canceled".
+      On a query that already finished, `cancel()` fails with 000605 ("Identified SQL statement is not currently executing."), SQLSTATE 01000.
     new_driver_behavior: |
       `statement.cancel()` returns immediately and does not report the abort result.
       An abort rejected by the server is ignored, whether `execute()` is still running or the statement already has a query id.
@@ -2330,14 +2334,20 @@ behavior_differences:
       When that abort is rejected or never answered, `execute()` still fails with 000604, but the query may keep running on the server; the old driver's `execute()` keeps waiting for the real result instead.
       With `asyncExec`, once the query id is back, `execute()` has already succeeded.
       `cancel()` does not change that result.
+      On a query that already finished, `cancel()` succeeds and the statement result stays as it is. The 000605 response is ignored like any other.
+    description: |
+      When this is fixed, 000605 should stay a success. The query already finished, so there
+      is nothing to cancel and the error does not help the user.
     status_rationale: |
-      Cancel is non-blocking, as in ODBC SQLCancel. The abort response is not part of cancel().
+      This is a serious bug. The Go driver had the same bug and it had to be fixed there.
+      Users must know when an abort fails. Otherwise a long-running query keeps running on
+      the server without their knowledge, and they lose money on warehouse time.
 
   117:
     name: 'MFA token caching is controlled by clientStoreTemporaryCredential'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2346,8 +2356,8 @@ behavior_differences:
       OAUTH_AUTHORIZATION_CODE tokens.
     new_driver_behavior: |
       clientStoreTemporaryCredential controls MFA token caching as well as ID and OAuth
-      token caching, and defaults to true (BD#39). clientRequestMFAToken is rejected
-      as an unknown connection option.
+      token caching, and defaults to true (BD#39). clientRequestMFAToken is removed.
+      Passing it throws an unknown-option error, which is tracked as a bug in BD#102.
     description: |
       If this difference blocks users, the driver could follow
       Python and accept clientRequestMFAToken as an alias that maps to
@@ -2380,9 +2390,9 @@ behavior_differences:
 
   123:
     name: 'CRL configure() options are read when a connection is created, with seconds granularity and a different default cache directory'
-    status: unknown
+    status: allowed
     type: unknown
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2406,8 +2416,16 @@ behavior_differences:
          loaded, otherwise ~/Library/Caches/snowflake/crls on macOS, $XDG_CACHE_HOME/snowflake/crls
          or ~/.cache/snowflake/crls on Linux, and %LOCALAPPDATA%\snowflake\crls on Windows. CRLs
          cached by the old driver are not reused.
-      4. All four options are also accepted as connection options, where they override the
-         configure() value for that connection.
+      4. The four options are not part of the ConnectionOptions type. Passed as connection options
+         anyway, for example through a TypeScript cast, they are accepted and override the
+         configure() value for that connection. This is a hidden bug in the driver design:
+         configure() values and connection options are merged into one object and pass the same
+         check of accepted keys, so connection options can set these keys too. It needs a fix
+         when the driver gets a whitelist of accepted connection options.
+    status_rationale: |
+      The options stay global and are set through configure(), as in the old driver, so no code
+      needs to change. Reading them when a connection is created, the rounding to seconds and the
+      new default cache directory are too small for a changelog entry.
 
   124:
     name: 'toCoreConnectionOptions stringifies null'
@@ -2431,9 +2449,9 @@ behavior_differences:
 
   125:
     name: 'A rejected password login sets SQLSTATE 28000 only on the new driver'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2451,12 +2469,16 @@ behavior_differences:
       asserts that the old driver leaves sqlState unset. Empty and null password
       failures keep their own entries (BD#124 and BD#126)
       and do not assert sqlState.
+    status_rationale: |
+      Snowflake does not send a sqlState for rejected logins, so the old driver left it unset.
+      The new driver fills in the standard SQLSTATE 28000 for credential rejections, so
+      applications can detect them without a list of Snowflake error codes.
 
   126:
     name: 'An empty password reaches login on the old driver'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2471,6 +2493,9 @@ behavior_differences:
     description: |
       should reject an empty password branches on this entry. Omitted and
       undefined passwords stay on BD#101. This test does not assert sqlState.
+    status_rationale: |
+      An empty password counts as missing, so it gets the same error as BD#101. Both drivers
+      fail at connect; only the error class and code differ, so there is no changelog entry.
 
   127:
     name: 'empty PAT token file fails at connect with Token file is empty'
@@ -2522,7 +2547,7 @@ behavior_differences:
     name: 'A deserialized connection sends heartbeats when keep-alive is on'
     status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2543,6 +2568,10 @@ behavior_differences:
       it learns the keep-alive setting only from query responses. Before its first query it
       sends no heartbeats. When the original connection also has keep-alive on, both connections
       send heartbeats for the same session. That is harmless and doubles the heartbeat requests.
+    status_rationale: |
+      clientSessionKeepAlive is a documented option of the ConnectionOptions that
+      deserializeConnection() accepts, and the old driver ignored it there. The new driver
+      honors it, so this is a bugfix and no code needs to change.
 
   130:
     name: 'LargeResultSetError has the HTTP status on cause instead of the raw response object'
@@ -2585,9 +2614,9 @@ behavior_differences:
 
   132:
     name: 'logLevel TRACE logs the same records as DEBUG, tagged DEBUG'
-    status: unknown
-    type: unknown
-    reviewed: false
+    status: allowed
+    type: enhancement
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2598,26 +2627,37 @@ behavior_differences:
       logLevel 'TRACE' is accepted and behaves exactly like 'DEBUG'. sf_core folds its own
       TRACE events into DEBUG, so they are already logged at logLevel 'DEBUG'. Every such line
       is tagged "DEBUG", and the driver calls customLogger.debug(), never customLogger.trace().
+    status_rationale: |
+      sf_core has no separate trace level. 'TRACE' and customLogger.trace() are kept for
+      backward compatibility with the old driver, so no code needs to change; only the level
+      tag in the log output differs. Deprecating only the 'TRACE' value of LogLevel is not
+      possible in TypeScript.
 
   133:
     name: 'configure keeps logging options that a later call does not set'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Each configure call that sets a logging option resets the logging options it omits to
-      their defaults, e.g. configure({ logFilePath }) drops an earlier customLogger.
+      A configure call that sets logLevel, logFilePath or customLogger resets the omitted
+      customLogger to undefined and the omitted additionalLogToConsole to true, e.g.
+      configure({ logFilePath }) drops an earlier customLogger. logLevel and logFilePath keep
+      their earlier values. A call that sets only additionalLogToConsole is ignored.
     new_driver_behavior: |
       Logging options keep their earlier values, like every other configure option.
       configure({ customLogger: undefined }) restores the built-in output.
+    status_rationale: |
+      Neither the TypeScript types nor the docs say that a later configure call resets
+      customLogger or additionalLogToConsole. Keeping earlier values matches every other
+      configure option, so code that sets logging options in several calls gets what it asks for.
 
   134:
     name: 'An invalid logLevel throws an InvalidParameterError without an error code'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2627,6 +2667,9 @@ behavior_differences:
     new_driver_behavior: |
       The same call throws an InvalidParameterError with no `code` and the message
       "Invalid logLevel: <value>".
+    status_rationale: |
+      The old driver also throws InvalidParameterError, so only the code and the message text
+      differ. New driver errors for invalid parameters do not carry error codes.
 
   135:
     name: 'HTTP connect phase times out after 60 seconds'
@@ -2647,16 +2690,16 @@ behavior_differences:
       waits up to its request timeout.
 
   136:
-    name: 'An occupied browserRedirectPort reports the port and the OS error'
+    name: 'An occupied browserRedirectPort fails with a different error message'
     status: allowed
-    type: enhancement
-    reviewed: false
+    type: api_incompatibility
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      server.listen(browserRedirectPort) binds '::'. A taken port fails with
-      Error, code undefined, and message "Error while creating local server on
-      port <port>: Error: listen EADDRINUSE: address already in use :::<port>".
+      The listener binds 127.0.0.1. A taken port fails with Error, code undefined,
+      and message "Error while creating local server on port <port>: Error: listen
+      EADDRINUSE: address already in use 127.0.0.1:<port>".
     new_driver_behavior: |
       The listener binds 127.0.0.1. A taken port fails with Error, code undefined,
       and message "Failed to login: External browser SSO failed: Failed to bind
@@ -2664,6 +2707,9 @@ behavior_differences:
       already in use (os error 48)". Linux detail is "Address already in use
       (os error 98)". Windows detail is "Only one usage of each socket address
       (protocol/network address/port) is normally permitted. (os error 10048)".
+    status_rationale: |
+      Only the message text differs. The error class, the missing code and the port in the
+      message are the same in both drivers.
 
   137:
     name: 'HTTP attempts time out after 300 seconds by default'

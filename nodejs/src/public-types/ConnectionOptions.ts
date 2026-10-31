@@ -369,28 +369,6 @@ export type ConnectionOptions = {
   crlOnDiskCache?: boolean;
 
   /**
-   * Overrides {@link ConfigureOptions.crlDownloadTimeout} for this connection, in milliseconds.
-   * The value is rounded down to whole seconds; a positive value under 1000 becomes 1 second.
-   */
-  crlDownloadTimeout?: number;
-
-  /**
-   * Overrides {@link ConfigureOptions.crlDownloadMaxSize} for this connection, in bytes.
-   */
-  crlDownloadMaxSize?: number;
-
-  /**
-   * Overrides {@link ConfigureOptions.crlCacheValidityTime} for this connection, in milliseconds.
-   * The value is rounded down to whole seconds; a positive value under 1000 becomes 1 second.
-   */
-  crlCacheValidityTime?: number;
-
-  /**
-   * Overrides {@link ConfigureOptions.crlCacheDir} for this connection.
-   */
-  crlCacheDir?: string;
-
-  /**
    * Per-attempt timeout of login, query, and other requests, in milliseconds. The value is
    * rounded down to whole seconds; a positive value under 1000 becomes 1 second. 0 and negative
    * values behave like an omitted timeout.

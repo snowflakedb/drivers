@@ -48,6 +48,11 @@ You may need to adjust your setup if you:
     - set `STRICT_JSON_OUTPUT` to `TRUE`. Snowflake then returns `null` instead of `undefined`, and the strings `"NaN"` and `"Infinity"`.
     - pass your own `jsonColumnVariantParser` to `snowflake.configure()`.
   - Changed `VECTOR` columns to return an array of numbers, such as `[1.5, 2.5, 3.5]`, instead of the text sent by the server, such as `'[1.500000,2.500000,3.500000]'`. If your code parses that text, use the array directly. To get a string instead, add `'Number'` to `fetchAsString`: the array is then returned as JSON text, such as `'[1.5,2.5,3.5]'`, and a NULL value as `'NULL'`, the same as for other numbers.
+- Errors
+  - Changed errors about connection options to always be an `InvalidParameterError` without a `code`. The old driver checked each option in its own way, so its errors were not consistent: most were an `InvalidParameterError` or a `MissingParameterError` with a code such as `404008`, but some were a plain `Error` with no code. The new driver checks all options in one shared step, so it can no longer give each problem its own code. Instead, the error `message` names every option that is missing or invalid. If your code checks `error.code` or `MissingParameterError`, check `error.name === 'InvalidParameterError'` instead.
+  - Changed the error for a query that fails because its session expired or no longer exists. It is now an `OperationFailedError` with the Snowflake error code (`'390114'` or `'390111'`) and `sqlState` `'08001'`, instead of a `ClientError` with code `407002` and `sqlState` `'08003'`. `isFatal` is still `true`, and later queries on the same connection still fail with `407002`. If your code reconnects after a `407002` error, check `isFatal` instead.
+  - Changed connecting to fail with an `InvalidParameterError` when `workloadIdentityProvider`, `workloadIdentityAzureEntraIdResource`, `workloadIdentityImpersonationPath` or `workloadIdentityAwsUseOutboundToken` is set but `authenticator` is not `WORKLOAD_IDENTITY`. Before, the driver ignored these options and logged in with the other authenticator, which hid a mistake in the connection settings. Remove these options, or set `authenticator` to `WORKLOAD_IDENTITY`.
+  - Changed connecting to fail with an `InvalidParameterError` when `authenticator` is not a supported value, for example because of a typo. Before, the driver logged a warning and fell back to password login, so the typo could go unnoticed when a `password` was also set.
 - Removed undocumented APIs. They were never meant to be public and were not part of the TypeScript types:
   - The `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. No public API used them.
   - The `connection.isTokenValid()` method.
@@ -56,6 +61,8 @@ You may need to adjust your setup if you:
 - Removed the `disableConsoleLogin` connection option. It is no longer needed because Snowflake already chooses the right login page. External browser login always opens the URL that Snowflake returns, as it did with the default value `true`:
   - If the account has the `ENABLE_IDENTIFIER_FIRST_LOGIN` parameter turned on, Snowflake returns its login page, where the user picks one of the account's identity providers.
   - Otherwise the account can have only one identity provider, and the browser goes straight to it.
+- Changed the `clientStoreTemporaryCredential` connection option to default to `true`. External browser and OAuth authorization code logins now cache their tokens unless you set it to `false`, so users are asked to log in less often. To keep the old behavior, set `clientStoreTemporaryCredential: false`.
+- Removed the `clientRequestMFAToken` connection option. MFA token caching is now controlled by `clientStoreTemporaryCredential`, the same option that controls caching for external browser and OAuth logins. Because that option defaults to `true`, MFA tokens are now cached by default when your account allows it. To turn MFA token caching off, set `clientStoreTemporaryCredential: false`.
 
 ### New Features
 
@@ -65,6 +72,8 @@ You may need to adjust your setup if you:
 - Added the `connectionName` connection option, which chooses a connection profile by name. You can pass other connection options next to it. The driver starts from the profile and replaces only the options you pass, for example to use a different `warehouse` than the profile sets. Without it, a profile is read only when `createConnection()` gets no options, as before.
 - Added support for connection profiles in [`config.toml`](https://docs.snowflake.com/en/developer-guide/snowflake-cli/connecting/configure-cli), the configuration file that other Snowflake tools also use. Profiles go under `[connections.<name>]`, and the `default_connection_name` key sets the profile used when `createConnection()` gets no options.
 - Added support for `workloadIdentityImpersonationPath` with the `AZURE` workload identity provider. The path must contain exactly one service principal client ID.
+- Added storing cached login tokens in the system keyring, such as the macOS Keychain, Windows Credential Manager or a Linux keyring. When a keyring is available, the driver now uses it by default instead of a JSON file on disk. The JSON file is still used when no keyring is available.
+- Added `sqlState` `'28000'` to errors for logins that Snowflake rejects because of wrong credentials, such as a wrong password or an invalid key-pair token.
 
 ### Bugfixes
 
@@ -77,6 +86,8 @@ You may need to adjust your setup if you:
 - Fixed `pool.acquire()` and `pool.use()` rejecting with a plain `Error` when a pooled connection fails to connect. They now reject with the original connect error, including its `name`, `code` and `sqlState`.
 - Fixed a `QUERY_TAG` passed in the `parameters` option of `connection.execute()` being replaced by the `queryTag` connection option. The statement's `QUERY_TAG` now applies to that query, and later queries still use the connection's `queryTag`.
 - Fixed `FLOAT` columns returning `NaN` for the values `inf` and `-inf`. They now return `Infinity` and `-Infinity`, so they can be told apart from a real `NaN`.
+- Fixed `snowflake.configure()` dropping an earlier `customLogger` or `additionalLogToConsole` value when a later call sets another logging option, such as `logLevel`. Logging options now keep their earlier values, like every other `configure()` option, and a call that sets only `additionalLogToConsole` now takes effect.
+- Fixed `snowflake.deserializeConnection()` ignoring the `clientSessionKeepAlive` option.
 
 ### Internal
 

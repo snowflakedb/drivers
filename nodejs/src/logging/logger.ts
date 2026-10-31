@@ -11,6 +11,10 @@ export interface SnowflakeLogger {
   warn(message: string): void;
   info(message: string): void;
   debug(message: string): void;
+  /**
+   * The driver doesn't produce trace-level logs, but this method is kept for backward
+   * compatibility with older driver versions.
+   */
   trace(message: string): void;
 }
 
