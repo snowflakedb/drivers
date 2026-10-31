@@ -225,6 +225,7 @@ fn bench_arrow_prefetch(c: &mut Criterion) {
                     let config = PrefetchConfig {
                         prefetch_threads: concurrency,
                         memory_limit_mb: 0,
+                        result_queue_size: None,
                     };
                     let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(
                         rt.block_on(PrefetchChunkReader::open(
@@ -325,6 +326,7 @@ fn bench_json_prefetch(c: &mut Criterion) {
                     let config = PrefetchConfig {
                         prefetch_threads: concurrency,
                         memory_limit_mb: 0,
+                        result_queue_size: None,
                     };
                     let mut reader: Box<dyn RecordBatchReader + Send> = Box::new(
                         rt.block_on(PrefetchChunkReader::open(

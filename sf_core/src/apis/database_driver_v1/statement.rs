@@ -17,7 +17,7 @@ use super::result_set::{
 };
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, is_unregistered_param,
-    resolve_options, validate_statement_option_write,
+    normalize_prefetch_option_write, resolve_options, validate_statement_option_write,
 };
 use crate::apis::operation_ctx::{OperationCtx, run_opt, with_cleanup_opt};
 use crate::config::ParamStore;
@@ -150,6 +150,7 @@ impl DatabaseDriverV1 {
                 let (canonical, def) =
                     canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
                 validate_statement_option_write(def)?;
+                let value = normalize_prefetch_option_write(def, value)?;
                 stmt.settings.insert(canonical, value);
                 Ok(())
             }
@@ -528,6 +529,13 @@ impl DatabaseDriverV1 {
         if let Some(multi) =
             multistatement::try_into_multi_result(&data, descriptor.clone(), Some(request_id))
         {
+            if let ExecuteQueryResult::Multi { query_ids, .. } = &multi {
+                conn_arc
+                    .lock()
+                    .await
+                    .record_statement_prefetch(query_ids.iter().map(String::as_str), &stmt.settings)
+                    .await;
+            }
             return Ok(multi);
         }
 
@@ -543,7 +551,25 @@ impl DatabaseDriverV1 {
                 cwd,
             )
             .await?;
-        let reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        let mut reader_ctx = resolve_reader_ctx(&conn_arc).await?;
+        reader_ctx
+            .prefetch_config
+            .apply_statement_params(&stmt.settings);
+        if !descriptor.query_id.is_empty()
+            && (stmt
+                .settings
+                .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str())
+                .is_some()
+                || stmt
+                    .settings
+                    .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str())
+                    .is_some())
+        {
+            conn_arc.lock().await.statement_prefetch_by_query_id.put(
+                descriptor.query_id.clone(),
+                reader_ctx.prefetch_config.clone(),
+            );
+        }
         Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, Some(request_id)))
     }
 
@@ -794,6 +820,8 @@ impl DatabaseDriverV1 {
                         result.response.data.parameters.as_ref(),
                     )
                     .await;
+                conn.record_statement_prefetch(std::iter::once(query_id.as_str()), &stmt.settings)
+                    .await;
             }
 
             stmt.state = StatementState::Executed;
@@ -837,6 +865,12 @@ impl DatabaseDriverV1 {
             if let Some(multi) =
                 multistatement::try_into_multi_result(&data, descriptor.clone(), None)
             {
+                if let ExecuteQueryResult::Multi { query_ids, .. } = &multi {
+                    conn_ptr
+                        .lock()
+                        .await
+                        .inherit_statement_prefetch(&query_id, query_ids);
+                }
                 return Ok(multi);
             }
 
@@ -870,7 +904,16 @@ impl DatabaseDriverV1 {
             let rowset_data = self
                 .extract_rowset_data(operation_ctx, &conn_ptr, data, refresh_sql, false, None, None, None)
                 .await?;
-            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            let mut reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            if let Some(config) = conn_ptr
+                .lock()
+                .await
+                .statement_prefetch_by_query_id
+                .get(&query_id)
+                .cloned()
+            {
+                reader_ctx.prefetch_config = config;
+            }
             Ok(self.build_execute_result(rowset_data, descriptor, reader_ctx, None))
         }
         .instrument(crate::snowflake_op_span!(
@@ -1313,6 +1356,20 @@ mod tests {
     }
 
     #[test]
+    fn prefetch_statement_options_never_become_query_parameters() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            param_names::CLIENT_PREFETCH_THREADS.as_str().to_owned(),
+            Setting::Int(8),
+        );
+        settings.insert(
+            param_names::CLIENT_RESULT_QUEUE_SIZE.as_str().to_owned(),
+            Setting::Int(16),
+        );
+        assert!(build_query_parameters(&settings).is_none());
+    }
+
+    #[test]
     fn registered_client_only_statement_option_is_not_forwarded() {
         let mut settings = ParamStore::new();
         settings.insert(
@@ -1424,13 +1481,170 @@ mod tests {
         let ch = ds.connection_new();
         let sh = ds.statement_new(ch).unwrap();
         let err = ds
-            .statement_set_option(sh, "client_prefetch_threads".into(), Setting::Int(8))
+            .statement_set_option(sh, "client_memory_limit".into(), Setting::Int(8))
             .await
             .unwrap_err();
         assert!(
             err.to_string().contains("not statement-scoped"),
             "unexpected: {err}"
         );
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn statement_prefetch_options_are_canonicalized_and_validated_by_both_setters() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statement_set_option(
+            sh,
+            "client_prefetch_threads".into(),
+            Setting::String("6".into()),
+        )
+        .await
+        .unwrap();
+        ds.statement_set_options(
+            sh,
+            HashMap::from([(
+                "client_result_queue_size".into(),
+                Setting::String("12".into()),
+            )]),
+        )
+        .await
+        .unwrap();
+        let stmt_ptr = ds.statements.get_obj(sh).unwrap();
+        {
+            let stmt = stmt_ptr.lock().await;
+            assert_eq!(
+                stmt.settings
+                    .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+                Some(&Setting::Int(6)),
+            );
+            assert_eq!(
+                stmt.settings
+                    .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+                Some(&Setting::Int(12)),
+            );
+        }
+
+        for (key, max) in [
+            (
+                "client_prefetch_threads",
+                tokio::sync::Semaphore::MAX_PERMITS as i64,
+            ),
+            (
+                "client_result_queue_size",
+                (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64) as i64,
+            ),
+        ] {
+            for invalid in [
+                Setting::Int(0),
+                Setting::Int(-1),
+                Setting::Int(max + 1),
+                Setting::String("0".into()),
+                Setting::String("-1".into()),
+                Setting::String("1.5".into()),
+                Setting::String("9223372036854775808".into()),
+                Setting::Double(1.0),
+            ] {
+                assert!(
+                    ds.statement_set_option(sh, key.into(), invalid.clone())
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    ds.statement_set_options(sh, HashMap::from([(key.into(), invalid)]))
+                        .await
+                        .is_err()
+                );
+            }
+        }
+        let stmt = stmt_ptr.lock().await;
+        assert_eq!(
+            stmt.settings
+                .get_any(param_names::CLIENT_PREFETCH_THREADS.as_str()),
+            Some(&Setting::Int(6)),
+        );
+        assert_eq!(
+            stmt.settings
+                .get_any(param_names::CLIENT_RESULT_QUEUE_SIZE.as_str()),
+            Some(&Setting::Int(12)),
+        );
+        drop(stmt);
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
+    }
+
+    #[tokio::test]
+    async fn result_set_snapshots_statement_prefetch_over_session_settings() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let conn_ptr = ds.connections.get_obj(ch).unwrap();
+        {
+            let mut conn = conn_ptr.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            let mut session = conn.session_parameters.write().await;
+            session.insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+            session.insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(10));
+            session.insert("CLIENT_MEMORY_LIMIT".into(), Setting::Int(512));
+        }
+
+        let sh = ds.statement_new(ch).unwrap();
+        ds.statement_set_option(sh, "CLIENT_PREFETCH_THREADS".into(), Setting::Int(8))
+            .await
+            .unwrap();
+        let stmt_ptr = ds.statements.get_obj(sh).unwrap();
+        {
+            let stmt = stmt_ptr.lock().await;
+            let mut reader_ctx = resolve_reader_ctx(&stmt.conn).await.unwrap();
+            reader_ctx
+                .prefetch_config
+                .apply_statement_params(&stmt.settings);
+            assert_eq!(reader_ctx.prefetch_config.prefetch_threads, 8);
+            assert_eq!(reader_ctx.prefetch_config.result_queue_size, Some(10));
+            assert_eq!(reader_ctx.prefetch_config.memory_limit_mb, 512);
+        }
+        ds.statement_set_option(sh, "CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(16))
+            .await
+            .unwrap();
+
+        let reader_ctx = {
+            let stmt = stmt_ptr.lock().await;
+            let mut reader_ctx = resolve_reader_ctx(&stmt.conn).await.unwrap();
+            reader_ctx
+                .prefetch_config
+                .apply_statement_params(&stmt.settings);
+            reader_ctx
+        };
+        assert_eq!(reader_ctx.prefetch_config.prefetch_threads, 8);
+        assert_eq!(reader_ctx.prefetch_config.result_queue_size, Some(16));
+        assert_eq!(reader_ctx.prefetch_config.memory_limit_mb, 512);
+
+        let data: Data = serde_json::from_value(serde_json::json!({})).unwrap();
+        let descriptor = response_to_descriptor(&data, &ds.wrapper_presets);
+        let result = ds.build_execute_result(data.into_rowset_data(), descriptor, reader_ctx, None);
+        let result_handle = match result {
+            ExecuteQueryResult::Single { info, .. } => info.handle,
+            ExecuteQueryResult::Multi { .. } => unreachable!(),
+        };
+        conn_ptr
+            .lock()
+            .await
+            .session_parameters
+            .write()
+            .await
+            .insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(2));
+        let result_ptr = ds.results.get_obj(result_handle).unwrap();
+        let result = result_ptr.lock().await;
+        assert_eq!(result.reader_ctx.prefetch_config.prefetch_threads, 8);
+        assert_eq!(
+            result.reader_ctx.prefetch_config.result_queue_size,
+            Some(16)
+        );
+        assert_eq!(result.reader_ctx.prefetch_config.memory_limit_mb, 512);
+        drop(result);
+        ds.result_set_release(result_handle).unwrap();
         ds.statement_release(sh).unwrap();
         ds.connection_release(ch).unwrap();
     }

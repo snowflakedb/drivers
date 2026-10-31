@@ -95,6 +95,42 @@ fn try_coerce_setting(
         .or_else(|| additional.and_then(|value_type| try_coerce_to_value_type(setting, value_type)))
 }
 
+/// Normalize the two client-side prefetch limits at the API boundary. Single
+/// setters accept numeric strings just like `resolve_options` does for batches.
+/// Tokio channels and semaphores cannot be constructed above `MAX_PERMITS`.
+fn normalize_prefetch_value(key: &str, value: Setting) -> Result<Setting, String> {
+    let max = if key == param_names::CLIENT_PREFETCH_THREADS.as_str() {
+        tokio::sync::Semaphore::MAX_PERMITS as u64
+    } else if key == param_names::CLIENT_RESULT_QUEUE_SIZE.as_str() {
+        (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64)
+    } else {
+        return Ok(value);
+    };
+    let invalid = || format!("Parameter '{key}' must be a positive integer no greater than {max}");
+    let value = match value {
+        Setting::Int(value) => value,
+        Setting::String(value) => value.parse::<i64>().map_err(|_| invalid())?,
+        _ => return Err(invalid()),
+    };
+    if value <= 0 || (value as u64) > max {
+        return Err(invalid());
+    }
+    Ok(Setting::Int(value))
+}
+
+pub(crate) fn normalize_prefetch_option_write(
+    def: Option<&param_registry::ParamDef>,
+    value: Setting,
+) -> Result<Setting, ApiError> {
+    let Some(def) = def else {
+        return Ok(value);
+    };
+    match normalize_prefetch_value(def.canonical_name, value) {
+        Ok(value) => Ok(value),
+        Err(argument) => InvalidArgumentSnafu { argument }.fail(),
+    }
+}
+
 fn odbc_key_for(internal_canonical: &str) -> Option<&'static str> {
     match internal_canonical {
         "user" => Some("UID"),
@@ -208,6 +244,20 @@ pub fn resolve_options(
                     });
                     continue;
                 };
+
+                let final_value =
+                    match normalize_prefetch_value(param_def.canonical_name, final_value) {
+                        Ok(value) => value,
+                        Err(message) => {
+                            issues.push(ValidationIssue {
+                                severity: ValidationSeverity::Error,
+                                parameter: key,
+                                message,
+                                code: ValidationCode::InvalidValue,
+                            });
+                            continue;
+                        }
+                    };
 
                 canonical_sources.insert(canonical_name.clone(), key);
                 resolved.insert(canonical_name, final_value);
@@ -556,6 +606,63 @@ mod tests {
             .collect();
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         assert_eq!(resolved.get("retry_backoff_factor"), Some(&Setting::Int(2)));
+    }
+
+    #[test]
+    fn prefetch_options_accept_numeric_strings_and_enforce_integer_limits() {
+        let thread_max = tokio::sync::Semaphore::MAX_PERMITS as i64;
+        let queue_max = (tokio::sync::Semaphore::MAX_PERMITS as u64).min(u32::MAX as u64) as i64;
+        for (key, input, expected) in [
+            ("CLIENT_PREFETCH_THREADS", "7".to_string(), 7),
+            (
+                "CLIENT_PREFETCH_THREADS",
+                thread_max.to_string(),
+                thread_max,
+            ),
+            ("CLIENT_RESULT_QUEUE_SIZE", queue_max.to_string(), queue_max),
+        ] {
+            let (resolved, issues) = resolve_options(
+                Wrapper::Python,
+                HashMap::from([(key.to_string(), Setting::String(input))]),
+            );
+            assert!(issues.is_empty(), "unexpected issues for {key}: {issues:?}");
+            assert_eq!(resolved.get(key), Some(&Setting::Int(expected)));
+        }
+
+        for (key, input) in [
+            ("CLIENT_PREFETCH_THREADS", Setting::Int(0)),
+            ("CLIENT_PREFETCH_THREADS", Setting::Int(-1)),
+            ("CLIENT_PREFETCH_THREADS", Setting::String("0".into())),
+            ("CLIENT_PREFETCH_THREADS", Setting::String("-1".into())),
+            ("CLIENT_PREFETCH_THREADS", Setting::Int(thread_max + 1)),
+            ("CLIENT_RESULT_QUEUE_SIZE", Setting::Int(0)),
+            ("CLIENT_RESULT_QUEUE_SIZE", Setting::Int(-1)),
+            ("CLIENT_RESULT_QUEUE_SIZE", Setting::String("0".into())),
+            ("CLIENT_RESULT_QUEUE_SIZE", Setting::String("-1".into())),
+            ("CLIENT_RESULT_QUEUE_SIZE", Setting::Int(queue_max + 1)),
+            (
+                "CLIENT_RESULT_QUEUE_SIZE",
+                Setting::Int(u32::MAX as i64 + 1),
+            ),
+        ] {
+            let (resolved, issues) =
+                resolve_options(Wrapper::Python, HashMap::from([(key.to_string(), input)]));
+            assert!(resolved.is_empty(), "invalid value stored for {key}");
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].code, ValidationCode::InvalidValue);
+        }
+
+        for key in ["CLIENT_PREFETCH_THREADS", "CLIENT_RESULT_QUEUE_SIZE"] {
+            for input in ["1.5", "9223372036854775808", "not an integer"] {
+                let (resolved, issues) = resolve_options(
+                    Wrapper::Python,
+                    HashMap::from([(key.to_string(), Setting::String(input.to_string()))]),
+                );
+                assert!(resolved.is_empty(), "invalid value stored for {key}");
+                assert_eq!(issues.len(), 1);
+                assert_eq!(issues[0].code, ValidationCode::InvalidType);
+            }
+        }
     }
 
     #[test]
@@ -1067,6 +1174,17 @@ mod tests {
     }
 
     #[test]
+    fn client_result_queue_size_is_not_sent_at_login() {
+        let mut settings = ParamStore::new();
+        settings.insert(
+            param_names::CLIENT_RESULT_QUEUE_SIZE.as_str().to_owned(),
+            Setting::Int(16),
+        );
+        let parameters = collect_login_session_parameters(&settings, &settings);
+        assert!(!parameters.contains_key("CLIENT_RESULT_QUEUE_SIZE"));
+    }
+
+    #[test]
     fn collect_unknown_settings_excludes_wrapper_restricted_canonicals() {
         let mut store = ParamStore::new();
         store.insert("put_fastfail".to_string(), Setting::Bool(true));
@@ -1127,6 +1245,7 @@ mod tests {
             Setting::String("batch".to_string()),
         );
         store.insert("CLIENT_PREFETCH_THREADS".to_string(), Setting::Int(5));
+        store.insert("CLIENT_RESULT_QUEUE_SIZE".to_string(), Setting::Int(16));
         store.insert("CLIENT_SESSION_KEEP_ALIVE".to_string(), Setting::Bool(true));
         store.insert(
             "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY".to_string(),
@@ -1144,6 +1263,7 @@ mod tests {
             parameters.get("CLIENT_PREFETCH_THREADS"),
             Some(&"5".to_string())
         );
+        assert!(!parameters.contains_key("CLIENT_RESULT_QUEUE_SIZE"));
         assert_eq!(
             parameters.get("CLIENT_SESSION_KEEP_ALIVE"),
             Some(&"true".to_string())
