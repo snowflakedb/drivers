@@ -556,9 +556,7 @@ enum TimestampCSource {
 
 fn timestamp_c_source(c_type: CDataType) -> Option<TimestampCSource> {
     match c_type {
-        CDataType::Default | CDataType::TimeStamp | CDataType::TypeTimestamp => {
-            Some(TimestampCSource::Timestamp)
-        }
+        CDataType::TimeStamp | CDataType::TypeTimestamp => Some(TimestampCSource::Timestamp),
         CDataType::Char | CDataType::WChar => Some(TimestampCSource::Char),
         CDataType::Date | CDataType::TypeDate => Some(TimestampCSource::Date),
         CDataType::Time | CDataType::TypeTime => Some(TimestampCSource::Time),

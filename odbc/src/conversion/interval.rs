@@ -154,7 +154,7 @@ enum YearMonthCSource {
 
 fn year_month_c_source(c_type: CDataType, compound: bool) -> Option<YearMonthCSource> {
     match c_type {
-        CDataType::Default | CDataType::Char => Some(YearMonthCSource::Char),
+        CDataType::Char => Some(YearMonthCSource::Char),
         CDataType::WChar => Some(YearMonthCSource::WChar),
         CDataType::IntervalYear | CDataType::IntervalMonth | CDataType::IntervalYearToMonth => {
             Some(YearMonthCSource::Interval)
@@ -189,7 +189,7 @@ enum DayTimeCSource {
 
 fn day_time_c_source(c_type: CDataType, compound: bool) -> Option<DayTimeCSource> {
     match c_type {
-        CDataType::Default | CDataType::Char => Some(DayTimeCSource::Char),
+        CDataType::Char => Some(DayTimeCSource::Char),
         CDataType::WChar => Some(DayTimeCSource::WChar),
         CDataType::IntervalDay
         | CDataType::IntervalHour

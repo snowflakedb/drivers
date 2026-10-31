@@ -152,7 +152,7 @@ enum DecimalCSource {
 
 fn decimal_c_source(c_type: CDataType) -> Option<DecimalCSource> {
     match c_type {
-        CDataType::Default | CDataType::Char => Some(DecimalCSource::Char),
+        CDataType::Char => Some(DecimalCSource::Char),
         CDataType::WChar => Some(DecimalCSource::WChar),
         CDataType::Long | CDataType::SLong => Some(DecimalCSource::SLong),
         CDataType::Short | CDataType::SShort => Some(DecimalCSource::SShort),
@@ -444,7 +444,8 @@ pub(crate) fn validate_c_to_sql_at_bind(
         Err(BindingError::UnsupportedParameterType { .. }) => return Ok(()),
         Err(err) => return Err(err),
     };
-    if value_type == CDataType::Default || converter.accepts_c_type(value_type) {
+    // SQL_C_DEFAULT is checked as the C type it resolves to, so bind and execute agree.
+    if converter.accepts_c_type(resolve_param_c_type(value_type, sql_type)) {
         Ok(())
     } else {
         UnsupportedCDataTypeSnafu { c_type: value_type }.fail()
@@ -669,6 +670,13 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
     unsafe { std::ptr::read_unaligned(apd.array_status_ptr.add(row_idx)) == SQL_PARAM_IGNORE }
 }
 
+fn resolve_param_c_type(value_type: CDataType, sql_type: sql::SqlDataType) -> CDataType {
+    match value_type {
+        CDataType::Default => default_bind_c_type(sql_type),
+        other => other,
+    }
+}
+
 fn default_bind_c_type(sql_type: sql::SqlDataType) -> CDataType {
     match sql_type {
         sql::SqlDataType::SMALLINT
@@ -682,9 +690,9 @@ fn default_bind_c_type(sql_type: sql::SqlDataType) -> CDataType {
         | SQL_SF_TIMESTAMP_NTZ
         | SQL_SF_TIMESTAMP_LTZ
         | SQL_SF_TIMESTAMP_TZ => CDataType::TimeStamp,
-        sql::SqlDataType::REAL | sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => {
-            CDataType::Double
-        }
+        // Appendix D gives SQL_REAL a 4-byte default, unlike SQL_FLOAT and SQL_DOUBLE.
+        sql::SqlDataType::REAL => CDataType::Float,
+        sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => CDataType::Double,
         sql::SqlDataType::EXT_BIT => CDataType::Bit,
         sql::SqlDataType::EXT_BINARY
         | sql::SqlDataType::EXT_VAR_BINARY
@@ -716,13 +724,10 @@ fn binding_for_row(
 ) -> ParameterBinding {
     use std::mem::size_of;
 
+    let value_type = resolve_param_c_type(apd_rec.value_type, ipd_rec.sql_data_type);
     let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
         // Fixed-size types are bound with BufferLength=0; stride by the C type's octet length.
-        let stride_c_type = match apd_rec.value_type {
-            CDataType::Default => default_bind_c_type(ipd_rec.sql_data_type),
-            other => other,
-        };
-        let stride = stride_c_type
+        let stride = value_type
             .fixed_size()
             .unwrap_or(apd_rec.buffer_length as usize);
         let data_ptr = if apd_rec.data_ptr.is_null() {
@@ -778,7 +783,7 @@ fn binding_for_row(
     let _ = size_of::<sql::Len>(); // keep import live
     ParameterBinding {
         sql_data_type: ipd_rec.sql_data_type,
-        value_type: apd_rec.value_type,
+        value_type,
         parameter_value_ptr: data_ptr,
         buffer_length: apd_rec.buffer_length,
         str_len_or_ind_ptr,
@@ -1266,6 +1271,26 @@ mod tests {
         let converter = make_converter(binding)?;
         let (sf_type, text, _) = converter.convert(binding)?;
         Ok((sf_type, text))
+    }
+
+    fn convert_default(
+        parameter_type: sql::SqlDataType,
+        ptr: sql::Pointer,
+        buffer_length: sql::Len,
+    ) -> Result<(SnowflakeLogicalType, String), BindingError> {
+        let apd_rec = ApdRecord {
+            value_type: CDataType::Default,
+            data_ptr: ptr,
+            buffer_length,
+            str_len_or_ind_ptr: std::ptr::null_mut(),
+        };
+        let ipd_rec = IpdRecord {
+            sql_data_type: parameter_type,
+            sf_subtype: TimestampSubtype::from_parameter_type(parameter_type),
+            ..IpdRecord::default()
+        };
+        let binding = binding_for_row(&apd_rec, &ipd_rec, 0, 0, 0);
+        convert_binding(&binding)
     }
 
     #[test]
@@ -3194,6 +3219,103 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "FIXED");
         assert_eq!(parsed["1"]["value"], serde_json::json!(["10", "20", "30"]));
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_default_real_zero_buffer_length_strides_by_float() -> TestResult {
+        let vals: [f32; 3] = [1.25, 2.5, -3.75];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::REAL,
+            vals.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "REAL");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1.25", "2.5", "-3.75"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_default_real_row_wise_reads_float() -> TestResult {
+        #[repr(C)]
+        struct Row {
+            v: f32,
+            ind: sql::Len,
+        }
+        let mut rows = [
+            Row { v: 1.25, ind: 0 },
+            Row { v: 2.5, ind: 0 },
+            Row { v: -3.75, ind: 0 },
+        ];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::REAL,
+            rows.as_mut_ptr() as sql::Pointer,
+            0,
+            std::ptr::addr_of_mut!(rows[0].ind),
+        )]);
+        apd.array_size = 3;
+        apd.bind_type = std::mem::size_of::<Row>();
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "REAL");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1.25", "2.5", "-3.75"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn csv_multi_row_default_real_zero_buffer_length_strides_by_float() -> TestResult {
+        let vals: [f32; 3] = [1.25, 2.5, -3.75];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::REAL,
+            vals.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let csv = odbc_bindings_to_csv(&apd, &ipd, 1)?;
+        assert_eq!(csv, "\"1.25\"\n\"2.5\"\n\"-3.75\"\n");
+        Ok(())
+    }
+
+    #[test]
+    fn json_multi_row_default_double_zero_buffer_length_strides_by_double() -> TestResult {
+        let vals: [f64; 3] = [1.25, 2.5, -3.75];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::DOUBLE,
+            vals.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "REAL");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1.25", "2.5", "-3.75"])
+        );
         Ok(())
     }
 
@@ -5444,16 +5566,101 @@ mod tests {
     }
 
     #[test]
-    fn convert_default_as_real() -> TestResult {
-        let val: f64 = 4.25;
-        let binding = make_binding(
+    fn convert_default_as_sql_real_reads_float() -> TestResult {
+        let buf: [u8; 8] = {
+            let mut b = [0xAAu8; 8];
+            b[..4].copy_from_slice(&1.25f32.to_ne_bytes());
+            b
+        };
+        let (ty, v) = convert_default(sql::SqlDataType::REAL, buf.as_ptr() as sql::Pointer, 0)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "1.25");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_binary_reads_bytes_verbatim() -> TestResult {
+        let buf: [u8; 3] = [0xCA, 0xFE, 0x00];
+        let mut ind: sql::Len = 3;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
             CDataType::Default,
+            sql::SqlDataType::EXT_BINARY,
+            buf.as_ptr() as sql::Pointer,
+            3,
+            &mut ind,
+        )]);
+        let binding = binding_for_row(&apd.records[&1], &ipd.records[&1], 0, 0, 0);
+        assert_eq!(binding.value_type, CDataType::Binary);
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Binary);
+        assert_eq!(v, "cafe00");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_sql_float_reads_double() -> TestResult {
+        let val: f64 = 4.25;
+        let (ty, v) = convert_default(
+            sql::SqlDataType::FLOAT,
+            &val as *const f64 as sql::Pointer,
+            0,
+        )?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, "4.25");
+        Ok(())
+    }
+
+    #[test]
+    fn validate_c_to_sql_at_bind_accepts_default_for_every_converter_sql_type() {
+        let sql_types = [
+            sql::SqlDataType::INTEGER,
+            sql::SqlDataType::SMALLINT,
+            sql::SqlDataType::EXT_BIG_INT,
+            sql::SqlDataType::EXT_TINY_INT,
+            sql::SqlDataType::REAL,
+            sql::SqlDataType::FLOAT,
+            sql::SqlDataType::DOUBLE,
+            sql::SqlDataType::VARCHAR,
+            sql::SqlDataType::CHAR,
+            sql::SqlDataType::EXT_LONG_VARCHAR,
+            sql::SqlDataType::EXT_W_CHAR,
+            sql::SqlDataType::EXT_W_VARCHAR,
+            sql::SqlDataType::EXT_W_LONG_VARCHAR,
+            sql::SqlDataType::DECIMAL,
+            sql::SqlDataType::NUMERIC,
+            sql::SqlDataType::EXT_BIT,
+            sql::SqlDataType::EXT_BINARY,
+            sql::SqlDataType::EXT_VAR_BINARY,
+            sql::SqlDataType::EXT_LONG_VAR_BINARY,
+            sql::SqlDataType::DATE,
+            sql::SqlDataType::DATETIME,
+            sql::SqlDataType::TIME,
+            sql::SqlDataType::EXT_TIME_OR_INTERVAL,
+            sql::SqlDataType::TIMESTAMP,
+            sql::SqlDataType::EXT_TIMESTAMP,
+            SQL_SF_TIMESTAMP_NTZ,
+            SQL_SF_TIMESTAMP_LTZ,
+            SQL_SF_TIMESTAMP_TZ,
+        ];
+        let interval_types = (101..=113).map(sql::SqlDataType);
+        for sql_type in sql_types.into_iter().chain(interval_types) {
+            let subtype = TimestampSubtype::from_parameter_type(sql_type);
+            assert!(
+                validate_c_to_sql_at_bind(CDataType::Default, sql_type, subtype).is_ok(),
+                "SQL_C_DEFAULT must bind against {sql_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn convert_default_as_sql_double_reads_double() -> TestResult {
+        let val: f64 = 4.25;
+        let (ty, v) = convert_default(
             sql::SqlDataType::DOUBLE,
             &val as *const f64 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
         assert_eq!(v, "4.25".to_string());
         Ok(())
@@ -5531,14 +5738,11 @@ mod tests {
     #[test]
     fn convert_default_as_boolean_true() -> TestResult {
         let val: u8 = 1;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::EXT_BIT,
             &val as *const u8 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, "true".to_string());
         Ok(())
@@ -5547,14 +5751,11 @@ mod tests {
     #[test]
     fn convert_default_as_boolean_false() -> TestResult {
         let val: u8 = 0;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::EXT_BIT,
             &val as *const u8 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, "false".to_string());
         Ok(())
@@ -5563,14 +5764,11 @@ mod tests {
     #[test]
     fn convert_default_as_decimal_reads_char() -> TestResult {
         let mut buf = *b"12.34\0";
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::DECIMAL,
             buf.as_mut_ptr() as sql::Pointer,
             buf.len() as sql::Len,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, "12.34");
         Ok(())
@@ -5579,14 +5777,11 @@ mod tests {
     #[test]
     fn convert_default_as_smallint_reads_sshort() -> TestResult {
         let val: i16 = 9;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::SMALLINT,
             &val as *const i16 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, "9");
         Ok(())
@@ -5595,14 +5790,11 @@ mod tests {
     #[test]
     fn convert_default_as_tinyint_reads_stinyint() -> TestResult {
         let val: i8 = 5;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::EXT_TINY_INT,
             &val as *const i8 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, "5");
         Ok(())
@@ -5611,14 +5803,11 @@ mod tests {
     #[test]
     fn convert_default_as_bigint_reads_sbigint() -> TestResult {
         let val: i64 = 9_000_000_000;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::EXT_BIG_INT,
             &val as *const i64 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, "9000000000");
         Ok(())
@@ -5627,14 +5816,11 @@ mod tests {
     #[test]
     fn convert_default_as_integer_reads_slong() -> TestResult {
         let val: i32 = 77;
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::INTEGER,
             &val as *const i32 as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, "77");
         Ok(())
@@ -5647,14 +5833,11 @@ mod tests {
             month: 6,
             day: 15,
         };
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::DATE,
             &val as *const sql::Date as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Date);
         let expected_millis = (chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap()
             - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
@@ -5671,14 +5854,11 @@ mod tests {
             minute: 45,
             second: 9,
         };
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::TIME,
             &val as *const sql::Time as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Time);
         assert_eq!(v, "49509000000000");
         Ok(())
@@ -5695,14 +5875,11 @@ mod tests {
             second: 3,
             fraction: 0,
         };
-        let binding = make_binding(
-            CDataType::Default,
+        let (ty, v) = convert_default(
             sql::SqlDataType::TIMESTAMP,
             &val as *const sql::Timestamp as sql::Pointer,
             0,
-            std::ptr::null_mut(),
-        );
-        let (ty, v) = convert_binding(&binding)?;
+        )?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
         assert_eq!(v, "2024-06-15 01:02:03");
         Ok(())

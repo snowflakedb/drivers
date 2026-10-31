@@ -263,7 +263,7 @@ pub(crate) fn is_binary_sql_parameter_type(sql_type: sql::SqlDataType) -> bool {
 pub(crate) fn binary_sql_accepts_c_type(c_type: CDataType) -> bool {
     matches!(
         c_type,
-        CDataType::Default | CDataType::Binary | CDataType::Char | CDataType::WChar
+        CDataType::Binary | CDataType::Char | CDataType::WChar
     )
 }
 
@@ -277,9 +277,9 @@ impl ReadODBC for SnowflakeBinary {
     ///
     /// Legal C source types for a binary SQL target:
     ///
-    /// - `SQL_C_BINARY` (and `SQL_C_DEFAULT`, which the driver maps to
-    ///   `SQL_C_BINARY` for binary targets) — bytes are taken verbatim
-    ///   from the application's buffer.
+    /// - `SQL_C_BINARY` — bytes are taken verbatim from the application's
+    ///   buffer. `SQL_C_DEFAULT` resolves to `SQL_C_BINARY` for binary
+    ///   targets before this reader runs.
     /// - `SQL_C_CHAR` — the buffer is an ASCII hex literal (e.g.
     ///   `"DEADBEEF"`); the driver decodes pairs of hex digits into
     ///   raw bytes.
@@ -300,7 +300,7 @@ impl ReadODBC for SnowflakeBinary {
             .fail();
         }
         match binding.value_type {
-            CDataType::Default | CDataType::Binary => {
+            CDataType::Binary => {
                 let len = buffer_data_len(binding);
                 let bytes =
                     unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) };

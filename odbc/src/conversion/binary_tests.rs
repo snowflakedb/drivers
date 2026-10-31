@@ -640,23 +640,6 @@ mod tests {
     }
 
     #[test]
-    fn read_odbc_default_routes_to_binary() {
-        // SQL_C_DEFAULT against a SQL_BINARY parameter must behave as
-        // SQL_C_BINARY per ODBC Appendix D ("Default C Data Types").
-        let sn = sn();
-        let buf: [u8; 3] = [0xCA, 0xFE, 0x00];
-        let mut ind: sql::Len = 3;
-        let b = binding_with_indicator(
-            CDataType::Default,
-            buf.as_ptr() as sql::Pointer,
-            3,
-            &mut ind,
-        );
-        let result = sn.read_odbc(&b).unwrap();
-        assert_eq!(result.as_ref(), &[0xCA, 0xFE, 0x00]);
-    }
-
-    #[test]
     fn read_odbc_char_decodes_uppercase_hex() {
         // Application sends "DEADBEEF" as 8 ASCII bytes; driver must
         // hex-decode into 4 bytes per ODBC Appendix D ("Converting Data
@@ -795,12 +778,7 @@ mod tests {
     fn binary_sql_accepts_c_type_matches_appendix_d() {
         use crate::conversion::binary::{binary_sql_accepts_c_type, is_binary_sql_parameter_type};
 
-        for c_type in [
-            CDataType::Default,
-            CDataType::Binary,
-            CDataType::Char,
-            CDataType::WChar,
-        ] {
+        for c_type in [CDataType::Binary, CDataType::Char, CDataType::WChar] {
             assert!(
                 binary_sql_accepts_c_type(c_type),
                 "{c_type:?} must be accepted for a binary SQL target",

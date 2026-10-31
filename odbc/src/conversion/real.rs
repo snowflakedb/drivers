@@ -524,7 +524,7 @@ enum RealCSource {
 fn real_c_source(c_type: CDataType) -> Option<RealCSource> {
     match c_type {
         CDataType::Float => Some(RealCSource::Float),
-        CDataType::Default | CDataType::Double => Some(RealCSource::Double),
+        CDataType::Double => Some(RealCSource::Double),
         CDataType::Long | CDataType::SLong => Some(RealCSource::SLong),
         CDataType::Short | CDataType::SShort => Some(RealCSource::SShort),
         CDataType::SBigInt => Some(RealCSource::SBigInt),

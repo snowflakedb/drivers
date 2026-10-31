@@ -665,18 +665,14 @@ fn number_c_source(c_type: CDataType) -> Option<NumberCSource> {
 
 impl ReadODBC for SnowflakeNumber {
     fn accepts_c_type(&self, c_type: CDataType) -> bool {
-        c_type == CDataType::Default || number_c_source(c_type).is_some()
+        number_c_source(c_type).is_some()
     }
 
     fn read_odbc<'a>(
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, BindingError> {
-        let value_type = match binding.value_type {
-            CDataType::Default => default_c_type_for_integer_sql(binding.sql_data_type),
-            other => other,
-        };
-        let value = match number_c_source(value_type) {
+        let value = match number_c_source(binding.value_type) {
             None => {
                 return UnsupportedCDataTypeSnafu {
                     c_type: binding.value_type,

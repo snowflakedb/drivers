@@ -249,7 +249,7 @@ enum BooleanCSource {
 
 fn boolean_c_source(c_type: CDataType) -> Option<BooleanCSource> {
     match c_type {
-        CDataType::Default | CDataType::Bit => Some(BooleanCSource::Bit),
+        CDataType::Bit => Some(BooleanCSource::Bit),
         CDataType::UTinyInt => Some(BooleanCSource::UTinyInt),
         CDataType::TinyInt | CDataType::STinyInt => Some(BooleanCSource::STinyInt),
         CDataType::Long | CDataType::SLong => Some(BooleanCSource::SLong),

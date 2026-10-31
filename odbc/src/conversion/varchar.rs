@@ -452,7 +452,7 @@ enum VarcharCSource {
 
 fn varchar_c_source(c_type: CDataType) -> Option<VarcharCSource> {
     match c_type {
-        CDataType::Default | CDataType::Char => Some(VarcharCSource::Char),
+        CDataType::Char => Some(VarcharCSource::Char),
         CDataType::WChar => Some(VarcharCSource::WChar),
         CDataType::Long | CDataType::SLong => Some(VarcharCSource::SLong),
         CDataType::Short | CDataType::SShort => Some(VarcharCSource::SShort),

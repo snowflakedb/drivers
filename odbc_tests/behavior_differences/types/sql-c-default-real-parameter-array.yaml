@@ -1,0 +1,17 @@
+name: "SQL_C_DEFAULT SQL_REAL parameter arrays advance by sizeof(SQLREAL)"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A column-wise parameter array bound with SQLBindParameter(SQL_C_DEFAULT,
+  SQL_REAL) and BufferLength 0 inserts the first element for every row:
+  binding {1.25f, 2.5f, -3.75f} inserts 1.25 three times.
+new_driver_behavior: |
+  SQL_C_DEFAULT on SQL_REAL is SQL_C_FLOAT, so each row is read from its own
+  4-byte SQLREAL element: binding {1.25f, 2.5f, -3.75f} inserts 1.25, 2.5,
+  and -3.75.
+description: |
+  ODBC Appendix D ("Default C Data Types") maps SQL_REAL to SQL_C_FLOAT, whose
+  octet length gives the column-wise stride when BufferLength is 0.

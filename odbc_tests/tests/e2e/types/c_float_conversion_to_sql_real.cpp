@@ -6,6 +6,7 @@
 
 #include <cfloat>
 #include <cmath>
+#include <cstring>
 #include <optional>
 
 #include <catch2/catch_approx.hpp>
@@ -186,6 +187,107 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT to SQL_DOUBLE and
   // Then The value should be read back correctly as SQL_C_DOUBLE
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(2.718));
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT to SQL_REAL as SQL_C_FLOAT",
+                 "[e2e][types][c_float][conversion][sql_real]") {
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When A 4-byte float followed by non-zero bytes is bound with SQL_C_DEFAULT and SQL_REAL and inserted
+  struct {
+    SQLREAL value;
+    unsigned char trailing[4];
+  } buf;
+  std::memset(&buf, 0xAA, sizeof(buf));
+  buf.value = 1.25f;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_REAL, 0, 0, &buf.value, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Only the 4-byte float is read, so the value round-trips exactly
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_FLOAT parameter array to SQL_REAL with zero BufferLength",
+                 "[e2e][types][c_float][conversion][sql_real]") {
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When A column-wise array of 4-byte floats is bound with SQL_C_FLOAT, SQL_REAL and BufferLength 0
+  constexpr SQLULEN num_rows = 3;
+  SQLREAL values[num_rows] = {1.25f, 2.5f, -3.75f};
+  SQLLEN indicators[num_rows] = {0, 0, 0};
+  SQLULEN params_processed = 0;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_REAL, 0, 0, values, 0, indicators);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(params_processed == num_rows);
+
+  // Then Each row is inserted
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t ORDER BY col");
+  CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == -3.75);
+  REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+  REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 2.5);
+  REQUIRE_ODBC_NO_DATA(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT parameter array to SQL_REAL with zero BufferLength",
+                 "[e2e][types][c_float][conversion][sql_real]") {
+  // Given Snowflake client is logged in
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
+
+  // When A column-wise array of 4-byte floats is bound with SQL_C_DEFAULT, SQL_REAL and BufferLength 0
+  constexpr SQLULEN num_rows = 3;
+  SQLREAL values[num_rows] = {1.25f, 2.5f, -3.75f};
+  SQLLEN indicators[num_rows] = {0, 0, 0};
+  SQLULEN params_processed = 0;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_REAL, 0, 0, values, 0, indicators);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(params_processed == num_rows);
+
+  // Then The new driver inserts each row and the old driver inserts the first element for every row
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t ORDER BY col");
+  NEW_DRIVER_ONLY("BD#sql-c-default-real-parameter-array") {
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == -3.75);
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 2.5);
+  }
+  OLD_DRIVER_ONLY("BD#sql-c-default-real-parameter-array") {
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == 1.25);
+  }
+  REQUIRE_ODBC_NO_DATA(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE zero", "[e2e][types][c_float][conversion][sql_real]") {
