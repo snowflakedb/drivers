@@ -319,6 +319,29 @@ impl LoginParameters {
     }
 }
 
+pub use super::param_registry::DEFAULT_JWT_TIMEOUT_SECS;
+
+pub(crate) fn jwt_timeout_secs(settings: &dyn Settings) -> Result<i64, ConfigError> {
+    let Some(value) = settings.get(param_names::JWT_TIMEOUT.as_str()) else {
+        return Ok(DEFAULT_JWT_TIMEOUT_SECS);
+    };
+    let seconds = match &value {
+        Setting::Int(seconds) => Some(*seconds),
+        Setting::String(seconds) => seconds.parse::<i64>().ok(),
+        _ => None,
+    };
+    match seconds {
+        Some(0) => Ok(DEFAULT_JWT_TIMEOUT_SECS),
+        Some(seconds) if seconds > 0 => Ok(seconds),
+        _ => InvalidParameterValueSnafu {
+            parameter: param_names::JWT_TIMEOUT.as_str(),
+            value: value.to_wire_string(),
+            explanation: "must be a non-negative integer number of seconds",
+        }
+        .fail(),
+    }
+}
+
 pub const DEFAULT_AUTHENTICATION_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug)]
@@ -667,6 +690,7 @@ pub enum LoginMethod {
         username: String,
         private_key: SensitiveString,
         passphrase: Option<SensitiveString>,
+        jwt_timeout_secs: i64,
     },
     Pat {
         username: String,
@@ -1017,6 +1041,7 @@ impl LoginMethod {
                 passphrase: settings
                     .get_string("private_key_password")
                     .map(SensitiveString::from),
+                jwt_timeout_secs: jwt_timeout_secs(settings)?,
             });
         }
 
