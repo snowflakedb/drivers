@@ -156,7 +156,9 @@ Ensure the public API of the statement returned by `connection.execute` is fully
 - `integration/testBind.js` — partially migrated. Scalar and multi-row `?`-bind insert/select
   (`testBindWithQmark`, `testBindArrayWithQmark`) moved to the "parameter binding" describes in
   `nodejs/tests/e2e/query/data-types/{boolean,string}.test.ts` and
-  `nodejs/tests/unit/query-result/binds.test.ts`. The string-column stage/CSV parity is covered by
+  `nodejs/tests/unit/query-result/binds.test.ts`. Binding a JS `Date` into `TIMESTAMP_NTZ`
+  (`testBindingTimestampNTZDate`) moved to the "Date binds" describe in
+  `nodejs/tests/e2e/query/binds.test.ts` and was deleted. The string-column stage/CSV parity is covered by
   `nodejs/tests/e2e/query/binds.test.ts`; the `Verify stage binding and array binding` timezone
   matrix stays as a gap (TIMESTAMP_NTZ/LTZ/TZ + DATE inline-vs-stage parity across four
   timezones). Still pending: `:n` named-placeholder binding, bind error codes (`testWrongBinds`),

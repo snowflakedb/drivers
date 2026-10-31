@@ -106,22 +106,36 @@ describe('Query Binds', () => {
   });
 
   describe('Date binds', () => {
-    it('should cast a bound Date to TIMESTAMP_NTZ only in the old driver', async () => {
+    it('should cast a bound Date to TIMESTAMP_NTZ', async () => {
       const connection = await createLiveConnection();
-      const result = executeAsync(connection, `SELECT ?::TIMESTAMP_NTZ AS NTZ`, {
-        binds: [new Date('2024-01-15T12:30:00+02:00')] as unknown as Binds,
+      const { rows } = await executeAsync(connection, `SELECT ?::TIMESTAMP_NTZ AS NTZ`, {
+        binds: [new Date('2024-01-15T12:30:00+02:00')],
       });
-      if (isRunningNewDriverWithBD('BD#86')) {
-        await expect(result).rejects.toMatchObject({
-          error: {
-            name: 'OperationFailedError',
-            message: "SQL compilation error:\nUnsupported data type 'VARIANT'.",
-          },
-        });
-      } else {
-        const { rows } = await result;
-        expect((rows[0].NTZ as Date).toISOString()).toBe('2024-01-15T10:30:00.000Z');
-      }
+      expect((rows[0].NTZ as Date).toISOString()).toBe('2024-01-15T10:30:00.000Z');
     });
+
+    it.each([
+      { path: 'stage', arrayBindingThreshold: LOW_THRESHOLD },
+      { path: 'inline', arrayBindingThreshold: HIGH_THRESHOLD },
+    ])(
+      'should insert Dates into a TIMESTAMP_NTZ column via the $path path',
+      async ({ arrayBindingThreshold }) => {
+        const connection = await createLiveConnection({ arrayBindingThreshold });
+        const tableName = await createTemporaryTable(connection, 'ID NUMBER, COL TIMESTAMP_NTZ');
+        await executeAsync(connection, `INSERT INTO ${tableName} (ID, COL) VALUES (?, ?)`, {
+          binds: [
+            [1, new Date('2024-01-15T12:30:00+02:00')],
+            [2, new Date('2024-06-20T14:45:30.123Z')],
+            [3, null],
+          ],
+        });
+        const { rows } = await executeAsync(connection, `SELECT COL FROM ${tableName} ORDER BY ID`);
+        expect(rows.map((row) => (row.COL as Date | null)?.toISOString() ?? null)).toEqual([
+          '2024-01-15T10:30:00.000Z',
+          '2024-06-20T14:45:30.123Z',
+          null,
+        ]);
+      },
+    );
   });
 });

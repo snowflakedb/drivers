@@ -108,7 +108,7 @@ Feature: TIMESTAMP_NTZ type support
 
   # ODBC bind types are SQL_TIMESTAMP_STRUCT, which has no offset. The driver
   # cannot bind an aware datetime and store the UTC instant as TIMESTAMP_NTZ.
-  @python_e2e @jdbc_e2e @odbc_not_needed
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_not_needed
   Scenario Outline: should store UTC equivalent when binding timezone-aware datetime to timestamp_ntz
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>

@@ -341,8 +341,13 @@ jobs:
   # AWS-LC statically, macOS needs @loader_path, Windows needs the DLL
   # directory next to the extension. Windows ARM is not a cell;
   # aws-lc-fips-sys does not build there. detect-changes gates this job.
+  #
+  # Temporarily disabled: AWS-LC FIPS 3.6.0 does not compile on ubuntu-latest
+  # (Ubuntu 26.04, glibc 2.43). Its `memchr` call breaks under
+  # -Werror=discarded-qualifiers. The guard in python-status is paused too.
+  # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
   packaging_tests_fips:
-    if: inputs.run_python_fips
+    if: false && inputs.run_python_fips
     strategy:
       fail-fast: false
       matrix:
@@ -591,8 +596,11 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
+      # Temporary unblock: the runner's python3 has the GIL and aborts at
+      # startup when PYTHON_GIL=0 is set, so drop it for this call only.
+      # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
       - name: Wait for test host DNS
-        run: ./scripts/wait_for_test_host.sh
+        run: env -u PYTHON_GIL ./scripts/wait_for_test_host.sh
         shell: bash
 
       - name: Setup OpenSSL (Windows ARM64)
@@ -637,7 +645,9 @@ jobs:
         working-directory: python
         run: |
           export WHEEL_PATH
-          WHEEL_PATH="$(python3 ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}")"
+          # Temporary unblock, same reason as "Wait for test host DNS":
+          # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
+          WHEEL_PATH="$(env -u PYTHON_GIL python3 ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}")"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
@@ -1192,10 +1202,12 @@ jobs:
             exit 1
           fi
 
-          if [[ "${{ inputs.run_python_fips }}" == "true" && "${{ needs.packaging_tests_fips.result }}" == "skipped" ]]; then
-            echo "✗ Driver CI requested the Python FIPS install but packaging_tests_fips was SKIPPED"
-            exit 1
-          fi
+          # Paused while packaging_tests_fips is disabled, see the comment on that job:
+          # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
+          # if [[ "${{ inputs.run_python_fips }}" == "true" && "${{ needs.packaging_tests_fips.result }}" == "skipped" ]]; then
+          #   echo "✗ Driver CI requested the Python FIPS install but packaging_tests_fips was SKIPPED"
+          #   exit 1
+          # fi
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
           if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then

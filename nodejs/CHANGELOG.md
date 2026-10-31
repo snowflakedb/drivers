@@ -87,6 +87,7 @@ You may need to adjust your setup if you:
 - Fixed `statement.getNumUpdatedRows()` returning `-1` for `COPY INTO <table>`. It now returns the number of rows loaded.
 - Fixed `connection.getQueryStatusThrowIfError()` rejecting with code `-1` when the query failed on the server. The error now has the query's Snowflake error code, for example `'002003'`.
 - Fixed `pool.acquire()` and `pool.use()` rejecting with a plain `Error` when a pooled connection fails to connect. They now reject with the original connect error, including its `name`, `code` and `sqlState`.
+- Fixed the `Bind` type missing `Date`. The driver has always accepted `Date` values in `binds`, but the type did not list it.
 - Fixed a `QUERY_TAG` passed in the `parameters` option of `connection.execute()` being replaced by the `queryTag` connection option. The statement's `QUERY_TAG` now applies to that query, and later queries still use the connection's `queryTag`.
 - Fixed `FLOAT` columns returning `NaN` for the values `inf` and `-inf`. They now return `Infinity` and `-Infinity`, so they can be told apart from a real `NaN`.
 - Fixed `snowflake.configure()` dropping an earlier `customLogger` or `additionalLogToConsole` value when a later call sets another logging option, such as `logLevel`. Logging options now keep their earlier values, like every other `configure()` option, and a call that sets only `additionalLogToConsole` now takes effect.

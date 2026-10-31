@@ -406,14 +406,7 @@ describe('Test Bind Varible', function () {
       );
     });
 
-    it('testBindingTimestampNTZDate', function (done) {
-      testingFunc(
-        'timestamp_ntz',
-        [new Date('Thu, 21 Jan 2016 06:32:44 -0800')],
-        [{ COLA: '2016-01-21 14:32:44.000' }],
-        done,
-      );
-    });
+    // "testBindingTimestampNTZDate" is covered by nodejs/tests/e2e/query/binds.test.ts ("Date binds").
 
     /*it('testBindingVariantSimple', function(done){
       var variant = {'a':1 , 'b':[1], 'c':{'a':1}};

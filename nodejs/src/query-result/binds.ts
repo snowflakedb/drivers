@@ -1,7 +1,7 @@
 import type { CoreQueryBindings } from '../core/index.js';
 import { CoreQueryBindingFormat } from '../core/index.js';
 
-export type Bind = string | number | boolean | null;
+export type Bind = string | number | boolean | Date | null;
 export type InsertBinds = readonly Bind[][];
 export type Binds = readonly Bind[] | InsertBinds;
 
@@ -21,20 +21,27 @@ function isMultiRowBinding(binds: Binds): binds is InsertBinds {
 // FIXED, REAL, TEXT) and leaves the server to recast the stringified value into the
 // column's final type. It matches the old driver, but the Python and JDBC drivers bind
 // dedicated types (DATE, TIME, TIMESTAMP_*, BINARY) with epoch-based encodings, which
-// avoids that server-side recast. A JS Date has no special handling and binds as VARIANT.
+// avoids that server-side recast. A JS Date binds as TEXT with its UTC ISO string, which
+// the server parses with the session's DATE/TIME/TIMESTAMP input format.
 // Aligning with the other drivers is tracked as a TODO in BCR_LOG.md.
 function snowflakeTypeOf(value: unknown): SnowflakeBindType {
   if (typeof value === 'boolean') return 'BOOLEAN';
+  if (value instanceof Date) return 'TEXT';
   if (value !== null && typeof value === 'object') return 'VARIANT';
   if (typeof value === 'number') return Number.isInteger(value) ? 'FIXED' : 'REAL';
   return 'TEXT';
 }
 
+function stringifyBindValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof Date) return value.toJSON();
+  return JSON.stringify(value);
+}
+
 function bindValueToText(value: unknown): BindText {
   // null stays null so `SET name = :1` binds a SQL NULL, not the literal 'null'.
   if (value === null) return null;
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value);
+  return stringifyBindValue(value);
 }
 
 export function buildBindsMap(binds: Binds): Record<string, ServerBind> {
@@ -72,7 +79,7 @@ function toCsvField(value: unknown): string {
   // form is "" -- also serializes to "", not "[]".
   if (value === null) return '';
   if (String(value) === '') return '""';
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  const text = stringifyBindValue(value);
   return CSV_CHARS_REQUIRING_QUOTES.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 

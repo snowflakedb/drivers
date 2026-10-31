@@ -159,6 +159,8 @@ export function sendExecute(
     statement = connection.execute({
       sqlText,
       ...additionalParameters,
+      // @ts-ignore BD#86 - Bug in old driver: forgot to include Date in Binds
+      binds: additionalParameters.binds,
       complete: (error, completedStatement, rows) => {
         if (error) {
           reject({ error, statement: completedStatement });

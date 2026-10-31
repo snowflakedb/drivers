@@ -28,10 +28,17 @@ describe('buildBindsMap', () => {
     });
   });
 
-  it('should bind a Date as VARIANT with its JSON-stringified ISO string', () => {
-    const binds = [new Date('2021-01-01T00:00:00.000Z')] as unknown as Binds;
-    expect(buildBindsMap(binds)).toEqual({
-      '1': { type: 'VARIANT', value: '"2021-01-01T00:00:00.000Z"' },
+  it('should bind a Date as TEXT with its UTC ISO string', () => {
+    expect(buildBindsMap([new Date('2021-01-01T02:00:00.000+02:00')])).toEqual({
+      '1': { type: 'TEXT', value: '2021-01-01T00:00:00.000Z' },
+    });
+    expect(
+      buildBindsMap([
+        [new Date('2021-01-01T00:00:00.000Z')],
+        [new Date('2021-06-15T12:30:00.000Z')],
+      ]),
+    ).toEqual({
+      '1': { type: 'TEXT', value: ['2021-01-01T00:00:00.000Z', '2021-06-15T12:30:00.000Z'] },
     });
   });
 
@@ -119,6 +126,12 @@ describe('buildBindsCsv', () => {
   it('should serialize a non-empty object via JSON.stringify', () => {
     const binds = [[{ a: 1 }]] as unknown as InsertBinds;
     expect(buildBindsCsv(binds)).toBe('"{""a"":1}"\n');
+  });
+
+  it('should serialize a Date as its unquoted UTC ISO string', () => {
+    expect(buildBindsCsv([[new Date('2021-01-01T02:00:00.000+02:00')]])).toBe(
+      '2021-01-01T00:00:00.000Z\n',
+    );
   });
 });
 

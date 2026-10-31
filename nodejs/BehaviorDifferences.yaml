@@ -1789,20 +1789,24 @@ behavior_differences:
       serialize() and deserializeConnection() may later be replaced by the child-session API.
 
   86:
-    name: 'A bound JavaScript Date binds as VARIANT'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    name: 'The Bind type includes Date'
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       `Bind` in index.d.ts is `string | number | boolean | null`, so `Date` is not part of the API,
       but the runtime binds one passed past the type check as TEXT via `Date.toJSON()`. The server
       parses that string with the session's DATE/TIMESTAMP/TIME input format.
     new_driver_behavior: |
-      A `Date` has no special handling: it binds as VARIANT with the JSON-stringified ISO string,
-      so a cast such as `?::TIMESTAMP_NTZ` fails with "Unsupported data type 'VARIANT'". Proper
-      temporal binds are tracked in BCR_LOG.md.
+      Same runtime as the old driver: a `Date` binds as TEXT via `Date.toJSON()`, both inline and
+      on the stage (CSV) path. `Bind` includes `Date`, so TypeScript code passes one without a
+      cast. Dedicated temporal bind types are tracked in BCR_LOG.md.
+    status_rationale: |
+      The old driver accepted a `Date` in binds even though the `Bind` type left it out. The new
+      driver binds it the same way and adds `Date` to `Bind`, so this ships as a bugfix to the
+      types.
 
   87:
     name: 'account validation differs from the old driver'
