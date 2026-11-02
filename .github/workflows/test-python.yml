@@ -584,11 +584,8 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
         shell: bash
 
-      # Temporary unblock: the runner's python3 has the GIL and aborts at
-      # startup when PYTHON_GIL=0 is set, so drop it for this call only.
-      # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
       - name: Wait for test host DNS
-        run: env -u PYTHON_GIL ./scripts/wait_for_test_host.sh
+        run: ./scripts/wait_for_test_host.sh
         shell: bash
 
       - name: Setup OpenSSL (Windows ARM64)
@@ -633,9 +630,7 @@ jobs:
         working-directory: python
         run: |
           export WHEEL_PATH
-          # Temporary unblock, same reason as "Wait for test host DNS":
-          # https://snowflake.slack.com/archives/C09TH5U3QP2/p1793449550103499
-          WHEEL_PATH="$(env -u PYTHON_GIL python3 ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}")"
+          WHEEL_PATH="$(python3 ../scripts/ci/select_connector_wheel.py dist "${{ matrix.py }}")"
           echo "Installing wheel: $WHEEL_PATH"
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:install-wheel
 
