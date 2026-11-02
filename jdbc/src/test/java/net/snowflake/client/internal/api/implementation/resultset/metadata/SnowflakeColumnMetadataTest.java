@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.sql.Types;
+import java.util.Collections;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.jdbc.utils.JsonTestUtils;
@@ -459,5 +460,45 @@ class SnowflakeColumnMetadataTest {
     SnowflakeColumnMetadata meta = new SnowflakeColumnMetadata(col, false);
 
     assertEquals(256, meta.getDimension());
+  }
+
+  @Test
+  void shouldPopulateAndExposeFieldMetadataProperties() {
+    FieldMetadataImpl child = new FieldMetadataImpl();
+    child.setName("nested_col");
+    child.setTypeName("VARCHAR");
+    child.setType(Types.VARCHAR);
+    child.setNullable(true);
+    child.setByteLength(64);
+    child.setPrecision(0);
+    child.setScale(0);
+    child.setFixed(false);
+    child.setBase(SnowflakeType.TEXT);
+    child.setFields(Collections.emptyList());
+
+    FieldMetadataImpl parent = new FieldMetadataImpl();
+    parent.setName("obj_col");
+    parent.setTypeName("OBJECT");
+    parent.setType(Types.STRUCT);
+    parent.setNullable(false);
+    parent.setByteLength(1024);
+    parent.setPrecision(18);
+    parent.setScale(2);
+    parent.setFixed(true);
+    parent.setBase(SnowflakeType.OBJECT);
+    parent.setFields(Collections.singletonList(child));
+
+    assertEquals("obj_col", parent.getName());
+    assertEquals("OBJECT", parent.getTypeName());
+    assertEquals(Types.STRUCT, parent.getType());
+    assertFalse(parent.isNullable());
+    assertEquals(1024, parent.getByteLength());
+    assertEquals(18, parent.getPrecision());
+    assertEquals(2, parent.getScale());
+    assertTrue(parent.isFixed());
+    assertEquals(SnowflakeType.OBJECT, parent.getBase());
+    assertEquals(1, parent.getFields().size());
+    assertEquals("nested_col", parent.getFields().get(0).getName());
+    assertEquals(SnowflakeType.TEXT, parent.getFields().get(0).getBase());
   }
 }

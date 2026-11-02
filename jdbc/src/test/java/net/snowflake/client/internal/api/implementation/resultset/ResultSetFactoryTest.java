@@ -187,6 +187,75 @@ class ResultSetFactoryTest {
   }
 
   @Test
+  void shouldWrapResultSetWithConverterDetachingSourceAndOwningStatement() throws Exception {
+    SnowflakeResultSetMetaDataImpl sourceMeta =
+        SnowflakeResultSetMetaDataImpl.fromColumnSpec(
+            QUERY_ID,
+            Arrays.asList("RAW_COL"),
+            Arrays.asList("TEXT"),
+            Arrays.asList(Types.VARCHAR));
+    SnowflakeResultSetImpl sourceResultSet =
+        (SnowflakeResultSetImpl)
+            ResultSetFactory.createFromRows(
+                mockStatement, sourceMeta, new Object[][] {{"hello"}, {"world"}}, false);
+
+    SnowflakeResultSetMetaDataImpl targetMeta =
+        SnowflakeResultSetMetaDataImpl.fromColumnSpec(
+            QUERY_ID,
+            Arrays.asList("UPPER_COL", "LEN_COL"),
+            Arrays.asList("TEXT", "FIXED"),
+            Arrays.asList(Types.VARCHAR, Types.INTEGER));
+
+    InternalResultSet wrapped =
+        ResultSetFactory.wrapWithConverter(
+            mockStatement,
+            sourceResultSet,
+            targetMeta,
+            row -> {
+              String val = row.getString(1);
+              return new Object[] {val.toUpperCase(), val.length()};
+            });
+
+    assertTrue(sourceResultSet.isClosed());
+    verify(mockStatement).removeClosedResultSet(sourceResultSet);
+
+    assertTrue(wrapped.next());
+    assertEquals("HELLO", wrapped.getString(1));
+    assertFalse(wrapped.wasNull());
+    assertEquals(5, wrapped.getInt(2));
+    assertFalse(wrapped.wasNull());
+
+    assertTrue(wrapped.next());
+    assertEquals("WORLD", wrapped.getString(1));
+    assertFalse(wrapped.wasNull());
+    assertEquals(5, wrapped.getInt(2));
+    assertFalse(wrapped.wasNull());
+
+    assertFalse(wrapped.next());
+
+    wrapped.close();
+    verify(mockStatement).close();
+  }
+
+  @Test
+  void shouldCreateResultSetFromRowsAndRespectOwnsStatementOnClose() throws Exception {
+    SnowflakeResultSetMetaDataImpl metaData =
+        SnowflakeResultSetMetaDataImpl.fromColumnSpec(
+            QUERY_ID, Arrays.asList("ID"), Arrays.asList("FIXED"), Arrays.asList(Types.INTEGER));
+
+    InternalResultSet result =
+        ResultSetFactory.createFromRows(mockStatement, metaData, new Object[][] {{42}}, true);
+
+    assertTrue(result.next());
+    assertEquals(42, result.getInt(1));
+    assertFalse(result.wasNull());
+    assertFalse(result.next());
+
+    result.close();
+    verify(mockStatement).close();
+  }
+
+  @Test
   void shouldRoundTripStreamPointerValues() {
     long[] values = {0L, 1L, -1L, 42L, Long.MAX_VALUE, Long.MIN_VALUE};
     for (long value : values) {

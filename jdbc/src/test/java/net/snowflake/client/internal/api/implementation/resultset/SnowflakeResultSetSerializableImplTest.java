@@ -1,6 +1,8 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -19,6 +21,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import net.snowflake.client.api.resultset.SnowflakeResultSetSerializable;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.parameters.FrozenParametersRegistry;
@@ -234,6 +237,62 @@ class SnowflakeResultSetSerializableImplTest {
     assertThrows(Exception.class, () -> serializable.getResultSet(retrieveConfig()));
 
     verify(mockCoreApi).databaseFetchChunk(eq(chunks), eq(columns));
+  }
+
+  @Test
+  void shouldValidateResultSetRetrieveConfigUrlAndPreserveProxyProperties() {
+    Properties proxyProps = new Properties();
+    proxyProps.setProperty("proxyHost", "proxy.snowflake.com");
+
+    SnowflakeResultSetSerializable.ResultSetRetrieveConfig httpsConfig =
+        SnowflakeResultSetSerializable.ResultSetRetrieveConfig.Builder.newInstance()
+            .setSfFullURL("HTTPS://acct.snowflakecomputing.com")
+            .setProxyProperties(proxyProps)
+            .build();
+    assertEquals("HTTPS://acct.snowflakecomputing.com", httpsConfig.getSfFullURL());
+    assertSame(proxyProps, httpsConfig.getProxyProperties());
+
+    SnowflakeResultSetSerializable.ResultSetRetrieveConfig httpConfig =
+        SnowflakeResultSetSerializable.ResultSetRetrieveConfig.Builder.newInstance()
+            .setSfFullURL("http://localhost:8080")
+            .build();
+    assertEquals("http://localhost:8080", httpConfig.getSfFullURL());
+    assertNull(httpConfig.getProxyProperties());
+
+    IllegalArgumentException nullUrlEx =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                SnowflakeResultSetSerializable.ResultSetRetrieveConfig.Builder.newInstance()
+                    .build());
+    assertEquals("The SF URL must include protocol. The invalid is: null", nullUrlEx.getMessage());
+
+    IllegalArgumentException badProtocolEx =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                SnowflakeResultSetSerializable.ResultSetRetrieveConfig.Builder.newInstance()
+                    .setSfFullURL("acct.snowflakecomputing.com")
+                    .build());
+    assertEquals(
+        "The SF URL must include protocol. The invalid is: acct.snowflakecomputing.com",
+        badProtocolEx.getMessage());
+  }
+
+  @Test
+  void shouldReturnZeroSizesForChunkWithNeitherInlineNorRemotePayload() {
+    ResultChunk emptyPayloadChunk = ResultChunk.newBuilder().setRowCount(2).build();
+    SnowflakeResultSetSerializableImpl serializable =
+        new SnowflakeResultSetSerializableImpl(
+            mockCoreApi,
+            QUERY_ID,
+            Collections.singletonList(emptyPayloadChunk),
+            Collections.emptyList(),
+            NO_PARAMS);
+
+    assertEquals(2, serializable.getRowCount());
+    assertEquals(0, serializable.getCompressedDataSizeInBytes());
+    assertEquals(0, serializable.getUncompressedDataSizeInBytes());
   }
 
   private static ResultChunk inlineChunk(

@@ -1,16 +1,27 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.sql.Date;
 import java.sql.SQLException;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Period;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -332,6 +343,99 @@ class ArrowRowReaderTest {
 
       reader.getString(2);
       assertFalse(reader.wasNull());
+    }
+  }
+
+  @Test
+  void shouldDelegateRemainingTypedGettersAndTrackWasNull() throws Exception {
+    Map<String, String> fixedMeta = new HashMap<>();
+    fixedMeta.put("logicalType", "FIXED");
+    fixedMeta.put("precision", "10");
+    fixedMeta.put("scale", "0");
+
+    Map<String, String> dateMeta = Collections.singletonMap("logicalType", "DATE");
+    Map<String, String> timeMeta = new HashMap<>();
+    timeMeta.put("logicalType", "TIME");
+    timeMeta.put("scale", "0");
+    Map<String, String> tsMeta = new HashMap<>();
+    tsMeta.put("logicalType", "TIMESTAMP_NTZ");
+    tsMeta.put("scale", "0");
+    Map<String, String> ymMeta = Collections.singletonMap("logicalType", "INTERVAL_YEAR_MONTH");
+    Map<String, String> dtMeta = Collections.singletonMap("logicalType", "INTERVAL_DAY_TIME");
+
+    Column intCol = ColumnBuilder.of("num", Column.PhysicalKind.INT32, fixedMeta);
+    Column dateCol = ColumnBuilder.of("d", Column.PhysicalKind.INT32, dateMeta);
+    Column timeCol = ColumnBuilder.of("t", Column.PhysicalKind.INT64, timeMeta);
+    Column tsCol = ColumnBuilder.of("ts", Column.PhysicalKind.INT64, tsMeta);
+    Column ymCol = ColumnBuilder.of("ym", Column.PhysicalKind.INT32, ymMeta);
+    Column dtCol = ColumnBuilder.of("dt", Column.PhysicalKind.INT64, dtMeta);
+
+    ColumnBuilder.set(intCol, 0, 42);
+    ColumnBuilder.set(dateCol, 0, 19_737);
+    ColumnBuilder.set(timeCol, 0, 3_600L);
+    ColumnBuilder.set(tsCol, 0, 1_705_322_096L);
+    ColumnBuilder.set(ymCol, 0, 14);
+    ColumnBuilder.set(dtCol, 0, 5_000_000_000L);
+
+    ColumnBuilder.setNull(intCol, 1);
+    ColumnBuilder.setNull(dateCol, 1);
+    ColumnBuilder.setNull(timeCol, 1);
+    ColumnBuilder.setNull(tsCol, 1);
+    ColumnBuilder.setNull(ymCol, 1);
+    ColumnBuilder.setNull(dtCol, 1);
+
+    for (Column col : new Column[] {intCol, dateCol, timeCol, tsCol, ymCol, dtCol}) {
+      ColumnBuilder.setValueCount(col, 2);
+    }
+
+    ColumnBatch root = ColumnBatch.of(intCol, dateCol, timeCol, tsCol, ymCol, dtCol);
+    root.setRowCount(2);
+
+    DataContextStub context = new DataContextStub();
+    ArrowResources res =
+        new ArrowResources(new ColumnBatchListReader(Collections.singletonList(root)));
+    try (ArrowRowReader reader = new ArrowRowReader(res, context, 2)) {
+      assertSame(context, reader.getConversionContext());
+
+      assertTrue(reader.next());
+      assertEquals(BigDecimal.valueOf(42L), reader.getBigDecimal(1));
+      assertFalse(reader.wasNull());
+      assertArrayEquals(new byte[] {0, 0, 0, 42}, reader.getBytes(1));
+      assertFalse(reader.wasNull());
+      assertEquals(42L, reader.getObject(1));
+      assertFalse(reader.wasNull());
+
+      TimeZone utc = TimeZone.getTimeZone("UTC");
+      assertEquals(Date.valueOf("2024-01-15"), reader.getDate(2, utc));
+      assertFalse(reader.wasNull());
+      assertEquals(new Time(3_600_000L), reader.getTime(3));
+      assertFalse(reader.wasNull());
+      assertEquals(new Timestamp(1_705_322_096_000L), reader.getTimestamp(4, utc));
+      assertFalse(reader.wasNull());
+      assertEquals(Period.of(1, 2, 0), reader.getPeriod(5));
+      assertFalse(reader.wasNull());
+      assertEquals(Duration.ofSeconds(5), reader.getDuration(6));
+      assertFalse(reader.wasNull());
+
+      assertTrue(reader.next());
+      assertNull(reader.getBigDecimal(1));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getBytes(1));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getObject(1));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getDate(2));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getTime(3));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getTimestamp(4));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getPeriod(5));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getDuration(6));
+      assertTrue(reader.wasNull());
+      assertNull(reader.getList(1));
+      assertTrue(reader.wasNull());
     }
   }
 
