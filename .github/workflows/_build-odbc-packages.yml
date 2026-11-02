@@ -315,6 +315,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Test Linux driver-name scripts
+        run: bash odbc/installer/unix/driver_name_test.sh
+
       - name: Restore Cargo registry cache (RPM build)
         id: rpm-cargo-registry
         continue-on-error: true

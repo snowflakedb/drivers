@@ -124,6 +124,7 @@ cp odbc/include/sf_odbc.h "$STAGE_DIR$ODBC_DIR/include/"
 sed "s/__ODBC_API_VERSION__/${ODBC_API_VERSION}/g" \
     "$TEMPLATES_DIR/odbcinst.ini.template" > "$STAGE_DIR$ODBC_DIR/templates/odbcinst.ini.template"
 cp "$TEMPLATES_DIR/odbc.ini.template" "$STAGE_DIR$ODBC_DIR/templates/odbc.ini.template"
+cp odbc/installer/unix/driver_name.sh "$STAGE_DIR$ODBC_DIR/driver_name.sh"
 
 mkdir -p "$BUILD_DIR"
 
@@ -147,6 +148,7 @@ for fmt in $PKG_FORMATS; do
                 --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
                 --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
                 --before-remove "$RPM_SCRIPTS_DIR/before_remove.sh" \
+                --rpm-posttrans "$RPM_SCRIPTS_DIR/rpm_posttrans.sh" \
                 "${ODBC_DIR:1}"
             echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
             ;;
