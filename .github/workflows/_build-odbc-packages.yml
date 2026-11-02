@@ -505,6 +505,9 @@ jobs:
           path: build/snowflake-odbc-*.universal.pkg
 
   build_deb:
+    # FIPS rows are a second package. The image's FIPS=1 layer supplies GCC 13
+    # and Go, and the .so stays unstripped so check_linked_crypto.py can see
+    # the AWS-LC FIPS module.
     strategy:
       fail-fast: false
       matrix:
@@ -514,11 +517,25 @@ jobs:
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64-glibc
             arch: x86_64
+            fips: false
           - os: ubuntu-24.04-arm
             name: Linux ARM64
             target: aarch64-unknown-linux-gnu
             platform: linux-aarch64-glibc
             arch: aarch64
+            fips: false
+          - os: ubuntu-latest
+            name: Linux x64 FIPS
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+            fips: true
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64 FIPS
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+            fips: true
     runs-on: ${{ matrix.os }}
     name: build_deb (${{ matrix.name }})
     steps:
@@ -531,8 +548,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}deb-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}deb-
             ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-
 
       - name: Restore Rust target cache (DEB build)
@@ -541,17 +559,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-target-deb
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}deb-release-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-
+            ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}deb-release-target-
 
       - name: Prepare cache directories
         run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-deb
 
       - name: Build Docker image
-        run: docker build -t deb-build -f ci/Dockerfile.debian-deb-build .
+        run: docker build --build-arg FIPS=${{ matrix.fips && '1' || '0' }} -t deb-build -f ci/Dockerfile.debian-deb-build .
 
       - name: Build ODBC driver and package .deb + .tgz
+        env:
+          PKG_VARIANT: ${{ matrix.fips && 'fips' || '' }}
+          CARGO_FEATURES: ${{ matrix.fips && '--features fips' || '' }}
+          FIPS_CFLAGS: ${{ matrix.fips && matrix.arch == 'aarch64' && '-fno-jump-tables' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.fips && 'false' || '' }}
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
@@ -562,9 +585,22 @@ jobs:
             -e PLATFORM=${{ matrix.platform }} \
             -e COMMIT_HASH=$(git rev-parse --short HEAD) \
             -e PKG_FORMATS="deb tgz" \
+            -e PKG_VARIANT \
+            -e CARGO_FEATURES \
+            -e FIPS_CFLAGS \
+            -e CARGO_PROFILE_RELEASE_STRIP \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             deb-build \
-            bash -c "cargo build --locked --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+            bash -c 'set -euo pipefail
+              if [ -z "${CARGO_PROFILE_RELEASE_STRIP}" ]; then unset CARGO_PROFILE_RELEASE_STRIP; fi
+              if [ "${PKG_VARIANT}" = fips ]; then
+                export CC=gcc-13 CXX=g++-13
+                if [ -n "${FIPS_CFLAGS}" ]; then export CFLAGS="${FIPS_CFLAGS}" CXXFLAGS="${FIPS_CFLAGS}"; fi
+                go version
+                gcc-13 --version
+              fi
+              cargo build --locked --release --package odbc ${CARGO_FEATURES} --target ${{ matrix.target }}
+              ./odbc/installer/unix/package.sh'
 
       # Container writes the mounted cache dirs as root, and some crates ship
       # owner-only file modes, so the runner cannot read them back.
@@ -577,6 +613,10 @@ jobs:
             sudo chown -Rh "$(id -u):$(id -g)" "$d"
           done
 
+      - name: Check linked FIPS crypto
+        if: matrix.fips && success()
+        run: python3 ci/fips/check_linked_crypto.py ".cargo-target-deb/${{ matrix.target }}/release/libsfodbc.so"
+
       - name: Save Cargo registry cache (DEB build)
         if: steps.deb-cargo-registry.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -586,7 +626,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-deb-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}deb-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (DEB build)
         if: steps.deb-cargo-target.outputs.cache-hit != 'true'
@@ -597,16 +637,16 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-target-deb
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-deb-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}deb-release-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload .deb
         uses: actions/upload-artifact@v7
         with:
-          name: snowflake-odbc-deb-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.deb
+          name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}deb-${{ matrix.arch }}
+          path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.deb
 
       - name: Upload .tgz
         uses: actions/upload-artifact@v7
         with:
-          name: snowflake-odbc-tgz-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.tar.gz
+          name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}tgz-${{ matrix.arch }}
+          path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.tar.gz
