@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.TimeZone;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +27,16 @@ public class SnowflakeTimeWithTimezoneTest {
         "07:34:56",
         new SnowflakeTimeWithTimezone(ts, TimeZone.getTimeZone("America/New_York"), true)
             .toString());
+  }
+
+  @Test
+  public void shouldDefaultOffsetToUtcWhenSessionTimeZoneIsNullInTimestampConstructor() {
+    Timestamp ts = new Timestamp(Instant.parse("2024-01-15T12:34:56.123456789Z").toEpochMilli());
+    ts.setNanos(123_456_789);
+    SnowflakeTimeWithTimezone time = new SnowflakeTimeWithTimezone(ts, null, true);
+    assertEquals(123_456_789, time.getNano());
+    assertEquals(ZoneOffset.UTC, time.getOffset());
+    assertEquals("12:34:56", time.toString());
   }
 
   @Test

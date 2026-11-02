@@ -61,6 +61,14 @@ public class SnowflakeTimestampWithTimezoneTest {
   }
 
   @Test
+  public void shouldDefaultToUtcWhenConstructedFromSingleTimestampArgument() {
+    SnowflakeTimestampWithTimezone ts =
+        new SnowflakeTimestampWithTimezone(Timestamp.from(Instant.parse("2024-01-15T12:34:56Z")));
+    assertEquals("UTC", ts.getTimezone().getID());
+    assertEquals("2024-01-15 12:34:56.0", ts.toString());
+  }
+
+  @Test
   public void shouldConvertToZonedDateTime() {
     SnowflakeTimestampWithTimezone ts =
         new SnowflakeTimestampWithTimezone(

@@ -273,6 +273,121 @@ public class TimestampTzAndLtzStructConverterTest extends BaseConverterTest {
     }
   }
 
+  @Test
+  public void shouldTreatThreeFieldTimestampTzRowAsNullWhenEpochOrFractionChildIsNull()
+      throws Exception {
+    try (ColumnBatch root =
+        threeFieldTzRoot(EPOCH_SECONDS, FRACTION_NANOS, IST_TIMEZONE_INDEX, 9)) {
+      Column vector = root.column("col");
+      Column epochs = child(vector, AbstractArrowVectorConverter.FIELD_NAME_EPOCH);
+      Column fractions = child(vector, AbstractArrowVectorConverter.FIELD_NAME_FRACTION);
+      Column timezones = child(vector, AbstractArrowVectorConverter.FIELD_NAME_TIMEZONE);
+      ColumnBuilder.setNull(epochs, 1);
+      ColumnBuilder.set(fractions, 1, FRACTION_NANOS);
+      ColumnBuilder.set(timezones, 1, IST_TIMEZONE_INDEX);
+      ColumnBuilder.set(epochs, 2, EPOCH_SECONDS);
+      ColumnBuilder.setNull(fractions, 2);
+      ColumnBuilder.set(timezones, 2, IST_TIMEZONE_INDEX);
+      ColumnBuilder.setDefined(vector, 1);
+      ColumnBuilder.setDefined(vector, 2);
+      ColumnBuilder.setValueCount(vector, 3);
+      root.setRowCount(3);
+
+      ThreeFieldStructToTimestampTZConverter converter =
+          new ThreeFieldStructToTimestampTZConverter(vector, 0, this, 9);
+
+      for (int row = 1; row <= 2; row++) {
+        assertTrue(converter.isNull(row));
+        assertNull(converter.toTimestamp(row, null));
+        assertNull(converter.toString(row));
+      }
+    }
+  }
+
+  @Test
+  public void shouldTreatTwoFieldTimestampTzRowAsNullWhenEpochOrTimezoneChildIsNull()
+      throws Exception {
+    try (ColumnBatch root = twoFieldTzRoot(EPOCH_SECONDS, IST_TIMEZONE_INDEX, 0)) {
+      Column vector = root.column("col");
+      Column epochs = child(vector, AbstractArrowVectorConverter.FIELD_NAME_EPOCH);
+      Column timezones = child(vector, AbstractArrowVectorConverter.FIELD_NAME_TIMEZONE);
+      ColumnBuilder.setNull(epochs, 1);
+      ColumnBuilder.set(timezones, 1, IST_TIMEZONE_INDEX);
+      ColumnBuilder.set(epochs, 2, EPOCH_SECONDS);
+      ColumnBuilder.setNull(timezones, 2);
+      ColumnBuilder.setDefined(vector, 1);
+      ColumnBuilder.setDefined(vector, 2);
+      ColumnBuilder.setValueCount(vector, 3);
+      root.setRowCount(3);
+
+      TwoFieldStructToTimestampTZConverter converter =
+          new TwoFieldStructToTimestampTZConverter(vector, 0, this, 0);
+
+      for (int row = 1; row <= 2; row++) {
+        assertTrue(converter.isNull(row));
+        assertNull(converter.toTimestamp(row, null));
+        assertNull(converter.toString(row));
+      }
+    }
+  }
+
+  @Test
+  public void shouldHandleStructAndChildNullsOnTwoFieldTimestampLtz() throws Exception {
+    try (ColumnBatch root = twoFieldLtzRoot(EPOCH_SECONDS, FRACTION_NANOS, 9)) {
+      Column vector = root.column("col");
+      Column epochs = child(vector, AbstractArrowVectorConverter.FIELD_NAME_EPOCH);
+      Column fractions = child(vector, AbstractArrowVectorConverter.FIELD_NAME_FRACTION);
+      ColumnBuilder.setNull(vector, 1);
+      ColumnBuilder.setNull(epochs, 2);
+      ColumnBuilder.set(fractions, 2, FRACTION_NANOS);
+      ColumnBuilder.set(epochs, 3, EPOCH_SECONDS);
+      ColumnBuilder.setNull(fractions, 3);
+      ColumnBuilder.setDefined(vector, 2);
+      ColumnBuilder.setDefined(vector, 3);
+      ColumnBuilder.setValueCount(vector, 4);
+      root.setRowCount(4);
+
+      TwoFieldStructToTimestampLTZConverter converter =
+          new TwoFieldStructToTimestampLTZConverter(vector, 0, this, 9);
+
+      for (int row = 1; row <= 3; row++) {
+        assertTrue(converter.isNull(row));
+        assertNull(converter.toTimestamp(row, null));
+        assertNull(converter.toObject(row));
+        assertNull(converter.toString(row));
+        assertNull(converter.toDate(row, null, false));
+        assertNull(converter.toTime(row));
+        assertFalse(converter.toBoolean(row));
+      }
+    }
+  }
+
+  @Test
+  public void shouldRenderTwoFieldTimestampLtzInSessionZoneWhenUseSessionTimezoneEnabled()
+      throws Exception {
+    DataConversionContext tokyoSession =
+        new DataConversionContext() {
+          @Override
+          public TimeZone getSessionTimeZone() {
+            return TimeZone.getTimeZone("Asia/Tokyo");
+          }
+
+          @Override
+          public boolean isUseSessionTimezone() {
+            return true;
+          }
+        };
+    try (ColumnBatch root = twoFieldLtzRoot(EPOCH_SECONDS, FRACTION_NANOS, 9)) {
+      TwoFieldStructToTimestampLTZConverter converter =
+          new TwoFieldStructToTimestampLTZConverter(root.column("col"), 0, tokyoSession, 9);
+
+      assertInstanceOf(SnowflakeTimestampWithTimezone.class, converter.toTimestamp(0, null));
+      assertEquals("Wed, 15 Jan 2020 09:00:00 +0900", converter.toString(0));
+      assertEquals("2020-01-15", converter.toDate(0, null, false).toString());
+      assertEquals("09:00:00", converter.toTime(0).toString());
+    }
+  }
+
   private static DataConversionContext useSessionTimezoneContext() {
     return new DataConversionContext() {
       @Override

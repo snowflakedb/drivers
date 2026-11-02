@@ -1,15 +1,27 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.nio.ByteBuffer;
+import java.sql.Date;
+import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.common.core.SnowflakeDateTimeFormat;
+import net.snowflake.client.internal.core.arrow.TestHelper;
 import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
+import net.snowflake.client.internal.jdbc.SnowflakeTimestampWithTimezone;
 import org.junit.jupiter.api.Test;
 
 public class BigIntToTimestampLTZConverterTest extends BaseConverterTest {
@@ -65,8 +77,67 @@ public class BigIntToTimestampLTZConverterTest extends BaseConverterTest {
       assertNull(converter.toTimestamp(1, null));
       assertNull(converter.toObject(1));
       assertNull(converter.toString(1));
+      assertNull(converter.toDate(1, null, false));
+      assertNull(converter.toTime(1));
+      assertNull(converter.toBytes(1));
+      assertFalse(converter.toBoolean(1));
     } finally {
       vector.close();
+    }
+  }
+
+  @Test
+  public void shouldConvertToDateAndTimeAndBytesAndReadReloadedValues() throws Exception {
+    int scale = 3;
+    long compact = EPOCH_SECONDS * 1_000L + 456L;
+    try (Column vector = createVector(scale, compact)) {
+      BigIntToTimestampLTZConverter converter =
+          new BigIntToTimestampLTZConverter(vector, 0, this, scale);
+
+      long expectedMillis = EPOCH_SECONDS * 1_000L + 456L;
+      byte[] expectedBytes = ByteBuffer.allocate(Long.BYTES).putLong(compact).array();
+      assertEquals(new Date(expectedMillis), converter.toDate(0, null, false));
+      assertEquals(new Time(expectedMillis), converter.toTime(0));
+      assertArrayEquals(expectedBytes, converter.toBytes(0));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
+
+      long reloaded = (EPOCH_SECONDS + 3_600L) * 1_000L;
+      ColumnBuilder.set(vector, 0, reloaded);
+      assertEquals(new Timestamp(reloaded), converter.toTimestamp(0, null));
+      assertEquals("Tue, 14 Jan 2020 17:00:00 -0800", converter.toString(0));
+    }
+  }
+
+  @Test
+  public void shouldReturnSessionTimezoneWrapperAndRejectMissingFormatter() throws Exception {
+    DataConversionContext sessionTzCtx =
+        new DataConversionContext() {
+          @Override
+          public boolean isUseSessionTimezone() {
+            return true;
+          }
+        };
+    DataConversionContext missingFormatterCtx =
+        new DataConversionContext() {
+          @Override
+          public SnowflakeDateTimeFormat getTimestampLTZFormatter() {
+            return null;
+          }
+        };
+
+    try (Column vector = createVector(0, EPOCH_SECONDS)) {
+      BigIntToTimestampLTZConverter sessionTzConverter =
+          new BigIntToTimestampLTZConverter(vector, 0, sessionTzCtx, 0);
+      Timestamp ts = sessionTzConverter.toTimestamp(0, null);
+      assertInstanceOf(SnowflakeTimestampWithTimezone.class, ts);
+      assertEquals(EPOCH_SECONDS * 1_000L, ts.getTime());
+
+      BigIntToTimestampLTZConverter missingFormatterConverter =
+          new BigIntToTimestampLTZConverter(vector, 0, missingFormatterCtx, 0);
+      SFSQLException error =
+          assertThrows(SFSQLException.class, () -> missingFormatterConverter.toString(0));
+      assertEquals(ErrorCode.INTERNAL_ERROR, error.getErrorCode());
+      assertEquals("INTERNAL_ERROR: [missing timestamp LTZ formatter]", error.getMessage());
     }
   }
 }
