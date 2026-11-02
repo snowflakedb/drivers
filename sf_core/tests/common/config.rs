@@ -64,6 +64,29 @@ pub struct Parameters {
     pub oauth_scope: Option<String>,
     #[serde(default, rename = "SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN")]
     pub oauth_access_token: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID")]
+    pub okta_oauth_external_client_id: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET")]
+    pub okta_oauth_external_client_secret: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL")]
+    pub okta_oauth_token_url: Option<String>,
+    #[serde(
+        default,
+        rename = "SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_REDIRECT_URI"
+    )]
+    pub external_oauth_okta_redirect_uri: Option<String>,
+    #[serde(default, rename = "SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_AUTH_URL")]
+    pub external_oauth_okta_auth_url: Option<String>,
+    #[serde(
+        default,
+        rename = "SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_ID"
+    )]
+    pub internal_oauth_snowflake_wildcards_client_id: Option<String>,
+    #[serde(
+        default,
+        rename = "SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_SECRET"
+    )]
+    pub internal_oauth_snowflake_wildcards_client_secret: Option<String>,
     #[serde(default, rename = "SNOWFLAKE_TEST_PAT")]
     pub pat: Option<String>,
     // Workload Identity Federation (WIF) parameters.

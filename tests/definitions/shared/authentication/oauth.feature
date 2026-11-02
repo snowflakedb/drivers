@@ -124,6 +124,24 @@ Feature: OAuth Authentication
     When Trying to Connect (this will spawn the local-loopback HTTP listener and `xdg-open`/`open`/`ShellExecute` the IdP login URL unless a previously cached access token short-circuits the leg)
     Then Login is successful and a simple query can be executed
 
+  @core_e2e @nodejs_e2e
+  Scenario: should authenticate using authorization code with an Okta IdP
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the external Okta client id, secret, redirect URI, authorization URL, and token URL
+    When Trying to Connect through the Okta browser scenario
+    Then Login is successful and a simple query can be executed
+
+  @core_e2e @nodejs_e2e
+  Scenario: should authenticate using authorization code with the wildcard Snowflake client and no redirect URI
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the wildcard Snowflake client id and secret and no oauth redirect URI
+    When Trying to Connect through the Snowflake browser scenario
+    Then Login is successful and a simple query can be executed
+
+  @nodejs_e2e
+  Scenario: should open the browser again when cached oauth tokens are removed
+    Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a browser login has stored an OAuth access token
+    When The cached OAuth tokens are removed and Trying to Connect
+    Then The browser callback runs again, login succeeds, and the cached access token value changes
+
   @core_e2e
   Scenario: oauth should short circuit authorization code flow with cached access token
     Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a valid OAuth access token is pre-seeded in the OS keyring under the (host, user, OAUTH_ACCESS_TOKEN) cache key. The host is derived from `oauth_token_request_url` — falling back to the Snowflake server URL — exactly like `host_from_token_url` in production code (prefers IdP token URL host, falls back to Snowflake host).

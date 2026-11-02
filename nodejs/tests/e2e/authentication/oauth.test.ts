@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import fs from 'node:fs';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Connection, ConnectionOptions } from '../../types/sdk-types.js';
+import { TempDir } from '../utils/files.js';
 import getTestParameter, { getTestParametersFromSameSource } from '../utils/getTestParameter.js';
 import {
   baseConnectionOptions,
@@ -30,6 +32,72 @@ import {
   requireOktaCredentials,
   TERMINATED_QUERY,
 } from './utils.js';
+
+// sf_core resolves the token-cache directory once per process, on the first connect in
+// this file. A stub inside the cache describe would miss that initialization, so the
+// whole file shares one directory.
+let tokenCacheDir: TempDir;
+
+beforeAll(() => {
+  tokenCacheDir = new TempDir({ prefix: 'oauth-token-cache' });
+  vi.stubEnv('SF_TEMPORARY_CREDENTIAL_CACHE_DIR', tokenCacheDir.path);
+});
+
+afterAll(() => {
+  vi.unstubAllEnvs();
+  tokenCacheDir.cleanup();
+});
+
+const OAUTH_ACCESS_TOKEN_KEY_PREFIX = 'SnowflakeTokenCache.v2.OauthAccessToken.';
+const OAUTH_REFRESH_TOKEN_KEY_PREFIX = 'SnowflakeTokenCache.v2.OauthRefreshToken.';
+
+type TokenCacheFile = { tokens: Record<string, string | null> };
+
+function getTokenCacheFilePath(): string {
+  const current = tokenCacheDir.resolve('credential_cache_v2.json');
+  if (fs.existsSync(current)) {
+    return current;
+  }
+  return tokenCacheDir.resolve('credential_cache_v1.json');
+}
+
+function getTokenCache(): TokenCacheFile {
+  if (!fs.existsSync(getTokenCacheFilePath())) {
+    return { tokens: {} };
+  }
+  return JSON.parse(fs.readFileSync(getTokenCacheFilePath(), 'utf8')) as TokenCacheFile;
+}
+
+// The old driver removes a token by setting its value to null.
+function getCachedTokenKeys(prefix: string): string[] {
+  return Object.entries(getTokenCache().tokens)
+    .filter(([key, value]) => key.startsWith(prefix) && value)
+    .map(([key]) => key);
+}
+
+function requireSingleCachedAccessToken(): string {
+  const keys = getCachedTokenKeys(OAUTH_ACCESS_TOKEN_KEY_PREFIX);
+  expect(keys).toHaveLength(1);
+  const value = getTokenCache().tokens[keys[0]];
+  expect(typeof value).toBe('string');
+  return value as string;
+}
+
+function removeCachedOauthTokens(): void {
+  if (!fs.existsSync(getTokenCacheFilePath())) {
+    return;
+  }
+  const cache = getTokenCache();
+  for (const key of Object.keys(cache.tokens)) {
+    if (
+      key.startsWith(OAUTH_ACCESS_TOKEN_KEY_PREFIX) ||
+      key.startsWith(OAUTH_REFRESH_TOKEN_KEY_PREFIX)
+    ) {
+      delete cache.tokens[key];
+    }
+  }
+  fs.writeFileSync(getTokenCacheFilePath(), JSON.stringify(cache));
+}
 
 function formatSingleIssueConfigurationValidationMessage(
   parameter: string,
@@ -152,14 +220,17 @@ function createAuthorizationCodeOptions(clientStoreTemporaryCredential: boolean)
 
 function connectWithOauthAuthorizationCode(
   connect: () => Promise<unknown>,
-  credentials: Pick<AuthorizationCodeCredentials, 'user' | 'password' | 'totpSeed'>,
+  credentials: { user: string; password: string; totpSeed?: string },
+  scenario:
+    | 'internalOauthSnowflakeSuccess'
+    | 'externalOauthOktaSuccess' = 'internalOauthSnowflakeSuccess',
 ): Promise<void> {
   return connectWithBrowserAutomation(connect, () =>
     provideBrowserCredentials(
-      'internalOauthSnowflakeSuccess',
+      scenario,
       credentials.user,
       credentials.password,
-      credentials.totpSeed,
+      ...(credentials.totpSeed ? [credentials.totpSeed] : []),
     ),
   );
 }
@@ -665,8 +736,127 @@ describe('tests/definitions/shared/authentication/oauth.feature', () => {
       await verifySimpleQuery(connection);
     });
 
+    // TODO(SNOW-4397810): skip until parameters_preprod has the Okta redirect URI and authorize URL.
+    it.skip('should authenticate using authorization code with an Okta IdP', async () => {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the external Okta client id, secret, redirect URI, authorization URL, and token URL
+      const { user, password } = requireOktaCredentials();
+      const externalOktaKeys = [
+        'SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID',
+        'SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET',
+        'SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_REDIRECT_URI',
+        'SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_AUTH_URL',
+        'SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL',
+      ] as const;
+      const externalOktaParameters = getTestParametersFromSameSource(externalOktaKeys);
+      if (!externalOktaParameters) {
+        throw new Error(`No parameters source defines ${externalOktaKeys.join(', ')}`);
+      }
+      const {
+        SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID: oauthClientId,
+        SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET: oauthClientSecret,
+        SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_REDIRECT_URI: oauthRedirectUri,
+        SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_AUTH_URL: oauthAuthorizationUrl,
+        SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL: oauthTokenRequestUrl,
+      } = externalOktaParameters;
+      const externalOktaOptions = {
+        oauthClientId,
+        oauthClientSecret,
+        oauthRedirectUri,
+        oauthAuthorizationUrl,
+        oauthTokenRequestUrl,
+      };
+      const connection = snowflake.createConnection({
+        ...baseConnectionOptions,
+        username: user,
+        authenticator: 'OAUTH_AUTHORIZATION_CODE',
+        ...externalOktaOptions,
+        clientStoreTemporaryCredential: false,
+        browserActionTimeout: 120000,
+      } as ConnectionOptions);
+      await cleanBrowserProcesses();
+
+      // When Trying to Connect through the Okta browser scenario
+      await connectWithOauthAuthorizationCode(
+        () => connection.connectAsync(),
+        { user, password },
+        'externalOauthOktaSuccess',
+      );
+      destroyConnectionAfterTest(connection);
+
+      // Then Login is successful and a simple query can be executed
+      await verifySimpleQuery(connection);
+    });
+
+    // TODO(SNOW-4397810): skip until parameters_preprod has the wildcard Snowflake client id and secret.
+    it.skip('should authenticate using authorization code with the wildcard Snowflake client and no redirect URI', async () => {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the wildcard Snowflake client id and secret and no oauth redirect URI
+      const { options, credentials } = createAuthorizationCodeOptions(false);
+      const { oauthRedirectUri: _oauthRedirectUri, ...wildcardOptions } = options;
+      void _oauthRedirectUri;
+      const wildcardSnowflakeKeys = [
+        'SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_ID',
+        'SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_SECRET',
+      ] as const;
+      const wildcardSnowflakeParameters = getTestParametersFromSameSource(wildcardSnowflakeKeys);
+      if (!wildcardSnowflakeParameters) {
+        throw new Error(`No parameters source defines ${wildcardSnowflakeKeys.join(', ')}`);
+      }
+      const {
+        SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_ID: oauthClientId,
+        SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_SECRET: oauthClientSecret,
+      } = wildcardSnowflakeParameters;
+      const wildcardSnowflakeOptions = {
+        oauthClientId,
+        oauthClientSecret,
+      };
+      const connection = snowflake.createConnection({
+        ...wildcardOptions,
+        ...wildcardSnowflakeOptions,
+      });
+      await cleanBrowserProcesses();
+
+      // When Trying to Connect through the Snowflake browser scenario
+      await connectWithOauthAuthorizationCode(() => connection.connectAsync(), credentials);
+      destroyConnectionAfterTest(connection);
+
+      // Then Login is successful and a simple query can be executed
+      await verifySimpleQuery(connection);
+    });
+
+    it('should open the browser again when cached oauth tokens are removed', async () => {
+      // Given Authentication is set to OAUTH_AUTHORIZATION_CODE and a browser login has stored an OAuth access token
+      const { options, credentials } = createAuthorizationCodeOptions(true);
+      removeCachedOauthTokens();
+      const browserLoginConnection = snowflake.createConnection({ ...options });
+      await cleanBrowserProcesses();
+      await connectWithOauthAuthorizationCode(
+        () => browserLoginConnection.connectAsync(),
+        credentials,
+      );
+      destroyConnectionAfterTest(browserLoginConnection);
+      const firstAccessToken = requireSingleCachedAccessToken();
+
+      // A cached refresh token lets both drivers refresh without opening a browser.
+      // Removing both tokens is what makes the next connect launch Chromium again.
+      removeCachedOauthTokens();
+      const reopenedBrowserConnection = snowflake.createConnection({ ...options });
+      await cleanBrowserProcesses();
+
+      // When The cached OAuth tokens are removed and Trying to Connect
+      await connectWithOauthAuthorizationCode(
+        () => reopenedBrowserConnection.connectAsync(),
+        credentials,
+      );
+      destroyConnectionAfterTest(reopenedBrowserConnection);
+
+      // Then The browser callback runs again, login succeeds, and the cached access token value changes
+      await verifySimpleQuery(reopenedBrowserConnection);
+      expect(requireSingleCachedAccessToken()).not.toBe(firstAccessToken);
+    });
+
     it('oauth should reuse cached access token without browser interaction', async () => {
       const { options, credentials } = createAuthorizationCodeOptions(true);
+      removeCachedOauthTokens();
       const browserLoginConnection = snowflake.createConnection({ ...options });
       await cleanBrowserProcesses();
       await connectWithOauthAuthorizationCode(
@@ -677,6 +867,7 @@ describe('tests/definitions/shared/authentication/oauth.feature', () => {
         await destroyConnectionAsync(browserLoginConnection);
       });
       await verifySimpleQuery(browserLoginConnection);
+      expect(getCachedTokenKeys(OAUTH_ACCESS_TOKEN_KEY_PREFIX)).toHaveLength(1);
 
       // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with client_store_temporary_credential=true and a token has been cached from a previous browser authentication
 

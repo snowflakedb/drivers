@@ -105,10 +105,33 @@ Deferred work — covered **last**, only once the corresponding feature support 
       covered by core `should_login_with_authorization_code_using_cached_refresh_token`,
       `should_evict_cached_at_and_retry_via_refresh_token_on_390303`, and
       `should_evict_cached_at_and_retry_via_refresh_token_on_390318`.
-  - [`authentication/testOauthOktaAuthorizationCode.js`](./authentication/testOauthOktaAuthorizationCode.js),
-    [`authentication/testOauthSnowflakeWildcardsAuthorizationCode.js`](./authentication/testOauthSnowflakeWildcardsAuthorizationCode.js)
-    — TODO(SNOW-4291607): implement when CI support lands for the external Okta
-    authorization-code client and the wildcard Snowflake client with no redirect URI.
+  - [`authentication/testOauthOktaAuthorizationCode.js`](./authentication/testOauthOktaAuthorizationCode.js)
+    stays for `Successful connection`. That case is `should authenticate using authorization code with an Okta IdP`,
+    which is skipped. TODO(SNOW-4397810): `parameters_preprod` has no Okta redirect URI or authorize URL.
+    The other tests in the old file are covered:
+    - `Mismatched Username` is core
+      `should_reject_a_mismatched_username_for_authorization_code` in `oauth_scenarios.rs`.
+    - `External browser timeout` is `should time out authorization code when browser credentials are not provided`.
+    - `obtains the id token from the server and saves it on the local storage` is the first
+      connect in `oauth should reuse cached access token without browser interaction`.
+    - `authenticates by token, browser credentials not needed` is that test's second connect.
+    - `opens browser again when token is incorrect` is
+      `should open the browser again when cached oauth tokens are removed`.
+  - [`authentication/testOauthSnowflakeWildcardsAuthorizationCode.js`](./authentication/testOauthSnowflakeWildcardsAuthorizationCode.js)
+    stays for `Successful connection`. That case is
+    `should authenticate using authorization code with the wildcard Snowflake client and no redirect URI`,
+    which is skipped. TODO(SNOW-4397810): `parameters_preprod` has no wildcard Snowflake client id or secret.
+    The other tests in the old file are covered:
+    - `Mismatched Username` is core
+      `should_reject_a_mismatched_username_for_authorization_code` in `oauth_scenarios.rs`.
+    - `External browser timeout` is `should time out authorization code when browser credentials are not provided`.
+    - `obtains the id token from the server and saves it on the local storage` and
+      `the token is saved in the credential manager` are the first connect and the cache-file
+      check in `oauth should reuse cached access token without browser interaction`.
+    - `authenticates by token, browser credentials not needed` is that test's second connect.
+    - `opens browser again when token is incorrect` and `refreshes the token for credential cache key`
+      are `should open the browser again when cached oauth tokens are removed`. That test checks
+      the browser callback runs and the cached access token value changes.
   - [`authentication/testOkta.js`](./authentication/testOkta.js) stays. Native Okta is
     `authenticator` set to an `https://` URL. Node already forwards `authenticator`.
     This PR does not add a Node test that calls `createConnection` with that URL.

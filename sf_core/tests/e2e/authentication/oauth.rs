@@ -44,6 +44,9 @@
 //! | `SNOWFLAKE_TEST_OAUTH_REDIRECT_URI`           | AC: loopback redirect URI (optional)         |
 //! | `SNOWFLAKE_TEST_OAUTH_SCOPE`                  | AC + CC: requested OAuth scope (optional)    |
 //! | `SNOWFLAKE_TEST_OAUTH_ACCESS_TOKEN`           | legacy `AUTHENTICATOR=OAUTH` flow            |
+//! | `SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID` / `CLIENT_SECRET` / `SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL` | Okta authorization-code client. Ignored until SNOW-4397810. |
+//! | `SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_REDIRECT_URI` / `AUTH_URL` | Okta redirect URI and authorize URL. Ignored until SNOW-4397810. |
+//! | `SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_ID` / `CLIENT_SECRET` | Wildcard Snowflake client, no redirect URI. Ignored until SNOW-4397810. |
 
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::token_cache::{
@@ -121,6 +124,87 @@ fn oauth_should_authenticate_using_authorization_code_flow() {
     // When Trying to Connect (this will spawn the local-loopback HTTP
     // listener and `xdg-open`/`open`/`ShellExecute` the IdP login URL
     // unless a previously cached access token short-circuits the leg)
+    let result = client.connect();
+
+    // Then Login is successful and a simple query can be executed
+    client.verify_simple_query(result);
+}
+
+#[test]
+#[ignore = "TODO(SNOW-4397810): skip until parameters_preprod has the Okta redirect URI and authorize URL"]
+fn should_authenticate_using_authorization_code_with_an_okta_idp() {
+    // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the external Okta client id, secret, redirect URI, authorization URL, and token URL
+    let client = SnowflakeTestClient::with_default_params();
+    let client_id = client
+        .parameters
+        .okta_oauth_external_client_id
+        .clone()
+        .expect("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_ID must be set");
+    let client_secret = client
+        .parameters
+        .okta_oauth_external_client_secret
+        .clone()
+        .expect("SNOWFLAKE_TEST_OKTA_OAUTH_EXTERNAL_CLIENT_SECRET must be set");
+    let redirect_uri = client
+        .parameters
+        .external_oauth_okta_redirect_uri
+        .clone()
+        .expect("SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_REDIRECT_URI must be set");
+    let authorization_url = client
+        .parameters
+        .external_oauth_okta_auth_url
+        .clone()
+        .expect("SNOWFLAKE_AUTH_TEST_EXTERNAL_OAUTH_OKTA_AUTH_URL must be set");
+    let token_url = client
+        .parameters
+        .okta_oauth_token_url
+        .clone()
+        .expect("SNOWFLAKE_TEST_OKTA_OAUTH_TOKEN_URL must be set");
+    let user = client
+        .parameters
+        .okta_user
+        .clone()
+        .expect("SNOWFLAKE_TEST_OKTA_USER must be set");
+
+    set_authorization_code(&client);
+    client.set_connection_option("user", &user);
+    client.set_connection_option("oauth_client_id", &client_id);
+    client.set_connection_option("oauth_client_secret", &client_secret);
+    client.set_connection_option("oauth_redirect_uri", &redirect_uri);
+    client.set_connection_option("oauth_authorization_url", &authorization_url);
+    client.set_connection_option("oauth_token_request_url", &token_url);
+    client.set_connection_option_bool("client_store_temporary_credential", false);
+
+    // When Trying to Connect through the Okta browser scenario
+    let result = client.connect();
+
+    // Then Login is successful and a simple query can be executed
+    client.verify_simple_query(result);
+}
+
+#[test]
+#[ignore = "TODO(SNOW-4397810): skip until parameters_preprod has the wildcard Snowflake client id and secret"]
+fn should_authenticate_using_authorization_code_with_the_wildcard_snowflake_client_and_no_redirect_uri()
+ {
+    // Given Authentication is set to OAUTH_AUTHORIZATION_CODE with the wildcard Snowflake client id and secret and no oauth redirect URI
+    let client = SnowflakeTestClient::with_default_params();
+    let client_id = client
+        .parameters
+        .internal_oauth_snowflake_wildcards_client_id
+        .clone()
+        .expect("SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_ID must be set");
+    let client_secret = client
+        .parameters
+        .internal_oauth_snowflake_wildcards_client_secret
+        .clone()
+        .expect("SNOWFLAKE_AUTH_TEST_INTERNAL_OAUTH_SNOWFLAKE_WILDCARDS_CLIENT_SECRET must be set");
+
+    set_authorization_code(&client);
+    client.set_connection_option("oauth_client_id", &client_id);
+    client.set_connection_option("oauth_client_secret", &client_secret);
+    client.set_connection_option_bool("client_store_temporary_credential", false);
+
+    // When Trying to Connect through the Snowflake browser scenario
     let result = client.connect();
 
     // Then Login is successful and a simple query can be executed
