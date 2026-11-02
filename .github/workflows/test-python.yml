@@ -502,13 +502,6 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      # An extension that is not free-threading compatible re-enables the GIL
-      # on import. PYTHON_GIL=0 keeps a 3.15t suite running with the GIL off.
-      - name: Keep the GIL disabled on free-threaded CPython
-        if: endsWith(matrix.py, 't')
-        shell: bash
-        run: echo "PYTHON_GIL=0" >> "$GITHUB_ENV"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
@@ -691,6 +684,10 @@ jobs:
 
       # test-pandas collects a curated subset via hatch :cov. The
       # unit/integ/e2e split applies to `test` and `test-native-arrow`.
+      # PYTHON_GIL=0 keeps a free-threaded suite running with the GIL off when
+      # an extension re-enables it on import. It is set only on pytest steps:
+      # a GIL-enabled CPython 3.13+ (e.g. Homebrew python3 on macOS) aborts at
+      # startup under PYTHON_GIL=0.
       - name: Run unit tests with coverage
         if: matrix.hatch_env != 'test-pandas'
         id: run_python_unit
@@ -706,10 +703,11 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          PYTHON_GIL: ${{ endsWith(matrix.py, 't') && '0' || '' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run integration tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && steps.run_python_unit.outcome != 'skipped' }}
         id: run_python_integ
         working-directory: python
         shell: bash
@@ -723,10 +721,11 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          PYTHON_GIL: ${{ endsWith(matrix.py, 't') && '0' || '' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Run e2e tests with coverage
-        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' }}
+        if: ${{ !cancelled() && matrix.hatch_env != 'test-pandas' && steps.run_python_unit.outcome != 'skipped' }}
         id: run_python_e2e
         working-directory: python
         shell: bash
@@ -740,6 +739,7 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          PYTHON_GIL: ${{ endsWith(matrix.py, 't') && '0' || '' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Merge pytest JSON reports
@@ -783,6 +783,7 @@ jobs:
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          PYTHON_GIL: ${{ endsWith(matrix.py, 't') && '0' || '' }}
           QUERY_RESULT_FORMAT: ${{ matrix.result_format == 'json' && 'JSON' || '' }}
 
       - name: Upload test results as GitHub artifact
