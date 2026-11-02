@@ -9,6 +9,7 @@ that selects its FIPS build.
 | Crypto selection | **One backend, one flag named `fips`.** The feature selects the AWS-LC FIPS build. |
 | OpenSSL | **Removed from production Rust crypto.** `openssl` remains a dev-dependency for independent fixture/reference tests; `openssl-probe` discovers CA locations without linking OpenSSL. |
 | Module | **AWS-LC FIPS 3.6.0**, pinned with `aws-lc-fips-sys = "=0.13.17"` and asserted at runtime in the FIPS smoke tests. [Certificate #5314](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5314) names the static 3.1.0 module. Applicability of that certificate to this 3.6.0 build is an open mapping. |
+| Evidence | ODBC and Node.js FIPS CI libraries have a candidate CycloneDX bundle. It covers the unstripped CI library. Installer SBOMs and RelEng attestation of the signed bytes remain open. |
 
 ## Module version
 

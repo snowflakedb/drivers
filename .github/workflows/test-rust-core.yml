@@ -296,6 +296,11 @@ jobs:
   fips_artifacts:
     needs: load-fips-matrix
     if: inputs.run_rust_core && needs.load-fips-matrix.outputs.matrix != '[]'
+    permissions:
+      actions: write
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -479,6 +484,8 @@ jobs:
           package_dir = Path("nodejs/_build/@snowflake/sdk-core")
           package = json.loads((package_dir / "package.json").read_text(encoding="utf-8"))
           node_artifact = package_dir / package["main"]
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              print(f"NODE_ARTIFACT={node_artifact.resolve()}", file=env)
           for artifact, linker_map in (
               (os.environ["ODBC_ARTIFACT"], os.environ.get("ODBC_LINKER_MAP")),
               (node_artifact, os.environ.get("NODEJS_BRIDGE_LINKER_MAP")),
@@ -487,6 +494,65 @@ jobs:
               if sys.platform == "win32":
                   command.extend(["--linker-map", linker_map])
               subprocess.run(command, check=True)
+
+      - name: Record ODBC FIPS evidence
+        uses: ./.github/actions/fips-release-evidence
+        with:
+          package: odbc
+          manifest-path: odbc/Cargo.toml
+          artifact-path: ${{ env.ODBC_ARTIFACT }}
+          output-dir: fips-evidence/odbc
+          target: ${{ env.CARGO_BUILD_TARGET }}
+          linker-map: ${{ env.ODBC_LINKER_MAP }}
+
+      - name: Record Node.js FIPS evidence
+        uses: ./.github/actions/fips-release-evidence
+        with:
+          package: nodejs_bridge
+          manifest-path: nodejs_bridge/Cargo.toml
+          artifact-path: ${{ env.NODE_ARTIFACT }}
+          output-dir: fips-evidence/nodejs_bridge
+          target: ${{ env.CARGO_BUILD_TARGET }}
+          linker-map: ${{ env.NODEJS_BRIDGE_LINKER_MAP }}
+
+      # actions/attest@v4 must be on the snowflakedb allowlist before a public
+      # workflow runs this job:
+      # https://github.com/snowflakedb/self-serve-snowflakedb/blob/26ecbd5af4827db3e40fe9cdbad9777d7abd3e35/configs/snowflakedb/default/default_actions.yml
+      # These statements bind the unstripped CI library. RelEng signing changes
+      # ODBC installer bytes after this job.
+      - name: Attest ODBC candidate provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.ODBC_ARTIFACT }}
+
+      - name: Attest ODBC candidate SBOM
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.ODBC_ARTIFACT }}
+          sbom-path: fips-evidence/odbc/sbom.cdx.json
+
+      - name: Attest Node.js candidate provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.NODE_ARTIFACT }}
+
+      - name: Attest Node.js candidate SBOM
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.NODE_ARTIFACT }}
+          sbom-path: fips-evidence/nodejs_bridge/sbom.cdx.json
+
+      - name: Upload FIPS evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fips-evidence-${{ matrix.name }}
+          path: fips-evidence/
+          if-no-files-found: warn
 
       - name: Clean up Windows linker maps
         if: always() && runner.os == 'Windows'

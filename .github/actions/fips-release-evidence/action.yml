@@ -1,0 +1,99 @@
+name: FIPS release evidence
+description: >
+  Generate a CycloneDX SBOM and evidence bundle for one FIPS native library.
+  The bundle describes this job's candidate bytes. It does not describe a
+  Release Engineering signed or notarized package.
+
+inputs:
+  package:
+    description: Evidence label, such as odbc or nodejs_bridge.
+    required: true
+  manifest-path:
+    description: Cargo.toml of the crate that produces the native library.
+    required: true
+  artifact-path:
+    description: Unstripped native library this job inspected.
+    required: true
+  output-dir:
+    description: Directory that receives the evidence bundle.
+    required: true
+  features:
+    description: Cargo features used for the SBOM. Matches the FIPS build.
+    required: false
+    default: fips
+  target:
+    description: Cargo target triple. Empty uses CARGO_BUILD_TARGET when set.
+    required: false
+    default: ""
+  linker-map:
+    description: Windows MSVC /MAP file from this artifact's final link.
+    required: false
+    default: ""
+  cyclonedx-version:
+    description: Pinned cargo-cyclonedx version.
+    required: false
+    default: "0.5.9"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore cargo-cyclonedx
+      id: cyclonedx-cache
+      continue-on-error: true
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/cargo-cyclonedx
+        key: cargo-cyclonedx-${{ inputs.cyclonedx-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install cargo-cyclonedx
+      if: steps.cyclonedx-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Git Bash prepends its usr/bin, and that directory's link.exe is GNU
+        # coreutils. cargo looks up link.exe for the MSVC target.
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          if [[ -z "${VCToolsInstallDir:-}" || -z "${VSCMD_ARG_HOST_ARCH:-}" || -z "${VSCMD_ARG_TGT_ARCH:-}" ]]; then
+            echo "MSVC environment is not configured" >&2
+            exit 1
+          fi
+          tools_dir="${VCToolsInstallDir%\\}"
+          tools_dir="${tools_dir%/}"
+          msvc_bin="$(cygpath -u "${tools_dir}/bin/Host${VSCMD_ARG_HOST_ARCH}/${VSCMD_ARG_TGT_ARCH}")"
+          if [[ ! -x "${msvc_bin}/link.exe" ]]; then
+            echo "MSVC link.exe is not at ${msvc_bin}" >&2
+            exit 1
+          fi
+          export PATH="${msvc_bin}:${PATH}"
+        fi
+        cargo install cargo-cyclonedx --version "${{ inputs.cyclonedx-version }}" --locked --root "$RUNNER_TEMP/cargo-cyclonedx"
+
+    - name: Save cargo-cyclonedx
+      if: steps.cyclonedx-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/cargo-cyclonedx
+        key: cargo-cyclonedx-${{ inputs.cyclonedx-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Write FIPS evidence bundle
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="$RUNNER_TEMP/cargo-cyclonedx/bin:$PATH"
+        args=(
+          python ci/fips/release_evidence.py
+          --package "${{ inputs.package }}"
+          --manifest-path "${{ inputs.manifest-path }}"
+          --artifact "${{ inputs.artifact-path }}"
+          --output-dir "${{ inputs.output-dir }}"
+          --features "${{ inputs.features }}"
+          --cyclonedx-version "${{ inputs.cyclonedx-version }}"
+        )
+        if [ -n "${{ inputs.target }}" ]; then
+          args+=(--target "${{ inputs.target }}")
+        fi
+        if [ -n "${{ inputs.linker-map }}" ]; then
+          args+=(--linker-map "${{ inputs.linker-map }}")
+        fi
+        "${args[@]}"
