@@ -2,22 +2,29 @@ package net.snowflake.client.internal.api.implementation.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.util.Collections;
 import java.util.UUID;
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.api.resultset.SnowflakeResultSet;
+import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -226,5 +233,77 @@ class SnowflakeAsyncResultSetImplTest {
     assertThrows(SQLException.class, rs::isAfterLast);
     assertThrows(SQLException.class, rs::isFirst);
     assertThrows(SQLException.class, rs::getRow);
+  }
+
+  @Test
+  void shouldMaterializeOnceAndDelegateDataAndPositionReads() throws Exception {
+    SnowflakeResultSetImpl mockDelegate = mock(SnowflakeResultSetImpl.class);
+    when(mockConnection.getQueryStatus(queryId)).thenReturn(successStatus());
+    when(mockConnection.createResultSetFromSfqid(eq(queryId), eq(mockStatement)))
+        .thenReturn(mockDelegate);
+    when(mockDelegate.next()).thenReturn(true, false);
+    when(mockDelegate.getString(1)).thenReturn("alpha");
+    when(mockDelegate.wasNull()).thenReturn(false);
+    when(mockDelegate.isBeforeFirst()).thenReturn(false);
+    when(mockDelegate.isFirst()).thenReturn(true);
+    when(mockDelegate.isAfterLast()).thenReturn(false);
+    when(mockDelegate.getRow()).thenReturn(1);
+
+    try (SnowflakeAsyncResultSetImpl rs = createAsyncResultSet()) {
+      assertTrue(rs.next());
+      assertEquals("alpha", rs.getString(1));
+      assertFalse(rs.wasNull());
+      assertFalse(rs.isBeforeFirst());
+      assertTrue(rs.isFirst());
+      assertFalse(rs.isAfterLast());
+      assertEquals(1, rs.getRow());
+      assertFalse(rs.next());
+
+      verify(mockConnection, times(1)).createResultSetFromSfqid(queryId, mockStatement);
+    }
+  }
+
+  @Test
+  void shouldUnwrapSelfWithoutMaterializingAndDelegateUnwrapForInnerType() throws Exception {
+    SnowflakeResultSetImpl mockDelegate = mock(SnowflakeResultSetImpl.class);
+    when(mockConnection.getQueryStatus(queryId)).thenReturn(successStatus());
+    when(mockConnection.createResultSetFromSfqid(eq(queryId), eq(mockStatement)))
+        .thenReturn(mockDelegate);
+    when(mockDelegate.unwrap(SnowflakeResultSetImpl.class)).thenReturn(mockDelegate);
+
+    try (SnowflakeAsyncResultSetImpl rs = createAsyncResultSet()) {
+      assertSame(rs, rs.unwrap(SnowflakeResultSet.class));
+      verify(mockConnection, never()).createResultSetFromSfqid(any(), any());
+
+      assertSame(mockDelegate, rs.unwrap(SnowflakeResultSetImpl.class));
+      verify(mockConnection, times(1)).createResultSetFromSfqid(queryId, mockStatement);
+    }
+  }
+
+  @Test
+  void shouldReturnAsyncMetaDataViewSuppressingSourceObjectNames() throws Exception {
+    SnowflakeResultSetImpl mockDelegate = mock(SnowflakeResultSetImpl.class);
+    SnowflakeResultSetMetaDataImpl syncMeta =
+        SnowflakeResultSetMetaDataImpl.fromColumnSpec(
+            "sync-qid",
+            Collections.singletonList("COL1"),
+            Collections.singletonList("VARCHAR"),
+            Collections.singletonList(Types.VARCHAR));
+    when(mockConnection.getQueryStatus(queryId)).thenReturn(successStatus());
+    when(mockConnection.createResultSetFromSfqid(eq(queryId), eq(mockStatement)))
+        .thenReturn(mockDelegate);
+    when(mockDelegate.getMetaDataImpl()).thenReturn(syncMeta);
+
+    try (SnowflakeAsyncResultSetImpl rs = createAsyncResultSet()) {
+      ResultSetMetaData asyncMeta = rs.getMetaData();
+
+      assertEquals(1, asyncMeta.getColumnCount());
+      assertEquals("COL1", asyncMeta.getColumnName(1));
+      assertEquals("", asyncMeta.getCatalogName(1));
+      assertEquals("", asyncMeta.getSchemaName(1));
+      assertEquals("", asyncMeta.getTableName(1));
+      assertEquals("T", syncMeta.getTableName(1));
+      assertEquals(queryId, asyncMeta.unwrap(SnowflakeResultSetMetaData.class).getQueryID());
+    }
   }
 }

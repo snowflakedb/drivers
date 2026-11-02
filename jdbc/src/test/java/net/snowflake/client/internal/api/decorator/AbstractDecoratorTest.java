@@ -1,18 +1,37 @@
 package net.snowflake.client.internal.api.decorator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowflakeAsyncResultSetImpl;
+import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.resultset.SnowflakeAsyncResultSetImpl;
+import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeCallableStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakePreparedStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -55,6 +74,14 @@ public class AbstractDecoratorTest {
 
     <T> T hotCall(Supplier<T> action) throws SQLException {
       return call(action);
+    }
+
+    void uninstrumentedRun(Runnable action) throws SQLException {
+      run(action);
+    }
+
+    SQLException hotTranslate(RuntimeException error) {
+      return translateHot(error);
     }
   }
 
@@ -166,5 +193,84 @@ public class AbstractDecoratorTest {
     decorator.instrumentedCall("Statement.execute", () -> "a");
     decorator.instrumentedCall("Statement.getResultSet", () -> "b");
     assertEquals(2, telemetry.apiUsage.size());
+  }
+
+  @Test
+  public void shouldTranslateHotExceptionAndRecordOnlyWhenOutermost() throws SQLException {
+    SQLException direct =
+        decorator.hotTranslate(SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED));
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), direct.getSQLState());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), direct.getErrorCode());
+    assertEquals(Arrays.asList("SFSQLException"), telemetry.wrapperErrors);
+
+    decorator.instrumentedCall(
+        "ResultSet.getString",
+        () -> {
+          SQLException nested =
+              decorator.hotTranslate(
+                  SFSQLException.fromErrorCode(ErrorCode.INVALID_PARAMETER_VALUE));
+          assertEquals(ErrorCode.INVALID_PARAMETER_VALUE.getSqlState(), nested.getSQLState());
+          return "ok";
+        });
+    assertEquals(Arrays.asList("SFSQLException"), telemetry.wrapperErrors);
+  }
+
+  @Test
+  public void shouldCoalesceNullTelemetryToNoopAndSupportUnwrap() throws SQLException {
+    TestDecorator nullTelemetryDecorator = new TestDecorator("delegate-val", null);
+    nullTelemetryDecorator.uninstrumentedRun(() -> {});
+    nullTelemetryDecorator.instrumentedRun("Statement.close", () -> {});
+    SQLException translated =
+        nullTelemetryDecorator.hotTranslate(
+            SFSQLException.fromErrorCode(ErrorCode.CONNECTION_CLOSED));
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), translated.getErrorCode());
+
+    assertTrue(decorator.isWrapperFor(TestDecorator.class));
+    assertTrue(decorator.isWrapperFor(CharSequence.class));
+    assertFalse(decorator.isWrapperFor(Integer.class));
+    assertSame(decorator, decorator.unwrap(TestDecorator.class));
+    assertEquals("d", decorator.unwrap(CharSequence.class));
+
+    SnowflakeSQLException unwrapFailure =
+        assertThrows(SnowflakeSQLException.class, () -> decorator.unwrap(Integer.class));
+    assertEquals("Cannot unwrap to java.lang.Integer", unwrapFailure.getMessage());
+    assertNull(unwrapFailure.getSQLState());
+    assertEquals(0, unwrapFailure.getErrorCode());
+    assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldDecorateStatementsResultSetsAndTelemetryIdempotently() {
+    assertNull(Decorators.statement(null, telemetry));
+    assertNull(Decorators.resultSet(null, telemetry));
+    assertNull(Decorators.connection(null, telemetry));
+    assertSame(Telemetry.NOOP, Decorators.telemetryOf((SnowflakeStatementImpl) null));
+
+    SnowflakeCallableStatementImpl callable = mock(SnowflakeCallableStatementImpl.class);
+    Statement decoratedCallable = Decorators.statement(callable, telemetry);
+    assertInstanceOf(DecoratedSnowflakeCallableStatementImpl.class, decoratedCallable);
+    assertSame(decoratedCallable, Decorators.statement(decoratedCallable, telemetry));
+
+    SnowflakePreparedStatementImpl prepared = mock(SnowflakePreparedStatementImpl.class);
+    assertInstanceOf(
+        DecoratedSnowflakePreparedStatementImpl.class, Decorators.statement(prepared, telemetry));
+
+    SnowflakeStatementImpl plain = mock(SnowflakeStatementImpl.class);
+    assertInstanceOf(DecoratedSnowflakeStatementImpl.class, Decorators.statement(plain, telemetry));
+    assertSame(Telemetry.NOOP, Decorators.telemetryOf(plain));
+
+    InternalSnowflakeConnection conn = mock(InternalSnowflakeConnection.class);
+    when(conn.getTelemetry()).thenReturn(telemetry);
+    when(plain.getConnectionInternal()).thenReturn(conn);
+    assertSame(telemetry, Decorators.telemetryOf(plain));
+
+    SnowflakeAsyncResultSetImpl asyncRs = mock(SnowflakeAsyncResultSetImpl.class);
+    ResultSet decoratedAsync = Decorators.resultSet(asyncRs, telemetry);
+    assertInstanceOf(DecoratedSnowflakeAsyncResultSetImpl.class, decoratedAsync);
+    assertSame(decoratedAsync, Decorators.resultSet(decoratedAsync, telemetry));
+
+    SnowflakeResultSetImpl syncRs = mock(SnowflakeResultSetImpl.class);
+    assertInstanceOf(
+        DecoratedSnowflakeResultSetImpl.class, Decorators.resultSet(syncRs, telemetry));
   }
 }

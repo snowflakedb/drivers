@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.google.protobuf.ByteString;
+import java.security.PrivateKey;
+import java.util.Base64;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import org.junit.jupiter.api.Test;
 
@@ -77,5 +79,33 @@ class ConfigSettingFactoryTest {
   @Test
   void returnsNullForUnsupportedTypes() {
     assertNull(ConfigSettingFactory.from(new Object()));
+    assertNull(ConfigSettingFactory.from(null));
+  }
+
+  @Test
+  void shouldEncodePrivateKeyBytesAsBase64StringValue() {
+    byte[] encodedKey = new byte[] {0x30, (byte) 0x82, 0x01, 0x22};
+    PrivateKey privateKey =
+        new PrivateKey() {
+          @Override
+          public String getAlgorithm() {
+            return "RSA";
+          }
+
+          @Override
+          public String getFormat() {
+            return "PKCS#8";
+          }
+
+          @Override
+          public byte[] getEncoded() {
+            return encodedKey;
+          }
+        };
+
+    ConfigSetting setting = ConfigSettingFactory.from(privateKey);
+
+    assertEquals(ConfigSetting.ValueCase.STRING_VALUE, setting.getValueCase());
+    assertEquals(Base64.getEncoder().encodeToString(encodedKey), setting.getStringValue());
   }
 }

@@ -283,6 +283,96 @@ class ProxyOptionsResolverTest {
                 exception.toSQLException().getErrorCode()));
   }
 
+  @Test
+  void shouldAcceptBooleanUseProxyAndTrimHostAndHttpsProtocol() {
+    Properties properties = new Properties();
+    properties.put("USEPROXY", Boolean.TRUE);
+    properties.setProperty("PROXYHOST", "  proxy.snowflake.com  ");
+    properties.setProperty("PROXYPORT", "8443");
+    properties.setProperty("PROXYPROTOCOL", "  HTTPS  ");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            properties, new MapEnvironment(Collections.emptyMap(), Collections.emptyMap()));
+
+    assertAll(
+        () -> assertEquals("proxy.snowflake.com", resolved.getProperty("proxy_host")),
+        () -> assertEquals(8443, resolved.get("proxy_port")),
+        () -> assertEquals("https", resolved.getProperty("proxy_scheme")),
+        () -> assertFalse(resolved.containsKey("USEPROXY")),
+        () -> assertFalse(resolved.containsKey("PROXYHOST")),
+        () -> assertFalse(resolved.containsKey("PROXYPORT")),
+        () -> assertFalse(resolved.containsKey("PROXYPROTOCOL")));
+  }
+
+  @Test
+  void shouldTreatCaseInsensitiveCanonicalProxyKeyAsConfiguredAndStripLegacyKeys() {
+    Properties properties = new Properties();
+    properties.setProperty("PROXY", "http://canonical-proxy.snowflake.com:8080");
+    properties.setProperty("useProxy", "true");
+    properties.setProperty("proxyHost", "legacy-proxy.snowflake.com");
+    properties.setProperty("proxyPort", "9090");
+    properties.setProperty("disableSocksProxy", "true");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            properties, new MapEnvironment(Collections.emptyMap(), Collections.emptyMap()));
+
+    assertAll(
+        () ->
+            assertEquals(
+                "http://canonical-proxy.snowflake.com:8080", resolved.getProperty("PROXY")),
+        () -> assertFalse(resolved.containsKey("proxy_host")),
+        () -> assertFalse(resolved.containsKey("useProxy")),
+        () -> assertFalse(resolved.containsKey("proxyHost")),
+        () -> assertFalse(resolved.containsKey("proxyPort")),
+        () -> assertFalse(resolved.containsKey("disableSocksProxy")));
+  }
+
+  @Test
+  void shouldUseEnvNoProxyWhenJvmNonProxyHostsIsBlank() {
+    Map<String, String> systemProperties = new HashMap<>();
+    systemProperties.put("http.useProxy", "true");
+    systemProperties.put("http.proxyHost", "proxy.snowflake.com");
+    systemProperties.put("http.proxyPort", "8080");
+    systemProperties.put("http.nonProxyHosts", "   ");
+    Map<String, String> environmentVariables = new HashMap<>();
+    environmentVariables.put("NO_PROXY", "internal.snowflake.com");
+
+    Properties resolved =
+        ProxyOptionsResolver.resolve(
+            new Properties(), new MapEnvironment(systemProperties, environmentVariables));
+
+    assertEquals("internal.snowflake.com", resolved.getProperty("no_proxy"));
+  }
+
+  @Test
+  void shouldRejectLegacyProxyWhenHostIsBlank() {
+    Properties properties = new Properties();
+    properties.setProperty("useProxy", "true");
+    properties.setProperty("proxyHost", "   ");
+    properties.setProperty("proxyPort", "8080");
+
+    SFSQLException exception =
+        assertThrows(
+            SFSQLException.class,
+            () ->
+                ProxyOptionsResolver.resolve(
+                    properties,
+                    new MapEnvironment(Collections.emptyMap(), Collections.emptyMap())));
+
+    assertAll(
+        () -> assertEquals(ErrorCode.INVALID_PROXY_PROPERTIES, exception.getErrorCode()),
+        () ->
+            assertEquals(
+                ErrorCode.INVALID_PROXY_PROPERTIES.getSqlState(),
+                exception.toSQLException().getSQLState()),
+        () ->
+            assertEquals(
+                ErrorCode.INVALID_PROXY_PROPERTIES.getMessageCode(),
+                exception.toSQLException().getErrorCode()));
+  }
+
   private static final class MapEnvironment implements ProxyOptionsResolver.Environment {
     private final Map<String, String> systemProperties;
     private final Map<String, String> environmentVariables;

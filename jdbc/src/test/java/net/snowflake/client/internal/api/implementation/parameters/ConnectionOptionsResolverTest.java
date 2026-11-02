@@ -461,4 +461,68 @@ class ConnectionOptionsResolverTest {
         "Conflicting JDBC connection Properties aliases for parameter: login_timeout",
         thrown.getMessage());
   }
+
+  @Test
+  public void shouldRejectNonStringConnectionNameInPropertiesForAutoUrl() {
+    Properties input = new Properties();
+    input.put("connectionName", 123);
+
+    SFSQLException thrown =
+        assertThrows(
+            SFSQLException.class,
+            () -> ConnectionOptionsResolver.resolve("jdbc:snowflake:auto", input, ignored -> null));
+
+    assertEquals(ErrorCode.INVALID_PARAMETER_VALUE, thrown.getErrorCode());
+    assertEquals("JDBC connection Properties selector must be a String", thrown.getMessage());
+  }
+
+  @Test
+  public void shouldResolveAutoUrlFromEnvironmentWhenPropertiesIsNull() {
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake:auto?warehouse=TEST_WH",
+            null,
+            key -> "SNOWFLAKE_DEFAULT_CONNECTION_NAME".equals(key) ? "envProfile" : null);
+
+    assertEquals("envProfile", resolved.getProperty("connection_name"));
+    assertEquals("TEST_WH", resolved.getProperty("warehouse"));
+  }
+
+  @Test
+  public void shouldIgnoreNonStringKeysWhenResolvingAutoUrlAndInheritedDefaults() {
+    Properties defaults = new Properties();
+    defaults.setProperty("warehouse", "DEFAULT_WH");
+    Properties input = new Properties(defaults);
+    input.put(42, "ignored");
+
+    Properties resolved =
+        ConnectionOptionsResolver.resolve("jdbc:snowflake:auto", input, ignored -> null);
+
+    assertEquals("DEFAULT_WH", resolved.getProperty("warehouse"));
+    assertFalse(resolved.containsKey(42));
+  }
+
+  @Test
+  public void shouldLeaveHostAndProtocolUnsetWhenConnectionStringIsInvalid() {
+    Properties resolved = ConnectionOptionsResolver.resolve("jdbc:snowflake://", new Properties());
+
+    assertEquals("jdbc:snowflake://", resolved.getProperty("url"));
+    assertNull(resolved.get("host"));
+    assertNull(resolved.get("port"));
+    assertNull(resolved.get("protocol"));
+  }
+
+  @Test
+  public void shouldRespectCaseInsensitiveHostAndSslOverridesInProperties() {
+    Properties input = new Properties();
+    input.setProperty("HOST", "override.snowflakecomputing.com");
+    input.setProperty("SSL", "on");
+
+    Properties resolved =
+        ConnectionOptionsResolver.resolve("jdbc:snowflake://url.snowflakecomputing.com", input);
+
+    assertEquals("override.snowflakecomputing.com", resolved.getProperty("HOST"));
+    assertNull(resolved.getProperty("host"));
+    assertFalse(resolved.containsKey("protocol"));
+  }
 }

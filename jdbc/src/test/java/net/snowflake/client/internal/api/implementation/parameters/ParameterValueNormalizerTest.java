@@ -2,6 +2,7 @@ package net.snowflake.client.internal.api.implementation.parameters;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import org.junit.jupiter.api.Test;
@@ -87,6 +88,46 @@ class ParameterValueNormalizerTest {
         () -> assertEquals(2L, ParameterValueNormalizer.normalize("networkTimeout", "1999")),
         () -> assertEquals(0L, ParameterValueNormalizer.normalize("networkTimeout", "0")),
         () -> assertEquals("abc", ParameterValueNormalizer.normalize("networkTimeout", "abc")));
+  }
+
+  @Test
+  void shouldHandleLongTrimmedNegativeAndNonNumericLegacyTimeoutValues() {
+    assertAll(
+        () ->
+            assertEquals(
+                300L, ParameterValueNormalizer.normalize("http_client_socket_timeout", 300000L)),
+        () ->
+            assertEquals(
+                2L, ParameterValueNormalizer.normalize("http_client_connection_timeout", " 1500 ")),
+        () -> assertEquals(0L, ParameterValueNormalizer.normalize("networkTimeout", -999L)),
+        () -> assertEquals(-1L, ParameterValueNormalizer.normalize("networkTimeout", -1500L)),
+        () ->
+            assertSame(
+                Boolean.TRUE, ParameterValueNormalizer.normalize("networkTimeout", Boolean.TRUE)),
+        () -> assertNull(ParameterValueNormalizer.normalize("networkTimeout", null)));
+  }
+
+  @Test
+  void shouldTrimTlsProtocolNamesAndIgnoreNonStringTlsValues() {
+    Integer nonString = 12;
+    assertAll(
+        () ->
+            assertEquals(
+                "tls12", ParameterValueNormalizer.normalize("min_tls_version", " tlsv1.2 ")),
+        () ->
+            assertEquals(
+                "tls13", ParameterValueNormalizer.normalize("MAX_TLS_VERSION", " TLSv1.3 ")),
+        () ->
+            assertSame(
+                nonString, ParameterValueNormalizer.normalize("min_tls_version", nonString)));
+  }
+
+  @Test
+  void shouldTrimNoProxyEntriesAndPreserveEmptySegments() {
+    assertEquals(
+        ".foo.snowflake.com,,.bar.snowflake.com,",
+        ParameterValueNormalizer.normalize(
+            "no_proxy", " *.foo.snowflake.com || *.bar.snowflake.com ,"));
   }
 
   @Test

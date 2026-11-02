@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.util.TimeZone;
 import org.junit.jupiter.api.Test;
 
 class InMemoryRowReaderTest {
@@ -426,6 +427,37 @@ class InMemoryRowReaderTest {
   void shouldThrowOnTimestampTypeMismatch() {
     InMemoryRowReader reader = readerWith("not-a-timestamp");
     assertThrows(IllegalArgumentException.class, () -> reader.getTimestamp(1));
+  }
+
+  @Test
+  void shouldRejectOutOfBoundsColumnNamesAndInvalidNumericOrTimeCoercions() {
+    InMemoryRowReader reader =
+        new InMemoryRowReader(
+            new String[] {"BAD_NUM", "OBJ"}, new Object[][] {{"not-a-num", new Object()}});
+    assertTrue(reader.next());
+
+    assertThrows(IllegalArgumentException.class, () -> reader.getColumnName(0));
+    assertThrows(IllegalArgumentException.class, () -> reader.getColumnName(3));
+    assertThrows(IllegalArgumentException.class, () -> reader.getByte(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getShort(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getFloat(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getDouble(1));
+    assertThrows(IllegalArgumentException.class, () -> reader.getByte(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getShort(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getInt(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getLong(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getFloat(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getDouble(2));
+    assertThrows(IllegalArgumentException.class, () -> reader.getTime(1));
+    assertNull(reader.getConversionContext());
+  }
+
+  @Test
+  void shouldDelegateGetTimestampWithTimeZone() {
+    Timestamp ts = Timestamp.valueOf("2024-01-15 10:30:00");
+    InMemoryRowReader reader = readerWith(ts);
+    assertEquals(ts, reader.getTimestamp(1, TimeZone.getTimeZone("UTC")));
+    assertFalse(reader.wasNull());
   }
 
   // --- Helpers ---

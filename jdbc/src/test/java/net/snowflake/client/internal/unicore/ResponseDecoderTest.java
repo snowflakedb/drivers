@@ -46,6 +46,19 @@ class ResponseDecoderTest {
   void shouldThrowTransportExceptionOnUnknownCode() {
     CoreTransport.TransportResponse response = new CoreTransport.TransportResponse(99, new byte[0]);
 
-    assertThrows(TransportException.class, () -> decoder.decode(response));
+    TransportException ex = assertThrows(TransportException.class, () -> decoder.decode(response));
+    assertEquals("Unknown error code: 99", ex.getMessage());
+  }
+
+  @Test
+  void shouldWrapCorruptedProtobufPayloadInTransportException() {
+    byte[] malformed = new byte[] {(byte) 0xFF, (byte) 0xFF, (byte) 0xFF};
+    CoreTransport.TransportResponse badSuccess =
+        new CoreTransport.TransportResponse(CoreTransport.CODE_SUCCESS, malformed);
+    CoreTransport.TransportResponse badError =
+        new CoreTransport.TransportResponse(CoreTransport.CODE_APPLICATION_ERROR, malformed);
+
+    assertThrows(TransportException.class, () -> decoder.decode(badSuccess));
+    assertThrows(TransportException.class, () -> decoder.decode(badError));
   }
 }

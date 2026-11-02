@@ -180,6 +180,40 @@ class DriverPropertyInfoUtilTest {
     assertEquals("serverURL", properties[0].name);
   }
 
+  @Test
+  void shouldResolveAutoConnectionFromPropertiesWhenUrlArgumentIsNull() {
+    Properties info = new Properties();
+    info.setProperty("url", "jdbc:snowflake:auto");
+    info.setProperty("authenticator", "externalbrowser");
+
+    DriverPropertyInfo[] properties = getPropertyInfo(null, info);
+
+    assertEquals(0, properties.length);
+  }
+
+  @Test
+  void shouldAcceptBooleanUseProxyAndCanonicalPrivateKeyTypesDuringValidation() {
+    Properties resolved = new Properties();
+    resolved.put("useProxy", Boolean.TRUE);
+    resolved.put("private_key", mock(PrivateKey.class));
+    validate(resolved);
+
+    resolved.put("private_key", "base64-encoded-key");
+    validate(resolved);
+    assertEquals(2, resolved.size());
+  }
+
+  @Test
+  void shouldReportOnlyMissingProxyPortWhenProxyHostIsProvided() {
+    Properties resolved = new Properties();
+    resolved.setProperty("user", "alice");
+    resolved.setProperty("password", "test_password");
+    resolved.setProperty("useProxy", "true");
+    resolved.setProperty("proxyHost", "proxy.snowflake.com");
+
+    assertEquals(Arrays.asList("proxyPort"), names(findMissingProperties(resolved)));
+  }
+
   private static List<String> names(DriverPropertyInfo[] properties) {
     return Arrays.stream(properties).map(property -> property.name).collect(toList());
   }

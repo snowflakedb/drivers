@@ -4,6 +4,8 @@ import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_CLOSED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -13,11 +15,14 @@ import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.sql.ConnectionEvent;
 import javax.sql.ConnectionEventListener;
 import javax.sql.PooledConnection;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import org.junit.jupiter.api.Test;
 
 public class SnowflakePooledConnectionTest {
@@ -300,5 +305,80 @@ public class SnowflakePooledConnectionTest {
     // close() atomically claims the physical connection, so a second close must be a no-op rather
     // than closing an already-closed (or null) physical connection again.
     verify(physicalConnection, org.mockito.Mockito.times(1)).close();
+  }
+
+  @Test
+  public void shouldTranslatePhysicalCloseFailureAndRemoveListenerOnClose() throws SQLException {
+    Connection physicalConnection = mock(Connection.class);
+    SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
+    when(physicalConnection.unwrap(SnowflakeConnectionImpl.class)).thenReturn(sfConnection);
+    SQLException closeFailure = new SQLException("physical close boom");
+    org.mockito.Mockito.doThrow(closeFailure).when(physicalConnection).close();
+
+    SnowflakePooledConnection raw = new SnowflakePooledConnection(physicalConnection);
+    ConnectionEventListener listener = mock(ConnectionEventListener.class);
+    raw.addConnectionEventListener(listener);
+    PooledConnection pooledConnection = decorated(raw);
+
+    SnowflakeSQLException ex = assertThrows(SnowflakeSQLException.class, pooledConnection::close);
+    assertSame(closeFailure, ex.getCause());
+    assertNull(ex.getSQLState());
+    assertEquals(0, ex.getErrorCode());
+
+    raw.fireConnectionCloseEvent();
+    verify(listener, never()).connectionClosed(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  public void shouldTranslateIsClosedFailureWhenBorrowingLogicalConnection() throws SQLException {
+    Connection physicalConnection = mock(Connection.class);
+    SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
+    when(physicalConnection.unwrap(SnowflakeConnectionImpl.class)).thenReturn(sfConnection);
+    SQLException checkFailure = new SQLException("isClosed check failed");
+    when(physicalConnection.isClosed()).thenThrow(checkFailure);
+
+    PooledConnection pooledConnection =
+        decorated(new SnowflakePooledConnection(physicalConnection));
+
+    SnowflakeSQLException ex =
+        assertThrows(SnowflakeSQLException.class, pooledConnection::getConnection);
+    assertSame(checkFailure, ex.getCause());
+    assertNull(ex.getSQLState());
+    assertEquals(0, ex.getErrorCode());
+  }
+
+  @Test
+  public void shouldReportConfiguredEventSourceAndTolerateSessionIdLookupFailure()
+      throws SQLException {
+    Connection physicalConnection = mock(Connection.class);
+    SnowflakeConnectionImpl sfConnection = mock(SnowflakeConnectionImpl.class);
+    when(physicalConnection.unwrap(SnowflakeConnectionImpl.class)).thenReturn(sfConnection);
+    when(sfConnection.getSessionID()).thenThrow(SFSQLException.fromErrorCode(CONNECTION_CLOSED));
+
+    SnowflakePooledConnection raw = new SnowflakePooledConnection(physicalConnection);
+    PooledConnection customSource = decorated(raw);
+    raw.setEventSource(customSource);
+
+    AtomicReference<Object> closeSource = new AtomicReference<>();
+    AtomicReference<Object> errorSource = new AtomicReference<>();
+    raw.addConnectionEventListener(
+        new ConnectionEventListener() {
+          @Override
+          public void connectionClosed(ConnectionEvent event) {
+            closeSource.set(event.getSource());
+          }
+
+          @Override
+          public void connectionErrorOccurred(ConnectionEvent event) {
+            errorSource.set(event.getSource());
+          }
+        });
+
+    raw.fireConnectionCloseEvent();
+    raw.fireConnectionErrorEvent(new SQLException("err"));
+    raw.close();
+
+    assertSame(customSource, closeSource.get());
+    assertSame(customSource, errorSource.get());
   }
 }

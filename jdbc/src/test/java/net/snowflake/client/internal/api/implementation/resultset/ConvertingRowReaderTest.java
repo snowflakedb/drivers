@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -15,6 +16,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.util.TimeZone;
+import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -447,5 +450,38 @@ class ConvertingRowReaderTest {
 
     assertTrue(reader.isClosed());
     verify(delegate).close();
+  }
+
+  @Test
+  void shouldParseTemporalAndBigDecimalStringsAndDelegateConversionContext() {
+    DataConversionContext context = mock(DataConversionContext.class);
+    when(delegate.getConversionContext()).thenReturn(context);
+    reader =
+        new ConvertingRowReader(
+            delegate,
+            new String[] {"D", "T", "TS", "BD", "B_ZERO", "B_TRUE", "B_FALSE"},
+            row ->
+                new Object[] {
+                  "2025-01-15", "13:45:30", "2025-01-15 13:45:30", "123.45", 0, "true", "0"
+                });
+    when(delegate.next()).thenReturn(true);
+    assertTrue(reader.next());
+
+    TimeZone utc = TimeZone.getTimeZone("UTC");
+    assertEquals(Date.valueOf("2025-01-15"), reader.getDate(1, utc));
+    assertFalse(reader.wasNull());
+    assertEquals(Time.valueOf("13:45:30"), reader.getTime(2));
+    assertFalse(reader.wasNull());
+    assertEquals(Timestamp.valueOf("2025-01-15 13:45:30"), reader.getTimestamp(3, utc));
+    assertFalse(reader.wasNull());
+    assertEquals(new BigDecimal("123.45"), reader.getBigDecimal(4));
+    assertFalse(reader.wasNull());
+    assertFalse(reader.getBoolean(5));
+    assertFalse(reader.wasNull());
+    assertTrue(reader.getBoolean(6));
+    assertFalse(reader.wasNull());
+    assertFalse(reader.getBoolean(7));
+    assertFalse(reader.wasNull());
+    assertSame(context, reader.getConversionContext());
   }
 }
