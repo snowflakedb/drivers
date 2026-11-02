@@ -16,19 +16,28 @@ in `sf_core/src/tls/crl_verifier.rs`:
 create_tls_client_with_proxy()          tls/client.rs
   ├─ verify_certificates=false ──────── accepts invalid certs AND invalid hostnames (see A4)
   ├─ crl_check_mode=DISABLED ────────── default TLS path
-  │    optional: custom_root_store_path (replaces system roots)
-  │    optional: extra_root_store_path (extends system roots)
+  │    roots: OS roots + bundled Mozilla roots
+  │    optional: custom_root_store_path (replaces the roots)
   │    optional: verify_hostname=false
   └─ crl_check_mode=ENABLED|ADVISORY ── CRL-aware verifier
        WebPkiServerVerifier (chain + hostname) + CRL revocation
        rustls ClientConfig … .with_no_client_auth()
 ```
 
-Crypto provider: `rustls` with `aws-lc-rs`, installed once at startup. The OS
-root store is loaded once per process. OS trust changes after the first
-connection apply on process restart. All three production client builders finish
-with `.with_no_client_auth()` — the driver never presents a client certificate
-(see the mTLS note in [proxy-tls.md](proxy-tls.md)).
+Crypto provider: `rustls` with `aws-lc-rs`; every client configuration is given
+the process-wide crypto module (`sf_core/src/tls/crypto_module.rs`) explicitly.
+
+Trust roots:
+
+- **CRL disabled (default):** the OS root store plus the bundled Mozilla roots. If
+  the OS store fails to load, the bundled roots alone are used.
+- **CRL `ENABLED` / `ADVISORY`:** the OS root store only; a load failure is fatal.
+- The OS store is loaded once per driver instance; a failed load is retried on the
+  next client build. OS trust changes after the first connection apply on process
+  restart.
+
+The driver never presents a client certificate (see the mTLS note in
+[proxy-tls.md](proxy-tls.md)).
 
 ---
 
@@ -41,9 +50,15 @@ classifies these as the `"certificate"` error type
 
 ### A1. Crypto provider unavailable
 
-The driver installs `aws-lc-rs` as the default rustls provider at startup. A
+The driver builds its TLS clients on a single `aws-lc-rs` crypto module. A
 failure here is a packaging/linking defect, not a configuration issue — report
-it as a driver bug.
+it as a driver bug. In FIPS builds (the `fips` feature) two further errors apply:
+
+- `driver was built with the fips feature but the linked module's TLS provider is
+  not FIPS-approved` — the wrong artifact is linked.
+- `driver was built with the fips feature but the process-global rustls crypto
+  provider is not in FIPS mode` — the host application installed its own provider
+  before the driver did; fix the application's startup order.
 
 ### A2. TLS protocol-version window
 
@@ -117,6 +132,12 @@ When `verify_certificates=false`, the client accepts **both** invalid
 certificates **and** invalid hostnames, regardless of `verify_hostname`
 (`sf_core/src/tls/client.rs`). Do not assume hostname checking survives when cert
 verification is off. This is a debugging-only escape hatch — never use it in production code.
+
+`tls_skip_verify=true` is the single-switch form: it turns off certificate,
+hostname, and CRL checks together and logs a warning (`TLS verification disabled
+via tls_skip_verify`). FIPS builds reject both `verify_certificates=false` and
+`tls_skip_verify=true` with `FIPS builds require TLS certificate verification; set
+verify_certificates=true and tls_skip_verify=false`.
 
 ### A5. Diagnostic tool — `tls_client`
 

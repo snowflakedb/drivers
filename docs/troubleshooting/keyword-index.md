@@ -23,28 +23,30 @@ nothing matches, use the [deep-dive index](index.md) or
 | `401`, "Incorrect username or password", bad credentials | [authentication.md](core/authentication.md) → "Symptom: 401" |
 | key-pair / JWT auth fails, "JWT token is invalid", `JWT_TOKEN_INVALID_EXPIRATION_TIME`, JWT expired in transit / proxy latency | [authentication.md](core/authentication.md) → "Symptom: key-pair (JWT) auth fails" |
 | PAT rejected, "Programmatic access token is invalid or expired" | [authentication.md](core/authentication.md) → "Symptom: PAT rejected" |
-| OAuth token rejected, `390301` | [authentication.md](core/authentication.md) → "Symptom: OAuth token rejected" |
-| MFA passcode not accepted | [authentication.md](core/authentication.md) → "Symptom: MFA passcode not accepted" |
+| OAuth token rejected, `390303` (invalid), `390318` (expired) | [authentication.md](core/authentication.md) → "Symptom: OAuth token rejected" |
+| MFA passcode not accepted, Duo push not received / denied, `390120`–`390132` | [authentication.md](core/authentication.md) → "Symptom: MFA not accepted" |
+| `PAT_WITH_EXTERNAL_SESSION`: "Missing required parameter 'token'", "Missing required parameter 'external_session_id'", "external_session_id must be a valid HTTP header value" | [authentication.md](core/authentication.md) → "Symptom: `PAT_WITH_EXTERNAL_SESSION` parameter errors" |
+| workload identity: "was set but authenticator was not set to WORKLOAD_IDENTITY", `wif_host`, impersonation path rejected, "single service principal", `workloadIdentityAwsExternalId is not enabled` | [authentication.md](core/authentication.md) → "Symptom: workload identity parameter errors" |
 | external-browser / Okta SSO fails; browser opens then login fails; account identifier with an **underscore** + SSO | [authentication.md](core/authentication.md) → "Symptom: external-browser / Okta SSO" |
 | "Account not found" / wrong endpoint | [authentication.md](core/authentication.md) → "Account not found" |
-| "Session expired", token refresh, `390111` (session gone), `390112`, `390114`, "Authentication token has expired", "session no longer exists", master token expired | [authentication.md](core/authentication.md) → "Session expiry & renewal" |
+| "Session expired", token refresh, `390111` (session gone), `390112`, `390113`, `390114`, `390115`, `390117`, `MasterTokenTerminal`, "Master token can never be renewed", "Authentication token has expired", "session no longer exists", master token expired | [authentication.md](core/authentication.md) → "Session expiry & renewal" |
 | heartbeat / keep-alive stopped, idle session dropped | [authentication.md](core/authentication.md) → "Keeping an idle session alive" |
 | keep-alive on but a query still times out; `STATEMENT_TIMEOUT_IN_SECONDS`; warehouse auto-suspend / auto-resume while the session stays alive | [authentication.md](core/authentication.md) → "Symptom: keep-alive is on but a query still times out" |
-| on-disk token cache, cached-token reuse problems | [authentication.md](core/authentication.md) → "On-disk token cache" |
+| token cache, cached-token reuse problems, OS keyring / keychain, `credential_cache_v2.json`, `SF_TEMPORARY_CREDENTIAL_CACHE_DIR` | [authentication.md](core/authentication.md) → "On-disk token cache" |
 
 ## TLS handshake & certificates
 
 | Match this | Go to |
 |---|---|
 | TLS handshake failure; "certificate", "ssl", "verify" | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "TLS handshake failures" |
-| crypto provider unavailable | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A1. Crypto provider unavailable" |
+| crypto provider unavailable; FIPS build: "TLS provider is not FIPS-approved", "provider is not in FIPS mode" | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A1. Crypto provider unavailable" |
 | TLS protocol-version mismatch / version too old | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A2. TLS protocol-version window" |
 | signature algorithm not supported | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A3. Signature algorithm not supported" |
-| `verify_certificates=false` also disables hostname verification | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A4." |
+| `verify_certificates=false` also disables hostname verification; `tls_skip_verify`, "TLS verification disabled via tls_skip_verify"; "FIPS builds require TLS certificate verification" | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "A4." |
 | cipher-suite mismatch, weak cipher rejected, `sslscan`, ciphersuite.info | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "Cipher-suite verification" |
 | capture the TLS handshake on the wire; `tcpdump` / `tshark` / Wireshark; `openssl ciphers -V`; offered vs selected cipher suite | [tls-handshake.md](core/crl-tls/tls-handshake.md) → "E4. Capture the handshake at the wire" |
 | "no anchored chains", unknown issuer, cert-chain error | [cert-chain.md](core/crl-tls/cert-chain.md) → `B1. "no anchored chains"` |
-| custom trust store empty/malformed (`custom_root_store_path`) | [cert-chain.md](core/crl-tls/cert-chain.md) → "B2. Custom trust store" |
+| custom trust store empty/malformed (`custom_root_store_path`); `extra_root_store_path`; `SSL_CERT_FILE` / `SSL_CERT_DIR` | [cert-chain.md](core/crl-tls/cert-chain.md) → "B2. Custom trust store" |
 | cross-signed intermediate chain | [cert-chain.md](core/crl-tls/cert-chain.md) → "B3. Cross-signed" |
 | hostname mismatch | [cert-chain.md](core/crl-tls/cert-chain.md) → "B4. Hostname mismatch" |
 | expired certificate | [cert-chain.md](core/crl-tls/cert-chain.md) → "B5. Expired certificate" |
@@ -54,8 +56,9 @@ nothing matches, use the [deep-dive index](index.md) or
 | Match this | Go to |
 |---|---|
 | slow first connection (10–60 s), fast on subsequent attempts | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-0. Slow first connection" |
-| certificate revoked | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-2. Certificate revoked" |
-| CRL fetch error, network/timeout fetching a CRL | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-3. Fetch errors" |
+| "CRL validation failed: chain revoked" but nothing is revoked; `ADVISORY` still fails the connection | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-1. Revocation vs fetch" |
+| certificate revoked, "CRL validation failed: end-entity certificate revoked" | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-2. Certificate revoked" |
+| CRL fetch error, network/timeout fetching a CRL, "Failed to download CRL from", `crl_http_timeout` | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-3. Fetch errors" |
 | stale / expired cached CRL | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-4." |
 
 ## Proxy
@@ -76,7 +79,7 @@ nothing matches, use the [deep-dive index](index.md) or
 | query hangs, never returns, async poll timeout | [query-execution.md](core/query-execution.md) → "Symptom: query hangs, no response" |
 | error 612, `AsyncPollResultNotFound` | [query-execution.md](core/query-execution.md) → "Symptom: error 612" |
 | multi-statement returns wrong / missing child-result count | [query-execution.md](core/query-execution.md) → "Symptom: multi-statement returns the wrong number" |
-| intermittent 503s; retries / backoff behavior | [query-execution.md](core/query-execution.md) → "Retries & 503s" |
+| intermittent 503s; retries / backoff behavior; "max attempts (N) reached", "deadline exceeded", `HttpRetry`; `retry_timeout` | [query-execution.md](core/query-execution.md) → "Retries & 503s" |
 | `RestError` classification / taxonomy | [query-execution.md](core/query-execution.md) → "RestError taxonomy" |
 | bind-stage upload fails before the query runs | [query-execution.md](core/query-execution.md) → "Symptom: bind-stage upload fails" |
 | OOM / out-of-memory on a large result set | [query-execution.md](core/query-execution.md) → "Symptom: OOM on a large result set" |
@@ -92,7 +95,7 @@ nothing matches, use the [deep-dive index](index.md) or
 | Match this | Go to |
 |---|---|
 | PUT/GET fails; S3 / Azure / GCS upload or download error | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "S3 transfers" / "Azure transfers" / "GCS transfers" |
-| result retrieval fails after the query already succeeded; max retry on chunk download | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "Symptom: result retrieval fails after the query already succeeded" |
+| result retrieval fails after the query already succeeded | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "Symptom: result retrieval fails after the query already succeeded" |
 | stage credential expired mid-transfer | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "Credential vending" |
 | DNS resolution fails for a stage / storage endpoint | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "Network prerequisites" |
 | large parameter bindings upload | [stage-cloud-storage.md](core/stage-cloud-storage.md) → "Large parameter bindings" |
@@ -109,8 +112,8 @@ nothing matches, use the [deep-dive index](index.md) or
 
 | Match this | Go to |
 |---|---|
-| no log output; "logging is on but there's no file"; log level / path config | [logging-diagnostics.md](core/logging-diagnostics.md) → "log_path gates the core file layer" |
-| OTLP / OpenTelemetry export not sending | [logging-diagnostics.md](core/logging-diagnostics.md) → "Forward-looking / not-yet-wired" |
+| no log output; "logging is on but there's no file"; log level / path config | [logging-diagnostics.md](core/logging-diagnostics.md) → "`log_path` gates the core file layer" |
+| OTLP / OpenTelemetry export not sending, `OTEL_*` env vars ignored | [logging-diagnostics.md](core/logging-diagnostics.md) → "Forward-looking / not-yet-wired" |
 | what is redacted / safe to share externally | [logging-diagnostics.md](core/logging-diagnostics.md) → "What is never in the logs" |
 | reproduce a TLS failure with no wrapper involved | [tls-client-tool.md](core/tls-client-tool.md) |
 
@@ -120,22 +123,28 @@ nothing matches, use the [deep-dive index](index.md) or
 | Match this | Go to |
 |---|---|
 | `Couldn't load the native library (sf_core_python)`, `cannot import name 'sf_core_python'`, core extension won't import, ABI mismatch | [python.md](wrappers/python.md) → "Symptom: `OperationalError: Couldn't load the native library" |
-| `OSError: libssl.so.X: cannot open shared object file` | [python.md](wrappers/python.md) → "Symptom: OSError: libssl.so" |
-| TLS error despite `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` set (they are ignored) | [python.md](wrappers/python.md) → "Symptom: TLS/certificate errors despite" |
-| Arrow → pandas / numpy, `ArrowInvalid`, type error | [python.md](wrappers/python.md) → "Symptom: Arrow→pandas conversion" |
+| TLS error despite `REQUESTS_CA_BUNDLE` set (ignored); `SSL_CERT_FILE` / `SSL_CERT_DIR` behavior | [python.md](wrappers/python.md) → "Symptom: TLS/certificate errors despite" |
+| Arrow → pandas / numpy, `ArrowInvalid`, type error; "Optional dependency: 'pyarrow' is not installed" (errno 255002); `use_core_arrow`, "rebuild with --features native-arrow" | [python.md](wrappers/python.md) → "Symptom: Arrow→pandas conversion" |
 | `fetchall()` returns `[]` | [python.md](wrappers/python.md) → "Symptom: `fetchall()` returns" |
 | read `cursor.sfqid` / query ID, `cursor.description` column metadata, `ResultMetadata`, `describe()`, `execute_async` / `get_results_from_sfqid` | [python.md](wrappers/python.md) → "Reading result metadata and the query ID" |
-| `DatabaseError: Connection is closed` (errno 250002), `InterfaceError: Cursor is closed` (errno 252006) | [python.md](wrappers/python.md) → "Connection is closed" |
+| `DatabaseError: Connection is closed` (errno 250002), `InterfaceError: Cursor is closed` (errno 252006) | [python.md](wrappers/python.md) → "Symptom: `DatabaseError: Connection is closed`" |
+| `except ServiceUnavailableError` (or another HTTP error class) never fires | [python.md](wrappers/python.md) → "Symptom: an `except` for an HTTP error class" |
+| `ProgrammingError` errno `255001` binding a parameter | [python.md](wrappers/python.md) → "Symptom: `ProgrammingError` errno `255001`" |
+| `HTTP_PROXY` / `HTTPS_PROXY` ignored when a proxy is also passed to `connect()` | [python.md](wrappers/python.md) → "Symptom: the proxy environment variables seem ignored" |
+| `ReauthenticationRequest` | [python.md](wrappers/python.md) → "Symptom: `ReauthenticationRequest`" |
+| `ProgrammingError` errno `251017` on a workload-identity connect | [python.md](wrappers/python.md) → "Symptom: `ProgrammingError` errno `251017`" |
+| `Unknown parameter '<key>'` warning; misspelled `connect()` kwarg; "Cannot pass both a ConnectionConfig object and keyword arguments" | [python.md](wrappers/python.md) → "Symptom: `Unknown parameter '<key>'` warning" |
 
 ### JDBC
 | Match this | Go to |
 |---|---|
-| `UnsatisfiedLinkError`, JNI load, wrong architecture, shaded jar | [jdbc.md](wrappers/jdbc.md) → "Symptom: `UnsatisfiedLinkError`" |
+| `UnsatisfiedLinkError`, JNI load, wrong architecture, shaded jar; "No bundled native library found in JAR resources", "Native library not found in JAR at"; `CORE_PATH`, `-Djdbc.library.path`, `-Djdbc.libc` | [jdbc.md](wrappers/jdbc.md) → "Symptom: `UnsatisfiedLinkError`" |
 | no driver logs appear (`loggerImpl` / `TRACING` / SLF4J); note **there is no `sf.logLevel`** | [jdbc.md](wrappers/jdbc.md) → "Symptom: no driver logs appear" |
 | TLS error and the JVM truststore has no effect (rustls, not JSSE) | [jdbc.md](wrappers/jdbc.md) → "Symptom: TLS/certificate errors, and the JVM truststore has no effect" |
 | JDBC large-result memory; `CLIENT_MEMORY_LIMIT` | [jdbc.md](wrappers/jdbc.md) → "Result delivery" |
 | `InaccessibleObjectException`, "module java.base does not open java.nio", `--add-opens=java.base/java.nio` still required | [jdbc.md](wrappers/jdbc.md) → "Symptom: `InaccessibleObjectException`" |
-| JDBC proxy properties (`proxyHost` / `nonProxyHosts`), `queryTimeoutSeconds`, `allowUnderscoresInHost`, JDBC connection-property behavior | [jdbc.md](wrappers/jdbc.md) → "Connection properties: JDBC-specific behavior" |
+| JDBC proxy properties (`proxyHost` / `nonProxyHosts`), `queryTimeoutSeconds`, `allowUnderscoresInHost`, JDBC connection-property behavior; `INVALID_PROXY_PROPERTIES` (200051), "Both proxy host and port values are needed"; `workloadIdentityProvider` and other workload-identity properties | [jdbc.md](wrappers/jdbc.md) → "Connection properties: JDBC-specific behavior" |
+| `DriverManager.setLoginTimeout` has no effect; `loginTimeout` | [jdbc.md](wrappers/jdbc.md) → "Auth, session expiry, timeouts" |
 
 ### ODBC
 | Match this | Go to |
@@ -145,6 +154,8 @@ nothing matches, use the [deep-dive index](index.md) or
 | which INI holds driver settings; `sf.odbc.ini` location / not found; `SF_ODBC_INI`; minimal `odbc.ini` / DSN example | [odbc.md](wrappers/odbc.md) → "The driver's own settings file" |
 | wide-string / `SQLWCHAR` text garbled, truncated, mojibake, extra NUL bytes; `DriverManagerEncoding`; UTF-16 vs UTF-32; unixODBC vs iODBC | [odbc.md](wrappers/odbc.md) → "Symptom: wide-string calls return garbled" |
 | password with `;` in connection string; brace-quote a value; `duplicate key` / `unterminated brace` invalid connection string | [odbc.md](wrappers/odbc.md) → "Quoting connection-string values" |
+| SQLSTATE `01S00` "invalid keys are found in the connection string"; SQLSTATE `01000` `CRL_CHECK` / `CRL_ADVISORY` / `DisableOCSPCheck` / `OCSP_FAIL_OPEN` / `TRACING` deprecated | [odbc.md](wrappers/odbc.md) → "Symptom: SQLSTATE `01S00` or `01000`" |
+| ODBC proxy: `PROXY`, `NO_PROXY`, `PROXYWITHENV`, `ALLOWEMPTYPROXY` | [odbc.md](wrappers/odbc.md) → "Proxy keys" |
 | configure a DSN on Windows; `odbcad32.exe` / ODBC Data Source Administrator; password not saved in DSN | [odbc.md](wrappers/odbc.md) → "Configuring a DSN on Windows" |
 
 ### Node.js

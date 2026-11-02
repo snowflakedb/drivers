@@ -1,7 +1,7 @@
 # Python wrapper
 
 Python-specific troubleshooting for the sf_core-based `snowflake-connector-python`
-(4.x): native-module loading, the Rust HTTP stack (not `requests`), the timeout
+(5.x): native-module loading, the Rust HTTP stack (not `requests`), the timeout
 fan-out, and Arrow/pandas delivery. Part of the
 [troubleshooting deep-dive](../index.md). For auth, TLS/CRL, and query issues that
 aren't Python-specific, follow the links into the [core pages](../index.md).
@@ -23,9 +23,10 @@ sf_core  (protobuf dispatch, Rust-native HTTP + TLS)
 ```
 
 The `_core` extension is built by Hatch at wheel-build time and loaded once at
-import. The core HTTP transport is **Rust-native (`reqwest` + rustls)** — the
-connector does **not** use the Python `requests` library. That single fact
-explains several of the symptoms below.
+import. Wheels are built per CPython version (3.11–3.14). The core HTTP transport
+is **Rust-native (`reqwest` + rustls, crypto from `aws-lc-rs`)** — the connector
+does **not** use the Python `requests` library and links no OpenSSL. That single
+fact explains several of the symptoms below.
 
 ---
 
@@ -70,22 +71,18 @@ Either way the fix is the same.
 
 ---
 
-## Symptom: `OSError: libssl.so.X: cannot open shared object file`
-
-Only occurs with **custom source builds**; manylinux wheels statically link their
-crypto provider. Point the loader at your OpenSSL:
-
-```sh
-export LD_LIBRARY_PATH=/opt/custom/openssl/lib:$LD_LIBRARY_PATH   # macOS: DYLD_LIBRARY_PATH
-```
-
----
-
-## Symptom: TLS/certificate errors despite `REQUESTS_CA_BUNDLE` (or `SSL_CERT_FILE`) being set
+## Symptom: TLS/certificate errors despite `REQUESTS_CA_BUNDLE` being set
 
 `REQUESTS_CA_BUNDLE` is a `requests`-library variable. Because the core transport
 is Rust-native and **does not use `requests`**, this variable has **no effect** on
 connection or TLS behavior.
+
+`SSL_CERT_FILE` / `SSL_CERT_DIR` **are** honored, on the default (no
+`custom_root_store_path`) path: when either is set, its certificates replace the OS
+trust store as the source of OS roots. With CRL checking disabled the bundled
+Mozilla roots are still added; with `crl_check_mode` (legacy kwarg
+`cert_revocation_check_mode`) `ENABLED` or `ADVISORY`, only the env-var roots are
+trusted.
 
 **Resolution:** point sf_core at your CA bundle with `custom_root_store_path`:
 
@@ -96,9 +93,10 @@ con = snowflake.connector.connect(
 )
 ```
 
-> `custom_root_store_path` **replaces** the system root store for that connection —
-> it is not additive (there is no `use_system_roots` toggle). If you need to trust
-> both the public web PKI and a private CA, put **both** into the one bundle. See
+> `custom_root_store_path` **replaces** the whole root store for that connection —
+> it is not additive, and `extra_root_store_path` is not available in Python. If you
+> need to trust both the public web PKI and a private CA, put **both** into the one
+> bundle. See
 > [cert-chain.md §B2](../core/crl-tls/cert-chain.md#b2-custom-trust-store-empty-or-malformed).
 
 ---
@@ -106,8 +104,8 @@ con = snowflake.connector.connect(
 ## Symptom: a call hangs, or times out sooner/later than expected
 
 Python exposes several **distinct** timeouts that fan out onto different phases —
-there is no single master timeout. All the "wall-clock" ones include retry time
-(`0` = no timeout):
+there is no single master timeout. The first three are wall-clock budgets that
+include retry time (`0` = no timeout):
 
 | `connect()` kwarg | Default | Bounds |
 |---|---|---|
@@ -116,11 +114,23 @@ there is no single master timeout. All the "wall-clock" ones include retry time
 | `request_timeout` | 120 s | All other operations (session close, heartbeat, …), including retries |
 | `authentication_timeout` | 120 s | The interactive auth step (e.g. external-browser wait) |
 | `connect_timeout` | 60 s | Connect phase only: name lookup, TCP, and TLS (per HTTP connection) |
-| `retry_timeout` | 300 s | Per HTTP attempt, wall-clock from start to body finish (0 = no timeout) |
+| `retry_timeout` | 300 s | A **single** HTTP attempt inside the retry loop, wall-clock from start to body finish (0 = no timeout) — not the overall budget (see [query-execution.md](../core/query-execution.md#retries--503s)) |
 
 So a query that "ignores" a short `login_timeout` is working as designed — set
 `query_timeout` for query duration. A hang during external-browser login is bounded
 by `authentication_timeout`, not `login_timeout`.
+
+Legacy kwargs fan out onto these (each emits a `DeprecationWarning`, and an
+explicitly set target wins):
+
+| Legacy kwarg | Sets |
+|---|---|
+| `network_timeout` | `query_timeout` **and** `request_timeout` |
+| `socket_timeout` | `connect_timeout` **and** `retry_timeout` |
+| `external_browser_timeout` | `authentication_timeout` |
+
+A `network_timeout` carried over from older code therefore also caps query
+duration.
 
 ---
 
@@ -141,9 +151,24 @@ pandas objects:
 - `[pyarrow]` → `cur.fetch_arrow_all()` / `cur.fetch_arrow_batches()`
 - `[pandas]` → `cur.fetch_pandas_all()` / `cur.fetch_pandas_batches()` (also pulls in `pyarrow`)
 
+Calling one of those without the extra raises `ProgrammingError` (errno `255002`):
+`Optional dependency: 'pyarrow' is not installed, …` (or `'pandas'`). Install the
+extra:
+
 ```sh
 pip install "snowflake-connector-python[pyarrow]"   # or [pandas]
 ```
+
+### `use_core_arrow=True`
+
+`use_core_arrow` opts into conversion in the Rust core instead of the compiled
+Cython iterator. It takes effect only on a build with the core's `native-arrow`
+feature; on any other build the Cython path is used without a message. An
+`InternalError` reading `sf_core_python.ArrowStreamIterator is unavailable; rebuild
+with --features native-arrow / SF_NATIVE_ARROW=1` (or the `ArrowStreamTableIterator`
+/ `AsyncArrowStreamIterator` variant) means the build reports `native-arrow` but
+lacks that class — reinstall from a released wheel or rebuild, or drop
+`use_core_arrow`.
 
 ---
 
@@ -160,6 +185,9 @@ Rare edge cases, only once the above is ruled out:
 - Mixing fetch APIs on one result — the row path (`fetchall`) and the Arrow path
   (`fetch_arrow_all`) consume the same underlying stream, so draining one leaves
   nothing for the other.
+
+Calling `fetchone()` / `fetchmany()` / `fetchall()` (or iterating) before any
+`execute()` does not return `[]` — it raises `ProgrammingError`.
 
 ---
 
@@ -194,12 +222,14 @@ different cursor or process — by its ID:
 ```python
 qid = cur.execute_async("call long_running_proc()")["queryId"]
 # ... later, possibly on a fresh connection ...
-cur.get_results_from_sfqid(qid)   # blocks until the query finishes, then wires up
-rows = cur.fetchall()             # description / rowcount / sfqid now populated
+cur.get_results_from_sfqid(qid)   # raises now if the query already failed
+rows = cur.fetchall()             # waits for completion; description / rowcount now populated
 ```
 
-`get_results_from_sfqid` waits for completion, then attaches the cursor to the
-result set — the submit-and-poll shape from
+`get_results_from_sfqid` checks the query status (raising `ProgrammingError` if
+the query has already failed), then attaches the cursor to the result lazily: the
+wait for completion happens on the **first fetch**, and `description` / `rowcount`
+are not populated before it. This is the submit-and-poll shape from
 [query-execution.md → Execution paths](../core/query-execution.md#execution-paths),
 exposed as an explicit API. For a **non-blocking** status check, call
 `connection.get_query_status(qid)` (returns a `QueryStatus`, importable from
@@ -228,17 +258,65 @@ connection is. For any of these, open a new connection.
 
 ---
 
+## Symptom: an `except` for an HTTP error class (`ServiceUnavailableError`, …) never fires
+
+HTTP status handling and retries run inside the Rust core, so the HTTP-specific
+classes in `snowflake.connector.errors` — `HttpError`, `ServiceUnavailableError`,
+`GatewayTimeoutError`, `BadGatewayError`, `ForbiddenError`, `TooManyRequests`,
+`RequestTimeoutError`, `RevocationCheckError`, `TokenExpiredError`,
+`PresignedUrlExpiredError`, and the rest of that group — stay importable (with a
+warning on first use) but are **never raised**. An error that reaches Python is
+already one of the PEP 249 classes: exhausted retries, timeouts, and transport
+failures arrive as `OperationalError`. Catch that (or `DatabaseError`) instead.
+
+---
+
+## Symptom: `ProgrammingError` errno `255001` when binding a parameter
+
+`Binding data in type (<type>) is not supported.` — the bound Python value has no
+Snowflake mapping. Convert it to `str`, `int`, `float`, `bool`, `bytes`, or a
+`date` / `datetime` / `time` / `timedelta` before passing it.
+
+---
+
+## Symptom: the proxy environment variables seem ignored
+
+Python defaults `use_proxy_env=True`, so `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`
+are honored — **unless** an explicit proxy is set. An explicit `proxy_host` /
+`proxy_port` or `proxy` URL always wins over the environment. See
+[proxy-tls.md](../core/crl-tls/proxy-tls.md).
+
+---
+
 ## Auth, JWT, and session expiry
 
 These are **not** Python-specific — the behavior lives in the core:
 
 - Key-pair (JWT), PAT, OAuth, MFA, external-browser/Okta → [authentication.md](../core/authentication.md).
   Note the Python kwargs are `private_key_file` / `private_key` and
-  `private_key_password` (the passphrase for an encrypted PEM — **not**
-  `private_key_passphrase`).
+  `private_key_password` (the passphrase for an encrypted PEM).
+  `private_key_passphrase` and `private_key_file_pwd` are accepted as deprecated
+  aliases and emit a `DeprecationWarning`.
 - `390114` "session token has expired" is auto-recovered by the core; a persistent
   390114 means the **master** token expired — reconnect. See
   [authentication.md § Session expiry & renewal](../core/authentication.md#session-expiry--renewal).
+
+### Symptom: `ReauthenticationRequest`
+
+Raised when the core reports that the session can never be renewed (the master
+token is expired or invalid) — including mid-session on an external-browser
+connection, where the driver does **not** reopen the browser. Open a new
+connection. It currently subclasses `ProgrammingError`; catch
+`ReauthenticationRequest` itself (or `DatabaseError`) rather than relying on the
+base class.
+
+### Symptom: `ProgrammingError` errno `251017` on a workload-identity connect
+
+errno `251017` (`ER_INVALID_WIF_SETTINGS`) marks a workload-identity configuration
+error: an unknown `workload_identity_provider` (`Unknown workload_identity_provider:
+'<value>'. Expected one of: …`) or a conflicting combination of WIF parameters
+rejected by the core. The message names the offending parameter; the rules are in
+[authentication.md](../core/authentication.md).
 
 ---
 
@@ -249,9 +327,9 @@ import snowflake.connector
 from snowflake.connector import ConnectionConfig
 
 # Preferred: a typed ConnectionConfig. Because the fields are declared, your IDE
-# autocompletes them and a type checker catches a misspelled parameter — the
-# kwargs form below would silently ignore it. (connection_config.py is
-# auto-generated from the core parameter registry.)
+# autocompletes them and a type checker catches a misspelled parameter before
+# runtime. (connection_config.py is auto-generated from the core parameter
+# registry.)
 con = snowflake.connector.connect(config=ConnectionConfig(
     account="myaccount", user="me", password="...",
     warehouse="wh", database="db", schema="sc",
@@ -266,7 +344,16 @@ con = snowflake.connector.connect(connection_name="default")
 ```
 
 > Pass **either** `config=` **or** keyword arguments, not both — combining them
-> raises `ProgrammingError`.
+> raises `ProgrammingError`: `Cannot pass both a ConnectionConfig object and
+> keyword arguments. Use one or the other.`
+
+### Symptom: `Unknown parameter '<key>'` warning
+
+A kwarg that is not a registered parameter (usually a typo, or a parameter of
+another wrapper) is not applied. The core reports it and the connector surfaces it
+through `warnings.warn` as `Unknown parameter '<key>'`; the connection still
+opens. Fix the spelling, or switch to `ConnectionConfig` to catch it before
+runtime.
 
 ---
 

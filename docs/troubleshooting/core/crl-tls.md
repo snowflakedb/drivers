@@ -8,7 +8,8 @@ error** row routes here.
 > **Revocation is CRL-only.** The core validates certificate revocation with
 > **CRLs**; it performs **no OCSP revocation validation** (a deliberate
 > divergence from the older drivers' versions). Don't look for OCSP settings — there are
-> none.
+> none. The ODBC keys `DisableOCSPCheck`, `ocsp_fail_open`, `CRL_CHECK`, and
+> `CRL_ADVISORY` are accepted for compatibility but ignored.
 
 | Topic | Page |
 |---|---|

@@ -23,18 +23,23 @@ Part of the [troubleshooting deep-dive](../index.md).
 ## `log_path` gates the core file layer (TOML / ODBC)
 
 The core file-logging layer emits nothing unless a log directory is configured.
-`build_core_layer()` (`sf_core/src/logging/log_manager.rs`) returns an **empty,
-event-discarding layer** when `log_path` is unset **or** logging is disabled —
-regardless of the configured level. So on the TOML/ODBC path, a missing
-`LogPath`/`path` means **silent no output**, not "default output somewhere".
+In `sf_core/src/logging/log_manager.rs`, `build_core_appender` creates no writer
+and `core_level_filter` returns `OFF` when `log_path` is unset **or** logging is
+disabled — regardless of the configured level. So on the TOML/ODBC path, a
+missing `LogPath`/`path` means **silent no output**, not "default output
+somewhere".
 
 This applies to the **file** layer only. Python and JDBC do not use it — they
-bridge core events into the host logging framework (Python `logging`, JDBC
-SLF4J), so their verbosity is controlled there (Runbook §1.1 / §1.3), and the
-`log_path` rule does not apply to them.
+bridge core events into the host logging framework (Python `logging`; JDBC
+`java.util.logging` by default, or SLF4J), so their verbosity is controlled there
+([Runbook §3.1](../../troubleshooting-runbook.md#31-python) /
+[§3.3](../../troubleshooting-runbook.md#33-jdbc)), and the `log_path` rule does
+not apply to them.
 
 **If you get no logs:** confirm `LogPath`/`path` is set to an existing, writable
-directory before anything else (Runbook §1.2 for the ODBC INI keys).
+directory before anything else (ODBC INI keys:
+[Runbook §3.2](../../troubleshooting-runbook.md#32-odbc); file discovery:
+[§4.2](../../troubleshooting-runbook.md#42-sfodbcini-odbc-only)).
 
 ---
 
@@ -49,6 +54,9 @@ grep 'sf_core::tls'  sf_driver.log    # handshake, chain, hostname
 grep 'sf_core::rest' sf_driver.log    # login / query HTTP calls
 grep -E ' (ERROR|WARN) ' sf_driver.log   # quick health scan
 ```
+
+The same targets appear in a troubleshooting capture
+(`sf_driver_troubleshooting.log`).
 
 The CRL/TLS pages lean on `sf_core::crl` in particular — see
 [crl-revocation.md](crl-tls/crl-revocation.md).
@@ -72,12 +80,14 @@ investigation, then pivot to the server side with it.
 ## What is never in the logs
 
 - **Credentials** — password, token, private key, and proxy password are wrapped
-  in `SensitiveString` (`sf_core/src/sensitive/`) and render as `[REDACTED]` at
+  in `SensitiveString` (`sf_core/src/sensitive.rs`) and render as `****` at
   **every** level, including TRACE. Read them from config directly; they will
-  never appear in a log (Runbook §1.4).
+  never appear in a log
+  ([Runbook §1.4](../../troubleshooting-runbook.md#14-secret-redaction)).
 - **SQL text** — off unless `log_query_text=true`. Opt-in and security-sensitive;
-  enabling it writes full SQL to the query log lines. Don't enable in production
-  unless the log file is access-controlled.
+  enabling it writes the SQL, truncated to `log_max_query_length` characters
+  (default `80`), to the query log lines. Don't enable in production unless the
+  log file is access-controlled.
 - **Bind parameter values** — off unless `log_query_parameters=true` (which
   itself requires `log_query_text`). Same caution.
 
@@ -96,10 +106,9 @@ URL, Snowflake error codes/messages, and file paths (including
 - **`LogMaxSize` / `max_size`** — accepted for forward-compatibility but **not
   enforced**; the driver prints a one-line stderr warning at init and ignores it.
   Use `LogRotation` + `LogMaxCount` for pruning.
-- **OpenTelemetry** — **not supported yet.** The TOML key (`opentelemetry = true`)
-  and the standard `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_SERVICE_NAME` env vars are
-  recognized for forward-compatibility, but tracing is not active and nothing is
-  exported yet.
+- **OpenTelemetry** — **not supported.** The only switch is the TOML key
+  `opentelemetry = true` in the inactive `[log]` section; no `OTEL_*` environment
+  variable is read, and nothing is exported.
 
 ---
 

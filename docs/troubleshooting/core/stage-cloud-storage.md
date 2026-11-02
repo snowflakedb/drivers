@@ -111,8 +111,9 @@ struct (`sf_core/src/file_manager/types.rs`):
 | Azure | SAS token |
 | GCS | Bearer token or presigned URL |
 
-Each provider has a refresher implementing the `StageInfoRefresher` trait. When
-cloud storage rejects vended credentials as expired (403/401), the driver
+A single `SnowflakeStageInfoRefresher` (`sf_core/src/apis/database_driver_v1/query.rs`)
+implements the `StageInfoRefresher` trait for every provider. When cloud storage
+rejects vended credentials as expired (403/401), the driver
 **re-issues the original PUT/GET SQL** to obtain fresh credentials and retries.
 Successful refreshes are cached for **~10 minutes** so concurrent transfers
 coalesce onto one refresh instead of hammering the server.
@@ -170,11 +171,11 @@ v1.x + `aws-sdk-sts`).
   exclude the S3 endpoint hostname (see
   [Proxy & the transfer clients](#proxy--the-transfer-clients)).
 
-**Checksum mismatch on download:**
-- Enable DEBUG logging to see per-chunk ETags; a single corrupt chunk invalidates
-  the result set.
-- Re-run the query — chunk downloads are not retried automatically on checksum
-  failure.
+**Digest mismatch on download:**
+- Client-side-encrypted objects are verified after decryption against the SHA-256
+  `sfc-digest` stored in the object metadata. A mismatch fails that file's GET.
+- Re-run the GET; a persistent mismatch means the object itself differs from what
+  was uploaded.
 
 ---
 
@@ -188,8 +189,9 @@ Upload & download: `sf_core/src/file_manager/azure_transfer.rs`.
   is invalidated.
 
 **Slow uploads to Azure:**
-- Azure Blob has block-size limits. Large files are split into blocks; check
-  whether the block-size configuration matches the storage-account tier.
+- Large files are uploaded as multiple blocks in parallel. The multipart
+  threshold and parallelism come from the server, not from a connection setting;
+  look at network throughput and proxy limits instead.
 
 ---
 
@@ -198,9 +200,13 @@ Upload & download: `sf_core/src/file_manager/azure_transfer.rs`.
 Upload & download: `sf_core/src/file_manager/gcs_transfer.rs`.
 
 **401 on presigned URL:**
+- With a bearer token, a 401 triggers one credential refresh and a retry. A second
+  consecutive 401 with the same token fails with `TokenExpired`.
+- With a presigned URL, a 400 triggers one URL re-fetch and a retry. A second
+  consecutive 400 fails with `PresignedUrlExpired`.
 - Presigned GCS URLs expire quickly (typically 1 hour). If the query took a long
-  time to return, the presigned URLs in the response may already be expired.
-- Resolution: re-run the query immediately; the new response carries fresh URLs.
+  time to return, the presigned URLs in the response may already be expired;
+  re-run the query immediately so the new response carries fresh URLs.
 
 ---
 
@@ -230,8 +236,7 @@ are shared with the result-fetch machinery documented in
 
 ### Symptom: result retrieval fails after the query already succeeded
 
-**Error patterns:** `Max retry reached for the download of chunk#N`,
-`connection refused` / `connection reset` on chunk fetch, or fetch succeeding for
+**Error patterns:** `connection refused` / `connection reset` on chunk fetch, or fetch succeeding for
 small results but failing for large ones.
 
 This profile — the query executes and returns a response, but result retrieval

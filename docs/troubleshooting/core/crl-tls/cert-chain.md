@@ -19,9 +19,10 @@ Common causes:
 - Server is not sending its intermediate certificates (server misconfiguration).
 - A custom trust store (`custom_root_store_path`) that does not contain the
   signing CA.
-- The system root store failed to load (minimal container images without
-  `ca-certificates`). OS trust changes after the first connection apply on
-  process restart.
+- With CRL checking on (`ENABLED` / `ADVISORY`), the OS root store failed to load
+  (minimal container images without `ca-certificates`). With CRL off, the driver
+  falls back to its bundled Mozilla roots instead. OS trust changes after the
+  first connection apply on process restart.
 
 **Diagnosis:**
 ```sh
@@ -43,9 +44,13 @@ previously-working connection starts failing with B1. The loader
 (`sf_core/src/tls/client.rs`) rejects a file that parses to zero certificates, or
 a DER it cannot add. Include **only CA certificates** — no end-entity certs, no
 private keys. To keep trusting the public web PKI *and* add a private CA, build a
-single bundle containing both, or set `extra_root_store_path` to the private CA
-bundle. When both settings are present, `custom_root_store_path` takes
-precedence.
+single bundle containing both. `extra_root_store_path` (additive) is not available
+in Python, JDBC, or ODBC.
+
+On the default (non-custom) path, `SSL_CERT_FILE` / `SSL_CERT_DIR` are honored
+when the OS store is loaded, and they **replace** it: when either is set, OS roots
+come only from those locations. With CRL disabled the bundled Mozilla roots are
+still added; with CRL enabled or advisory only the env-var roots are trusted.
 
 ### B3. Cross-signed intermediate chains
 
@@ -79,7 +84,7 @@ skew causes false expiry.
 | `verify_certificates` | bool | `true` | `false` disables **all** cert + hostname validation (debug only) |
 | `verify_hostname` | bool | `true` | `false` disables the hostname check only |
 | `custom_root_store_path` | path | — | PEM bundle used **instead of** the system roots |
-| `extra_root_store_path` | path | — | PEM bundle added to the system roots |
+| `tls_skip_verify` | bool | `false` | `true` disables cert, hostname, and CRL checks (debug only) |
 
 Source: `sf_core/src/tls/config.rs`, `sf_core/src/config/connection_config.rs`.
 Full reference: [crl-tls-settings.md](crl-tls-settings.md).

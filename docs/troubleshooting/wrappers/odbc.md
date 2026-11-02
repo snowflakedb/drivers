@@ -70,9 +70,7 @@ exists (`odbc/src/api/ini_paths.rs`):
 4. **macOS only:** the `.pkg` installer default — the driver looks here via the
    `MACOS_INSTALLER_INI` constant (`odbc/src/api/ini_paths.rs`), which resolves to
    `sf.odbc.ini` under the installer's `INSTALL_DIR` (`odbc/installer/mac/package.sh`).
-   Both must agree; currently `/opt/snowflake/snowflakeodbcud/sf.odbc.ini` (verify
-   against those symbols rather than trusting this literal — it can move between
-   releases).
+   Both must agree: `/opt/snowflake/snowflakeodbc/sf.odbc.ini`.
 
 The shipped macOS default is a single line, and a minimal file rarely needs more:
 
@@ -86,7 +84,7 @@ to `UTF-16` (what the other DMs use). A wrong value garbles wide-string calls �
 below.
 
 Driver logging keys (log path, level, rotation) also live here — see
-[Runbook §1.2 ODBC](../../troubleshooting-runbook.md#12-odbc) for the exact keys.
+[Runbook §3.2 ODBC](../../troubleshooting-runbook.md#32-odbc) for the exact keys.
 
 For contrast, the **Driver-Manager** files that `sf.odbc.ini` sits alongside — a
 minimal registration plus one DSN — look like:
@@ -111,7 +109,7 @@ DSN keys are matched case-insensitively; use the exact spellings shown (see
 The example above has no `PWD` line, but a `PWD` **is** honored if you add one: at
 connect time the driver reads every key from the DSN section (`read_dsn_config` /
 `merge_dsn_config` in `odbc/src/api/connection.rs`), stripping only `Driver`,
-`Description`, and `DSN`. **Precedence:** a password supplied at connect time — in
+`Description`, `DSN`, and `TRACING`. **Precedence:** a password supplied at connect time — in
 the connection string, or as the `PWD` argument to `SQLConnect` — overrides one
 stored in the DSN. Snowflake's Windows setup dialog never writes a password for you
 (see [Configuring a DSN on Windows](#configuring-a-dsn-on-windows)), and keeping a
@@ -158,8 +156,19 @@ JDBC bridge into their host frameworks instead). Two independent layers matter:
 
 ### Driver logging (the driver's own events)
 
-Enabled through the ODBC INI keys — see
-[Runbook §1.2 ODBC](../../troubleshooting-runbook.md#12-odbc) for the exact keys.
+Enabled through the `sf.odbc.ini` keys — see
+[Runbook §3.2 ODBC](../../troubleshooting-runbook.md#32-odbc) for the exact keys.
+Only `sf.odbc.ini` and the troubleshooting environment variables configure driver
+logging; `LogLevel` / `LogPath` / `TRACING` in a DSN or connection string are not
+consulted.
+
+The configuration is re-resolved on **every** connect (`SQLConnect` /
+`SQLDriverConnect` / `SQLBrowseConnect`, `odbc/src/api/log_reload.rs`): editing
+`sf.odbc.ini`, or setting the troubleshooting variables, takes effect on the next
+connect without restarting the application. Each applied configuration logs `ODBC
+logging configuration applied (DSN LogLevel/LogPath/TRACING are not consulted)`
+with the INI file that was used — check that line first when a setting "doesn't
+take". `DriverManagerEncoding` is the exception: it is negotiated once per process.
 
 > **The log path gates everything.** If the log directory is unset, the core file
 > layer discards every event **silently** — not "logs to a default location." A
@@ -199,8 +208,10 @@ loop `SQLGetDiagRec` over record numbers until it returns `SQL_NO_DATA`.
 
 Same rustls-based core stack as every other wrapper (not a system ODBC TLS layer).
 Supply a trust anchor with the `custom_root_store_path` connection setting, which
-**replaces** the system root store (not additive; there is no `use_system_roots`
-toggle) — put both public and private CAs into one PEM bundle if you need both. See
+**replaces** the whole root store (not additive; `extra_root_store_path` is not
+available in ODBC) — put both public and private CAs into one PEM bundle if you need
+both. The `SSL_CERT_FILE` / `SSL_CERT_DIR` environment variables of the application
+process are honored on the default path as the source of OS roots. See
 [cert-chain.md §B2](../core/crl-tls/cert-chain.md#b2-custom-trust-store-empty-or-malformed).
 To reproduce a TLS failure without the DM/driver at all, use
 [tls-client-tool.md](../core/tls-client-tool.md).
@@ -215,7 +226,37 @@ core parameter registry and resolve to their canonical names
 uppercases the key you supply and looks it up, rather than applying a mechanical
 `SCREAMING_SNAKE` transform, so use the exact spellings shown here and in the
 examples above. Standard ODBC keys `UID` / `PWD` / `SERVER` / `DSN` are recognized
-directly. The login flows
+directly.
+
+### Symptom: SQLSTATE `01S00` or `01000` warning on connect
+
+- **`01S00`** — `<N> invalid keys are found in the connection string: <keys>`. The
+  listed keywords are not registered parameters (usually a typo or a key from
+  another driver) and are **not** sent to the server; the connection proceeds
+  without them. Fix the spelling.
+- **`01000`** for `CRL_CHECK` / `CRL_ADVISORY` / `DisableOCSPCheck` /
+  `OCSP_FAIL_OPEN` — `Parameter 'CRL_CHECK' is deprecated and has no effect. …`.
+  These ODBC 3.x keys are accepted and ignored; certificate revocation uses CRL,
+  so set `CRL_MODE` instead (`CRL_MODE=DISABLED` replaces `DisableOCSPCheck`; see
+  [crl-revocation.md](../core/crl-tls/crl-revocation.md)).
+- **`01000`** for `TRACING` — see
+  [Configuring a DSN on Windows](#configuring-a-dsn-on-windows).
+
+Both are `SQL_SUCCESS_WITH_INFO` — read them with `SQLGetDiagRec`
+([below](#symptom-a-call-fails-but-you-only-see-the-return-code-sql_error)).
+
+### Proxy keys
+
+| Key | Behavior |
+|---|---|
+| `PROXY` | Proxy URL, `[scheme://][user:pass@]host[:port]`. Sensitive: the password part is masked in logs (user, host, and port stay visible), and the Windows dialog never saves the value. |
+| `NO_PROXY` | Hosts that bypass the proxy. |
+| `PROXYWITHENV` | `true` honors `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` when no explicit proxy is set. Default **false** — the environment is ignored unless you set this. |
+| `ALLOWEMPTYPROXY` | Default true: an empty `PROXY=` explicitly disables the proxy, overriding the environment. |
+
+See [proxy-tls.md](../core/crl-tls/proxy-tls.md).
+
+The login flows
 (key-pair, PAT, OAuth, MFA, external-browser/Okta) are core behavior —
 [authentication.md](../core/authentication.md). A persistent `390114` after a
 working connect means the master token expired (reconnect); see
@@ -252,12 +293,12 @@ brace-quote there.
 On Windows the driver is configured through the **ODBC Data Source Administrator**
 (`odbcad32.exe`), which stores DSNs in the registry rather than in `odbc.ini`
 files. Add a *User* or *System* DSN under the Snowflake driver; the setup dialog
-persists the same connection keys used everywhere else — `SERVER`, `UID`,
-`DATABASE`, `SCHEMA`, `WAREHOUSE`, `ROLE`, `AUTHENTICATOR`, `PROXY`, `NO_PROXY`,
-`PRIV_KEY_FILE`, and the OAuth client fields (`odbc/src/setup_dialog.rs`).
+persists the non-secret connection keys used everywhere else — `SERVER`, `UID`,
+`DATABASE`, `SCHEMA`, `WAREHOUSE`, `ROLE`, `AUTHENTICATOR`, `NO_PROXY`,
+`PRIV_KEY_FILE`, and the non-secret OAuth client fields (`odbc/src/setup_dialog.rs`).
 Driver logging is configured through `sf.odbc.ini` (`LogLevel`, `LogPath`, …) or
 the troubleshooting env vars — see
-[Runbook §1.2](../../troubleshooting-runbook.md#12-odbc). Legacy ODBC 3.x
+[Runbook §3.2](../../troubleshooting-runbook.md#32-odbc). Legacy ODBC 3.x
 `TRACING` (0–6) in a DSN or connection string is ignored, and connect posts a
 SQLSTATE `01000` warning that names `LogLevel` in `sf.odbc.ini`. The setup dialog
 neither shows nor removes a stored `TRACING` value. To clear the warning, delete
@@ -266,16 +307,18 @@ the `TRACING` value from the DSN's registry key —
 `HKEY_LOCAL_MACHINE\SOFTWARE\ODBC\ODBC.INI\<DSN>` for a System DSN — or, on
 Linux and macOS, the `TRACING` line from the DSN's `odbc.ini` section.
 
-Two things are deliberately **not** written to the stored DSN
-(`odbc/src/setup_common.rs`):
+**`PWD` and every sensitive key** are deliberately **not** written to the stored DSN
+(`odbc/src/setup_common.rs`, `should_persist_to_dsn` in `odbc/src/api/oauth.rs`):
 
 - **`PWD`** — the setup dialog never writes the password to the DSN; supply it at
   connect time (in the connection string, or when the DM prompts). A DSN written by
   the dialog that "forgets" the password is behaving as designed. (A `PWD` you add to
   a DSN by hand *is* still read at connect time — see the
   [`sf.odbc.ini` / DSN note above](#the-drivers-own-settings-file-sfodbcini).)
-- **OAuth secrets** (`OAUTH_CLIENT_SECRET`, `TOKEN`) — read from the dialog only for
-  the in-memory **Test** connection, never saved to the registry.
+- **Other secrets** — `PROXY` (it can carry proxy credentials), `PRIV_KEY_FILE_PWD`,
+  `OAUTH_CLIENT_SECRET`, `TOKEN`, and any other parameter the registry marks
+  sensitive. Values typed into the dialog are used only for the in-memory **Test**
+  connection and are never saved to the registry; supply them at connect time.
 
 ---
 
@@ -298,4 +341,5 @@ Related: [authentication.md](../core/authentication.md) ·
 [tls-client-tool.md](../core/tls-client-tool.md) · up to the
 [deep-dive index](../index.md) ·
 [Runbook §1.2](../../troubleshooting-runbook.md#12-odbc) /
-[§2.2](../../troubleshooting-runbook.md#22-odbc)
+[§2.2](../../troubleshooting-runbook.md#22-odbc) /
+[§3.2](../../troubleshooting-runbook.md#32-odbc)

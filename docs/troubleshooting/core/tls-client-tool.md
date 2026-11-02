@@ -16,15 +16,16 @@ the [CRL/TLS pages](crl-tls.md).
 
 ```sh
 # Debug build (faster to compile; fine for one-off diagnosis)
-cargo build --package sf_core --bin tls_client
+cargo build --package sf_core --features cli --bin tls_client
 ./target/debug/tls_client <URL>
 
 # Release build (faster to run; use for timing measurements)
-cargo build --release --package sf_core --bin tls_client
+cargo build --release --package sf_core --features cli --bin tls_client
 ./target/release/tls_client <URL>
 ```
 
-Run from the workspace root (the directory with the top-level `Cargo.toml`).
+Run from the workspace root (the directory with the top-level `Cargo.toml`). The
+binary requires the `cli` feature; without `--features cli` cargo does not build it.
 
 ---
 
@@ -33,8 +34,8 @@ Run from the workspace root (the directory with the top-level `Cargo.toml`).
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `<URL>` | | *required* | Target URL (positional) |
-| `--cert-store <FILE>` | `-s` | system roots | PEM bundle to use as trust anchor **instead of** system roots |
-| `--no-verify-certs` | | false | Disable certificate-chain validation (INSECURE) |
+| `--cert-store <FILE>` | `-s` | default roots | PEM bundle to use as trust anchor **instead of** the default roots |
+| `--no-verify-certs` | | false | Disable certificate-chain validation (INSECURE; unavailable in FIPS builds) |
 | `--no-verify-hostname` | | false | Disable the hostname check only (INSECURE) |
 | `--insecure` | `-k` | false | Disable all TLS verification (sets both flags above) |
 | `--crl-mode <MODE>` | | `disabled` | CRL revocation check: `disabled` / `enabled` / `advisory` |
@@ -51,7 +52,22 @@ Run from the workspace root (the directory with the top-level `Cargo.toml`).
 
 **Timeout note:** the total request deadline is `http-timeout + connect-timeout`.
 The two values are **summed** into a single reqwest timeout, not applied as
-independent limits.
+independent limits. The driver's own CRL download timeout (`crl_http_timeout`)
+defaults to 10 s, not 30.
+
+**Default roots:** without `--cert-store`, the trust set is the OS root store plus
+the bundled Mozilla roots; with `--crl-mode enabled` or `advisory`, the OS root
+store only — the same rules as the driver.
+
+**Proxy:** `tls_client` has no proxy flags and picks up `HTTP_PROXY` /
+`HTTPS_PROXY` / `NO_PROXY` from the environment automatically. The driver uses
+env proxies only with `use_proxy_env=true`, so unset them to reproduce a driver
+that connects directly.
+
+**Headers in the log:** from `-v` up, `tls_client` logs every `-H` request header
+and every response header with its value. Before sharing `-v` / `-vv` output,
+remove any `Authorization` header (and `Set-Cookie` / `Cookie` values), or leave
+those headers off the command line.
 
 ---
 
@@ -86,14 +102,13 @@ echo $?   # 0 = success (2xx), 1 = any failure
 ## Result JSON schema
 
 Written to `--result-file` when specified. The process also exits non-zero on any
-failure, so shell scripts can rely on `$?` without parsing JSON.
+failure, so shell scripts can rely on `$?` without parsing JSON. Absent fields are
+omitted, not written as `null`.
 
 ```json
 {
   "success": true,
-  "status_code": 200,
-  "error": null,
-  "error_type": null
+  "status_code": 200
 }
 ```
 

@@ -44,6 +44,15 @@ driver parameter. When it is on, the hostnames returned by
 traffic must reach those PrivateLink hostnames rather than the public
 cloud-storage ones. See [stage-cloud-storage.md](stage-cloud-storage.md).
 
+The storage host is chosen from the stage info the server returns with each PUT/GET
+or result set (`sf_core/src/file_manager/types.rs`): an explicit `endPoint` always
+wins; otherwise `useS3RegionalUrl` (or `useRegionalUrl`) selects the regional S3
+endpoint `s3.<region>.amazonaws.com`, and `useVirtualUrl` selects virtual-hosted
+GCS URLs. The `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session parameter also
+turns on the regional S3 endpoint for bind-stage uploads. If PUT/GET reaches the
+wrong host, compare the logged stage host with the `SYSTEM$ALLOWLIST_PRIVATELINK()`
+entries.
+
 ### Getting the hostnames to allowlist
 
 ```sql

@@ -21,22 +21,22 @@ network:
 | **Main REST** (login, queries) | yes | only when `use_proxy_env=true` |
 | **Cloud-storage transfers** (PUT/GET to S3/Azure/GCS) | yes — uses the connection's proxy config and its env policy | follows the same `use_proxy_env` policy |
 | **CRL fetch** (`sf_core/src/crl/cache.rs`) | **no** — built with timeouts only | **yes, always auto-detected** |
-| **Cloud metadata / IMDS** (workload-identity attestation) | **no** | **yes, always auto-detected** |
+| **Workload-identity attestation** (Azure/GCP metadata and token exchange, AWS STS) | yes — uses the connection's main client / proxy config | follows the same `use_proxy_env` policy |
+| **AWS IMDS region probe**, **platform-detection probes** | **no** | **yes, always auto-detected** |
 
 The two consequences that surprise people:
 
-1. An explicit `proxy_host`/`proxy_port` is **not** applied to CRL fetches or to
-   the cloud-metadata calls used by workload-identity auth. If those endpoints
-   are only reachable via the proxy, the explicit-proxy config alone won't route
-   them.
-2. `HTTP_PROXY`/`HTTPS_PROXY` env vars are honored by the CRL-fetch and
-   IMDS clients **even when `use_proxy_env=false`**, because those clients never
-   suppress env detection. `use_proxy_env=false` only suppresses env proxy on the
-   main REST and cloud-storage clients.
+1. An explicit `proxy_host`/`proxy_port` is **not** applied to CRL fetches, the AWS
+   IMDS region probe, or platform detection. If those endpoints are only
+   reachable via the proxy, the explicit-proxy config alone won't route them.
+2. `HTTP_PROXY`/`HTTPS_PROXY` env vars are honored by the CRL-fetch, AWS IMDS
+   region, and platform-detection clients **even when `use_proxy_env=false`**,
+   because those clients never suppress env detection. `use_proxy_env=false` only
+   suppresses env proxy on the main REST, cloud-storage, and attestation clients.
 
-So the reliable way to route **every** path (including CRL and IMDS) through one
-proxy is the `HTTP_PROXY`/`HTTPS_PROXY` env vars; use `proxy_host` when you only
-need the Snowflake REST + transfer traffic proxied. See
+So the reliable way to route **every** path (including CRL) through one proxy is
+the `HTTP_PROXY`/`HTTPS_PROXY` env vars; use `proxy_host` when you only need the
+Snowflake REST + transfer traffic proxied. See
 [crl-revocation.md](crl-revocation.md) for the CRL-specific firewall test.
 
 ---
@@ -46,7 +46,8 @@ need the Snowflake REST + transfer traffic proxied. See
 `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase) are **ignored by the main
 REST and cloud-storage clients by default** (`sf_core/src/tls/config.rs`). They
 apply to those clients only when `use_proxy_env=true` (or ODBC `PROXYWITHENV=true`).
-(The CRL/IMDS clients are the exception noted above.)
+The Python wrapper defaults `use_proxy_env` to `true`. (The CRL, AWS IMDS region,
+and platform-detection clients are the exception noted above.)
 
 ### C2. Two input forms
 
@@ -63,7 +64,7 @@ Merged by `ProxyConfig::from_settings` (`sf_core/src/tls/config.rs`):
 
 **Legacy ODBC URL form:** `PROXY = [scheme://][user:pass@]host[:port]`.
 Individual fields override URL components. An `https://` scheme is preserved as
-`proxy_scheme=https`. ODBC aliases: `NOPROXY`→`no_proxy`,
+`proxy_scheme=https`. ODBC keys: `NO_PROXY`→`no_proxy`,
 `PROXYWITHENV`→`use_proxy_env`, `ALLOWEMPTYPROXY`→`allow_empty_proxy`.
 
 ### C3. Precedence
@@ -88,12 +89,14 @@ tls_client <URL> -vv --result-file r.json
 
 **Resolution:**
 1. Export the proxy CA as PEM.
-2. Point `extra_root_store_path` at the proxy CA bundle to retain the system
-   roots. Use `custom_root_store_path` only when the supplied bundle should
-   replace them; see
+2. Build one PEM bundle containing the proxy CA **and** the public roots you still
+   need, and point `custom_root_store_path` at it; the setting replaces the system
+   roots, see
    [cert-chain.md](cert-chain.md#b2-custom-trust-store-empty-or-malformed).
-3. If the proxy CA rotates often, consider `crl_check_mode=ADVISORY` so a
-   not-yet-cached CRL doesn't hard-fail.
+3. With CRL checking on, the proxy must also let the CRL distribution points
+   through (HTTP port 80); an unreachable CRL fails the connection in `ADVISORY`
+   as well as `ENABLED` ([crl-revocation.md](crl-revocation.md#crl-3-fetch-errors--network--timeout)).
+   Otherwise leave `crl_check_mode=DISABLED`.
 
 ### C5. Credential special characters
 
@@ -115,9 +118,9 @@ natively.
 
 ---
 
-> **mTLS / client certificates are not supported.** All three production TLS
-> client builders finish with `.with_no_client_auth()` (`sf_core/src/tls/client.rs`);
-> there is no `client_cert`/`client_key` setting. If a "certificate required"
+> **mTLS / client certificates are not supported.** The TLS client builders in
+> `sf_core/src/tls/client.rs` configure no client authentication; there is no
+> `client_cert`/`client_key` setting. If a "certificate required"
 > error comes from an intermediary, terminate that client-cert requirement at the
 > network boundary. Key-pair auth (`authenticator=snowflake_jwt`) is
 > application-layer Snowflake authentication — unrelated to TLS client

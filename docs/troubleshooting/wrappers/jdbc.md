@@ -22,7 +22,11 @@ sf_core  (protobuf dispatch, Rust-native HTTP + TLS)
 ```
 
 The driver class is `net.snowflake.client.api.driver.SnowflakeDriver`; connection
-URLs start with `jdbc:snowflake://`. The core HTTP/TLS transport is **Rust-native
+URLs start with `jdbc:snowflake://`, or are exactly `jdbc:snowflake:auto` (optionally
+`?connectionName=<profile>`) to connect from a `connections.toml` profile — without
+`connectionName` the default profile is used (`SNOWFLAKE_DEFAULT_CONNECTION_NAME`,
+see [Runbook §4.1](../../troubleshooting-runbook.md#41-connectionstoml--configtoml)).
+The core HTTP/TLS transport is **Rust-native
 (rustls)**, reached over JNI — it is **not** the JVM's JSSE stack. That single fact
 explains the TLS symptom below.
 
@@ -43,7 +47,8 @@ Selected by the JVM system property `net.snowflake.jdbc.loggerImpl`
 | *(unset)* or `net.snowflake.client.log.JDK14Logger` | `java.util.logging` (JUL) | **yes** |
 | `net.snowflake.client.log.SLF4JLogger` | SLF4J (→ logback / log4j2 / …) | no |
 
-The default is **JUL**, not SLF4J.
+The default is **JUL**, not SLF4J. Any other value (a typo, a short name) also
+selects JUL, with no warning.
 
 ### 2. Level and destination
 
@@ -82,17 +87,38 @@ configured level — see
 
 ## Symptom: `UnsatisfiedLinkError` / native library fails to load
 
-The JNI layer could not load the bundled native `sf_core` library. This is the
-JDBC analog of Python's `_core` import failure.
+The JNI layer could not load the native bridge library (`libjdbc_bridge.so` /
+`libjdbc_bridge.dylib` / `jdbc_bridge.dll`, which embeds sf_core). This is the JDBC
+analog of Python's `_core` import failure.
 
-1. **Platform/arch mismatch** — use the jar built for your OS + CPU (e.g. Linux
-   `aarch64` vs `x86_64`, macOS `arm64`). A jar for the wrong platform has no
-   loadable native library.
-2. **Repackaged / shaded fat-jar** — a shading step that strips or relocates the
-   bundled native resource breaks the loader. Verify the native library resource
-   is still present in the final artifact.
-3. Capture the full stack trace — the `UnsatisfiedLinkError` message names the
-   library it tried to load.
+The loader (`jdbc/src/main/java/net/snowflake/client/internal/unicore/NativeLibraryLoader.java`)
+takes the first source that is set, once per JVM:
+
+1. the `CORE_PATH` environment variable — an absolute path to the library;
+2. the `-Djdbc.library.path` system property — an absolute path;
+3. the library bundled in the jar under
+   `/net/snowflake/client/internal/unicore/native/<os>-<arch>[-gnu|-musl]/`,
+   extracted to a temp directory and loaded from there. On Linux the libc flavor is
+   detected; `-Djdbc.libc=gnu|musl` overrides it.
+
+A stale `CORE_PATH` from a dev setup therefore wins over the bundled library.
+
+Failure messages:
+
+- **`RuntimeException: No bundled native library found in JAR resources. The
+  classifier-less 'net.snowflake:snowflake-jdbc-native' jar is native-free by
+  design …`** (caused by **`Native library not found in JAR at <resource>`**) — the
+  jar on the classpath carries no library for this platform. The plain
+  `snowflake-jdbc-native` artifact carries none by design: depend on the platform
+  classifier jar (`net.snowflake:snowflake-jdbc-native:<version>:<classifier>`) or
+  the self-contained `net.snowflake:snowflake-jdbc-native-all`. The same message
+  appears with a classifier jar built for a different OS / CPU.
+- **`UnsatisfiedLinkError`** — a library was found but could not be loaded: a wrong
+  `CORE_PATH` / `jdbc.library.path`, a library for another architecture, or the
+  wrong libc flavor (try `-Djdbc.libc`). The message names the file it tried.
+
+A shading step that strips the `native/` resources from a fat jar produces the first
+message; verify the resource is still present in the final artifact.
 
 ---
 
@@ -119,9 +145,11 @@ and does not consult JSSE — exactly as `REQUESTS_CA_BUNDLE` is ignored on the
 Python side.
 
 **Resolution:** supply the trust anchor to the core as the `custom_root_store_path`
-connection property. It **replaces** the system root store (it is not additive, and
-there is no `use_system_roots` toggle) — put both public and private CAs into the
-one PEM bundle if you need both. See
+connection property. It **replaces** the whole root store (it is not additive, and
+`extra_root_store_path` is not available in JDBC) — put both public and private CAs
+into the one PEM bundle if you need both. The `SSL_CERT_FILE` / `SSL_CERT_DIR`
+environment variables of the JVM process (not `-D` properties) are honored on the
+default path as the source of OS roots. See
 [cert-chain.md §B2](../core/crl-tls/cert-chain.md#b2-custom-trust-store-empty-or-malformed)
 and, to reproduce outside the JVM entirely,
 [tls-client-tool.md](../core/tls-client-tool.md).
@@ -173,9 +201,10 @@ properties/URL parameters through to sf_core:
   reconnect; and `CLIENT_SESSION_KEEP_ALIVE` runs a heartbeat for long-idle
   connections. See
   [authentication.md § Session expiry & renewal](../core/authentication.md#session-expiry--renewal).
-- `Statement.setQueryTimeout(int)` maps to the core query timeout;
-  `DriverManager.setLoginTimeout` / the `loginTimeout` property maps to the login
-  timeout. Retry behavior and 503s are core-wide —
+- `Statement.setQueryTimeout(int)` maps to the core query timeout. The login
+  timeout comes from the `loginTimeout` connection property (or
+  `SnowflakeDataSource.setLoginTimeout`); `DriverManager.setLoginTimeout` is **not**
+  read by the driver. Retry behavior and 503s are core-wide —
   [query-execution.md § Retries & 503s](../core/query-execution.md#retries--503s).
 
 ---
@@ -193,6 +222,9 @@ value handling that explains a setting "not taking":
 | `nonProxyHosts` | Hosts that bypass the proxy. Accepts the **legacy Java forms** — pipe-delimited (`host1\|host2`) and the `*.host` subdomain glob — and normalizes them (pipe→comma, `*.foo.com`→`.foo.com`). Note the resulting leading-dot form matches the **apex** host too, a slight over-match versus Java's subdomain-only glob. |
 | JVM proxy properties | With `-Dhttp.useProxy=true`, the driver reads the legacy `http.proxy*`, `https.proxy*`, `http.proxyProtocol`, and `http.nonProxyHosts` properties and combines `NO_PROXY` with the bypass list. |
 | `proxyProtocol` / `disableSocksProxy` | Accepted on `SnowflakeDataSource` for source compatibility. `proxyProtocol=https` maps to core `proxy_scheme=https` (TLS to the proxy). `disableSocksProxy` does not change routing; the native transport does not use JVM SOCKS. |
+| Canonical `proxy` / `proxy_host` / `use_proxy_env` | If any of these is set, the legacy `useProxy` / `proxyHost` / `proxyPort` / … properties and the JVM proxy properties are **ignored** — the canonical settings are used as given. |
+| Proxy errors | `useProxy=true` with a missing host or port fails with `INVALID_PROXY_PROPERTIES` (vendor code `200051`, SQLSTATE `08000`): `Both proxy host and port values are needed.`; a non-numeric port gives `Could not parse proxy port number.` |
+| `workloadIdentityProvider` / `workloadIdentityEntraResource` / `workloadIdentityImpersonationPath` / `workloadIdentityAwsUseOutboundToken` / `wifHost` (or `workloadIdentityHost`) | JDBC names for the core workload-identity settings (`workload_identity_provider`, `workload_identity_entra_resource`, `workload_identity_impersonation_path`, `workload_identity_aws_use_outbound_token`, `wif_host`) — see [authentication.md](../core/authentication.md). A non-empty `workloadIdentityAwsExternalId` with `authenticator=WORKLOAD_IDENTITY` and the AWS provider is rejected: `Connection property workloadIdentityAwsExternalId is not enabled`. |
 | `loginTimeout` / `queryTimeoutSeconds` | Login and query time budgets (seconds) as connection properties. `Statement.setQueryTimeout(int)` sets the query budget per statement. |
 | `maxHttpRetries` / `putGetMaxRetries` | Retry-count caps for query HTTP calls and for PUT/GET transfers, respectively. |
 | `allowUnderscoresInHost` | Permits `_` in the account host. Relevant to the SSO underscore→hyphen rule — see [authentication.md](../core/authentication.md). |

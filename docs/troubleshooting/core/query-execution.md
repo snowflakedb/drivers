@@ -10,8 +10,8 @@ result** and **Slow / intermittent** rows route here.
 ## Execution paths
 
 ```
-statement_execute()                       sf_core/src/apis/database_driver_v1/statement.rs
-  ├─ sync  ── execute_sync_with_retry()    sf_core/src/rest/snowflake/mod.rs
+statement_execute_query()                 sf_core/src/apis/database_driver_v1/statement.rs
+  ├─ sync  ── execute_sync_query()         sf_core/src/rest/snowflake/mod.rs
   │            POST /queries/v1/query-request (asyncExec=false), blocks for the body
   └─ async ── submit_statement_async()     sf_core/src/rest/snowflake/async_exec.rs
                POST /queries/v1/query-request (asyncExec=true)
@@ -53,16 +53,17 @@ parallel (up to `CLIENT_PREFETCH_THREADS`). Chunks are gzip-compressed
 |---|---|---|
 | `CLIENT_PREFETCH_THREADS` | 4 | Concurrent chunk downloads |
 | `CLIENT_MEMORY_LIMIT` | 1536 (MB) | In-flight chunk memory budget; back-pressures prefetch when exceeded |
-| `MULTI_STATEMENT_COUNT` | 1 | Expected statement count for multi-statement |
+| `MULTI_STATEMENT_COUNT` | *unset* (statement parameter) | Expected statement count for multi-statement |
 
 ---
 
 ## Retries & 503s
 
-**Entry: logs contain `HTTP status error: 503`, `RetryAttemptsExhausted`, or
-`RetryBudgetExceeded`.**
+**Entry: logs contain `HTTP status error: 503`, `max attempts (N) reached`,
+`deadline exceeded`, or `retry-after … exceeds remaining budget`.**
 
-Any 5xx is retryable (`sf_core/src/http/retry.rs`). The query
+The retried statuses are 408, 429, 307, 308, any 5xx, and any code listed in
+`retry_extra_status_codes` (`sf_core/src/http/retry.rs`). The query
 `POST /queries/v1/query-request` opts into POST retries, so 503s on submission are
 retried.
 
@@ -75,8 +76,8 @@ Set `include_retry_reason` to `false` to suppress the `retryReason` parameter;
 `retryCount` is always sent regardless of this setting. Both parameters apply only
 to query-request retries — login and other non-query endpoints carry neither.
 
-**Default retry policy** (`sf_core/src/config/retry.rs`) — now **configurable**
-per connection:
+**Default retry policy** (`sf_core/src/config/retry.rs`), configurable per
+connection:
 
 | Behavior | Default | Setting |
 |---|---|---|
@@ -85,23 +86,32 @@ per connection:
 | Backoff factor | 2× | `retry_backoff_factor` |
 | Backoff cap | 16 000 ms | `retry_backoff_cap_ms` |
 | Jitter | decorrelated | `retry_backoff_jitter` |
-| Overall time budget | *none* | `retry_timeout` |
+| Extra retried status codes | *none* | `retry_extra_status_codes` |
+| Per-attempt HTTP timeout | 300 s (`0` = no timeout) | `retry_timeout` |
 | Include retry reason | true | `include_retry_reason` |
 
-By default there is **no overall elapsed-time budget** — the loop retries up to
-`retry_max_attempts` with decorrelated-jitter backoff. Set `retry_timeout` to
-bound total (or per-attempt) time; only then can `RetryBudgetExceeded` arise from
-elapsed time.
+`retry_timeout` bounds a **single HTTP attempt**, not the whole retry loop. The
+overall wall clock comes from the operation's own timeout:
 
-**Exhaustion variants:** `RetryAttemptsExhausted` (all attempts used);
-`RetryBudgetExceeded` (a `Retry-After` delay, or the configured `retry_timeout`,
-exceeded the remaining budget).
+| Operation | Overall budget |
+|---|---|
+| Login | `login_timeout` (120 s) |
+| Query | `query_timeout` (0 = unbounded) |
+| Other HTTP calls (heartbeat, session close, …) | `request_timeout` (120 s) |
+| PUT/GET file transfer | 600 s, and at most `put_get_max_attempts` (6) attempts |
+
+Without a budget the loop stops after `retry_max_attempts` attempts with
+decorrelated-jitter backoff.
+
+**Exhaustion variants** (wrapped in `RestError::HttpRetry`): `max attempts (N)
+reached; last status …` (all attempts used); `deadline exceeded after …` (the
+operation budget ran out); `retry-after … exceeds remaining budget`.
 
 **`Retry-After` back-pressure.** A 503 carrying `Retry-After: <seconds>` makes the
 driver wait that long instead of the computed backoff. If the wait exceeds the
-remaining budget (only meaningful when `retry_timeout` is set) it returns
-`RetryBudgetExceeded` — correct behavior; the root cause is server-side
-throttling. Reduce submission rate at the application layer.
+remaining budget it fails with `retry-after … exceeds remaining budget` — correct
+behavior; the root cause is server-side throttling. Reduce submission rate at the
+application layer.
 
 **Retry-storm amplification.** The driver has no built-in concurrency limiter. N
 concurrent queries each retrying up to `retry_max_attempts` can hit the service
@@ -121,6 +131,7 @@ when diagnosing a failed statement:
 | `SessionExpired` | 390xxx session-token expiry | Yes — refresh then one retry ([authentication.md](authentication.md#session-expiry--renewal)) |
 | `AsyncPollResultNotFound` | GS `612` on async poll (PUT/GET has no async result) | First poll: driver retries as sync. Later: no |
 | `OperationTimeout` | Login or statement-poll deadline | No |
+| `MasterTokenTerminal` | GS `390113` / `390114` / `390115`: the master token can never be renewed | No — reconnect ([authentication.md](authentication.md#session-expiry--renewal)) |
 
 `QueryFailed` carries a Snowflake error code: `390xxx` auth/session; `612`
 async-poll-not-found (handled automatically, below); `002xxx` SQL compilation
@@ -139,13 +150,14 @@ credentials first ([authentication.md](authentication.md)).
 
 1. Confirm which path (look for `asyncExec=true`); for async, watch the
    `GET /queries/{id}/result` poll loop.
-2. Check timeouts — the CRL-fetch client has its own timeout; the main client's
-   request timeout applies to query calls.
+2. Check timeouts — the CRL-fetch client has its own timeout (`crl_http_timeout`);
+   query calls are bounded by `query_timeout` (0 = unbounded), not `request_timeout`.
 3. The query may be queued server-side — check the warehouse state.
 4. DEBUG logging shows poll intervals and response codes.
 
-**Resolution:** cancel via `ALTER SESSION ABORT QUERY` (or a fresh session's
-`SYSTEM$CANCEL_QUERY`), or drop the statement handle.
+**Resolution:** cancel the statement through the wrapper's cancel API (the core sends
+`POST /queries/v1/abort-request` for the `requestId`), cancel from a fresh session
+with `SYSTEM$CANCEL_QUERY`, or drop the statement handle.
 
 ### Symptom: a legitimately long-running query (not hung)
 
@@ -159,10 +171,10 @@ from the hang above.
   [Execution paths](#execution-paths)) returns a `queryId` up front and polls, so
   no single request is held open for the duration. Whether that path is automatic
   or an explicit call depends on the wrapper's API.
-- **`retry_timeout` does not bound query runtime.** It bounds the transient-failure
-  retry loop ([Retries & 503s](#retries--503s)), not how long a running query may
-  take; setting it low will not "give up" on a slow query (the query is not
-  failing, it is running) and does not cancel one. To cap server-side runtime use
+- **`retry_timeout` does not bound query runtime.** It bounds one HTTP attempt
+  ([Retries & 503s](#retries--503s)), not how long a running query may take; setting
+  it low will not "give up" on a slow query (the query is not failing, it is
+  running) and does not cancel one. `query_timeout` bounds the client-side wait. To cap server-side runtime use
   `STATEMENT_TIMEOUT_IN_SECONDS` (see the keep-alive-vs-query-timeout note in
   [authentication.md](authentication.md)); to stop one in flight, cancel it (above).
 
@@ -240,7 +252,7 @@ A statement handle **can** be re-executed without closing it, but doing so while
 prior result set is only partially read **discards** the unread rows: the new
 execution cancels the pending result set. Fully consume (or explicitly close) a
 result set before calling execute again on the same handle. Using a handle after
-it has been freed yields an `InvalidHandle` error — the wrapper owns handle
+it has been freed yields an `InvalidArgument` error ("Statement handle not found") — the wrapper owns handle
 lifetime; there is no reference counting on the core side.
 
 ### Symptom: the same DML appears to run twice / duplicate side effects
