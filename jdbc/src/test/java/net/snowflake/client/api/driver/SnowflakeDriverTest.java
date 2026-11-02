@@ -55,11 +55,11 @@ public class SnowflakeDriverTest {
   @Test
   public void testDriverVersion() {
     SnowflakeDriver driver = new SnowflakeDriver();
-    // Legacy snowflake-jdbc has major > 0; this module is 0.x.
     if (DriverCompatibility.isOldDriver()) {
       assertTrue(driver.getMajorVersion() > 0, "Legacy driver major version should be gt 0");
     } else {
-      assertEquals(0, driver.getMajorVersion(), "New driver major version should be 0 (0.0.1)");
+      assertEquals("5.0.0-RC1", SnowflakeDriver.getDriverVersion());
+      assertEquals(5, driver.getMajorVersion(), "Driver major version should be 5 (5.0.0-RC1)");
     }
     assertTrue(driver.getMinorVersion() >= 0, "Minor version should be gte 0");
     assertFalse(driver.jdbcCompliant(), "Driver should not claim JDBC compliance");

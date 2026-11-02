@@ -50,12 +50,12 @@ public class SnowflakeDriver implements Driver {
   /** Sourced from {@code build.gradle}'s {@code project.version} via the generated class. */
   public static final String DRIVER_VERSION = DriverVersion.VALUE;
 
-  // Version reported to GS at login only, decoupled from the 0.0.1 artifact version: GS's
+  // Version reported to GS at login only, decoupled from the published artifact version: GS's
   // validateClientVersion rejects CLIENT_APP_ID="JDBC" below its floors (min 2.3.1, crypto floors
-  // up to 2.5.0) as CLIENT_TOO_OLD. DRIVER_VERSION / DatabaseMetaData stay 0.0.1.
-  // Pre-release suffix is parsed by sf_core: CLIENT_APP_VERSION is stripped to "5.0.0" and
-  // CLIENT_ENVIRONMENT.RELEASE_TYPE becomes "prpr6".
-  public static final String CLIENT_APP_VERSION = "5.0.0.prpr6";
+  // up to 2.5.0) as CLIENT_TOO_OLD.
+  // sf_core sends this value as CLIENT_APP_VERSION and derives
+  // CLIENT_ENVIRONMENT.RELEASE_TYPE from the suffix ("RC1").
+  public static final String CLIENT_APP_VERSION = "5.0.0.RC1";
 
   public static final int MAJOR_VERSION = parseVersionComponent(DRIVER_VERSION, 0);
   public static final int MINOR_VERSION = parseVersionComponent(DRIVER_VERSION, 1);
