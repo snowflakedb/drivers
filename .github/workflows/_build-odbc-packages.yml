@@ -424,8 +424,19 @@ jobs:
           path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.rpm
 
   build_pkg:
+    # The FIPS row builds both slices with --features fips and leaves release
+    # symbols in place. check_linked_crypto.py reads each slice, and the
+    # package ships the AWS-LC crypto library next to libsfodbc.dylib.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Universal
+            fips: false
+          - name: macOS Universal FIPS
+            fips: true
     runs-on: macos-latest
-    name: build_pkg (macOS Universal)
+    name: build_pkg (${{ matrix.name }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -434,17 +445,18 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-cargo-registry-${{ matrix.fips && 'fips-' || '' }}pkg-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-universal-cargo-registry-${{ matrix.fips && 'fips-' || '' }}pkg-
             ${{ runner.os }}-universal-cargo-registry-pkg-
 
       - name: Restore Rust target cache (pkg build)
         uses: actions/cache/restore@v6
         with:
           path: .cargo-target-pkg
-          key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-rust-${{ matrix.fips && 'fips-' || '' }}pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-universal-rust-pkg-release-target-
+            ${{ runner.os }}-universal-rust-${{ matrix.fips && 'fips-' || '' }}pkg-release-target-
 
       - name: Prepare cache directories
         run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-pkg
@@ -460,19 +472,38 @@ jobs:
           echo "void _odbc_stub(void) {}" | clang -x c -arch x86_64 -arch arm64 -dynamiclib \
             -Wl,-install_name,libodbc.dylib -o .odbc-stub/libodbc.dylib -
 
+      - name: Setup FIPS build environment
+        if: matrix.fips && success()
+        uses: ./.github/actions/setup-fips-build-env
+
       - name: Build ODBC driver (x86_64)
-        run: cargo build --locked --release --package odbc --target x86_64-apple-darwin
+        run: |
+          set -euo pipefail
+          if [ "${FIPS}" = 1 ]; then export CARGO_PROFILE_RELEASE_STRIP=false; fi
+          cargo build --locked --release --package odbc ${{ matrix.fips && '--features fips' || '' }} --target x86_64-apple-darwin
         env:
+          FIPS: ${{ matrix.fips && '1' || '0' }}
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
           RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
 
       - name: Build ODBC driver (aarch64)
-        run: cargo build --locked --release --package odbc --target aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          if [ "${FIPS}" = 1 ]; then export CARGO_PROFILE_RELEASE_STRIP=false; fi
+          cargo build --locked --release --package odbc ${{ matrix.fips && '--features fips' || '' }} --target aarch64-apple-darwin
         env:
+          FIPS: ${{ matrix.fips && '1' || '0' }}
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-pkg
           RUSTFLAGS: "-L native=${{ github.workspace }}/.odbc-stub"
+
+      - name: Check linked FIPS crypto
+        if: matrix.fips && success()
+        run: |
+          python3 ci/fips/check_linked_crypto.py \
+            .cargo-target-pkg/x86_64-apple-darwin/release/libsfodbc.dylib \
+            .cargo-target-pkg/aarch64-apple-darwin/release/libsfodbc.dylib
 
       - name: Save Cargo registry cache (pkg build)
         if: always()
@@ -481,7 +512,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-universal-cargo-registry-pkg-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-cargo-registry-${{ matrix.fips && 'fips-' || '' }}pkg-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (pkg build)
         if: always()
@@ -490,19 +521,20 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-target-pkg
-          key: ${{ runner.os }}-universal-rust-pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-universal-rust-${{ matrix.fips && 'fips-' || '' }}pkg-release-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Package pkg
         run: ./odbc/installer/mac/package.sh
         env:
           DRIVER_X86_64: .cargo-target-pkg/x86_64-apple-darwin/release/libsfodbc.dylib
           DRIVER_ARM64: .cargo-target-pkg/aarch64-apple-darwin/release/libsfodbc.dylib
+          PKG_VARIANT: ${{ matrix.fips && 'fips' || '' }}
 
       - name: Upload pkg
         uses: actions/upload-artifact@v7
         with:
-          name: snowflake-odbc-macos-universal
-          path: build/snowflake-odbc-*.universal.pkg
+          name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}macos-universal
+          path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.universal.pkg
 
   build_deb:
     # FIPS rows are a second package. The image's FIPS=1 layer supplies GCC 13

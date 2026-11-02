@@ -11,6 +11,9 @@
 # Environment variables (optional):
 #   DRIVER_X86_64  - path to x86_64 libsfodbc.dylib (default: target/x86_64-apple-darwin/release/libsfodbc.dylib)
 #   DRIVER_ARM64   - path to aarch64 libsfodbc.dylib (default: target/aarch64-apple-darwin/release/libsfodbc.dylib)
+#   PKG_VARIANT    - empty for the standard driver, or "fips" for the FIPS build.
+#                    The FIPS package is named snowflake-odbc-fips and ships the
+#                    AWS-LC crypto library next to libsfodbc.dylib.
 #
 set -euxo pipefail
 
@@ -52,6 +55,47 @@ fi
 COMMIT_HASH="${COMMIT_HASH:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 VERSION="${BASE_VERSION}"
 
+PKG_VARIANT="${PKG_VARIANT:-}"
+case "$PKG_VARIANT" in
+    ""|fips) ;;
+    *)
+        echo "Unsupported PKG_VARIANT: $PKG_VARIANT"
+        exit 1
+        ;;
+esac
+
+stage_fips_slice() {
+    local driver="$1"
+    local slice_dir="$2"
+    local dep base src found_crypto
+    mkdir -p "$slice_dir"
+    cp "$driver" "$slice_dir/libsfodbc.dylib"
+    found_crypto=0
+    while read -r dep; do
+        [[ -z "$dep" ]] && continue
+        base=$(basename "$dep")
+        if [[ -f "$dep" ]]; then
+            src="$dep"
+        else
+            src=$(find "$(dirname "$driver")" -name "$base" -type f -print -quit)
+        fi
+        if [[ -z "${src}" || ! -f "$src" ]]; then
+            echo "FIPS library $base not found for $driver"
+            exit 1
+        fi
+        cp "$src" "$slice_dir/$base"
+        install_name_tool -id "@loader_path/$base" "$slice_dir/$base"
+        install_name_tool -change "$dep" "@loader_path/$base" "$slice_dir/libsfodbc.dylib"
+        case "$base" in
+            libaws_lc_fips_*_crypto.dylib) found_crypto=1 ;;
+        esac
+    done < <(otool -L "$slice_dir/libsfodbc.dylib" | awk '/libaws_lc_fips_.*\.dylib/ { print $1 }')
+    if [[ "$found_crypto" -ne 1 ]]; then
+        echo "Driver $driver does not link an AWS-LC FIPS crypto library"
+        exit 1
+    fi
+}
+
 INSTALL_DIR="/opt/snowflake/snowflakeodbc"
 PKG_IDENTIFIER="net.snowflake.odbc"
 BUILD_DIR=build
@@ -75,7 +119,34 @@ trap 'rm -rf "$STAGE_DIR" "$SCRIPTS_STAGE_DIR" "$EXPAND_PARENT"' EXIT
 
 echo "=== Creating universal binary ==="
 mkdir -p "$STAGE_DIR$INSTALL_DIR/lib"
-lipo -create "$DRIVER_X86_64" "$DRIVER_ARM64" -output "$STAGE_DIR$INSTALL_DIR/lib/libsfodbc.dylib"
+if [[ "$PKG_VARIANT" == "fips" ]]; then
+    SLICE_DIR=$(mktemp -d)
+    trap 'rm -rf "$STAGE_DIR" "$SCRIPTS_STAGE_DIR" "$SLICE_DIR"' EXIT
+    stage_fips_slice "$DRIVER_X86_64" "$SLICE_DIR/x86_64"
+    stage_fips_slice "$DRIVER_ARM64" "$SLICE_DIR/arm64"
+    lipo -create \
+        "$SLICE_DIR/x86_64/libsfodbc.dylib" \
+        "$SLICE_DIR/arm64/libsfodbc.dylib" \
+        -output "$STAGE_DIR$INSTALL_DIR/lib/libsfodbc.dylib"
+    shopt -s nullglob
+    fips_libs=("$SLICE_DIR/x86_64"/libaws_lc_fips_*.dylib)
+    shopt -u nullglob
+    if [[ ${#fips_libs[@]} -eq 0 ]]; then
+        echo "No AWS-LC FIPS libraries were staged"
+        exit 1
+    fi
+    for crypto in "${fips_libs[@]}"; do
+        name=$(basename "$crypto")
+        if [[ ! -f "$SLICE_DIR/arm64/$name" ]]; then
+            echo "FIPS library $name is missing from the arm64 slice"
+            exit 1
+        fi
+        lipo -create "$crypto" "$SLICE_DIR/arm64/$name" \
+            -output "$STAGE_DIR$INSTALL_DIR/lib/$name"
+    done
+else
+    lipo -create "$DRIVER_X86_64" "$DRIVER_ARM64" -output "$STAGE_DIR$INSTALL_DIR/lib/libsfodbc.dylib"
+fi
 lipo -info "$STAGE_DIR$INSTALL_DIR/lib/libsfodbc.dylib"
 
 echo "=== Staging additional files ==="
@@ -98,7 +169,11 @@ cp "$TEMPLATES_DIR/odbc.ini.template" "$SCRIPTS_STAGE_DIR/odbc.ini.template"
 
 mkdir -p "$BUILD_DIR"
 
-PKG_NAME="snowflake-odbc-${VERSION}.universal.pkg"
+if [[ "$PKG_VARIANT" == "fips" ]]; then
+    PKG_NAME="snowflake-odbc-fips-${VERSION}.universal.pkg"
+else
+    PKG_NAME="snowflake-odbc-${VERSION}.universal.pkg"
+fi
 
 echo "=== Building pkg: $PKG_NAME ==="
 pkgbuild \
