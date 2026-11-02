@@ -12,6 +12,9 @@
 #   PLATFORM    - e.g. "linux-x86_64-glibc" or "linux-aarch64-glibc"
 #   PKG_FORMATS - space-separated list of formats to produce: rpm deb tgz
 #                 (default: rpm — for backward compatibility)
+#   PKG_VARIANT - empty for the standard driver, or "fips" for the FIPS build.
+#                 The FIPS package is named snowflake-odbc-fips and conflicts
+#                 with snowflake-odbc. Both install the same files.
 #
 set -euxo pipefail
 
@@ -53,9 +56,27 @@ fi
 VERSION="${BASE_VERSION}"
 
 PKG_FORMATS="${PKG_FORMATS:-rpm}"
+PKG_VARIANT="${PKG_VARIANT:-}"
+case "$PKG_VARIANT" in
+    ""|fips) ;;
+    *)
+        echo "Unsupported PKG_VARIANT: $PKG_VARIANT"
+        exit 1
+        ;;
+esac
+
+PKG_NAME="snowflake-odbc"
+PKG_DESCRIPTION="Snowflake ODBC Driver ($VERSION, Release)"
+FPM_EXTRA=()
+if [[ "$PKG_VARIANT" == "fips" ]]; then
+    PKG_NAME="snowflake-odbc-fips"
+    PKG_DESCRIPTION="Snowflake ODBC Driver ($VERSION, Release, FIPS build)"
+    FPM_EXTRA+=(--conflicts snowflake-odbc)
+fi
 
 echo "=== Platform: $PLATFORM ==="
 echo "=== Formats:  $PKG_FORMATS ==="
+echo "=== Package:  $PKG_NAME ==="
 
 case "$PLATFORM" in
     linux-x86_64-glibc)
@@ -109,17 +130,18 @@ mkdir -p "$BUILD_DIR"
 for fmt in $PKG_FORMATS; do
     case "$fmt" in
         rpm)
-            RPM_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.rpm"
+            RPM_NAME="${PKG_NAME}-${VERSION}.${SYSTEM_ARCH}.rpm"
             echo "=== Building RPM: $RPM_NAME ==="
             fpm -s dir \
                 -t rpm \
-                -n snowflake-odbc \
+                -n "$PKG_NAME" \
                 -v "$BASE_VERSION" \
                 -C "$STAGE_DIR" \
                 -p "$BUILD_DIR/$RPM_NAME" \
                 -d unixODBC \
                 --url https://www.snowflake.net/ \
-                --description "Snowflake ODBC Driver ($VERSION, Release)" \
+                --description "$PKG_DESCRIPTION" \
+                "${FPM_EXTRA[@]}" \
                 --license "Commercial" \
                 --vendor "Snowflake Computing, Inc." \
                 --rpm-changelog "$RPM_SCRIPTS_DIR/changelog" \
@@ -129,11 +151,11 @@ for fmt in $PKG_FORMATS; do
             echo "=== Successfully created RPM at $BUILD_DIR/$RPM_NAME ==="
             ;;
         deb)
-            DEB_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.deb"
+            DEB_NAME="${PKG_NAME}-${VERSION}.${SYSTEM_ARCH}.deb"
             echo "=== Building DEB: $DEB_NAME ==="
             fpm -s dir \
                 -t deb \
-                -n snowflake-odbc \
+                -n "$PKG_NAME" \
                 -v "$BASE_VERSION" \
                 -C "$STAGE_DIR" \
                 -p "$BUILD_DIR/$DEB_NAME" \
@@ -141,7 +163,8 @@ for fmt in $PKG_FORMATS; do
                 -d unixodbc \
                 -d odbcinst \
                 --url https://www.snowflake.net/ \
-                --description "Snowflake ODBC Driver ($VERSION, Release)" \
+                --description "$PKG_DESCRIPTION" \
+                "${FPM_EXTRA[@]}" \
                 --license "Commercial" \
                 --vendor "Snowflake Computing, Inc." \
                 --after-install "$RPM_SCRIPTS_DIR/after_install.sh" \
@@ -150,7 +173,7 @@ for fmt in $PKG_FORMATS; do
             echo "=== Successfully created DEB at $BUILD_DIR/$DEB_NAME ==="
             ;;
         tgz)
-            TGZ_NAME="snowflake-odbc-${VERSION}.${SYSTEM_ARCH}.tar.gz"
+            TGZ_NAME="${PKG_NAME}-${VERSION}.${SYSTEM_ARCH}.tar.gz"
             echo "=== Building TGZ: $TGZ_NAME ==="
             tar -czf "$BUILD_DIR/$TGZ_NAME" -C "$STAGE_DIR" "${ODBC_DIR:1}"
             echo "=== Successfully created TGZ at $BUILD_DIR/$TGZ_NAME ==="

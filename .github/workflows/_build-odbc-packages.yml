@@ -278,6 +278,9 @@ jobs:
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
     # and does not consume artifacts from the test jobs.
+    # FIPS rows are a second package. The image's FIPS=1 layer supplies GCC 13
+    # and Go, and the .so stays unstripped so check_linked_crypto.py can see
+    # the AWS-LC FIPS module.
     strategy:
       fail-fast: false
       matrix:
@@ -287,11 +290,25 @@ jobs:
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64-glibc
             arch: x86_64
+            fips: false
           - os: ubuntu-24.04-arm
             name: Linux ARM64
             target: aarch64-unknown-linux-gnu
             platform: linux-aarch64-glibc
             arch: aarch64
+            fips: false
+          - os: ubuntu-latest
+            name: Linux x64 FIPS
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+            fips: true
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64 FIPS
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+            fips: true
     runs-on: ${{ matrix.os }}
     name: build_rpm (${{ matrix.name }})
     steps:
@@ -304,8 +321,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}rpm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}rpm-
             ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
 
       - name: Restore Rust target cache (RPM build)
@@ -314,17 +332,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-target-rpm
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-
+            ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}rpm-release-target-
 
       - name: Prepare cache directories
         run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-rpm
 
       - name: Build Docker image
-        run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
+        run: docker build --build-arg FIPS=${{ matrix.fips && '1' || '0' }} -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
 
       - name: Build ODBC driver and package RPM
+        env:
+          PKG_VARIANT: ${{ matrix.fips && 'fips' || '' }}
+          CARGO_FEATURES: ${{ matrix.fips && '--features fips' || '' }}
+          FIPS_CFLAGS: ${{ matrix.fips && matrix.arch == 'aarch64' && '-fno-jump-tables' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.fips && 'false' || '' }}
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
@@ -335,9 +358,24 @@ jobs:
             -e PLATFORM=${{ matrix.platform }} \
             -e COMMIT_HASH=$(git rev-parse --short HEAD) \
             -e PKG_FORMATS=rpm \
+            -e PKG_VARIANT \
+            -e CARGO_FEATURES \
+            -e FIPS_CFLAGS \
+            -e CARGO_PROFILE_RELEASE_STRIP \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
             rpm-build \
-            bash -c "cargo build --locked --release --package odbc --target ${{ matrix.target }} && ./odbc/installer/unix/package.sh"
+            bash -c 'set -euo pipefail
+              if [ -z "${CARGO_PROFILE_RELEASE_STRIP}" ]; then unset CARGO_PROFILE_RELEASE_STRIP; fi
+              if [ "${PKG_VARIANT}" = fips ]; then
+                # shellcheck disable=SC1091
+                source /opt/rh/gcc-toolset-13/enable
+                export CC=gcc CXX=g++
+                if [ -n "${FIPS_CFLAGS}" ]; then export CFLAGS="${FIPS_CFLAGS}" CXXFLAGS="${FIPS_CFLAGS}"; fi
+                go version
+                gcc --version
+              fi
+              cargo build --locked --release --package odbc ${CARGO_FEATURES} --target ${{ matrix.target }}
+              ./odbc/installer/unix/package.sh'
 
       # Container writes the mounted cache dirs as root, and some crates ship
       # owner-only file modes, so the runner cannot read them back.
@@ -350,6 +388,10 @@ jobs:
             sudo chown -Rh "$(id -u):$(id -g)" "$d"
           done
 
+      - name: Check linked FIPS crypto
+        if: matrix.fips && success()
+        run: python3 ci/fips/check_linked_crypto.py ".cargo-target-rpm/${{ matrix.target }}/release/libsfodbc.so"
+
       - name: Save Cargo registry cache (RPM build)
         if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -359,7 +401,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}rpm-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (RPM build)
         if: steps.rpm-cargo-target.outputs.cache-hit != 'true'
@@ -370,13 +412,13 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-target-rpm
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload RPM
         uses: actions/upload-artifact@v7
         with:
-          name: snowflake-odbc-rpm-${{ matrix.arch }}
-          path: build/snowflake-odbc-*.rpm
+          name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.rpm
 
   build_pkg:
     runs-on: macos-latest

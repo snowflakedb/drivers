@@ -1,15 +1,13 @@
-# Docker image for CI (and optional local use): build the Snowflake ODBC driver
-# (`cargo build -p odbc`) and package it as an RPM via `odbc/installer/unix/package.sh`
-# and fpm. Keeps the linked glibc and OpenSSL in line with a single EL generation.
+# Docker image for CI: build the ODBC driver and package it as an RPM via
+# `odbc/installer/unix/package.sh` and fpm.
 #
-# Compatibility / follow-ups (TODO):
-# - Base is Rocky Linux 9, so the driver links against this distro's glibc and
-#   OpenSSL 3.x. Resulting RPMs are appropriate for RHEL/Rocky/Alma 9 and other
-#   distros with compatible glibc + OpenSSL 3; they are not intended for EL8
-#   (older glibc, OpenSSL 1.1) without a separate build or static OpenSSL.
-# - To support EL8 from the same driver codebase, consider a rockylinux:8-based
-#   image and/or static OpenSSL linking so the binary does not require EL9's
-#   libssl — tradeoffs with support matrix and CI matrix size.
+# The base is Rocky Linux 9, so the driver links this distro's glibc. RPMs
+# from this image target RHEL/Rocky/Alma 9 and other distros with a compatible
+# glibc. EL8 needs its own image.
+#
+# `--build-arg FIPS=1` adds the GCC 13 toolset and Go 1.25 that
+# `aws-lc-fips-sys` needs. The FIPS package job selects that compiler. The
+# default image keeps Rocky's GCC for the standard driver.
 
 FROM rockylinux:9
 
@@ -28,6 +26,29 @@ RUN dnf install -y --enablerepo=crb \
     dnf clean all
 
 RUN gem install fpm
+
+# GCC 13 is the compiler aws-lc-fips-sys builds with. Rocky's default GCC
+# stays on PATH until the package job sources /opt/rh/gcc-toolset-13/enable.
+# Go 1.25 is that crate's toolchain. The image checksums the upstream tarball.
+# curl is the base image's curl-minimal. The full curl package conflicts with it.
+ARG FIPS=0
+ARG GO_VERSION=1.25.14
+RUN if [ "$FIPS" = "1" ]; then \
+        dnf install -y gcc-toolset-13 && \
+        dnf clean all && \
+        case "$(uname -m)" in \
+            x86_64) GO_SHA=a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712; GO_ARCH=amd64 ;; \
+            aarch64) GO_SHA=9bf234ea70ffec9347fdf6b22ce4add51717d3386a38a441e8c8743fceb5eaee; GO_ARCH=arm64 ;; \
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;; \
+        esac && \
+        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tgz && \
+        echo "${GO_SHA}  /tmp/go.tgz" | sha256sum -c - && \
+        rm -rf /usr/local/go && \
+        tar -C /usr/local -xzf /tmp/go.tgz && \
+        rm /tmp/go.tgz && \
+        ln -sf /usr/local/go/bin/go /usr/local/bin/go && \
+        go version; \
+    fi
 
 ENV CARGO_HOME=/root/.cargo
 ENV RUSTUP_HOME=/root/.rustup
