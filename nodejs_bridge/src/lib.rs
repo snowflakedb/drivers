@@ -26,6 +26,7 @@ mod session;
 mod session_params;
 mod session_state;
 mod statement;
+mod telemetry;
 mod token_cache;
 mod validation_utils;
 

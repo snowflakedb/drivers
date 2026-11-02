@@ -364,7 +364,7 @@ impl DatabaseDriverV1 {
     /// No-ops when telemetry is unconfigured or the telemetry id is not yet known
     /// (login incomplete / handle released). Core owns batching, flush threshold,
     /// and egress.
-    pub(crate) async fn telemetry_send_log(
+    pub async fn telemetry_send_log(
         &self,
         conn_handle: Handle,
         message_json: String,

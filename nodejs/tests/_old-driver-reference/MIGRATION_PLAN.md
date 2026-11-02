@@ -448,6 +448,13 @@ called out explicitly.
     in `nodejs_bridge` `statement/column.rs`; `Column.getName()` and `getColumn()` per row mode
     are in [`row-mode.test.ts`](../e2e/query/row-mode.test.ts).
 
+  Precision-loss telemetry files:
+  - [`result_test_number.js`](./unit/connection/result/result_test_number.js) — partial.
+    The fixed-number precision loss warning and once-per-query `selecting_with_precision_loss`
+    telemetry live in
+    [`numeric-precision-loss.test.ts`](../e2e/query/data-types/numeric-precision-loss.test.ts).
+    The `to_double` warning and `getColumnValueAsString` assertions are not ported.
+
 ### Configuration / global config
 
 - [`unit/configuration/`](./unit/configuration/) — appears to test dead code that is not

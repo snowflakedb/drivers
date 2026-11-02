@@ -3048,6 +3048,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "reqwest",
+ "serde_json",
  "sf_core",
  "sf_output_format",
  "sf_types",

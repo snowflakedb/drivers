@@ -29,6 +29,7 @@ tokio = { version = "1.50.0", features = ["sync", "time"] }
 uuid = { version = "1.18", features = ["v4"] }
 chrono-tz = "0.10.4"
 snafu = "0.8.7"
+serde_json = "1.0.143"
 
 # sf_core's `sonic-json` (sonic-rs) needs SIMD and does not build for 32-bit
 # targets such as i686-pc-windows-msvc. Those targets use sf_core's serde_json

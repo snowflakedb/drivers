@@ -1,16 +1,57 @@
 import { Readable } from 'node:stream';
-import type { CoreStatementInstance } from '../core/index.js';
+import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
+import { logger } from '../logging/index.js';
 import { createRowFormatter } from './cell-mapping.js';
 import { shouldRenameDuplicateColumns, type RowOptions } from './types.js';
 
+const precisionLossWarning = (queryId: string | null, columnIndex: number) =>
+  `
+Query ${queryId}: Query result precision loss detected when converting a value in column at index ${columnIndex} to a JavaScript Number.
+
+Fetch as string or BigInt instead:
+https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-consume#fetching-integer-data-types-as-bigint
+https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-consume#fetching-data-types-as-strings
+
+This will throw an error in future driver versions.
+`.trim();
+
+function createStatementRowFormatter(
+  connection: CoreConnectionInstance,
+  coreStatement: CoreStatementInstance,
+  rowOptions: RowOptions,
+) {
+  const queryId = coreStatement.getQueryId();
+  // each handler fires per affected value, but its telemetry event is sent once per query
+  const reportedEventTypes = new Set<string>();
+  const sendTelemetryEventOnce = (eventType: string) => {
+    if (reportedEventTypes.has(eventType)) {
+      return;
+    }
+    reportedEventTypes.add(eventType);
+    // telemetry is best-effort: a failed send does not reject into the user's process
+    connection
+      .sendTelemetryEvent(eventType, queryId)
+      .catch((err: Error) => logger.debug(`Failed to send ${eventType} telemetry: ${err}`));
+  };
+
+  return createRowFormatter({
+    columns: coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!,
+    sessionParameters: coreStatement.getSessionParametersSnapshot(),
+    rowOptions,
+    onPrecisionLoss: (columnIndex) => {
+      logger.warn(precisionLossWarning(queryId, columnIndex));
+      sendTelemetryEventOnce('selecting_with_precision_loss');
+    },
+  });
+}
+
 export async function collectRows(
+  connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
 ): Promise<unknown[]> {
   try {
-    const columns = coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!;
-    const sessionParameters = coreStatement.getSessionParametersSnapshot();
-    const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
+    const formatRow = createStatementRowFormatter(connection, coreStatement, rowOptions);
 
     const rows: unknown[] = [];
     while (await coreStatement.fetchNextBatch()) {
@@ -27,12 +68,11 @@ export async function collectRows(
 }
 
 export function createRowStream(
+  connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
 ): Readable {
-  const columns = coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!;
-  const sessionParameters = coreStatement.getSessionParametersSnapshot();
-  const formatRow = createRowFormatter({ columns, sessionParameters, rowOptions });
+  const formatRow = createStatementRowFormatter(connection, coreStatement, rowOptions);
 
   const pushNextRow = (stream: Readable): boolean => {
     const row = coreStatement.getNextRow();

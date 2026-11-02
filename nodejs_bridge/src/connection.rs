@@ -4,6 +4,7 @@ use crate::query_status::QueryStatus;
 use crate::session::{Session, SessionConfig};
 use crate::session_params::KnownSessionParameters;
 use crate::statement::{ExecuteParams, Statement};
+use crate::telemetry::Telemetry;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
@@ -103,6 +104,7 @@ impl ConnectionParams<'_> {
 #[napi]
 pub struct Connection {
     session: Session,
+    telemetry: Arc<Telemetry>,
 }
 
 #[napi]
@@ -123,7 +125,10 @@ impl Connection {
         }))
         .map_err(|e| e.to_js_error(*env))?;
 
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            telemetry: Arc::default(),
+        })
     }
 
     #[napi]
@@ -237,6 +242,21 @@ impl Connection {
         status.is_still_running()
     }
 
+    #[napi]
+    pub fn send_telemetry_event(
+        &self,
+        env: &Env,
+        event_type: String,
+        query_id: Option<String>,
+    ) -> Result<AsyncBlock<()>> {
+        let connection_handle = self.session.connection_handle();
+        let telemetry = Arc::clone(&self.telemetry);
+        async_to_js(env, async move {
+            telemetry
+                .send_event(connection_handle, event_type, query_id)
+                .await
+        })
+    }
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let session = self.session.clone();

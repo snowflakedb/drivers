@@ -119,6 +119,10 @@ impl Session {
         Ok(session)
     }
 
+    pub(crate) fn connection_handle(&self) -> Handle {
+        self.handles.connection
+    }
+
     fn new(connection: Handle, database: Handle) -> Self {
         Self {
             handles: Arc::new(Handles {

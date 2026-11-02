@@ -1,5 +1,11 @@
 import type { CoreColumnInstance, CoreKnownSessionParameters } from '../core/index.js';
-import type { CellConverter, ConverterFactory, DataType, RowOptions } from './types.js';
+import type {
+  CellConverter,
+  ConverterContext,
+  ConverterFactory,
+  DataType,
+  RowOptions,
+} from './types.js';
 import {
   binaryAsStringConverter,
   booleanAsStringConverter,
@@ -49,8 +55,7 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
 function createColumnConverter(
   column: CoreColumnInstance,
   asStringColumnTypes: ReadonlySet<string>,
-  sessionParameters: CoreKnownSessionParameters,
-  options: { representNullAsStringNull: boolean },
+  context: ConverterContext,
 ): CellConverter | null {
   const columnType = column.getType();
   const factories = CONVERTER_FACTORIES_BY_COLUMN_TYPE[columnType];
@@ -59,16 +64,16 @@ function createColumnConverter(
   }
 
   if (!asStringColumnTypes.has(columnType)) {
-    return factories.asValue?.(column, sessionParameters) ?? null;
+    return factories.asValue?.(column, context) ?? null;
   }
 
-  const asString = factories.asString?.(column, sessionParameters) ?? null;
+  const asString = factories.asString?.(column, context) ?? null;
   if (!asString) {
     return null;
   }
 
   return (value) => {
-    if (value === null && options.representNullAsStringNull === false) {
+    if (value === null && !context.options.representNullAsStringNull) {
       return null;
     }
     return asString(value);
@@ -84,6 +89,7 @@ interface RowFormatterOptions {
   columns: CoreColumnInstance[];
   sessionParameters: CoreKnownSessionParameters;
   rowOptions: RowOptions;
+  onPrecisionLoss: ConverterContext['onPrecisionLoss'];
 }
 
 type RowFormatter = (rawRow: unknown[]) => unknown[] | Record<string, unknown>;
@@ -92,7 +98,15 @@ export function createRowFormatter({
   columns,
   sessionParameters,
   rowOptions,
+  onPrecisionLoss,
 }: RowFormatterOptions): RowFormatter {
+  const context: ConverterContext = {
+    sessionParameters,
+    options: {
+      representNullAsStringNull: rowOptions.representNullAsStringNull,
+    },
+    onPrecisionLoss,
+  };
   const columnNames = columns.map((column) => column.getName());
   const asStringColumnTypes = new Set(
     rowOptions.fetchAsString.flatMap((token) => COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN[token]),
@@ -100,9 +114,7 @@ export function createRowFormatter({
 
   const columnConverters: ColumnConverter[] = [];
   for (const column of columns) {
-    const convert = createColumnConverter(column, asStringColumnTypes, sessionParameters, {
-      representNullAsStringNull: rowOptions.representNullAsStringNull,
-    });
+    const convert = createColumnConverter(column, asStringColumnTypes, context);
     if (convert !== null) {
       columnConverters.push({ index: column.getIndex(), convert });
     }

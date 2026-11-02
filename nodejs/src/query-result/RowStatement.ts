@@ -1,5 +1,5 @@
 import type { Readable } from 'node:stream';
-import type { CoreStatementInstance } from '../core/index.js';
+import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
@@ -19,6 +19,7 @@ import { shouldRenameDuplicateColumns } from './types.js';
 // driver methods from Rust or that using so many FFI calls won't be efficient.
 // Refactor if that won't be the case.
 export class RowStatement {
+  #connection: CoreConnectionInstance;
   #core: CoreStatementInstance;
   #rowOptions: RowOptions;
   #sqlText?: string;
@@ -28,11 +29,13 @@ export class RowStatement {
   #complete?: StatementCallback;
 
   constructor(
+    connection: CoreConnectionInstance,
     core: CoreStatementInstance,
     rowOptions: RowOptions,
     sqlText?: string,
     complete?: StatementCallback,
   ) {
+    this.#connection = connection;
     this.#core = core;
     this.#rowOptions = rowOptions;
     this.#sqlText = sqlText;
@@ -113,14 +116,14 @@ export class RowStatement {
   // and the result is already drained. (would suggest a BCR with error)
   // oxlint-disable-next-line no-unused-vars
   streamRows(options?: StreamOptions): Readable {
-    return createRowStream(this.#core, {
+    return createRowStream(this.#connection, this.#core, {
       ...this.#rowOptions,
       fetchAsString: options?.fetchAsString ?? this.#rowOptions.fetchAsString,
     });
   }
 
   fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#core, this.#rowOptions);
+    const stream = createRowStream(this.#connection, this.#core, this.#rowOptions);
     let finished = false;
 
     const onComplete = (err: SnowflakeError | undefined) => {

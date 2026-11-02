@@ -31,7 +31,9 @@ export async function createLiveConnection(
   await connection.connectAsync();
   if (shouldCleanupAfterTest) {
     onTestFinished(async () => {
-      await destroyConnectionAsync(connection);
+      if (connection.isUp()) {
+        await destroyConnectionAsync(connection);
+      }
     });
   }
   return connection;

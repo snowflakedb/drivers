@@ -1,16 +1,22 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Connection, RowStatement } from '../../../types/sdk-types.js';
 import { createLiveConnection } from '../../utils/fixtures.js';
 import {
   baseConnectionOptions,
+  collectStreamedRows,
   executeAsync,
   isRunningNewDriverWithBD,
-  NOT_IMPLEMENTED_IN_NEW_DRIVER,
   resetGlobalConfig,
-  sleepAsync,
   snowflake,
 } from '../../utils/index.js';
+import {
+  destroyConnectionAndCollectTelemetryLogs,
+  expectInBandTelemetryLog,
+} from '../../utils/telemetry.js';
 import { proxyAllTo, telemetrySuccess, WiremockServer } from '../../utils/wiremock/index.js';
 import { expectBigIntValue } from '../utils.js';
+
+const PRECISION_LOSS_EVENT = 'selecting_with_precision_loss';
 
 describe('Numeric precision loss', () => {
   let warnsLogged: string[] = [];
@@ -52,19 +58,28 @@ describe('Numeric precision loss', () => {
     );
   }
 
-  async function collectPrecisionLossTelemetryEvents(): Promise<string[]> {
-    await sleepAsync(500);
-    const requests = await wiremock.findRequests('/telemetry/send.*');
-    return requests
-      .flatMap((request) => {
-        const payload = JSON.parse(request.body) as {
-          logs: { message: { type: string; value: { queryId: string } } }[];
-        };
-        return payload.logs.map((log) => log.message);
-      })
-      .filter((message) => message.type === 'selecting_with_precision_loss')
-      .map((message) => message.value.queryId);
+  function expectPrecisionLossWarns(lostValues: [rawValue: string, columnIndex: number][]): void {
+    expect(collectPrecisionLossWarns()).toEqual(
+      lostValues.map(([rawValue, columnIndex]) =>
+        expect.stringContaining(
+          isRunningNewDriverWithBD('BD#145')
+            ? `converting a value in column at index ${columnIndex} to a JavaScript Number`
+            : `converting ${rawValue} to a JavaScript Number`,
+        ),
+      ),
+    );
   }
+
+  const destroyConnectionAndCollectPrecisionLossLogs = (
+    connection: Connection,
+    expectedCount: number,
+  ) =>
+    destroyConnectionAndCollectTelemetryLogs(
+      wiremock,
+      connection,
+      PRECISION_LOSS_EVENT,
+      expectedCount,
+    );
 
   it('should return rounded Numbers for fixed types, warn for unsafe values, and send precision loss telemetry only once per query', async () => {
     const connection = await createLiveConnection(wiremock.connectionOptions);
@@ -89,15 +104,14 @@ describe('Numeric precision loss', () => {
       [9007199254740996, 42, null, 1.2345678901234568e29, 1.25, null],
       [-9007199254740996, 42, null, -1.2345678901234568e29, 1.25, null],
     ]);
-    if (!NOT_IMPLEMENTED_IN_NEW_DRIVER) {
-      expect(collectPrecisionLossWarns()).toEqual([
-        expect.stringContaining('9007199254740995'),
-        expect.stringContaining('123456789012345678901234567890.12'),
-        expect.stringContaining('-9007199254740995'),
-        expect.stringContaining('-123456789012345678901234567890.12'),
-      ]);
-      expect(await collectPrecisionLossTelemetryEvents()).toEqual([statement.getQueryId()]);
-    }
+    expectPrecisionLossWarns([
+      ['9007199254740995', 0],
+      ['123456789012345678901234567890.12', 3],
+      ['-9007199254740995', 0],
+      ['-123456789012345678901234567890.12', 3],
+    ]);
+    const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 1);
+    expectInBandTelemetryLog(logs[0], PRECISION_LOSS_EVENT, statement.getQueryId());
   });
 
   it('should return rounded Numbers for float without warning or telemetry (precision loss is a known server-side behavior)', async () => {
@@ -111,7 +125,7 @@ describe('Numeric precision loss', () => {
     );
     expect(Object.values(rows[0])).toEqual([9007199254740930, -9007199254740930, 1.5, null]);
     expect(collectPrecisionLossWarns()).toHaveLength(0);
-    expect(await collectPrecisionLossTelemetryEvents()).toHaveLength(0);
+    await destroyConnectionAndCollectPrecisionLossLogs(connection, 0);
   });
 
   it('should keep exact int digits as BigInt under jsTreatIntegerAsBigInt and still lose precision for fixed and float', async () => {
@@ -130,12 +144,9 @@ describe('Numeric precision loss', () => {
     expectBigIntValue(intValue, '9007199254740995');
     expect(fixedValue).toBe(1.2345678901234568e29);
     expect(floatValue).toBe(9007199254740930);
-    if (!NOT_IMPLEMENTED_IN_NEW_DRIVER) {
-      expect(collectPrecisionLossWarns()).toEqual([
-        expect.stringContaining('123456789012345678901234567890.12'),
-      ]);
-      expect(await collectPrecisionLossTelemetryEvents()).toEqual([statement.getQueryId()]);
-    }
+    expectPrecisionLossWarns([['123456789012345678901234567890.12', 1]]);
+    const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 1);
+    expectInBandTelemetryLog(logs[0], PRECISION_LOSS_EVENT, statement.getQueryId());
   });
 
   it('should keep exact fixed type digit strings under fetchAsString', async () => {
@@ -153,13 +164,39 @@ describe('Numeric precision loss', () => {
     expect(typeof floatValue).toBe('string');
     if (isRunningNewDriverWithBD('BD#40')) {
       expect(collectPrecisionLossWarns()).toHaveLength(0);
-      expect(await collectPrecisionLossTelemetryEvents()).toHaveLength(0);
+      await destroyConnectionAndCollectPrecisionLossLogs(connection, 0);
     } else {
-      expect(collectPrecisionLossWarns()).toEqual([
-        expect.stringContaining('9007199254740995'),
-        expect.stringContaining('123456789012345678901234567890.12'),
+      expectPrecisionLossWarns([
+        ['9007199254740995', 0],
+        ['123456789012345678901234567890.12', 1],
       ]);
-      expect(await collectPrecisionLossTelemetryEvents()).toEqual([statement.getQueryId()]);
+      const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 1);
+      expectInBandTelemetryLog(logs[0], PRECISION_LOSS_EVENT, statement.getQueryId());
     }
+  });
+
+  it('should send precision loss telemetry once per query when one connection runs several queries', async () => {
+    const connection = await createLiveConnection(wiremock.connectionOptions);
+    const { statement: first } = await executeAsync(connection, 'SELECT 9007199254740995::INT');
+    const { statement: second } = await executeAsync(connection, 'SELECT 9007199254740997::INT');
+
+    const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 2);
+    expect(logs.map((log) => log.message.value.queryId).sort()).toEqual(
+      [first.getQueryId(), second.getQueryId()].sort(),
+    );
+  });
+
+  it('should send precision loss telemetry when rows are streamed', async () => {
+    const connection = await createLiveConnection(wiremock.connectionOptions);
+    const { statement } = await executeAsync(
+      connection,
+      'SELECT 9007199254740995::INT UNION ALL SELECT 9007199254740997::INT',
+      { streamResult: true },
+    );
+    const rows = await collectStreamedRows(statement as RowStatement);
+
+    expect(rows.map((row) => Object.values(row)[0])).toEqual([9007199254740996, 9007199254740996]);
+    const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 1);
+    expectInBandTelemetryLog(logs[0], PRECISION_LOSS_EVENT, statement.getQueryId());
   });
 });

@@ -291,14 +291,18 @@ export class Connection {
     },
   ): RowStatement {
     const { complete, streamResult, sqlText, asyncExec, rowOptions } = options;
-    const statement = new RowStatement(coreStatement, rowOptions, sqlText, complete);
+    const statement = new RowStatement(this.#core, coreStatement, rowOptions, sqlText, complete);
     (async () => {
       try {
         await coreStatement.waitForCompletion();
         if (asyncExec === true || streamResult === true || coreStatement.hasNext()) {
           complete?.(undefined, statement, undefined);
         } else {
-          complete?.(undefined, statement, await collectRows(coreStatement, rowOptions));
+          complete?.(
+            undefined,
+            statement,
+            await collectRows(this.#core, coreStatement, rowOptions),
+          );
         }
       } catch (err) {
         complete?.(err as SnowflakeError, statement, undefined);

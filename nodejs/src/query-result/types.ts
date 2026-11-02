@@ -19,9 +19,15 @@ export function shouldRenameDuplicateColumns(rowMode: RowMode): boolean {
 
 export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
 
+export interface ConverterContext {
+  sessionParameters: CoreKnownSessionParameters;
+  options: { representNullAsStringNull: boolean };
+  onPrecisionLoss: (columnIndex: number) => void;
+}
+
 export type ConverterFactory = (
   column: CoreColumnInstance,
-  sessionParameters: CoreKnownSessionParameters,
+  context: ConverterContext,
 ) => CellConverter;
 
 export type CellConverter = (value: unknown) => unknown;

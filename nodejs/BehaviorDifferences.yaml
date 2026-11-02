@@ -2937,3 +2937,19 @@ behavior_differences:
       Single-use refresh tokens are consumed by the IdP. The new driver drops the
       cached copy when the refresh response does not replace it. The old driver
       keeps that copy until a later refresh fails.
+
+  145:
+    name: 'The precision-loss warning names the query id and column index instead of the value'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The precision-loss warning names the value ("... when converting 9007199254740995 to a
+      JavaScript Number.") and does not name the query id.
+    new_driver_behavior: |
+      The warning starts with "Query <query ID>: " and names the zero-based column index instead
+      of the value ("... when converting a value in column at index 0 to a JavaScript Number.").
+    description: |
+      Cell values are customer data, which the driver does not log.

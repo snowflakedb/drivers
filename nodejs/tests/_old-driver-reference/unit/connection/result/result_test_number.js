@@ -4,7 +4,9 @@ const assert = require('assert');
 const ResultTestCommon = require('./result_test_common');
 
 // TODO:
-// New driver needs coverage for precision loss warning and telemetry
+// The precision loss warning and telemetry for fixed numbers are covered by
+// nodejs/tests/e2e/query/data-types/numeric-precision-loss.test.ts. The to_double warning and the
+// getColumnValueAsString assertions in this block are not ported yet.
 describe('Result: test number', function () {
   let logWarnSpy;
 
