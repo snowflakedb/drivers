@@ -565,9 +565,11 @@ impl BatchTransport {
     }
 
     fn join<'a>(&'a self, tx: TransferCtx<'a>) -> TransferCtx<'a> {
-        let tx = tx
-            .with_scheduler(&self.scheduler)
-            .with_http_client(self.http.client());
+        let tx = tx.with_scheduler(&self.scheduler);
+        let tx = TransferCtx {
+            http: Some(&self.http),
+            ..tx
+        };
         self.s3_client_cache
             .as_ref()
             .map(|cache| tx.with_s3_client_cache(cache))

@@ -78,7 +78,7 @@ pub(super) async fn build_gcs_client(stage_info: &StageInfo) -> Result<reqwest::
 }
 
 pub(crate) enum StorageHttp {
-    S3(reqwest::Client),
+    S3(crate::tls::aws_http_client::AwsSdkReqwestClient),
     Gcs(reqwest::Client),
     Azure(reqwest::Client),
 }
@@ -88,11 +88,6 @@ impl StorageHttp {
         Ok(match stage_info.location_type {
             LocationType::Azure => Self::Azure(build_azure_client(stage_info).await?),
             LocationType::Gcs => Self::Gcs(build_gcs_client(stage_info).await?),
-            // The sole producer of an `S3` slot, and so the sole reason
-            // `AwsSdkReqwestClient::from_shared` is sound -- see the doc on
-            // `into_shared`. Keep it that way: a second producer that skips
-            // this constructor would put an unconstrained client on the SDK
-            // transport without the type system objecting.
             LocationType::S3 => Self::S3(
                 crate::tls::aws_http_client::AwsSdkReqwestClient::build_prepared(
                     &stage_info.tls_config,
@@ -100,15 +95,22 @@ impl StorageHttp {
                     stage_info.crl_manager.clone(),
                     stage_info.root_store_provider.clone(),
                 )
-                .await?
-                .into_shared(),
+                .await?,
             ),
         })
     }
 
-    pub(crate) fn client(&self) -> &reqwest::Client {
+    pub(crate) fn s3(&self) -> Option<&crate::tls::aws_http_client::AwsSdkReqwestClient> {
         match self {
-            Self::S3(c) | Self::Gcs(c) | Self::Azure(c) => c,
+            Self::S3(client) => Some(client),
+            Self::Gcs(_) | Self::Azure(_) => None,
+        }
+    }
+
+    pub(crate) fn reqwest(&self) -> Option<&reqwest::Client> {
+        match self {
+            Self::Gcs(client) | Self::Azure(client) => Some(client),
+            Self::S3(_) => None,
         }
     }
 }

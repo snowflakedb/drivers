@@ -604,7 +604,11 @@ pub(super) async fn upload_to_azure_or_skip(
 
     // Build the client once — TLS config is creds-independent; only the SAS in
     // `stage_info.creds` rotates on refresh — and clone it into each attempt.
-    let client = create_azure_client(stage_info, tx.http_client).await?;
+    let client = create_azure_client(
+        stage_info,
+        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+    )
+    .await?;
     // On-cloud byte count (ciphertext length under CSE) decides single-PUT vs
     // multipart; computed once, outside the per-attempt closure.
     let body_len = multipart::upload_body_len(&prepared.prepared)
@@ -1515,7 +1519,11 @@ pub async fn download_from_azure_streaming(
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Build the client once (TLS config is creds-independent); only the SAS in
     // `stage_info.creds` rotates on refresh.
-    let client = create_azure_client(stage_info, tx.http_client).await?;
+    let client = create_azure_client(
+        stage_info,
+        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+    )
+    .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
     // The routing HEAD + the ranged/single GET all run INSIDE the refresh

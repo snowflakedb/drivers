@@ -835,7 +835,7 @@ pub struct TransferCtx<'a> {
     pub(crate) scheduler: Option<&'a TransferScheduler>,
     /// The batch HTTP client when this transfer joined a `BatchTransport`.
     /// `None` means a single-file caller or test; the callee builds its own.
-    pub(crate) http_client: Option<&'a reqwest::Client>,
+    pub(crate) http: Option<&'a super::cloud_http::StorageHttp>,
     /// Shared `S3Client` for the command when this transfer joined a
     /// `BatchTransport` on an S3 stage. `None` for single-file callers, tests,
     /// and non-S3 clouds.
@@ -853,7 +853,7 @@ impl<'a> TransferCtx<'a> {
     }
 
     /// Refresh + cleanup, from the optional handles the callers hold. Leaves
-    /// `scheduler`/`http_client` unset; chain [`Self::with_scheduler`] to join a
+    /// `scheduler`/`http` unset; chain [`Self::with_scheduler`] to join a
     /// batch budget.
     pub fn new(
         refresher: Option<&'a dyn StageInfoRefresher>,
@@ -863,7 +863,7 @@ impl<'a> TransferCtx<'a> {
             refresher,
             cleanup,
             scheduler: None,
-            http_client: None,
+            http: None,
             s3_client_cache: None,
         }
     }
@@ -876,13 +876,6 @@ impl<'a> TransferCtx<'a> {
     pub(crate) fn with_scheduler(self, scheduler: &'a TransferScheduler) -> Self {
         Self {
             scheduler: Some(scheduler),
-            ..self
-        }
-    }
-
-    pub(crate) fn with_http_client(self, client: &'a reqwest::Client) -> Self {
-        Self {
-            http_client: Some(client),
             ..self
         }
     }

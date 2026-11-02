@@ -131,7 +131,11 @@ pub async fn upload_to_gcs_or_skip(
     tx: TransferCtx<'_>,
 ) -> Result<UploadStatus, GcsUploadError> {
     let scheduler = &super::scheduler_for(tx, multipart);
-    let client = create_gcs_client(stage_info, tx.http_client).await?;
+    let client = create_gcs_client(
+        stage_info,
+        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+    )
+    .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let using_presigned_url = stage_info.presigned_url.is_some();
     let refresher = tx.refresher;
@@ -342,7 +346,11 @@ async fn gcs_get_with_refresh(
     per_file_index: usize,
     tx: TransferCtx<'_>,
 ) -> Result<reqwest::Response, GcsDownloadError> {
-    let client = create_gcs_client(stage_info, tx.http_client).await?;
+    let client = create_gcs_client(
+        stage_info,
+        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+    )
+    .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     // Either presigned-URL source enables the 400-handling: the URL may
     // have expired and reissuing it produces a fresh signature. The
@@ -1278,7 +1286,11 @@ async fn gcs_try_ranged_download(
     spill_target: cloud_http::CloudSpillTarget<'_>,
     tx: TransferCtx<'_>,
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
-    let client = create_gcs_client(stage_info, tx.http_client).await?;
+    let client = create_gcs_client(
+        stage_info,
+        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+    )
+    .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
     let make_attempt = |base: &StageInfo| {
