@@ -84,7 +84,7 @@ async fn should_negotiate_tls_when_the_server_offers_a_version_inside_the_window
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -121,7 +121,7 @@ async fn should_fail_the_handshake_when_the_server_only_offers_a_version_below_t
     let cfg = TlsConfig::from_settings(&settings).expect("tls13-only window is valid");
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -144,7 +144,7 @@ async fn should_fail_the_handshake_when_the_server_only_offers_a_version_below_t
     };
     let permissive_client = create_tls_client_with_config(
         permissive,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");

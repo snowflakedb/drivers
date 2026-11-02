@@ -814,7 +814,7 @@ mod tests {
         let sdk_http = AwsSdkReqwestClient::build(
             &crate::tls::TlsConfig::default(),
             Some(&proxy),
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("SDK HTTP client must build");

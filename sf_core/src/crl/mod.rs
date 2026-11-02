@@ -3,6 +3,7 @@ pub mod certificate_parser;
 pub mod config;
 pub mod error;
 pub mod manager;
+mod stats_buffer;
 pub mod validator;
 pub mod worker;
 
@@ -16,6 +17,6 @@ pub use certificate_parser::{
 };
 pub use config::{CertRevocationCheckMode, CrlConfig};
 pub use error::CrlError;
-pub use manager::CrlManager;
+pub use manager::{ConnectionCrl, CrlManager};
 pub use validator::CrlValidator;
 pub use worker::{CrlWorker, SharedCrlWorker};

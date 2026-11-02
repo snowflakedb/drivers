@@ -316,7 +316,7 @@ pub struct StageInfo {
     pub tls_config: TlsConfig,
     /// Driver-owned CRL manager for storage TLS clients. Always set by
     /// `StageTransport` alongside `tls_config`.
-    pub crl_manager: crate::crl::CrlManager,
+    pub crl_manager: crate::crl::ConnectionCrl,
     /// Driver-owned system root certificates for storage TLS clients. Always
     /// set by `StageTransport` alongside `tls_config`.
     pub root_store_provider: RootStoreProvider,
@@ -360,7 +360,7 @@ impl StageInfo {
 pub struct StageTransport {
     pub tls_config: TlsConfig,
     pub proxy_config: crate::tls::config::ProxyConfig,
-    pub crl_manager: crate::crl::CrlManager,
+    pub crl_manager: crate::crl::ConnectionCrl,
     pub root_store_provider: RootStoreProvider,
 }
 
@@ -374,7 +374,7 @@ impl StageTransport {
         Self {
             tls_config: TlsConfig::default(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
-            crl_manager: crate::crl::CrlManager::new(),
+            crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: RootStoreProvider::new(),
         }
     }

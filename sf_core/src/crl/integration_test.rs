@@ -95,7 +95,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_tls_client_creation_with_different_modes() {
         let driver = DatabaseDriverV1::new();
-        let crl_manager = driver.crl_manager.clone();
+        let crl_manager = driver.crl_manager.connection_crl();
 
         // Test disabled mode
         let config = CrlConfig {
@@ -107,7 +107,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_manager.clone(),
+            crl_manager.connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .unwrap();
@@ -123,7 +123,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_manager.clone(),
+            crl_manager.connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .unwrap();
@@ -139,7 +139,7 @@ mod integration_tests {
                 crl_config: config,
                 ..Default::default()
             },
-            crl_manager,
+            crl_manager.connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .unwrap();

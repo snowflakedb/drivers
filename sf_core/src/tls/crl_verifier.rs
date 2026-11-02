@@ -1,4 +1,4 @@
-use crate::crl::CrlManager;
+use crate::crl::ConnectionCrl;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::validator::CrlValidator;
 use crate::crl::worker::SharedCrlWorker;
@@ -29,7 +29,7 @@ pub(crate) struct CrlServerCertVerifier {
     root_store: Arc<RootCertStore>,
     supported_algs: WebPkiSupportedAlgorithms,
     crl_worker: SharedCrlWorker,
-    _crl_manager: CrlManager,
+    _crl_manager: ConnectionCrl,
 }
 
 impl CrlServerCertVerifier {
@@ -37,7 +37,7 @@ impl CrlServerCertVerifier {
         crl_config: CrlConfig,
         root_store: Arc<RootCertStore>,
         verify_hostname: bool,
-        crl: CrlManager,
+        crl: ConnectionCrl,
         crl_download_roots: &RootStoreSnapshot<'_>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let supported_algs = default_supported_algs();
@@ -48,11 +48,10 @@ impl CrlServerCertVerifier {
         .build()?;
         let crl_worker = crl.worker();
         let cache = crl.cache(crl_config.clone(), crl_download_roots)?;
-        let crl_validator = Arc::new(CrlValidator::new_with_root_store(
-            crl_config.clone(),
-            Some(root_store.clone()),
-            cache,
-        ));
+        let crl_validator = Arc::new(
+            CrlValidator::new_with_root_store(crl_config.clone(), Some(root_store.clone()), cache)
+                .with_crl_stats(crl.stats()),
+        );
         Ok(Self {
             webpki_verifier,
             crl_validator,
@@ -199,8 +198,8 @@ mod tests {
     use crate::tls::test_helpers::x509::make_root_store;
     use chrono::Utc;
 
-    fn test_crl() -> CrlManager {
-        CrlManager::new()
+    fn test_crl() -> ConnectionCrl {
+        CrlManager::new().connection_crl()
     }
 
     fn memory_cache(crl: &CrlManager) -> Arc<CrlCache> {

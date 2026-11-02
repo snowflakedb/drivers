@@ -105,7 +105,7 @@ impl DatabaseDriverV1 {
                 //  serialized with the result chunk
                 let client = tls::client::create_tls_client_with_config_prepared(
                     tls::TlsConfig::default(),
-                    self.crl_manager.clone(),
+                    self.crl_manager.connection_crl(),
                     self.root_store_provider.clone(),
                 )
                 .await

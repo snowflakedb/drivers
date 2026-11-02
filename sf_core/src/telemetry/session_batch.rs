@@ -78,6 +78,13 @@ impl<T> SessionBuffer<T> {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_entries<R>(&self, telemetry_id: u64, f: impl FnOnce(&[T]) -> R) -> R {
+        let bufs = self.buffers.lock_recover();
+        let entries = bufs.get(&telemetry_id).map(Vec::as_slice).unwrap_or(&[]);
+        f(entries)
+    }
+
+    #[cfg(test)]
     pub(crate) fn len(&self, telemetry_id: u64) -> usize {
         self.buffers
             .lock()

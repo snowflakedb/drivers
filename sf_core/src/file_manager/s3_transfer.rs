@@ -2493,7 +2493,7 @@ mod tests {
             use_s3_regional_url,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new(),
+            crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: crate::tls::RootStoreProvider::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
         }
@@ -3790,7 +3790,7 @@ mod tests {
             use_s3_regional_url: false,
             storage_account: None,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new(),
+            crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: crate::tls::RootStoreProvider::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
         }

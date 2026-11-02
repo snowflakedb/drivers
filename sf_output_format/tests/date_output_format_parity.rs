@@ -8,8 +8,8 @@ use chrono::NaiveDate;
 use sf_core::config::rest_parameters::{
     ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, LoginMethod, LoginParameters, QueryParameters,
 };
-use sf_core::crl::CrlManager;
 use sf_core::crl::config::CrlConfig;
+use sf_core::crl::{ConnectionCrl, CrlManager};
 use sf_core::rest::snowflake::{
     QueryInput, QueryOptions, RestError, snowflake_login, snowflake_query,
 };
@@ -739,7 +739,7 @@ async fn run_sql(
     query_params: QueryParameters,
     session_token: &str,
     sql: String,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
 ) -> Result<sf_core::rest::snowflake::query_response::Data, String> {
     match snowflake_query(
         query_params,
@@ -783,7 +783,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("parameters.json"));
     let params = load_parameters(&parameter_path);
-    let crl_manager = CrlManager::new();
+    let crl_manager = CrlManager::new().connection_crl();
     let client_info = default_client_info();
     let server_url = params.server_url();
     let login_params = build_login_params(&params, client_info.clone(), server_url.clone());

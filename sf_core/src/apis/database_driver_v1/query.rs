@@ -89,7 +89,7 @@ pub(super) async fn perform_put_get_transfer(
     unsafe_file_write: bool,
     tls_config: crate::tls::config::TlsConfig,
     proxy_config: crate::tls::config::ProxyConfig,
-    crl_manager: crate::crl::CrlManager,
+    crl_manager: crate::crl::ConnectionCrl,
     root_store_provider: RootStoreProvider,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.

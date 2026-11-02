@@ -204,7 +204,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         None,
         &Default::default(),
         xp_backend,
-        CrlManager::new(),
+        CrlManager::new().connection_crl(),
         RootStoreProvider::new(),
         None,
     )

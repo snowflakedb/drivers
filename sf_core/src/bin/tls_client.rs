@@ -179,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let result_file = matches.get_one::<String>("result-file").cloned();
 
-    let crl_manager = sf_core::crl::CrlManager::new();
+    let crl_manager = sf_core::crl::CrlManager::new().connection_crl();
     let client = create_tls_client_with_config(
         tls_config,
         crl_manager.clone(),

@@ -36,7 +36,7 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::config::settings::Setting;
-use crate::crl::CrlManager;
+use crate::crl::ConnectionCrl;
 use crate::crl::config::CertRevocationCheckMode;
 use crate::http::retry::{
     HttpContext, HttpError, LastStatus, RetryState, TransportSnafu, execute_with_retry,
@@ -818,7 +818,7 @@ pub async fn auth_request_data(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
@@ -1352,7 +1352,7 @@ struct DPoPSigner {
 pub async fn snowflake_login(
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(
@@ -1400,7 +1400,7 @@ pub async fn snowflake_login_with_client(
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
     login_deadline: Option<Instant>,
 ) -> Result<LoginResult, RestError> {
@@ -2126,7 +2126,7 @@ pub async fn snowflake_query<'a>(
     session_token: impl AsRef<str>,
     query_input: QueryInput<'a>,
     options: QueryOptions,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info, crl_manager, roots).await?;
@@ -2992,7 +2992,7 @@ where
 
 async fn build_tls_http_client(
     client_info: &ClientInfo,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<reqwest::Client, RestError> {
     create_tls_client_with_proxy_prepared(
@@ -3867,7 +3867,7 @@ mod tests {
             None,
             &RetryPolicy::default(),
             Some(&backend),
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
             None,
         )
@@ -4377,7 +4377,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4412,7 +4412,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4442,7 +4442,7 @@ mod tests {
             None,
             None,
             &RetryPolicy::default(),
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         ))
         .unwrap()
@@ -4587,7 +4587,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4615,7 +4615,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4640,7 +4640,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4671,7 +4671,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4698,7 +4698,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4777,7 +4777,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
                 None,
             ))
@@ -4814,8 +4814,8 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                CrlManager::new(),
-                RootStoreProvider::new(),
+                crate::crl::CrlManager::new().connection_crl(),
+                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4856,7 +4856,7 @@ mod tests {
                     None,
                     None,
                     &RetryPolicy::default(),
-                    crate::crl::CrlManager::new(),
+                    crate::crl::CrlManager::new().connection_crl(),
                     crate::tls::RootStoreProvider::new(),
                 ))
                 .unwrap();
@@ -4881,7 +4881,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -4905,7 +4905,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
@@ -5421,7 +5421,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
                 None,
             )
@@ -5723,7 +5723,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
                 None,
             )
@@ -5767,7 +5767,7 @@ mod tests {
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
                 None,
             )
@@ -6620,7 +6620,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             )
             .await
@@ -6655,7 +6655,7 @@ mod tests {
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 crate::tls::RootStoreProvider::new(),
             )
             .await

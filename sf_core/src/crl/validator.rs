@@ -1,6 +1,7 @@
 use super::config::CrlConfig;
 use crate::crl::cache::CrlCache;
 use crate::crl::error::CrlError;
+use crate::crl::stats_buffer::CrlStatsBuffer;
 use std::sync::Arc;
 use x509_cert::der::{Decode, Encode};
 
@@ -9,6 +10,7 @@ pub struct CrlValidator {
     pub config: CrlConfig,
     cache: Arc<CrlCache>,
     root_store: Option<Arc<rustls::RootCertStore>>, // used to verify CRL signatures for top-most intermediates
+    crl_stats: Option<CrlStatsBuffer>,
 }
 
 impl CrlValidator {
@@ -17,6 +19,7 @@ impl CrlValidator {
             config,
             cache,
             root_store: None,
+            crl_stats: None,
         }
     }
 
@@ -29,7 +32,13 @@ impl CrlValidator {
             config,
             cache,
             root_store,
+            crl_stats: None,
         }
+    }
+
+    pub(crate) fn with_crl_stats(mut self, crl_stats: CrlStatsBuffer) -> Self {
+        self.crl_stats = Some(crl_stats);
+        self
     }
 
     /// Returns true if chain is unrevoked and without errors; errors mark chain invalid
@@ -136,6 +145,7 @@ impl CrlValidator {
                     Some(&issuer_candidates)
                 },
                 self.root_store.clone(),
+                self.crl_stats.as_ref(),
             )
             .await
         {
@@ -156,6 +166,7 @@ impl CrlValidator {
                             issuer_der,
                             Some(&issuer_candidates),
                             self.root_store.clone(),
+                            self.crl_stats.as_ref(),
                         )
                         .await
                 } else {

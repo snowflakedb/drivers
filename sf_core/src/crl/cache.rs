@@ -4,6 +4,7 @@ use crate::crl::error::{
     CrlDistributionPointSnafu, CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu,
     MutexPoisonedSnafu, TlsConfigBuildSnafu, VerificationTaskSnafu,
 };
+use crate::crl::stats_buffer::CrlStatsBuffer;
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
 use crate::tls::RootStoreProvider;
 use crate::utils::sync::MutexRecoverExt;
@@ -357,6 +358,27 @@ fn crl_http_client_builder(
         .context(TlsConfigBuildSnafu)
 }
 
+async fn crl_parse_counts(
+    crl_der: Vec<u8>,
+) -> Result<(Vec<u8>, Option<i64>, Option<i64>), CrlError> {
+    let join = tokio::task::spawn_blocking(move || {
+        use x509_parser::prelude::{CertificateRevocationList, FromDer};
+        let parse_start = std::time::Instant::now();
+        let parsed = CertificateRevocationList::from_der(&crl_der).ok();
+        let parse_ms = parsed
+            .as_ref()
+            .map(|_| parse_start.elapsed().as_millis() as i64);
+        let revoked = parsed.map(|(_, crl)| crl.tbs_cert_list.revoked_certificates.len() as i64);
+        (crl_der, parse_ms, revoked)
+    })
+    .await;
+    match join {
+        Ok(parsed) => Ok(parsed),
+        Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+        Err(error) => Err(error).context(VerificationTaskSnafu),
+    }
+}
+
 impl CrlCache {
     // Compute remaining duration until half-life. None if expired or invalid.
     fn compute_half_life_duration(
@@ -662,12 +684,13 @@ impl CrlCache {
         }
     }
 
-    pub async fn check_revocation(
+    pub(crate) async fn check_revocation(
         &self,
         cert_der: &[u8],
         issuer_der: Option<&[u8]>,
         issuer_candidates: Option<&[&[u8]]>,
         root_store: Option<Arc<rustls::RootCertStore>>,
+        crl_stats: Option<&CrlStatsBuffer>,
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
         use crate::tls::revocation::RevocationOutcome;
@@ -701,10 +724,37 @@ impl CrlCache {
         // underlying cause. See CrlError::CrlDistributionPoint in error.rs.
         let mut last_verify_error: Option<(String, CrlError)> = None;
         for url in crl_urls.iter() {
-            let bytes = self
-                .get(url)
-                .await
-                .context(crate::tls::revocation::CrlOperationSnafu)?;
+            let (bytes, download_ms) = match self.get_with_source(url).await {
+                Ok(got) => got,
+                Err(error) => {
+                    if matches!(
+                        error,
+                        CrlError::CrlDownload { .. }
+                            | CrlError::DownloadSizeExceeded { .. }
+                            | CrlError::HttpTimeout { .. }
+                    ) && let Some(crl_stats) = crl_stats
+                    {
+                        crl_stats.record(url, None, None, None, None);
+                    }
+                    return Err(error).context(crate::tls::revocation::CrlOperationSnafu);
+                }
+            };
+            let bytes = match (crl_stats, download_ms) {
+                (Some(crl_stats), Some(download_time_ms)) => {
+                    let (bytes, parse_time_ms, revoked_certificates) = crl_parse_counts(bytes)
+                        .await
+                        .context(crate::tls::revocation::CrlOperationSnafu)?;
+                    crl_stats.record(
+                        url,
+                        Some(bytes.len() as i64),
+                        revoked_certificates,
+                        Some(download_time_ms as i64),
+                        parse_time_ms,
+                    );
+                    bytes
+                }
+                _ => bytes,
+            };
             let scope = crate::tls::x509_utils::extract_crl_idp_scope(&bytes)
                 .ok()
                 .flatten();
@@ -1105,8 +1155,8 @@ impl CrlCache {
         Ok(None)
     }
 
-    async fn fetch_from_network_and_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
-        let fetched = self.fetch(url).await?;
+    async fn fetch_from_network_and_cache(&self, url: &str) -> Result<(Vec<u8>, u64), CrlError> {
+        let (fetched, download_ms) = self.fetch(url).await?;
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
         {
@@ -1185,10 +1235,18 @@ impl CrlCache {
                 "Failed to put CRL into memory cache for url {url}: {e}"
             );
         }
-        Ok(fetched)
+        Ok((fetched, download_ms))
     }
 
     pub async fn get(&self, url: &str) -> Result<Vec<u8>, CrlError> {
+        self.get_with_source(url).await.map(|(bytes, _)| bytes)
+    }
+
+    /// `Some` is the HTTP GET and body read. A memory or disk hit returns `None`.
+    pub(crate) async fn get_with_source(
+        &self,
+        url: &str,
+    ) -> Result<(Vec<u8>, Option<u64>), CrlError> {
         let start = std::time::Instant::now();
         if let Some(mem) = self.get_from_memory_cache(url).await? {
             let ms = start.elapsed().as_millis() as u64;
@@ -1198,12 +1256,12 @@ impl CrlCache {
             self.metrics
                 .get_total
                 .add(1, &[KeyValue::new("source", "memory")]);
-            return Ok(mem.crl);
+            return Ok((mem.crl, None));
         }
         let lock = self.get_url_lock(url)?;
         let _guard = lock.lock().await;
         if let Some(mem) = self.get_from_memory_cache(url).await? {
-            return Ok(mem.crl);
+            return Ok((mem.crl, None));
         }
 
         if let Some(disk) = self.get_from_disk_cache(url).await? {
@@ -1214,10 +1272,10 @@ impl CrlCache {
             self.metrics
                 .get_total
                 .add(1, &[KeyValue::new("source", "disk")]);
-            return Ok(disk);
+            return Ok((disk, None));
         }
 
-        let fetched = self.fetch_from_network_and_cache(url).await?;
+        let (fetched, download_ms) = self.fetch_from_network_and_cache(url).await?;
         let ms = start.elapsed().as_millis() as u64;
         self.metrics
             .get_ms
@@ -1225,7 +1283,7 @@ impl CrlCache {
         self.metrics
             .get_total
             .add(1, &[KeyValue::new("source", "network")]);
-        Ok(fetched)
+        Ok((fetched, Some(download_ms)))
     }
 
     fn get_url_lock(&self, url: &str) -> Result<Arc<tokio::sync::Mutex<()>>, CrlError> {
@@ -1241,7 +1299,7 @@ impl CrlCache {
             .clone())
     }
 
-    async fn fetch(&self, url: &str) -> Result<Vec<u8>, CrlError> {
+    async fn fetch(&self, url: &str) -> Result<(Vec<u8>, u64), CrlError> {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
 
@@ -1249,6 +1307,7 @@ impl CrlCache {
         let req_builder = || self.http_client.get(url);
         // Stream the body against a fixed size limit so an oversized CRL
         // response is bounded.
+        let download_start = std::time::Instant::now();
         let bytes = match execute_bytes_with_retry_capped(
             req_builder,
             &http_ctx,
@@ -1282,10 +1341,11 @@ impl CrlCache {
             }
         };
         self.record_backoff_success(url)?;
+        let download_ms = download_start.elapsed().as_millis() as u64;
         let ms = start.elapsed().as_millis() as u64;
         self.metrics.fetch_ms.record(ms, &[]);
         self.metrics.fetch_total.add(1, &[]);
-        Ok(bytes)
+        Ok((bytes, download_ms))
     }
 
     async fn maybe_sleep_backoff(&self, url: &str) -> Result<(), CrlError> {
@@ -1433,6 +1493,7 @@ impl CrlCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tls::revocation::RevocationOutcome;
     use tokio::runtime::Builder;
     use tokio::time::timeout;
 
@@ -1942,7 +2003,7 @@ mod tests {
         .expect("cache");
 
         let url = format!("{}/some.crl", server.uri());
-        let bytes = cache
+        let (bytes, _) = cache
             .fetch(&url)
             .await
             .expect("within-cap CRL must download");
@@ -1992,5 +2053,364 @@ mod tests {
             got.is_none(),
             "a symlinked cache entry must be rejected (O_NOFOLLOW), got {got:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn should_emit_client_crl_stats_after_network_fetch() {
+        let f = crl_fixture(CrlBytes::Signed {
+            revoked_serials: vec![0xDEAD_BEEF],
+        })
+        .await;
+        assert_eq!(
+            f.check().await.expect("network check"),
+            RevocationOutcome::NotRevoked
+        );
+        assert_eq!(
+            f.check().await.expect("outcome-cache hit"),
+            RevocationOutcome::NotRevoked
+        );
+        let memory_hit = f
+            .cache
+            .check_revocation(
+                &f.ee_der,
+                None,
+                None,
+                Some(Arc::clone(&f.roots)),
+                Some(&f.crl.stats()),
+            )
+            .await
+            .expect("memory-cache hit");
+        assert_eq!(memory_hit, RevocationOutcome::NotRevoked);
+        assert_eq!(f.server.received_requests().await.unwrap().len(), 1);
+        assert_downloaded(&f.one_stat(), &f, 1);
+    }
+
+    #[tokio::test]
+    async fn should_report_zero_revoked_certificates_for_an_empty_crl() {
+        let f = crl_fixture(CrlBytes::Signed {
+            revoked_serials: vec![],
+        })
+        .await;
+        assert_eq!(
+            f.check().await.expect("revocation check"),
+            RevocationOutcome::NotRevoked
+        );
+        assert_downloaded(&f.one_stat(), &f, 0);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_download_exceeds_the_cap() {
+        let max_download_size = 1024usize;
+        let f = crl_fixture_with(
+            CrlBytes::Raw(vec![0u8; max_download_size + 1]),
+            None,
+            CrlConfig {
+                max_download_size,
+                ..test_config()
+            },
+            200,
+            None,
+        )
+        .await;
+        f.check().await.expect_err("oversized CRL must be rejected");
+        assert_only_url(&f.one_stat(), &f.url);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_body_is_not_a_crl() {
+        let f = crl_fixture(CrlBytes::Raw(b"not-a-crl".to_vec())).await;
+        f.check()
+            .await
+            .expect_err("a body that is not a CRL fails the check");
+        let stat = f.one_stat();
+        assert_eq!(stat["crl_url"], f.url);
+        assert_eq!(stat["crl_bytes"], f.crl_der.len() as i64);
+        assert!(
+            stat["crl_download_time_ms"]
+                .as_i64()
+                .is_some_and(|ms| ms >= 0)
+        );
+        assert!(stat.get("crl_parse_time_ms").is_none());
+        assert!(stat.get("crl_revoked_certificates").is_none());
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_signature_check_fails() {
+        let f = crl_fixture(CrlBytes::Signed {
+            revoked_serials: vec![1],
+        })
+        .await;
+        f.cache
+            .check_revocation(&f.ee_der, None, None, None, Some(&f.crl.stats()))
+            .await
+            .expect_err("a CRL with no issuer fails the signature check");
+        assert_downloaded(&f.one_stat(), &f, 1);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_certificate_is_revoked() {
+        let serial = 0xDEAD_BEEFu64;
+        let f = crl_fixture_with(
+            CrlBytes::Signed {
+                revoked_serials: vec![serial],
+            },
+            Some(serial),
+            test_config(),
+            200,
+            None,
+        )
+        .await;
+        assert_eq!(
+            f.check().await.expect("revocation check"),
+            RevocationOutcome::Revoked {
+                reason: None,
+                revocation_time: None,
+            }
+        );
+        assert_downloaded(&f.one_stat(), &f, 1);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_download_returns_not_found() {
+        let f = crl_fixture_with(
+            CrlBytes::Raw(b"missing".to_vec()),
+            None,
+            test_config(),
+            404,
+            None,
+        )
+        .await;
+        f.check().await.expect_err("a 404 does not yield a CRL");
+        assert_only_url(&f.one_stat(), &f.url);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_connection_fails() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = format!("http://{}/test-ca.crl", listener.local_addr().unwrap());
+        drop(listener);
+        let f = crl_fixture_with(
+            CrlBytes::Raw(b"crl".to_vec()),
+            None,
+            test_config(),
+            200,
+            Some(closed),
+        )
+        .await;
+        f.check()
+            .await
+            .expect_err("a closed CRL endpoint fails the download");
+        assert_only_url(&f.one_stat(), &f.url);
+    }
+
+    #[tokio::test]
+    async fn should_not_emit_crl_stats_on_a_disk_cache_hit() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = crl_fixture_with(
+            CrlBytes::Signed {
+                revoked_serials: vec![],
+            },
+            None,
+            CrlConfig {
+                enable_memory_caching: false,
+                enable_disk_caching: true,
+                cache_dir: Some(dir.path().to_path_buf()),
+                unsafe_skip_file_permissions_check: true,
+                ..test_config()
+            },
+            200,
+            None,
+        )
+        .await;
+        f.check().await.expect("first check downloads the CRL");
+        f.check().await.expect("second check reads the disk cache");
+        assert_eq!(f.server.received_requests().await.unwrap().len(), 1);
+        assert_downloaded(&f.one_stat(), &f, 0);
+    }
+
+    #[tokio::test]
+    async fn should_emit_crl_stats_when_the_crl_covers_only_some_reasons() {
+        let body = include_bytes!(
+            "../../third_party/rustls-webpki/tests/crls/crl.idp.only_some_reasons.der"
+        )
+        .to_vec();
+        let f = crl_fixture(CrlBytes::Raw(body)).await;
+        let checked = f.check().await;
+        assert!(
+            matches!(checked, Ok(RevocationOutcome::NotDetermined)),
+            "a reasons-limited CRL is not a full revocation answer, got {checked:?}"
+        );
+        let stat = f.one_stat();
+        assert_eq!(stat["crl_url"], f.url);
+        assert_eq!(stat["crl_bytes"], f.crl_der.len() as i64);
+        assert!(stat["crl_download_time_ms"].is_number());
+        assert!(stat["crl_parse_time_ms"].is_number());
+        assert!(stat["crl_revoked_certificates"].is_number());
+    }
+
+    enum CrlBytes {
+        Raw(Vec<u8>),
+        Signed { revoked_serials: Vec<u64> },
+    }
+
+    struct CrlFixture {
+        server: wiremock::MockServer,
+        crl: crate::crl::ConnectionCrl,
+        cache: Arc<CrlCache>,
+        ee_der: Vec<u8>,
+        ca_der: Vec<u8>,
+        roots: Arc<rustls::RootCertStore>,
+        url: String,
+        crl_der: Vec<u8>,
+    }
+
+    impl CrlFixture {
+        async fn check(
+            &self,
+        ) -> Result<RevocationOutcome, crate::tls::revocation::RevocationError> {
+            self.cache
+                .check_revocation(
+                    &self.ee_der,
+                    Some(&self.ca_der),
+                    None,
+                    Some(Arc::clone(&self.roots)),
+                    Some(&self.crl.stats()),
+                )
+                .await
+        }
+
+        fn one_stat(&self) -> serde_json::Value {
+            let telemetry = super::super::stats_buffer::disconnected_session_telemetry(1);
+            self.crl.flush_crl_stats(&telemetry, 1);
+            let messages = telemetry.raw_log_messages(1);
+            let [message] = messages.as_slice() else {
+                panic!("expected one client_crl_stats event, got {messages:?}");
+            };
+            serde_json::from_str(message).unwrap_or_else(|err| {
+                panic!("client_crl_stats event is not json: {err}; body={message}")
+            })
+        }
+    }
+
+    fn assert_only_url(stat: &serde_json::Value, url: &str) {
+        assert_eq!(stat["type"], "client_crl_stats");
+        assert_eq!(stat["crl_url"], url);
+        for field in [
+            "crl_bytes",
+            "crl_download_time_ms",
+            "crl_parse_time_ms",
+            "crl_revoked_certificates",
+        ] {
+            assert!(stat.get(field).is_none(), "{field} is set on {stat}");
+        }
+    }
+
+    fn assert_downloaded(stat: &serde_json::Value, f: &CrlFixture, revoked_certificates: i64) {
+        assert_eq!(stat["type"], "client_crl_stats");
+        assert_eq!(stat["crl_url"], f.url);
+        assert_eq!(stat["crl_bytes"], f.crl_der.len() as i64);
+        assert_eq!(stat["crl_revoked_certificates"], revoked_certificates);
+        for field in ["crl_download_time_ms", "crl_parse_time_ms"] {
+            assert!(
+                stat[field].as_i64().is_some_and(|ms| ms >= 0),
+                "{field} is not a duration on {stat}"
+            );
+        }
+    }
+
+    async fn crl_fixture(body: CrlBytes) -> CrlFixture {
+        crl_fixture_with(body, None, test_config(), 200, None).await
+    }
+
+    async fn crl_fixture_with(
+        body: CrlBytes,
+        ee_serial: Option<u64>,
+        config: CrlConfig,
+        status: u16,
+        endpoint: Option<String>,
+    ) -> CrlFixture {
+        use crate::crl::CrlManager;
+        use rcgen::{
+            BasicConstraints, CertificateParams, CertificateRevocationListParams,
+            CrlDistributionPoint, IsCa, KeyPair, KeyUsagePurpose, RevokedCertParams, SerialNumber,
+        };
+        use rustls::pki_types::CertificateDer;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_der = ca_cert.der().to_vec();
+        let crl_der = match body {
+            CrlBytes::Raw(bytes) => bytes,
+            CrlBytes::Signed { revoked_serials } => {
+                let now = time::OffsetDateTime::now_utc();
+                CertificateRevocationListParams {
+                    this_update: now,
+                    next_update: now + time::Duration::days(7),
+                    crl_number: SerialNumber::from(1u64),
+                    issuing_distribution_point: None,
+                    revoked_certs: revoked_serials
+                        .into_iter()
+                        .map(|serial| RevokedCertParams {
+                            serial_number: SerialNumber::from(serial),
+                            revocation_time: now,
+                            reason_code: None,
+                            invalidity_date: None,
+                        })
+                        .collect(),
+                    key_identifier_method: rcgen::KeyIdMethod::Sha256,
+                }
+                .signed_by(&ca_cert, &ca_key)
+                .unwrap()
+                .der()
+                .to_vec()
+            }
+        };
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(status)
+                    .insert_header("content-type", "application/pkix-crl")
+                    .set_body_bytes(crl_der.clone()),
+            )
+            .mount(&server)
+            .await;
+        let url = endpoint.unwrap_or_else(|| format!("{}/test-ca.crl", server.uri()));
+
+        let ee_key = KeyPair::generate().unwrap();
+        let mut ee_params = CertificateParams::new(vec!["test.snowflake.com".into()]).unwrap();
+        ee_params.is_ca = IsCa::NoCa;
+        ee_params.serial_number = ee_serial.map(SerialNumber::from);
+        ee_params.crl_distribution_points = vec![CrlDistributionPoint {
+            uris: vec![url.clone()],
+        }];
+        let ee_der = ee_params
+            .signed_by(&ee_key, &ca_cert, &ca_key)
+            .unwrap()
+            .der()
+            .to_vec();
+
+        let mut root_store = rustls::RootCertStore::empty();
+        let _ = root_store.add(CertificateDer::from(ca_der.clone()));
+        let crl = CrlManager::new().connection_crl();
+        let cache = crl
+            .cache(config, &RootStoreProvider::new().snapshot())
+            .expect("cache");
+        CrlFixture {
+            server,
+            crl,
+            cache,
+            ee_der,
+            ca_der,
+            roots: Arc::new(root_store),
+            url,
+            crl_der,
+        }
     }
 }

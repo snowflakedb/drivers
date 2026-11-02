@@ -354,7 +354,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let params = load_parameters(&cli.parameter_path)?;
 
-    let crl_manager = CrlManager::new();
+    let crl_manager = CrlManager::new().connection_crl();
     let roots = RootStoreProvider::new();
 
     let client_info = default_client_info();

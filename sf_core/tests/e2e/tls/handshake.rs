@@ -151,7 +151,7 @@ async fn should_complete_handshake_with_default_roots() {
     // When GET request is sent to the server URL
     let client = create_tls_client_with_config(
         TlsConfig::default(),
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -175,7 +175,7 @@ async fn should_complete_handshake_with_custom_pem_roots() {
         };
         let client = create_tls_client_with_config(
             cfg,
-            sf_core::crl::CrlManager::new(),
+            sf_core::crl::CrlManager::new().connection_crl(),
             sf_core::tls::RootStoreProvider::new(),
         )
         .expect("client");
@@ -202,7 +202,7 @@ async fn should_trust_custom_root_store_when_crl_disabled() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -222,7 +222,7 @@ async fn should_replace_default_roots_with_custom_root_store() {
         std::env::var("E2E_TLS_SERVER").unwrap_or("https://www.snowflake.com".to_string());
     let default_client = create_tls_client_with_config(
         TlsConfig::default(),
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("default client");
@@ -239,7 +239,7 @@ async fn should_replace_default_roots_with_custom_root_store() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -263,7 +263,7 @@ async fn should_trust_extra_root_store_when_crl_disabled() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -291,7 +291,7 @@ async fn should_keep_default_roots_when_extra_root_store_is_configured() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -324,7 +324,7 @@ async fn should_trust_extra_root_store_when_crl_enabled() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -357,7 +357,7 @@ async fn should_skip_hostname_verification_when_disabled() {
     };
     let client = create_tls_client_with_config(
         cfg,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -377,7 +377,7 @@ async fn should_skip_hostname_verification_when_disabled() {
     };
     let client_strict = create_tls_client_with_config(
         cfg_strict,
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("client");
@@ -404,7 +404,7 @@ async fn insecure_client_still_accepts_untrusted_host_mismatch() {
             ..Default::default()
         },
         Some(&sf_core::tls::config::ProxyConfig::default()),
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("insecure client must still build with the guarded global provider");
@@ -429,7 +429,7 @@ async fn disabled_hostname_check_still_rejects_untrusted_chain() {
             ..Default::default()
         },
         Some(&sf_core::tls::config::ProxyConfig::default()),
-        sf_core::crl::CrlManager::new(),
+        sf_core::crl::CrlManager::new().connection_crl(),
         sf_core::tls::RootStoreProvider::new(),
     )
     .expect("build client with hostname verification disabled");

@@ -1,7 +1,9 @@
 use crate::crl::cache::{BackgroundRefresher, CrlCache};
 use crate::crl::config::CrlConfig;
 use crate::crl::error::CrlError;
+use crate::crl::stats_buffer::CrlStatsBuffer;
 use crate::crl::worker::{CrlWorker, SharedCrlWorker};
+use crate::telemetry::session_telemetry::SessionTelemetry;
 use crate::tls::RootStoreSnapshot;
 use crate::utils::sync::MutexRecoverExt;
 use once_cell::sync::OnceCell;
@@ -55,6 +57,52 @@ impl CrlManager {
         }
         Ok(Arc::clone(cache))
     }
+
+    /// A copy that shares this manager's worker and caches and carries a new
+    /// `client_crl_stats` buffer. Clones of the returned handle share that buffer.
+    pub fn connection_crl(&self) -> ConnectionCrl {
+        ConnectionCrl {
+            manager: self.clone(),
+            stats: CrlStatsBuffer::new(),
+        }
+    }
+}
+
+/// The driver's [`CrlManager`] plus the `client_crl_stats` buffer for one connection.
+///
+/// [`Deref`] forwards cache and worker calls to the shared manager. Cloning keeps
+/// both the manager and this connection's buffer.
+#[derive(Clone, Debug)]
+pub struct ConnectionCrl {
+    manager: CrlManager,
+    stats: CrlStatsBuffer,
+}
+
+impl ConnectionCrl {
+    pub(crate) fn stats(&self) -> CrlStatsBuffer {
+        self.stats.clone()
+    }
+
+    pub(crate) fn flush_crl_stats(&self, telemetry: &SessionTelemetry, telemetry_id: u64) {
+        self.stats.flush_to(telemetry, telemetry_id);
+    }
+
+    pub(crate) fn discard_crl_stats(&self) {
+        self.stats.discard();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_crl_stats(&self) -> Vec<crate::crl::stats_buffer::CrlStat> {
+        self.stats.pending()
+    }
+}
+
+impl std::ops::Deref for ConnectionCrl {
+    type Target = CrlManager;
+
+    fn deref(&self) -> &Self::Target {
+        &self.manager
+    }
 }
 
 impl Default for CrlManager {
@@ -80,6 +128,33 @@ mod tests {
             enable_disk_caching: false,
             ..CrlConfig::default()
         }
+    }
+
+    #[test]
+    fn connection_crl_shares_the_worker_and_keeps_its_own_stats() {
+        let driver = CrlManager::new();
+        let account_a = driver.connection_crl();
+        let account_b = driver.connection_crl();
+        assert!(Arc::ptr_eq(&account_a.worker(), &account_b.worker()));
+
+        let telemetry_a = crate::crl::stats_buffer::disconnected_session_telemetry(1);
+        account_a.flush_crl_stats(&telemetry_a, 1);
+        account_b
+            .stats()
+            .record("http://crl.snowflake.com/b.crl", None, None, None, None);
+
+        assert!(telemetry_a.raw_log_messages(1).is_empty());
+        let pending_b = account_b.pending_crl_stats();
+        let [stat] = pending_b.as_slice() else {
+            panic!("expected one parked event for account B, got {pending_b:?}");
+        };
+        assert_eq!(stat.url, "http://crl.snowflake.com/b.crl");
+
+        let cloned = account_b.clone();
+        cloned
+            .stats()
+            .record("http://crl.snowflake.com/b2.crl", None, None, None, None);
+        assert_eq!(account_b.pending_crl_stats().len(), 2);
     }
 
     #[test]

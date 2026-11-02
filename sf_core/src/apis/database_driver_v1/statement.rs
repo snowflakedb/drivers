@@ -374,8 +374,10 @@ impl DatabaseDriverV1 {
             flags,
             put_get_policy,
             xp_backend,
+            connection_crl,
         ) = {
             let conn = conn_arc.lock().await;
+            let connection_crl = conn.connection_crl_or(&self.crl_manager);
             let regional = conn.use_s3_regional_url_session_param().await;
             let flags = crate::stage_binding::StageBindingFlags {
                 stage_state: conn.stage_state.clone(),
@@ -387,6 +389,7 @@ impl DatabaseDriverV1 {
                 flags,
                 put_get_policy,
                 conn.xp_backend_arc().context(QuerySnafu)?,
+                connection_crl,
             )
         };
 
@@ -402,7 +405,7 @@ impl DatabaseDriverV1 {
             use_s3_regional_url_session_param,
             &session_parameters,
             &self.wrapper_presets,
-            self.crl_manager.clone(),
+            connection_crl,
             self.root_store_provider.clone(),
             operation_ctx.map(OperationCtx::cleanup_scope),
             xp_backend,
@@ -607,6 +610,7 @@ impl DatabaseDriverV1 {
                     put_compress_level,
                     put_tempdir,
                     get_fastfail,
+                    connection_crl,
                 ) = {
                     let conn = conn.lock().await;
                     let effective_settings = conn.effective_settings();
@@ -625,6 +629,7 @@ impl DatabaseDriverV1 {
                         get_fastfail_override
                             .or_else(|| conn.get_fastfail())
                             .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
+                        conn.connection_crl_or(&self.crl_manager),
                     )
                 };
                 perform_put_get_transfer(
@@ -644,7 +649,7 @@ impl DatabaseDriverV1 {
                     unsafe_file_write,
                     tls_config,
                     proxy_config,
-                    self.crl_manager.clone(),
+                    connection_crl,
                     self.root_store_provider.clone(),
                 )
                 .await

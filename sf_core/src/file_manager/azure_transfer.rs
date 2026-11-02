@@ -1979,7 +1979,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new(),
+            crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: crate::tls::RootStoreProvider::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: overrides
@@ -2300,7 +2300,7 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new(),
+            crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: crate::tls::RootStoreProvider::new(),
             proxy_config: crate::tls::config::ProxyConfig::default(),
             storage_account: Some("test".to_string()),

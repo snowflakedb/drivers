@@ -118,7 +118,7 @@ fn gcs_stage(endpoint: &str) -> StageInfo {
         use_s3_regional_url: false,
         storage_account: None,
         tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new(),
+        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
         root_store_provider: sf_core::tls::RootStoreProvider::new(),
         proxy_config: sf_core::tls::config::ProxyConfig::default(),
     }

@@ -1,4 +1,4 @@
-use crate::crl::CrlManager;
+use crate::crl::ConnectionCrl;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
@@ -243,7 +243,7 @@ fn extend_with_optional_pem(
 /// Handles all TLS configuration including CRL validation, custom root stores, etc.
 pub fn create_tls_client_with_config(
     tls_config: TlsConfig,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<Client, TlsError> {
     create_tls_client_with_proxy(tls_config, None, crl_manager, roots)
@@ -259,7 +259,7 @@ pub fn create_tls_client_with_config(
 pub fn create_tls_client_with_proxy(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<Client, TlsError> {
     build_tls_client_and_rustls_config_sync(
@@ -276,7 +276,7 @@ pub fn create_tls_client_with_proxy(
 pub(crate) async fn create_tls_client_with_proxy_prepared(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<Client, TlsError> {
     let snapshot = roots
@@ -288,7 +288,7 @@ pub(crate) async fn create_tls_client_with_proxy_prepared(
 
 pub(crate) async fn create_tls_client_with_config_prepared(
     tls_config: TlsConfig,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<Client, TlsError> {
     create_tls_client_with_proxy_prepared(tls_config, None, crl_manager, roots).await
@@ -304,7 +304,7 @@ pub(crate) async fn create_tls_client_with_config_prepared(
 pub(crate) async fn build_tls_client_and_rustls_config(
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
@@ -325,7 +325,7 @@ pub(crate) async fn build_tls_client_and_rustls_config(
 fn build_tls_client_and_rustls_config_sync(
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
     connect_timeout: Option<Duration>,
     need_diag_config: bool,
@@ -436,7 +436,7 @@ fn build_tls_client_and_rustls_config_sync(
 pub fn create_tls_client_with_proxy_and_timeouts(
     tls_config: TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
     connect_timeout: Option<Duration>,
 ) -> Result<Client, TlsError> {
@@ -457,7 +457,7 @@ pub(crate) fn configure_http1_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<ClientBuilder, TlsError> {
     configure_tls_builder(
@@ -494,7 +494,7 @@ fn configure_tls_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
     alpn: ClientAlpn,
 ) -> Result<ClientBuilder, TlsError> {
@@ -564,7 +564,7 @@ pub(crate) fn configure_storage_client_builder(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<ClientBuilder, TlsError> {
     configure_storage_from_snapshot(builder, tls_config, proxy, crl_manager, &roots.snapshot())
@@ -574,7 +574,7 @@ pub(crate) async fn configure_storage_client_builder_prepared(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: RootStoreProvider,
 ) -> Result<ClientBuilder, TlsError> {
     let snapshot = roots
@@ -587,7 +587,7 @@ fn configure_storage_from_snapshot(
     builder: ClientBuilder,
     tls_config: &TlsConfig,
     proxy: Option<&ProxyConfig>,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<ClientBuilder, TlsError> {
     configure_tls_builder(
@@ -616,7 +616,7 @@ fn build_crl_rustls_config(
     verify_hostname: bool,
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     alpn: ClientAlpn,
-    crl_manager: CrlManager,
+    crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<rustls::ClientConfig, TlsError> {
     if !verify_hostname {
@@ -1133,6 +1133,7 @@ fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl::CrlManager;
     use crate::sensitive::SensitiveString;
     use std::io::Write;
 
@@ -1329,7 +1330,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             RootStoreProvider::new(),
         );
 
@@ -1362,7 +1363,7 @@ mod tests {
         build_tls_client_and_rustls_config(
             &TlsConfig::default(),
             Some(&ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             provider.clone(),
             None,
             true,
@@ -1398,7 +1399,7 @@ mod tests {
         build_tls_client_and_rustls_config(
             &TlsConfig::default(),
             Some(&ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             provider.clone(),
             None,
             false,
@@ -1409,7 +1410,7 @@ mod tests {
             Client::builder(),
             &TlsConfig::default(),
             Some(&ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             provider.clone(),
         )
         .await
@@ -1478,7 +1479,7 @@ mod tests {
         create_tls_client_with_proxy(
             config,
             Some(&ProxyConfig::default()),
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             provider.clone(),
         )
         .expect("custom PEM client");
@@ -1539,7 +1540,7 @@ mod tests {
             ..Default::default()
         };
         let provider = RootStoreProvider::with_native_loader(count_custom_crl_native_load);
-        let manager = CrlManager::new();
+        let manager = CrlManager::new().connection_crl();
         build_tls_client_and_rustls_config(
             &config,
             Some(&ProxyConfig::default()),
@@ -1579,7 +1580,7 @@ mod tests {
         build_tls_client_and_rustls_config(
             &config,
             Some(&ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             provider,
             None,
             false,
@@ -1620,7 +1621,7 @@ mod tests {
         build_tls_client_and_rustls_config(
             &config,
             Some(&ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             provider.clone(),
             None,
             false,
@@ -1697,7 +1698,7 @@ mod tests {
         let result = create_tls_client_with_proxy(
             config,
             Some(&ProxyConfig::default()),
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             provider,
         );
         assert!(
@@ -1787,7 +1788,7 @@ mod tests {
             let result = create_tls_client_with_proxy(
                 config,
                 Some(&ProxyConfig::default()),
-                crate::crl::CrlManager::new(),
+                crate::crl::CrlManager::new().connection_crl(),
                 RootStoreProvider::new(),
             );
             assert!(
@@ -1987,7 +1988,7 @@ mod tests {
                 let result = build_tls_client_and_rustls_config_sync(
                     &config,
                     None,
-                    CrlManager::new(),
+                    CrlManager::new().connection_crl(),
                     &RootStoreProvider::new().snapshot(),
                     None,
                     need_diag_config,
@@ -2010,7 +2011,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             &RootStoreProvider::new().snapshot(),
         );
         assert!(matches!(s3, Err(TlsError::InsecureTlsRejected { .. })));
@@ -2018,7 +2019,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             RootStoreProvider::new(),
         );
         assert!(matches!(
@@ -2036,7 +2037,7 @@ mod tests {
         let (_, diagnostic) = build_tls_client_and_rustls_config_sync(
             &config,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             &roots.snapshot(),
             None,
             true,
@@ -2047,7 +2048,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             &roots.snapshot(),
         )
         .expect("non-FIPS insecure S3 client")
@@ -2057,7 +2058,7 @@ mod tests {
             Client::builder(),
             &config,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             roots,
         )
         .expect("non-FIPS insecure Azure/GCS client")
@@ -2072,7 +2073,7 @@ mod tests {
             let connection = build_tls_client_and_rustls_config_sync(
                 &TlsConfig::insecure(),
                 None,
-                CrlManager::new(),
+                CrlManager::new().connection_crl(),
                 &RootStoreProvider::new().snapshot(),
                 None,
                 false,
@@ -2086,7 +2087,7 @@ mod tests {
                 Client::builder(),
                 &TlsConfig::insecure(),
                 None,
-                CrlManager::new(),
+                CrlManager::new().connection_crl(),
                 &RootStoreProvider::new().snapshot(),
             )
             .expect_err("unknown cipher on the storage client");
@@ -2105,7 +2106,7 @@ mod tests {
         let (_, without_diag) = build_tls_client_and_rustls_config(
             &config,
             None,
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             roots.clone(),
             None,
             false,
@@ -2117,7 +2118,7 @@ mod tests {
         let (_, with_diag) = build_tls_client_and_rustls_config(
             &config,
             None,
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             roots.clone(),
             None,
             true,

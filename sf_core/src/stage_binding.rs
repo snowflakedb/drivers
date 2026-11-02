@@ -132,7 +132,7 @@ pub struct StageBindingContext<'a> {
     pub use_scoped_stage: bool,
     /// Driver-owned CRL manager for the storage TLS client, threaded through so
     /// the bind-stage upload honours CRL like the file-path PUT/GET does.
-    pub crl_manager: crate::crl::CrlManager,
+    pub crl_manager: crate::crl::ConnectionCrl,
     pub root_store_provider: RootStoreProvider,
     /// Where the upload registers cancellation cleanup. Matters only for a CSV
     /// payload at or above the multipart threshold, which has an abort to register;
@@ -152,7 +152,7 @@ impl<'a> StageBindingContext<'a> {
         use_s3_regional_url_session_param: bool,
         session_parameters: &AsyncRwLock<HashMap<String, Setting>>,
         wrapper_presets: &WrapperPresets,
-        crl_manager: crate::crl::CrlManager,
+        crl_manager: crate::crl::ConnectionCrl,
         root_store_provider: RootStoreProvider,
         cleanup: Option<&'a CleanupScope>,
         xp_backend: Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,

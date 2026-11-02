@@ -392,11 +392,12 @@ impl DatabaseDriverV1 {
                     _ => None,
                 };
 
+                let connection_crl = self.crl_manager.connection_crl();
                 let (http_client, diag_rustls) =
                     crate::tls::client::build_tls_client_and_rustls_config(
                         &config.tls,
                         Some(&config.proxy),
-                        self.crl_manager.clone(),
+                        connection_crl.clone(),
                         self.root_store_provider.clone(),
                         timeout_config.connect_timeout,
                         effective_diag.is_some(),
@@ -475,7 +476,7 @@ impl DatabaseDriverV1 {
                     Some(&self.prompt_locks),
                     &retry_policy,
                     xp_backend.as_deref(),
-                    self.crl_manager.clone(),
+                    connection_crl.clone(),
                     self.root_store_provider.clone(),
                     timeout_config
                         .login_timeout
@@ -588,6 +589,7 @@ impl DatabaseDriverV1 {
                     // take to do their work.
                     let telemetry_id = conn_handle.id;
                     conn.telemetry_id = Some(telemetry_id);
+                    conn.connection_crl = Some(connection_crl.clone());
 
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
@@ -609,6 +611,7 @@ impl DatabaseDriverV1 {
                             tracing::warn!(
                                 "Skipping telemetry: http_client not set after connection init"
                             );
+                            connection_crl.discard_crl_stats();
                             drop(conn);
                             return Ok(());
                         };
@@ -636,6 +639,10 @@ impl DatabaseDriverV1 {
                             );
                         }
 
+                        if let Some(telemetry) = self.session_telemetry() {
+                            connection_crl.flush_crl_stats(telemetry, telemetry_id);
+                        }
+
                         let env_info = conn
                             .wrapper_identity
                             .as_ref()
@@ -654,6 +661,8 @@ impl DatabaseDriverV1 {
                             crate::snowflake_op_span!("session_init", Some(telemetry_id));
                         let _guard = init_span.enter();
                         crate::telemetry::record_session_init(&env_info);
+                    } else {
+                        connection_crl.discard_crl_stats();
                     }
 
                     if keep_alive {
@@ -1179,6 +1188,9 @@ pub struct Connection {
     /// Acquire this before [`Mutex<Connection>`].
     session_mutex: Arc<Mutex<()>>,
     pub(crate) browser_opener: Option<BrowserOpenFn>,
+    /// Shared CRL caches plus this connection's `client_crl_stats` buffer.
+    /// Set at the start of login, before the TLS client is built.
+    pub(crate) connection_crl: Option<crate::crl::ConnectionCrl>,
 }
 
 impl Default for Connection {
@@ -1225,6 +1237,7 @@ impl Connection {
             optimistic_alter_session_param_cache: false,
             session_mutex: Arc::new(Mutex::new(())),
             browser_opener: None,
+            connection_crl: None,
         }
     }
 
@@ -1235,6 +1248,17 @@ impl Connection {
     /// `true` after a successful [`Connection::initialize`] (post-login transport is ready).
     pub(crate) fn is_post_connect(&self) -> bool {
         self.http_client.is_some()
+    }
+
+    /// This connection's CRL handle. When login has not stored one, the handle
+    /// comes from `manager` and nothing flushes it.
+    pub(crate) fn connection_crl_or(
+        &self,
+        manager: &crate::crl::CrlManager,
+    ) -> crate::crl::ConnectionCrl {
+        self.connection_crl
+            .clone()
+            .unwrap_or_else(|| manager.connection_crl())
     }
 
     /// Resolves the `ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1` session

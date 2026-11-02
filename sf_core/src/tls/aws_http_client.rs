@@ -46,7 +46,7 @@ use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use aws_smithy_types::body::SdkBody;
 use snafu::ResultExt;
 
-use crate::crl::CrlManager;
+use crate::crl::ConnectionCrl;
 use crate::tls::RootStoreProvider;
 use crate::tls::client::configure_http1_tls_builder;
 use crate::tls::config::{ProxyConfig, TlsConfig};
@@ -79,7 +79,7 @@ impl AwsSdkReqwestClient {
     pub(crate) fn build(
         tls_config: &TlsConfig,
         proxy: Option<&ProxyConfig>,
-        crl_manager: CrlManager,
+        crl_manager: ConnectionCrl,
         roots: RootStoreProvider,
     ) -> Result<Self, TlsError> {
         Self::finish(configure_http1_tls_builder(
@@ -94,7 +94,7 @@ impl AwsSdkReqwestClient {
     pub(crate) async fn build_prepared(
         tls_config: &TlsConfig,
         proxy: Option<&ProxyConfig>,
-        crl_manager: CrlManager,
+        crl_manager: ConnectionCrl,
         roots: RootStoreProvider,
     ) -> Result<Self, TlsError> {
         let snapshot = roots
@@ -127,7 +127,7 @@ impl AwsSdkReqwestClient {
         Self::build_prepared(
             &TlsConfig::default(),
             None,
-            crate::crl::CrlManager::new(),
+            crate::crl::CrlManager::new().connection_crl(),
             roots,
         )
         .await
@@ -265,7 +265,7 @@ mod tests {
         AwsSdkReqwestClient::build(
             &TlsConfig::default(),
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("default SDK reqwest client must build")
@@ -334,7 +334,7 @@ mod tests {
         AwsSdkReqwestClient::build(
             &cfg,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("TLS 1.3-only window must build");
@@ -352,7 +352,7 @@ mod tests {
         AwsSdkReqwestClient::build(
             &cfg,
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("TLS 1.2-only window must build");
@@ -368,7 +368,7 @@ mod tests {
         AwsSdkReqwestClient::build(
             &TlsConfig::default(),
             Some(&proxy),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("explicit-proxy client must build");
@@ -521,7 +521,7 @@ mod tests {
                 ..TlsConfig::default()
             },
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("client must build")
@@ -542,7 +542,7 @@ mod tests {
                 ..TlsConfig::default()
             },
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("client must build")
@@ -634,7 +634,7 @@ mod tests {
                 ..TlsConfig::default()
             },
             None,
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("client must build")
@@ -680,7 +680,7 @@ mod tests {
             reqwest::Client::builder(),
             &config,
             Some(&crate::tls::config::ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("configure storage TLS client")
@@ -717,7 +717,7 @@ mod tests {
         let client = crate::tls::create_tls_client_with_proxy(
             config,
             Some(&crate::tls::config::ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
         )
         .expect("build connection-level TLS client");
@@ -749,7 +749,7 @@ mod tests {
                 ..Default::default()
             },
             Some(&crate::tls::config::ProxyConfig::default()),
-            CrlManager::new(),
+            CrlManager::new().connection_crl(),
             crate::tls::RootStoreProvider::new(),
             None,
             true,
