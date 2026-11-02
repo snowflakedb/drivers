@@ -64,13 +64,22 @@ runs:
         done
         echo "CC=gcc-13" >> "$GITHUB_ENV"
         echo "CXX=g++-13" >> "$GITHUB_ENV"
+        # glibc 2.41 and later make memchr return const void * for a const
+        # input once _GNU_SOURCE is set. bcm.c sets _GNU_SOURCE. AWS-LC FIPS
+        # 3.6.0 returns that pointer as void * from OPENSSL_memchr, and the
+        # module build treats every warning as an error.
+        # -Wno-error=discarded-qualifiers keeps that diagnostic visible and
+        # leaves it as a warning after the later -Werror. The certified
+        # sources stay unchanged.
         # GCC's aarch64 jump tables contain `.word (label - label) / 4`.
         # The AWS-LC FIPS 3.6.0 delocator grammar has no division operator,
         # so that form fails while writing bcm-delocated.S.
+        cflags="-Wno-error=discarded-qualifiers"
         if [ "$(uname -m)" = "aarch64" ]; then
-          echo "CFLAGS=-fno-jump-tables" >> "$GITHUB_ENV"
+          cflags="$cflags -fno-jump-tables"
           echo "CXXFLAGS=-fno-jump-tables" >> "$GITHUB_ENV"
         fi
+        echo "CFLAGS=${cflags}" >> "$GITHUB_ENV"
         gcc-13 --version
         g++-13 --version
 
