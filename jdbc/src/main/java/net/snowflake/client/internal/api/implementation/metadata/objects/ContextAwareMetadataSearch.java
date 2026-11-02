@@ -41,17 +41,24 @@ class ContextAwareMetadataSearch {
         catalog, schemaPattern, isExactSchema, useSessionSchema, enableWildcards);
   }
 
-  // TODO(SNOW-3740734): I think that the schemaMatchesExactly branch is redundant in practice.
-  //  The compiledSchemaPattern is built by Wildcard.toRegexPattern which treats '_'
-  //  as a single-char wildcard (regex '.'), so matches() already accepts every schema name
-  //  that schemaMatchesExactly would. The exact-match branch can never widen the result set beyond
-  //  what the wildcard match already returns.
-  //  Keeping for parity with the legacy driver's intent.
+  // SHOW can return a quoted identifier, such as "FOO%BAR" for schema FOO%BAR.
+  // A null catalog makes getProcedures and getFunctions run SHOW in account, which
+  // is not limited to that schema.
   boolean schemaMatches(Pattern compiledSchemaPattern, String schemaName) {
     return matches(compiledSchemaPattern, schemaName) || schemaMatchesExactly(schemaName);
   }
 
-  boolean schemaMatchesExactly(String schemaName) {
-    return isExactSchema && schema.equals(schemaName);
+  private boolean schemaMatchesExactly(String schemaName) {
+    return isExactSchema && schema != null && schema.equals(unquoteIdentifier(schemaName));
+  }
+
+  private static String unquoteIdentifier(String identifier) {
+    if (identifier == null
+        || identifier.length() < 2
+        || identifier.charAt(0) != '"'
+        || identifier.charAt(identifier.length() - 1) != '"') {
+      return identifier;
+    }
+    return identifier.substring(1, identifier.length() - 1).replace("\"\"", "\"");
   }
 }
