@@ -136,8 +136,15 @@ export declare function getFipsStatus(): FipsStatus
  * first, including records logged in JS, which JS sends in with `logEvent`. sf_core writes
  * them to its own outputs, such as the troubleshooting file, then calls `logCallback`
  * with each record allowed by the level set with `setLogLevel`.
+ *
+ * The result tells JS whether sf_core runs in troubleshooting mode. In that mode JS also
+ * sends records below the configured level, so they reach the troubleshooting file.
  */
-export declare function initBridge(classConstructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }, logCallback: (arg: LogEvent) => void): void
+export declare function initBridge(classConstructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }, logCallback: (arg: LogEvent) => void): InitBridgeResult
+
+export interface InitBridgeResult {
+  troubleshooting: boolean
+}
 
 /**
  * Session parameters that both the Node.js layer and this bridge read for a

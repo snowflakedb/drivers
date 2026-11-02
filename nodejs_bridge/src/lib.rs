@@ -41,6 +41,7 @@ use napi::bindgen_prelude::{Function, Object};
 use napi::{Env, Result};
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::{DatabaseDriverV1, DriverProviders, WrapperPresets};
+use sf_core::logging::LogManager;
 use sf_core::token_cache::TokenCache;
 use std::sync::{Arc, LazyLock};
 
@@ -49,6 +50,7 @@ static BRIDGE: LazyLock<Bridge> = LazyLock::new(Bridge::new);
 struct Bridge {
     driver: DatabaseDriverV1,
     token_cache: Arc<token_cache::NodeTokenCache>,
+    troubleshooting: bool,
     logging: JsLogging,
 }
 
@@ -57,6 +59,9 @@ impl Bridge {
         let token_cache = Arc::new(token_cache::NodeTokenCache::new());
         let logging = JsLogging::default();
         let log_manager = logging.log_manager();
+        let troubleshooting = log_manager
+            .as_ref()
+            .is_some_and(LogManager::is_troubleshooting);
         Self {
             driver: DatabaseDriverV1::with_providers(DriverProviders {
                 log_manager,
@@ -65,6 +70,7 @@ impl Bridge {
                 ..Default::default()
             }),
             token_cache,
+            troubleshooting,
             logging,
         }
     }
@@ -83,6 +89,11 @@ pub fn get_fips_status() -> FipsStatus {
     }
 }
 
+#[napi(object)]
+pub struct InitBridgeResult {
+    pub troubleshooting: bool,
+}
+
 /// Connects the bridge to the JS side. The package entry point calls it once at load.
 ///
 /// `classConstructors` holds the JS classes the bridge creates but napi cannot define:
@@ -94,6 +105,9 @@ pub fn get_fips_status() -> FipsStatus {
 /// first, including records logged in JS, which JS sends in with `logEvent`. sf_core writes
 /// them to its own outputs, such as the troubleshooting file, then calls `logCallback`
 /// with each record allowed by the level set with `setLogLevel`.
+///
+/// The result tells JS whether sf_core runs in troubleshooting mode. In that mode JS also
+/// sends records below the configured level, so they reach the troubleshooting file.
 #[napi(
     ts_args_type = "classConstructors: { SnowflakeDate: new (epochMillis: number, nanos: number, scale: number, timezone: string | number, format: string) => unknown }, logCallback: (arg: LogEvent) => void"
 )]
@@ -101,7 +115,10 @@ pub fn init_bridge(
     env: Env,
     class_constructors: Object,
     log_callback: Function<'static, logging::LogEvent, ()>,
-) -> Result<()> {
+) -> Result<InitBridgeResult> {
     class_constructors::register_class_constructors(env, class_constructors)?;
-    logging::init(log_callback)
+    logging::init(log_callback)?;
+    Ok(InitBridgeResult {
+        troubleshooting: BRIDGE.troubleshooting,
+    })
 }

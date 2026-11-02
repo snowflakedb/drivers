@@ -33,8 +33,15 @@ import * as api from './api.js';
 import { coreInitBridge, coreLogEvent, coreSetLogLevel } from './core/index.js';
 import { logRouter } from './logging/index.js';
 
-coreInitBridge({ SnowflakeDate: api.SnowflakeDate }, logRouter.handleCoreLogEvent);
-logRouter.setup({ logEvent: coreLogEvent, setLogLevel: coreSetLogLevel });
+const initBridgeResult = coreInitBridge(
+  { SnowflakeDate: api.SnowflakeDate },
+  logRouter.handleCoreLogEvent,
+);
+logRouter.setup({
+  logEvent: coreLogEvent,
+  setLogLevel: coreSetLogLevel,
+  troubleshooting: initBridgeResult.troubleshooting,
+});
 
 // Values are exported with `export import`, because only this form gives both:
 // - Users can replace an export, for example stub `createConnection` in tests.

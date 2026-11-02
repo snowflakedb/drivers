@@ -21,6 +21,7 @@ export interface SnowflakeLogger {
 export interface CoreLogging {
   logEvent(level: number, message: string): void;
   setLogLevel(level: number): void;
+  troubleshooting: boolean;
 }
 
 /**
@@ -41,7 +42,7 @@ class LogRouter {
   }
 
   log(level: number, msg: string, args: unknown[]): void {
-    if (level > this.#configuredLevel()) {
+    if (level > this.#configuredLevel() && !this.#core?.troubleshooting) {
       return;
     }
     const message = format(msg, ...args);
