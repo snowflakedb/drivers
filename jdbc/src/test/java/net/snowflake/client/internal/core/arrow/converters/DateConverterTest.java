@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -379,6 +380,58 @@ public class DateConverterTest extends BaseConverterTest {
       assertEquals(Date.valueOf("2026-10-23"), converter.toDate(0, null, false));
     } finally {
       vector.close();
+    }
+  }
+
+  @Test
+  public void shouldRejectToShortUnderflowAndReturnFalseForNullBoolean() throws Exception {
+    try (Column vector =
+        ColumnBuilder.of("col_date", Column.PhysicalKind.DATE32, dateFieldMeta())) {
+      ColumnBuilder.set(vector, 0, (int) Short.MIN_VALUE - 1);
+      ColumnBuilder.set(vector, 1, Short.MIN_VALUE);
+      ColumnBuilder.set(vector, 2, Short.MAX_VALUE);
+      ColumnBuilder.setNull(vector, 3);
+      ColumnBuilder.setValueCount(vector, 4);
+
+      DateConverter converter = new DateConverter(vector, 0, this);
+
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toShort(0));
+      assertEquals(Short.MIN_VALUE, converter.toShort(1));
+      assertEquals(Short.MAX_VALUE, converter.toShort(2));
+      assertFalse(converter.toBoolean(3));
+    }
+  }
+
+  @Test
+  public void shouldHandleNullSessionTimezoneAndDefaultFormatDateWithTimezoneInDateConverter()
+      throws Exception {
+    int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
+    TimeZone utc = TimeZone.getTimeZone("UTC");
+    TimeZone tokyo = TimeZone.getTimeZone("Asia/Tokyo");
+
+    assertEquals(ArrowDateUtil.getDate(epochDay), DateConverter.getDate(epochDay, utc, null, true));
+    assertEquals(
+        ArrowDateUtil.getDate(epochDay, utc, tokyo),
+        DateConverter.getDate(epochDay, utc, tokyo, true));
+
+    DataConversionContext defaultFormatCtx =
+        new DataConversionContext() {
+          @Override
+          public TimeZone getSessionTimeZone() {
+            return tokyo;
+          }
+
+          @Override
+          public boolean isDefaultFormatDateWithTimezone() {
+            return true;
+          }
+        };
+
+    try (Column vector = createVector(epochDay)) {
+      DateConverter converter = new DateConverter(vector, 0, defaultFormatCtx);
+      assertEquals(
+          new Timestamp(ArrowDateUtil.getDate(epochDay, utc, tokyo).getTime()),
+          converter.toTimestamp(0, utc));
     }
   }
 }

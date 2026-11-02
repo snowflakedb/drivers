@@ -1,0 +1,18 @@
+name: "Statement.executeLargeUpdate(String) is the JDK default"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  `Statement.executeLargeUpdate(String)` executes the statement and returns the
+  update count as a long.
+new_driver_behavior: |
+  `Statement.executeLargeUpdate(String)` throws `UnsupportedOperationException`
+  with the message "executeLargeUpdate not implemented".
+description: |
+  The public method is still the JDK default. `executeLargeBatch` goes through
+  `executeLargeUpdateWithBindings`, which is implemented. This entry records
+  the gap so the unit test does not treat the exception as accepted behavior.
+  `reviewed` stays false until a reviewer accepts the omission or the method
+  is implemented.

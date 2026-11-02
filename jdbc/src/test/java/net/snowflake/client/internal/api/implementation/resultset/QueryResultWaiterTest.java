@@ -1,10 +1,15 @@
 package net.snowflake.client.internal.api.implementation.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.snowflake.client.api.resultset.QueryStatus;
@@ -145,5 +150,46 @@ class QueryResultWaiterTest {
     assertTrue(thrown.getMessage().contains("Interrupted"));
     assertEquals(queryId, thrown.getQueryId());
     assertTrue(Thread.interrupted(), "Thread interrupt flag should be re-set");
+  }
+
+  @Test
+  void shouldFollowCappedBackoffScheduleAndSucceedBeforeMaxNoDataRetries() {
+    List<Long> sleepMillis = new ArrayList<>();
+    AtomicInteger calls = new AtomicInteger();
+    QueryResultWaiter waiter =
+        new QueryResultWaiter(
+            () -> {
+              if (calls.incrementAndGet() <= 29) {
+                return status("NO_DATA");
+              }
+              return status("SUCCESS");
+            },
+            queryId,
+            sleepMillis::add);
+
+    QueryStatus result = waiter.waitForCompletion();
+
+    assertEquals("SUCCESS", result.getName());
+    assertEquals(30, calls.get());
+    assertEquals(29, sleepMillis.size());
+    assertEquals(
+        Arrays.asList(500L, 500L, 1000L, 1500L, 2000L, 4000L, 5000L, 5000L),
+        sleepMillis.subList(0, 8));
+    assertEquals(5000L, sleepMillis.get(28).longValue());
+  }
+
+  @Test
+  void shouldUseFallbackErrorMessageWhenTerminalFailureHasNullMessage() {
+    QueryStatus failed = errorStatus("FAILED_WITH_INCIDENT", 200001, null);
+    QueryResultWaiter waiter = new QueryResultWaiter(() -> failed, queryId);
+
+    SFSQLException thrown = assertThrows(SFSQLException.class, waiter::waitForCompletion);
+
+    assertTrue(thrown.getMessage().contains("FAILED_WITH_INCIDENT"));
+    assertTrue(thrown.getMessage().contains("No error message available"));
+    assertEquals(queryId, thrown.getQueryId());
+    SQLException sqlException = thrown.toSQLException();
+    assertNull(sqlException.getSQLState());
+    assertEquals(0, sqlException.getErrorCode());
   }
 }

@@ -4,45 +4,70 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.notNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.lang.ref.WeakReference;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.sql.BatchUpdateException;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.NativeBuffer;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.MultiStatementResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetDescriptor;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetGetStreamResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ResultSetResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteAsyncResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetOptionsResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
+import org.mockito.ArgumentCaptor;
 
+@Isolated("asserts the process-wide NativeBuffer.allocatedBytes() counter")
 public class SnowflakeStatementImplTest {
 
   private final ConnectionHandle connHandle =
@@ -449,6 +474,291 @@ public class SnowflakeStatementImplTest {
   void shouldAcceptBatchIDWithoutThrowing() throws Exception {
     Statement stmt = createStatement();
     assertDoesNotThrow(() -> ((SnowflakeStatement) stmt).setBatchID("batch-1"));
+  }
+
+  @Test
+  void shouldDelegateExecuteQueryInternalToUnboundQueryWhenParametersAreNullOrEmpty()
+      throws Exception {
+    when(mockCoreApi.statementExecuteQuery(eq(stmtHandle), isNull()))
+        .thenReturn(insertResponse(0L, "qid-unbound"));
+    when(mockCoreApi.resultSetGetStream(any()))
+        .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      assertNull(stmt.executeQueryInternal("SELECT 1", null));
+      assertEquals("qid-unbound", stmt.getQueryID());
+      assertNull(stmt.executeQueryInternal("SELECT 1", Collections.emptyList()));
+      verify(mockCoreApi, times(2)).statementExecuteQuery(eq(stmtHandle), isNull());
+    }
+  }
+
+  @Test
+  void shouldSerializeOneBasedTextBindingsAndReleaseNativeBufferInExecuteQueryInternal()
+      throws Exception {
+    long baseline = NativeBuffer.allocatedBytes();
+    AtomicReference<String> capturedJson = new AtomicReference<>();
+    when(mockCoreApi.resultSetGetStream(any()))
+        .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
+    when(mockCoreApi.statementExecuteQuery(eq(stmtHandle), notNull(QueryBindings.class)))
+        .thenAnswer(
+            invocation -> {
+              QueryBindings bindings = invocation.getArgument(1);
+              BinaryDataPtr jsonPtr = bindings.getJson();
+              long address =
+                  ByteBuffer.wrap(jsonPtr.getValue().toByteArray())
+                      .order(ByteOrder.LITTLE_ENDIAN)
+                      .getLong();
+              ByteBuffer view = NativeBuffer.view(address, (int) jsonPtr.getLength());
+              byte[] copy = new byte[view.remaining()];
+              view.get(copy);
+              capturedJson.set(new String(copy, StandardCharsets.UTF_8));
+              return insertResponse(0L, "qid-bound");
+            })
+        .thenThrow(driverExceptionWithQueryId("qid-bound-failed"));
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      assertNull(
+          stmt.executeQueryInternal(
+              "SELECT * FROM info WHERE t = ? AND s = ?", Arrays.asList("T_ONE", "S_TWO")));
+      assertEquals("qid-bound", stmt.getQueryID());
+      assertEquals(
+          "{\"1\":{\"type\":\"TEXT\",\"value\":\"T_ONE\"},"
+              + "\"2\":{\"type\":\"TEXT\",\"value\":\"S_TWO\"}}",
+          capturedJson.get());
+      assertEquals(baseline, NativeBuffer.allocatedBytes());
+
+      CoreException ex =
+          assertThrows(
+              CoreException.class,
+              () ->
+                  stmt.executeQueryInternal(
+                      "SELECT * FROM info WHERE t = ?", Collections.singletonList("T_ONE")));
+      assertEquals("qid-bound-failed", ex.getQueryId());
+      assertEquals("qid-bound-failed", stmt.getQueryID());
+      assertEquals(baseline, NativeBuffer.allocatedBytes());
+    }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void shouldSetNumericAndStringStatementParametersViaCoreOptions() throws Exception {
+    when(mockCoreApi.statementSetOptions(eq(stmtHandle), any()))
+        .thenReturn(StatementSetOptionsResponse.getDefaultInstance());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      stmt.setParameter("MULTI_STATEMENT_COUNT", 3);
+      stmt.setParameter("QUERY_TAG", "etl-job");
+    }
+
+    ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(mockCoreApi, times(2)).statementSetOptions(eq(stmtHandle), optionsCaptor.capture());
+    List<Map<String, ConfigSetting>> calls = optionsCaptor.getAllValues();
+    assertEquals(
+        ConfigSetting.newBuilder().setIntValue(3L).build(),
+        calls.get(0).get("MULTI_STATEMENT_COUNT"));
+    assertEquals(
+        ConfigSetting.newBuilder().setStringValue("etl-job").build(),
+        calls.get(1).get("QUERY_TAG"));
+  }
+
+  @Test
+  void shouldExecuteAsyncQueryAndCacheDecoratedResultSetWhileParkingPreviousOpenResultSet()
+      throws Exception {
+    when(mockCoreApi.statementExecuteAsync(eq(stmtHandle), isNull()))
+        .thenReturn(StatementExecuteAsyncResponse.newBuilder().setQueryId("qid-async-1").build());
+    SnowflakeResultSetMetaDataImpl metaData = mock(SnowflakeResultSetMetaDataImpl.class);
+    when(metaData.getColumnNames()).thenReturn(Collections.emptyList());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      InternalResultSet previous = ResultSetFactory.createEmpty(stmt, metaData, false);
+      stmt.setCurrentResultSet(previous);
+
+      try (ResultSet asyncRs = stmt.executeAsyncQuery("SELECT 1")) {
+        assertEquals("qid-async-1", stmt.getQueryID());
+        assertSame(asyncRs, stmt.getResultSet());
+        assertTrue(stmt.getOpenResultSets().contains(previous));
+      }
+    }
+  }
+
+  @Test
+  void shouldRejectExecuteUpdateAndExecuteLargeUpdateWithBindingsWhenStatementProducesResultSet()
+      throws Exception {
+    SnowflakeStatementImpl raw =
+        new SnowflakeStatementImpl(mockConnection, mockCoreApi) {
+          @Override
+          protected boolean executeWithBindings(
+              String sql, PreparedStatementBindingSerializer.NativeBindings bindings) {
+            this.queryId = "qid-select";
+            return true;
+          }
+        };
+
+    try (Statement decorated = new DecoratedSnowflakeStatementImpl(raw, Telemetry.NOOP)) {
+      SnowflakeSQLException updateEx =
+          assertInstanceOf(
+              SnowflakeSQLException.class,
+              assertThrows(SQLException.class, () -> decorated.executeUpdate("SELECT 1")));
+      assertEquals(
+          "executeUpdate() cannot be used for statements that produce a ResultSet",
+          updateEx.getMessage());
+      assertEquals("qid-select", updateEx.getQueryId());
+      assertNull(updateEx.getSQLState());
+      assertEquals(0, updateEx.getErrorCode());
+    }
+
+    // The result-set guard lives on the batch path, executeLargeUpdateWithBindings, which is what
+    // callers of large batches hit. Statement.executeLargeUpdate(String) remains the JDK default.
+    SFSQLException largeUpdateEx =
+        assertThrows(
+            SFSQLException.class, () -> raw.executeLargeUpdateWithBindings("SELECT 1", null));
+    assertEquals(
+        "executeLargeUpdate() cannot be used for statements that produce a ResultSet",
+        largeUpdateEx.getMessage());
+    assertEquals("qid-select", largeUpdateEx.getQueryId());
+  }
+
+  @Test
+  void shouldLeavePublicExecuteLargeUpdateAsUnsupportedOperation() throws Exception {
+    // BD#statement-execute-large-update-unsupported: the public method is still the JDK
+    // default. Large batches use executeLargeUpdateWithBindings instead.
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      UnsupportedOperationException publicLargeUpdate =
+          assertThrows(
+              UnsupportedOperationException.class, () -> stmt.executeLargeUpdate("SELECT 1"));
+      assertEquals("executeLargeUpdate not implemented", publicLargeUpdate.getMessage());
+    }
+  }
+
+  @Test
+  void shouldRejectUpdateCountExceedingJdbcIntRangeWithQueryIdAndArithmeticCause()
+      throws Exception {
+    long overflowCount = (long) Integer.MAX_VALUE + 5L;
+    when(mockCoreApi.statementExecuteQuery(any(), isNull()))
+        .thenReturn(insertResponse(overflowCount, "qid-overflow"));
+
+    try (Statement decorated = createDecoratedStatement()) {
+      SnowflakeSQLException updateEx =
+          assertInstanceOf(
+              SnowflakeSQLException.class,
+              assertThrows(
+                  SQLException.class,
+                  () -> decorated.executeUpdate("INSERT INTO big SELECT * FROM src")));
+      assertEquals("Update count exceeds JDBC int range", updateEx.getMessage());
+      assertEquals("qid-overflow", updateEx.getQueryId());
+      assertInstanceOf(ArithmeticException.class, updateEx.getCause());
+      assertNull(updateEx.getSQLState());
+      assertEquals(0, updateEx.getErrorCode());
+
+      assertFalse(decorated.execute("INSERT INTO big SELECT * FROM src"));
+      SnowflakeSQLException countEx =
+          assertInstanceOf(
+              SnowflakeSQLException.class,
+              assertThrows(SQLException.class, decorated::getUpdateCount));
+      assertEquals("Update count exceeds JDBC int range", countEx.getMessage());
+      assertEquals("qid-overflow", countEx.getQueryId());
+      assertInstanceOf(ArithmeticException.class, countEx.getCause());
+    }
+  }
+
+  @Test
+  void shouldNavigateMultiStatementUpdateCountsAndManageOpenResultSetsAcrossGetMoreResultsModes()
+      throws Exception {
+    long insertTypeId = 0x3000L + 0x100L;
+    ExecuteQueryResponse emptyMulti =
+        ExecuteQueryResponse.newBuilder()
+            .setMulti(
+                MultiStatementResult.newBuilder()
+                    .setParent(ResultSetDescriptor.newBuilder().setQueryId("qid-empty-multi"))
+                    .build())
+            .build();
+    ExecuteQueryResponse twoChildMulti =
+        ExecuteQueryResponse.newBuilder()
+            .setMulti(
+                MultiStatementResult.newBuilder()
+                    .setParent(ResultSetDescriptor.newBuilder().setQueryId("qid-parent"))
+                    .addQueryIds("qid-c1")
+                    .addQueryIds("qid-c2")
+                    .addStatementTypeIds(insertTypeId)
+                    .build())
+            .build();
+    when(mockCoreApi.statementExecuteQuery(any(), isNull()))
+        .thenReturn(emptyMulti)
+        .thenReturn(twoChildMulti);
+    when(mockCoreApi.connectionGetResultSet(connHandle, "qid-c1"))
+        .thenReturn(insertResponse(2L, "qid-c1").getSingle());
+    when(mockCoreApi.connectionGetResultSet(connHandle, "qid-c2"))
+        .thenReturn(insertResponse(5L, "qid-c2").getSingle());
+
+    SnowflakeResultSetMetaDataImpl metaData = mock(SnowflakeResultSetMetaDataImpl.class);
+    when(metaData.getColumnNames()).thenReturn(Collections.emptyList());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      assertFalse(stmt.execute(";"));
+      assertEquals("qid-empty-multi", stmt.getQueryID());
+      assertEquals(-1, stmt.getUpdateCount());
+      assertFalse(stmt.getMoreResults());
+
+      assertFalse(stmt.execute("INSERT INTO t VALUES (1); INSERT INTO t VALUES (2)"));
+      assertEquals("qid-parent", stmt.getQueryID());
+      assertEquals(2, stmt.getUpdateCount());
+
+      InternalResultSet rs1 = ResultSetFactory.createEmpty(stmt, metaData, false);
+      stmt.setCurrentResultSet(rs1);
+      assertFalse(stmt.getMoreResults(Statement.KEEP_CURRENT_RESULT));
+      assertFalse(rs1.isClosed());
+      assertTrue(stmt.getOpenResultSets().contains(rs1));
+      assertEquals(5, stmt.getUpdateCount());
+
+      InternalResultSet rs2 = ResultSetFactory.createEmpty(stmt, metaData, false);
+      stmt.setCurrentResultSet(rs2);
+      assertFalse(stmt.getMoreResults(Statement.CLOSE_ALL_RESULTS));
+      assertTrue(rs1.isClosed());
+      assertTrue(rs2.isClosed());
+      assertTrue(stmt.getOpenResultSets().isEmpty());
+      assertEquals(-1, stmt.getUpdateCount());
+    }
+  }
+
+  @Test
+  void shouldRejectNullBatchSqlAndUnsupportedStatementOperations() throws Exception {
+    try (Statement stmt = createDecoratedStatement()) {
+      SQLException nullBatchEx = assertThrows(SQLException.class, () -> stmt.addBatch(null));
+      assertEquals("addBatch requires a non-null SQL string", nullBatchEx.getMessage());
+      assertNull(nullBatchEx.getSQLState());
+      assertEquals(0, nullBatchEx.getErrorCode());
+
+      stmt.setFetchDirection(ResultSet.FETCH_FORWARD);
+      assertEquals(ResultSet.FETCH_FORWARD, stmt.getFetchDirection());
+
+      SQLFeatureNotSupportedException fetchDirEx =
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> stmt.setFetchDirection(ResultSet.FETCH_REVERSE));
+      assertEquals("Only FETCH_FORWARD supported", fetchDirEx.getMessage());
+      assertNull(fetchDirEx.getSQLState());
+      assertEquals(0, fetchDirEx.getErrorCode());
+
+      SQLFeatureNotSupportedException cursorEx =
+          assertThrows(SQLFeatureNotSupportedException.class, () -> stmt.setCursorName("cursor_1"));
+      assertEquals("setCursorName not supported", cursorEx.getMessage());
+      assertNull(cursorEx.getSQLState());
+      assertEquals(0, cursorEx.getErrorCode());
+
+      SQLFeatureNotSupportedException keysEx =
+          assertThrows(SQLFeatureNotSupportedException.class, stmt::getGeneratedKeys);
+      assertEquals("getGeneratedKeys not supported", keysEx.getMessage());
+      assertNull(keysEx.getSQLState());
+      assertEquals(0, keysEx.getErrorCode());
+
+      SQLFeatureNotSupportedException asyncTimeoutEx =
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> ((SnowflakeStatement) stmt).setAsyncQueryTimeout(30));
+      assertEquals("setAsyncQueryTimeout not supported", asyncTimeoutEx.getMessage());
+      assertNull(asyncTimeoutEx.getSQLState());
+      assertEquals(0, asyncTimeoutEx.getErrorCode());
+    }
   }
 
   private static CoreException driverExceptionWithQueryId(String queryId) {

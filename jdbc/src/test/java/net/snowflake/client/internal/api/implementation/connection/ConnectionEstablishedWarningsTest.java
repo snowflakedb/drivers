@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.sql.SQLWarning;
+import java.util.Properties;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse;
 import org.junit.jupiter.api.Test;
@@ -117,6 +118,43 @@ class ConnectionEstablishedWarningsTest {
     SQLWarning warning = ConnectionEstablishedWarnings.compute(props("database", "REQ_DB"), null);
     assertNotNull(warning);
     assertEquals("Database", extractProperty(warning));
+  }
+
+  @Test
+  void shouldIgnoreEmptyOrNonStringRequestedProperties() {
+    Properties requested = new Properties();
+    requested.setProperty("database", "");
+    requested.put(Integer.valueOf(1), "REQ_DB");
+
+    SQLWarning warning =
+        ConnectionEstablishedWarnings.compute(
+            requested, ConnectionGetInfoResponse.newBuilder().setDatabase("SERVER_DB").build());
+    assertNull(warning);
+  }
+
+  @Test
+  void shouldWarnWhenServerReturnsEmptySessionStringsForRequestedProperties() {
+    ConnectionGetInfoResponse emptyServerStrings =
+        ConnectionGetInfoResponse.newBuilder()
+            .setDatabase("")
+            .setSchema("")
+            .setRole("")
+            .setWarehouse("")
+            .build();
+    SQLWarning schema =
+        ConnectionEstablishedWarnings.compute(
+            props("SCHEMA", "REQ_SCHEMA", "ROLE", "REQ_ROLE", "WAREHOUSE", "REQ_WH"),
+            emptyServerStrings);
+
+    assertNotNull(schema);
+    assertEquals("Schema", extractProperty(schema));
+    SQLWarning role = schema.getNextWarning();
+    assertNotNull(role);
+    assertEquals("Role", extractProperty(role));
+    SQLWarning warehouse = role.getNextWarning();
+    assertNotNull(warehouse);
+    assertEquals("Warehouse", extractProperty(warehouse));
+    assertNull(warehouse.getNextWarning());
   }
 
   /** The mismatched property name is the first placeholder in the parity message. */

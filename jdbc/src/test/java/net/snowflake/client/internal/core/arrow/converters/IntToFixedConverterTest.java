@@ -326,4 +326,68 @@ public class IntToFixedConverterTest extends BaseConverterTest {
 
     vector.close();
   }
+
+  @Test
+  public void shouldConvertScaleZeroIntToFloatDoubleAndBigDecimalAndReloadInPlace() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "FIXED");
+    customFieldMeta.put("precision", "10");
+    customFieldMeta.put("scale", "0");
+
+    try (Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta)) {
+      ColumnBuilder.set(vector, 0, 12345);
+      ColumnBuilder.setNull(vector, 1);
+      ColumnBuilder.setValueCount(vector, 2);
+
+      IntToFixedConverter converter = new IntToFixedConverter(vector, 0, this);
+
+      assertEquals(12345.0f, converter.toFloat(0));
+      assertEquals(12345.0d, converter.toDouble(0));
+      assertEquals(BigDecimal.valueOf(12345L, 0), converter.toBigDecimal(0));
+
+      assertEquals((byte) 0, converter.toByte(1));
+      assertEquals((short) 0, converter.toShort(1));
+      assertEquals(0L, converter.toLong(1));
+      assertEquals(0.0f, converter.toFloat(1));
+      assertEquals(0.0d, converter.toDouble(1));
+      assertNull(converter.toBigDecimal(1));
+
+      ColumnBuilder.set(vector, 0, -678);
+      assertEquals(-678, converter.toInt(0));
+      assertEquals(BigDecimal.valueOf(-678L, 0), converter.toBigDecimal(0));
+      assertEquals("-678", converter.toString(0));
+    }
+  }
+
+  @Test
+  public void shouldConvertScaledIntExactOneToBooleanTrueAndReloadInPlace() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "FIXED");
+    customFieldMeta.put("precision", "10");
+    customFieldMeta.put("scale", "3");
+
+    try (Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT32, customFieldMeta)) {
+      ColumnBuilder.set(vector, 0, 1000);
+      ColumnBuilder.set(vector, 1, 0);
+      ColumnBuilder.setNull(vector, 2);
+      ColumnBuilder.setValueCount(vector, 3);
+
+      IntToScaledFixedConverter converter = new IntToScaledFixedConverter(vector, 0, this, 3);
+
+      assertTrue(converter.toBoolean(0));
+      assertFalse(converter.toBoolean(1));
+      assertFalse(converter.toBoolean(2));
+      assertEquals(1.0f, converter.toFloat(0), 0.0001f);
+      assertEquals(1.0d, converter.toDouble(0), 0.0001d);
+      assertEquals(0.0f, converter.toFloat(2));
+      assertEquals(0.0d, converter.toDouble(2));
+      assertEquals((short) 0, converter.toShort(2));
+      assertEquals(0, converter.toInt(2));
+      assertEquals(0L, converter.toLong(2));
+
+      ColumnBuilder.set(vector, 0, -2500);
+      assertEquals(BigDecimal.valueOf(-2500L, 3), converter.toBigDecimal(0));
+      assertEquals(-2.5d, converter.toDouble(0), 0.0001d);
+    }
+  }
 }
