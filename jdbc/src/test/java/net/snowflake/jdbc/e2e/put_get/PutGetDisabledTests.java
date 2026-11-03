@@ -1,6 +1,7 @@
 package net.snowflake.jdbc.e2e.put_get;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
@@ -35,6 +36,8 @@ public class PutGetDisabledTests extends SnowflakeIntegrationTestBase implements
           DISABLED_MESSAGE,
           exception.getMessage().toLowerCase(),
           "Unexpected message for a disabled PUT");
+      assertEquals(0, exception.getErrorCode(), "disabled PUT must not report a JDBC vendor code");
+      assertNull(exception.getSQLState(), "disabled PUT must not report a SQLSTATE");
     }
   }
 
@@ -58,6 +61,8 @@ public class PutGetDisabledTests extends SnowflakeIntegrationTestBase implements
           DISABLED_MESSAGE,
           exception.getMessage().toLowerCase(),
           "Unexpected message for a disabled GET");
+      assertEquals(0, exception.getErrorCode(), "disabled GET must not report a JDBC vendor code");
+      assertNull(exception.getSQLState(), "disabled GET must not report a SQLSTATE");
     }
   }
 }

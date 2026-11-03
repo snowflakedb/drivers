@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -58,6 +59,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorKind;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.IoClass;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.UploadStreamHandle;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -662,5 +664,186 @@ class UploadDownloadStreamTest {
         assertThrows(
             CoreException.class, () -> connection.downloadStream("@missing_stage", "data.csv"));
     assertSame(original, thrown, "a non-missing-file begin failure must not be remapped");
+  }
+
+  @Test
+  void shouldSurfaceLegacyUploadVendorCodeWhenBeginFailsThroughJdbcBoundary() {
+    when(mockCoreApi.connectionUploadStreamBegin(any(), anyString()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_FILE_UPLOAD, "upload begin failed"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () -> jdbcBoundary().uploadStream("@s", "f", new ByteArrayInputStream(new byte[] {1})));
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getSqlState(), thrown.getSQLState());
+    verify(mockCoreApi, never()).connectionUploadStreamAbort(any());
+    verify(mockCoreApi, never()).connectionUploadStreamFinish(any());
+  }
+
+  @Test
+  void shouldSurfaceLegacyUploadVendorCodeWhenFinishFailsThroughJdbcBoundary() throws Exception {
+    when(mockCoreApi.connectionUploadStreamFinish(UPLOAD_HANDLE))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_FILE_UPLOAD, "upload finish failed"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () -> jdbcBoundary().uploadStream("@s", "f", new ByteArrayInputStream(new byte[] {1})));
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getSqlState(), thrown.getSQLState());
+    verify(mockCoreApi, never()).connectionUploadStreamAbort(any());
+  }
+
+  @Test
+  void shouldSurfaceLegacyNetworkVendorCodeWhenDownloadBeginFailsThroughJdbcBoundary() {
+    when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_NETWORK, "download network failed"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class, () -> jdbcBoundary().downloadStream("@my_stage", "data.csv"));
+    assertEquals(ErrorCode.NETWORK_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.NETWORK_ERROR.getSqlState(), thrown.getSQLState());
+  }
+
+  @Test
+  void shouldLeaveVendorCodeUnsetWhenDisabledTransferFailsThroughJdbcBoundary() {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("File transfers have been disabled.")
+            .setKind(ErrorKind.ERROR_KIND_IO)
+            .build();
+    when(mockCoreApi.connectionUploadStreamBegin(any(), anyString()))
+        .thenThrow(new CoreException(payload, null));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () -> jdbcBoundary().uploadStream("@s", "f", new ByteArrayInputStream(new byte[] {1})));
+    assertEquals(0, thrown.getErrorCode());
+    assertNull(thrown.getSQLState());
+  }
+
+  @Test
+  void shouldSurfaceLegacyIoErrorVendorCodeWhenUploadChunkFailsWithNoSpaceLeftThroughJdbcBoundary()
+      throws Exception {
+    when(mockCoreApi.connectionUploadStreamChunk(eq(UPLOAD_HANDLE), any(), anyInt(), anyInt()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_NO_SPACE_LEFT, "disk full during upload"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () ->
+                jdbcBoundary()
+                    .uploadStream(
+                        "@my_stage", "data.csv", new ByteArrayInputStream(new byte[] {1})));
+
+    assertEquals(ErrorCode.IO_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.IO_ERROR.getSqlState(), thrown.getSQLState());
+    verify(mockCoreApi).connectionUploadStreamAbort(UPLOAD_HANDLE);
+    verify(mockCoreApi, never()).connectionUploadStreamFinish(any());
+  }
+
+  @Test
+  void shouldSurfaceLegacyIoErrorVendorCodeWhenUploadFinishFailsWithNoSpaceLeftThroughJdbcBoundary()
+      throws Exception {
+    when(mockCoreApi.connectionUploadStreamFinish(UPLOAD_HANDLE))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_NO_SPACE_LEFT, "disk full at finish"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () ->
+                jdbcBoundary()
+                    .uploadStream(
+                        "@my_stage", "data.csv", new ByteArrayInputStream(new byte[] {1})));
+
+    assertEquals(ErrorCode.IO_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.IO_ERROR.getSqlState(), thrown.getSQLState());
+    verify(mockCoreApi, never()).connectionUploadStreamAbort(any());
+  }
+
+  @Test
+  void shouldSurfaceLegacyIoErrorVendorCodeWhenDownloadChunkFailsWithNoSpaceLeft()
+      throws Exception {
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_NO_SPACE_LEFT, "disk full during download"));
+
+    try (InputStream stream = connection.downloadStream("@my_stage", "data.csv.gz")) {
+      IOException io = assertThrows(IOException.class, () -> readAllBytes(stream));
+      SQLException surfaced = coreCause(io).toSQLException();
+      assertEquals(ErrorCode.IO_ERROR.getMessageCode(), surfaced.getErrorCode());
+      assertEquals(ErrorCode.IO_ERROR.getSqlState(), surfaced.getSQLState());
+    }
+  }
+
+  @Test
+  void shouldSurfaceLegacyUploadVendorCodeWhenUploadChunkFailsWithIoUploadClass() throws Exception {
+    when(mockCoreApi.connectionUploadStreamChunk(eq(UPLOAD_HANDLE), any(), anyInt(), anyInt()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_FILE_UPLOAD, "stage upload failed"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class,
+            () ->
+                jdbcBoundary()
+                    .uploadStream(
+                        "@my_stage", "data.csv", new ByteArrayInputStream(new byte[] {1})));
+
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.FILE_OPERATION_UPLOAD_ERROR.getSqlState(), thrown.getSQLState());
+    verify(mockCoreApi).connectionUploadStreamAbort(UPLOAD_HANDLE);
+    verify(mockCoreApi, never()).connectionUploadStreamFinish(any());
+  }
+
+  @Test
+  void shouldSurfaceLegacyDownloadVendorCodeWhenDownloadBeginFailsWithIoDownloadClass()
+      throws Exception {
+    when(mockCoreApi.connectionDownloadStreamBegin(any(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_FILE_DOWNLOAD, "stage download failed"));
+
+    SQLException thrown =
+        assertThrows(
+            SQLException.class, () -> jdbcBoundary().downloadStream("@my_stage", "data.csv.gz"));
+
+    assertEquals(ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR.getMessageCode(), thrown.getErrorCode());
+    assertEquals(ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR.getSqlState(), thrown.getSQLState());
+  }
+
+  @Test
+  void shouldPreserveLegacyDownloadVendorCodeWhenDownloadChunkFailsWithIoDownloadClass()
+      throws Exception {
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenThrow(ioFailure(IoClass.IO_CLASS_FILE_DOWNLOAD, "stage download failed"));
+
+    try (InputStream stream = connection.downloadStream("@my_stage", "data.csv.gz")) {
+      IOException io = assertThrows(IOException.class, () -> readAllBytes(stream));
+      CoreException core = coreCause(io);
+      SQLException surfaced = core.toSQLException();
+      assertEquals(
+          ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR.getMessageCode(), surfaced.getErrorCode());
+      assertEquals(ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR.getSqlState(), surfaced.getSQLState());
+    }
+  }
+
+  private SnowflakeConnection jdbcBoundary() {
+    return new DecoratedSnowflakeConnectionImpl(connection, Telemetry.NOOP);
+  }
+
+  private static CoreException ioFailure(IoClass ioClass, String message) {
+    return new CoreException(
+        DriverException.newBuilder()
+            .setMessage(message)
+            .setKind(ErrorKind.ERROR_KIND_IO)
+            .setIoClass(ioClass)
+            .build(),
+        null);
+  }
+
+  private static CoreException coreCause(IOException io) {
+    Throwable cause = io.getCause();
+    assertInstanceOf(CoreException.class, cause, "chunk failure must retain the core carrier");
+    return (CoreException) cause;
   }
 }

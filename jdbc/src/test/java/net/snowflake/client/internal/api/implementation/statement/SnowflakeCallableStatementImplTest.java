@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -15,12 +16,14 @@ import java.net.URL;
 import java.sql.CallableStatement;
 import java.sql.Date;
 import java.sql.ParameterMetaData;
+import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Calendar;
 import java.util.HashMap;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
@@ -64,6 +67,20 @@ class SnowflakeCallableStatementImplTest {
   private CallableStatement createCallableStatement(String sql) throws Exception {
     return new DecoratedSnowflakeCallableStatementImpl(
         new SnowflakeCallableStatementImpl(mockConnection, sql, mockCoreApi), Telemetry.NOOP);
+  }
+
+  @Test
+  void shouldReportConnectionClosedWhenConnectionIsClosedButCallableStatementStaysOpen()
+      throws Exception {
+    when(mockConnection.isClosed()).thenReturn(true);
+    CallableStatement cs = createCallableStatement("{CALL square_it(?)}");
+    assertFalse(cs.isClosed());
+
+    SQLException ex = assertThrows(SQLException.class, () -> cs.execute());
+
+    assertEquals("Connection is closed", ex.getMessage());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
+    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
   }
 
   // ── parseSqlEscapeSyntax ──────────────────────────────────────────────────
