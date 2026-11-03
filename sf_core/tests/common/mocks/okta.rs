@@ -121,7 +121,7 @@ pub fn okta_token_mfa_required() -> Mock {
 
 // ─── Okta SSO SAML Endpoint (/app/sso/saml) ─────────────────────────────────
 
-fn saml_html(postback_url: &str) -> String {
+pub fn saml_html(postback_url: &str) -> String {
     format!(
         r#"<html><body><form method="post" action="{postback_url}"><input type="hidden" name="SAMLResponse" value="AAAA" /></form></body></html>"#
     )

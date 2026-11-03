@@ -68,6 +68,22 @@ impl OktaTestFixture {
         assert!(result.is_ok(), "Expected {context}, got: {result:?}");
     }
 
+    fn assert_login_body_has_saml(&self) {
+        let html = okta::saml_html(&format!("{}/fed/login", self.mock.http_url()));
+        let requests = self.mock.received_requests();
+        let login_req = requests
+            .iter()
+            .find(|request| request.url.path().contains("login-request"))
+            .expect("No login-request was captured");
+        let body: serde_json::Value =
+            serde_json::from_slice(&login_req.body).expect("login-request body is JSON");
+        assert_eq!(
+            body["data"]["RAW_SAML_RESPONSE"].as_str(),
+            Some(html.as_str()),
+            "RAW_SAML_RESPONSE must be the HTML the Okta SSO stub returned"
+        );
+    }
+
     fn assert_error(result: Result<(), String>, patterns: &[&str], context: &str) {
         let error = result.expect_err(&format!("Expected {context} to fail"));
         let matches = patterns.iter().any(|p| error.contains(p));
@@ -87,8 +103,9 @@ fn should_login_with_native_okta_using_saml_flow() {
     // When Trying to Connect
     let result = fixture.connect();
 
-    // Then Login is successful
+    // Then Login is successful and the login body carries the HTML the stub returned
     OktaTestFixture::assert_success(result, "Okta login to succeed");
+    fixture.assert_login_body_has_saml();
 }
 
 // =============================================================================

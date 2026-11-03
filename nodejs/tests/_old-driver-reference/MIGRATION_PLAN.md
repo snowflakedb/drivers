@@ -132,17 +132,13 @@ Deferred work — covered **last**, only once the corresponding feature support 
     - `opens browser again when token is incorrect` and `refreshes the token for credential cache key`
       are `should open the browser again when cached oauth tokens are removed`. That test checks
       the browser callback runs and the cached access token value changes.
-  - [`authentication/testOkta.js`](./authentication/testOkta.js) stays. Native Okta is
-    `authenticator` set to an `https://` URL. Node already forwards `authenticator`.
-    This PR does not add a Node test that calls `createConnection` with that URL.
-    `Successful connection`, `Wrong credentials`, and `Wrong okta url` have core, Python,
-    JDBC, and ODBC Gherkin scenarios. Those scenarios do not call `createConnection`.
-    `Wrong credentials` replaces the username and the password and expects
-    `Request failed with status code 401`. The core e2e keeps the real user, changes the
-    password, and accepts any login error. `Wrong okta url` expects
-    `Cannot read properties of null (reading 'ssoUrl')` for
-    `https://testinvalidaccoount.com`. The core e2e uses `https://invalid.okta.com` and
-    accepts any login error.
+  - `authentication/testOkta.js` — deleted from the snapshot. Replaced by
+    [`../../e2e/authentication/native-okta.test.ts`](../../e2e/authentication/native-okta.test.ts),
+    tagged `requires_auth_test_container`. The old driver sets `region` from `host` so
+    authenticator-request reaches the account.
+    Wrong password expects `rejected credentials` on the new driver. `sqlState` stays unset
+    (BD#151). The typo URL expects `Missing required field: data`. `https://invalid.okta.com`
+    expects the account configuration sentence (BD#152).
 
 ## Integration tests (`integration/`), sorted by priority
 
@@ -277,9 +273,9 @@ Each of these depends on the corresponding auth provider landing in `sf_core` + 
     and a missing oauth_scope. `ac_token_exchange_omits_scope_when_config_scope_is_none` covers a
     config whose scope is already `None`: the authorize URL has no `scope` parameter and the
     token body has no `scope=`. `authorize_url_carries_pkce_client_id_scope_and_redirect_uri`
-    keeps scope set and checks that the authorize URL carries it. Node still rejects `oauthScope`.
-    These tests do not call `createConnection`, and they do not send the old fixture value
-    `session:role:ANALYST test-scope`.
+    keeps scope set and checks that the authorize URL carries it. Node `should send the configured oauth scope on the authorize URL`
+    sets `oauthScope` to `session:role:ANALYST test-scope` with role `ANALYST` and the authorize
+    URL carries that scope.
   - Redirect `invalid_scope`: `should_fail_connect_when_authorize_redirect_returns_invalid_scope`
     checks the connect string. `idp_error_in_authorize_redirect_surfaces_idp_error` sends
     `access_denied` and checks that error and description.
@@ -393,6 +389,13 @@ called out explicitly.
   park until after the beta release. `sf_core` + the new Node driver will surface a different set
   of errors when `.createConnection` fails, so this needs a re-review against the new error
   taxonomy rather than a line-by-line migration.
+  `disableSamlURLCheck` is listed on the Node option type and in `CONNECTION_OPTION_ALIASES`.
+  The flag connects are in `native-okta.test.ts` (BD#149).
+  The snapshot rows `invalid disableSamlURLCheck` (error 404051) and
+  `getDisableSamlURLCheck()` stay out of this PR. A non-boolean reaches core as a string,
+  and core option validation rejects it as not a Bool. No Node test asserts that error.
+  `should_succeed_with_mismatched_postback_when_disable_saml_url_check_is_true`
+  sets the flag on a Rust fixture.
   Partially migrated: `oauth without username` splits. Login with the user omitted
   runs as `should authenticate with pre acquired access token without user`.
   The old row also asserted `accessUrl` `https://account.snowflakecomputing.com`
@@ -518,12 +521,27 @@ called out explicitly.
   Node `createConnection`.
   `getAuthenticator()` table row `oauth` → `AuthOauth` is retired with that
   class. The public authenticator is the string that unit test forwards.
-  The `okta authentication` describe stays. That is the thenable `authenticate`, the SAML
-  body, reauthenticate, the timeout, the max retry, the prefix and postback failures, a
-  login body with no `AUTHENTICATOR`, the 14 `validateURLs` cases, and
-  `getAuthenticator()` → `AuthOkta`. Core wiremock covers a SAML login, a 401, an origin
-  mismatch, and a postback mismatch. It does not call `createConnection`, and it does not
-  cover that table.
+  The `okta authentication` describe is partially mapped.
+  `okta - authenticate method is thenable` and `getAuthenticator()` → `AuthOkta` are not
+  ported: there is no authenticator class. The public promise is `connectAsync`.
+  `okta - SAML response success` is the core test
+  `should_login_with_native_okta_using_saml_flow`, which checks `RAW_SAML_RESPONSE`
+  against the HTML the stub returned.
+  `okta - reauthenticate` is
+  `native-okta.test.ts` (BD#150).
+  `okta - reauthentication timeout error`, `okta - reauthentication max retry error`, and
+  the `shouldRetryOktaAuth` rows stay in the snapshot for the retries and timeouts work.
+  `okta - SAML response fail prefix` and the 14 `validateURLs` rows are one
+  `validate_idp_urls` table in core, plus two Node connects for the two old sentences
+  (BD#146, BD#147).
+  `okta - SAML response fail postback` is the no-form connect in
+  `native-okta.test.ts` (BD#148). The other-host postback and
+  `disableSamlURLCheck` true are the flag connects in that file (BD#149). The
+  404051 row stays with the error-taxonomy review.
+  `okta - no authenticator should be added to the request body` is outdated.
+  `formAuthJSON` left `AUTHENTICATOR` unset for an Okta URL. Core sends the Okta URL.
+  There was no need to avoid sending it. Do not port the omission. The difference is
+  BD#153.
 
 ### Agent (CRL / OCSP)
 

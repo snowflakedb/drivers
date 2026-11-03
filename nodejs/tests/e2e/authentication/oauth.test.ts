@@ -1251,6 +1251,39 @@ describe('authorization code against wiremock', () => {
     }
   });
 
+  it('should send the configured oauth scope on the authorize URL', async () => {
+    await wiremock.stub([
+      {
+        request: { method: 'POST', urlPathPattern: '/oauth/token-request.*' },
+        response: jsonResponse(200, {
+          access_token: 'AT-SCOPE',
+          token_type: 'Bearer',
+          expires_in: 600,
+        }),
+      },
+      loginSuccess(),
+      logoutSuccess(),
+    ]);
+    let scope: string | null = null;
+    const connection = snowflake.createConnection({
+      ...AUTHORIZATION_CODE_WIREMOCK_BASE,
+      role: 'ANALYST',
+      oauthScope: 'session:role:ANALYST test-scope',
+      oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
+      ...(isRunningNewDriverWithBD('BD#140') ? {} : { oauthHttpAllowed: true }),
+      openExternalBrowserCallback: async (authorizeUrl: string) => {
+        scope = new URL(authorizeUrl).searchParams.get('scope');
+        await createLoopbackRedirect({ code: 'THE-CODE' })(authorizeUrl);
+      },
+      ...wiremock.connectionOptions,
+    });
+    onTestFinished(() => destroyConnectionAsync(connection));
+
+    await connection.connectAsync();
+
+    expect(scope).toBe('session:role:ANALYST test-scope');
+  });
+
   it('should reject a redirect whose state does not match', async () => {
     const connection = snowflake.createConnection({
       ...AUTHORIZATION_CODE_WIREMOCK_BASE,

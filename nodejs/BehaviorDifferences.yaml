@@ -2953,3 +2953,172 @@ behavior_differences:
       of the value ("... when converting a value in column at index 0 to a JavaScript Number.").
     description: |
       Cell values are customer data, which the driver does not log.
+
+  146:
+    name: 'A native Okta token URL on another origin fails with an origin error, and authenticator-request follows host'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      After Snowflake returns token and SSO URLs, a token URL whose scheme or host
+      differs from the Okta authenticator fails as Error with no own code property.
+      The message is "The prefix of the SSO/token URL and the specified authenticator
+      do not match." https://host and https://host:443 match. authenticator-request
+      ignores the host option and goes to https://{account}.snowflakecomputing.com
+      when region is unset, or https://{account}.{region}.snowflakecomputing.com
+      otherwise.
+    new_driver_behavior: |
+      The same token URL fails as Error with code undefined. The message is
+      "Failed to login: Native Okta SSO failed: IdP URL safety validation failed:
+      returned <url> does not match configured Okta URL <url>". https://host and
+      https://host:443 match. authenticator-request is
+      POST {protocol}://{host}:{port}/session/authenticator-request. A connection
+      with protocol http, host localhost, and port 443 calls
+      http://localhost:443/session/authenticator-request.
+    description: |
+      The old error text says "prefix". The old check is protocol and host.
+      URL.host includes an explicit port and omits the default port. The new
+      check is the URL origin. An explicit default port matches an omitted one.
+
+  147:
+    name: 'An unparseable native Okta token URL fails as a redacted parse error'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A token URL that is not a URL, such as "abcd", fails as Error with no own code
+      property. The message is "Authenticator, SSO, or token URL is invalid."
+    new_driver_behavior: |
+      The same value fails as Error with code undefined. The message is "Failed to
+      login: Native Okta SSO failed: Failed to parse URL (<unknown>)". The raw
+      string is not included.
+
+  148:
+    name: 'Native Okta SAML HTML with no form fails as a missing postback'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SAML HTML with no form action has no separate "no form" error. The failure
+      is Error with no own code property and message "The specified authenticator
+      and destination URL in the SAML assertion do not match: expected:
+      {protocol}://{host}:{port} postback: {extracted}". HTML with no form yields
+      a postback such as "<html><".
+    new_driver_behavior: |
+      The same HTML fails as Error with code undefined and message "Failed to login:
+      Native Okta SSO failed: Failed to extract SAML postback (form action) from
+      HTML". No login request is sent.
+    description: |
+      The old driver still produces a postback string from that HTML and runs the
+      same destination check as BD#149. The new driver stops when the form action
+      is missing.
+
+  149:
+    name: 'A native Okta SAML postback on another host fails with a destination error'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A form action on another host, such as https://attacker.snowflake.com/fed/login,
+      fails as Error with no own code property. The message is "The specified
+      authenticator and destination URL in the SAML assertion do not match:
+      expected: {protocol}://{host}:{port} postback: {url}". The message prints
+      both URLs in full. No login request is sent.
+    new_driver_behavior: |
+      The same form fails as Error with code undefined and message "Failed to login:
+      Native Okta SSO failed: SAML postback destination validation failed: postback
+      <url> does not match Snowflake server <url>". A postback that differs only
+      by the default port matches. No login request is sent.
+    # TODO(SNOW-4392811): decide whether the old driver's prefix postback check
+    # should be replaced by the URL-origin check. The ticket has the details.
+    description: |
+      disableSamlURLCheck true skips this check on both drivers, and the login
+      then succeeds. The old decision uses a prefix of the two URL strings. The
+      new decision uses scheme, host, and port. An explicit default port matches
+      an omitted one.
+
+  150:
+    name: 'A retried native Okta login resends the first SAML response'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When the first login POST fails with a retryable status such as 503, the
+      driver posts the password to Okta again, fetches SAML again, and the retried
+      login body carries that new HTML in RAW_SAML_RESPONSE.
+    new_driver_behavior: |
+      The retry posts the same login body again, including the first
+      RAW_SAML_RESPONSE. Okta is not called a second time.
+    description: |
+      The WireMock test checks that the retry happens and which RAW_SAML_RESPONSE
+      each login body carries. A SAML assertion is single-use, so Snowflake may
+      reject the resent one as a replay.
+
+  151:
+    name: 'A rejected native Okta password reports the Okta rejection and leaves sqlState unset'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A wrong password, or a username and password Okta does not know, fails as
+      AxiosError with code ERR_BAD_REQUEST and message "Request failed with status
+      code 401". sqlState is unset.
+    new_driver_behavior: |
+      The same connects fail as Error with code undefined and message "Failed to
+      login: Native Okta SSO failed: Okta token endpoint rejected credentials
+      (HTTP 401 Unauthorized)". sqlState is unset.
+    description: |
+      A Snowflake password rejection uses GS code 390100, which Node maps to
+      SQLSTATE 28000. Okta's HTTP 401 is not that code, so Node does not set
+      sqlState. ODBC still reports 28000 for a wrong Okta password.
+
+  152:
+    name: 'An invalid native Okta URL fails with the Snowflake response instead of crashing'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      authenticator https://testinvalidaccoount.com makes Snowflake return success
+      with no data. The driver then throws TypeError "Cannot read properties of
+      null (reading 'ssoUrl')" (SNOW-1844747). authenticator https://invalid.okta.com
+      fails as Error with a non-empty message. That sentence is not stable.
+    new_driver_behavior: |
+      https://testinvalidaccoount.com fails as Error with code undefined and message
+      "Failed to login: Native Okta SSO failed: Missing required field: data".
+      https://invalid.okta.com fails as Error with code undefined and message
+      "Failed to login: Native Okta SSO failed: The specified authenticator is not
+      accepted by your Snowflake account configuration.  Please contact your local
+      system administrator to get the correct URL to use." sqlState is unset.
+    description: |
+      The two URLs are different Snowflake responses. The typo host is a success
+      body with no data, which the old driver crashed on. invalid.okta.com is
+      Snowflake rejecting the authenticator. The crash stays fixed.
+
+  153:
+    name: 'A native Okta login request includes AUTHENTICATOR'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The login POST omits AUTHENTICATOR when the authenticator is an Okta URL.
+    new_driver_behavior: |
+      The login POST sets AUTHENTICATOR to that Okta URL.
+    description: |
+      The field names the IdP on the login request. The old omission is not
+      restored.

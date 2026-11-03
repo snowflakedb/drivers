@@ -513,12 +513,25 @@ export type ConnectionOptions = {
   oauthTokenRequestUrl?: string;
 
   /**
+   * OAuth scope sent on the authorize and token requests.
+   * When unset, the driver sends `session:role:<role>` from `role`, or omits scope when `role` is unset.
+   */
+  oauthScope?: string;
+
+  /**
    * When true, the authorization-code token request includes
    * `enable_single_use_refresh_tokens=true`. Snowflake as the IdP only.
    *
    * @default false
    */
   oauthEnableSingleUseRefreshTokens?: boolean;
+
+  /**
+   * When true, native Okta login skips the SAML postback origin check.
+   *
+   * @default false
+   */
+  disableSamlURLCheck?: boolean;
 
   /**
    * Replaces the system-browser launch used by `EXTERNALBROWSER` SSO and

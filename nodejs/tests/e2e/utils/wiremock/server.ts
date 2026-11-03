@@ -27,6 +27,7 @@ export class WiremockServer {
   readonly #host = 'localhost';
   #process?: ChildProcess;
   #port?: number;
+  #httpsPort?: number;
   #launchError?: Error;
 
   // Spawns the shared WireMock standalone JAR over plain HTTP and resolves once
@@ -40,6 +41,13 @@ export class WiremockServer {
   static async spawnForwardProxy(): Promise<WiremockServer> {
     const server = new WiremockServer();
     await server.#spawn(['--enable-browser-proxying', '--proxy-pass-through', 'false']);
+    return server;
+  }
+
+  // Admin and Snowflake stay on the HTTP port. Okta stubs are also served on the HTTPS port.
+  static async spawnWithHttps(): Promise<WiremockServer> {
+    const server = new WiremockServer();
+    await server.#spawn([], true);
     return server;
   }
 
@@ -57,6 +65,13 @@ export class WiremockServer {
 
   get url(): string {
     return this.#url();
+  }
+
+  get httpsUrl(): string {
+    if (this.#httpsPort === undefined) {
+      throw new Error('WiremockServer has no HTTPS port; use WiremockServer.spawnWithHttps()');
+    }
+    return `https://${this.#host}:${this.#httpsPort}`;
   }
 
   async stub(mapping: StubMapping | StubMapping[]): Promise<void> {
@@ -109,6 +124,7 @@ export class WiremockServer {
     const child = this.#process;
     this.#process = undefined;
     this.#port = undefined;
+    this.#httpsPort = undefined;
     if (!child || child.exitCode !== null) {
       return;
     }
@@ -127,11 +143,20 @@ export class WiremockServer {
     });
   }
 
-  async #spawn(extraArgs: string[]): Promise<void> {
+  async #spawn(extraArgs: string[], https = false): Promise<void> {
     if (!existsSync(WIREMOCK_JAR)) {
       throw new Error(`WireMock standalone JAR not found at ${WIREMOCK_JAR}`);
     }
     this.#port = await findFreePort();
+    const args = [...extraArgs];
+    if (https) {
+      let httpsPort = await findFreePort();
+      while (httpsPort === this.#port) {
+        httpsPort = await findFreePort();
+      }
+      this.#httpsPort = httpsPort;
+      args.push('--https-port', String(httpsPort));
+    }
     const child = spawn(
       'java',
       [
@@ -141,7 +166,7 @@ export class WiremockServer {
         String(this.#port),
         '--disable-banner',
         '--local-response-templating',
-        ...extraArgs,
+        ...args,
       ],
       { stdio: 'ignore' },
     );

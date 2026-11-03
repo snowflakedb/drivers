@@ -694,6 +694,160 @@ mod tests {
     }
 
     // =========================================================================
+    // validate_idp_urls — old Node validateURLs rows plus tokenUrl "abcd"
+    // =========================================================================
+
+    #[test]
+    fn validate_idp_urls_matches_old_nodejs_inputs() {
+        let cases = [
+            (
+                ".okta.com format, ssourl and tokenurl matches",
+                "https://MYCUSTOM.okta.com",
+                "https://mycustom.okta.com/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com/api/v1/sessions",
+                true,
+            ),
+            (
+                "custom okta format, ssourl and tokenurl matches",
+                "HTTPS://MYAPPS.MYDOMAIN.COM/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM/api/v1/authn",
+                true,
+            ),
+            (
+                ".okta.com format with default https port, ssourl (no port) and tokenurl matches",
+                "https://mycustom.okta.com:443",
+                "https://mycustom.okta.com/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com/api/v1/sessions",
+                true,
+            ),
+            (
+                "custom okta format with default https port, ssourl and tokenurl matches",
+                "HTTPS://MYAPPS.MYDOMAIN.COM:443/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM:443/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM/api/v1/authn",
+                true,
+            ),
+            (
+                ".okta.com format with custom https port, ssourl and tokenurl matches",
+                "https://mycustom.okta.com:8443",
+                "https://mycustom.okta.com:8443/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com:8443/api/v1/sessions",
+                true,
+            ),
+            (
+                "custom okta format with custom https port, ssourl and tokenurl matches",
+                "HTTPS://MYAPPS.MYDOMAIN.COM:8443/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM:8443/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM:8443/api/v1/authn",
+                true,
+            ),
+            (
+                ".okta.com format, ssourl doesnt match",
+                "https://MyCUSTOM.okta.com",
+                "https://another.okta.com/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com/api/v1/sessions",
+                false,
+            ),
+            (
+                "custom okta format, ssourl doesnt match",
+                "HTTPS://MYAPPS.MYDOMAIN.COM/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.NET/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM/api/v1/authn",
+                false,
+            ),
+            (
+                ".okta.com format, protocol doesnt match",
+                "https://mycustom.okta.com",
+                "http://mycustom.okta.com/app/snowflake/mytokenmytokenmytoken",
+                "http://mycustom.okta.com/api/v1/sessions",
+                false,
+            ),
+            (
+                "custom okta format, port doesnt match",
+                "HTTP://MYAPPS.MYDOMAIN.COM/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM/app/snowflake/mytokenmytoken/sso/saml",
+                "http://MYAPPS.MYDOMAIN.COM/api/v1/authn",
+                false,
+            ),
+            (
+                ".okta.com format, ssourl and tokenurl match, port doesnt match",
+                "https://mycustom.okta.com",
+                "https://mycustom.okta.com:8443/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com:8443/api/v1/sessions",
+                false,
+            ),
+            (
+                "custom okta format, ssourl and tokenurl match, port doesnt match",
+                "HTTPS://MYAPPS.MYDOMAIN.COM/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM:8443/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM:8443/api/v1/authn",
+                false,
+            ),
+            (
+                ".okta.com format, authenticator port substring of ssourl port",
+                "https://mycustom.okta.com:3030",
+                "https://mycustom.okta.com:30303/app/snowflake/mytokenmytokenmytoken",
+                "https://mycustom.okta.com/api/v1/sessions",
+                false,
+            ),
+            (
+                "custom okta format, ssourl/tokenurl port substring of authenticator port",
+                "https://myaPPS.MYDOMAIN.COM:8443/SNOWFLAKE/OKTA",
+                "https://MYAPPS.MYDOMAIN.COM:443/app/snowflake/mytokenmytoken/sso/saml",
+                "https://MYAPPS.MYDOMAIN.COM:443/api/v1/authn",
+                false,
+            ),
+        ];
+
+        for (name, authenticator, sso_url, token_url, expect_ok) in cases {
+            let okta_url = Url::parse(authenticator).unwrap_or_else(|err| {
+                panic!("{name}: authenticator {authenticator} did not parse: {err}")
+            });
+            let result = validate_idp_urls(
+                &okta_url,
+                &AuthenticatorRequestData {
+                    token_url: token_url.to_string(),
+                    sso_url: sso_url.to_string(),
+                },
+                std::time::Instant::now(),
+            );
+            if expect_ok {
+                assert!(result.is_ok(), "{name}: expected a match, got {result:?}");
+            } else {
+                let error = result.expect_err(name);
+                assert!(
+                    matches!(error, NativeOktaError::IdpUrlMismatch { .. }),
+                    "{name}: expected an origin mismatch, got {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validate_idp_urls_rejects_token_url_that_is_not_a_url() {
+        let error = validate_idp_urls(
+            &Url::parse("https://mycustom.okta.com").unwrap(),
+            &AuthenticatorRequestData {
+                token_url: "abcd".to_string(),
+                sso_url: "https://mycustom.okta.com/app/sso/saml".to_string(),
+            },
+            std::time::Instant::now(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, NativeOktaError::UrlParse { .. }),
+            "expected a URL parse error, got {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse URL (<unknown>)"),
+            "{error}"
+        );
+    }
+
+    // =========================================================================
     // URL Origin Matching Tests
     // =========================================================================
 

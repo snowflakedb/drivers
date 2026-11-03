@@ -4,6 +4,7 @@ import { TempDir, type TempDirOptions } from './files.js';
 import {
   destroyConnectionAsync,
   executeAsync,
+  IS_RUNNING_FOR_OLD_DRIVER,
   randomizeName,
   snowflake,
   TEST_CONNECTION_OPTIONS,
@@ -14,6 +15,18 @@ export function stubEnv(name: string, value: string): void {
   onTestFinished(() => {
     vi.unstubAllEnvs();
   });
+}
+
+// NODE_TLS_REJECT_UNAUTHORIZED=0 stops Node from rejecting the certificate. The new driver maps
+// that to tls_skip_verify, which also skips revocation. The old driver still runs OCSP.
+export function acceptUntrustedHttps(): void {
+  stubEnv('NODE_TLS_REJECT_UNAUTHORIZED', '0');
+  if (IS_RUNNING_FOR_OLD_DRIVER) {
+    snowflake.configure({ disableOCSPChecks: true });
+    onTestFinished(() => {
+      snowflake.configure({ disableOCSPChecks: false });
+    });
+  }
 }
 
 export function createConnection(overrides: Partial<ConnectionOptions> = {}): Connection {

@@ -132,12 +132,12 @@ describe('EXTERNALBROWSER authentication', () => {
   describe('tests/definitions/shared/authentication/external_browser.feature', () => {
     describe('WireMock external browser authentication', () => {
       let wiremock: WiremockServer;
-      let previousHttpsProtocol: string | undefined;
+      let restoreHttpsProtocol: (() => void) | undefined;
 
       beforeAll(async () => {
         wiremock = await WiremockServer.spawn();
         if (!isRunningNewDriverWithBD('BD#64')) {
-          previousHttpsProtocol = patchOldDriverHttpsProtocol('http');
+          restoreHttpsProtocol = patchOldDriverHttpsProtocol('http');
         }
       });
 
@@ -146,9 +146,7 @@ describe('EXTERNALBROWSER authentication', () => {
       });
 
       afterAll(async () => {
-        if (previousHttpsProtocol !== undefined) {
-          patchOldDriverHttpsProtocol(previousHttpsProtocol);
-        }
+        restoreHttpsProtocol?.();
         await wiremock.destroy();
       });
 
@@ -407,12 +405,12 @@ describe('EXTERNALBROWSER authentication', () => {
 
   describe('WireMock EXTERNALBROWSER behavior', () => {
     let wiremock: WiremockServer;
-    let previousHttpsProtocol: string | undefined;
+    let restoreHttpsProtocol: (() => void) | undefined;
 
     beforeAll(async () => {
       wiremock = await WiremockServer.spawn();
       if (!isRunningNewDriverWithBD('BD#64')) {
-        previousHttpsProtocol = patchOldDriverHttpsProtocol('http');
+        restoreHttpsProtocol = patchOldDriverHttpsProtocol('http');
       }
     });
 
@@ -421,9 +419,7 @@ describe('EXTERNALBROWSER authentication', () => {
     });
 
     afterAll(async () => {
-      if (previousHttpsProtocol !== undefined) {
-        patchOldDriverHttpsProtocol(previousHttpsProtocol);
-      }
+      restoreHttpsProtocol?.();
       await wiremock.destroy();
     });
 

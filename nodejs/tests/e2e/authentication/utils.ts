@@ -299,13 +299,15 @@ export function destroyConnectionAfterTest(connection: Connection): void {
 // export that field, so this reaches the CJS singleton. snowflake-sdk-old is always
 // installed; the new driver never reads this object, so the write is unused when that
 // driver is under test.
-export function patchOldDriverHttpsProtocol(value: string): string {
+export function patchOldDriverHttpsProtocol(value: string): () => void {
   const { rest } = createRequire(import.meta.url)(
     'snowflake-sdk-old/dist/lib/global_config.js',
   ) as { rest: { HTTPS_PROTOCOL: string } };
-  const previous = rest.HTTPS_PROTOCOL;
+  const oldHttpsProtocol = rest.HTTPS_PROTOCOL;
   rest.HTTPS_PROTOCOL = value;
-  return previous;
+  return () => {
+    rest.HTTPS_PROTOCOL = oldHttpsProtocol;
+  };
 }
 
 export const TERMINATED_QUERY = {

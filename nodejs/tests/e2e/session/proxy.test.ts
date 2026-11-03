@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
-import { createConnection, createLiveConnection, stubEnv } from '../utils/fixtures.js';
+import {
+  acceptUntrustedHttps,
+  createConnection,
+  createLiveConnection,
+  stubEnv,
+} from '../utils/fixtures.js';
 import {
   connectAsyncWithErrorBD,
   IS_RUNNING_FOR_OLD_DRIVER,
@@ -52,16 +57,6 @@ describe('proxy session options', () => {
     onTestFinished(() => {
       snowflake.configure({ useEnvProxy: false });
     });
-  }
-
-  function useHttpsTarget(): void {
-    stubEnv('NODE_TLS_REJECT_UNAUTHORIZED', '0');
-    if (IS_RUNNING_FOR_OLD_DRIVER) {
-      snowflake.configure({ disableOCSPChecks: true });
-      onTestFinished(() => {
-        snowflake.configure({ disableOCSPChecks: false });
-      });
-    }
   }
 
   function proxyEndpoint() {
@@ -277,7 +272,7 @@ describe('proxy session options', () => {
 
   describe('https account URL', () => {
     it('should route an https login through the proxy when proxy host and port are configured', async () => {
-      useHttpsTarget();
+      acceptUntrustedHttps();
       await wiremock.stub(loginSuccess());
 
       await createLiveConnection({
@@ -297,7 +292,7 @@ describe('proxy session options', () => {
       });
       await wiremock.stub(loginSuccess());
       await uppercaseProxy.stub([loginSuccess(), logoutSuccess()]);
-      useHttpsTarget();
+      acceptUntrustedHttps();
       enableUseEnvProxy();
       stubEnv('https_proxy', `http://localhost:${getWiremockPort(wiremock)}`);
       stubEnv('HTTPS_PROXY', `http://localhost:${getWiremockPort(uppercaseProxy)}`);
@@ -320,7 +315,7 @@ describe('proxy session options', () => {
     });
 
     it('should ignore HTTP_PROXY for an https login', async () => {
-      useHttpsTarget();
+      acceptUntrustedHttps();
       enableUseEnvProxy();
       setHttpProxy(wiremock);
       await wiremock.stub(loginSuccess());
