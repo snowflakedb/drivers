@@ -4,7 +4,7 @@
 #   or when it doesn't belong in the changelog.
 #   A status in original BehaviorDifferences.yaml should be updated to match.
 # - The original BehaviorDifferences.yaml stays until tests run against both the new and the old driver.
-# - The last entry included in this snapshot is 136.
+# - The last entry included in this snapshot is 144.
 behavior_differences:
   13:
     name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
@@ -43,7 +43,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       Under fetchAsString a NULL cell becomes the string 'NULL' (representNullAsStringNull, on by
@@ -54,70 +54,6 @@ behavior_differences:
     status_rationale: |
       One rule for every type is easier to rely on than a rule with exceptions, and the old
       driver's exceptions came from its internals rather than from a decision.
-
-  19:
-    name: 'Statements issued while a connect is in flight are refused rather than queued'
-    status: todo
-    type: bug
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      A connection whose login is still running is in its own connecting state, and requests
-      reaching it are put on a queue and run once the login completes
-      (StateConnecting.request -> enqueueRequest). The caller sees no error, and isUp() reports
-      up, since a request there is taken rather than refused.
-    new_driver_behavior: |
-      A connection counts as never established until its connect resolves, so a statement issued
-      in that window is refused with ClientError 407001, SQL state 08003, the same error a caller
-      gets for never calling connect at all. isUp() reports down for the same window, because a
-      connection that refuses statements is not usable.
-    status_rationale: |
-      The window is only reachable by starting a statement without awaiting connect, which no
-      documented usage does. Queueing means holding operations and replaying them after login,
-      which is its own feature rather than an error-mapping detail.
-
-  20:
-    name: 'isUp() still reports up after a renewal fails for a reason the core does not record'
-    status: allowed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: medium
-    old_driver_behavior: |
-      The driver renews the session token itself, so it sees the outcome. An expired master token,
-      or a renewal that fails for any reason other than a network error, moves the connection to
-      its disconnected state and isUp() answers false from then on
-      (StateRenewing.enter -> transitionToDisconnected).
-    new_driver_behavior: |
-      isUp() reads the core, which records an expired master token and a session the server says
-      cannot be recovered (GS 390111 gone, GS 390117 closed), so those renewals take isUp() to
-      false. Other answered RENEW refusals — network policy, CAAP, a CNG header mismatch, a
-      malformed session token — leave the connection up, because the server session can still be
-      open. A renewal that fails to reach the server also leaves the connection up, which is what
-      the old driver does.
-    description: |
-      sf_core records 390111 and 390117. The old driver's "any non-network RENEW refusal
-      disconnects" rule is not lifted into shared core: those other codes leave a live session.
-
-  26:
-    name: 'A connection-level arrayBindingThreshold no longer overrides a later ALTER SESSION of CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'
-    status: todo
-    type: bug
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      The arrayBindingThreshold connection option is stored on the connection and takes strict
-      precedence when the driver picks between the inline and stage bind paths, so it wins over the
-      server's CLIENT_STAGE_ARRAY_BINDING_THRESHOLD even after an ALTER SESSION changes that
-      parameter mid-session.
-    new_driver_behavior: |
-      arrayBindingThreshold is applied as the initial value of the CLIENT_STAGE_ARRAY_BINDING_THRESHOLD
-      session parameter at connect time rather than held separately on the connection. Threshold
-      resolution reads the current session-parameter value from sf_core's per-connection cache (see
-      BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
-      connection option and the stage path is chosen by the ALTER'd value instead.
 
   30:
     name: 'PUT of a symlinked source reports the target basename'
@@ -139,6 +75,12 @@ behavior_differences:
       `PUT file:///data/link.csv @stage` the stage has `real.csv`, and
       `GET @stage/link.csv file:///out/` fails because the file does not exist.
 
+  # Not ready for the changelog. On main the new driver has no precision-loss warning or
+  # selecting_with_precision_loss telemetry at all, for any fetch mode. The BD#40 check in
+  # numeric-precision-loss.test.ts passes only because nothing can emit the warning yet.
+  # snowflakedb/drivers#2575 (open) adds the warning and telemetry on the Number path only,
+  # so fetchAsString cells stay silent. After it merges, this entry describes real behavior.
+  # https://github.com/snowflakedb/drivers/pull/2575
   40:
     name: 'fetchAsString Number does not emit a precision-loss warning or telemetry'
     status: allowed
@@ -158,176 +100,60 @@ behavior_differences:
       converts the cell to Number first, so the warning fires even when fetchAsString
       already returned the exact digits.
 
-  41:
-    name: 'BLOCKED query status is still-running, not an error'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Query status BLOCKED means that the query is not running and resulted in an error.
-    new_driver_behavior: |
-      Query status BLOCKED means that the query is still running.
-    status_rationale: |
-      BLOCKED in GS is described as non-terminal state. Python connector correctly treats
-      BLOCKED as still running.
-
-  43:
-    name: 'An unknown query ID maps to NO_DATA'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      An unknown query ID (`queries[]` empty) returns `'NO_QUERY_DATA'`.
-      `'NO_QUERY_DATA'` is not still-running, so `getResultsFromQueryId` throws
-      ClientError 460002 on the first status poll if query id is not found.
-    new_driver_behavior: |
-      An unknown query ID returns `'NO_DATA'`.
-      `'NO_DATA'` is still-running, so `getResultsFromQueryId` polls 25 times (~105s)
-      and then throws ClientError 460002 with
-      `Cannot retrieve data. No information returned from server for query <id>`.
-    status_rationale: |
-      `'NO_QUERY_DATA'` is a custom status used only by the Node.js driver. Python and
-      JDBC, map a missing monitoring row to `NO_DATA`. Moreover NodeJs also defines
-      NO_DATA status which can never be returned by snowflake server, so it makes no
-      sense to keep both.
-
-  44:
-    name: 'Unrecognized query status name maps to NO_DATA'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      An unrecognized `status` string from `/monitoring/queries/{id}` is returned as-is.
-    new_driver_behavior: |
-      An unrecognized status name returns `'NO_DATA'`.
-    status_rationale: |
-      `getQueryStatus()` returns a `QueryStatus` string union and cannot surface unknown names.
-      Matches Python and JDBC, which map unrecognized names to `NO_DATA`.
-
-  45:
-    name: 'getQueryStatus is typed to return QueryStatus union instead of string'
-    status: unknown
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      index.d.ts types getQueryStatus(queryId) as returning Promise<string>. Callers passing the result
-      to isStillRunning(status: QueryStatus) or isAnError(status: QueryStatus) in TypeScript had to explicitly
-      cast the returned string to QueryStatus.
-    new_driver_behavior: |
-      getQueryStatus(queryId) is typed to return Promise<QueryStatus>, directly matching the parameter type
-      expected by isStillRunning(status) and isAnError(status) without requiring a type cast. The only BCR
-      is when snowflake server returns status which is not a valid QueryStatus. In this case, the driver
-      will return NO_DATA.
-    status_rationale: |
-      Aligns getQueryStatus's return type with the status predicates. Runtime return values are unchanged
-      (string literals like 'SUCCESS', 'RUNNING', etc.).
-
   46:
     name: 'RequestFailedError is not implemented'
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
-    impact: low
+    impact: medium
     old_driver_behavior: |
-      HTTP failures against Snowflake reject with RequestFailedError, code 401002,
-      and message `Request to Snowflake failed.`
+      Any request to Snowflake (login, query, query status, abort, and others) that gets
+      an HTTP status other than 200 rejects with RequestFailedError, code 401002, and
+      message `Request to Snowflake failed.` Retryable statuses (5xx, 429) are retried
+      first. err.response holds the HTTP response, so callers can read
+      err.response.statusCode.
+      A 401 whose body has code 390104 uses code 401004 and message
+      `Request to Snowflake failed.  Invalid token`.
+      No HTTP response at all is NetworkError 401001. A 200 with `success: false` is
+      OperationFailedError.
     new_driver_behavior: |
-      The same failures reject with a generic Error. RequestFailedError is not
-      implemented.
-    status_rationale: We aim to reduce the number of custom error types in the driver.
-
-  49:
-    name: 'asyncExec complete callback does not pass { queryId } as the rows argument'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      execute({ asyncExec: true, complete }) invokes complete(null, stmt, { queryId }).
-      The third argument is overloaded: a row array for normal execute, or { queryId } for
-      asyncExec. queryId is also available on stmt.getQueryId(). After complete,
-      stmt.getNumRows(), stmt.getColumns(), stmt.getColumn(...), and stmt.getSessionState()
-      throw TypeError instead of returning undefined.
-    new_driver_behavior: |
-      execute({ asyncExec: true, complete }) invokes complete(undefined, stmt, undefined).
-      Callers read queryId from stmt.getQueryId() only. The third argument is a row array
-      or undefined, never { queryId }. stmt.getNumRows(), stmt.getColumns(),
-      stmt.getColumn(...), and stmt.getSessionState() return undefined because the statement
-      has no result set.
-    status_rationale: |
-      The old driver's third-argument is typed as row array or undefined (not { queryId }),
-      and callers can already obtain queryId from stmt.getQueryId(). The new driver keeps
-      the third argument as a row array or undefined for every execute path. Moreover, this
-      third argument is called rows, so it doesn't make sense to put queryId in it.
-
-  52:
-    name: 'Zero UTC offset in a TIME format prints Z, not +00:00'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Offset elements on a TIME (`TZH:TZM`, `TZHTZM`, `TZH`) print `+00:00` / `+0000` / `+00`.
-    new_driver_behavior: |
-      Those elements print `Z`, matching `TO_CHAR` for a zero UTC offset.
+      The same failures reject with a plain Error. code is undefined and there is no
+      response field:
+      - A retryable status (5xx, 408, 429, 307, 308), after the last retry: message
+        `HTTP request failed after retries: <operation>`, for example
+        `... query status`. cause.message is
+        `max attempts (N) reached; last status 500 Internal Server Error`.
+      - Any other 4xx: message `Invalid Snowflake response`. cause.message is
+        `Snowflake responded with error status: 400 Bad Request, message: ...`.
+      - A 401 refreshes the session and retries the request. If the refresh fails,
+        the error comes from the session refresh. No test checks this case yet.
+      The HTTP status appears only in the cause text. NetworkError 401001 is the same
+      as in the old driver. ErrorCode.ERR_SF_RESPONSE_FAILURE is still exported, but
+      nothing throws it.
     description: |
-      The new driver follows the server. The old driver always writes a numeric offset.
-
-  54:
-    name: 'client rejects a non-UUID requestId before talking to GS'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      Any string is sent as `?requestId=` on `POST /queries/v1/query-request`.
-      GS does not accept a non-UUID value: live `requestId: 'foobar'` returns
-      HTTP 400, which the driver surfaces as RequestFailedError `401002`.
-      Only a UUID from `getRequestId()` actually resubmits.
-    new_driver_behavior: |
-      `execute()` throws synchronously with `460001` / InvalidParameterError and
-      `Invalid requestId: {id}` for a malformed `requestId`. No statement is
-      returned and no HTTP call is made.
-    status_rationale: |
-      The old client check was wrong. GS never executed a non-UUID `requestId`;
-      rejecting up front with the same code as a bad `queryId` is the fix, not
-      an incompatibility.
-
-  56:
-    name: 'describeOnly multi-statement throws instead of returning the wrapper result'
-    status: unknown
-    type: bug
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      execute({ describeOnly: true }) on a multi-statement query succeeds. complete receives
-      empty rows and a parent wrapper column named `multiple statement execution`. GS does
-      not return child resultIds, so hasNext is absent (ordinary RowStatement).
-    new_driver_behavior: |
-      The same request is classified as ExecuteQueryResult::Multi. With no child query IDs,
-      the request fails with a plain Error "multi-statement result contained no child query IDs"
-      whose code is undefined.
-      The statement object in the error still has hasNext/NextResult (BD#50).
-    description: |
-      Closing this difference requires a core change. Core classifies the parent execute
-      response as Multi and drops the wrapper rowset before the bridge sees it, so the
-      bridge cannot reconstruct the old driver's wrapper result from empty child query IDs.
-    status_rationale: |
-      describeOnly on a multi-statement query does not work: the server does not return child
-      query IDs, so there is no per-statement metadata to describe anyway.
+      Status is unknown: this needs more investigation before a decision.
+      Without RequestFailedError, a failed request looks the same as other errors with
+      no name or code (invalid argument, row decode), so callers can only match the
+      message text. They also cannot write "retry on 5xx or 429" logic, because the
+      status is not a field.
+      The first reason given for this difference, fewer custom error types, does not
+      fit well. The bridge already keeps NetworkError 401001 and LargeResultSetError
+      402002, and RequestFailedError is an existing type that callers check for.
+      To check before deciding:
+      - Map the core errors that carry a Snowflake HTTP status to RequestFailedError
+        401002 in nodejs_bridge/src/error.rs: RestError::HttpRetry with
+        HttpError::MaxAttempts, InvalidSnowflakeResponse with
+        SnowflakeResponseError::ResponseStatus, SessionRefresh, and TokenRequestHttp.
+        InvalidSnowflakeResponse also wraps bodies the core cannot parse. Those are
+        not failed requests and stay out.
+      - Decide what err.response holds. The old driver attaches the whole response.
+        The body can contain sensitive data, so { statusCode } may be enough.
+      - Decide what to do with retries that end on time (HttpError::DeadlineExceeded,
+        RetryAfterExceeded). These carry no status.
+      - Check what a failed session refresh after a 401 shows, and whether 401004 is
+        needed.
+      A server that rejects an abort is covered by BD#116, not by this entry.
 
   59:
     name: 'browserActionTimeout still accepted (ms) but bounds core authentication_timeout'
@@ -362,89 +188,6 @@ behavior_differences:
       before the authenticator-request. A slow SSO round trip leaves less time for
       the browser callback. Timeout: "Failed to login: External browser SSO failed:
       Authentication timeout exceeded (budget <n>s)". No error.code.
-
-  61:
-    name: 'execute() after a connect that never reached the server reports a terminated connection, not a never-established one'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    description: |
-      This entry covers only connects that failed WITHOUT a session-rejecting response
-      from Snowflake, e.g. EXTERNALBROWSER browser timeout, no browser callback, or a
-      client-side configuration failure. When the server did reject the login (e.g.
-      unknown user, invalid token, IdP username mismatch), both drivers already report
-      407002 with the same message, so that case is not a difference.
-    old_driver_behavior: |
-      connection.execute() after such a connect rejects with code 407001 and message
-      "Unable to perform operation because a connection was never established."
-    new_driver_behavior: |
-      The same call rejects with code 407002 and message
-      "Unable to perform operation using terminated connection."
-
-  62:
-    name: 'destroy() after a connect that never reached the server reports already disconnected, not nothing to destroy'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    description: |
-      Same kind of connects as BD#61: the login failed without a session-rejecting
-      response from Snowflake. After a login the server rejected, both drivers report
-      406502 with the same message. Cleanup paths treat 406501 and 406502 alike, so
-      this changes the error a caller sees, not whether teardown succeeds.
-    old_driver_behavior: |
-      connection.destroy() after such a connect rejects with code 406501 and message
-      "Not connected, so nothing to destroy."
-    new_driver_behavior: |
-      The same call rejects with code 406502 and message "Already disconnected."
-
-  64:
-    name: 'EXTERNALBROWSER authenticator-request uses connection protocol and port'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection accepts protocol (default https) and port and uses them only
-      to build accessUrl. EXTERNALBROWSER getSSOURL posts to
-      rest.HTTPS_PROTOCOL + '://' + host + '/session/authenticator-request'
-      (defaults https, host as given, no port unless the caller stuffed it into
-      host). Connection protocol, port, and accessUrl are ignored for that request.
-    new_driver_behavior: |
-      protocol and port are allow-listed connection options and feed sf_core
-      server_url. EXTERNALBROWSER authenticator-request uses that URL
-      (http(s)://host:port/session/authenticator-request). Omitting protocol
-      still defaults to https.
-
-  67:
-    name: 'EXTERNALBROWSER connect failures reject with the full new-driver message'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      A failed EXTERNALBROWSER connect rejects with the legacy client's own text.
-      An authenticator-request logical failure is
-      "Authentication failed. Error code: <code>, message: <server message>".
-      When the JSON body has no code, that template interpolates "undefined".
-      A login-request failure's message is the server sentence alone, with the GS
-      code on error.code. A thrown openExternalBrowserCallback rejects with that
-      error's own message.
-    new_driver_behavior: |
-      The same failures reject with the wrapped driver message. An
-      authenticator-request logical failure is "Failed to login: External browser
-      SSO failed: Snowflake authenticator-request (logical failure): <server
-      message>, code: <code>". A body with no code uses -1. A login-request
-      failure is "Failed to login: Login error: <server message>, code: <code>",
-      and error.code is the GS code. A thrown openExternalBrowserCallback is
-      "Failed to login: External browser SSO failed: " plus the thrown error's
-      string, including its stack. HTTP 403 is BD#65. The browser timeout is BD#59.
-      A codeless error.code is BD#66.
 
   71:
     name: 'deserializeConnection either restores the session or throws 408003'
@@ -523,22 +266,6 @@ behavior_differences:
       decrypted, but its `Authentication failed` error does not include that cause
       in its message. So the user gets no hint that the passphrase is wrong.
 
-  75:
-    name: 'JWT login rejection message includes the GS code'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      A GS login rejection is surfaced as
-      "JWT token is invalid.  [<request id>]".
-      error.code is "390144".
-    new_driver_behavior: |
-      The same rejection is
-      "Failed to login: Login error: JWT token is invalid.  [<request id>], code: 390144".
-      error.code is "390144". The request id changes on every login.
-
   78:
     name: 'privateKey or privateKeyPath without authenticator infers SNOWFLAKE_JWT'
     status: unknown
@@ -565,33 +292,9 @@ behavior_differences:
         the old driver and fails at connect with the new one. The only way to keep password
         login is to remove the key options.
 
-  79:
-    name: 'NetworkError message is the catalog text and the transport detail is on cause'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createNetworkError passes the axios or Node error as `cause` and no message, so
-      createError copies `cause.message` into `message` (for a refused port,
-      `connect ECONNREFUSED 127.0.0.1:<port>`). The catalog text 'Network error. Could not
-      reach Snowflake.' is only the fallback for a cause without a message. A result chunk
-      download that cannot reach cloud storage fails the same way with NetworkError 402001
-      (for a reset connection, `read ECONNRESET`).
-    new_driver_behavior: |
-      NetworkError 401001 always has the catalog message 'Network error. Could not reach
-      Snowflake.', and NetworkError 402001 always has 'Network error. Could not reach
-      S3/Blob.'. The root cause from the Rust HTTP stack is on `cause`. Name and code match
-      the old driver.
-    description: |
-      The transport runs in Rust, not in Node, so the old message text (Node's ECONNREFUSED
-      wording) cannot be reproduced. A fixed message gives callers stable text; the detail
-      stays available on `cause`.
-
   80:
     name: 'A query fails with NetworkError when the session renewal it triggered cannot reach Snowflake'
-    status: allowed
+    status: todo
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -608,6 +311,19 @@ behavior_differences:
       The query rejects with NetworkError 401001, the root cause on `cause`. The core makes one
       renewal request without retrying it and does not re-send the query. The connection stays
       up (isUp() is true, see BD#20), so the next query renews again.
+    status_rationale: |
+      This looks like a serious oversight in sf_core that needs to be fixed. The RENEW request
+      (refresh_session and token_request in sf_core/src/rest/snowflake/mod.rs) is sent once with
+      client.execute. Queries, logout and async polling go through execute_with_retry. So a
+      network problem of a second or two exactly when the session token expires fails the query,
+      even though a retry would have renewed the session.
+      A fix would send RENEW through a short, bounded retry policy:
+      - retry only on network errors, 429 and 5xx;
+      - reuse the same requestId on each attempt;
+      - keep the total time short, because the token write lock is held while renewing and
+        blocks every other query on the connection.
+      Open question: whether Snowflake accepts a repeated RENEW when the first one succeeded but
+      its response was lost.
     description: |
       Re-sending a query after a failed renewal is a core retry policy rather than an
       error-mapping detail. The difference shows only when a renewal coincides with a network
@@ -787,40 +503,6 @@ behavior_differences:
     description: |
       The default store is initialized on first use rather than at connect, so its failure is
       handled like any other best-effort cache failure.
-
-  98:
-    name: 'A mismatched OAuth username is reported as a wrapped login error'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      The rejection is OperationFailedError. error.code is the string "390309".
-      The message is "The user you were trying to authenticate as differs from
-      the user tied to the access token. [<request id>]". The request id changes
-      on every login.
-    new_driver_behavior: |
-      The rejection is OperationFailedError. error.code is the string
-      "390309". The message is "Failed to login: Login error: The
-      user you were trying to authenticate as differs from the user tied to the
-      access token. [<request id>], code: 390309". The request id changes on
-      every login.
-
-  100:
-    name: 'Legacy AUTHENTICATOR=OAUTH without a TOKEN: new driver rejects with a missing-parameter error; old driver does not validate token presence client-side'
-    status: allowed
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      When AUTHENTICATOR=OAUTH is used without supplying a TOKEN value, the old driver does not
-      validate token presence client-side; it proceeds to a connection attempt against the configured
-      host and no missing-parameter error is raised to the caller.
-    new_driver_behavior: |
-      sf_core connection validation rejects with a missing-parameter error citing the missing token
-      before any network attempt.
 
   101:
     name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
@@ -1081,3 +763,60 @@ behavior_differences:
       The new driver uses the 60-second connect default of the old JDBC and Python
       drivers. A connect that takes longer than 60 seconds fails here; the old driver
       waits up to its request timeout.
+
+  137:
+    name: 'HTTP attempts time out after 300 seconds by default'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      Each HTTP request uses axios timeout (default 360000 ms, or the timeout option)
+      as an idle socket timer covering the whole request.
+    new_driver_behavior: |
+      retry_timeout defaults to 300 seconds and bounds each HTTP attempt from start
+      until the response body finishes. 0 removes the per-attempt limit. Result chunk
+      downloads do not use this policy.
+    description: |
+      The new driver applies a 300-second wall-clock cap per HTTP attempt, matching
+      the old JDBC socket default. A request that stays active longer than 300 seconds
+      fails here; the old driver waited up to its 360-second request timeout. The Node
+      timeout option still maps to retry_timeout.
+
+  139:
+    name: 'AWS WIF defaults to us-east-1 when region discovery fails'
+    status: todo
+    type: bug
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Without AWS_REGION, a failure to read the region from EC2 metadata rejects
+      WIF authentication with the metadata error.
+    new_driver_behavior: |
+      Region resolution checks AWS_REGION, AWS_DEFAULT_REGION, and EC2 metadata.
+      AWS_EC2_METADATA_SERVICE_ENDPOINT overrides the metadata address. If none
+      provides a region, authentication continues with us-east-1.
+    status_rationale: |
+      SNOW-4356822 resolves this: fail authentication when region discovery
+      finds nothing, instead of continuing with us-east-1.
+
+  144:
+    name: 'A successful single-use refresh that omits the refresh token deletes the cached one'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      With `oauthEnableSingleUseRefreshTokens` true, a refresh grant that succeeds
+      without a `refresh_token` field leaves the previously cached refresh token in
+      place. The old driver removes that cache entry only when the refresh request throws.
+    new_driver_behavior: |
+      The same response deletes the cached refresh token. Both drivers still log in
+      with the new access token.
+    description: |
+      Single-use refresh tokens are consumed by the IdP. The new driver drops the
+      cached copy when the refresh response does not replace it. The old driver
+      keeps that copy until a later refresh fails.

@@ -85,7 +85,7 @@ describe('Query Binds', () => {
       expect(selected).toEqual(['a', 'b', 'c']);
     });
 
-    it('should let the connection option override the session parameter', async () => {
+    it('should let ALTER SESSION override the arrayBindingThreshold connection option', async () => {
       const connection = await createLiveConnection({ arrayBindingThreshold: HIGH_THRESHOLD });
       await executeAsync(
         connection,

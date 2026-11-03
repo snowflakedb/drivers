@@ -438,9 +438,9 @@ behavior_differences:
 
   19:
     name: 'Statements issued while a connect is in flight are refused rather than queued'
-    status: todo
-    type: bug
-    reviewed: false
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -454,32 +454,57 @@ behavior_differences:
       gets for never calling connect at all. isUp() reports down for the same window, because a
       connection that refuses statements is not usable.
     status_rationale: |
-      The window is only reachable by starting a statement without awaiting connect, which no
-      documented usage does. Queueing means holding operations and replaying them after login,
-      which is its own feature rather than an error-mapping detail.
+      The new architecture does not hold statements while login is running, so a statement
+      issued before connect resolves fails. Callers wait for the connection to be established
+      before running queries, which is what the documented usage already does.
 
   20:
-    name: 'isUp() still reports up after a renewal fails for a reason the core does not record'
+    name: 'isUp() stays true after Snowflake refuses a session renewal but the session is still open'
     status: allowed
-    type: bug
-    reviewed: false
-    is_breaking_change: false
-    impact: medium
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
     old_driver_behavior: |
-      The driver renews the session token itself, so it sees the outcome. An expired master token,
-      or a renewal that fails for any reason other than a network error, moves the connection to
-      its disconnected state and isUp() answers false from then on
-      (StateRenewing.enter -> transitionToDisconnected).
+      The driver renews the session token itself (StateRenewing.enter). When the RENEW request
+      cannot reach Snowflake, it goes back to the connected state. When Snowflake answers with any
+      refusal, it moves to the disconnected state: isUp() returns false from then on, and later
+      queries fail with ClientError 407002 (isFatal: true).
     new_driver_behavior: |
-      isUp() reads the core, which records an expired master token and a session the server says
-      cannot be recovered (GS 390111 gone, GS 390117 closed), so those renewals take isUp() to
-      false. Other answered RENEW refusals — network policy, CAAP, a CNG header mismatch, a
-      malformed session token — leave the connection up, because the server session can still be
-      open. A renewal that fails to reach the server also leaves the connection up, which is what
-      the old driver does.
+      isUp() reads connection_is_usable in sf_core. It returns false only after one of these:
+      - the master token expired (GS 390113/390114/390115, or the client-side expiry check that
+        runs before a RENEW);
+      - Snowflake reports the session gone (GS 390111) or closed (GS 390117).
+      Snowflake refuses a RENEW today for other reasons too, such as a network policy that no
+      longer allows the client IP, CAAP, a CNG header mismatch or a malformed session token. These
+      fail the query with the Snowflake error (OperationFailedError, sqlState '08001', not
+      isFatal) and leave isUp() true. The tokens are kept, so each later query tries the RENEW
+      again and works once the cause is fixed.
+    status_rationale: |
+      sf_core is shared by all drivers and marks a session as ended only when Snowflake says so.
+      After the other refusals the session can still be open on the server, so ending it on the
+      client would throw away a session that can recover. Logging in again usually fails for the
+      same reason anyway, for example when a network policy blocks the client IP.
     description: |
-      sf_core records 390111 and 390117. The old driver's "any non-network RENEW refusal
-      disconnects" rule is not lifted into shared core: those other codes leave a live session.
+      Network errors are not part of this difference. In both drivers a request that cannot reach
+      Snowflake fails without changing the connection state, so isUp() stays true during an outage
+      no matter how many requests fail. Only a server answer or the master-token expiry check ends
+      the session.
+
+      The master-token expiry check runs only when a query gets GS 390112 and the core is about to
+      send a RENEW. connection_is_usable does not check the clock. So an idle connection, or one
+      that cannot reach Snowflake, still reports isUp() true after the master token's time has
+      passed. The first query that reaches Snowflake then fails, and isUp() turns false. The old
+      driver also finds out only when it sends a RENEW.
+
+      If the refusal keeps happening, isUp() turns false once the master token expires (4 hours
+      by default).
+
+      isValidAsync() sends a heartbeat, which needs the same RENEW, so it returns false while
+      renewals are refused or Snowflake cannot be reached. createPool validates connections with
+      isValidAsync(), so pools still drop these connections, as in the old driver.
+
+      Related: BD#80 covers a RENEW that cannot reach Snowflake, where the query is not sent again.
 
   22:
     name: 'representNullAsStringNull is scoped to the connection rather than leaking into module state'
@@ -563,10 +588,10 @@ behavior_differences:
 
   26:
     name: 'A connection-level arrayBindingThreshold no longer overrides a later ALTER SESSION of CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'
-    status: todo
-    type: bug
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       The arrayBindingThreshold connection option is stored on the connection and takes strict
@@ -579,6 +604,12 @@ behavior_differences:
       resolution reads the current session-parameter value from sf_core's per-connection cache (see
       BD#21), so a later ALTER SESSION SET CLIENT_STAGE_ARRAY_BINDING_THRESHOLD overwrites the
       connection option and the stage path is chosen by the ALTER'd value instead.
+    status_rationale: |
+      The old driver ignored an ALTER SESSION that succeeded, so the server reported one threshold
+      while the driver used another. The session parameter is now the only value, the same as for
+      other options backed by a session parameter such as jsTreatIntegerAsBigInt. Inserted rows
+      are the same through the stage and inline paths, so no code change is needed. Honoring a
+      statement-level threshold is tracked in BCR_LOG.md.
 
   27:
     name: 'destroy() issued while a connect is in flight is refused rather than queued'
@@ -756,7 +787,7 @@ behavior_differences:
     status: allowed
     type: bugfix
     reviewed: true
-    is_breaking_change: false
+    is_breaking_change: true
     impact: medium
     old_driver_behavior: |
       A GET whose path matches no staged object resolves with an empty result set and downloads
@@ -769,8 +800,9 @@ behavior_differences:
     status_rationale: |
       An empty result for a file that does not exist hides a mistake in the path, so the old
       driver's behavior is a bug. Raising matches the Python driver and the core. JDBC keeps the
-      empty result, and the Node.js driver does not copy that. We treat it as a bugfix: the old
-      driver failed silently, so code that reached this case already had a wrong path.
+      empty result, and the Node.js driver does not copy that. A GET that matches no files,
+      including through PATTERN, now fails, and an empty match can be a normal result, so it is
+      listed under Breaking Changes in the changelog.
 
   36:
     name: 'put_get_max_attempts has no upper-bound clamp'
@@ -877,18 +909,25 @@ behavior_differences:
 
   41:
     name: 'BLOCKED query status is still-running, not an error'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       Query status BLOCKED means that the query is not running and resulted in an error.
+      isAnError('BLOCKED') returns true, getQueryStatusThrowIfError throws an OperationFailedError,
+      and getResultsFromQueryId fails for a query that has not finished.
     new_driver_behavior: |
       Query status BLOCKED means that the query is still running.
+      isStillRunning('BLOCKED') returns true, isAnError('BLOCKED') returns false,
+      getQueryStatusThrowIfError returns 'BLOCKED', and getResultsFromQueryId keeps waiting.
     status_rationale: |
-      BLOCKED in GS is described as non-terminal state. Python connector correctly treats
-      BLOCKED as still running.
+      BLOCKED in GS is described as non-terminal state: a blocked query has not finished and can
+      still succeed. Reporting it as an error made getResultsFromQueryId fail for queries that later
+      completed. Python connector correctly treats BLOCKED as still running.
+      Not breaking: code that waits for a query keeps working and now gets the real final status.
+      Listed under Bugfixes in the changelog.
 
   42:
     name: 'isAnError is typed to take a QueryStatus argument'
@@ -907,10 +946,10 @@ behavior_differences:
 
   43:
     name: 'An unknown query ID maps to NO_DATA'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       An unknown query ID (`queries[]` empty) returns `'NO_QUERY_DATA'`.
@@ -926,13 +965,32 @@ behavior_differences:
       JDBC, map a missing monitoring row to `NO_DATA`. Moreover NodeJs also defines
       NO_DATA status which can never be returned by snowflake server, so it makes no
       sense to keep both.
+      Not a breaking change, because no documented behavior changes:
+      - `'NO_QUERY_DATA'` is not part of the `QueryStatus` type in the old index.d.ts, and
+        getQueryStatus was typed as `Promise<string>`. Code that compares the result with
+        `'NO_QUERY_DATA'` depends on an undocumented value.
+      - Callers get query IDs from the driver, for example from statement.getQueryId(), so the
+        query exists on the server. An empty `queries[]` for such an ID is a temporary state,
+        and checking again is the right response.
+      - A query ID that is not a UUID is still rejected before any request is sent. Only a
+        well-formed ID that Snowflake doesn't know returns `'NO_DATA'`. That is a caller error,
+        not a case the API is designed for.
+      - getResultsFromQueryId still fails for such an ID, with the same error code 460002. It
+        only fails later, after its NO_DATA retries. The old driver already had this retry
+        loop with the same limits (500 ms base, pattern [1, 1, 2, 3, 4, 8, 10], 24 retries),
+        and its own integration test expects getResultsFromQueryId to "fail from exceeding
+        NO_DATA retry count". The `'NO_QUERY_DATA'` shortcut skipped that loop.
+      A polling loop such as `while (isStillRunning(status))` keeps waiting for such an ID.
+      This is not a reason to keep `'NO_QUERY_DATA'`, for the same reason: the ID is a caller
+      error. Users can still see the change, so it is listed under Changes in the changelog,
+      without the retry timing.
 
   44:
     name: 'Unrecognized query status name maps to NO_DATA'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       An unrecognized `status` string from `/monitoring/queries/{id}` is returned as-is.
@@ -941,26 +999,33 @@ behavior_differences:
     status_rationale: |
       `getQueryStatus()` returns a `QueryStatus` string union and cannot surface unknown names.
       Matches Python and JDBC, which map unrecognized names to `NO_DATA`.
+      Not user-facing: the server sends only the statuses listed in `QueryStatus` today, so this
+      mapping only matters if that contract changes. It is a safety net, not a behavior users can
+      observe, so the changelog does not mention it.
 
   45:
     name: 'getQueryStatus is typed to return QueryStatus union instead of string'
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      index.d.ts types getQueryStatus(queryId) as returning Promise<string>. Callers passing the result
-      to isStillRunning(status: QueryStatus) or isAnError(status: QueryStatus) in TypeScript had to explicitly
-      cast the returned string to QueryStatus.
+      index.d.ts types getQueryStatus(queryId) and getQueryStatusThrowIfError(queryId) as returning
+      Promise<string>. Callers passing the result to isStillRunning(status: QueryStatus) or
+      isAnError(status: QueryStatus) in TypeScript had to explicitly cast the returned string to QueryStatus.
     new_driver_behavior: |
-      getQueryStatus(queryId) is typed to return Promise<QueryStatus>, directly matching the parameter type
-      expected by isStillRunning(status) and isAnError(status) without requiring a type cast. The only BCR
-      is when snowflake server returns status which is not a valid QueryStatus. In this case, the driver
-      will return NO_DATA.
+      getQueryStatus(queryId) and getQueryStatusThrowIfError(queryId) are typed to return
+      Promise<QueryStatus>, directly matching the parameter type expected by isStillRunning(status) and
+      isAnError(status) without requiring a type cast. The only BCR is when snowflake server returns status
+      which is not a valid QueryStatus. In this case, the driver will return NO_DATA.
     status_rationale: |
-      Aligns getQueryStatus's return type with the status predicates. Runtime return values are unchanged
-      (string literals like 'SUCCESS', 'RUNNING', etc.).
+      Aligns the return type of both status methods with the status predicates. Every value in QueryStatus
+      is returned as is. A status outside QueryStatus is returned as NO_DATA (BD#44), and an unknown query ID
+      returns NO_DATA instead of NO_QUERY_DATA (BD#43).
+      Not breaking: `QueryStatus` is narrower than `string`, so code that stores the result in a `string`
+      still compiles, and code that cast the result to `QueryStatus` no longer needs the cast. Listed under
+      Bugfixes in the changelog, next to the isAnError(status) type fix (BD#42).
 
   46:
     name: 'RequestFailedError is not implemented'
@@ -968,14 +1033,54 @@ behavior_differences:
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
-    impact: low
+    impact: medium
     old_driver_behavior: |
-      HTTP failures against Snowflake reject with RequestFailedError, code 401002,
-      and message `Request to Snowflake failed.`
+      Any request to Snowflake (login, query, query status, abort, and others) that gets
+      an HTTP status other than 200 rejects with RequestFailedError, code 401002, and
+      message `Request to Snowflake failed.` Retryable statuses (5xx, 429) are retried
+      first. err.response holds the HTTP response, so callers can read
+      err.response.statusCode.
+      A 401 whose body has code 390104 uses code 401004 and message
+      `Request to Snowflake failed.  Invalid token`.
+      No HTTP response at all is NetworkError 401001. A 200 with `success: false` is
+      OperationFailedError.
     new_driver_behavior: |
-      The same failures reject with a generic Error. RequestFailedError is not
-      implemented.
-    status_rationale: We aim to reduce the number of custom error types in the driver.
+      The same failures reject with a plain Error. code is undefined and there is no
+      response field:
+      - A retryable status (5xx, 408, 429, 307, 308), after the last retry: message
+        `HTTP request failed after retries: <operation>`, for example
+        `... query status`. cause.message is
+        `max attempts (N) reached; last status 500 Internal Server Error`.
+      - Any other 4xx: message `Invalid Snowflake response`. cause.message is
+        `Snowflake responded with error status: 400 Bad Request, message: ...`.
+      - A 401 refreshes the session and retries the request. If the refresh fails,
+        the error comes from the session refresh. No test checks this case yet.
+      The HTTP status appears only in the cause text. NetworkError 401001 is the same
+      as in the old driver. ErrorCode.ERR_SF_RESPONSE_FAILURE is still exported, but
+      nothing throws it.
+    description: |
+      Status is unknown: this needs more investigation before a decision.
+      Without RequestFailedError, a failed request looks the same as other errors with
+      no name or code (invalid argument, row decode), so callers can only match the
+      message text. They also cannot write "retry on 5xx or 429" logic, because the
+      status is not a field.
+      The first reason given for this difference, fewer custom error types, does not
+      fit well. The bridge already keeps NetworkError 401001 and LargeResultSetError
+      402002, and RequestFailedError is an existing type that callers check for.
+      To check before deciding:
+      - Map the core errors that carry a Snowflake HTTP status to RequestFailedError
+        401002 in nodejs_bridge/src/error.rs: RestError::HttpRetry with
+        HttpError::MaxAttempts, InvalidSnowflakeResponse with
+        SnowflakeResponseError::ResponseStatus, SessionRefresh, and TokenRequestHttp.
+        InvalidSnowflakeResponse also wraps bodies the core cannot parse. Those are
+        not failed requests and stay out.
+      - Decide what err.response holds. The old driver attaches the whole response.
+        The body can contain sensitive data, so { statusCode } may be enough.
+      - Decide what to do with retries that end on time (HttpError::DeadlineExceeded,
+        RetryAfterExceeded). These carry no status.
+      - Check what a failed session refresh after a 401 shows, and whether 401004 is
+        needed.
+      A server that rejects an abort is covered by BD#116, not by this entry.
 
   47:
     name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
@@ -1020,9 +1125,9 @@ behavior_differences:
 
   49:
     name: 'asyncExec complete callback does not pass { queryId } as the rows argument'
-    status: unknown
+    status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1080,18 +1185,29 @@ behavior_differences:
       does not add a runtime-only copy of an unpublished API.
 
   52:
-    name: 'Zero UTC offset in a TIME format prints Z, not +00:00'
+    name: 'Zero UTC offset in a TIME or TIMESTAMP format prints Z, not +00:00'
     status: allowed
-    type: bugfix
-    reviewed: false
+    type: api_incompatibility
+    reviewed: true
     is_breaking_change: true
-    impact: low
+    impact: medium
     old_driver_behavior: |
-      Offset elements on a TIME (`TZH:TZM`, `TZHTZM`, `TZH`) print `+00:00` / `+0000` / `+00`.
+      Offset elements (`TZH:TZM`, `TZHTZM`, `TZH`) print `+00:00` / `+0000` / `+00`
+      for a zero UTC offset. This covers TIME, a TIMESTAMP_TZ stored at `+00:00`, and a
+      TIMESTAMP_LTZ in a UTC session. With the default `TIMESTAMP_OUTPUT_FORMAT`
+      (`... TZHTZM`), `fetchAsString: ['Date']` and `toJSON()` return
+      `2024-01-15 10:30:00.000 +0000`.
     new_driver_behavior: |
-      Those elements print `Z`, matching `TO_CHAR` for a zero UTC offset.
-    description: |
-      The new driver follows the server. The old driver always writes a numeric offset.
+      Those elements print `Z` for a zero UTC offset, for example
+      `2024-01-15 10:30:00.000 Z`. TIME, TIMESTAMP_TZ and TIMESTAMP_LTZ share one
+      formatter (`sf_output_format`), so all three behave the same.
+    status_rationale: |
+      Snowflake prints `Z` for a zero offset. A live check shows `Z` from `TO_CHAR` and
+      `::VARCHAR` for all three offset elements, on TIMESTAMP_TZ, TIMESTAMP_LTZ in a UTC
+      session, and TIME. The old driver formatted these values itself and did not match
+      the server. Both forms mean the same instant, and `new Date()` parses both. Only
+      code that checks the offset text (exact compare, regex, strict format) breaks, so
+      this is a Breaking Changes entry, not a bug fix.
 
   53:
     name: 'getNumUpdatedRows reports COPY rows_loaded instead of -1'
@@ -1117,8 +1233,8 @@ behavior_differences:
     name: 'client rejects a non-UUID requestId before talking to GS'
     status: allowed
     type: enhancement
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       Any string is sent as `?requestId=` on `POST /queries/v1/query-request`.
@@ -1133,6 +1249,14 @@ behavior_differences:
       The old client check was wrong. GS never executed a non-UUID `requestId`;
       rejecting up front with the same code as a bad `queryId` is the fix, not
       an incompatibility.
+      No changelog entry. The general note about different error messages and
+      codes in the new architecture covers it:
+      - A call with a non-UUID `requestId` failed in both drivers. No working app
+        sends one.
+      - Only the error name, code, and where it is reported changed.
+      - The old driver already threw from `execute()` for a non-string
+        `requestId` (`409013`), so a thrown error for a bad `requestId` is not
+        new.
 
   55:
     name: 'createPool factory-create errors keep the connect error object'
@@ -1156,9 +1280,9 @@ behavior_differences:
 
   56:
     name: 'describeOnly multi-statement throws instead of returning the wrapper result'
-    status: unknown
-    type: bug
-    reviewed: false
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -1176,7 +1300,9 @@ behavior_differences:
       bridge cannot reconstruct the old driver's wrapper result from empty child query IDs.
     status_rationale: |
       describeOnly on a multi-statement query does not work: the server does not return child
-      query IDs, so there is no per-statement metadata to describe anyway.
+      query IDs, so there is no per-statement metadata to describe anyway. The old driver
+      returned only the wrapper column `multiple statement execution`, which describes none of
+      the statements, so failing is clearer than returning metadata that looks valid.
 
   57:
     name: 'getSessionState returns a typed SessionState'
@@ -1249,10 +1375,10 @@ behavior_differences:
 
   61:
     name: 'execute() after a connect that never reached the server reports a terminated connection, not a never-established one'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: false
     impact: medium
     description: |
       This entry covers only connects that failed WITHOUT a session-rejecting response
@@ -1266,13 +1392,19 @@ behavior_differences:
     new_driver_behavior: |
       The same call rejects with code 407002 and message
       "Unable to perform operation using terminated connection."
+    status_rationale: |
+      The old driver's behavior after a failed connect depended on whether the failure
+      happened before or after the login request, and no API documented it. The new
+      driver treats every failed connect the same way: later queries fail with 407002
+      and connect() fails with 405503. Create a new connection to retry. Only the error
+      code and message change, which the general note about changed error codes covers.
 
   62:
     name: 'destroy() after a connect that never reached the server reports already disconnected, not nothing to destroy'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: false
     impact: low
     description: |
       Same kind of connects as BD#61: the login failed without a session-rejecting
@@ -1284,6 +1416,12 @@ behavior_differences:
       "Not connected, so nothing to destroy."
     new_driver_behavior: |
       The same call rejects with code 406502 and message "Already disconnected."
+    status_rationale: |
+      Like BD#61, the old driver's error depended on whether the failed connect got as
+      far as the login request. The new driver treats every failed connect the same way,
+      so destroy() always fails with 406502. destroy() fails on both drivers and there is
+      nothing to clean up, so only the error code and message change, which the general
+      note about changed error codes covers.
 
   63:
     name: 'disableConsoleLogin is not supported'
@@ -1311,8 +1449,8 @@ behavior_differences:
     name: 'EXTERNALBROWSER authenticator-request uses connection protocol and port'
     status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createConnection accepts protocol (default https) and port and uses them only
@@ -1320,11 +1458,19 @@ behavior_differences:
       rest.HTTPS_PROTOCOL + '://' + host + '/session/authenticator-request'
       (defaults https, host as given, no port unless the caller stuffed it into
       host). Connection protocol, port, and accessUrl are ignored for that request.
+      Native Okta's authenticator-request also hardcodes https with no port.
     new_driver_behavior: |
       protocol and port are allow-listed connection options and feed sf_core
-      server_url. EXTERNALBROWSER authenticator-request uses that URL
-      (http(s)://host:port/session/authenticator-request). Omitting protocol
-      still defaults to https.
+      server_url. The EXTERNALBROWSER and native Okta authenticator-requests use
+      that URL (http(s)://host:port/session/authenticator-request). Omitting
+      protocol still defaults to https.
+    status_rationale: |
+      protocol and port were undocumented in the old driver: they are absent from its
+      index.d.ts and ConnectionOptions. The new driver types them in ConnectionOptions and
+      applies them to every request. Not breaking: the old behavior mattered only with a
+      non-default protocol or port, where external browser and Okta logins sent the
+      authenticator-request to a different endpoint than the login-request. Listed under
+      New Features.
 
   65:
     name: 'EXTERNALBROWSER authenticator-request HTTP failure is a plain Error whose message includes status and body'
@@ -1371,10 +1517,10 @@ behavior_differences:
 
   67:
     name: 'EXTERNALBROWSER connect failures reject with the full new-driver message'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A failed EXTERNALBROWSER connect rejects with the legacy client's own text.
@@ -1394,6 +1540,10 @@ behavior_differences:
       "Failed to login: External browser SSO failed: " plus the thrown error's
       string, including its stack. HTTP 403 is BD#65. The browser timeout is BD#59.
       A codeless error.code is BD#66.
+    status_rationale: |
+      Only the message text changes. error.name and the Snowflake error.code are the
+      same as in the old driver, and the new message has more detail. No changelog
+      entry: the changelog already says that error messages differ in the new driver.
 
   68:
     name: 'a statement QUERY_TAG overrides the connection queryTag'
@@ -1431,7 +1581,7 @@ behavior_differences:
       Login rejects a SESSION_PARAMETERS.QUERY_TAG string longer than 2000 characters with
       001008 (invalid value for parameter 'QUERY_TAG'). The new driver does not repeat that
       check. QUERY_TAG on a statement is not checked by the old driver either.
-      The query request keeps a long string and cuts the job tag at 2000. Listed under Internal
+      The query request keeps a long string and cuts the job tag at 2000. Listed under Changes
       in the changelog.
 
   70:
@@ -1555,10 +1705,10 @@ behavior_differences:
 
   75:
     name: 'JWT login rejection message includes the GS code'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A GS login rejection is surfaced as
@@ -1568,6 +1718,11 @@ behavior_differences:
       The same rejection is
       "Failed to login: Login error: JWT token is invalid.  [<request id>], code: 390144".
       error.code is "390144". The request id changes on every login.
+    status_rationale: |
+      Only the message text changes. error.name (OperationFailedError) and error.code
+      are the same as in the old driver, and the new message has more detail. No
+      changelog entry: the changelog already says that error messages differ in the new
+      driver.
 
   76:
     name: 'JWT without privateKey or privateKeyPath reports a named missing-parameter error'
@@ -1634,8 +1789,8 @@ behavior_differences:
     name: 'NetworkError message is the catalog text and the transport detail is on cause'
     status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createNetworkError passes the axios or Node error as `cause` and no message, so
@@ -1653,10 +1808,16 @@ behavior_differences:
       The transport runs in Rust, not in Node, so the old message text (Node's ECONNREFUSED
       wording) cannot be reproduced. A fixed message gives callers stable text; the detail
       stays available on `cause`.
+    status_rationale: |
+      error.name (NetworkError) and error.code (401001, 402001) are the same as in the old
+      driver, so code that detects network failures by name or code keeps working. The
+      message text and the `cause` object differ: `cause` is a plain Error with the Rust
+      text and no Node `code` such as 'ECONNRESET'. No changelog entry: the changelog
+      already says that error messages and codes differ in the new driver.
 
   80:
     name: 'A query fails with NetworkError when the session renewal it triggered cannot reach Snowflake'
-    status: allowed
+    status: todo
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -1673,6 +1834,19 @@ behavior_differences:
       The query rejects with NetworkError 401001, the root cause on `cause`. The core makes one
       renewal request without retrying it and does not re-send the query. The connection stays
       up (isUp() is true, see BD#20), so the next query renews again.
+    status_rationale: |
+      This looks like a serious oversight in sf_core that needs to be fixed. The RENEW request
+      (refresh_session and token_request in sf_core/src/rest/snowflake/mod.rs) is sent once with
+      client.execute. Queries, logout and async polling go through execute_with_retry. So a
+      network problem of a second or two exactly when the session token expires fails the query,
+      even though a retry would have renewed the session.
+      A fix would send RENEW through a short, bounded retry policy:
+      - retry only on network errors, 429 and 5xx;
+      - reuse the same requestId on each attempt;
+      - keep the total time short, because the token write lock is held while renewing and
+        blocks every other query on the connection.
+      Open question: whether Snowflake accepts a repeated RENEW when the first one succeeded but
+      its response was lost.
     description: |
       Re-sending a query after a failed renewal is a core retry policy rather than an
       error-mapping detail. The difference shows only when a renewal coincides with a network
@@ -1766,7 +1940,7 @@ behavior_differences:
     status_rationale: |
       The serialize() docs say its format is not stable and can change between driver
       versions. A string is only guaranteed to work with deserializeConnection() on the same
-      driver version, so a format change is allowed. Listed under Internal in the changelog.
+      driver version, so a format change is allowed. Listed under Changes in the changelog.
 
   85:
     name: 'deserializeConnection without account and host throws InvalidParameterError with no code'
@@ -2004,10 +2178,10 @@ behavior_differences:
 
   98:
     name: 'A mismatched OAuth username is reported as a wrapped login error'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       The rejection is OperationFailedError. error.code is the string "390309".
@@ -2020,6 +2194,11 @@ behavior_differences:
       user you were trying to authenticate as differs from the user tied to the
       access token. [<request id>], code: 390309". The request id changes on
       every login.
+    status_rationale: |
+      Only the message text changes. error.name (OperationFailedError) and error.code
+      are the same as in the old driver, and the new message has more detail. No
+      changelog entry: the changelog already says that error messages differ in the new
+      driver.
 
   99:
     name: 'Unknown AUTHENTICATOR values are rejected before login'
@@ -2044,9 +2223,9 @@ behavior_differences:
     name: 'Legacy AUTHENTICATOR=OAUTH without a TOKEN: new driver rejects with a missing-parameter error; old driver does not validate token presence client-side'
     status: allowed
     type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
+    reviewed: true
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
       When AUTHENTICATOR=OAUTH is used without supplying a TOKEN value, the old driver does not
       validate token presence client-side; it proceeds to a connection attempt against the configured
@@ -2054,6 +2233,10 @@ behavior_differences:
     new_driver_behavior: |
       sf_core connection validation rejects with a missing-parameter error citing the missing token
       before any network attempt.
+    status_rationale: |
+      An OAUTH login without a token fails in both drivers. The new driver only fails
+      earlier, before any request, and the error is the InvalidParameterError from BD#101,
+      which already has a changelog entry. No separate changelog entry.
 
   101:
     name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
@@ -2494,7 +2677,7 @@ behavior_differences:
 
   124:
     name: 'toCoreConnectionOptions stringifies null'
-    status: allowed
+    status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
@@ -2806,10 +2989,10 @@ behavior_differences:
 
   138:
     name: 'Client-credentials token endpoint failures expose different errors'
-    status: todo
-    type: bug
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: false
     impact: medium
     old_driver_behavior: |
       HTTP 400 with an invalid_client body fails with name AxiosError, code ERR_BAD_REQUEST, and
@@ -2820,6 +3003,13 @@ behavior_differences:
       Both failures are login errors with name Error and code undefined. A token response that
       omits access_token reports "Failed to login: OAuth flow failed: Failed to decode OAuth token response".
       HTTP 400 invalid_client reports "Failed to login: OAuth flow failed: Identity Provider responded with error: invalid_client: The client secret supplied for a confidential client is invalid."
+    status_rationale: |
+      Login fails in both drivers. The old error classes and codes (AxiosError /
+      ERR_BAD_REQUEST, OperationProcessingError / OAUTH_INVALID_RESPONSE) came from the
+      HTTP and OAuth libraries and are not part of the old driver's types. No changelog
+      entry: the changelog already says that error messages and codes differ in the new
+      driver. SNOW-4350899 tracks a clearer message for an unknown client ID, which Okta
+      reports with non-standard error fields.
 
   139:
     name: 'AWS WIF defaults to us-east-1 when region discovery fails'
@@ -2868,28 +3058,35 @@ behavior_differences:
       STRICT_JSON_OUTPUT=TRUE or pass their own jsonColumnVariantParser to snowflake.configure().
 
   141:
-    name: 'oauthHttpAllowed is not accepted; http OAuth token URLs are allowed without it'
-    status: unknown
+    name: 'oauthHttpAllowed is not accepted; loopback http OAuth token URLs are allowed without it'
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      `oauthHttpAllowed` is a testing-only connection option. An `http://` OAuth token
-      URL is rejected with "only requests to HTTPS are allowed" unless the option is true.
+      `oauthHttpAllowed` is a deprecated, testing-only connection option. An `http://`
+      OAuth token URL, including a loopback one, is rejected with "only requests to
+      HTTPS are allowed" unless the option is true.
     new_driver_behavior: |
-      `oauthHttpAllowed` is an unknown connection option and createConnection throws.
-      An `http://` token URL is accepted without that option.
+      `oauthHttpAllowed` is an unknown connection option and createConnection throws
+      the unknown-option error of BD#102. An `http://` token URL is accepted without
+      that option only when the host is loopback (`localhost`, `127.0.0.0/8`, `::1`).
+      Any other `http://` token URL fails on connect with "OAuth endpoint must use
+      https (http is permitted only for loopback hosts)".
     description: |
       The option existed so tests could point the token endpoint at an http WireMock.
       The new driver does not keep the testing switch.
+    status_rationale: |
+      The old driver already marked the option as deprecated and for testing only.
+      The loopback exception covers the local mock servers it was used for.
 
   142:
     name: 'An empty HTTP 400 from the OAuth token endpoint is a core IdP error, not an Axios status'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       When the token endpoint returns HTTP 400 with an empty body, connect fails as
@@ -2901,13 +3098,18 @@ behavior_differences:
     description: |
       The new driver reports the core IdP error. It does not surface the HTTP client
       library's status text.
+    status_rationale: |
+      Login fails in both drivers. The old error class and code (AxiosError,
+      ERR_BAD_REQUEST) came from the HTTP client library and are not part of the old
+      driver's types. No changelog entry: the changelog already says that error messages
+      and codes differ in the new driver.
 
   143:
     name: 'An OAuth redirect with the wrong state is a core state-mismatch error'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       A loopback redirect whose state does not match fails as OperationProcessingError
@@ -2919,6 +3121,11 @@ behavior_differences:
     description: |
       The new driver reports the core state-mismatch text. Callers that matched the
       oauth4webapi sentence see a different error.
+    status_rationale: |
+      Login fails in both drivers. The old error class and code (OperationProcessingError,
+      OAUTH_INVALID_RESPONSE) came from the oauth4webapi library and are not part of the
+      old driver's types. No changelog entry: the changelog already says that error
+      messages and codes differ in the new driver.
 
   144:
     name: 'A successful single-use refresh that omits the refresh token deletes the cached one'
