@@ -264,6 +264,8 @@ mod tests {
     use crate::config::param_registry::param_names;
     use std::time::Duration;
 
+    use super::super::connection::SessionRenewal;
+
     #[test]
     fn test_validate_config_accepts_none() {
         let config = LogoutConfig {
@@ -424,7 +426,6 @@ mod tests {
 
     #[tokio::test]
     async fn send_logout_request_skips_http_when_host_backend_active() {
-        use std::sync::atomic::AtomicBool;
         use tokio::sync::RwLock as AsyncRwLock;
 
         let backend: std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend> =
@@ -434,8 +435,7 @@ mod tests {
             reqwest::Client::new(),
             "http://127.0.0.1:1".into(),
             crate::config::rest_parameters::test_fixtures::test_client_info(),
-            std::sync::Arc::new(AtomicBool::new(false)),
-            std::sync::Arc::new(AtomicBool::new(false)),
+            std::sync::Arc::new(SessionRenewal::new()),
             Some(backend),
         );
         let data = LogoutData {

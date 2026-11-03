@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::RwLock as AsyncRwLock;
@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
 use url::Url;
 
-use super::connection::RefreshContext;
+use super::connection::{RefreshContext, SessionRenewal};
 use super::error::ApiError;
 use crate::config::rest_parameters::ClientInfo;
 use crate::rest::snowflake::{RestError, SessionTokens, heartbeat::send_heartbeat};
@@ -87,8 +87,7 @@ pub fn spawn_heartbeat_task(
     server_url: String,
     client_info: ClientInfo,
     heartbeat_interval: Duration,
-    is_master_token_expired: Arc<AtomicBool>,
-    session_terminated: Arc<AtomicBool>,
+    renewal: Arc<SessionRenewal>,
 ) -> HeartbeatHandle {
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
@@ -101,8 +100,7 @@ pub fn spawn_heartbeat_task(
             client_info,
             heartbeat_interval,
             task_token,
-            is_master_token_expired,
-            session_terminated,
+            renewal,
         )
         .with_current_subscriber(),
     );
@@ -113,7 +111,6 @@ pub fn spawn_heartbeat_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn heartbeat_loop(
     tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     http_client: reqwest::Client,
@@ -121,8 +118,7 @@ async fn heartbeat_loop(
     client_info: ClientInfo,
     interval: Duration,
     cancel_token: CancellationToken,
-    is_master_token_expired: Arc<AtomicBool>,
-    session_terminated: Arc<AtomicBool>,
+    renewal: Arc<SessionRenewal>,
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 
@@ -148,8 +144,7 @@ async fn heartbeat_loop(
             http_client.clone(),
             server_url.to_string(),
             client_info.clone(),
-            is_master_token_expired.clone(),
-            session_terminated.clone(),
+            renewal.clone(),
             None,
         );
         let mut last_error: Option<RestError> = None;
@@ -166,7 +161,7 @@ async fn heartbeat_loop(
                         return;
                     }
                     Err(e) => {
-                        if session_terminated.load(Ordering::SeqCst) {
+                        if renewal.session_terminated.load(Ordering::SeqCst) {
                             tracing::error!("Session no longer exists, heartbeat task exiting");
                             return;
                         }
@@ -202,6 +197,7 @@ async fn heartbeat_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -282,8 +278,7 @@ mod tests {
             server.uri(),
             test_client_info(),
             Duration::from_secs(3600),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(SessionRenewal::new()),
         );
 
         handle.cancel_and_wait().await;
@@ -303,8 +298,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(10),
             task_token,
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(SessionRenewal::new()),
         ));
 
         tokio::time::timeout(Duration::from_secs(2), task)
@@ -333,8 +327,7 @@ mod tests {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(SessionRenewal::new()),
         );
 
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -380,8 +373,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(50),
             task_token,
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(SessionRenewal::new()),
         ));
 
         // Wait for at least one heartbeat, then clear tokens.
@@ -421,20 +413,21 @@ mod tests {
             .await;
 
         let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok"))));
-        let is_master_token_expired = Arc::new(AtomicBool::new(false));
+        let renewal = Arc::new(SessionRenewal::new());
         let mut handle = spawn_heartbeat_task(
             tokens,
             reqwest::Client::new(),
             server.uri(),
             test_client_info(),
             Duration::from_millis(20),
-            is_master_token_expired.clone(),
-            Arc::new(AtomicBool::new(false)),
+            renewal.clone(),
         );
 
-        // Poll for the flag rather than sleeping a fixed duration.
         let flagged = tokio::time::timeout(Duration::from_secs(2), async {
-            while !is_master_token_expired.load(std::sync::atomic::Ordering::SeqCst) {
+            while !renewal
+                .is_master_token_expired
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })

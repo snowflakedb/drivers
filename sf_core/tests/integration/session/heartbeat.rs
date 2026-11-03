@@ -1,10 +1,11 @@
 //! Integration tests for the per-connection heartbeat background task.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
+use sf_core::apis::database_driver_v1::connection::SessionRenewal;
 use sf_core::apis::database_driver_v1::heartbeat::spawn_heartbeat_task;
 use sf_core::config::rest_parameters::test_fixtures::test_client_info;
 use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};
@@ -38,8 +39,7 @@ async fn heartbeat_sends_periodic_requests() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(SessionRenewal::new()),
     );
 
     // When enough time passes for multiple heartbeat intervals
@@ -95,8 +95,7 @@ async fn heartbeat_refreshes_on_401_then_retries() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(SessionRenewal::new()),
     );
 
     // When the heartbeat task runs and encounters the 401
@@ -149,8 +148,7 @@ async fn heartbeat_stops_on_cancellation() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(SessionRenewal::new()),
     );
     // Win32 CI can miss the first tick in 100ms (interval 50ms + HTTP). Wait
     // until the mock has seen at least one request, with a hard deadline.
@@ -201,8 +199,7 @@ async fn heartbeat_exits_when_tokens_cleared() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(SessionRenewal::new()),
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -242,37 +239,30 @@ async fn heartbeat_exits_when_the_session_is_gone() {
         .mount(&server)
         .await;
 
-    let session_terminated = Arc::new(AtomicBool::new(false));
     let mut handle = spawn_heartbeat_task(
         Arc::new(AsyncRwLock::new(Some(test_tokens("tok1")))),
         reqwest::Client::new(),
         server.uri(),
         test_client_info(),
         Duration::from_millis(50),
-        Arc::new(AtomicBool::new(false)),
-        session_terminated.clone(),
+        Arc::new(SessionRenewal::new()),
     );
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    while !session_terminated.load(Ordering::SeqCst) && tokio::time::Instant::now() < deadline {
+    while heartbeat_count.load(Ordering::SeqCst) < 1 && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(
-        session_terminated.load(Ordering::SeqCst),
-        "the refused renewal must mark the session"
-    );
-
-    let count_when_gone = heartbeat_count.load(Ordering::SeqCst);
     assert_eq!(
-        count_when_gone, 1,
-        "the task must not keep beating a session the server has taken away"
+        heartbeat_count.load(Ordering::SeqCst),
+        1,
+        "the refused renewal must stop the heartbeat after one beat"
     );
     // Same window as `heartbeat_stops_on_cancellation`: absence of further ticks is
     // the behavior under test once the session is already marked gone.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         heartbeat_count.load(Ordering::SeqCst),
-        count_when_gone,
+        1,
         "the task must not keep beating a session the server has taken away"
     );
 
@@ -339,8 +329,7 @@ async fn heartbeat_fires_repeatedly_at_configured_interval() {
         server.uri(),
         test_client_info(),
         Duration::from_millis(100),
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicBool::new(false)),
+        Arc::new(SessionRenewal::new()),
     );
 
     // When 550ms elapse (enough for ~4-5 heartbeats at 100ms)
@@ -381,8 +370,7 @@ async fn heartbeat_drop_cancels_task() {
             server.uri(),
             test_client_info(),
             Duration::from_millis(50),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(SessionRenewal::new()),
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
 
