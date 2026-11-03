@@ -4,6 +4,36 @@
 
 In-progress notes are files under `changelog/unreleased/`.
 
+## 5.2.0 (November 4, 2026)
+
+New features:
+
+- Added support for Python 3.15 and free-threaded Python 3.15t. The pandas extra installs pandas 3 on Python 3.15. (snowflakedb/drivers#2929)
+- Added a connection-level `force_microsecond_precision` setting so Arrow and pandas fetches use it when the call omits the argument. (snowflakedb/drivers#3052)
+- Added support for `EllipticCurvePrivateKey` objects as `private_key`. (snowflakedb/drivers#3005)
+- Added support for a leading `~` in `token_file_path`, so a path such as `~/.snowflake/pat.token` is read from the home directory when loading a PAT, OAuth, or OIDC bearer token. (snowflakedb/drivers#3049)
+
+Changes:
+
+- Removed pandas upper bound dependency constraint on the `[pandas]` extra to allow installation of pandas 3.0.0 and later. (snowflakedb/drivers#2971)
+- Changed `split_statements` to apply one delimiter for the whole script, read when the call starts. (snowflakedb/drivers#3043)
+
+Bug fixes:
+
+- Fixed `cursor.execute()` raising `000006: Invalid Snowflake response` for an empty or whitespace-only statement; it now skips the statement with a warning and returns the cursor, as the 4.x connector did. (snowflakedb/drivers#2970)
+- Fixed `Error.errorhandler_make_exception` so it constructs only PEP 249 `Error` subclasses. (snowflakedb/drivers#2873)
+- Fixed a hang when two threads read their first Arrow result at the same time. (snowflakedb/drivers#2943)
+- Fixed the driver resubmitting a running query when the session token expired during a long-running server-side poll; the driver now refreshes the token and retries only the result poll. (snowflakedb/drivers#3127)
+- Fixed type hints so `cursor(DictCursor)` remains a `DictCursor` through `execute` and `executemany`, its fetch results and `next()` are dictionaries, and the default `cursor()` is narrowed to a tuple cursor, for both the sync and async cursors. (snowflakedb/drivers#2872)
+- Fixed building the Python connector from source on FreeBSD, where the system headers do not define ENODATA. (snowflakedb/drivers#2870)
+- Implemented the `service_name` connection property, reading the live `SERVICE_NAME` session parameter from the core driver so the value tracks cluster reassignments made by query responses. (snowflakedb/drivers#3068)
+- Fixed an issue where `write_pandas` accepted column names that are not valid unquoted identifiers when `quote_identifiers=False`. (snowflakedb/drivers#2977)
+- Fixed `validate_default_parameters=true` not failing login when the specified database, schema, or warehouse does not exist. (snowflakedb/drivers#2974)
+
+Internal changes:
+
+- Typed the Python connection and cursor error handlers as a shared Protocol with a structured payload. (snowflakedb/drivers#2873)
+
 ## 5.1.0 (October 21, 2026)
 
 New features:
