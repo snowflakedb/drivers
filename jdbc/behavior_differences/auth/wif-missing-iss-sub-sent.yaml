@@ -1,0 +1,24 @@
+name: "A workload-identity token missing iss or sub is sent to Snowflake instead of rejected locally"
+status: allowed
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  With `authenticator=WORKLOAD_IDENTITY` and provider `OIDC`, `AZURE`, or `GCP`, the
+  connection fails with `WORKLOAD_IDENTITY_FLOW_ERROR` when the token does not parse as
+  a JWT or lacks `iss` or `sub`.
+new_driver_behavior: |
+  A structurally valid OIDC token is sent even when `iss` or `sub` is absent. A token
+  that is not a three-part JWT with a base64 JSON payload still fails before login.
+  Azure and GCP send the metadata token as returned, including one that is not a JWT or
+  that lacks `iss` or `sub`. Azure impersonation still fails before login when the
+  managed-identity token is not a JWT or lacks a `tid` claim.
+description: |
+  A token the old driver rejected locally for a missing `iss` or `sub`, or for not
+  parsing as a JWT on Azure or GCP, is sent to Snowflake. A structurally invalid OIDC
+  token still fails before login.
+status_rationale: |
+  Claim checks on the client do not verify the signature, and `iss` and `sub` are not
+  fields of the login request. Snowflake validates the token that is sent. A login that
+  succeeded on the old driver still succeeds.
