@@ -108,6 +108,7 @@ export interface FetchResultOptions {
 export class Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
+  #defaultStreamResult: boolean;
   #id: string;
 
   constructor(options?: ConnectionOptions) {
@@ -118,6 +119,7 @@ export class Connection {
       jsTreatIntegerAsBigInt,
       representNullAsStringNull,
       rowStreamHighWaterMark,
+      streamResult,
       arrayBindingThreshold,
       openExternalBrowserCallback,
       [TOKEN_INFO]: tokenInfo,
@@ -133,6 +135,7 @@ export class Connection {
       representNullAsStringNull: representNullAsStringNull ?? true,
       rowStreamHighWaterMark: rowStreamHighWaterMark ?? 10,
     };
+    this.#defaultStreamResult = streamResult ?? false;
 
     const sessionParameters: Record<string, string> = {};
     if (jsTreatIntegerAsBigInt !== undefined) {
@@ -290,7 +293,8 @@ export class Connection {
       rowOptions: RowOptions;
     },
   ): RowStatement {
-    const { complete, streamResult, sqlText, asyncExec, rowOptions } = options;
+    const { complete, sqlText, asyncExec, rowOptions } = options;
+    const streamResult = options.streamResult ?? this.#defaultStreamResult;
     const statement = new RowStatement(this.#core, coreStatement, rowOptions, sqlText, complete);
     (async () => {
       try {

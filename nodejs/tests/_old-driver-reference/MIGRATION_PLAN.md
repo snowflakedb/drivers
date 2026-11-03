@@ -581,13 +581,12 @@ called out explicitly.
 
 ### Mocks / streaming
 
-`unit/mock/` contains test utilities plus two test files:
+`unit/mock/` contains test utilities plus one test file:
 
 - [`unit/mock/statement_fetch_as_string.js`](./unit/mock/statement_fetch_as_string.js) — after
   beta, ensure this is covered by both unit and e2e tests.
-- [`unit/mock/statement_stream_result.js`](./unit/mock/statement_stream_result.js) — appears to
-  duplicate the streaming integration tests. After beta, confirm the streaming integration
-  coverage is sufficient and drop.
+- `unit/mock/statement_stream_result.js` — removed. Every combination of connection and
+  statement `streamResult` is covered by `nodejs/tests/e2e/query/stream-result.test.ts`.
 
 ### Miscellaneous
 

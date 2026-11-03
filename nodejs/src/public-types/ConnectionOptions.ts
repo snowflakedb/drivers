@@ -200,6 +200,19 @@ export type ConnectionOptions = {
   fetchAsString?: DataType[];
 
   /**
+   * When `true`, the `complete` callback of every statement on this connection gets no rows.
+   * Read the rows with `statement.streamRows()` or `statement.fetchRows()` instead. This keeps
+   * a large result out of memory.
+   *
+   * Applies to `execute()`, `fetchResult()` and `getResultsFromQueryId()`. A call can override it
+   * with its own `streamResult`.
+   *
+   * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-consume
+   * @default false
+   */
+  streamResult?: boolean;
+
+  /**
    * When `true`, Snowflake INTEGER columns (NUMBER with scale 0) are returned as JavaScript
    * `bigint`, which can store larger values than `number`.
    *
