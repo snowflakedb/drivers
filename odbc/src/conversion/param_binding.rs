@@ -3267,6 +3267,35 @@ mod tests {
     }
 
     #[test]
+    fn json_multi_row_default_wvarchar_reads_wchar_rows() -> TestResult {
+        let rows: [u16; 6] = [
+            b'a' as u16,
+            b'b' as u16,
+            b'c' as u16,
+            b'd' as u16,
+            b'e' as u16,
+            b'f' as u16,
+        ];
+        let row_bytes = (2 * mem::size_of::<u16>()) as sql::Len;
+        let mut inds: [sql::Len; 3] = [row_bytes; 3];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType::EXT_W_VARCHAR,
+            rows.as_ptr() as sql::Pointer,
+            row_bytes,
+            inds.as_mut_ptr(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "TEXT");
+        assert_eq!(parsed["1"]["value"], serde_json::json!(["ab", "cd", "ef"]));
+        Ok(())
+    }
+
+    #[test]
     fn json_multi_row_default_double_zero_buffer_length_strides_by_double() -> TestResult {
         let vals: [f64; 3] = [1.25, 2.5, -3.75];
         let (mut apd, ipd) = make_descriptors(vec![(
@@ -5565,6 +5594,40 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Binary);
         assert_eq!(v, "cafe00");
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_wide_sql_types_reads_wchar() -> TestResult {
+        let val: [u16; 3] = [b'h' as u16, b'i' as u16, 0];
+        for sql_type in [
+            sql::SqlDataType::EXT_W_CHAR,
+            sql::SqlDataType::EXT_W_VARCHAR,
+            sql::SqlDataType::EXT_W_LONG_VARCHAR,
+        ] {
+            let (ty, v) = convert_default(
+                sql_type,
+                val.as_ptr() as sql::Pointer,
+                (val.len() * mem::size_of::<u16>()) as sql::Len,
+            )?;
+            assert_eq!(ty, SnowflakeLogicalType::Text, "{sql_type:?}");
+            assert_eq!(v, "hi", "{sql_type:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_narrow_sql_types_reads_char() -> TestResult {
+        let val = *b"hi\0";
+        for sql_type in [
+            sql::SqlDataType::CHAR,
+            sql::SqlDataType::VARCHAR,
+            sql::SqlDataType::EXT_LONG_VARCHAR,
+        ] {
+            let (ty, v) = convert_default(sql_type, val.as_ptr() as sql::Pointer, 3)?;
+            assert_eq!(ty, SnowflakeLogicalType::Text, "{sql_type:?}");
+            assert_eq!(v, "hi", "{sql_type:?}");
+        }
         Ok(())
     }
 

@@ -16,6 +16,7 @@
 #include "SchemaFixtures.hpp"
 #include "ScopedTable.hpp"
 #include "SessionParameterOverride.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -191,6 +192,43 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns known table with cor
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
+}
+
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: SQL_C_DEFAULT returns SQL_WVARCHAR columns as SQL_C_WCHAR",
+                 "[odbc-api][catalog][tables]") {
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  for (SQLUSMALLINT col : {3, 4}) {
+    SQLLEN conciseType = 0;
+    ret = SQLColAttribute(stmt_handle(), col, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &conciseType);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(conciseType == SQL_WVARCHAR);
+  }
+
+  SQLWCHAR tableName[64];
+  std::memset(tableName, 0xFF, sizeof(tableName));
+  SQLLEN tableNameInd = 0;
+  ret = SQLBindCol(stmt_handle(), 3, SQL_C_DEFAULT, tableName, sizeof(tableName), &tableNameInd);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const std::u32string expectedTableName = sf::wide::utf8_to_utf32(readonly_db::BASIC_TABLE);
+  REQUIRE(tableNameInd == static_cast<SQLLEN>(expectedTableName.size() * sizeof(SQLWCHAR)));
+  CHECK(sf::wide::decode_wide(tableName, expectedTableName.size()) == expectedTableName);
+  CHECK(tableName[expectedTableName.size()] == 0);
+
+  SQLWCHAR tableType[16];
+  std::memset(tableType, 0xFF, sizeof(tableType));
+  SQLLEN tableTypeInd = 0;
+  ret = SQLGetData(stmt_handle(), 4, SQL_C_DEFAULT, tableType, sizeof(tableType), &tableTypeInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(tableTypeInd == static_cast<SQLLEN>(5 * sizeof(SQLWCHAR)));
+  CHECK(sf::wide::decode_wide(tableType, 5) == U"TABLE");
+  CHECK(tableType[5] == 0);
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns view with TABLE_TYPE VIEW", "[odbc-api][catalog][tables]") {

@@ -15,6 +15,7 @@
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "WideString.hpp"
 #include "catalog_ird.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -1050,6 +1051,28 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple 
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: SQL_C_DEFAULT returns TYPE_NAME as SQL_C_WCHAR",
+                 "[odbc-api][gettypeinfo][driver_info]") {
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_VARCHAR);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN conciseType = 0;
+  ret = SQLColAttribute(stmt_handle(), 1, SQL_DESC_CONCISE_TYPE, nullptr, 0, nullptr, &conciseType);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(conciseType == SQL_WVARCHAR);
+
+  SQLWCHAR typeName[32];
+  std::memset(typeName, 0xFF, sizeof(typeName));
+  SQLLEN typeNameInd = 0;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_DEFAULT, typeName, sizeof(typeName), &typeNameInd);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(typeNameInd == static_cast<SQLLEN>(7 * sizeof(SQLWCHAR)));
+  CHECK(sf::wide::decode_wide(typeName, 7) == U"VARCHAR");
+  CHECK(typeName[7] == 0);
 }
 
 // ============================================================================

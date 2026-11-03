@@ -15,10 +15,11 @@ pub(crate) fn default_c_type(sql_type: sql::SqlDataType) -> Option<CDataType> {
         | sql::SqlDataType::VARCHAR
         | sql::SqlDataType::EXT_LONG_VARCHAR
         | sql::SqlDataType::DECIMAL
-        | sql::SqlDataType::NUMERIC
-        | sql::SqlDataType::EXT_W_CHAR
+        | sql::SqlDataType::NUMERIC => CDataType::Char,
+        // Only catalog text columns report a wide SQL type, so query text columns still default to SQL_C_CHAR.
+        sql::SqlDataType::EXT_W_CHAR
         | sql::SqlDataType::EXT_W_VARCHAR
-        | sql::SqlDataType::EXT_W_LONG_VARCHAR => CDataType::Char,
+        | sql::SqlDataType::EXT_W_LONG_VARCHAR => CDataType::WChar,
         sql::SqlDataType::SMALLINT => CDataType::SShort,
         sql::SqlDataType::INTEGER => CDataType::SLong,
         sql::SqlDataType::EXT_TINY_INT => CDataType::STinyInt,
@@ -78,9 +79,9 @@ mod tests {
             (sql::SqlDataType::EXT_LONG_VARCHAR, CDataType::Char),
             (sql::SqlDataType::DECIMAL, CDataType::Char),
             (sql::SqlDataType::NUMERIC, CDataType::Char),
-            (sql::SqlDataType::EXT_W_CHAR, CDataType::Char),
-            (sql::SqlDataType::EXT_W_VARCHAR, CDataType::Char),
-            (sql::SqlDataType::EXT_W_LONG_VARCHAR, CDataType::Char),
+            (sql::SqlDataType::EXT_W_CHAR, CDataType::WChar),
+            (sql::SqlDataType::EXT_W_VARCHAR, CDataType::WChar),
+            (sql::SqlDataType::EXT_W_LONG_VARCHAR, CDataType::WChar),
             (sql::SqlDataType::SMALLINT, CDataType::SShort),
             (sql::SqlDataType::INTEGER, CDataType::SLong),
             (sql::SqlDataType::EXT_TINY_INT, CDataType::STinyInt),

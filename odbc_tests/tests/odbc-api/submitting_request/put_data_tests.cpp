@@ -3,10 +3,12 @@
 #include <sqltypes.h>
 
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCFixtures.hpp"
+#include "WideString.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -114,6 +116,47 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: SQL_C_DEFAULT character dat
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   // Then the chunks are concatenated as SQL_C_CHAR data
+  SQLCHAR buf[64] = {};
+  SQLLEN ind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, buf, sizeof(buf), &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(ind == 6);
+  CHECK(std::string(reinterpret_cast<char*>(buf)) == "AAABBB");
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: SQL_C_DEFAULT wide character data sent in multiple chunks",
+                 "[odbc-api][putdata][submitting_request]") {
+  // Given a SQL_WVARCHAR data-at-execution parameter bound with SQL_C_DEFAULT
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_WVARCHAR, 200, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER valuePtr = nullptr;
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  // When the wide value is sent in two SQLPutData calls with byte lengths
+  std::vector<SQLWCHAR> first = sf::wide::encode_wide(U"AAA");
+  std::vector<SQLWCHAR> second = sf::wide::encode_wide(U"BBB");
+  ret = SQLPutData(stmt_handle(), first.data(), static_cast<SQLLEN>((first.size() - 1) * sizeof(SQLWCHAR)));
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  ret = SQLPutData(stmt_handle(), second.data(), static_cast<SQLLEN>((second.size() - 1) * sizeof(SQLWCHAR)));
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Then the chunks are concatenated as SQL_C_WCHAR data
   SQLCHAR buf[64] = {};
   SQLLEN ind = 0;
   ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, buf, sizeof(buf), &ind);

@@ -1260,8 +1260,8 @@ mod concise_sql_type_override_tests {
         type_name_from_field,
     };
     use crate::api::CDataType;
-    use crate::conversion::test_utils::helpers::binding_for_value;
-    use arrow::array::{ArrayRef, Int16Array, Int32Array};
+    use crate::conversion::test_utils::helpers::{binding_for_char_buffer, binding_for_value};
+    use arrow::array::{ArrayRef, Int16Array, Int32Array, StringArray};
     use arrow::datatypes::{DataType, Field};
     use odbc_sys as sql;
     use std::collections::HashMap;
@@ -1342,6 +1342,47 @@ mod concise_sql_type_override_tests {
             sql_type_from_field(&field, &settings).unwrap(),
             sql::SqlDataType::EXT_W_VARCHAR
         );
+    }
+
+    fn fetch_text_as_default(field: &Field, value: &str, buffer: &mut [u8]) -> sql::Len {
+        let settings = NumericSettings::default();
+        let converter = make_converter(field, &settings).unwrap();
+        let array: ArrayRef = Arc::new(StringArray::from(vec![Some(value)]));
+        let mut str_len: sql::Len = 0;
+        let target_type = resolve_fetch_c_type(CDataType::Default, field, &settings).unwrap();
+        let binding = binding_for_char_buffer(target_type, buffer, &mut str_len);
+        converter
+            .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
+            .unwrap();
+        str_len
+    }
+
+    #[test]
+    fn catalog_wide_char_default_writes_wchar() {
+        for concise in [WVARCHAR_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE] {
+            let field = text_field_with_concise(concise);
+            let mut buffer = [0xFFu8; 16];
+            let str_len = fetch_text_as_default(&field, "CHAR", &mut buffer);
+            let expected: Vec<u8> = "CHAR\0".encode_utf16().flat_map(u16::to_ne_bytes).collect();
+            assert_eq!(
+                str_len,
+                (4 * std::mem::size_of::<u16>()) as sql::Len,
+                "concise {concise}"
+            );
+            assert_eq!(
+                &buffer[..expected.len()],
+                &expected[..],
+                "concise {concise}"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_default_writes_char() {
+        let mut buffer = [0xFFu8; 16];
+        let str_len = fetch_text_as_default(&plain_text_field(), "CHAR", &mut buffer);
+        assert_eq!(str_len, 4);
+        assert_eq!(&buffer[..5], b"CHAR\0");
     }
 
     fn catalog_fixed_field(data_type: DataType, scale: u32, precision: u32, concise: i16) -> Field {
@@ -1646,7 +1687,7 @@ mod resolve_fetch_c_type_tests {
                     ],
                 ),
                 NumericSettings::default(),
-                CDataType::Char,
+                CDataType::WChar,
             ),
             (
                 field(DataType::Int64, &[("logicalType", "INTERVAL_YEAR_MONTH")]),
