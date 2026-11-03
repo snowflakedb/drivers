@@ -21,6 +21,7 @@ use odbc_sys as sql;
 use super::binary::SnowflakeBinary;
 use super::boolean::{SnowflakeBoolean, read_boolean_param};
 use super::date::SnowflakeDate;
+use super::default_c_type::resolve_default_c_type;
 #[cfg(not(windows))]
 use super::error::InvalidUtf8Snafu;
 use super::error::{
@@ -445,7 +446,7 @@ pub(crate) fn validate_c_to_sql_at_bind(
         Err(err) => return Err(err),
     };
     // SQL_C_DEFAULT is checked as the C type it resolves to, so bind and execute agree.
-    if converter.accepts_c_type(resolve_param_c_type(value_type, sql_type)) {
+    if converter.accepts_c_type(resolve_default_c_type(value_type, sql_type)) {
         Ok(())
     } else {
         UnsupportedCDataTypeSnafu { c_type: value_type }.fail()
@@ -670,37 +671,6 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
     unsafe { std::ptr::read_unaligned(apd.array_status_ptr.add(row_idx)) == SQL_PARAM_IGNORE }
 }
 
-fn resolve_param_c_type(value_type: CDataType, sql_type: sql::SqlDataType) -> CDataType {
-    match value_type {
-        CDataType::Default => default_bind_c_type(sql_type),
-        other => other,
-    }
-}
-
-fn default_bind_c_type(sql_type: sql::SqlDataType) -> CDataType {
-    match sql_type {
-        sql::SqlDataType::SMALLINT
-        | sql::SqlDataType::INTEGER
-        | sql::SqlDataType::EXT_TINY_INT
-        | sql::SqlDataType::EXT_BIG_INT => super::number::default_c_type_for_integer_sql(sql_type),
-        sql::SqlDataType::DATE | sql::SqlDataType::DATETIME => CDataType::Date,
-        sql::SqlDataType::TIME | sql::SqlDataType::EXT_TIME_OR_INTERVAL => CDataType::Time,
-        sql::SqlDataType::TIMESTAMP
-        | sql::SqlDataType::EXT_TIMESTAMP
-        | SQL_SF_TIMESTAMP_NTZ
-        | SQL_SF_TIMESTAMP_LTZ
-        | SQL_SF_TIMESTAMP_TZ => CDataType::TimeStamp,
-        // Appendix D gives SQL_REAL a 4-byte default, unlike SQL_FLOAT and SQL_DOUBLE.
-        sql::SqlDataType::REAL => CDataType::Float,
-        sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => CDataType::Double,
-        sql::SqlDataType::EXT_BIT => CDataType::Bit,
-        sql::SqlDataType::EXT_BINARY
-        | sql::SqlDataType::EXT_VAR_BINARY
-        | sql::SqlDataType::EXT_LONG_VAR_BINARY => CDataType::Binary,
-        _ => CDataType::Char,
-    }
-}
-
 ///
 /// **Column-wise binding** (`bind_type == 0`, i.e. `SQL_PARAM_BIND_BY_COLUMN`):
 /// * For each column the application provided a contiguous array of values.
@@ -724,7 +694,7 @@ fn binding_for_row(
 ) -> ParameterBinding {
     use std::mem::size_of;
 
-    let value_type = resolve_param_c_type(apd_rec.value_type, ipd_rec.sql_data_type);
+    let value_type = resolve_default_c_type(apd_rec.value_type, ipd_rec.sql_data_type);
     let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
         // Fixed-size types are bound with BufferLength=0; stride by the C type's octet length.
         let stride = value_type

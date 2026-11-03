@@ -6,7 +6,7 @@ mod tests {
     use crate::conversion::boolean::SnowflakeBoolean;
     use crate::conversion::test_utils::helpers::{
         binding_for_char_buffer, binding_for_interval_with_precision, binding_for_value,
-        binding_for_wchar_buffer, zero_interval,
+        binding_for_wchar_buffer, fetch_default_c_type, zero_interval,
     };
     use odbc_sys as sql;
 
@@ -43,7 +43,11 @@ mod tests {
         let sn = SnowflakeBoolean;
         let mut value: u8 = 0xFF;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sn.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
         let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(value, 1);
@@ -55,7 +59,11 @@ mod tests {
         let sn = SnowflakeBoolean;
         let mut value: u8 = 0xFF;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sn.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
         let warnings = sn.write_odbc_type(false, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(value, 0);

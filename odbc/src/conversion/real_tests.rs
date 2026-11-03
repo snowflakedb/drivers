@@ -5,7 +5,8 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::test_utils::helpers::{
-        binding_for_interval, binding_for_interval_with_precision, zero_interval,
+        binding_for_interval, binding_for_interval_with_precision, fetch_default_c_type,
+        zero_interval,
     };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
@@ -99,7 +100,11 @@ mod tests {
         let sr = make_real();
         let mut value: f64 = 0.0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sr.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
 
         sr.write_odbc_type(3.125, &binding, &mut None).unwrap();
 
@@ -111,7 +116,11 @@ mod tests {
         let sr = make_real();
         let mut value: f64 = 0.0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sr.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
 
         sr.write_odbc_type(-99.5, &binding, &mut None).unwrap();
 
@@ -123,7 +132,11 @@ mod tests {
         let sr = make_real();
         let mut value: f64 = 1.0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sr.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
 
         sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
 
@@ -135,7 +148,11 @@ mod tests {
         let sr = make_real();
         let mut value: f64 = 0.0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sr.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
 
         let input = 1.23e-10;
         sr.write_odbc_type(input, &binding, &mut None).unwrap();
@@ -148,7 +165,11 @@ mod tests {
         let sr = make_real();
         let mut value: f64 = 0.0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sr.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
 
         let input = 1.23e+100;
         sr.write_odbc_type(input, &binding, &mut None).unwrap();

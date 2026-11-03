@@ -7,7 +7,7 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::binary::SnowflakeBinary;
     use crate::conversion::test_utils::helpers::{
-        binding_for_char_buffer, binding_for_wchar_buffer,
+        binding_for_char_buffer, binding_for_wchar_buffer, fetch_default_c_type,
     };
     use crate::conversion::warning::Warning;
     use odbc_sys as sql;
@@ -52,7 +52,7 @@ mod tests {
     }
 
     // ========================================================================
-    // CDataType::Default / CDataType::Binary — raw bytes
+    // CDataType::Binary — raw bytes
     // ========================================================================
 
     #[test]
@@ -76,7 +76,11 @@ mod tests {
         let input: &[u8] = &[0xCA, 0xFE];
         let mut buffer = vec![0u8; 16];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(sn.sql_type()),
+            &mut buffer,
+            &mut str_len,
+        );
         let warnings = sn
             .write_odbc_type(Cow::Borrowed(input), &binding, &mut None)
             .unwrap();

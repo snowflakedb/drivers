@@ -170,8 +170,6 @@ impl Default for NumericSettings {
 }
 
 /// Represents the SQL numeric data types as defined by the ODBC specification.
-/// Each SQL type has a different default C type used when the application
-/// specifies `SQL_C_DEFAULT`.
 /// Reference: https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-to-c-numeric
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NumericSqlType {
@@ -183,13 +181,13 @@ pub(crate) enum NumericSqlType {
 }
 
 impl NumericSqlType {
-    pub(crate) fn default_c_type(&self) -> CDataType {
+    pub(crate) fn default_c_type_key(self) -> sql::SqlDataType {
         match self {
-            Self::Decimal => CDataType::Char,
-            Self::BigInt => CDataType::SBigInt,
-            Self::VarChar => CDataType::Char,
-            Self::SmallInt => CDataType::SShort,
-            Self::Integer => CDataType::SLong,
+            Self::Decimal => sql::SqlDataType::DECIMAL,
+            Self::BigInt => sql::SqlDataType::EXT_BIG_INT,
+            Self::VarChar => sql::SqlDataType::VARCHAR,
+            Self::SmallInt => sql::SqlDataType::SMALLINT,
+            Self::Integer => sql::SqlDataType::INTEGER,
         }
     }
 
@@ -406,14 +404,10 @@ impl WriteODBCType for SnowflakeNumber {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
-        let target_type = match binding.target_type {
-            CDataType::Default => self.sql_type.default_c_type(),
-            other => other,
-        };
-
         let scale_factor = pow10_i128(self.scale)?;
         let int_value = snowflake_value / scale_factor;
         let has_fractional = self.scale > 0 && snowflake_value % scale_factor != 0;
+        let target_type = binding.target_type;
 
         match target_type {
             CDataType::Double => {
@@ -624,16 +618,6 @@ enum NumberCSource {
     WChar,
     Binary,
     SingleFieldInterval,
-}
-
-pub(crate) fn default_c_type_for_integer_sql(sql_type: sql::SqlDataType) -> CDataType {
-    match sql_type {
-        sql::SqlDataType::SMALLINT => CDataType::SShort,
-        sql::SqlDataType::INTEGER => CDataType::SLong,
-        sql::SqlDataType::EXT_TINY_INT => CDataType::STinyInt,
-        sql::SqlDataType::EXT_BIG_INT => CDataType::SBigInt,
-        _ => CDataType::SLong,
-    }
 }
 
 fn number_c_source(c_type: CDataType) -> Option<NumberCSource> {

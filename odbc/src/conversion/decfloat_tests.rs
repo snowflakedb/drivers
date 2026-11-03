@@ -6,7 +6,7 @@ mod tests {
     use crate::conversion::decfloat::{SnowflakeDecfloat, format_decfloat};
     use crate::conversion::error::WriteOdbcError;
     use crate::conversion::test_utils::helpers::{
-        binding_for_interval, binding_for_wchar_buffer, zero_interval,
+        binding_for_interval, binding_for_wchar_buffer, fetch_default_c_type, zero_interval,
     };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
@@ -265,7 +265,11 @@ mod tests {
         let df = decfloat();
         let mut buffer = vec![0u8; 64];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(df.sql_type()),
+            &mut buffer,
+            &mut str_len,
+        );
 
         let warnings = df
             .write_odbc_type((123456, -3), &binding, &mut None)

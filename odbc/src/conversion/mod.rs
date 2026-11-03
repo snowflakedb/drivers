@@ -18,6 +18,8 @@ mod date;
 mod decfloat;
 #[cfg(test)]
 mod decfloat_tests;
+mod default_c_type;
+pub(crate) use default_c_type::resolve_default_c_type;
 #[cfg(test)]
 mod getdata_probe_tests;
 mod int_fmt;
@@ -68,6 +70,7 @@ pub use error::{
 };
 pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN, TzOffsetFormatCache};
 
+use crate::api::CDataType;
 #[cfg(not(windows))]
 use crate::api::encoding::is_ascii_locale;
 use crate::api::{SQL_SF_OBJECT, SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ};
@@ -1210,6 +1213,27 @@ pub fn sql_type_from_field(
     Ok(field_type.sql_type())
 }
 
+/// Replaces `SQL_C_DEFAULT` with the C type it resolves to for the column;
+/// any other target type is returned unchanged.
+pub(crate) fn resolve_fetch_c_type(
+    target_type: CDataType,
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<CDataType, ConversionError> {
+    if target_type != CDataType::Default {
+        return Ok(target_type);
+    }
+    let sql_type = match SnowflakeFieldType::from_field(field, numeric_settings)? {
+        // ODBC_TREAT_DECIMAL_AS_INT defaults to SQL_C_SBIGINT even though SQLDescribeCol reports DECIMAL.
+        SnowflakeFieldType::Number(number) => number.sql_type.default_c_type_key(),
+        _ => sql_type_from_field(field, numeric_settings)?,
+    };
+    Ok(default_c_type::resolve_default_c_type(
+        target_type,
+        sql_type,
+    ))
+}
+
 /// Returns the verbose SQL data type (SQL_DESC_TYPE) for a field.
 /// For date/time types this returns SQL_DATETIME (9) instead of the concise type.
 /// For all other types, verbose == concise.
@@ -1232,7 +1256,8 @@ mod concise_sql_type_override_tests {
         CATALOG_UNSIGNED_METADATA_KEY, INTEGER_CONCISE_SQL_TYPE, NumericSettings,
         SMALLINT_CONCISE_SQL_TYPE, WCHAR_CONCISE_SQL_TYPE, WVARCHAR_CONCISE_SQL_TYPE,
         display_size_from_field, is_unsigned_from_field, local_type_name_from_field,
-        make_converter, octet_length_from_field, sql_type_from_field, type_name_from_field,
+        make_converter, octet_length_from_field, resolve_fetch_c_type, sql_type_from_field,
+        type_name_from_field,
     };
     use crate::api::CDataType;
     use crate::conversion::test_utils::helpers::binding_for_value;
@@ -1341,7 +1366,8 @@ mod concise_sql_type_override_tests {
         let array: ArrayRef = Arc::new(Int16Array::from(vec![Some(-9)]));
         let mut value: i16 = 0x7FFF;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let target_type = resolve_fetch_c_type(CDataType::Default, &field, &settings).unwrap();
+        let binding = binding_for_value(target_type, &mut value, &mut str_len);
         converter
             .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
             .unwrap();
@@ -1352,11 +1378,13 @@ mod concise_sql_type_override_tests {
     #[test]
     fn fixed_integer_concise_default_writes_binary_not_char() {
         let field = catalog_fixed_field(DataType::Int32, 0, 10, INTEGER_CONCISE_SQL_TYPE);
-        let converter = make_converter(&field, &NumericSettings::default()).unwrap();
+        let settings = NumericSettings::default();
+        let converter = make_converter(&field, &settings).unwrap();
         let array: ArrayRef = Arc::new(Int32Array::from(vec![Some(12)]));
         let mut value: i32 = -1;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let target_type = resolve_fetch_c_type(CDataType::Default, &field, &settings).unwrap();
+        let binding = binding_for_value(target_type, &mut value, &mut str_len);
         converter
             .convert_arrow_value(array.as_ref(), 0, &binding, &mut None)
             .unwrap();
@@ -1515,6 +1543,196 @@ mod concise_sql_type_override_tests {
             octet_length_from_field(&plain_text_field(), &settings).unwrap(),
             255 * narrow_width
         );
+    }
+}
+
+#[cfg(test)]
+mod resolve_fetch_c_type_tests {
+    use super::{NumericSettings, WVARCHAR_CONCISE_SQL_TYPE, resolve_fetch_c_type};
+    use crate::api::CDataType;
+    use arrow::datatypes::{DataType, Field};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn field(data_type: DataType, metadata: &[(&str, &str)]) -> Field {
+        let metadata: HashMap<String, String> = metadata
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        Field::new("col", data_type, true).with_metadata(metadata)
+    }
+
+    fn fixed(precision: &str, scale: &str) -> Field {
+        field(
+            DataType::Int64,
+            &[
+                ("logicalType", "FIXED"),
+                ("precision", precision),
+                ("scale", scale),
+            ],
+        )
+    }
+
+    #[test]
+    fn resolve_fetch_c_type_keeps_explicit_target_types() {
+        let resolved = resolve_fetch_c_type(
+            CDataType::WChar,
+            &fixed("10", "0"),
+            &NumericSettings::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved, CDataType::WChar);
+    }
+
+    #[test]
+    fn resolve_fetch_c_type_resolves_sql_c_default_per_column_type() {
+        let decimal_as_int = NumericSettings {
+            treat_decimal_as_int: true,
+            ..NumericSettings::default()
+        };
+        let int_and_big_number_as_string = NumericSettings {
+            treat_decimal_as_int: true,
+            treat_big_number_as_string: true,
+            ..NumericSettings::default()
+        };
+        let custom_types = NumericSettings {
+            use_custom_sql_data_types: true,
+            ..NumericSettings::default()
+        };
+        let long_varchar = NumericSettings {
+            map_to_long_varchar: Some(8000),
+            ..NumericSettings::default()
+        };
+        let vector_child = Arc::new(Field::new("item", DataType::Int32, false));
+        let wvarchar = WVARCHAR_CONCISE_SQL_TYPE.to_string();
+        let cases = [
+            (
+                fixed("10", "0"),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (fixed("10", "2"), decimal_as_int, CDataType::Char),
+            (fixed("10", "0"), decimal_as_int, CDataType::SBigInt),
+            (
+                fixed("18", "0"),
+                int_and_big_number_as_string,
+                CDataType::SBigInt,
+            ),
+            (
+                fixed("38", "0"),
+                int_and_big_number_as_string,
+                CDataType::Char,
+            ),
+            (
+                field(DataType::Float64, &[("logicalType", "REAL")]),
+                NumericSettings::default(),
+                CDataType::Double,
+            ),
+            (
+                field(
+                    DataType::Int64,
+                    &[("logicalType", "TIMESTAMP_NTZ"), ("scale", "0")],
+                ),
+                custom_types,
+                CDataType::TimeStamp,
+            ),
+            (
+                field(
+                    DataType::Utf8,
+                    &[
+                        ("logicalType", "TEXT"),
+                        ("charLength", "255"),
+                        ("conciseSqlType", wvarchar.as_str()),
+                    ],
+                ),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (
+                field(DataType::Int64, &[("logicalType", "INTERVAL_YEAR_MONTH")]),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (
+                field(
+                    DataType::Utf8,
+                    &[("logicalType", "OBJECT"), ("charLength", "255")],
+                ),
+                custom_types,
+                CDataType::Char,
+            ),
+            (
+                field(DataType::Boolean, &[("logicalType", "BOOLEAN")]),
+                NumericSettings::default(),
+                CDataType::Bit,
+            ),
+            (
+                field(
+                    DataType::Binary,
+                    &[("logicalType", "BINARY"), ("byteLength", "8")],
+                ),
+                NumericSettings::default(),
+                CDataType::Binary,
+            ),
+            (
+                field(DataType::Date32, &[("logicalType", "DATE")]),
+                NumericSettings::default(),
+                CDataType::Date,
+            ),
+            (
+                field(DataType::Int64, &[("logicalType", "TIME"), ("scale", "9")]),
+                NumericSettings::default(),
+                CDataType::Time,
+            ),
+            (
+                field(
+                    DataType::Utf8,
+                    &[("logicalType", "DECFLOAT"), ("precision", "38")],
+                ),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (
+                field(
+                    DataType::FixedSizeList(vector_child, 3),
+                    &[("logicalType", "VECTOR"), ("charLength", "64")],
+                ),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (
+                field(
+                    DataType::Decimal128(38, 0),
+                    &[("logicalType", "INTERVAL_DAY_TIME"), ("scale", "9")],
+                ),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+            (
+                field(
+                    DataType::Utf8,
+                    &[("logicalType", "TEXT"), ("charLength", "16777216")],
+                ),
+                long_varchar,
+                CDataType::Char,
+            ),
+            (
+                field(
+                    DataType::Utf8,
+                    &[("logicalType", "GEOGRAPHY"), ("charLength", "255")],
+                ),
+                NumericSettings::default(),
+                CDataType::Char,
+            ),
+        ];
+        for (field, settings, expected) in cases {
+            assert_eq!(
+                resolve_fetch_c_type(CDataType::Default, &field, &settings).unwrap(),
+                expected,
+                "{:?}",
+                field.metadata()
+            );
+        }
     }
 }
 

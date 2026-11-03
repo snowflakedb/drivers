@@ -3,12 +3,13 @@ mod tests {
     use crate::api::CDataType;
     use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar, encode_wide};
     use crate::conversion::WriteODBCType;
+    use crate::conversion::default_c_type::default_c_type;
     use crate::conversion::number::{
         NumericSettings, NumericSqlType, SnowflakeNumber, TzOffsetFormatCache,
     };
     use crate::conversion::test_utils::helpers::{
         binding_for_char_buffer, binding_for_interval, binding_for_value, binding_for_wchar_buffer,
-        zero_interval,
+        fetch_default_c_type, zero_interval,
     };
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
@@ -77,27 +78,42 @@ mod tests {
 
     #[test]
     fn decimal_default_c_type_is_char() {
-        assert_eq!(NumericSqlType::Decimal.default_c_type(), CDataType::Char);
+        assert_eq!(
+            default_c_type(NumericSqlType::Decimal.default_c_type_key()).unwrap(),
+            CDataType::Char
+        );
     }
 
     #[test]
     fn bigint_default_c_type_is_sbigint() {
-        assert_eq!(NumericSqlType::BigInt.default_c_type(), CDataType::SBigInt);
+        assert_eq!(
+            default_c_type(NumericSqlType::BigInt.default_c_type_key()).unwrap(),
+            CDataType::SBigInt
+        );
     }
 
     #[test]
     fn varchar_default_c_type_is_char() {
-        assert_eq!(NumericSqlType::VarChar.default_c_type(), CDataType::Char);
+        assert_eq!(
+            default_c_type(NumericSqlType::VarChar.default_c_type_key()).unwrap(),
+            CDataType::Char
+        );
     }
 
     #[test]
     fn smallint_default_c_type_is_sshort() {
-        assert_eq!(NumericSqlType::SmallInt.default_c_type(), CDataType::SShort);
+        assert_eq!(
+            default_c_type(NumericSqlType::SmallInt.default_c_type_key()).unwrap(),
+            CDataType::SShort
+        );
     }
 
     #[test]
     fn integer_default_c_type_is_slong() {
-        assert_eq!(NumericSqlType::Integer.default_c_type(), CDataType::SLong);
+        assert_eq!(
+            default_c_type(NumericSqlType::Integer.default_c_type_key()).unwrap(),
+            CDataType::SLong
+        );
     }
 
     #[test]
@@ -134,7 +150,11 @@ mod tests {
         let sn = make_catalog_number(NumericSqlType::SmallInt, 0, 5);
         let mut value: i16 = -1;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut value,
+            &mut str_len,
+        );
         let warnings = sn.write_odbc_type(-9i128, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(value, -9);
@@ -148,7 +168,7 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let str_len_ptr = &mut str_len as *mut sql::Len;
         let binding = Binding {
-            target_type: CDataType::Default,
+            target_type: fetch_default_c_type(sn.sql_type.default_c_type_key()),
             target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
             buffer_length: buffer.len() as sql::Len,
             octet_length_ptr: str_len_ptr,
@@ -402,7 +422,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Char / Default string conversions
+    // Char string conversions
     // ========================================================================
 
     macro_rules! char_conversion_tests {
@@ -433,7 +453,7 @@ mod tests {
                     let sn = make_number($scale, $precision, &SETTINGS_DECIMAL_AS_INT);
                     let mut value: i64 = 0;
                     let mut str_len: sql::Len = 0;
-                    let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+                    let binding = binding_for_value(fetch_default_c_type(sn.sql_type.default_c_type_key()), &mut value, &mut str_len);
                     let warnings = sn.write_odbc_type($input, &binding, &mut None).unwrap();
                     assert!(warnings.is_empty());
                     assert_eq!(value, $expected);
@@ -455,7 +475,11 @@ mod tests {
         let sn = make_number(0, 10, &SETTINGS_DEFAULT);
         let mut buffer = vec![0u8; 128];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut buffer,
+            &mut str_len,
+        );
         sn.write_odbc_type(42i128, &binding, &mut None).unwrap();
         assert_eq!(str_len, 2);
         assert_eq!(&buffer[..2], b"42");
@@ -468,7 +492,11 @@ mod tests {
         let sn = make_number(0, 38, &SETTINGS_DECIMAL_AS_INT);
         let mut value: i64 = 0;
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut value,
+            &mut str_len,
+        );
         let warnings = sn.write_odbc_type(42i128, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(value, 42);
@@ -480,7 +508,11 @@ mod tests {
         let sn = make_number(0, 38, &SETTINGS_BOTH);
         let mut buffer = vec![0u8; 128];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut buffer,
+            &mut str_len,
+        );
         sn.write_odbc_type(42i128, &binding, &mut None).unwrap();
         assert_eq!(str_len, 2);
         assert_eq!(&buffer[..2], b"42");
@@ -492,17 +524,17 @@ mod tests {
         let sn = make_number(0, 38, &SETTINGS_BIG_NUMBER_AS_STRING);
         let mut buffer = vec![0u8; 128];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut buffer,
+            &mut str_len,
+        );
         sn.write_odbc_type(42i128, &binding, &mut None).unwrap();
         assert_eq!(str_len, 2);
         assert_eq!(&buffer[..2], b"42");
     }
 
     char_conversion_tests! {
-        // Default type with scale > 0 (maps to Char via Decimal)
-        default_scaled_as_char:                 CDataType::Default, 2, 10, 12345i128            => "123.45";
-        default_negative_scaled_as_char:        CDataType::Default, 3, 10, -50i128              => "-0.050";
-
         // Explicit Char type
         char_integer:                           CDataType::Char,    0, 10, 42i128               => "42";
         char_negative_integer:                  CDataType::Char,    0, 10, -42i128              => "-42";
@@ -859,7 +891,11 @@ mod tests {
         let sn = make_decimal(0, 10);
         let mut buffer = vec![0u8; 2];
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_char_buffer(CDataType::Default, &mut buffer, &mut str_len);
+        let binding = binding_for_char_buffer(
+            fetch_default_c_type(sn.sql_type.default_c_type_key()),
+            &mut buffer,
+            &mut str_len,
+        );
         assert!(sn.write_odbc_type(12i128, &binding, &mut None).is_err());
     }
 

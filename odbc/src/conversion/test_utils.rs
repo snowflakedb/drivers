@@ -2,8 +2,13 @@
 pub(crate) mod helpers {
     use crate::api::CDataType;
     use crate::api::encoding::{WIDE_CHAR_SIZE, WideChar};
+    use crate::conversion::default_c_type::resolve_default_c_type;
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
+
+    pub fn fetch_default_c_type(sql_type: sql::SqlDataType) -> CDataType {
+        resolve_default_c_type(CDataType::Default, sql_type)
+    }
 
     pub fn binding_for_value<T>(
         target_type: CDataType,

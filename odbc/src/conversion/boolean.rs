@@ -63,7 +63,7 @@ impl WriteODBCType for SnowflakeBoolean {
         let int_value = snowflake_value as u8;
 
         match binding.target_type {
-            CDataType::Default | CDataType::Bit => {
+            CDataType::Bit => {
                 binding.write_fixed(int_value);
                 Ok(vec![])
             }

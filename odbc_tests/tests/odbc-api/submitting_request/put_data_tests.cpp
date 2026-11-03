@@ -84,6 +84,47 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: Sends data in multiple chun
   REQUIRE(std::string(reinterpret_cast<char*>(buf)) == "AAABBB");
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: SQL_C_DEFAULT character data sent in multiple chunks",
+                 "[odbc-api][putdata][submitting_request]") {
+  // Given a SQL_VARCHAR data-at-execution parameter bound with SQL_C_DEFAULT
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_VARCHAR, 200, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLPOINTER valuePtr = nullptr;
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  // When the value is sent in two SQLPutData calls
+  char first[] = "AAA";
+  char second[] = "BBB";
+  ret = SQLPutData(stmt_handle(), first, 3);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  ret = SQLPutData(stmt_handle(), second, 3);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLParamData(stmt_handle(), &valuePtr);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Then the chunks are concatenated as SQL_C_CHAR data
+  SQLCHAR buf[64] = {};
+  SQLLEN ind = 0;
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, buf, sizeof(buf), &ind);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  CHECK(ind == 6);
+  CHECK(std::string(reinterpret_cast<char*>(buf)) == "AAABBB");
+}
+
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPutData: SQL_NULL_DATA sets parameter to NULL",
                  "[odbc-api][putdata][submitting_request]") {
   SKIP_OLD_DRIVER("SNOW-3240517", "Reference driver does not propagate SQL_NULL_DATA indicator for DAE params");

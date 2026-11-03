@@ -33,6 +33,7 @@ use crate::conversion::Binding;
 use crate::conversion::param_binding::{
     odbc_bindings_to_csv_into, odbc_bindings_to_json_into, validate_c_to_sql_at_bind,
 };
+use crate::conversion::resolve_default_c_type;
 use crate::conversion::warning::Warnings;
 use arrow::array::RecordBatch;
 use arrow::array::RecordBatchReader;
@@ -3242,7 +3243,7 @@ pub fn put_data(
             origin,
         } => {
             let result = inner.with_effective_apd(|apd| {
-                put_data_inner(apd, &mut dae_context, data_ptr, str_len_or_ind)
+                put_data_inner(apd, &inner.ipd, &mut dae_context, data_ptr, str_len_or_ind)
             });
             inner.state.set(if result.is_ok() {
                 StatementState::PutDataCalled {
@@ -3263,7 +3264,7 @@ pub fn put_data(
             origin,
         } => {
             let result = inner.with_effective_apd(|apd| {
-                put_data_inner(apd, &mut dae_context, data_ptr, str_len_or_ind)
+                put_data_inner(apd, &inner.ipd, &mut dae_context, data_ptr, str_len_or_ind)
             });
             inner.state.set(StatementState::PutDataCalled {
                 dae_context,
@@ -3287,6 +3288,7 @@ pub fn put_data(
 /// compiler enforces correctness rather than relying on a manual boolean flag.
 fn put_data_inner(
     apd: &crate::api::ApdDescriptor,
+    ipd: &crate::api::IpdDescriptor,
     dae_context: &mut DaeContext,
     data_ptr: sql::Pointer,
     str_len_or_ind: sql::Len,
@@ -3307,10 +3309,14 @@ fn put_data_inner(
         .fail();
     }
 
+    let sql_type = ipd
+        .records
+        .get(&param_num)
+        .map_or(sql::SqlDataType::UNKNOWN_TYPE, |r| r.sql_data_type);
     let c_type = apd
         .records
         .get(&param_num)
-        .map(|r| r.value_type)
+        .map(|r| resolve_default_c_type(r.value_type, sql_type))
         .unwrap_or(CDataType::Default);
     accumulate_put_data(dae_context, param_num, data_ptr, str_len_or_ind, c_type)
 }

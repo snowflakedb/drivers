@@ -126,3 +126,43 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
     REQUIRE(ret == SQL_SUCCESS);
   }
 }
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFetch: SQL_C_DEFAULT column-wise array advances by the default C type size",
+                 "[odbc-api][fetch][retrieving_results]") {
+  // Given a FLOAT column bound column-wise with SQL_C_DEFAULT and BufferLength 0 for a three-row rowset
+  constexpr SQLULEN kRows = 3;
+  SQLDOUBLE values[kRows] = {99.0, 99.0, 99.0};
+  SQLLEN indicators[kRows] = {-999, -999, -999};
+  SQLULEN rows_fetched = 0;
+  SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ROW_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(kRows), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_DEFAULT, values, 0, indicators);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When the rowset is fetched
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1::FLOAT FROM VALUES (1.5), (2.5), (-3.5) ORDER BY column1"),
+                      SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then each row lands in its own SQL_C_DOUBLE element on the new driver
+  REQUIRE(rows_fetched == kRows);
+  NEW_DRIVER_ONLY("BD#sql-c-default-column-wise-fetch-stride") {
+    CHECK(values[0] == -3.5);
+    CHECK(values[1] == 1.5);
+    CHECK(values[2] == 2.5);
+  }
+  // And the old driver writes every row to the first element
+  OLD_DRIVER_ONLY("BD#sql-c-default-column-wise-fetch-stride") {
+    CHECK(values[0] == 2.5);
+    CHECK(values[1] == 99.0);
+    CHECK(values[2] == 99.0);
+  }
+  for (SQLULEN i = 0; i < kRows; ++i) {
+    INFO("row " << i);
+    CHECK(indicators[i] == static_cast<SQLLEN>(sizeof(SQLDOUBLE)));
+  }
+}

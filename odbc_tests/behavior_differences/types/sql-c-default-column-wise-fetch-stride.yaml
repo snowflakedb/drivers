@@ -1,0 +1,21 @@
+name: "SQL_C_DEFAULT column-wise fetch arrays advance by the default C type size"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A column bound with SQLBindCol(SQL_C_DEFAULT) and BufferLength 0 in a
+  column-wise rowset of 3 rows writes every row into the first array
+  element: fetching FLOAT values -3.5, 1.5, 2.5 leaves 2.5 in element 0 and
+  the other elements unchanged. Each row's length indicator is still set to
+  sizeof(SQLDOUBLE).
+new_driver_behavior: |
+  Each row is written to its own element, advancing by the size of the
+  default C type (sizeof(SQLDOUBLE) for FLOAT), so fetching -3.5, 1.5, 2.5
+  fills elements 0, 1, and 2 in that order.
+description: |
+  For a fixed-length C type, ODBC ignores BufferLength and the column-wise
+  stride is the octet length of the C type. SQL_C_DEFAULT stands for the
+  default C type of the column's SQL type (ODBC Appendix D, "Default C Data
+  Types"), so that type's octet length is the stride.

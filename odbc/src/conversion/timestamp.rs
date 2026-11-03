@@ -459,7 +459,7 @@ fn write_timestamp_to_odbc(
     get_data_offset: &mut Option<usize>,
 ) -> Result<Warnings, WriteOdbcError> {
     match binding.target_type {
-        CDataType::Default | CDataType::TimeStamp | CDataType::TypeTimestamp => {
+        CDataType::TimeStamp | CDataType::TypeTimestamp => {
             let ts = to_sql_timestamp(dt);
             binding.write_fixed(ts);
             Ok(vec![])

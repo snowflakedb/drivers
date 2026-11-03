@@ -226,7 +226,7 @@ impl WriteODBCType for SnowflakeVarchar {
     ) -> Result<Warnings, WriteOdbcError> {
         if self.semi_structured_type_name.is_some() {
             match binding.target_type {
-                CDataType::Default | CDataType::Char | CDataType::WChar | CDataType::Binary => {}
+                CDataType::Char | CDataType::WChar | CDataType::Binary => {}
                 _ => {
                     return UnsupportedOdbcTypeSnafu {
                         target_type: binding.target_type,
@@ -237,9 +237,7 @@ impl WriteODBCType for SnowflakeVarchar {
         }
         let snowflake_value: &str = &snowflake_value;
         match binding.target_type {
-            CDataType::Default | CDataType::Char => {
-                Ok(binding.write_char_string(snowflake_value, get_data_offset))
-            }
+            CDataType::Char => Ok(binding.write_char_string(snowflake_value, get_data_offset)),
             CDataType::WChar => Ok(binding.write_wchar_string(snowflake_value, get_data_offset)),
             CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
             CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),

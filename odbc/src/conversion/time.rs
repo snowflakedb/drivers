@@ -101,7 +101,7 @@ impl WriteODBCType for SnowflakeTime {
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Default | CDataType::Time | CDataType::TypeTime => {
+            CDataType::Time | CDataType::TypeTime => {
                 let time = sql::Time {
                     hour: snowflake_value.hour() as u16,
                     minute: snowflake_value.minute() as u16,

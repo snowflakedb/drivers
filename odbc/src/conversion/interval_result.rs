@@ -94,9 +94,7 @@ impl WriteODBCType for IntervalYearMonthReader {
     ) -> Result<Warnings, WriteOdbcError> {
         let literal = format_year_month(snowflake_value);
         match binding.target_type {
-            CDataType::Default | CDataType::Char => {
-                Ok(binding.write_char_string(&literal, get_data_offset))
-            }
+            CDataType::Char => Ok(binding.write_char_string(&literal, get_data_offset)),
             CDataType::WChar => Ok(binding.write_wchar_string(&literal, get_data_offset)),
             CDataType::IntervalYear | CDataType::IntervalMonth | CDataType::IntervalYearToMonth => {
                 varchar_to_interval(&literal, binding.target_type, binding)
@@ -159,9 +157,7 @@ impl WriteODBCType for IntervalDayTimeReader {
     ) -> Result<Warnings, WriteOdbcError> {
         let literal = format_day_time(snowflake_value, self.fraction_scale);
         match binding.target_type {
-            CDataType::Default | CDataType::Char => {
-                Ok(binding.write_char_string(&literal, get_data_offset))
-            }
+            CDataType::Char => Ok(binding.write_char_string(&literal, get_data_offset)),
             CDataType::WChar => Ok(binding.write_wchar_string(&literal, get_data_offset)),
             CDataType::IntervalDay
             | CDataType::IntervalHour

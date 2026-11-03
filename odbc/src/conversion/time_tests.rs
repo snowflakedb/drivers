@@ -6,7 +6,7 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::error::ReadArrowError;
     use crate::conversion::test_utils::helpers::{
-        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer,
+        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer, fetch_default_c_type,
     };
     use crate::conversion::time::SnowflakeTime;
     use arrow::array::PrimitiveArray;
@@ -257,7 +257,11 @@ mod tests {
             second: 0,
         };
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_value(CDataType::Default, &mut value, &mut str_len);
+        let binding = binding_for_value(
+            fetch_default_c_type(sn.sql_type()),
+            &mut value,
+            &mut str_len,
+        );
         let input = NaiveTime::from_hms_opt(23, 59, 59).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());

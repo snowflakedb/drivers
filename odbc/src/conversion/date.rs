@@ -110,7 +110,7 @@ impl WriteODBCType for SnowflakeDate {
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Default | CDataType::Date | CDataType::TypeDate => {
+            CDataType::Date | CDataType::TypeDate => {
                 let date = sql::Date {
                     year: snowflake_value.year() as i16,
                     month: snowflake_value.month() as u16,

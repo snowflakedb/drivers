@@ -106,9 +106,7 @@ impl WriteODBCType for SnowflakeBinary {
     ) -> Result<Warnings, WriteOdbcError> {
         let snowflake_value: &[u8] = snowflake_value.as_ref();
         match binding.target_type {
-            CDataType::Default | CDataType::Binary => {
-                Ok(binding.write_binary(snowflake_value, get_data_offset))
-            }
+            CDataType::Binary => Ok(binding.write_binary(snowflake_value, get_data_offset)),
             CDataType::Char => {
                 let total_hex_len = (snowflake_value.len() * 2) as sql::Len;
                 let converter = |pos: usize| {

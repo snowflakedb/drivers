@@ -108,7 +108,7 @@ impl WriteODBCType for SnowflakeVector {
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Default | CDataType::Char | CDataType::WChar | CDataType::Binary => {}
+            CDataType::Char | CDataType::WChar | CDataType::Binary => {}
             _ => {
                 return UnsupportedOdbcTypeSnafu {
                     target_type: binding.target_type,
@@ -118,9 +118,7 @@ impl WriteODBCType for SnowflakeVector {
         }
         let s: &str = &snowflake_value;
         match binding.target_type {
-            CDataType::Default | CDataType::Char => {
-                Ok(binding.write_char_string(s, get_data_offset))
-            }
+            CDataType::Char => Ok(binding.write_char_string(s, get_data_offset)),
             CDataType::WChar => Ok(binding.write_wchar_string(s, get_data_offset)),
             CDataType::Binary => Ok(binding.write_binary(s.as_bytes(), get_data_offset)),
             _ => unreachable!("all non-string-family types rejected above"),

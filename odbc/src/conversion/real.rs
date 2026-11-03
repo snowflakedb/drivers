@@ -288,10 +288,7 @@ impl WriteODBCType for SnowflakeReal {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
-        let target_type = match binding.target_type {
-            CDataType::Default => CDataType::Double,
-            other => other,
-        };
+        let target_type = binding.target_type;
         match target_type {
             CDataType::Double => {
                 binding.write_fixed(snowflake_value);

@@ -16,6 +16,7 @@ use crate::api::{
 use crate::conversion::warning::Warnings;
 use crate::conversion::{
     Binding, BindingStrides, ColumnConverter, ConversionError, NumericSettings, make_converter,
+    resolve_fetch_c_type,
 };
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
@@ -37,6 +38,20 @@ fn read_arrow_value(
     let converter = make_converter(field, numeric_settings)?;
     let warnings = converter.convert_arrow_value(array_ref, batch_idx, binding, get_data_offset)?;
     Ok(warnings)
+}
+
+fn resolve_fetch_binding(
+    binding: &Binding,
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> OdbcResult<Binding> {
+    // Converters and the row stride both need a concrete C type.
+    let target_type = resolve_fetch_c_type(binding.target_type, field, numeric_settings)
+        .context(ConversionSnafu)?;
+    Ok(Binding {
+        target_type,
+        ..*binding
+    })
 }
 
 /// Per-batch cache of converters and `Binding` snapshots for the bound
@@ -125,7 +140,7 @@ impl FetchConverterCache {
             let converter = make_converter(field, numeric_settings).context(ConversionSnafu)?;
             self.entries.push(CachedColumn {
                 arrow_col,
-                binding: *binding,
+                binding: resolve_fetch_binding(binding, field, numeric_settings)?,
                 converter: Some(converter),
             });
         }
@@ -801,19 +816,23 @@ pub fn get_data(
             let ard_binding = inner.with_active_ard(|ard| {
                 ard.bindings.get(&col_or_param_num).copied()
             });
-            let binding = Binding {
-                target_type,
-                target_value_ptr,
-                buffer_length,
-                octet_length_ptr: str_len_or_ind_ptr,
-                indicator_ptr: str_len_or_ind_ptr,
-                precision: ard_binding.and_then(|b| b.precision),
-                scale: ard_binding.and_then(|b| b.scale),
-                datetime_interval_precision: ard_binding
-                    .and_then(|b| b.datetime_interval_precision),
-                length: 0,
-            };
             let settings = guard.conn()?.connection.lock().numeric_settings;
+            let binding = resolve_fetch_binding(
+                &Binding {
+                    target_type,
+                    target_value_ptr,
+                    buffer_length,
+                    octet_length_ptr: str_len_or_ind_ptr,
+                    indicator_ptr: str_len_or_ind_ptr,
+                    precision: ard_binding.and_then(|b| b.precision),
+                    scale: ard_binding.and_then(|b| b.scale),
+                    datetime_interval_precision: ard_binding
+                        .and_then(|b| b.datetime_interval_precision),
+                    length: 0,
+                },
+                field,
+                &settings,
+            )?;
             let conversion_warnings = read_arrow_value(
                 &binding,
                 array_ref,
@@ -881,20 +900,23 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
 
+    // Resolves SQL_C_DEFAULT the way SQLGetData does.
     fn read_arrow_value_test(
         binding: &Binding,
         array_ref: &dyn Array,
         field: &Field,
         batch_idx: usize,
     ) -> Result<Warnings, ConversionError> {
-        read_arrow_value(
-            binding,
-            array_ref,
-            field,
-            batch_idx,
-            &NumericSettings::default(),
-            &mut None,
-        )
+        let settings = NumericSettings::default();
+        let binding = Binding {
+            target_type: resolve_fetch_c_type(binding.target_type, field, &settings)?,
+            ..*binding
+        };
+        read_arrow_value(&binding, array_ref, field, batch_idx, &settings, &mut None)
+    }
+
+    fn resolved_sql_c_default(field: &Field) -> CDataType {
+        resolve_fetch_c_type(CDataType::Default, field, &NumericSettings::default()).unwrap()
     }
 
     fn field_with_fixed_meta(data_type: DataType, scale: u32, precision: u32) -> Field {
@@ -1378,7 +1400,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1393,7 +1416,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1408,7 +1432,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1425,7 +1450,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1440,7 +1466,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1455,7 +1482,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1470,7 +1498,8 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1488,7 +1517,8 @@ mod tests {
             let mut buffer = vec![0u8; 64];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1507,7 +1537,8 @@ mod tests {
             let mut buffer = vec![0u8; 64];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1526,7 +1557,8 @@ mod tests {
             let mut buffer = vec![0u8; 64];
             let mut str_len: sql::Len = 0;
 
-            let binding = Binding::from_buffer(CDataType::Default, &mut buffer, &mut str_len);
+            let binding =
+                Binding::from_buffer(resolved_sql_c_default(&field), &mut buffer, &mut str_len);
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
@@ -1548,7 +1580,7 @@ mod tests {
 
             let binding = Binding {
                 octet_length_ptr: &mut str_len,
-                ..Binding::from_value(CDataType::Default, &mut value)
+                ..Binding::from_value(resolved_sql_c_default(&field), &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
@@ -1565,7 +1597,7 @@ mod tests {
 
             let binding = Binding {
                 octet_length_ptr: &mut str_len,
-                ..Binding::from_value(CDataType::Default, &mut value)
+                ..Binding::from_value(resolved_sql_c_default(&field), &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
@@ -1582,7 +1614,7 @@ mod tests {
 
             let binding = Binding {
                 octet_length_ptr: &mut str_len,
-                ..Binding::from_value(CDataType::Default, &mut value)
+                ..Binding::from_value(resolved_sql_c_default(&field), &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 
