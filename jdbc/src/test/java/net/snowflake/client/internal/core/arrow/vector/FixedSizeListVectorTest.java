@@ -2,6 +2,7 @@ package net.snowflake.client.internal.core.arrow.vector;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -46,6 +47,50 @@ class FixedSizeListVectorTest {
     ColumnBuilder.setNull(vector, 0);
 
     assertNull(vector.getObject(0));
+  }
+
+  @Test
+  void shouldSliceMultiRowVectorsAndPreserveNullElementsInCompactList() {
+    Column child = ColumnBuilder.of("item", Column.PhysicalKind.INT32, null);
+    ColumnBuilder.set(child, 0, 10);
+    ColumnBuilder.setNull(child, 1);
+    ColumnBuilder.set(child, 2, 30);
+    ColumnBuilder.set(child, 3, 40);
+    ColumnBuilder.set(child, 4, 50);
+    ColumnBuilder.set(child, 5, 60);
+
+    try (Column vector = ColumnBuilder.list("v", child, 3)) {
+      ColumnBuilder.setDefined(vector, 0);
+      ColumnBuilder.setDefined(vector, 1);
+      ColumnBuilder.setNull(vector, 2);
+      ColumnBuilder.setValueCount(vector, 3);
+
+      List<?> row0 = (List<?>) vector.getObject(0);
+      assertEquals(Arrays.asList(10, null, 30), row0);
+      assertEquals("[10,null,30]", row0.toString());
+
+      List<?> row1 = (List<?>) vector.getObject(1);
+      assertEquals(Arrays.asList(40, 50, 60), row1);
+      assertEquals("[40,50,60]", row1.toString());
+
+      assertNull(vector.getObject(2));
+    }
+  }
+
+  @Test
+  void shouldRejectUnsupportedElementKindInsideFixedSizeList() {
+    Column innerItem = ColumnBuilder.of("leaf", Column.PhysicalKind.INT32, null);
+    Column nestedList = ColumnBuilder.list("inner", innerItem, 1);
+    ColumnBuilder.setDefined(nestedList, 0);
+
+    try (Column outerList = ColumnBuilder.list("outer", nestedList, 1)) {
+      ColumnBuilder.setDefined(outerList, 0);
+      ColumnBuilder.setValueCount(outerList, 1);
+
+      IllegalArgumentException failure =
+          assertThrows(IllegalArgumentException.class, () -> outerList.getObject(0));
+      assertEquals("Unsupported struct child FIXED_SIZE_LIST", failure.getMessage());
+    }
   }
 
   private static Column intVector(int... values) {

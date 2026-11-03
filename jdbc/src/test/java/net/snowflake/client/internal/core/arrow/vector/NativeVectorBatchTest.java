@@ -11,10 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.ReadOnlyBufferException;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,8 @@ class NativeVectorBatchTest {
 
   /** Mirrors {@code Column.BUFFERS_PER_NODE} and the values role's position within a node. */
   private static final int BUFFERS_PER_NODE = 3;
+
+  private static final int VALIDITY_SLOT = 0;
 
   private static final int OFFSETS_SLOT = 1;
 
@@ -351,6 +355,197 @@ class NativeVectorBatchTest {
     assertEquals(0, root.getRowCount());
     assertFalse(root.column("v").nativeBound);
     assertTrue(root.column("v").isNull(0));
+  }
+
+  @Test
+  void shouldWrapBoundBuffersAsReadOnlyLittleEndianViewsAndResetPositionAndLimit() {
+    List<Column.Field> schema =
+        ColumnBatch.decodeSchema(
+            schemaBytes(
+                field("n", PhysicalKind.INT32, null),
+                field("s", PhysicalKind.UTF8, null),
+                structField("nested", field("child", PhysicalKind.INT64, null))));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+
+    ByteBuffer validity = ByteBuffer.allocateDirect(1).order(ByteOrder.BIG_ENDIAN);
+    validity.put(0, (byte) 0b11);
+    validity.position(1);
+
+    ByteBuffer intValues =
+        ByteBuffer.allocateDirect(2 * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+    intValues.putInt(0, 100);
+    intValues.putInt(Integer.BYTES, 200);
+    intValues.order(ByteOrder.BIG_ENDIAN);
+    intValues.position(Integer.BYTES);
+    intValues.limit(Integer.BYTES);
+
+    ByteBuffer utf8Offsets =
+        ByteBuffer.allocateDirect(3 * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+    utf8Offsets.putInt(0, 0);
+    utf8Offsets.putInt(Integer.BYTES, 2);
+    utf8Offsets.putInt(2 * Integer.BYTES, 5);
+    utf8Offsets.order(ByteOrder.BIG_ENDIAN);
+    utf8Offsets.position(2 * Integer.BYTES);
+
+    ByteBuffer utf8Values = ByteBuffer.allocateDirect(5).order(ByteOrder.BIG_ENDIAN);
+    utf8Values.put("hi".getBytes(StandardCharsets.UTF_8));
+    utf8Values.put("bye".getBytes(StandardCharsets.UTF_8));
+    utf8Values.position(3);
+
+    ByteBuffer childValues =
+        ByteBuffer.allocateDirect(2 * Long.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+    childValues.putLong(0, 9_000_000_000L);
+    childValues.putLong(Long.BYTES, -7_000_000_000L);
+    childValues.order(ByteOrder.BIG_ENDIAN);
+    childValues.position(Long.BYTES);
+
+    slots[VALIDITY_SLOT] = validity;
+    slots[VALUES_SLOT] = intValues;
+    slots[BUFFERS_PER_NODE + OFFSETS_SLOT] = utf8Offsets;
+    slots[BUFFERS_PER_NODE + VALUES_SLOT] = utf8Values;
+    slots[3 * BUFFERS_PER_NODE + VALUES_SLOT] = childValues;
+
+    root.bind(slots, 2);
+
+    Column intCol = root.column("n");
+    Column utf8Col = root.column("s");
+    Column childCol = root.column("nested").child("child");
+
+    assertTrue(intCol.validity.isReadOnly());
+    assertTrue(intCol.values.isReadOnly());
+    assertTrue(utf8Col.offsets.isReadOnly());
+    assertTrue(utf8Col.values.isReadOnly());
+    assertTrue(childCol.values.isReadOnly());
+
+    assertEquals(ByteOrder.LITTLE_ENDIAN, intCol.validity.order());
+    assertEquals(ByteOrder.LITTLE_ENDIAN, intCol.values.order());
+    assertEquals(ByteOrder.LITTLE_ENDIAN, utf8Col.offsets.order());
+    assertEquals(ByteOrder.LITTLE_ENDIAN, utf8Col.values.order());
+    assertEquals(ByteOrder.LITTLE_ENDIAN, childCol.values.order());
+
+    assertThrows(ReadOnlyBufferException.class, () -> intCol.values.putInt(0, 1));
+    assertThrows(ReadOnlyBufferException.class, () -> utf8Col.offsets.putInt(0, 1));
+    assertThrows(ReadOnlyBufferException.class, () -> childCol.values.putLong(0, 1L));
+
+    assertEquals(100, intCol.getInt(0));
+    assertEquals(200, intCol.getInt(1));
+    assertArrayEquals("hi".getBytes(StandardCharsets.UTF_8), utf8Col.getBytes(0));
+    assertArrayEquals("bye".getBytes(StandardCharsets.UTF_8), utf8Col.getBytes(1));
+    assertEquals(9_000_000_000L, childCol.getLong(0));
+    assertEquals(-7_000_000_000L, childCol.getLong(1));
+  }
+
+  @Test
+  void shouldClearParentAndNestedColumnsAndAllowRebinding() {
+    List<Column.Field> schema =
+        ColumnBatch.decodeSchema(
+            schemaBytes(
+                field("label", PhysicalKind.UTF8, null),
+                structField("nested", field("n", PhysicalKind.INT64, null))));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+
+    ByteBuffer offsets = direct(2 * Integer.BYTES);
+    offsets.putInt(0, 0);
+    offsets.putInt(Integer.BYTES, 2);
+    ByteBuffer values = direct(2);
+    values.put("ok".getBytes(StandardCharsets.UTF_8));
+    slots[OFFSETS_SLOT] = offsets;
+    slots[VALUES_SLOT] = values;
+    slots[2 * BUFFERS_PER_NODE + VALUES_SLOT] = direct(Long.BYTES).putLong(0, 55L);
+
+    root.bind(slots, 1);
+    Column label = root.column("label");
+    Column nestedChild = root.column("nested").child("n");
+    assertTrue(label.nativeBound);
+    assertTrue(nestedChild.nativeBound);
+    assertEquals(55L, nestedChild.getLong(0));
+
+    root.clear();
+
+    assertEquals(0, root.getRowCount());
+    assertFalse(label.nativeBound);
+    assertFalse(nestedChild.nativeBound);
+    assertTrue(label.isNull(0));
+    assertTrue(nestedChild.isNull(0));
+
+    slots[2 * BUFFERS_PER_NODE + VALUES_SLOT] = direct(Long.BYTES).putLong(0, 99L);
+    root.bind(slots, 1);
+    assertEquals(99L, nestedChild.getLong(0));
+    assertArrayEquals("ok".getBytes(StandardCharsets.UTF_8), label.getBytes(0));
+  }
+
+  @Test
+  void shouldClearPreviouslyBoundColumnsWhenLaterColumnInBatchIsClosed() {
+    List<Column.Field> schema =
+        ColumnBatch.decodeSchema(
+            schemaBytes(
+                field("first", PhysicalKind.INT64, null),
+                field("second", PhysicalKind.INT64, null)));
+    ColumnBatch root = ColumnBatch.empty(schema);
+    ByteBuffer[] slots = root.newSlots();
+    slots[VALUES_SLOT] = direct(Long.BYTES).putLong(0, 11L);
+    slots[BUFFERS_PER_NODE + VALUES_SLOT] = direct(Long.BYTES).putLong(0, 22L);
+
+    root.column("second").close();
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> root.bind(slots, 1));
+    assertEquals("Arrow vector is closed", failure.getMessage());
+    assertEquals(0, root.getRowCount());
+    assertFalse(root.column("first").nativeBound);
+    assertTrue(root.column("first").isNull(0));
+  }
+
+  @Test
+  void shouldMaterializeStructWithUtf8FalseBoolAndNullChildAndRejectNestedStructChild() {
+    Column boolChild = ColumnBuilder.of("flag", PhysicalKind.BOOL, null);
+    Column utf8Child = ColumnBuilder.of("text", PhysicalKind.UTF8, null);
+    Column nullChild = ColumnBuilder.of("missing", PhysicalKind.INT32, null);
+
+    ColumnBuilder.set(boolChild, 0, 0L);
+    ColumnBuilder.set(utf8Child, 0, "abc".getBytes(StandardCharsets.UTF_8));
+    ColumnBuilder.setNull(nullChild, 0);
+
+    try (Column structCol = ColumnBuilder.struct("s", null, boolChild, utf8Child, nullChild)) {
+      ColumnBuilder.setDefined(structCol, 0);
+      Map<?, ?> row0 = (Map<?, ?>) structCol.getObject(0);
+      assertEquals(Boolean.FALSE, row0.get("flag"));
+      assertArrayEquals("abc".getBytes(StandardCharsets.UTF_8), (byte[]) row0.get("text"));
+      assertTrue(row0.containsKey("missing"));
+      assertNull(row0.get("missing"));
+      assertNull(structCol.child("absent"));
+    }
+
+    Column innerLeaf = ColumnBuilder.of("leaf", PhysicalKind.INT32, null);
+    Column innerStruct = ColumnBuilder.struct("inner", null, innerLeaf);
+    try (Column outerStruct = ColumnBuilder.struct("outer", null, innerStruct)) {
+      ColumnBuilder.setDefined(innerStruct, 0);
+      ColumnBuilder.setDefined(outerStruct, 0);
+      IllegalArgumentException failure =
+          assertThrows(IllegalArgumentException.class, () -> outerStruct.getObject(0));
+      assertEquals("Unsupported struct child STRUCT", failure.getMessage());
+    }
+  }
+
+  @Test
+  void shouldDefensivelyCopyFieldMetadataAndChildren() {
+    Map<String, String> sourceMeta = new HashMap<>();
+    sourceMeta.put("logicalType", "TEXT");
+    Column.Field child =
+        Column.field("c", PhysicalKind.INT32, true, null, Collections.emptyList(), 0, 0, 0);
+    assertTrue(child.getMetadata().isEmpty());
+
+    List<Column.Field> children = Collections.singletonList(child);
+    Column.Field parent =
+        Column.field("p", PhysicalKind.STRUCT, false, sourceMeta, children, 0, 0, 0);
+    sourceMeta.put("logicalType", "MUTATED");
+
+    assertEquals("TEXT", parent.getMetadata().get("logicalType"));
+    assertThrows(
+        UnsupportedOperationException.class, () -> parent.getMetadata().put("extra", "val"));
+    assertThrows(UnsupportedOperationException.class, () -> parent.getChildren().clear());
   }
 
   private static ByteBuffer direct(int bytes) {

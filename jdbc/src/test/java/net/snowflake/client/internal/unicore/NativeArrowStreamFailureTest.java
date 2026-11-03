@@ -2,6 +2,7 @@ package net.snowflake.client.internal.unicore;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.SQLException;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -9,6 +10,15 @@ import net.snowflake.client.internal.api.implementation.exception.SFSQLException
 import org.junit.jupiter.api.Test;
 
 class NativeArrowStreamFailureTest {
+
+  @Test
+  void shouldRejectNullStreamPointerAsInternalError() {
+    SFSQLException thrown = assertThrows(SFSQLException.class, () -> NativeArrowStream.open(0L));
+
+    SQLException sql = thrown.toSQLException();
+    assertEquals(ErrorCode.INTERNAL_ERROR.getMessageCode(), sql.getErrorCode());
+    assertEquals("Arrow stream pointer is null or misaligned", sql.getMessage());
+  }
 
   @Test
   void shouldTranslateUnsupportedColumnTagToFeatureUnsupported() {

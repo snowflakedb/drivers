@@ -37,8 +37,18 @@ public final class ColumnBuilder {
   }
 
   public static Column list(String name, Column child, int listSize) {
+    return list(name, null, child, listSize);
+  }
+
+  public static Column list(String name, Map<String, String> metadata, Column child, int listSize) {
     return column(
-        name, PhysicalKind.FIXED_SIZE_LIST, null, Collections.singletonList(child), 0, 0, listSize);
+        name,
+        PhysicalKind.FIXED_SIZE_LIST,
+        metadata,
+        Collections.singletonList(child),
+        0,
+        0,
+        listSize);
   }
 
   public static void set(Column column, int index, long value) {
