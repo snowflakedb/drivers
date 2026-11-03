@@ -234,4 +234,21 @@ public class TinyIntToFixedConverterTest extends BaseConverterTest {
     assertFalse(converter.isNull(3));
     vector.close();
   }
+
+  @Test
+  public void shouldReturnBigDecimalFromToObjectOnScaleZeroTinyIntWhenDecimalFlagsAreFalse() {
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT8, fixedMeta(3, 0));
+    ColumnBuilder.set(vector, 0, 7);
+    ColumnBuilder.setValueCount(vector, 1);
+
+    try {
+      TinyIntToFixedConverter converter =
+          new TinyIntToFixedConverter(vector, 0, decimalAsBigDecimalContext());
+      assertEquals(BigDecimal.valueOf(7L, 0), converter.toObject(0));
+      assertEquals(7.0f, converter.toFloat(0));
+      assertEquals(7.0, converter.toDouble(0));
+    } finally {
+      vector.close();
+    }
+  }
 }

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -12,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TimeZone;
+import net.snowflake.client.internal.core.arrow.TestHelper;
 import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
@@ -105,6 +108,54 @@ public class BitToBooleanConverterTest extends BaseConverterTest {
       assertEquals("FALSE", converter.toString(9));
     } finally {
       vector.close();
+    }
+  }
+
+  @Test
+  public void shouldConvertBitToNumericTypesAndRejectUnsupportedConversions() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "BOOLEAN");
+    try (Column vector = ColumnBuilder.of("col_bool", Column.PhysicalKind.BOOL, customFieldMeta)) {
+      ColumnBuilder.set(vector, 0, 1);
+      ColumnBuilder.set(vector, 1, 0);
+      ColumnBuilder.setNull(vector, 2);
+      ColumnBuilder.setValueCount(vector, 3);
+
+      BitToBooleanConverter converter = new BitToBooleanConverter(vector, 0, this);
+
+      assertEquals((short) 1, converter.toShort(0));
+      assertEquals(1, converter.toInt(0));
+      assertEquals(1L, converter.toLong(0));
+      assertEquals(1.0f, converter.toFloat(0));
+      assertEquals(1.0d, converter.toDouble(0));
+      assertEquals(BigDecimal.ONE, converter.toBigDecimal(0));
+
+      assertEquals((short) 0, converter.toShort(1));
+      assertEquals(0, converter.toInt(1));
+      assertEquals(0L, converter.toLong(1));
+      assertEquals(0.0f, converter.toFloat(1));
+      assertEquals(0.0d, converter.toDouble(1));
+      assertEquals(BigDecimal.ZERO, converter.toBigDecimal(1));
+
+      assertEquals((short) 0, converter.toShort(2));
+      assertEquals(0, converter.toInt(2));
+      assertEquals(0L, converter.toLong(2));
+      assertEquals(0.0f, converter.toFloat(2));
+      assertEquals(0.0d, converter.toDouble(2));
+      assertNull(converter.toBigDecimal(2));
+      assertNull(converter.toPeriod(2));
+      assertNull(converter.toDuration(2));
+      assertNull(converter.toList(2));
+
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toByte(0));
+      TestHelper.assertSFException(
+          invalidConversionErrorCode, () -> converter.toDate(0, TimeZone.getDefault(), false));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toTime(0));
+      TestHelper.assertSFException(
+          invalidConversionErrorCode, () -> converter.toTimestamp(0, TimeZone.getDefault()));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toPeriod(0));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toDuration(0));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toList(0));
     }
   }
 }

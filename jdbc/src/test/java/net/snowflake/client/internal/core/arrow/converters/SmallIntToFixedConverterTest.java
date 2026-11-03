@@ -238,4 +238,21 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
 
     vector.close();
   }
+
+  @Test
+  public void shouldReturnBigDecimalFromToObjectOnScaleZeroSmallIntWhenDecimalFlagsAreFalse() {
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT16, fixedMeta(5, 0));
+    ColumnBuilder.set(vector, 0, 123);
+    ColumnBuilder.setValueCount(vector, 1);
+
+    try {
+      SmallIntToFixedConverter converter =
+          new SmallIntToFixedConverter(vector, 0, decimalAsBigDecimalContext());
+      assertEquals(BigDecimal.valueOf(123L, 0), converter.toObject(0));
+      assertEquals(123.0f, converter.toFloat(0));
+      assertEquals(123.0, converter.toDouble(0));
+    } finally {
+      vector.close();
+    }
+  }
 }

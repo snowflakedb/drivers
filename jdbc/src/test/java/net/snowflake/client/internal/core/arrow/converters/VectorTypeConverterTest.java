@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import net.snowflake.client.internal.core.arrow.TestHelper;
 import net.snowflake.client.internal.core.arrow.vector.Column;
 import net.snowflake.client.internal.core.arrow.vector.ColumnBuilder;
 import org.junit.jupiter.api.Test;
@@ -65,6 +67,34 @@ class VectorTypeConverterTest extends BaseConverterTest {
       ColumnBuilder.set(child, 2, 30);
       assertEquals("[10,20,30]", converter.toString(0));
       assertEquals(Arrays.asList(10, 20, 30), converter.toList(0));
+    }
+  }
+
+  @Test
+  void shouldRejectNumericAndBooleanConversionsOnVector() {
+    try (Column vector = newVector(1, 2, 3)) {
+      VectorTypeConverter converter = new VectorTypeConverter(vector, 0, this);
+
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toInt(0));
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
+    }
+  }
+
+  @Test
+  void shouldDispatchVectorLogicalTypeToVectorConverterAndRenderFloatElements() {
+    Column child = ColumnBuilder.of("item", Column.PhysicalKind.FLOAT32, null);
+    ColumnBuilder.set(child, 0, 1.5f);
+    ColumnBuilder.set(child, 1, -2.25f);
+    try (Column vector =
+        ColumnBuilder.list("vec", Collections.singletonMap("logicalType", "VECTOR"), child, 2)) {
+      ColumnBuilder.setDefined(vector, 0);
+      ColumnBuilder.setValueCount(vector, 1);
+
+      ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
+
+      assertInstanceOf(VectorTypeConverter.class, converter);
+      assertEquals(Arrays.asList(1.5f, -2.25f), converter.toList(0));
+      assertEquals("[1.5,-2.25]", converter.toString(0));
     }
   }
 

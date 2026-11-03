@@ -130,6 +130,132 @@ class ArrowVectorConverterUtilTest extends BaseConverterTest {
     }
   }
 
+  @Test
+  void shouldInitConverterForFixedAndScaledFixedAndStructuredTypes() {
+    Map<String, String> fixedZero = new HashMap<>();
+    fixedZero.put("logicalType", "FIXED");
+    fixedZero.put("precision", "10");
+    fixedZero.put("scale", "0");
+
+    try (Column int8 = ColumnBuilder.of("c", PhysicalKind.INT8, fixedZero);
+        Column int16 = ColumnBuilder.of("c", PhysicalKind.INT16, fixedZero);
+        Column int32 = ColumnBuilder.of("c", PhysicalKind.INT32, fixedZero);
+        Column int64 = ColumnBuilder.of("c", PhysicalKind.INT64, fixedZero)) {
+      assertInstanceOf(
+          TinyIntToFixedConverter.class, ArrowVectorConverterUtil.initConverter(int8, this, 0));
+      assertInstanceOf(
+          SmallIntToFixedConverter.class, ArrowVectorConverterUtil.initConverter(int16, this, 0));
+      assertInstanceOf(
+          IntToFixedConverter.class, ArrowVectorConverterUtil.initConverter(int32, this, 0));
+      assertInstanceOf(
+          BigIntToFixedConverter.class, ArrowVectorConverterUtil.initConverter(int64, this, 0));
+    }
+
+    Map<String, String> fixedScaled = new HashMap<>();
+    fixedScaled.put("logicalType", "FIXED");
+    fixedScaled.put("precision", "10");
+    fixedScaled.put("scale", "2");
+
+    try (Column int8 = ColumnBuilder.of("c", PhysicalKind.INT8, fixedScaled);
+        Column int16 = ColumnBuilder.of("c", PhysicalKind.INT16, fixedScaled);
+        Column int32 = ColumnBuilder.of("c", PhysicalKind.INT32, fixedScaled);
+        Column int64 = ColumnBuilder.of("c", PhysicalKind.INT64, fixedScaled);
+        Column dec128 = ColumnBuilder.of("c", PhysicalKind.DECIMAL128, fixedScaled)) {
+      assertInstanceOf(
+          TinyIntToScaledFixedConverter.class,
+          ArrowVectorConverterUtil.initConverter(int8, this, 0));
+      assertInstanceOf(
+          SmallIntToScaledFixedConverter.class,
+          ArrowVectorConverterUtil.initConverter(int16, this, 0));
+      assertInstanceOf(
+          IntToScaledFixedConverter.class, ArrowVectorConverterUtil.initConverter(int32, this, 0));
+      assertInstanceOf(
+          BigIntToScaledFixedConverter.class,
+          ArrowVectorConverterUtil.initConverter(int64, this, 0));
+      assertInstanceOf(
+          DecimalToScaledFixedConverter.class,
+          ArrowVectorConverterUtil.initConverter(dec128, this, 0));
+    }
+
+    for (String structuredType : new String[] {"MAP", "ARRAY", "OBJECT", "CHAR", "ANY"}) {
+      Map<String, String> meta = Collections.singletonMap("logicalType", structuredType);
+      try (Column col = ColumnBuilder.of("c", PhysicalKind.UTF8, meta)) {
+        assertInstanceOf(
+            VarCharConverter.class, ArrowVectorConverterUtil.initConverter(col, this, 0));
+      }
+    }
+  }
+
+  @Test
+  void shouldRejectUnsupportedPhysicalTypesAndStructLayoutsInInitConverter() {
+    Map<String, String> timeMeta = Collections.singletonMap("logicalType", "TIME");
+    try (Column badTime = ColumnBuilder.of("c", PhysicalKind.UTF8, timeMeta)) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class, () -> ArrowVectorConverterUtil.initConverter(badTime, this, 0));
+      assertEquals("Unsupported Arrow physical type for TIME: UTF8", ex.getMessage());
+    }
+
+    Map<String, String> vectorMeta = Collections.singletonMap("logicalType", "VECTOR");
+    try (Column badVector = ColumnBuilder.of("c", PhysicalKind.INT32, vectorMeta)) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class,
+              () -> ArrowVectorConverterUtil.initConverter(badVector, this, 0));
+      assertEquals("Unsupported Arrow physical type for VECTOR: INT32", ex.getMessage());
+    }
+
+    Map<String, String> ntzMeta = Collections.singletonMap("logicalType", "TIMESTAMP_NTZ");
+    try (Column badNtz =
+        ColumnBuilder.struct(
+            "c", ntzMeta, ColumnBuilder.of("epoch", PhysicalKind.INT64, Collections.emptyMap()))) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class, () -> ArrowVectorConverterUtil.initConverter(badNtz, this, 0));
+      assertEquals(
+          "Unsupported Arrow physical layout for TIMESTAMP_NTZ: 1 struct children",
+          ex.getMessage());
+    }
+
+    Map<String, String> ltzMeta = Collections.singletonMap("logicalType", "TIMESTAMP_LTZ");
+    try (Column badLtz =
+        ColumnBuilder.struct(
+            "c", ltzMeta, ColumnBuilder.of("epoch", PhysicalKind.INT64, Collections.emptyMap()))) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class, () -> ArrowVectorConverterUtil.initConverter(badLtz, this, 0));
+      assertEquals(
+          "Unsupported Arrow physical layout for TIMESTAMP_LTZ: 1 struct children",
+          ex.getMessage());
+    }
+
+    Map<String, String> tzMeta = Collections.singletonMap("logicalType", "TIMESTAMP_TZ");
+    try (Column badTz = ColumnBuilder.of("c", PhysicalKind.INT64, tzMeta)) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class, () -> ArrowVectorConverterUtil.initConverter(badTz, this, 0));
+      assertEquals(
+          "Unsupported Arrow physical layout for TIMESTAMP_TZ: 0 struct children", ex.getMessage());
+    }
+
+    Map<String, String> geoMeta = Collections.singletonMap("logicalType", "GEOGRAPHY");
+    try (Column badLogical = ColumnBuilder.of("c", PhysicalKind.UTF8, geoMeta)) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class,
+              () -> ArrowVectorConverterUtil.initConverter(badLogical, this, 0));
+      assertEquals("Unsupported Arrow logical type: GEOGRAPHY", ex.getMessage());
+    }
+
+    try (Column unmappedField = ColumnBuilder.of("c", PhysicalKind.UTF8, Collections.emptyMap())) {
+      SFSQLException ex =
+          assertThrows(
+              SFSQLException.class,
+              () -> ArrowVectorConverterUtil.initConverter(unmappedField, this, 0));
+      assertEquals("Unsupported Arrow field type: UTF8", ex.getMessage());
+    }
+  }
+
   private static DataConversionContext contextWithTimestampMapping(String mapping) {
     Map<String, ConfigSetting> parameters = new HashMap<>();
     parameters.put(

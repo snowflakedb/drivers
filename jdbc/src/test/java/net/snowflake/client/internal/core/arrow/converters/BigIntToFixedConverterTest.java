@@ -235,4 +235,21 @@ public class BigIntToFixedConverterTest extends BaseConverterTest {
 
     vector.close();
   }
+
+  @Test
+  public void shouldReturnBigDecimalFromToObjectOnScaleZeroBigIntWhenDecimalFlagsAreFalse() {
+    Column vector = ColumnBuilder.of("col_one", Column.PhysicalKind.INT64, fixedMeta(18, 0));
+    ColumnBuilder.set(vector, 0, 999L);
+    ColumnBuilder.setValueCount(vector, 1);
+
+    try {
+      BigIntToFixedConverter converter =
+          new BigIntToFixedConverter(vector, 0, decimalAsBigDecimalContext());
+      assertEquals(BigDecimal.valueOf(999L, 0), converter.toObject(0));
+      assertEquals(999.0f, converter.toFloat(0));
+      assertEquals(999.0, converter.toDouble(0));
+    } finally {
+      vector.close();
+    }
+  }
 }
