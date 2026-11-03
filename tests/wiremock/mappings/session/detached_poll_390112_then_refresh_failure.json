@@ -1,0 +1,80 @@
+{
+  "mappings": [
+    {
+      "name": "Query submission returns detached (333334)",
+      "scenarioName": "detached-poll-refresh-failure",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "Polling",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "code": "333334",
+          "data": {
+            "queryId": "detached-query-id-002",
+            "getResultUrl": "/queries/detached-query-id-002/result",
+            "queryResultFormat": "json",
+            "rowtype": null,
+            "rowset": null,
+            "rowsetBase64": null,
+            "chunks": null,
+            "parameters": []
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    },
+    {
+      "name": "First poll returns 390112 (session expired)",
+      "scenarioName": "detached-poll-refresh-failure",
+      "requiredScenarioState": "Polling",
+      "newScenarioState": "Token Expired",
+      "request": {
+        "urlPathPattern": "/queries/detached-query-id-002/result.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": false,
+          "code": "390112",
+          "message": "Your session has expired. Please login again.",
+          "data": {}
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    },
+    {
+      "name": "Token refresh fails (master token expired)",
+      "scenarioName": "detached-poll-refresh-failure",
+      "requiredScenarioState": "Token Expired",
+      "request": {
+        "urlPathPattern": "/session/token-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": false,
+          "code": "390114",
+          "message": "Master token expired.",
+          "data": {}
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    }
+  ]
+}

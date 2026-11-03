@@ -1,6 +1,5 @@
 use snafu::{OptionExt, ResultExt};
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock, atomic::Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 
@@ -13,8 +12,9 @@ use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::query_response::Response;
 use crate::rest::snowflake::{
-    AbortOutcome, QueryExecutionMode, QueryInput, QueryOptions, RestError, snowflake_cancel_query,
-    snowflake_query_with_client,
+    AbortOutcome, DetachableQueryOutcome, DetachedContext, QueryExecutionMode, QueryInput,
+    QueryOptions, RestError, poll_detached_result, snowflake_cancel_query,
+    snowflake_query_with_client_detachable,
 };
 use crate::utils::sync::MutexRecoverExt;
 use crate::xp_backend::SnowflakeBackend;
@@ -100,23 +100,57 @@ pub(super) async fn submit_query(
     let sql = query_input.sql.clone();
 
     let submit = Box::pin(async {
+        let detached_ctx = Arc::new(OnceLock::<DetachedContext>::new());
         let attempt = with_session_refresh(conn_arc, |token| {
             let query_input = query_input.clone();
+            let detached_ctx = Arc::clone(&detached_ctx);
             async move {
-                let result = snowflake_query_with_client(
-                    &transport.http_client,
-                    transport.query_parameters.clone(),
-                    token.reveal(),
-                    query_input,
-                    QueryOptions {
-                        retry_policy: transport.retry_policy.clone(),
-                        execution_mode,
-                        request_id: Some(request_id),
-                    },
-                    transport.xp_backend.as_deref(),
-                )
-                .await;
-                // Error envelopes can still carry queryContext.
+                let detached = match detached_ctx.get() {
+                    None => {
+                        let detachable_outcome = snowflake_query_with_client_detachable(
+                            &transport.http_client,
+                            &transport.query_parameters,
+                            token.reveal(),
+                            query_input,
+                            QueryOptions {
+                                retry_policy: transport.retry_policy.clone(),
+                                execution_mode,
+                                request_id: Some(request_id),
+                            },
+                            transport.xp_backend.as_deref(),
+                        )
+                        .await;
+
+                        if let DetachableQueryOutcome::Detached(ref detached_inner_ctx) =
+                            detachable_outcome
+                        {
+                            let _ = detached_ctx.set(detached_inner_ctx.as_ref().clone());
+                        }
+                        detachable_outcome
+                    }
+                    Some(detached_ctx_inner) => {
+                        DetachableQueryOutcome::Detached(Box::new(detached_ctx_inner.clone()))
+                    }
+                };
+
+                let result = match detached {
+                    DetachableQueryOutcome::Detached(detached_ctx_inner) =>
+                    // On a session-refresh retry after the POST already
+                    // succeeded and returned a detached query, skip the POST
+                    // and only re-poll.
+                    {
+                        poll_detached_result(
+                            &transport.http_client,
+                            &transport.query_parameters,
+                            token.reveal(),
+                            detached_ctx_inner.as_ref(),
+                            &transport.retry_policy,
+                        )
+                        .await
+                    }
+                    DetachableQueryOutcome::Completed(result) => result,
+                };
+
                 if let Err(RestError::QueryFailed {
                     query_context: Some(qctx),
                     ..

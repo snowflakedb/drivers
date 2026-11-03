@@ -2141,6 +2141,31 @@ pub async fn snowflake_query<'a>(
     .await
 }
 
+/// Resolve a [`DetachableQueryOutcome`] into a final result by polling inline
+/// when the query was detached. Used by callers that don't need the
+/// two-phase split.
+async fn resolve_sync_outcome(
+    outcome: DetachableQueryOutcome,
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    match outcome {
+        DetachableQueryOutcome::Completed(result) => result,
+        DetachableQueryOutcome::Detached(detached_ctx) => {
+            poll_detached_result(
+                client,
+                query_parameters,
+                session_token,
+                &detached_ctx,
+                retry_policy,
+            )
+            .await
+        }
+    }
+}
+
 /// Execute a query with a caller-supplied HTTP client and [`QueryOptions`].
 ///
 /// See [`QueryOptions`] for the rarely-varied knobs (retry policy, execution
@@ -2165,48 +2190,82 @@ pub async fn snowflake_query_with_client<'a>(
     options: QueryOptions,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
 ) -> Result<query_response::Response, RestError> {
+    let session_token = session_token.as_ref();
+    let retry_policy = options.retry_policy.clone();
+    let outcome = snowflake_query_with_client_detachable(
+        client,
+        &query_parameters,
+        session_token,
+        query_input,
+        options,
+        xp_backend,
+    )
+    .await;
+    resolve_sync_outcome(
+        outcome,
+        client,
+        &query_parameters,
+        session_token,
+        &retry_policy,
+    )
+    .await
+}
+
+/// Internal variant that returns [`DetachableQueryOutcome`] so callers
+/// can separate the POST phase from the poll phase when handling
+/// session-token refresh.
+pub(crate) async fn snowflake_query_with_client_detachable<'a>(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_input: QueryInput<'a>,
+    options: QueryOptions,
+    xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
+) -> DetachableQueryOutcome {
     let QueryOptions {
         retry_policy,
         execution_mode,
         request_id,
     } = options;
-    let request_id = request_id.unwrap_or_else(uuid::Uuid::new_v4);
-    let session_token = session_token.as_ref();
+    let request_id = request_id.unwrap_or_else(Uuid::new_v4);
 
     if let Some(backend) = xp_backend {
         let backend_options = crate::xp_backend::BackendQueryOptions {
             execution_mode,
             request_id,
         };
-        return Ok(backend
-            .execute_query(&query_input, &query_parameters, backend_options)
-            .await?);
+        let result = backend
+            .execute_query(&query_input, query_parameters, backend_options)
+            .await
+            .map_err(RestError::from);
+        return result.into();
     }
 
     // Async mode path (legacy, opt-in)
     if matches!(execution_mode, QueryExecutionMode::Async) {
-        let response = execute_async_with_fallback(
+        let result = execute_async_with_fallback(
             client,
-            &query_parameters,
+            query_parameters,
             session_token,
             query_input,
             &retry_policy,
             request_id,
         )
-        .await?;
-        return Ok(response);
+        .await;
+        return result.into();
     }
 
     // Sync mode (default): use requestId-based retry for connection failures
     execute_sync_query(
         client,
-        &query_parameters,
+        query_parameters,
         session_token,
         &query_input,
         request_id,
         &retry_policy,
     )
     .await
+    .unwrap_or_else(|e| DetachableQueryOutcome::Completed(Err(e)))
 }
 
 /// Execute query in async mode with fallback to sync for error 612.
@@ -2256,12 +2315,21 @@ async fn execute_async_with_fallback<'a>(
     }
 
     // Fallback to sync after 612
-    let response = execute_sync_query(
+    let outcome = execute_sync_query(
         client,
         query_parameters,
         session_token,
         &query_input,
         request_id,
+        retry_policy,
+    )
+    .await?;
+
+    let response = resolve_sync_outcome(
+        outcome,
+        client,
+        query_parameters,
+        session_token,
         retry_policy,
     )
     .await?;
@@ -2335,7 +2403,7 @@ async fn execute_sync_query<'a>(
     query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     retry_policy: &RetryPolicy,
-) -> Result<query_response::Response, RestError> {
+) -> Result<DetachableQueryOutcome, RestError> {
     use crate::http::retry::HttpContext;
 
     // guarded with: log_query_text, log_query_parameters
@@ -2427,22 +2495,51 @@ async fn execute_sync_query<'a>(
         request_id: Some(request_id),
         query_id: query_response.data.query_id.clone(),
     };
-    let query_response = if async_exec::should_poll_for_completion(&query_response) {
-        tracing::debug!(request_id = %request_id, "detached query - polling for completion");
-        async_exec::poll_detached_query(
-            client,
-            query_parameters,
-            session_token,
+    if async_exec::should_poll_for_completion(&query_response) {
+        let result_url = async_exec::extract_result_url_from_response(
+            &query_parameters.server_url,
             &query_response,
-            retry_policy,
-            &ids,
-        )
-        .await?
-    } else {
-        query_response
-    };
+        )?
+        .with_context(|| MissingResultUrlSnafu { ids: ids.clone() })?;
+        let detached_context = DetachedContext::new(result_url, &ids);
+        return Ok(DetachableQueryOutcome::Detached(Box::new(detached_context)));
+    }
 
-    into_query_result(query_response, &ids)
+    Ok(into_query_result(query_response, &ids).into())
+}
+
+pub(crate) async fn poll_detached_result(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    detached_ctx: &DetachedContext,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    let DetachedContext {
+        request_id,
+        query_id,
+        ..
+    } = detached_ctx;
+    tracing::debug!(
+        request_id = ?request_id,
+        query_id = query_id.as_deref().unwrap_or_default(),
+        "polling detached query for completion"
+    );
+    let response = async_exec::poll_detached_query(
+        client,
+        query_parameters,
+        session_token,
+        detached_ctx,
+        retry_policy,
+    )
+    .await?;
+    into_query_result(
+        response,
+        &QueryIds {
+            request_id: Some(*request_id),
+            query_id: query_id.clone(),
+        },
+    )
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -2456,7 +2553,7 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     session_token: S,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
-    request_id: uuid::Uuid,
+    request_id: Uuid,
 ) -> Result<query_response::Response, RestError> {
     async_exec::execute_blocking_with_async(
         client,
@@ -2747,6 +2844,35 @@ pub enum AbortOutcome {
     /// The query was not running (e.g. already completed, or never
     /// started); nothing to abort.
     NotRunning,
+}
+
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum DetachableQueryOutcome {
+    Completed(Result<query_response::Response, RestError>),
+    Detached(Box<DetachedContext>),
+}
+
+impl From<Result<query_response::Response, RestError>> for DetachableQueryOutcome {
+    fn from(result: Result<query_response::Response, RestError>) -> Self {
+        Self::Completed(result)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DetachedContext {
+    request_id: Uuid,
+    result_url: String,
+    query_id: Option<String>,
+}
+
+impl DetachedContext {
+    pub(crate) fn new(result_url: String, query_ids: &QueryIds) -> Self {
+        Self {
+            request_id: query_ids.request_id.unwrap_or_else(Uuid::new_v4),
+            result_url,
+            query_id: query_ids.query_id.clone(),
+        }
+    }
 }
 
 /// Abort a running query by its Snowflake Query ID.

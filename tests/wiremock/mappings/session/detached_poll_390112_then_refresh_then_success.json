@@ -1,0 +1,122 @@
+{
+  "mappings": [
+    {
+      "name": "Query submission returns detached (333334)",
+      "scenarioName": "detached-poll-refresh",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "Polling",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "code": "333334",
+          "data": {
+            "queryId": "detached-query-id-001",
+            "getResultUrl": "/queries/detached-query-id-001/result",
+            "queryResultFormat": "json",
+            "rowtype": null,
+            "rowset": null,
+            "rowsetBase64": null,
+            "chunks": null,
+            "parameters": []
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    },
+    {
+      "name": "First poll returns 390112 (session expired)",
+      "scenarioName": "detached-poll-refresh",
+      "requiredScenarioState": "Polling",
+      "newScenarioState": "Token Expired",
+      "request": {
+        "urlPathPattern": "/queries/detached-query-id-001/result.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": false,
+          "code": "390112",
+          "message": "Your session has expired. Please login again.",
+          "data": {}
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    },
+    {
+      "name": "Token refresh succeeds after poll 390112",
+      "scenarioName": "detached-poll-refresh",
+      "requiredScenarioState": "Token Expired",
+      "newScenarioState": "Token Refreshed",
+      "request": {
+        "urlPathPattern": "/session/token-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "sessionToken": "refreshed-session-token",
+            "masterToken": "refreshed-master-token",
+            "sessionId": 12345
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    },
+    {
+      "name": "Second poll succeeds with refreshed token",
+      "scenarioName": "detached-poll-refresh",
+      "requiredScenarioState": "Token Refreshed",
+      "request": {
+        "urlPathPattern": "/queries/detached-query-id-001/result.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "detached-query-id-001",
+            "queryResultFormat": "json",
+            "rowtype": [
+              {
+                "name": "STATUS",
+                "type": "text",
+                "nullable": true,
+                "length": 16777216,
+                "byteLength": 16777216,
+                "precision": null,
+                "scale": null
+              }
+            ],
+            "rowset": [["Statement executed successfully."]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "statementTypeId": 16384
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      },
+      "priority": 1
+    }
+  ]
+}
