@@ -1,5 +1,5 @@
 use crate::error::{BridgeError, ToJsError};
-use chrono::{DateTime, NaiveDateTime, Offset, TimeDelta, Utc};
+use chrono::{DateTime, Offset, TimeDelta, Utc};
 use chrono_tz::Tz;
 use napi::Env;
 use napi::bindgen_prelude::Either;
@@ -33,30 +33,61 @@ fn utc_from_parts(epoch_millis: f64, nanos: u32) -> Result<DateTime<Utc>, Bridge
     })
 }
 
-fn local_in_timezone(
-    utc: DateTime<Utc>,
-    timezone: Either<String, i32>,
-) -> Result<(NaiveDateTime, i32, Zone), BridgeError> {
-    match timezone {
-        Either::B(offset_minutes) => Ok((
-            utc.naive_utc() + TimeDelta::minutes(i64::from(offset_minutes)),
-            offset_minutes,
-            Zone::Offset,
-        )),
-        Either::A(name) if name.eq_ignore_ascii_case("UTC") || name.eq_ignore_ascii_case("GMT") => {
-            Ok((utc.naive_utc(), 0, Zone::Named("GMT")))
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ResolvedTimezone {
+    Utc,
+    Named(Tz),
+    Offset(i32),
+}
+
+impl ResolvedTimezone {
+    pub(crate) fn from_name(name: &str) -> Result<Self, String> {
+        if name.eq_ignore_ascii_case("UTC") || name.eq_ignore_ascii_case("GMT") {
+            return Ok(Self::Utc);
         }
-        Either::A(name) => {
-            let tz: Tz = name
-                .parse()
-                .map_err(|_| BridgeError::Message(format!("unknown timezone: {name}")))?;
-            let local = utc.with_timezone(&tz);
-            Ok((
-                local.naive_local(),
-                local.offset().fix().local_minus_utc() / 60,
+        name.parse()
+            .map(Self::Named)
+            .map_err(|_| format!("unknown timezone: {name}"))
+    }
+
+    fn from_js(timezone: Either<String, i32>) -> Result<Self, String> {
+        match timezone {
+            Either::A(name) => Self::from_name(&name),
+            Either::B(offset_minutes) => Ok(Self::Offset(offset_minutes)),
+        }
+    }
+
+    pub(crate) fn to_js(self) -> Either<String, i32> {
+        match self {
+            Self::Utc => Either::A("UTC".to_owned()),
+            Self::Named(tz) => Either::A(tz.name().to_owned()),
+            Self::Offset(offset_minutes) => Either::B(offset_minutes),
+        }
+    }
+
+    pub(crate) fn format(self, format: &DateTimeFormat, utc: DateTime<Utc>, scale: u32) -> String {
+        let (local, offset_minutes, zone) = match self {
+            Self::Utc => (utc.naive_utc(), 0, Zone::Named("GMT")),
+            Self::Offset(offset_minutes) => (
+                utc.naive_utc() + TimeDelta::minutes(i64::from(offset_minutes)),
+                offset_minutes,
                 Zone::Offset,
-            ))
-        }
+            ),
+            Self::Named(tz) => {
+                let local = utc.with_timezone(&tz);
+                (
+                    local.naive_local(),
+                    local.offset().fix().local_minus_utc() / 60,
+                    Zone::Offset,
+                )
+            }
+        };
+        format.format(&DateTimeValue {
+            local,
+            offset_minutes,
+            scale,
+            zone,
+        })
     }
 }
 
@@ -79,19 +110,52 @@ fn format_date(
     scale: u32,
     timezone: Either<String, i32>,
 ) -> Result<String, BridgeError> {
-    let (local, offset_minutes, zone) =
-        local_in_timezone(utc_from_parts(epoch_millis, nanos)?, timezone)?;
-    Ok(compiled_format(format).format(&DateTimeValue {
-        local,
-        offset_minutes,
+    let timezone = ResolvedTimezone::from_js(timezone).map_err(BridgeError::Message)?;
+    Ok(timezone.format(
+        &compiled_format(format),
+        utc_from_parts(epoch_millis, nanos)?,
         scale,
-        zone,
-    }))
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn los_angeles() -> ResolvedTimezone {
+        ResolvedTimezone::from_name("America/Los_Angeles").unwrap()
+    }
+
+    #[test]
+    fn from_name_resolves_utc_aliases_named_zones_and_rejects_unknown() {
+        assert_eq!(
+            ResolvedTimezone::from_name("utc"),
+            Ok(ResolvedTimezone::Utc)
+        );
+        assert_eq!(
+            ResolvedTimezone::from_name("GMT"),
+            Ok(ResolvedTimezone::Utc)
+        );
+        assert_eq!(
+            los_angeles(),
+            ResolvedTimezone::Named(Tz::America__Los_Angeles)
+        );
+        assert_eq!(
+            ResolvedTimezone::from_name("Not/AZone"),
+            Err("unknown timezone: Not/AZone".to_string())
+        );
+    }
+
+    #[test]
+    fn js_round_trip_preserves_the_timezone() {
+        for timezone in [
+            ResolvedTimezone::Utc,
+            los_angeles(),
+            ResolvedTimezone::Offset(-480),
+        ] {
+            assert_eq!(ResolvedTimezone::from_js(timezone.to_js()), Ok(timezone));
+        }
+    }
 
     #[test]
     fn formats_calendar_date_in_utc() {

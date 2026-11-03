@@ -1,14 +1,9 @@
-use napi::bindgen_prelude::{Buffer, Either, Null, ToNapiValue};
+use napi::bindgen_prelude::{Buffer, Null, ToNapiValue};
 use napi::{Env, Result, sys};
 use std::borrow::Cow;
 
 use crate::class_constructors::ClassConstructors;
-
-#[derive(Debug, PartialEq)]
-pub(super) enum DateTimezone<'a> {
-    Named(&'a str),
-    Offset(i32),
-}
+use crate::date_format::ResolvedTimezone;
 
 /// Lets column readers stay free of `napi::Env`, so they can be unit-tested without a Node runtime
 /// and all N-API code lives in this file.
@@ -25,7 +20,7 @@ pub(super) enum JsCell<'a> {
         epoch_millis: f64,
         nanos: u32,
         scale: u32,
-        timezone: DateTimezone<'a>,
+        timezone: ResolvedTimezone,
         format: &'a str,
     },
 }
@@ -47,15 +42,18 @@ impl<'a> ToNapiValue for JsCell<'a> {
                 format,
             } => {
                 let env = Env::from_raw(env);
-                let timezone = match timezone {
-                    DateTimezone::Named(name) => Either::A(name.to_owned()),
-                    DateTimezone::Offset(minutes) => Either::B(minutes),
-                };
                 let date = ClassConstructors::get(&env)?
                     .snowflake_date
                     .borrow_back(&env)?
                     .new_instance(
-                        (epoch_millis, nanos, scale, timezone, format.to_owned()).into(),
+                        (
+                            epoch_millis,
+                            nanos,
+                            scale,
+                            timezone.to_js(),
+                            format.to_owned(),
+                        )
+                            .into(),
                     )?;
                 unsafe { ToNapiValue::to_napi_value(env.raw(), date) }
             }

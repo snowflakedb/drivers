@@ -10,7 +10,6 @@ import {
   binaryAsStringConverter,
   booleanAsStringConverter,
   realAsStringConverter,
-  temporalAsStringConverter,
   textAsStringConverter,
   vectorAsStringConverter,
 } from './string-converters.js';
@@ -32,11 +31,7 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   interval_day_time: { asValue: null, asString: () => textAsStringConverter },
   boolean: { asValue: null, asString: () => booleanAsStringConverter },
   binary: { asValue: null, asString: () => binaryAsStringConverter },
-  date: { asValue: null, asString: () => temporalAsStringConverter },
   time: { asValue: null, asString: () => textAsStringConverter },
-  timestamp_tz: { asValue: null, asString: () => temporalAsStringConverter },
-  timestamp_ltz: { asValue: null, asString: () => temporalAsStringConverter },
-  timestamp_ntz: { asValue: null, asString: () => temporalAsStringConverter },
   variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
   object: { asValue: () => variantConverter, asString: null },
   array: { asValue: () => variantConverter, asString: null },
@@ -48,7 +43,8 @@ const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   Number: ['fixed', 'real', 'vector'],
   Boolean: ['boolean'],
   Buffer: ['binary'],
-  Date: ['date', 'timestamp_tz', 'timestamp_ltz', 'timestamp_ntz'],
+  // DATE and TIMESTAMP_* columns are converted to strings in the bridge.
+  Date: [],
   JSON: ['variant'],
 };
 

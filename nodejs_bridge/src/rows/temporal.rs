@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTime, SnowflakeTimestampNtz};
 
-use super::js_cell::{DateTimezone, JsCell};
+use super::js_cell::JsCell;
+use super::row_options::ColumnOutput;
+use crate::date_format::{ResolvedTimezone, compiled_format};
 
 pub(super) enum TimeColumn {
     I32(Int32Array),
@@ -66,25 +68,37 @@ impl TimeFormat {
     }
 }
 
-/// Builds `SnowflakeDate` cells for DATE and TIMESTAMP_* columns; the JS side
-/// does the formatting.
+/// Builds cells for DATE and TIMESTAMP_* columns: a `SnowflakeDate` the JS side
+/// formats, or the formatted string when the column is fetched as a string.
 pub(super) struct SnowflakeDateFormat {
     pub(super) scale: u32,
     pub(super) format: String,
-    pub(super) timezone: String,
+    pub(super) timezone: ResolvedTimezone,
 }
 
 impl SnowflakeDateFormat {
     /// `offset_minutes` is the cell's own offset (TIMESTAMP_TZ); other types use
     /// the column's timezone.
-    pub(super) fn to_cell(&self, utc: DateTime<Utc>, offset_minutes: Option<i32>) -> JsCell<'_> {
-        JsCell::SnowflakeDate {
-            epoch_millis: utc.timestamp_millis() as f64,
-            nanos: utc.timestamp_subsec_nanos(),
-            scale: self.scale,
-            timezone: offset_minutes
-                .map_or(DateTimezone::Named(&self.timezone), DateTimezone::Offset),
-            format: &self.format,
+    pub(super) fn to_cell(
+        &self,
+        utc: DateTime<Utc>,
+        offset_minutes: Option<i32>,
+        output: ColumnOutput,
+    ) -> JsCell<'_> {
+        let timezone = offset_minutes.map_or(self.timezone, ResolvedTimezone::Offset);
+        match output {
+            ColumnOutput::String { .. } => JsCell::Str(Cow::Owned(timezone.format(
+                &compiled_format(&self.format),
+                utc,
+                self.scale,
+            ))),
+            ColumnOutput::Native => JsCell::SnowflakeDate {
+                epoch_millis: utc.timestamp_millis() as f64,
+                nanos: utc.timestamp_subsec_nanos(),
+                scale: self.scale,
+                timezone,
+                format: &self.format,
+            },
         }
     }
 }

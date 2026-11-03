@@ -1,4 +1,5 @@
 use super::column_reader::{ColumnReader, RowDecodeError};
+use super::row_options::RowOptions;
 use crate::error::{BridgeError, ToJsError};
 use crate::session_params::KnownSessionParameters;
 use arrow::array::RecordBatch;
@@ -31,6 +32,7 @@ impl StreamState {
     pub(crate) async fn fetch_next_batch(
         &self,
         session_params: &KnownSessionParameters,
+        row_options: &RowOptions,
     ) -> Result<bool, BridgeError> {
         let prepared = {
             let mut fetcher = self.fetcher.lock().await;
@@ -42,7 +44,11 @@ impl StreamState {
             loop {
                 match fetcher.next_batch().await? {
                     Some(batch) if batch.num_rows() > 0 => {
-                        break Some(CurrentBatch::from_batch(&batch, session_params)?);
+                        break Some(CurrentBatch::from_batch(
+                            &batch,
+                            session_params,
+                            row_options,
+                        )?);
                     }
                     Some(_) => {}
                     None => break None,
@@ -87,6 +93,7 @@ impl CurrentBatch {
     fn from_batch(
         batch: &RecordBatch,
         session_params: &KnownSessionParameters,
+        row_options: &RowOptions,
     ) -> Result<Self, RowDecodeError> {
         let column_readers = batch
             .schema()
@@ -94,7 +101,13 @@ impl CurrentBatch {
             .iter()
             .enumerate()
             .map(|(index, field)| {
-                ColumnReader::for_field(index, field, batch.column(index), session_params)
+                ColumnReader::for_field(
+                    index,
+                    field,
+                    batch.column(index),
+                    session_params,
+                    row_options,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
@@ -152,8 +165,11 @@ mod tests {
         StreamState::new(AsyncArrowBatchFetcher::from_batches(schema, batches))
     }
 
-    fn fetch_ok(result: Result<bool, BridgeError>) -> bool {
-        result.unwrap_or_else(|_| panic!("fetch_next_batch should succeed"))
+    async fn fetch(state: &StreamState, params: &KnownSessionParameters) -> bool {
+        state
+            .fetch_next_batch(params, &RowOptions::default())
+            .await
+            .unwrap_or_else(|_| panic!("fetch_next_batch should succeed"))
     }
 
     /// A `true` return has to guarantee at least one decodable row, otherwise
@@ -171,7 +187,7 @@ mod tests {
             ],
         );
 
-        assert!(fetch_ok(state.fetch_next_batch(&session_params()).await));
+        assert!(fetch(&state, &session_params()).await);
         assert_eq!(
             state.rows_remaining(),
             Some(1),
@@ -194,11 +210,11 @@ mod tests {
         );
         let params = session_params();
 
-        assert!(fetch_ok(state.fetch_next_batch(&params).await));
+        assert!(fetch(&state, &params).await);
         assert_eq!(state.rows_remaining(), Some(2));
 
         assert!(
-            fetch_ok(state.fetch_next_batch(&params).await),
+            fetch(&state, &params).await,
             "a redundant fetch should report the resident batch, not the stream state"
         );
         assert_eq!(
@@ -214,7 +230,7 @@ mod tests {
         let state = state_over(schema.clone(), vec![boolean_batch(&schema, vec![])]);
 
         assert!(
-            !fetch_ok(state.fetch_next_batch(&session_params()).await),
+            !fetch(&state, &session_params()).await,
             "a stream of only empty batches should be reported as exhausted"
         );
     }

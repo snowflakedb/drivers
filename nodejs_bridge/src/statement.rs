@@ -6,6 +6,7 @@ use column::column_names;
 
 use crate::BRIDGE;
 use crate::error::{BridgeError, ToJsError, async_to_js};
+use crate::rows::RowOptions;
 use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use crate::session_state::SessionState;
@@ -134,7 +135,7 @@ impl Statement {
     /// exhausted. Drain the loaded batch with
     /// [`get_next_row`](Self::get_next_row) before calling this again.
     #[napi]
-    pub fn fetch_next_batch(&self, env: &Env) -> Result<AsyncBlock<bool>> {
+    pub fn fetch_next_batch(&self, env: &Env, row_options: RowOptions) -> Result<AsyncBlock<bool>> {
         let result = self.result.clone();
         async_to_js(env, async move {
             let value = result.ready().await?;
@@ -145,7 +146,9 @@ impl Statement {
             let stream_state = Arc::clone(&query_result.stream_state);
             let session_params = Arc::clone(&query_result.session_params);
             drop(query_result);
-            stream_state.fetch_next_batch(&session_params).await
+            stream_state
+                .fetch_next_batch(&session_params, &row_options)
+                .await
         })
     }
 

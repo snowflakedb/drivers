@@ -34,9 +34,3 @@ export const binaryAsStringConverter: CellConverter = (value) =>
 
 export const vectorAsStringConverter: CellConverter = (value) =>
   value === null ? NULL_AS_STRING : JSON.stringify(value);
-
-// TODO: when DATE or timestamp columns are fetched as strings, format them in the bridge
-//  instead of building a SnowflakeDate there only for this converter to call toJSON().
-//  It also applies to other types, as they can be converted to string in the bridge as well.
-export const temporalAsStringConverter: CellConverter = (value) =>
-  value === null ? NULL_AS_STRING : (value as Date).toJSON();

@@ -54,7 +54,7 @@ export async function collectRows(
     const formatRow = createStatementRowFormatter(connection, coreStatement, rowOptions);
 
     const rows: unknown[] = [];
-    while (await coreStatement.fetchNextBatch()) {
+    while (await coreStatement.fetchNextBatch(rowOptions)) {
       let row: unknown[] | null = null;
       while ((row = coreStatement.getNextRow()) !== null) {
         rows.push(formatRow(row));
@@ -92,7 +92,7 @@ export function createRowStream(
       }
 
       coreStatement
-        .fetchNextBatch()
+        .fetchNextBatch(rowOptions)
         .then((hasRows) => {
           if (hasRows) {
             pushNextRow(this);

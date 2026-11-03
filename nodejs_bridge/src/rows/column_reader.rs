@@ -9,9 +9,10 @@ use super::column_source::{ColumnId, ColumnSource};
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::numeric::{FloatColumn, IntColumn, decimal_string};
+use super::row_options::{ColumnOutput, RowOptions};
 use super::temporal::{SnowflakeDateFormat, TimeColumn, TimeFormat, TimestampColumn};
 use super::vector::vector_numbers;
-use crate::date_format::compiled_format;
+use crate::date_format::{ResolvedTimezone, compiled_format};
 use crate::session_params::KnownSessionParameters;
 use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTimestampTz};
 use snafu::Snafu;
@@ -34,6 +35,7 @@ pub(super) struct ColumnReader {
     id: ColumnId,
     nulls: Option<NullBuffer>,
     decoder: ColumnDecoder,
+    output: ColumnOutput,
 }
 
 #[derive(Snafu, Debug)]
@@ -70,6 +72,7 @@ impl ColumnReader {
         field: &Field,
         column: &dyn Array,
         session_params: &KnownSessionParameters,
+        row_options: &RowOptions,
     ) -> Result<Self, RowDecodeError> {
         let logical_type =
             field
@@ -91,6 +94,7 @@ impl ColumnReader {
         Ok(Self {
             id: src.id,
             nulls: column.nulls().cloned(),
+            output: row_options.output_for(logical_type),
             decoder,
         })
     }
@@ -101,10 +105,10 @@ impl ColumnReader {
             .as_ref()
             .is_some_and(|nulls| nulls.is_null(row_index))
         {
-            return Ok(JsCell::Null);
+            return Ok(self.output.null_cell());
         }
         self.decoder
-            .read(row_index)
+            .read(row_index, self.output)
             .map_err(|source| RowDecodeError::InvalidValue {
                 column: self.id.clone(),
                 row: row_index,
@@ -127,7 +131,7 @@ impl ColumnDecoder {
                 SnowflakeDateFormat {
                     scale: 0,
                     format: params.date_output_format.clone(),
-                    timezone: "UTC".to_owned(),
+                    timezone: ResolvedTimezone::Utc,
                 },
             ),
             "DECFLOAT" => Self::Decfloat(src.array()?, src.metadata("precision")?),
@@ -147,7 +151,7 @@ impl ColumnDecoder {
                 SnowflakeDateFormat {
                     scale: src.metadata("scale")?,
                     format: params.timestamp_ltz_output_format.clone(),
-                    timezone: params.timezone.clone(),
+                    timezone: ResolvedTimezone::from_name(&params.timezone)?,
                 },
             ),
             "TIMESTAMP_NTZ" => Self::Timestamp(
@@ -155,7 +159,7 @@ impl ColumnDecoder {
                 SnowflakeDateFormat {
                     scale: src.metadata("scale")?,
                     format: params.timestamp_ntz_output_format.clone(),
-                    timezone: "UTC".to_owned(),
+                    timezone: ResolvedTimezone::Utc,
                 },
             ),
             "TIMESTAMP_TZ" => Self::TimestampTz(
@@ -163,7 +167,7 @@ impl ColumnDecoder {
                 SnowflakeDateFormat {
                     scale: src.metadata("scale")?,
                     format: params.timestamp_tz_output_format.clone(),
-                    timezone: "UTC".to_owned(),
+                    timezone: ResolvedTimezone::Utc,
                 },
             ),
             "VARIANT" | "OBJECT" | "ARRAY" => Self::Variant(src.array()?),
@@ -172,7 +176,7 @@ impl ColumnDecoder {
         })
     }
 
-    fn read(&self, row: usize) -> Result<JsCell<'_>, ReadArrowError> {
+    fn read(&self, row: usize, output: ColumnOutput) -> Result<JsCell<'_>, ReadArrowError> {
         Ok(match self {
             Self::Binary(array) => {
                 JsCell::Buffer(sf_types::SnowflakeBinary.read_arrow_type(array, row)?)
@@ -182,7 +186,7 @@ impl ColumnDecoder {
             }
             Self::Date(array, format) => {
                 let date = sf_types::SnowflakeDate.read_arrow_type(array, row)?;
-                format.to_cell(date.and_time(NaiveTime::MIN).and_utc(), None)
+                format.to_cell(date.and_time(NaiveTime::MIN).and_utc(), None, output)
             }
             Self::Decfloat(array, precision) => {
                 let (sig, exp) = sf_types::SnowflakeDecfloat.read_arrow_type(array, row)?;
@@ -198,14 +202,14 @@ impl ColumnDecoder {
             )),
             Self::Time(values, format) => format.to_cell(values.get(format.scale, row)?),
             Self::Timestamp(values, format) => {
-                format.to_cell(values.get(format.scale, row)?.and_utc(), None)
+                format.to_cell(values.get(format.scale, row)?.and_utc(), None, output)
             }
             Self::TimestampTz(array, format) => {
                 let instant = SnowflakeTimestampTz {
                     scale: format.scale,
                 }
                 .read_arrow_type(array, row)?;
-                format.to_cell(instant.utc.and_utc(), Some(instant.offset_minutes))
+                format.to_cell(instant.utc.and_utc(), Some(instant.offset_minutes), output)
             }
             Self::Vector(array) => JsCell::NumberArray(vector_numbers(array, row)?),
         })
@@ -215,7 +219,8 @@ impl ColumnDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rows::js_cell::DateTimezone;
+    use crate::date_format::ResolvedTimezone;
+    use crate::rows::row_options::FetchAsStringType;
     use arrow::array::{
         BinaryArray, BooleanArray, Decimal128Array, FixedSizeListArray, Float32Array, Float64Array,
         Int8Array, Int16Array, Int32Array, Int64Array, StringArray, StructArray,
@@ -245,7 +250,38 @@ mod tests {
     }
 
     fn reader_with_format(field: &Field, column: &dyn Array, time_format: &str) -> ColumnReader {
-        ColumnReader::for_field(0, field, column, &session_params(time_format)).unwrap()
+        ColumnReader::for_field(
+            0,
+            field,
+            column,
+            &session_params(time_format),
+            &RowOptions::default(),
+        )
+        .unwrap()
+    }
+
+    fn date_as_string() -> RowOptions {
+        RowOptions {
+            fetch_as_string: vec![FetchAsStringType::Date],
+            represent_null_as_string_null: false,
+        }
+    }
+
+    fn try_reader_with_options(
+        field: &Field,
+        column: &dyn Array,
+        options: &RowOptions,
+    ) -> Result<ColumnReader, String> {
+        ColumnReader::for_field(0, field, column, &session_params("HH24:MI:SS"), options)
+            .map_err(|err| err.to_string())
+    }
+
+    fn try_reader(field: &Field, column: &dyn Array) -> Result<ColumnReader, String> {
+        try_reader_with_options(field, column, &RowOptions::default())
+    }
+
+    fn string_reader(field: &Field, column: &dyn Array) -> ColumnReader {
+        try_reader_with_options(field, column, &date_as_string()).unwrap()
     }
 
     fn reader(field: &Field, column: &dyn Array) -> ColumnReader {
@@ -258,7 +294,7 @@ mod tests {
             epoch_millis: midnight.timestamp_millis() as f64,
             nanos: 0,
             scale: 0,
-            timezone: DateTimezone::Named("UTC"),
+            timezone: ResolvedTimezone::Utc,
             format: "YYYY-MM-DD",
         }
     }
@@ -537,10 +573,7 @@ mod tests {
         metadata.insert("logicalType".to_string(), "TIME".to_string());
         let field = Field::new("T", DataType::Int32, true).with_metadata(metadata);
         let array = Int32Array::from(vec![Some(0)]);
-        let err = ColumnReader::for_field(0, &field, &array, &session_params("HH24:MI:SS"))
-            .err()
-            .unwrap()
-            .to_string();
+        let err = try_reader(&field, &array).err().unwrap();
         assert!(
             err.contains("missing scale metadata"),
             "error should name the missing scale metadata, got: {err}"
@@ -551,10 +584,7 @@ mod tests {
     fn for_field_rejects_unsupported_physical_type_for_time() {
         let field = time_field("0");
         let array = BooleanArray::from(vec![true]);
-        let err = ColumnReader::for_field(0, &field, &array, &session_params("HH24:MI:SS"))
-            .err()
-            .unwrap()
-            .to_string();
+        let err = try_reader(&field, &array).err().unwrap();
         assert!(
             err.contains("TIME column 0 has unsupported Arrow type"),
             "error should name the unsupported type, got: {err}"
@@ -897,7 +927,7 @@ mod tests {
                 epoch_millis: 1_453_386_764_000.0,
                 nanos: 0,
                 scale: 0,
-                timezone: DateTimezone::Offset(-480),
+                timezone: ResolvedTimezone::Offset(-480),
                 format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
             }
         );
@@ -919,7 +949,7 @@ mod tests {
                 epoch_millis: -1_500.0,
                 nanos: 500_000_000,
                 scale: 3,
-                timezone: DateTimezone::Named("America/Los_Angeles"),
+                timezone: ResolvedTimezone::Named(chrono_tz::Tz::America__Los_Angeles),
                 format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
             }
         );
@@ -941,7 +971,7 @@ mod tests {
                 epoch_millis: -1_500.0,
                 nanos: 500_000_000,
                 scale: 3,
-                timezone: DateTimezone::Named("UTC"),
+                timezone: ResolvedTimezone::Utc,
                 format: "YYYY-MM-DD HH24:MI:SS.FF3",
             }
         );
@@ -949,13 +979,91 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_tz_rejects_flat_int64_physical_type() {
-        let field = field("TIMESTAMP_TZ", DataType::Int64, &[("scale", "9")]);
-        let array = Int64Array::from(vec![Some(0i64)]);
-        let err = ColumnReader::for_field(0, &field, &array, &session_params("HH24:MI:SS"))
+    fn date_as_string_formats_with_date_output_format() {
+        let date = NaiveDate::from_ymd_opt(2016, 1, 21).unwrap();
+        let field = field("DATE", DataType::Date32, &[]);
+        let array = Date32Array::from(vec![Some(Date32Type::from_naive_date(date)), None]);
+        let reader = string_reader(&field, &array);
+        assert_eq!(reader.read(0).unwrap(), str_cell("2016-01-21"));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+    }
+
+    #[test]
+    fn date_as_string_represents_null_as_string_null_when_requested() {
+        let field = field("DATE", DataType::Date32, &[]);
+        let array = Date32Array::from(vec![None]);
+        let options = RowOptions {
+            represent_null_as_string_null: true,
+            ..date_as_string()
+        };
+        let reader = try_reader_with_options(&field, &array, &options).unwrap();
+        assert_eq!(reader.read(0).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn time_ignores_date_fetch_as_string() {
+        let field = time_field("0");
+        let array = Int32Array::from(vec![None]);
+        let options = RowOptions {
+            represent_null_as_string_null: true,
+            ..date_as_string()
+        };
+        let reader = try_reader_with_options(&field, &array, &options).unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_tz_as_string_formats_in_the_cell_offset() {
+        let array = tz_2col(1_453_386_764, -480);
+        let field = field("TIMESTAMP_TZ", array.data_type().clone(), &[("scale", "0")]);
+        assert_eq!(
+            string_reader(&field, &array).read(0).unwrap(),
+            str_cell("2016-01-21 06:32:44.000 -0800")
+        );
+    }
+
+    #[test]
+    fn timestamp_ltz_as_string_formats_in_the_session_timezone() {
+        let field = field("TIMESTAMP_LTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500), None]);
+        let reader = string_reader(&field, &array);
+        assert_eq!(
+            reader.read(0).unwrap(),
+            str_cell("1969-12-31 15:59:58.500 -0800")
+        );
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+    }
+
+    #[test]
+    fn timestamp_ntz_as_string_formats_in_utc() {
+        let field = field("TIMESTAMP_NTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(-1_500)]);
+        assert_eq!(
+            string_reader(&field, &array).read(0).unwrap(),
+            str_cell("1969-12-31 23:59:58.500")
+        );
+    }
+
+    #[test]
+    fn timestamp_ltz_rejects_unknown_session_timezone() {
+        let field = field("TIMESTAMP_LTZ", DataType::Int64, &[("scale", "3")]);
+        let array = Int64Array::from(vec![Some(0)]);
+        let params = KnownSessionParameters {
+            timezone: "Not/AZone".to_string(),
+            ..KnownSessionParameters::defaults()
+        };
+        let err = ColumnReader::for_field(0, &field, &array, &params, &RowOptions::default())
             .err()
             .unwrap()
             .to_string();
+        assert_eq!(err, "unknown timezone: Not/AZone");
+    }
+
+    #[test]
+    fn timestamp_tz_rejects_flat_int64_physical_type() {
+        let field = field("TIMESTAMP_TZ", DataType::Int64, &[("scale", "9")]);
+        let array = Int64Array::from(vec![Some(0i64)]);
+        let err = try_reader(&field, &array).err().unwrap();
         assert!(
             err.contains("TIMESTAMP_TZ column 0 has unsupported Arrow type"),
             "got: {err}"

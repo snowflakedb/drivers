@@ -65,7 +65,7 @@ export declare class Statement {
    * exhausted. Drain the loaded batch with
    * [`get_next_row`](Self::get_next_row) before calling this again.
    */
-  fetchNextBatch(): Promise<boolean>
+  fetchNextBatch(rowOptions: RowOptions): Promise<boolean>
   /**
    * Returns the next row of the current batch, or `null` once that batch
    * is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
@@ -116,6 +116,8 @@ export interface ExecuteParams {
   requestId?: string
   describeOnly?: boolean
 }
+
+export type FetchAsStringType = 'String' | 'Number' | 'Boolean' | 'Date' | 'JSON' | 'Buffer'
 
 export interface FipsStatus {
   isFips: boolean
@@ -210,6 +212,11 @@ export interface QueryBindings {
 }
 
 export type QueryStatus = 'RUNNING' | 'ABORTING' | 'SUCCESS' | 'FAILED_WITH_ERROR' | 'ABORTED' | 'QUEUED' | 'FAILED_WITH_INCIDENT' | 'DISCONNECTED' | 'RESUMING_WAREHOUSE' | 'QUEUED_REPARING_WAREHOUSE' | 'RESTARTED' | 'BLOCKED' | 'NO_DATA'
+
+export interface RowOptions {
+  fetchAsString: Array<FetchAsStringType>
+  representNullAsStringNull: boolean
+}
 
 export declare function setCustomCredentialManager(manager: { read: (key: string) => Promise<string | null | undefined>, write: (key: string, token: string) => Promise<void>, remove: (key: string) => Promise<void> } | null): void
 
