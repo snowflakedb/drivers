@@ -41,7 +41,7 @@ RUN if [ "$FIPS" = "1" ]; then \
             aarch64) GO_SHA=9bf234ea70ffec9347fdf6b22ce4add51717d3386a38a441e8c8743fceb5eaee; GO_ARCH=arm64 ;; \
             *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;; \
         esac && \
-        curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tgz && \
+        curl --retry 5 --retry-all-errors --retry-delay 5 -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tgz && \
         echo "${GO_SHA}  /tmp/go.tgz" | sha256sum -c - && \
         rm -rf /usr/local/go && \
         tar -C /usr/local -xzf /tmp/go.tgz && \
