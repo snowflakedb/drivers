@@ -107,6 +107,15 @@ export type ConnectionOptions = {
   privateKeyPass?: string;
 
   /**
+   * Lifetime of each key-pair authentication JWT, in seconds. Applies to the token signed at
+   * login and to a token signed again on login retry. `0` uses the default. A negative value
+   * or a non-integer is rejected.
+   *
+   * @default 120
+   */
+  jwtTimeout?: number;
+
+  /**
    * When authenticator=WORKLOAD_IDENTITY, specifies the identity provider. Available options:
    * * AWS - Finds AWS credentials in the environment. Supports two attestation methods:
    *   * `GetCallerIdentity` (default) - encodes a SigV4-signed `GetCallerIdentity` request as the token

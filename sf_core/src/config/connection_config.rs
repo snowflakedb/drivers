@@ -14,7 +14,8 @@ use crate::config::param_names::*;
 use crate::config::rest_parameters::{
     BrowserOpenFn, ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
-    WifProvider, WorkloadIdentityConfig, parse_browser_redirect_port, require_http_header_value,
+    WifProvider, WorkloadIdentityConfig, jwt_timeout_secs, parse_browser_redirect_port,
+    require_http_header_value,
 };
 use crate::config::settings::Settings;
 use crate::config::{
@@ -97,6 +98,7 @@ pub enum AuthConfig {
         user: String,
         private_key_pem: SensitiveString,
         passphrase: Option<SensitiveString>,
+        jwt_timeout_secs: i64,
     },
     Pat {
         user: String,
@@ -309,13 +311,17 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         || (authenticator.is_empty() && has_private_key_params(settings));
 
     if use_jwt {
-        return Ok(AuthConfig::Jwt {
+        let jwt_timeout_secs = jwt_timeout_secs(settings)?;
+        let config = AuthConfig::Jwt {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
             private_key_pem: read_private_key(settings)?,
             passphrase: settings.get_sensitive_string(PRIVATE_KEY_PASSWORD),
-        });
+            jwt_timeout_secs,
+        };
+        tracing::debug!(jwt_timeout_secs, "configured key-pair JWT lifetime");
+        return Ok(config);
     }
 
     match auth_upper.as_str() {
@@ -532,10 +538,12 @@ fn login_method_from_auth_config(auth: &AuthConfig) -> LoginMethod {
             user,
             private_key_pem,
             passphrase,
+            jwt_timeout_secs,
         } => LoginMethod::PrivateKey {
             username: user.clone(),
             private_key: private_key_pem.clone(),
             passphrase: passphrase.clone(),
+            jwt_timeout_secs: *jwt_timeout_secs,
         },
         AuthConfig::Pat { user, token } => LoginMethod::Pat {
             username: user.clone(),
@@ -712,6 +720,15 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 "Invalid character {invalid_character:?} in account identifier '{account}'. \
                  Account identifiers may only contain letters, digits, '.', '-', and '_'."
             ),
+            code: ValidationCode::InvalidValue,
+        });
+    }
+
+    if let Err(err) = jwt_timeout_secs(settings) {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: JWT_TIMEOUT.into(),
+            message: err.to_string(),
             code: ValidationCode::InvalidValue,
         });
     }
@@ -2213,6 +2230,130 @@ mod tests {
             AuthConfig::Mfa { .. } => {}
             _ => panic!("Expected Mfa auth for lowercase 'username_password_mfa'"),
         }
+    }
+
+    #[test]
+    fn jwt_timeout_reaches_login_method_with_default_and_override() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIIFake\n-----END PRIVATE KEY-----\n";
+        let base = [
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String(pem.into())),
+            ("host", Setting::String("h.com".into())),
+        ];
+        for (configured, expected) in [
+            (None, 120),
+            (Some(Setting::Int(600)), 600),
+            (Some(Setting::Int(0)), 120),
+            (Some(Setting::String("0".into())), 120),
+        ] {
+            let mut settings = settings_from(&base);
+            if let Some(value) = configured {
+                settings.insert(JWT_TIMEOUT.to_string(), value);
+            }
+            let config = ConnectionConfig::build(&settings).unwrap();
+            let method = login_method_from_auth_config(&config.auth);
+            assert!(
+                matches!(method, LoginMethod::PrivateKey { jwt_timeout_secs, .. } if jwt_timeout_secs == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_jwt_timeout_returns_validation_error() {
+        for invalid in [
+            Setting::Int(-1),
+            Setting::String("-5".into()),
+            Setting::String("1.5".into()),
+            Setting::String("not-an-integer".into()),
+            Setting::Bool(true),
+        ] {
+            let settings = settings_from(&[
+                ("account", Setting::String("acct".into())),
+                ("user", Setting::String("u".into())),
+                ("password", Setting::String("p".into())),
+                (JWT_TIMEOUT.as_str(), invalid.clone()),
+            ]);
+            let err = ConnectionConfig::build(&settings).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::Validation { ref issues, .. }
+                    if issues.iter().any(|issue|
+                        issue.parameter == JWT_TIMEOUT.as_str()
+                            && issue.code == ValidationCode::InvalidValue
+                            && issue.message.contains("non-negative integer"))),
+                "expected jwt_timeout validation error for {invalid:?}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_logs_effective_lifetime_without_the_key() {
+        use std::sync::{Arc, Mutex};
+        use tracing::Subscriber;
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::layer::{Context, SubscriberExt};
+
+        struct Capture(Arc<Mutex<Vec<String>>>);
+
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+                let mut visitor = FieldVisitor::default();
+                event.record(&mut visitor);
+                self.0
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(visitor.text);
+            }
+        }
+
+        #[derive(Default)]
+        struct FieldVisitor {
+            text: String,
+        }
+
+        impl tracing::field::Visit for FieldVisitor {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.text.push_str(&format!("{}={value:?};", field.name()));
+            }
+
+            fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+                self.text.push_str(&format!("{}={value};", field.name()));
+            }
+
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                self.text.push_str(&format!("{}={value};", field.name()));
+            }
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(Capture(Arc::clone(&events)));
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let pem = "\n  -----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFake\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("SNOWFLAKE_JWT".into())),
+            ("private_key", Setting::String(pem.into())),
+            ("private_key_password", Setting::String("secret".into())),
+            (JWT_TIMEOUT.as_str(), Setting::Int(600)),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        ConnectionConfig::build(&settings).unwrap();
+
+        let logged = events
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .join("\n");
+        assert!(
+            logged.contains("jwt_timeout_secs=600"),
+            "expected the effective lifetime, got {logged}"
+        );
+        assert!(
+            !logged.contains("MIIFake") && !logged.contains("secret"),
+            "key material must stay out of the log, got {logged}"
+        );
     }
 
     #[test]

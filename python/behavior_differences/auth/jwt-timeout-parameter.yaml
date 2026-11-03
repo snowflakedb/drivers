@@ -1,0 +1,27 @@
+name: "Key-pair JWT lifetime is the jwt_timeout connection parameter"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  connect() has no jwt_timeout argument. A key-pair JWT is valid for 60 seconds
+  unless AuthByKeyPair is constructed with lifetime_in_seconds, or
+  JWT_LIFETIME_IN_SECONDS is set. The environment variable overrides the
+  constructor argument. 0 makes the token expire at its issue time. A negative
+  value makes it expire that many seconds before its issue time. A non-integer
+  environment value raises ValueError when the authenticator is created.
+new_driver_behavior: |
+  jwt_timeout is a connection parameter, in seconds. When it is omitted or 0,
+  each key-pair JWT is valid for 120 seconds. A positive integer is that
+  lifetime, including a token signed again on login retry. A negative value or a
+  non-integer is rejected when the connection is configured, as a
+  ProgrammingError whose message says the value must be a non-negative integer
+  number of seconds. JWT_LIFETIME_IN_SECONDS has no effect.
+description: |
+  The old driver's 60-second default is AuthByKeyPair's lifetime. The new
+  driver's 120-second default is the lifetime it already used before this
+  parameter existed. 0 selects that default.
+status_rationale: |
+  Kept as a breaking change on purpose. The new driver's lifetime was already
+  120 seconds, and a Python preset of 60 seconds would change that.

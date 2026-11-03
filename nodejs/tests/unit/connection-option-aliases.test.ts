@@ -27,6 +27,15 @@ describe('toCoreConnectionOptions', () => {
     });
   });
 
+  it('should map jwtTimeout onto jwt_timeout in seconds', () => {
+    expect(toCoreConnectionOptions({ jwtTimeout: 600 })).toEqual({
+      jwt_timeout: '600',
+    });
+    expect(toCoreConnectionOptions({ jwtTimeout: 0 })).toEqual({
+      jwt_timeout: '0',
+    });
+  });
+
   // TODO(SNOW-3996212): drop these two cases once OAuth and WIF e2e replace them.
   // Kept until then so a map typo on the new aliases fails in unit, not only in Jenkins.
   it('should map the access token used by legacy OAUTH and WORKLOAD_IDENTITY with an OIDC provider', () => {
@@ -190,6 +199,17 @@ describe('toCoreConnectionOptions', () => {
         browserActionTimeout: 'invalid' as unknown as number,
       }),
     ).toThrow("Expected type Int for parameter 'browserActionTimeout'");
+  });
+
+  it('should reject a non-integer jwtTimeout', () => {
+    expect(() =>
+      createConnection({
+        account: 'test-account',
+        username: 'test-user',
+        password: 'test-password',
+        jwtTimeout: 'invalid' as unknown as number,
+      }),
+    ).toThrow("Expected type Int for parameter 'jwt_timeout'");
   });
 
   it('should normalize workload identity option values for sf_core', () => {

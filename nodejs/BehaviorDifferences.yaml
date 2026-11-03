@@ -3330,3 +3330,22 @@ behavior_differences:
     description: |
       The field names the IdP on the login request. The old omission is not
       restored.
+
+  154:
+    name: 'jwtTimeout sets the key-pair JWT lifetime'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      There is no jwtTimeout connection option. A key-pair JWT is valid for 120
+      seconds. A jwtTimeout value is ignored, and the lifetime stays 120 seconds.
+    new_driver_behavior: |
+      jwtTimeout is a connection option, in seconds. When it is omitted or 0,
+      each key-pair JWT is valid for 120 seconds. A positive integer is that
+      lifetime, including a token signed again on login retry. A negative value
+      or a non-integer is rejected when the connection is configured.
+    description: |
+      The omitted lifetime matches the old driver. 0 selects that 120-second
+      default.

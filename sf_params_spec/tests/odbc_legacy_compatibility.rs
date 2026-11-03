@@ -26,6 +26,7 @@ const SUPPORTED_LEGACY_ODBC_DSN_KEYS: &[(&str, &str)] = &[
     ("SSL", "ssl"),
     ("LOGIN_TIMEOUT", "authentication_timeout"),
     ("QUERY_TIMEOUT", "query_timeout"),
+    ("JWT_TIMEOUT", "jwt_timeout"),
     ("PRIV_KEY_FILE", "private_key_file"),
     ("PRIV_KEY_FILE_PWD", "private_key_password"),
     ("PROXY", "proxy"),
@@ -169,8 +170,7 @@ const UNSUPPORTED_LEGACY_ODBC_DSN_KEYS: &[&str] = &[
     // Documented `NETWORK_TIMEOUT`. The legacy driver accepted the key;
     // its `getNetworkTimeout()` reader is unused today.
     "NETWORK_TIMEOUT",
-    // Hidden JWT, WIF, console-login, and platform-detection knobs.
-    "JWT_TIMEOUT",
+    // Hidden WIF, console-login, and platform-detection knobs.
     "JWT_CNXN_WAIT_TIME",
     "WORKLOAD_IDENTITY_HOST_KEY",
     "disableConsoleLogin",

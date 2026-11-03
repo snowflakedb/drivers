@@ -160,6 +160,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     Default: True
     """
 
+    jwt_timeout: int | None = 120
+    """Lifetime in seconds for each key-pair authentication JWT (0 uses the default; must not be negative).
+
+    Default: 120
+    """
+
     log_max_query_length: int | None = 80
     """Maximum number of characters of a query string to include in log messages. Default: 80"""
 

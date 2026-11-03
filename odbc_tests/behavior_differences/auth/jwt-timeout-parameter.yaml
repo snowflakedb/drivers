@@ -1,0 +1,28 @@
+name: "JWT_TIMEOUT defaults to 120 seconds and 0 selects that default"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  JWT_TIMEOUT is a connection-string attribute, in seconds. When it is omitted
+  or empty, each key-pair JWT is valid for 60 seconds. JWT_TIMEOUT=0 makes the
+  token expire at its issue time. A positive integer is that lifetime. A
+  negative integer makes the token expire that many seconds before its issue
+  time. A value with no leading integer, such as "abc", fails during connect.
+  A value such as "1.5" is read as 1.
+new_driver_behavior: |
+  JWT_TIMEOUT and jwt_timeout name the same connection parameter, in seconds.
+  When it is omitted or 0, each key-pair JWT is valid for 120 seconds. A
+  positive integer is that lifetime, including a token signed again on login
+  retry. A negative value, an empty value, or a non-integer is rejected when
+  the connection is configured, with SQLSTATE HY000 and a message that the
+  value must be a non-negative integer number of seconds.
+description: |
+  The old driver treats JWT_TIMEOUT as a hidden attribute. The new driver
+  accepts it as a supported connection parameter. The new driver keeps the
+  120-second lifetime it used before this parameter existed. An explicit 0
+  selects that default.
+status_rationale: |
+  Kept as a breaking change on purpose. The new driver's lifetime was already
+  120 seconds, and an ODBC preset of 60 seconds would change that.
