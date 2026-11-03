@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -74,6 +75,36 @@ class NativeBatchLifetimeTest {
     SFSQLException failure = assertThrows(SFSQLException.class, reader::loadNextBatch);
     assertEquals("Native Arrow stream is closed", failure.getMessage());
     assertEquals(0, reader.getBatch().getRowCount());
+  }
+
+  @Test
+  void shouldCloseSourceWhenSchemaDecodingFails() {
+    AtomicInteger closeCount = new AtomicInteger();
+    NativeBatchSource invalidSchemaSource =
+        new NativeBatchSource() {
+          @Override
+          public byte[] schema() {
+            // One field whose name length is negative.
+            return ByteBuffer.allocate(8)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(1)
+                .putInt(-1)
+                .array();
+          }
+
+          @Override
+          public int nextBatch(ByteBuffer[] slots) {
+            throw new AssertionError("no batch is requested when the schema is invalid");
+          }
+
+          @Override
+          public void close() {
+            closeCount.incrementAndGet();
+          }
+        };
+
+    assertThrows(IllegalArgumentException.class, () -> new NativeBatchReader(invalidSchemaSource));
+    assertEquals(1, closeCount.get());
   }
 
   private static void assertLifetimeAcross(List<int[]> batches, boolean expectEmptySkip)
