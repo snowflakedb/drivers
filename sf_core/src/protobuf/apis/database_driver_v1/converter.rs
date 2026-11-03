@@ -1592,14 +1592,9 @@ mod tests {
             oidc_token: None,
         };
         let client = reqwest::Client::new();
-        let source = workload_identity::create_attestation(
-            &client,
-            None,
-            &config,
-            crate::tls::RootStoreProvider::new(),
-        )
-        .await
-        .expect_err("OIDC provider with no token must fail");
+        let source = workload_identity::create_attestation(&client, None, &config, None)
+            .await
+            .expect_err("OIDC provider with no token must fail");
 
         let err = ApiError::WorkloadIdentityAttestation {
             location: loc(),

@@ -53,6 +53,7 @@ use crate::rest::snowflake::external_browser::{
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::RootStoreProvider;
+use crate::tls::aws_http_client::AwsSdkReqwestClient;
 use crate::tls::client::create_tls_client_with_proxy_prepared;
 use crate::tls::error::TlsError;
 use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
@@ -810,17 +811,43 @@ fn login_session_parameter_value(key: &str, value: &str) -> serde_json::Value {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn auth_request_data(
-    client: &reqwest::Client,
+/// HTTP clients for one login.
+///
+/// [`LoginClients::new`] sets no AWS SDK client. AWS Workload Identity then
+/// uses a default-TLS client.
+pub struct LoginClients<'a> {
+    client: &'a reqwest::Client,
+    aws_sdk_http: Option<&'a AwsSdkReqwestClient>,
+}
+
+impl<'a> LoginClients<'a> {
+    pub fn new(client: &'a reqwest::Client) -> Self {
+        Self {
+            client,
+            aws_sdk_http: None,
+        }
+    }
+
+    pub(crate) fn with_aws_sdk_http(
+        client: &'a reqwest::Client,
+        aws_sdk_http: Option<&'a AwsSdkReqwestClient>,
+    ) -> Self {
+        Self {
+            client,
+            aws_sdk_http,
+        }
+    }
+}
+
+pub(crate) async fn auth_request_data(
+    clients: &LoginClients<'_>,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
-    crl_manager: ConnectionCrl,
-    roots: RootStoreProvider,
 ) -> Result<AuthRequestData, RestError> {
+    let client = clients.client;
     let mut data = base_auth_request_data(login_parameters);
 
     if let Some(secondary_roles) = login_parameters.secondary_roles.as_deref()
@@ -967,26 +994,8 @@ pub async fn auth_request_data(
             // fetching cloud credentials. See workload_identity::host_allowlist.
             workload_identity::ensure_allowed_host(&login_parameters.server_url)
                 .context(WorkloadIdentityAttestationSnafu)?;
-            let aws_sdk_http = if matches!(
-                cfg.provider,
-                crate::config::rest_parameters::WifProvider::Aws
-            ) {
-                let tls_config = aws_wif_tls_config(&login_parameters.client_info.tls_config);
-                Some(
-                    crate::tls::aws_http_client::AwsSdkReqwestClient::build_prepared(
-                        &tls_config,
-                        Some(&login_parameters.client_info.proxy_config),
-                        crl_manager,
-                        roots.clone(),
-                    )
-                    .await
-                    .context(WifSdkHttpClientSnafu)?,
-                )
-            } else {
-                None
-            };
             let attestation =
-                workload_identity::create_attestation(client, aws_sdk_http.as_ref(), cfg, roots)
+                workload_identity::create_attestation(client, clients.aws_sdk_http, cfg, None)
                     .await
                     .context(WorkloadIdentityAttestationSnafu)?;
             data.authenticator = Some(authenticator::WORKLOAD_IDENTITY.to_string());
@@ -1361,17 +1370,16 @@ pub async fn snowflake_login(
         roots.clone(),
     )
     .await?;
+    let aws_sdk_http = aws_wif_sdk_http_client(login_parameters, crl_manager, roots).await?;
     let policy = RetryPolicy::default();
     snowflake_login_with_client(
-        &client,
+        &LoginClients::with_aws_sdk_http(&client, aws_sdk_http.as_ref()),
         login_parameters,
         session_parameters,
         None,
         None,
         &policy,
         None,
-        crl_manager,
-        roots,
         None,
     )
     .await
@@ -1379,31 +1387,28 @@ pub async fn snowflake_login(
 
 #[tracing::instrument(
     skip(
-        client,
+        clients,
         login_parameters,
         session_parameters,
         token_cache,
         retry_policy,
         xp_backend,
-        crl_manager,
-        roots,
         login_deadline
     ),
     fields(account_name, login_name)
 )]
 #[allow(clippy::too_many_arguments)]
 pub async fn snowflake_login_with_client(
-    client: &reqwest::Client,
+    clients: &LoginClients<'_>,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     prompt_locks: Option<&std::sync::Arc<prompt_lock::PromptLockMap>>,
     retry_policy: &RetryPolicy,
     xp_backend: Option<&dyn crate::xp_backend::SnowflakeBackend>,
-    crl_manager: ConnectionCrl,
-    roots: RootStoreProvider,
     login_deadline: Option<Instant>,
 ) -> Result<LoginResult, RestError> {
+    let client = clients.client;
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -1553,14 +1558,12 @@ pub async fn snowflake_login_with_client(
     // For prompt-locked callers the existing cache lookups inside this function
     // (lines for ID token / MFA token) serve as the post-lock double-check.
     let login_request_data = auth_request_data(
-        client,
+        clients,
         login_parameters,
         session_parameters,
         token_cache.clone(),
         prompt_locks,
         retry_policy,
-        crl_manager.clone(),
-        roots.clone(),
     )
     .await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
@@ -1626,14 +1629,12 @@ pub async fn snowflake_login_with_client(
                 )
                 .await;
                 let retry_data = auth_request_data(
-                    client,
+                    clients,
                     login_parameters,
                     session_parameters,
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
-                    crl_manager.clone(),
-                    roots.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest {
@@ -1701,14 +1702,12 @@ pub async fn snowflake_login_with_client(
             if should_retry {
                 tracing::debug!("Retrying login after OAuth refresh");
                 let retry_data = auth_request_data(
-                    client,
+                    clients,
                     login_parameters,
                     session_parameters,
                     token_cache.clone(),
                     prompt_locks,
                     retry_policy,
-                    crl_manager.clone(),
-                    roots.clone(),
                 )
                 .await?;
                 let retry_request = AuthRequest {
@@ -3138,6 +3137,32 @@ fn aws_wif_tls_config(tls_config: &crate::tls::TlsConfig) -> crate::tls::TlsConf
     tls_config
 }
 
+pub(crate) async fn aws_wif_sdk_http_client(
+    login_parameters: &LoginParameters,
+    crl_manager: ConnectionCrl,
+    roots: RootStoreProvider,
+) -> Result<Option<AwsSdkReqwestClient>, RestError> {
+    let LoginMethod::WorkloadIdentity(cfg) = &login_parameters.login_method else {
+        return Ok(None);
+    };
+    if !matches!(
+        cfg.provider,
+        crate::config::rest_parameters::WifProvider::Aws
+    ) {
+        return Ok(None);
+    }
+    let tls_config = aws_wif_tls_config(&login_parameters.client_info.tls_config);
+    AwsSdkReqwestClient::build_prepared(
+        &tls_config,
+        Some(&login_parameters.client_info.proxy_config),
+        crl_manager,
+        roots,
+    )
+    .await
+    .context(WifSdkHttpClientSnafu)
+    .map(Some)
+}
+
 pub(crate) fn authorization_header(session_token: &str, use_bearer: bool) -> header::HeaderValue {
     let value = if use_bearer {
         format!("Bearer {session_token}")
@@ -3556,6 +3581,18 @@ mod tests {
         assert!(output.verify_hostname);
         assert!(!input.verify_certificates);
         assert!(!input.verify_hostname);
+    }
+
+    #[tokio::test]
+    async fn aws_wif_sdk_http_client_is_absent_for_password_login() {
+        let client = aws_wif_sdk_http_client(
+            &test_login_params(),
+            crate::crl::CrlManager::new().connection_crl(),
+            RootStoreProvider::new(),
+        )
+        .await
+        .expect("password login does not build an SDK client");
+        assert!(client.is_none());
     }
 
     #[test]
@@ -3986,15 +4023,13 @@ mod tests {
     async fn login_uses_backend_without_http() {
         let backend = RecordingBackend::default();
         let result = snowflake_login_with_client(
-            &reqwest::Client::new(),
+            &LoginClients::new(&reqwest::Client::new()),
             &test_login_params(),
             None,
             None,
             None,
             &RetryPolicy::default(),
             Some(&backend),
-            crate::crl::CrlManager::new().connection_crl(),
-            crate::tls::RootStoreProvider::new(),
             None,
         )
         .await;
@@ -4497,14 +4532,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4532,14 +4565,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4562,14 +4593,12 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         rt.block_on(auth_request_data(
-            &client,
+            &LoginClients::new(&client),
             &test_login_params(),
             Some(session_parameters),
             None,
             None,
             &RetryPolicy::default(),
-            crate::crl::CrlManager::new().connection_crl(),
-            crate::tls::RootStoreProvider::new(),
         ))
         .unwrap()
         .session_parameters
@@ -4707,14 +4736,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4735,14 +4762,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4760,14 +4785,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
         let json = serde_json::to_value(&data).unwrap();
@@ -4791,14 +4814,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4818,14 +4839,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4896,15 +4915,13 @@ mod tests {
         let client = reqwest::Client::new();
         let result = rt
             .block_on(snowflake_login_with_client(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
                 None,
             ))
             .unwrap();
@@ -4934,14 +4951,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -4976,14 +4991,12 @@ mod tests {
             };
             let data = rt
                 .block_on(auth_request_data(
-                    &client,
+                    &LoginClients::new(&client),
                     &login_params,
                     None,
                     None,
                     None,
                     &RetryPolicy::default(),
-                    crate::crl::CrlManager::new().connection_crl(),
-                    crate::tls::RootStoreProvider::new(),
                 ))
                 .unwrap();
             assert_eq!(
@@ -5001,14 +5014,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -5025,14 +5036,12 @@ mod tests {
         let client = reqwest::Client::new();
         let data = rt
             .block_on(auth_request_data(
-                &client,
+                &LoginClients::new(&client),
                 &login_params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             ))
             .unwrap();
 
@@ -5540,15 +5549,13 @@ mod tests {
                 ..test_login_params()
             };
             let result = snowflake_login_with_client(
-                &reqwest::Client::new(),
+                &LoginClients::new(&reqwest::Client::new()),
                 &params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
                 None,
             )
             .await
@@ -5842,15 +5849,13 @@ mod tests {
                 ..test_login_params()
             };
             let result = snowflake_login_with_client(
-                &reqwest::Client::new(),
+                &LoginClients::new(&reqwest::Client::new()),
                 &params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
                 None,
             )
             .await
@@ -5886,15 +5891,13 @@ mod tests {
 
         async fn login(params: &LoginParameters) -> Result<LoginResult, RestError> {
             snowflake_login_with_client(
-                &reqwest::Client::new(),
+                &LoginClients::new(&reqwest::Client::new()),
                 params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
                 None,
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
                 None,
             )
             .await
@@ -6740,14 +6743,12 @@ mod tests {
             let params = wif_login_params("https://not-snowflake.example");
 
             let err = auth_request_data(
-                &reqwest::Client::new(),
+                &LoginClients::new(&reqwest::Client::new()),
                 &params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             )
             .await
             .expect_err("disallowed WIF host must fail closed");
@@ -6775,14 +6776,12 @@ mod tests {
             let params = wif_login_params("https://acct.snowflakecomputing.com");
 
             let err = auth_request_data(
-                &reqwest::Client::new(),
+                &LoginClients::new(&reqwest::Client::new()),
                 &params,
                 None,
                 None,
                 None,
                 &RetryPolicy::default(),
-                crate::crl::CrlManager::new().connection_crl(),
-                crate::tls::RootStoreProvider::new(),
             )
             .await
             .expect_err("missing OIDC token must fail");

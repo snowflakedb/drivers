@@ -206,14 +206,14 @@ impl Default for AttestationEndpoints {
 /// `aws_sdk_http` backs the AWS provider's STS calls (which need the
 /// SDK-constrained transport, see `tls::aws_http_client`). Pass a
 /// connection-scoped client so those calls honour the connection's TLS
-/// policy; `None` builds a default-TLS one, for callers with no connection
-/// context (the `wif_create_attestation` RPC). The other providers only use
+/// policy. `None` builds a default-TLS client from `roots`, or from a fresh
+/// [`RootStoreProvider`] when `roots` is `None`. The other providers only use
 /// `client`.
 pub(crate) async fn create_attestation(
     client: &reqwest::Client,
     aws_sdk_http: Option<&AwsSdkReqwestClient>,
     config: &WorkloadIdentityConfig,
-    roots: RootStoreProvider,
+    roots: Option<RootStoreProvider>,
 ) -> Result<Attestation, AttestationError> {
     // The AWS, Azure and GCP providers exchange authentication material over
     // the supplied clients (OIDC makes no request). Every caller now passes a
@@ -228,7 +228,8 @@ pub(crate) async fn create_attestation(
             let sdk_http = match aws_sdk_http {
                 Some(sdk_http) => sdk_http,
                 None => {
-                    default_sdk_http = AwsSdkReqwestClient::with_default_tls(roots.clone())
+                    let roots = roots.unwrap_or_default();
+                    default_sdk_http = AwsSdkReqwestClient::with_default_tls(roots)
                         .await
                         .context(aws::SdkHttpClientSnafu)
                         .context(AwsAttestationSnafu)?;

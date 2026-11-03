@@ -111,15 +111,13 @@ fn should_refresh_session_proactively() {
         // When we login and immediately call refresh
         let policy = sf_core::config::retry::RetryPolicy::default();
         let login_result = snowflake_login_with_client(
-            &http_client,
+            &sf_core::rest::snowflake::LoginClients::new(&http_client),
             &login_parameters,
             None,
             None,
             None,
             &policy,
             None,
-            sf_core::crl::CrlManager::new().connection_crl(),
-            sf_core::tls::RootStoreProvider::new(),
             None,
         )
         .await

@@ -29,8 +29,6 @@ use sf_core::apis::database_driver_v1::{DatabaseDriverV1, ExecuteQueryResult};
 #[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
 #[cfg(target_os = "linux")]
-use sf_core::crl::CrlManager;
-#[cfg(target_os = "linux")]
 use sf_core::rest::snowflake::{
     AbortOutcome, QueryInput, QueryOptions, RestError, get_query_status, snowflake_abort_query,
     snowflake_cancel_query, snowflake_get_query_result, snowflake_login_with_client,
@@ -38,8 +36,6 @@ use sf_core::rest::snowflake::{
 };
 #[cfg(target_os = "linux")]
 use sf_core::sensitive::SensitiveString;
-#[cfg(target_os = "linux")]
-use sf_core::tls::RootStoreProvider;
 #[cfg(target_os = "linux")]
 use sf_core::xp_backend::SnowflakeBackend;
 #[cfg(target_os = "linux")]
@@ -194,7 +190,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
 
     host.set_session_info(SESSION_INFO);
     let login = snowflake_login_with_client(
-        &client,
+        &sf_core::rest::snowflake::LoginClients::new(&client),
         &login_parameters(),
         Some(&HashMap::from([(
             "QUERY_TAG".to_string(),
@@ -204,8 +200,6 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         None,
         &Default::default(),
         xp_backend,
-        CrlManager::new().connection_crl(),
-        RootStoreProvider::new(),
         None,
     )
     .await

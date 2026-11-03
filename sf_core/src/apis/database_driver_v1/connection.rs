@@ -468,20 +468,30 @@ impl DatabaseDriverV1 {
                     conn.xp_backend_arc().context(LoginSnafu)?
                 };
 
-                let login_fut = crate::rest::snowflake::snowflake_login_with_client(
-                    &http_client,
-                    &login_parameters,
-                    init_params.as_ref(),
-                    token_cache,
-                    Some(&self.prompt_locks),
-                    &retry_policy,
-                    xp_backend.as_deref(),
-                    connection_crl.clone(),
-                    self.root_store_provider.clone(),
-                    timeout_config
-                        .login_timeout
-                        .map(|budget| std::time::Instant::now() + budget),
-                );
+                let login_fut = async {
+                    let aws_sdk_http = crate::rest::snowflake::aws_wif_sdk_http_client(
+                        &login_parameters,
+                        connection_crl.clone(),
+                        self.root_store_provider.clone(),
+                    )
+                    .await?;
+                    crate::rest::snowflake::snowflake_login_with_client(
+                        &crate::rest::snowflake::LoginClients::with_aws_sdk_http(
+                            &http_client,
+                            aws_sdk_http.as_ref(),
+                        ),
+                        &login_parameters,
+                        init_params.as_ref(),
+                        token_cache,
+                        Some(&self.prompt_locks),
+                        &retry_policy,
+                        xp_backend.as_deref(),
+                        timeout_config
+                            .login_timeout
+                            .map(|budget| std::time::Instant::now() + budget),
+                    )
+                    .await
+                };
 
                 let login_result = if let Some(budget) = timeout_config.login_timeout {
                     match tokio::time::timeout(budget, login_fut).await {

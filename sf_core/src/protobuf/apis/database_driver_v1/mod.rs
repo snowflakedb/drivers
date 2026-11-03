@@ -1291,7 +1291,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         // thing that can end the call short of the endpoint answering. The OIDC
         // provider makes no request and so has nothing to observe.
         let create = async {
-            workload_identity::create_attestation(&client, None, &config, roots)
+            workload_identity::create_attestation(&client, None, &config, Some(roots))
                 .await
                 .context(WorkloadIdentityAttestationSnafu)
         };
