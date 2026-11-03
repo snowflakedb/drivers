@@ -3245,6 +3245,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn build_succeeds_with_server_url_only_no_account_for_nodejs() {
+        use crate::config::param_registry::Wrapper;
+        use crate::config::path_resolver::ConfigPaths;
+        use crate::config::resolver;
+
+        let mut explicit = ParamStore::new();
+        explicit.insert(
+            "server_url".into(),
+            Setting::String("https://myaccount.snowflakecomputing.com".into()),
+        );
+        explicit.insert("user".into(), Setting::String("myuser".into()));
+        explicit.insert("password".into(), Setting::String("mypassword".into()));
+
+        let paths = ConfigPaths {
+            config_file: None,
+            connections_file: None,
+        };
+        let resolved = resolver::resolve_with_paths_for_wrapper(
+            &explicit,
+            &paths,
+            false,
+            Some(Wrapper::NodeJs),
+        )
+        .unwrap();
+        let config = ConnectionConfig::build(&resolved).unwrap();
+
+        assert_eq!(config.server.account, "myaccount");
+        assert_eq!(
+            config.server.server_url,
+            "https://myaccount.snowflakecomputing.com"
+        );
+    }
+
     // ── WIF tests ──────────────────────────────────────────────────────
 
     fn wif_base_settings(provider: &str) -> Vec<(&'static str, Setting)> {

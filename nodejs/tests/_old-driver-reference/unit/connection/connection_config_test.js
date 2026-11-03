@@ -1429,38 +1429,9 @@ describe('ConnectionConfig: basic', function () {
         account: 'account',
       },
     },
-    {
-      name: 'accessUrl and host no account',
-      input: {
-        username: 'username',
-        password: 'password',
-        retryTimeout: 1234,
-        host: 'host.snowflakecomputing.com',
-        accessUrl: 'https://access-url.snowflakecomputing.com',
-      },
-      options: {
-        accessUrl: 'https://access-url.snowflakecomputing.com',
-        username: 'username',
-        password: 'password',
-        account: 'access-url',
-      },
-    },
-    {
-      name: 'host no account',
-      input: {
-        username: 'username',
-        password: 'password',
-        retryTimeout: 1234,
-        host: 'host.snowflakecomputing.com',
-      },
-      options: {
-        accessUrl: 'https://host.snowflakecomputing.com',
-        username: 'username',
-        password: 'password',
-        host: 'host.snowflakecomputing.com',
-        account: 'host',
-      },
-    },
+    // "accessUrl and host no account" and "host no account" are covered by the
+    // derive_account_from_host_* tests in sf_core/src/config/resolver.rs and by
+    // nodejs/tests/e2e/session/connection-option-parameters.test.ts.
     {
       name: 'host and port',
       input: {

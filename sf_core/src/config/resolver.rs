@@ -9,30 +9,38 @@ use crate::config::settings::Setting;
 use crate::config::toml_loader::FilePermissionCheck;
 use crate::env_vars;
 use std::path::Path;
+use url::Url;
 
-/// If `account` is not explicitly set but `host` is available,
-/// derive the account identifier from the hostname — matching the legacy
-/// `snowflake-odbc` driver behavior.
+/// If `account` is not explicitly set, derive the account identifier from the
+/// hostname — matching the legacy `snowflake-odbc` driver behavior for `host`.
+///
+/// For the Node.js wrapper the hostname of `server_url` (its `accessUrl`) is
+/// used first when it parses as a URL, matching the legacy Node.js driver.
+/// Other wrappers derive the account from `host` only.
 ///
 /// The algorithm is:
-///   1. Take everything before the first `.` in the host.
-///   2. If the host contains `.global.`, strip the external-ID suffix after the
-///      last `-` in that first token.
+///   1. Take everything before the first `.` in the hostname.
+///   2. If the hostname contains `.global.`, strip the external-ID suffix after
+///      the last `-` in that first token.
 ///
 /// Must be called **before** underscore normalization so that
 /// `normalize_host_underscores` can see the derived account.
-pub(crate) fn derive_account_from_host(store: &mut ParamStore) {
+pub(crate) fn derive_account_from_host(store: &mut ParamStore, wrapper: Option<Wrapper>) {
     if store.get_string(param_names::ACCOUNT).is_some() {
         return;
     }
 
-    let host_opt = store.get(param_names::HOST).and_then(|h| h.as_string());
+    let server_url_host = store
+        .get_string(param_names::SERVER_URL)
+        .filter(|_| wrapper == Some(Wrapper::NodeJs))
+        .and_then(|server_url| Url::parse(&server_url).ok())
+        .and_then(|server_url| server_url.host_str().map(str::to_owned));
 
-    let Some(host) = host_opt else {
+    let Some(host) = server_url_host.or_else(|| store.get_string(param_names::HOST)) else {
         return;
     };
 
-    let first_label = host.split('.').next().unwrap_or(host);
+    let first_label = host.split('.').next().unwrap_or(&host);
     if first_label.is_empty() {
         return;
     }
@@ -286,7 +294,7 @@ pub fn resolve_with_paths_for_wrapper(
         },
     );
 
-    derive_account_from_host(&mut merged);
+    derive_account_from_host(&mut merged, wrapper);
     derive_host_from_account(&mut merged);
 
     Ok(merged)
@@ -370,7 +378,7 @@ mod tests {
         let mut store = ParamStore::new();
         store.insert(param_names::HOST.into(), Setting::String(host.to_owned()));
 
-        derive_account_from_host(&mut store);
+        derive_account_from_host(&mut store, None);
 
         assert_eq!(
             store.get(param_names::ACCOUNT),
@@ -386,7 +394,7 @@ mod tests {
             Setting::String("myaccount-extid.global.snowflake.com".to_owned()),
         );
 
-        derive_account_from_host(&mut store);
+        derive_account_from_host(&mut store, None);
 
         assert_eq!(
             store.get(param_names::ACCOUNT),
@@ -406,7 +414,7 @@ mod tests {
             Setting::String("other.snowflakecomputing.com".to_owned()),
         );
 
-        derive_account_from_host(&mut store);
+        derive_account_from_host(&mut store, None);
 
         assert_eq!(
             store.get(param_names::ACCOUNT),
@@ -414,11 +422,136 @@ mod tests {
         );
     }
 
+    #[test_case("https://myaccount.snowflakecomputing.com", "myaccount" ; "server url")]
+    #[test_case("http://MyAccount.us-east-1.snowflakecomputing.com:8443/path", "myaccount" ; "server url with port and path")]
+    #[test_case("https://myaccount-extid.global.snowflakecomputing.com", "myaccount" ; "global server url")]
+    fn derive_account_from_host_uses_server_url_hostname(server_url: &str, expected: &str) {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String(server_url.to_owned()),
+        );
+
+        derive_account_from_host(&mut store, Some(Wrapper::NodeJs));
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String(expected.to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_prefers_server_url_over_host() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://url-account.snowflakecomputing.com".to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("host-account.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store, Some(Wrapper::NodeJs));
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("url-account".to_owned())),
+        );
+    }
+
+    #[test_case("not-a-url" ; "not a url")]
+    #[test_case("" ; "empty")]
+    fn derive_account_from_host_falls_back_to_host_when_server_url_does_not_parse(
+        server_url: &str,
+    ) {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String(server_url.to_owned()),
+        );
+        store.insert(
+            param_names::HOST.into(),
+            Setting::String("host-account.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store, Some(Wrapper::NodeJs));
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("host-account".to_owned())),
+        );
+    }
+
+    #[test]
+    fn derive_account_from_host_noop_when_server_url_does_not_parse_and_no_host() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("not-a-url".to_owned()),
+        );
+
+        derive_account_from_host(&mut store, Some(Wrapper::NodeJs));
+
+        assert_eq!(store.get(param_names::ACCOUNT), None);
+    }
+
+    #[test]
+    fn derive_account_from_host_skips_server_url_when_account_present() {
+        let mut store = ParamStore::new();
+        store.insert(
+            param_names::ACCOUNT.into(),
+            Setting::String("explicit".to_owned()),
+        );
+        store.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://other.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut store, Some(Wrapper::NodeJs));
+
+        assert_eq!(
+            store.get(param_names::ACCOUNT),
+            Some(&Setting::String("explicit".to_owned())),
+        );
+    }
+
+    #[test_case(None ; "no wrapper")]
+    #[test_case(Some(Wrapper::Python) ; "python")]
+    #[test_case(Some(Wrapper::Odbc) ; "odbc")]
+    #[test_case(Some(Wrapper::Jdbc) ; "jdbc")]
+    #[test_case(Some(Wrapper::DotNet) ; "dotnet")]
+    fn derive_account_from_host_ignores_server_url_outside_nodejs(wrapper: Option<Wrapper>) {
+        let mut with_host = ParamStore::new();
+        with_host.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://url-account.snowflakecomputing.com".to_owned()),
+        );
+        with_host.insert(
+            param_names::HOST.into(),
+            Setting::String("host-account.snowflakecomputing.com".to_owned()),
+        );
+        let mut server_url_only = ParamStore::new();
+        server_url_only.insert(
+            param_names::SERVER_URL.into(),
+            Setting::String("https://url-account.snowflakecomputing.com".to_owned()),
+        );
+
+        derive_account_from_host(&mut with_host, wrapper);
+        derive_account_from_host(&mut server_url_only, wrapper);
+
+        assert_eq!(
+            with_host.get(param_names::ACCOUNT),
+            Some(&Setting::String("host-account".to_owned())),
+        );
+        assert_eq!(server_url_only.get(param_names::ACCOUNT), None);
+    }
+
     #[test]
     fn derive_account_from_host_noop_when_no_host() {
         let mut store = ParamStore::new();
 
-        derive_account_from_host(&mut store);
+        derive_account_from_host(&mut store, None);
 
         assert_eq!(store.get(param_names::ACCOUNT), None);
     }

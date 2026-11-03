@@ -1829,8 +1829,9 @@ behavior_differences:
     new_driver_behavior: |
       account is typed as string on ConnectionOptions. createConnection accepts the value.
       connectAsync fails in core.
-      - Missing: a non-empty account is required even when host is set. connectAsync fails
-        with "Missing required parameter 'account'".
+      - Missing: when host or accessUrl is set, account is taken from it, as in the old
+        driver (BD#88). With none of the three, connectAsync fails with "Missing required
+        parameter 'account'".
       - Empty: the same missing-account error as above.
       - Non-string: rejected by the TypeScript type. There is no runtime 404008.
       - Other values: each character must be an ASCII letter, digit, ".", "-", or "_".
@@ -1839,18 +1840,19 @@ behavior_differences:
 
   88:
     name: 'accessUrl does not fill account'
-    status: unknown
-    type: unknown
+    status: fixed
+    type: bug
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
       createConnection with accessUrl "https://access-url.snowflakecomputing.com" and no
-      account sets account to "access-url". createConnection does not throw.
+      account sets account to "access-url". createConnection does not throw. When host
+      is also set, account still comes from accessUrl.
     new_driver_behavior: |
-      accessUrl does not fill account. account is required. With accessUrl and no
-      account, connectAsync fails with "Missing required parameter 'account'". The
-      error name is "InvalidParameterError" and code is undefined (BD#101).
+      Same as the old driver: with accessUrl "https://access-url.snowflakecomputing.com"
+      and no account, the connection uses account "access-url", including when host is
+      also set. An accessUrl that is not a URL fills nothing (BD#89).
 
   89:
     name: 'a non-URL accessUrl is not rejected at createConnection'
@@ -2083,7 +2085,6 @@ behavior_differences:
       and the new driver rejects at connect:
       - BD#73: a non-PEM privateKey
       - BD#87: account validation
-      - BD#88: accessUrl does not fill account
       - BD#89: a non-URL accessUrl
       - BD#91: a non-numeric retryTimeout
       - BD#103: a connection profile that cannot be loaded

@@ -406,6 +406,10 @@ called out explicitly.
   `ConnectionConfig`. The `invalid username with OAUTH authenticator` and
   `invalid oauth token` type-check rows stay; `toCoreConnectionOptions`
   currently `String()`s those values.
+  The `accessUrl and host no account` and `host no account` rows are migrated:
+  the `derive_account_from_host_*` tests in `sf_core/src/config/resolver.rs`
+  assert the derived account. `connection-option-parameters.test.ts` connects
+  with only `accessUrl` and with only `host`.
   The two `oauth public client parameters` rows (`.com` and `.cn`) assert the filled
   config: client id and secret `LOCAL_APPLICATION`, and
   `http://{host}:8082/oauth/authorize` plus `http://{host}:8082/oauth/token-request`.

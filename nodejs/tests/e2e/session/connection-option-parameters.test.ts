@@ -41,6 +41,10 @@ describe('account parameter', () => {
     }
   });
 
+  it('should connect with host when account is not set', async () => {
+    await expect(createLiveConnection({ account: undefined })).resolves.toBeDefined();
+  });
+
   it('should reject an invalid account', async () => {
     if (isRunningNewDriverWithBD('BD#87')) {
       const connection = createConnection({ account: 'acct/x' });
@@ -73,22 +77,14 @@ describe('accessUrl parameter', () => {
     ).resolves.toBeDefined();
   });
 
-  it('should not fill host or account from accessUrl alone', async () => {
-    const options = {
-      accessUrl: 'https://access-url.snowflakecomputing.com',
-      username: 'username',
-      password: 'password',
-    };
-    if (isRunningNewDriverWithBD('BD#88')) {
-      const connection = snowflake.createConnection(options);
-      await expect(connection.connectAsync()).rejects.toMatchObject({
-        name: 'InvalidParameterError',
-        code: undefined,
-        message: expect.stringContaining("Missing required parameter 'account'"),
-      });
-    } else {
-      expect(() => snowflake.createConnection(options)).not.toThrow();
-    }
+  it('should connect with accessUrl when account and host are not set', async () => {
+    await expect(
+      createLiveConnection({
+        accessUrl: `https://${baseConnectionOptions.host}`,
+        account: undefined,
+        host: undefined,
+      }),
+    ).resolves.toBeDefined();
   });
 
   it('should reject an accessUrl that is not a URL', async () => {
