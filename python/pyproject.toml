@@ -313,7 +313,7 @@ PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 
 [[tool.hatch.envs.dev.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
 
 [tool.hatch.envs.dev.scripts]
 # Per-test retries come from addopts --reruns 2 (not a second whole-suite run).
@@ -336,7 +336,7 @@ skip-install = true
 dev-mode = false
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
@@ -369,7 +369,7 @@ template = "test"
 features = ["test", "dev", "pandas"]
 
 [[tool.hatch.envs.test-pandas.matrix]]
-python = ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"]
+python = ["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
 
 [tool.hatch.envs.test-pandas.scripts]
 cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
