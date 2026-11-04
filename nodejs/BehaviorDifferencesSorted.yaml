@@ -4,7 +4,7 @@
 #   or when it doesn't belong in the changelog.
 #   A status in original BehaviorDifferences.yaml should be updated to match.
 # - The original BehaviorDifferences.yaml stays until tests run against both the new and the old driver.
-# - The last entry included in this snapshot is 144.
+# - The last entry included in this snapshot is 167.
 behavior_differences:
   13:
     name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
@@ -540,10 +540,10 @@ behavior_differences:
     new_driver_behavior: |
       createConnection throws InvalidParameterError "Unknown connection option: <key>",
       `error.code` undefined. This includes old-driver options the new driver does not
-      support: clientRequestMFAToken (BD#117), disableConsoleLogin (BD#63), forceStageBindError,
-      gcsUseDownscopedCredential, includeRetryReason, oauthChallengeMethod,
-      oauthHttpAllowed, resultPrefetch, serviceName,
-      sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
+      support: clientConfigFile (BD#159), clientRequestMFAToken (BD#117), disableConsoleLogin
+      (BD#63), forceStageBindError, gcsUseDownscopedCredential, includeRetryReason,
+      oauthChallengeMethod, oauthHttpAllowed (BD#141), region (BD#160), resultPrefetch,
+      serviceName (BD#158), sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
     description: |
       An option that is silently ignored leaves the application believing it took effect,
       so the new driver fails instead.
@@ -820,3 +820,236 @@ behavior_differences:
       Single-use refresh tokens are consumed by the IdP. The new driver drops the
       cached copy when the refresh response does not replace it. The old driver
       keeps that copy until a later refresh fails.
+
+  145:
+    name: 'The precision-loss warning names the query id and column index instead of the value'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The precision-loss warning names the value ("... when converting 9007199254740995 to a
+      JavaScript Number.") and does not name the query id.
+    new_driver_behavior: |
+      The warning starts with "Query <query ID>: " and names the zero-based column index instead
+      of the value ("... when converting a value in column at index 0 to a JavaScript Number.").
+    description: |
+      Cell values are customer data, which the driver does not log.
+
+  146:
+    name: 'A native Okta token URL on another origin fails with an origin error, and authenticator-request follows host'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      After Snowflake returns token and SSO URLs, a token URL whose scheme or host
+      differs from the Okta authenticator fails as Error with no own code property.
+      The message is "The prefix of the SSO/token URL and the specified authenticator
+      do not match." https://host and https://host:443 match. authenticator-request
+      ignores the host option and goes to https://{account}.snowflakecomputing.com
+      when region is unset, or https://{account}.{region}.snowflakecomputing.com
+      otherwise.
+    new_driver_behavior: |
+      The same token URL fails as Error with code undefined. The message is
+      "Failed to login: Native Okta SSO failed: IdP URL safety validation failed:
+      returned <url> does not match configured Okta URL <url>". https://host and
+      https://host:443 match. authenticator-request is
+      POST {protocol}://{host}:{port}/session/authenticator-request. A connection
+      with protocol http, host localhost, and port 443 calls
+      http://localhost:443/session/authenticator-request.
+    description: |
+      The old error text says "prefix". The old check is protocol and host.
+      URL.host includes an explicit port and omits the default port. The new
+      check is the URL origin. An explicit default port matches an omitted one.
+
+  147:
+    name: 'An unparseable native Okta token URL fails as a redacted parse error'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A token URL that is not a URL, such as "abcd", fails as Error with no own code
+      property. The message is "Authenticator, SSO, or token URL is invalid."
+    new_driver_behavior: |
+      The same value fails as Error with code undefined. The message is "Failed to
+      login: Native Okta SSO failed: Failed to parse URL (<unknown>)". The raw
+      string is not included.
+
+  148:
+    name: 'Native Okta SAML HTML with no form fails as a missing postback'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      SAML HTML with no form action has no separate "no form" error. The failure
+      is Error with no own code property and message "The specified authenticator
+      and destination URL in the SAML assertion do not match: expected:
+      {protocol}://{host}:{port} postback: {extracted}". HTML with no form yields
+      a postback such as "<html><".
+    new_driver_behavior: |
+      The same HTML fails as Error with code undefined and message "Failed to login:
+      Native Okta SSO failed: Failed to extract SAML postback (form action) from
+      HTML". No login request is sent.
+    description: |
+      The old driver still produces a postback string from that HTML and runs the
+      same destination check as BD#149. The new driver stops when the form action
+      is missing.
+
+  149:
+    name: 'A native Okta SAML postback on another host fails with a destination error'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A form action on another host, such as https://attacker.snowflake.com/fed/login,
+      fails as Error with no own code property. The message is "The specified
+      authenticator and destination URL in the SAML assertion do not match:
+      expected: {protocol}://{host}:{port} postback: {url}". The message prints
+      both URLs in full. No login request is sent.
+    new_driver_behavior: |
+      The same form fails as Error with code undefined and message "Failed to login:
+      Native Okta SSO failed: SAML postback destination validation failed: postback
+      <url> does not match Snowflake server <url>". A postback that differs only
+      by the default port matches. No login request is sent.
+    # TODO(SNOW-4392811): decide whether the old driver's prefix postback check
+    # should be replaced by the URL-origin check. The ticket has the details.
+    description: |
+      disableSamlURLCheck true skips this check on both drivers, and the login
+      then succeeds. The old decision uses a prefix of the two URL strings. The
+      new decision uses scheme, host, and port. An explicit default port matches
+      an omitted one.
+
+  150:
+    name: 'A retried native Okta login resends the first SAML response'
+    status: unknown
+    type: unknown
+    reviewed: false
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      When the first login POST fails with a retryable status such as 503, the
+      driver posts the password to Okta again, fetches SAML again, and the retried
+      login body carries that new HTML in RAW_SAML_RESPONSE.
+    new_driver_behavior: |
+      The retry posts the same login body again, including the first
+      RAW_SAML_RESPONSE. Okta is not called a second time.
+    description: |
+      The WireMock test checks that the retry happens and which RAW_SAML_RESPONSE
+      each login body carries. A SAML assertion is single-use, so Snowflake may
+      reject the resent one as a replay.
+
+  151:
+    name: 'A rejected native Okta password reports the Okta rejection and leaves sqlState unset'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A wrong password, or a username and password Okta does not know, fails as
+      AxiosError with code ERR_BAD_REQUEST and message "Request failed with status
+      code 401". sqlState is unset.
+    new_driver_behavior: |
+      The same connects fail as Error with code undefined and message "Failed to
+      login: Native Okta SSO failed: Okta token endpoint rejected credentials
+      (HTTP 401 Unauthorized)". sqlState is unset.
+    description: |
+      A Snowflake password rejection uses GS code 390100, which Node maps to
+      SQLSTATE 28000. Okta's HTTP 401 is not that code, so Node does not set
+      sqlState. ODBC still reports 28000 for a wrong Okta password.
+
+  152:
+    name: 'An invalid native Okta URL fails with the Snowflake response instead of crashing'
+    status: allowed
+    type: bugfix
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      authenticator https://testinvalidaccoount.com makes Snowflake return success
+      with no data. The driver then throws TypeError "Cannot read properties of
+      null (reading 'ssoUrl')" (SNOW-1844747). authenticator https://invalid.okta.com
+      fails as Error with a non-empty message. That sentence is not stable.
+    new_driver_behavior: |
+      https://testinvalidaccoount.com fails as Error with code undefined and message
+      "Failed to login: Native Okta SSO failed: Missing required field: data".
+      https://invalid.okta.com fails as Error with code undefined and message
+      "Failed to login: Native Okta SSO failed: The specified authenticator is not
+      accepted by your Snowflake account configuration.  Please contact your local
+      system administrator to get the correct URL to use." sqlState is unset.
+    description: |
+      The two URLs are different Snowflake responses. The typo host is a success
+      body with no data, which the old driver crashed on. invalid.okta.com is
+      Snowflake rejecting the authenticator. The crash stays fixed.
+
+  153:
+    name: 'A native Okta login request includes AUTHENTICATOR'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The login POST omits AUTHENTICATOR when the authenticator is an Okta URL.
+    new_driver_behavior: |
+      The login POST sets AUTHENTICATOR to that Okta URL.
+    description: |
+      The field names the IdP on the login request. The old omission is not
+      restored.
+
+  154:
+    name: 'jwtTimeout sets the key-pair JWT lifetime'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      There is no jwtTimeout connection option. A key-pair JWT is valid for 120
+      seconds. A jwtTimeout value is ignored, and the lifetime stays 120 seconds.
+    new_driver_behavior: |
+      jwtTimeout is a connection option, in seconds. When it is omitted or 0,
+      each key-pair JWT is valid for 120 seconds. A positive integer is that
+      lifetime, including a token signed again on login retry. A negative value
+      or a non-integer is rejected when the connection is configured.
+    description: |
+      The omitted lifetime matches the old driver. 0 selects that 120-second
+      default.
+
+  155:
+    name: 'streamRows() ignores the start and end options'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      statement.streamRows({ start, end }) streams only the rows from position start to
+      position end. Positions start at 0, and both ends are included: { start: 200, end: 300 }
+      returns 101 rows.
+      - A negative start counts as 0. Fractional values are rounded down.
+      - An end that is missing, or past the last row, counts as the last row.
+      - When start is greater than end, the stream ends without rows and without an error.
+      - A start or end that is not a finite number throws right away: 411002 "Invalid start
+        index. The specified value must be a number." or 411003 "Invalid end index. The
+        specified value must be a number."
+      streamRows() can be called again on the same statement, for example to read the next
+      range of rows.
+    new_driver_behavior: |
+      StreamOptions still has start and end, but streamRows() ignores them. The stream
+      always returns every row of the result. A value that is not a number does not throw.
+    description: |
+      The old driver also uses the range to download only the result chunks that contain
+      rows in it. Other Snowflake drivers have no row range. Their result cursors are
+      forward-only. Python (cursor.get_result_batches()), JDBC
+      (getResultSetSerializables()) and Go (arrow batches) let callers fetch whole chunks
+      on their own instead.

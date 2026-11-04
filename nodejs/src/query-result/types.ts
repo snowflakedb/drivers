@@ -46,7 +46,7 @@ export interface RowOptions {
 export type StatementCallback = (
   err: SnowflakeError | undefined,
   stmt: RowStatement,
-  rows: Array<unknown> | undefined,
+  rows?: any[],
 ) => void;
 
 export interface StreamOptions {

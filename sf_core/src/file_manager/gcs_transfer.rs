@@ -662,6 +662,11 @@ async fn check_file_exists_gcs(
 
 /// Upload data to GCS with retry logic.
 ///
+/// Every file goes out as one non-resumable PUT, at any size. There is no
+/// chunked or resumable path above the multipart threshold, because on GCS a
+/// resumable upload in chunks measured about three times slower than a single
+/// PUT. GCS is therefore the one cloud whose uploads are not split into parts.
+///
 /// Streams the body without buffering the whole file in memory:
 /// - `ByteSource::Path` opens the file on each retry attempt via
 ///   `tokio::fs::File` and wraps it in a streaming `reqwest::Body` — the

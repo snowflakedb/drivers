@@ -949,7 +949,7 @@ behavior_differences:
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: false
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
       An unknown query ID (`queries[]` empty) returns `'NO_QUERY_DATA'`.
@@ -965,7 +965,7 @@ behavior_differences:
       JDBC, map a missing monitoring row to `NO_DATA`. Moreover NodeJs also defines
       NO_DATA status which can never be returned by snowflake server, so it makes no
       sense to keep both.
-      Not a breaking change, because no documented behavior changes:
+      Keeping `'NO_DATA'` is accepted for these reasons:
       - `'NO_QUERY_DATA'` is not part of the `QueryStatus` type in the old index.d.ts, and
         getQueryStatus was typed as `Promise<string>`. Code that compares the result with
         `'NO_QUERY_DATA'` depends on an undocumented value.
@@ -980,10 +980,10 @@ behavior_differences:
         loop with the same limits (500 ms base, pattern [1, 1, 2, 3, 4, 8, 10], 24 retries),
         and its own integration test expects getResultsFromQueryId to "fail from exceeding
         NO_DATA retry count". The `'NO_QUERY_DATA'` shortcut skipped that loop.
-      A polling loop such as `while (isStillRunning(status))` keeps waiting for such an ID.
-      This is not a reason to keep `'NO_QUERY_DATA'`, for the same reason: the ID is a caller
-      error. Users can still see the change, so it is listed under Changes in the changelog,
-      without the retry timing.
+      It is still a breaking change. In the old driver `'NO_QUERY_DATA'` is neither a running
+      nor an error status, so a polling loop such as `while (isStillRunning(status))` stops
+      for such an ID. With `'NO_DATA'` the loop keeps waiting, with no error. The changelog
+      lists it under Breaking Changes, without the getResultsFromQueryId retry timing.
 
   44:
     name: 'Unrecognized query status name maps to NO_DATA'
@@ -2283,10 +2283,10 @@ behavior_differences:
     new_driver_behavior: |
       createConnection throws InvalidParameterError "Unknown connection option: <key>",
       `error.code` undefined. This includes old-driver options the new driver does not
-      support: clientRequestMFAToken (BD#117), disableConsoleLogin (BD#63), forceStageBindError,
-      gcsUseDownscopedCredential, includeRetryReason, oauthChallengeMethod,
-      oauthHttpAllowed, resultPrefetch, serviceName,
-      sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
+      support: clientConfigFile (BD#159), clientRequestMFAToken (BD#117), disableConsoleLogin
+      (BD#63), forceStageBindError, gcsUseDownscopedCredential, includeRetryReason,
+      oauthChallengeMethod, oauthHttpAllowed (BD#141), region (BD#160), resultPrefetch,
+      serviceName (BD#158), sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
     description: |
       An option that is silently ignored leaves the application believing it took effect,
       so the new driver fails instead.
@@ -3344,3 +3344,282 @@ behavior_differences:
     description: |
       The omitted lifetime matches the old driver. 0 selects that 120-second
       default.
+
+  155:
+    name: 'streamRows() ignores the start and end options'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      statement.streamRows({ start, end }) streams only the rows from position start to
+      position end. Positions start at 0, and both ends are included: { start: 200, end: 300 }
+      returns 101 rows.
+      - A negative start counts as 0. Fractional values are rounded down.
+      - An end that is missing, or past the last row, counts as the last row.
+      - When start is greater than end, the stream ends without rows and without an error.
+      - A start or end that is not a finite number throws right away: 411002 "Invalid start
+        index. The specified value must be a number." or 411003 "Invalid end index. The
+        specified value must be a number."
+      streamRows() can be called again on the same statement, for example to read the next
+      range of rows.
+    new_driver_behavior: |
+      StreamOptions still has start and end, but streamRows() ignores them. The stream
+      always returns every row of the result. A value that is not a number does not throw.
+    description: |
+      The old driver also uses the range to download only the result chunks that contain
+      rows in it. Other Snowflake drivers have no row range. Their result cursors are
+      forward-only. Python (cursor.get_result_batches()), JDBC
+      (getResultSetSerializables()) and Go (arrow batches) let callers fetch whole chunks
+      on their own instead.
+
+  156:
+    name: 'StatementOption no longer declares excludeGuid and queryId'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      index.d.ts declares excludeGuid?: string and queryId?: string on StatementOption.
+      execute() reads neither of them, so setting them has no effect:
+      - excludeGuid is read only from the driver's own HTTP request options, and no code
+        copies it there from the statement options.
+      - queryId is read only by fetchResult() and getResultsFromQueryId(), whose options
+        are typed as { queryId: string } & Partial<StatementOption>.
+    new_driver_behavior: |
+      StatementOption has neither field, so TypeScript code that sets them does not compile.
+      execute() still ignores them at runtime. fetchResult() and getResultsFromQueryId() take
+      FetchResultOptions, where queryId is required.
+    status_rationale: |
+      Both fields were dead in execute(), so removing them only fixes the types. queryId stays
+      where it is used, in FetchResultOptions.
+
+  157:
+    name: 'statement.getStatementId() is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      statement.getStatementId() returns the query ID, the same value as
+      statement.getQueryId(). index.d.ts marks it as deprecated and says to use
+      getQueryId() instead.
+    new_driver_behavior: |
+      RowStatement has no getStatementId(). TypeScript code that calls it does not compile,
+      and JavaScript code fails with "getStatementId is not a function".
+    status_rationale: |
+      The method was already deprecated and only returned the same value as getQueryId(),
+      so callers can switch with no change in behavior.
+
+  158:
+    name: 'The serviceName connection option and connection.getServiceName() are removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection accepts serviceName. Login and authenticator requests send it to
+      Snowflake. connection.getServiceName() returns the SERVICE_NAME session parameter
+      that Snowflake returns at login, and the driver sends that value in the
+      X-Snowflake-Service header of later requests.
+    new_driver_behavior: |
+      serviceName is rejected as an unknown connection option (InvalidParameterError,
+      see BD#102). Connection has no getServiceName(). The driver still reads the
+      SERVICE_NAME session parameter and sends it in the X-Snowflake-Service header, but
+      applications can neither set nor read it.
+    status_rationale: |
+      The service name is an internal session value that routes requests inside
+      Snowflake. Snowflake sets it, so applications have no reason to set or read it.
+
+  159:
+    name: 'clientConfigFile and easy logging are removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      On connect, the driver looks for an easy logging config file, sf_client_config.json,
+      in this order:
+      1. The path in the clientConfigFile connection option.
+      2. The path in the SF_CLIENT_CONFIG_FILE environment variable.
+      3. sf_client_config.json in the driver directory, then in the home directory.
+      When a file is found, its log level and log path set up the driver logs.
+    new_driver_behavior: |
+      clientConfigFile is rejected as an unknown connection option (InvalidParameterError,
+      see BD#102). The driver does not read SF_CLIENT_CONFIG_FILE or look for
+      sf_client_config.json, and does not report that it ignores them. An application that
+      set up logging only through this file gets no driver logs and no error.
+    description: |
+      The logLevel and logFilePath options of snowflake.configure() set the log level and
+      the log file instead.
+    status_rationale: |
+      snowflake.configure() already sets the log level and log file, so the config file
+      was a second way to do the same thing.
+
+  160:
+    name: 'The region connection option is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
+    old_driver_behavior: |
+      createConnection accepts region, which was deprecated. When neither host nor accessUrl
+      is set, the driver builds the host name from account and region:
+      - {account}.{region}.snowflakecomputing.com
+      - {account}.{region}.snowflakecomputing.cn when region starts with "cn-"
+      - {account}.snowflakecomputing.com when region is unset or "us-west-2"
+    new_driver_behavior: |
+      region is rejected as an unknown connection option (InvalidParameterError, see BD#102).
+      The host name comes from host or accessUrl, or is {account}.snowflakecomputing.com when
+      only account is set.
+    status_rationale: |
+      region was already deprecated. host and accessUrl take the full host name, which also
+      covers accounts in China, so no account needs region.
+
+  161:
+    name: 'enableExperimentalMultipartUploads is removed and PUT/GET always transfer large files in parts on S3 and Azure'
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      snowflake.configure() accepts enableExperimentalMultipartUploads (default false).
+      - false: PUT uploads each file in one request, and GET downloads each file in one
+        request.
+      - true: PUT splits uploads of 64 MiB or more into parts on S3, Azure and GCS, and
+        sends the parts one at a time.
+    new_driver_behavior: |
+      ConfigureOptions has no enableExperimentalMultipartUploads, so TypeScript code that
+      sets it does not compile. In JavaScript, configure() accepts it and ignores it.
+      PUT and GET always transfer a file in parts on S3 and Azure when its size, after
+      compression and encryption, is at least the limit that Snowflake sends for each
+      command (200 MiB today):
+      - Parts are 8 MiB, or bigger when needed to stay within 10,000 parts on S3 and 50,000
+        on Azure.
+      - Parts are sent in parallel. PARALLEL limits the requests of the whole command, and
+        one file uses at most 16 at once.
+      - A failed part is retried on its own. A failed S3 upload is cancelled, which deletes
+        the parts already sent.
+      On GCS, PUT always sends each file in one request.
+    description: |
+      On GCS, one request measured about three times faster than an upload in parts.
+    status_rationale: |
+      Transfers in parts are faster and retry less data when a request fails, so they are
+      always on instead of behind an experimental switch.
+
+  162:
+    name: 'xmlParserConfig is typed as X2jOptions and passes every option to fast-xml-parser'
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      xmlParserConfig in snowflake.configure() is typed as XMlParserConfigOption. The driver
+      reads only ignoreAttributes, alwaysCreateTextNode, attributeNamePrefix and
+      attributesGroupName, and ignores any other option. attributesGroupName accepts null,
+      which means no grouping.
+    new_driver_behavior: |
+      xmlParserConfig is typed as X2jOptions from fast-xml-parser and is passed to
+      XMLParser as is, so every fast-xml-parser option takes effect. The defaults are the
+      fast-xml-parser defaults, which match the old ones. attributesGroupName: null no
+      longer compiles in TypeScript. attributesGroupName: false works the same way.
+    status_rationale: |
+      Passing the options through lets users set any fast-xml-parser option. The only
+      code that breaks is TypeScript code that sets attributesGroupName to null.
+
+  163:
+    name: 'Column.getScale() and Column.getPrecision() are typed to return number | null'
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types getScale() and getPrecision() as returning number. At runtime they
+      return null for columns that have no scale or precision, such as TEXT columns.
+    new_driver_behavior: |
+      getScale() and getPrecision() are typed as returning number | null. The runtime
+      values are the same.
+    status_rationale: |
+      The old types were wrong. Strict TypeScript code may now have to handle null where
+      it uses these values.
+
+  164:
+    name: 'snowflake.configure() options argument is typed as required'
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types configure(options?: ConfigureOptions). A call without arguments
+      throws a TypeError at runtime.
+    new_driver_behavior: |
+      configure is typed as configure(options: ConfigureOptions): void, so TypeScript
+      reports a call without arguments when it compiles.
+    status_rationale: |
+      The old types were wrong. A call without arguments never worked, so no working code
+      breaks.
+
+  165:
+    name: 'customCredentialManager is typed as CustomCredentialManager'
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      customCredentialManager in snowflake.configure() is typed as object. At runtime
+      configure() throws InvalidParameterError when the object does not have read, write
+      and remove functions as its own properties.
+    new_driver_behavior: |
+      The exported CustomCredentialManager type declares read, write and remove, and
+      customCredentialManager is typed with it. TypeScript reports a manager without these
+      methods when it compiles. The runtime check in configure() is the same.
+    status_rationale: |
+      The type only describes what configure() already checked at runtime, so no working
+      code breaks.
+
+  166:
+    name: 'The proxy connection option sets the proxy as one URL'
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      There is no proxy connection option. createConnection ignores it like any other
+      unknown option.
+    new_driver_behavior: |
+      proxy takes a URL, [scheme://][user:password@]host[:port]. The scheme can be http or
+      https and defaults to http. Special characters in the user name or password must be
+      percent-encoded. When proxyHost, proxyPort, proxyProtocol, proxyUser or proxyPassword
+      is also set, it replaces the matching part of the URL.
+    status_rationale: |
+      A new option. The old driver ignored a proxy key, so code that already sets one now
+      sends traffic through that proxy.
+
+  167:
+    name: 'snowflake.getFipsStatus() reports whether the native library uses a FIPS crypto module'
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      There is no getFipsStatus(). The driver uses the Node.js crypto module, so FIPS mode
+      follows the Node.js settings.
+    new_driver_behavior: |
+      snowflake.getFipsStatus() returns FipsStatus, { isFips: boolean }. It needs no
+      connection and makes no network call. The prebuilt addons are not FIPS builds today,
+      so they return { isFips: false }.
+    status_rationale: |
+      A new method. The old driver has no equivalent, so no existing code changes.

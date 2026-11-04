@@ -1,7 +1,9 @@
 //! Foundation for cloud multipart upload + ranged download (S3, Azure, GCS).
 //!
 //! One shared policy sizes parts and download ranges. S3 and Azure chunk
-//! uploads; GCS uploads as a single PUT and uses the policy only for ranged GET.
+//! uploads; GCS uploads as a single PUT, which is faster on GCS than a chunked
+//! upload (see `gcs_transfer::upload_to_gcs`), and uses the policy only for
+//! ranged GET.
 //!
 //! Only the cloud-agnostic policy lives here — per-cloud limits
 //! ([`MultipartConfig`]), the part-size formula ([`compute_part_size`]), and
