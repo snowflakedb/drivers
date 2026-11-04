@@ -1151,7 +1151,7 @@ class PythonMatrixTests(unittest.TestCase):
         intel_rows = [r for r in self.gha if r["os"] == "macos-15-intel"]
         self.assertTrue(intel_rows, "expected macos-15-intel cells in the python matrix")
         for r in intel_rows:
-            self.assertIn(r["py"], {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"})
+            self.assertIn(r["py"], {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"})
             self.assertEqual(r.get("wheel_artifact"), "macosx_x86_64", r["name"])
 
     def test_windows_arm_at_merge_scope(self) -> None:
@@ -1819,13 +1819,13 @@ class BuildTargetsTests(unittest.TestCase):
         # Updated after cloud rotation was moved into CONSTRAINTS (models/python.py):
         # each PyVersion maps to exactly one cloud, so all versions now appear at
         # nightly for every platform (each runs once against its assigned cloud).
-        # Windows-arm excludes 3.13, 3.14, 3.15, and 3.15t (no win-arm wheel for those).
+        # Windows-arm excludes 3.13, 3.14, 3.14t, 3.15, and 3.15t (no win-arm wheel for those).
         legacy = {
-            "linux_x86":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
-            "linux_aarch": {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
-            "macos_arm":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
-            "macos_x86":   {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
-            "windows_x86": {"3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"},
+            "linux_x86":   {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"},
+            "linux_aarch": {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"},
+            "macos_arm":   {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"},
+            "macos_x86":   {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"},
+            "windows_x86": {"3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"},
             "windows_arm": {"3.11", "3.12"},
         }
         actual = {k: set(v) for k, v in self.targets_nightly.items()}

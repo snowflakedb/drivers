@@ -4,7 +4,7 @@ PARAMS = {
     "OS":        ["ubuntu", "macos", "windows"],
     "Arch":      ["x64", "arm"],
     "Cloud":     ["aws", "gcp", "azure"],
-    "PyVersion": ["3.11", "3.12", "3.13", "3.14", "3.15", "3.15t"],
+    "PyVersion": ["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"],
     "HatchEnv":  ["test", "test-pandas", "test-native-arrow"],
 }
 
@@ -17,6 +17,7 @@ _CLOUD_FOR_PY = {
     "3.12": "azure",
     "3.13": "aws",
     "3.14": "gcp",
+    "3.14t": "gcp",
     "3.15": "aws",
     "3.15t": "aws",
 }
