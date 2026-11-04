@@ -1983,34 +1983,30 @@ behavior_differences:
       types.
 
   87:
-    name: 'account validation differs from the old driver'
-    status: unknown
-    type: unknown
+    name: 'account format checks are looser than in the old driver'
+    status: allowed
+    type: api_incompatibility
     reviewed: false
-    is_breaking_change: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      createConnection checks account before connect.
-      - Missing: with no account, host, or accessUrl, throws MissingParameterError 404007
-        ("An account must be specified."). When host is set and account is omitted, the
-        account is copied from the host and createConnection does not throw.
-      - Empty: throws InvalidParameterError 404045 ("Invalid account. The specified value
-        must be a valid subdomain string.").
-      - Non-string: throws InvalidParameterError 404008 ("Invalid account. The specified
-        value must be a string.").
-      - Other values: must match /^\w+([.-]\w+)*$/i. A "." or "-" cannot start or end the
-        value, and separators cannot repeat. A failure is the same 404045 as an empty string.
+      createConnection rejects an account that does not match /^\w+([.-]\w+)*$/i with
+      InvalidParameterError 404045 ("Invalid account. The specified value must be a valid
+      subdomain string."). A leading or trailing "." or "-" and repeated separators
+      ("--", "..") are rejected. A non-string account throws InvalidParameterError 404008
+      ("Invalid account. The specified value must be a string.").
     new_driver_behavior: |
-      account is typed as string on ConnectionOptions. createConnection accepts the value.
-      connectAsync fails in core.
-      - Missing: when host or accessUrl is set, account is taken from it, as in the old
-        driver (BD#88). With none of the three, connectAsync fails with "Missing required
-        parameter 'account'".
-      - Empty: the same missing-account error as above.
-      - Non-string: rejected by the TypeScript type. There is no runtime 404008.
-      - Other values: each character must be an ASCII letter, digit, ".", "-", or "_".
-        A leading or trailing separator and repeated separators ("--", "..") are allowed.
-        Any other character fails connectAsync.
+      connectAsync rejects an account only for a character other than an ASCII letter,
+      digit, ".", "-" or "_". "-acct-" and "a..b" are accepted, and connectAsync fails
+      later, when the host built from the account cannot be reached or the server rejects
+      the login. A non-string account is sent as its string form: 123 becomes "123" and
+      fails the same way, {} becomes "[object Object]" and is rejected for its characters.
+      null is covered by BD#124.
+    description: |
+      Every value affected here is one the old driver would never connect with; only the
+      error differs. A missing, empty or invalid account fails at connect with
+      InvalidParameterError and no code instead of a 404xxx error from createConnection;
+      that difference is BD#101.
 
   88:
     name: 'accessUrl does not fill account'
@@ -2267,7 +2263,6 @@ behavior_differences:
       These entries describe specific settings that the old driver rejects in createConnection
       and the new driver rejects at connect:
       - BD#73: a non-PEM privateKey
-      - BD#87: account validation
       - BD#89: a non-URL accessUrl
       - BD#91: a non-numeric retryTimeout
       - BD#103: a connection profile that cannot be loaded

@@ -1,10 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { createConnection, createLiveConnection } from '../utils/fixtures.js';
-import { baseConnectionOptions, isRunningNewDriverWithBD, snowflake } from '../utils/index.js';
+import {
+  baseConnectionOptions,
+  destroyConnectionAsync,
+  isRunningNewDriverWithBD,
+  snowflake,
+} from '../utils/index.js';
+import { loginSuccess, logoutSuccess, WiremockServer } from '../utils/wiremock/index.js';
 
 describe('account parameter', () => {
   it('should reject a missing account', async () => {
-    if (isRunningNewDriverWithBD('BD#87')) {
+    if (isRunningNewDriverWithBD('BD#101')) {
       const connection = createConnection({ account: undefined, host: undefined });
       await expect(connection.connectAsync()).rejects.toMatchObject({
         name: 'InvalidParameterError',
@@ -23,7 +29,7 @@ describe('account parameter', () => {
   });
 
   it('should reject an empty account', async () => {
-    if (isRunningNewDriverWithBD('BD#87')) {
+    if (isRunningNewDriverWithBD('BD#101')) {
       const connection = createConnection({ account: '' });
       await expect(connection.connectAsync()).rejects.toMatchObject({
         name: 'InvalidParameterError',
@@ -46,7 +52,7 @@ describe('account parameter', () => {
   });
 
   it('should reject an invalid account', async () => {
-    if (isRunningNewDriverWithBD('BD#87')) {
+    if (isRunningNewDriverWithBD('BD#101')) {
       const connection = createConnection({ account: 'acct/x' });
       await expect(connection.connectAsync()).rejects.toMatchObject({
         name: 'InvalidParameterError',
@@ -62,6 +68,69 @@ describe('account parameter', () => {
         }),
       );
     }
+  });
+
+  describe('account format', () => {
+    let wiremock: WiremockServer;
+
+    beforeAll(async () => {
+      wiremock = await WiremockServer.spawn();
+    });
+
+    beforeEach(async () => {
+      await wiremock.reset();
+      await wiremock.stub([loginSuccess(), logoutSuccess()]);
+    });
+
+    afterAll(async () => {
+      await wiremock.destroy();
+    });
+
+    it.each([
+      {
+        account: '-acct-',
+        accountName: '-acct-',
+        code: 404045,
+        message: 'Invalid account. The specified value must be a valid subdomain string.',
+      },
+      {
+        account: 'a..b',
+        accountName: 'a..b',
+        code: 404045,
+        message: 'Invalid account. The specified value must be a valid subdomain string.',
+      },
+      {
+        account: 123,
+        accountName: '123',
+        code: 404008,
+        message: 'Invalid account. The specified value must be a string.',
+      },
+    ])(
+      'should log in with account $account that the old driver rejects',
+      async ({ account, accountName, code, message }) => {
+        const options = {
+          ...wiremock.connectionOptions,
+          account: account as string,
+          username: 'username',
+          password: 'password',
+        };
+        if (isRunningNewDriverWithBD('BD#87')) {
+          const connection = snowflake.createConnection(options);
+          await connection.connectAsync();
+          onTestFinished(async () => {
+            await destroyConnectionAsync(connection);
+          });
+
+          const [loginRequest] = await wiremock.findRequests('/session/v1/login-request.*');
+          const { data } = JSON.parse(loginRequest.body) as { data: { ACCOUNT_NAME: string } };
+          expect(data.ACCOUNT_NAME).toBe(accountName);
+        } else {
+          expect(() => snowflake.createConnection(options)).toThrow(
+            expect.objectContaining({ name: 'InvalidParameterError', code, message }),
+          );
+        }
+      },
+    );
   });
 });
 
