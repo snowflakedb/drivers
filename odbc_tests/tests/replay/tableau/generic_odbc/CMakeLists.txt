@@ -1,3 +1,4 @@
 cmake_minimum_required(VERSION 4.0)
 
 add_odbc_test(replay_tableau_generic_odbc_navigate_and_load navigate_and_load/test.cpp)
+add_odbc_test(replay_tableau_generic_odbc_drill_and_filter drill_and_filter/test.cpp)
