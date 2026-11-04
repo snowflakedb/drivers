@@ -53,6 +53,10 @@ fn main() {
         let manifest_path = std::path::Path::new(&manifest_dir);
         let def_path = manifest_path.join("exports.def");
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
+        if std::env::var_os("CARGO_FEATURE_FIPS").is_some() {
+            // 0x1100 is LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS.
+            println!("cargo:rustc-cdylib-link-arg=/DEPENDENTLOADFLAG:0x1100");
+        }
 
         let (major, minor, patch) = parse_package_version();
         let commit_hash = resolve_commit_hash();

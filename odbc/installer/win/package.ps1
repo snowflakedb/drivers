@@ -29,6 +29,11 @@
     Directory where the resulting MSI will be placed. Created if it doesn't exist.
     Defaults to build\.
 
+.PARAMETER Fips
+    Package the x64 FIPS build. -DriverBinDir must contain
+    aws_lc_fips_*_crypto.dll. aws_lc_fips_*_rust_wrapper.dll is packaged
+    only when the build emits it. The MSI is named snowflake-odbc-fips.
+
 .EXAMPLE
     .\odbc\installer\win\package.ps1 -DriverBinDir target\release -Arch x64
 
@@ -54,7 +59,9 @@ param(
 
     [string]$Version,
 
-    [string]$OutputDir = "build"
+    [string]$OutputDir = "build",
+
+    [switch]$Fips
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,6 +112,17 @@ $DriverBinDir = (Resolve-Path $DriverBinDir).Path
 $driverDll = if ($Arch -eq "x86") { "sfodbc32.dll" } else { "sfodbc.dll" }
 if (-not (Test-Path (Join-Path $DriverBinDir $driverDll))) {
     throw "$driverDll not found in $DriverBinDir. Build the driver first."
+}
+
+$fipsCryptoDll = $null
+$fipsWrapperDll = $null
+if ($Fips) {
+    if ($Arch -ne "x64") {
+        throw "-Fips is supported for x64 only."
+    }
+    . (Join-Path $PSScriptRoot 'Select-FipsDll.ps1')
+    $fipsCryptoDll = Select-FipsDll -DriverBinDir $DriverBinDir -Filter 'aws_lc_fips_*_crypto.dll'
+    $fipsWrapperDll = Select-FipsDll -DriverBinDir $DriverBinDir -Filter 'aws_lc_fips_*_rust_wrapper.dll' -Optional
 }
 
 # --- VC++ Redistributable ---
@@ -169,7 +187,21 @@ Write-Host "  VCRedist dir     : $VCRedistDir"
 Write-Host "  Source dir       : $SourceDir"
 Write-Host "  Output dir       : $OutputDir"
 
-$MsiFile = Join-Path $OutputDir "snowflake-odbc-${Version}${configSuffix}.${artifactArch}.msi"
+$packagePrefix = if ($Fips) { "snowflake-odbc-fips" } else { "snowflake-odbc" }
+$MsiFile = Join-Path $OutputDir "${packagePrefix}-${Version}${configSuffix}.${artifactArch}.msi"
+
+$fipsWixArgs = @()
+if ($Fips) {
+    Write-Host "  FIPS crypto DLL  : $fipsCryptoDll"
+    $fipsWixArgs = @(
+        "-d", "Fips=1",
+        "-d", "FipsCryptoDll=$fipsCryptoDll"
+    )
+    if ($fipsWrapperDll) {
+        Write-Host "  FIPS wrapper DLL : $fipsWrapperDll"
+        $fipsWixArgs += @("-d", "FipsWrapperDll=$fipsWrapperDll")
+    }
+}
 
 Write-Host "`n--- Building MSI ---"
 & wix build `
@@ -184,6 +216,7 @@ Write-Host "`n--- Building MSI ---"
     -d VCRedistDir="$VCRedistDir" `
     -d SourceDir="$SourceDir" `
     -b "$PSScriptRoot" `
+    @fipsWixArgs `
     -o "$MsiFile"
 if ($LASTEXITCODE -ne 0) { throw "wix build failed with exit code $LASTEXITCODE" }
 

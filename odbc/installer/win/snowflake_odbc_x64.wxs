@@ -2,8 +2,13 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+	<?ifdef Fips ?>
+	<?define EditionSuffix = ", FIPS build" ?>
+	<?else ?>
+	<?define EditionSuffix = "" ?>
+	<?endif ?>
 	<Package
-		Name="Snowflake ODBC Driver $(var.FullVersion) (x64)"
+		Name="Snowflake ODBC Driver $(var.FullVersion) (x64$(var.EditionSuffix))"
 		Language="1033"
 		Version="$(var.ProductVersion)"
 		Manufacturer="Snowflake Computing"
@@ -12,10 +17,11 @@
 		Scope="perMachine">
 
 		<SummaryInformation
-			Description="Snowflake ODBC Driver $(var.FullVersion) (64-bit)"
+			Description="Snowflake ODBC Driver $(var.FullVersion) (64-bit$(var.EditionSuffix))"
 			Comments="Installs the Snowflake ODBC Driver." />
 
 		<Media Id="1" Cabinet="odbc64.cab" EmbedCab="yes" />
+		<!-- AllowDowngrades matches every other product code in this UpgradeCode, including the same version. -->
 		<MajorUpgrade AllowDowngrades="yes" />
 		<Property Id="REBOOT" Value="ReallySuppress" />
 
@@ -190,6 +196,18 @@
 					Source="$(var.DriverBinDir)\sfodbc.dll" />
 			</Component>
 		</DirectoryRef>
+		<?ifdef Fips ?>
+		<DirectoryRef Id="BinDir">
+			<Component Id="AwsLcFipsCrypto" Guid="08B2FA6B-B788-4A1A-B166-E82FC53C0969" Permanent="no">
+				<File Id="AwsLcFipsCryptoDll" KeyPath="yes" Source="$(var.FipsCryptoDll)" />
+			</Component>
+			<?ifdef FipsWrapperDll ?>
+			<Component Id="AwsLcFipsWrapper" Guid="DBFE9DD5-B3CC-4395-81BF-F0E01174CFD3" Permanent="no">
+				<File Id="AwsLcFipsWrapperDll" KeyPath="yes" Source="$(var.FipsWrapperDll)" />
+			</Component>
+			<?endif ?>
+		</DirectoryRef>
+		<?endif ?>
 
 		<!-- ================================================================ -->
 		<!-- Files: public header                                              -->
@@ -252,6 +270,12 @@
 		<!-- ================================================================ -->
 		<Feature Id="MainApplication" Title="Snowflake ODBC Driver" Level="1">
 			<ComponentRef Id="sfodbc.dll" />
+			<?ifdef Fips ?>
+			<ComponentRef Id="AwsLcFipsCrypto" />
+			<?ifdef FipsWrapperDll ?>
+			<ComponentRef Id="AwsLcFipsWrapper" />
+			<?endif ?>
+			<?endif ?>
 			<ComponentRef Id="sf_odbc.h" />
 			<ComponentRef Id="RegistryEntries" />
 			<ComponentRef Id="LogDir" />

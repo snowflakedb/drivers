@@ -130,6 +130,7 @@ jobs:
             cargo_target: x86_64-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: ""
+            fips: false
           - name: Windows x86 Release
             os: windows-latest
             arch: x86
@@ -137,6 +138,7 @@ jobs:
             cargo_target: i686-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: "--no-default-features"
+            fips: false
           - name: Windows ARM64 Release
             os: windows-11-arm
             arch: arm64
@@ -144,6 +146,15 @@ jobs:
             cargo_target: aarch64-pc-windows-msvc
             cargo_profile: "--release"
             cargo_extra: ""
+            fips: false
+          - name: Windows x64 FIPS
+            os: windows-latest
+            arch: x64
+            config: release
+            cargo_target: x86_64-pc-windows-msvc
+            cargo_profile: "--release"
+            cargo_extra: ""
+            fips: true
     runs-on: ${{ matrix.os }}
     name: build_msi (${{ matrix.name }})
     steps:
@@ -155,8 +166,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}msi-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}msi-
             ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-
 
       - name: Restore Rust target cache (MSI build)
@@ -167,7 +179,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .cargo-target-msi
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Prepare cache directories
         shell: pwsh
@@ -191,18 +203,40 @@ jobs:
         with:
           wix-version: ${{ env.WIX_VERSION }}
 
+      - name: Setup FIPS build environment
+        if: matrix.fips && success()
+        uses: ./.github/actions/setup-fips-build-env
+        with:
+          msvc-arch: x64
+
       - name: Build ODBC driver
         # pwsh for the explicit $LASTEXITCODE propagation below. The Strawberry
         # Perl PATH prepend that used to sit here went with F2: no step compiles
         # OpenSSL from source any more, so nothing needs Perl.
+        # The FIPS row uses the MSVC linker from setup-fips-build-env. rust-lld
+        # stays on the standard rows. A unique /MAP path is the evidence
+        # check_linked_crypto.py reads for that exact link. build.rs adds
+        # /DEPENDENTLOADFLAG:0x1100 on that FIPS cdylib link.
         shell: pwsh
-        run: |
-          cargo build --locked ${{ matrix.cargo_profile }} --package odbc ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
-          RUSTFLAGS: "-C linker=rust-lld"
           CARGO_HOME: ${{ github.workspace }}/.cargo-cache
           CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-msi
+          FIPS: ${{ matrix.fips && '1' || '0' }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:FIPS -eq "1") {
+            Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue
+            $env:CARGO_PROFILE_RELEASE_STRIP = "false"
+            $mapDir = Join-Path $env:RUNNER_TEMP ("fips-odbc-map-" + [guid]::NewGuid().ToString("n"))
+            New-Item -ItemType Directory -Force -Path $mapDir | Out-Null
+            $map = Join-Path $mapDir "sfodbc.map"
+            "ODBC_LINKER_MAP=$map" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            cargo rustc --locked --release --lib --package odbc --features fips --target ${{ matrix.cargo_target }} -- -C "link-arg=/MAP:$map"
+          } else {
+            $env:RUSTFLAGS = "-C linker=rust-lld"
+            cargo build --locked ${{ matrix.cargo_profile }} --package odbc ${{ matrix.cargo_extra }} --target ${{ matrix.cargo_target }}
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save Cargo registry cache (MSI build)
         if: always()
@@ -213,7 +247,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-msi-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ matrix.fips && 'fips-' || '' }}msi-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (MSI build)
         if: always()
@@ -224,7 +258,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .cargo-target-msi
-          key: ${{ runner.os }}-${{ matrix.arch }}-rust-msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}msi-${{ matrix.config }}-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Rename x86 driver DLL
         if: matrix.arch == 'x86'
@@ -234,13 +268,33 @@ jobs:
           Move-Item -Force "$dir/sfodbc.dll" "$dir/sfodbc32.dll"
           if (Test-Path "$dir/sfodbc.pdb") { Move-Item -Force "$dir/sfodbc.pdb" "$dir/sfodbc32.pdb" }
 
+      - name: Set up Python
+        if: matrix.fips && success()
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Check linked FIPS crypto
+        if: matrix.fips && success()
+        shell: pwsh
+        run: |
+          python ci/fips/check_linked_crypto.py ".cargo-target-msi/${{ matrix.cargo_target }}/${{ matrix.config }}/sfodbc.dll" --linker-map "$env:ODBC_LINKER_MAP"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test FIPS DLL selection
+        shell: pwsh
+        run: .\scripts\odbc\Test-SelectFipsDll.ps1
+
       - name: Build MSI installer
         shell: pwsh
         run: |
-          .\odbc\installer\win\package.ps1 `
-            -DriverBinDir ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}" `
-            -Arch ${{ matrix.arch }} `
-            -BuildConfig ${{ matrix.config }}
+          $packageArgs = @{
+            DriverBinDir = ".cargo-target-msi\${{ matrix.cargo_target }}\${{ matrix.config }}"
+            Arch = "${{ matrix.arch }}"
+            BuildConfig = "${{ matrix.config }}"
+          }
+          if ('${{ matrix.fips }}' -eq 'true') { $packageArgs.Fips = $true }
+          .\odbc\installer\win\package.ps1 @packageArgs
 
       - name: Build MSI upgrade fixture
         shell: pwsh
@@ -265,15 +319,55 @@ jobs:
             -Arch ${{ matrix.arch }} `
             -LogDir build\msi-driver-name-logs
 
+      - name: Verify FIPS driver loads beside its crypto DLL
+        if: matrix.fips && success()
+        shell: pwsh
+        run: |
+          $msi = @(Get-Item build\snowflake-odbc-fips-*.msi)
+          if ($msi.Count -ne 1) { throw "expected one FIPS MSI, found $($msi.Count)" }
+          .\scripts\odbc\Test-OdbcMsiFipsLoad.ps1 -MsiPath $msi[0].FullName -LogDir build\msi-fips-load-logs
+
       - name: Upload MSI
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: snowflake-odbc-${{ matrix.config }}-${{ matrix.arch }}
+          name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}${{ matrix.config }}-${{ matrix.arch }}
           path: |
-            build/snowflake-odbc-*.msi
+            build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.msi
             build/msi-driver-name-logs/
           if-no-files-found: warn
+
+  verify_fips_same_version_upgrade:
+    needs: build_msi
+    runs-on: windows-latest
+    name: verify FIPS MSI replaces the standard x64 MSI
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download standard x64 MSI
+        uses: actions/download-artifact@v8
+        with:
+          name: snowflake-odbc-release-x64
+          path: msi-standard
+
+      - name: Download FIPS x64 MSI
+        uses: actions/download-artifact@v8
+        with:
+          name: snowflake-odbc-fips-release-x64
+          path: msi-fips
+
+      - name: Install the standard MSI and then the same-version FIPS MSI
+        shell: pwsh
+        run: |
+          $standard = @(Get-Item msi-standard\snowflake-odbc-*.msi)
+          $fips = @(Get-Item msi-fips\snowflake-odbc-fips-*.msi)
+          if ($standard.Count -ne 1) { throw "expected one standard MSI, found $($standard.Count)" }
+          if ($fips.Count -ne 1) { throw "expected one FIPS MSI, found $($fips.Count)" }
+          .\scripts\odbc\Test-OdbcMsiFipsReplace.ps1 `
+            -StandardMsi $standard[0].FullName `
+            -FipsMsi $fips[0].FullName `
+            -LogDir build\msi-fips-replace-logs
 
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image

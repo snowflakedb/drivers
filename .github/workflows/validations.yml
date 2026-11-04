@@ -60,12 +60,15 @@ jobs:
 
       - name: Fetch changelog comparison base
         id: base
-        # A depth-1 checkout is the PR head (or merge commit) and does not
-        # contain the base tree. Released version folders are frozen against
-        # that base, so the check needs the base commit itself.
+        # A depth-1 pull_request checkout is the merge commit and does not
+        # contain its parents. The first parent is the base that GitHub
+        # merged. pull_request.base.sha can lag behind that commit.
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
+          mapfile -t parents < <(git cat-file -p HEAD | awk '/^parent / { print $2 }')
+          if [[ ${#parents[@]} -ge 2 ]]; then
+            base="${parents[0]}"
+          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
             base="${{ github.event.merge_group.base_sha }}"
           else
             base="${{ github.event.pull_request.base.sha }}"

@@ -11,6 +11,9 @@ on:
     paths:
       - 'odbc/installer/**'
       - 'scripts/odbc/Test-OdbcMsiDriverName.ps1'
+      - 'scripts/odbc/Test-OdbcMsiFipsLoad.ps1'
+      - 'scripts/odbc/Test-OdbcMsiFipsReplace.ps1'
+      - 'scripts/odbc/Test-SelectFipsDll.ps1'
       - 'ci/Dockerfile.rocky-rpm-build'
       - 'ci/Dockerfile.debian-deb-build'
       - '.github/actions/install-wix-from-artifact/**'
