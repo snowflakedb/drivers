@@ -6,13 +6,7 @@ import type {
   DataType,
   RowOptions,
 } from './types.js';
-import {
-  binaryAsStringConverter,
-  booleanAsStringConverter,
-  realAsStringConverter,
-  textAsStringConverter,
-  vectorAsStringConverter,
-} from './string-converters.js';
+import { realAsStringConverter, vectorAsStringConverter } from './string-converters.js';
 import { createFixedConverter, variantConverter } from './value-converters.js';
 
 const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
@@ -22,28 +16,24 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
     asString: ConverterFactory | null;
   }
 > = {
-  text: { asValue: null, asString: () => textAsStringConverter },
-  fixed: { asValue: createFixedConverter, asString: () => textAsStringConverter },
+  fixed: { asValue: createFixedConverter, asString: null },
   real: { asValue: null, asString: () => realAsStringConverter },
   vector: { asValue: null, asString: () => vectorAsStringConverter },
-  decfloat: { asValue: null, asString: () => textAsStringConverter },
-  interval_year_month: { asValue: null, asString: () => textAsStringConverter },
-  interval_day_time: { asValue: null, asString: () => textAsStringConverter },
-  boolean: { asValue: null, asString: () => booleanAsStringConverter },
-  binary: { asValue: null, asString: () => binaryAsStringConverter },
-  time: { asValue: null, asString: () => textAsStringConverter },
-  variant: { asValue: () => variantConverter, asString: () => textAsStringConverter },
+  variant: { asValue: () => variantConverter, asString: null },
   object: { asValue: () => variantConverter, asString: null },
   array: { asValue: () => variantConverter, asString: null },
   map: { asValue: () => variantConverter, asString: null },
 };
 
 const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
-  String: ['text', 'time', 'decfloat', 'interval_year_month', 'interval_day_time'],
+  // Column types listed here skip their `asValue` converter when the token is requested.
+  // REAL and VECTOR are converted to strings by their `asString` converter. FIXED and VARIANT
+  // are already strings from the bridge and are listed only so `Number()`/JSON parsing does not
+  // run on them. Every other type is converted to a string in the bridge.
+  String: [],
   Number: ['fixed', 'real', 'vector'],
-  Boolean: ['boolean'],
-  Buffer: ['binary'],
-  // DATE and TIMESTAMP_* columns are converted to strings in the bridge.
+  Boolean: [],
+  Buffer: [],
   Date: [],
   JSON: ['variant'],
 };

@@ -3044,6 +3044,7 @@ dependencies = [
  "arrow",
  "chrono",
  "chrono-tz",
+ "hex",
  "napi",
  "napi-build",
  "napi-derive",

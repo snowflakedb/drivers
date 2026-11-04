@@ -18,8 +18,18 @@ pub enum FetchAsStringType {
 impl FetchAsStringType {
     fn bridge_logical_types(self) -> &'static [&'static str] {
         match self {
+            Self::Boolean => &["BOOLEAN"],
+            Self::Buffer => &["BINARY"],
             Self::Date => &["DATE", "TIMESTAMP_LTZ", "TIMESTAMP_NTZ", "TIMESTAMP_TZ"],
-            Self::String | Self::Number | Self::Boolean | Self::Json | Self::Buffer => &[],
+            Self::Json => &["VARIANT"],
+            Self::Number => &["FIXED"],
+            Self::String => &[
+                "DECFLOAT",
+                "INTERVAL_DAY_TIME",
+                "INTERVAL_YEAR_MONTH",
+                "TEXT",
+                "TIME",
+            ],
         }
     }
 }

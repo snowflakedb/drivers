@@ -1,4 +1,4 @@
-use napi::bindgen_prelude::{Buffer, Null, ToNapiValue};
+use napi::bindgen_prelude::{BufferSlice, Null, ToNapiValue};
 use napi::{Env, Result, sys};
 use std::borrow::Cow;
 
@@ -33,7 +33,12 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::Str(val) => unsafe { ToNapiValue::to_napi_value(env, val.as_ref()) },
             JsCell::Number(val) => unsafe { f64::to_napi_value(env, val) },
             JsCell::NumberArray(vals) => unsafe { Vec::<f64>::to_napi_value(env, vals) },
-            JsCell::Buffer(bytes) => unsafe { Buffer::to_napi_value(env, bytes.to_vec().into()) },
+            JsCell::Buffer(bytes) => unsafe {
+                ToNapiValue::to_napi_value(
+                    env,
+                    &BufferSlice::copy_from(&Env::from_raw(env), bytes)?,
+                )
+            },
             JsCell::SnowflakeDate {
                 epoch_millis,
                 nanos,

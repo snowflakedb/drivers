@@ -58,6 +58,7 @@ enum ColumnDecoder {
     Fixed(IntColumn, u32),
     Interval(IntColumn),
     Real(FloatColumn),
+    Structured(StringArray),
     Text(StringArray),
     Time(TimeColumn, TimeFormat),
     Timestamp(TimestampColumn, SnowflakeDateFormat),
@@ -170,7 +171,8 @@ impl ColumnDecoder {
                     timezone: ResolvedTimezone::Utc,
                 },
             ),
-            "VARIANT" | "OBJECT" | "ARRAY" => Self::Variant(src.array()?),
+            "VARIANT" => Self::Variant(src.array()?),
+            "OBJECT" | "ARRAY" => Self::Structured(src.array()?),
             "VECTOR" => Self::Vector(src.array()?),
             _ => return Err(format!("{} has an unsupported logicalType", src.id)),
         })
@@ -179,10 +181,22 @@ impl ColumnDecoder {
     fn read(&self, row: usize, output: ColumnOutput) -> Result<JsCell<'_>, ReadArrowError> {
         Ok(match self {
             Self::Binary(array) => {
-                JsCell::Buffer(sf_types::SnowflakeBinary.read_arrow_type(array, row)?)
+                let value = sf_types::SnowflakeBinary.read_arrow_type(array, row)?;
+                match output {
+                    ColumnOutput::String { .. } => {
+                        JsCell::Str(Cow::Owned(hex::encode_upper(value)))
+                    }
+                    ColumnOutput::Native => JsCell::Buffer(value),
+                }
             }
             Self::Boolean(array) => {
-                JsCell::Bool(sf_types::SnowflakeBoolean.read_arrow_type(array, row)?)
+                let value = sf_types::SnowflakeBoolean.read_arrow_type(array, row)?;
+                match output {
+                    ColumnOutput::String { .. } => {
+                        JsCell::Str(Cow::Borrowed(if value { "TRUE" } else { "FALSE" }))
+                    }
+                    ColumnOutput::Native => JsCell::Bool(value),
+                }
             }
             Self::Date(array, format) => {
                 let date = sf_types::SnowflakeDate.read_arrow_type(array, row)?;
@@ -197,9 +211,9 @@ impl ColumnDecoder {
             }
             Self::Interval(values) => JsCell::Str(Cow::Owned(values.get(row)?.to_string())),
             Self::Real(values) => JsCell::Number(values.get(row)?),
-            Self::Text(array) | Self::Variant(array) => JsCell::Str(Cow::Borrowed(
-                sf_types::SnowflakeText.read_arrow_type(array, row)?,
-            )),
+            Self::Structured(array) | Self::Text(array) | Self::Variant(array) => JsCell::Str(
+                Cow::Borrowed(sf_types::SnowflakeText.read_arrow_type(array, row)?),
+            ),
             Self::Time(values, format) => format.to_cell(values.get(format.scale, row)?),
             Self::Timestamp(values, format) => {
                 format.to_cell(values.get(format.scale, row)?.and_utc(), None, output)
@@ -260,10 +274,10 @@ mod tests {
         .unwrap()
     }
 
-    fn date_as_string() -> RowOptions {
+    fn as_string(data_type: FetchAsStringType, represent_null_as_string_null: bool) -> RowOptions {
         RowOptions {
-            fetch_as_string: vec![FetchAsStringType::Date],
-            represent_null_as_string_null: false,
+            fetch_as_string: vec![data_type],
+            represent_null_as_string_null,
         }
     }
 
@@ -281,7 +295,7 @@ mod tests {
     }
 
     fn string_reader(field: &Field, column: &dyn Array) -> ColumnReader {
-        try_reader_with_options(field, column, &date_as_string()).unwrap()
+        try_reader_with_options(field, column, &as_string(FetchAsStringType::Date, false)).unwrap()
     }
 
     fn reader(field: &Field, column: &dyn Array) -> ColumnReader {
@@ -328,6 +342,31 @@ mod tests {
         );
         assert_eq!(reader.read(0).unwrap(), JsCell::Buffer(&[0xab, 0xcd]));
         assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+    }
+
+    #[test]
+    fn binary_as_string_reads_upper_hex_and_null() {
+        let field = field("BINARY", DataType::Binary, &[]);
+        let array = BinaryArray::from(vec![Some(b"\x01\xab\xcd".as_slice()), None]);
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Buffer, false))
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), str_cell("01ABCD"));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Buffer, true))
+                .unwrap();
+        assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn binary_ignores_other_fetch_as_string_types() {
+        let field = field("BINARY", DataType::Binary, &[]);
+        let array = BinaryArray::from(vec![Some(b"\xab".as_slice())]);
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Number, true))
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::Buffer(&[0xab]));
     }
 
     #[test]
@@ -618,22 +657,83 @@ mod tests {
     }
 
     #[test]
-    fn object_and_array_logical_types_route_to_variant() {
-        let array = StringArray::from(vec![Some("{}")]);
-        assert!(
-            matches!(
-                reader(&field("OBJECT", DataType::Utf8, &[]), &array).decoder,
-                ColumnDecoder::Variant(_)
+    fn object_and_array_ignore_json_fetch_as_string() {
+        let array = StringArray::from(vec![Some("{}"), None]);
+        for logical in ["OBJECT", "ARRAY"] {
+            let reader = try_reader_with_options(
+                &field(logical, DataType::Utf8, &[]),
+                &array,
+                &as_string(FetchAsStringType::Json, true),
+            )
+            .unwrap();
+            assert!(
+                matches!(reader.decoder, ColumnDecoder::Structured(_)),
+                "{logical} should route to the Structured arm"
+            );
+            assert_eq!(reader.read(0).unwrap(), str_cell("{}"));
+            assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+        }
+    }
+
+    #[test]
+    fn boolean_as_string_reads_upper_case_and_null() {
+        let field = field("BOOLEAN", DataType::Boolean, &[]);
+        let array = BooleanArray::from(vec![Some(true), Some(false), None]);
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Boolean, true))
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), str_cell("TRUE"));
+        assert_eq!(reader.read(1).unwrap(), str_cell("FALSE"));
+        assert_eq!(reader.read(2).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn string_like_columns_as_string_keep_value_and_honor_null_as_string() {
+        let text = StringArray::from(vec![Some("v"), None]);
+        let fixed = Int64Array::from(vec![Some(42), None]);
+        let interval = Int64Array::from(vec![Some(7), None]);
+        let time = Int32Array::from(vec![Some(37_800), None]);
+        let cases: [(Field, &dyn Array, FetchAsStringType, &str); 5] = [
+            (
+                field("TEXT", DataType::Utf8, &[]),
+                &text,
+                FetchAsStringType::String,
+                "v",
             ),
-            "OBJECT should share the Variant arm"
-        );
-        assert!(
-            matches!(
-                reader(&field("ARRAY", DataType::Utf8, &[]), &array).decoder,
-                ColumnDecoder::Variant(_)
+            (
+                field("VARIANT", DataType::Utf8, &[]),
+                &text,
+                FetchAsStringType::Json,
+                "v",
             ),
-            "ARRAY should share the Variant arm"
-        );
+            (
+                field("FIXED", DataType::Int64, &[("scale", "0")]),
+                &fixed,
+                FetchAsStringType::Number,
+                "42",
+            ),
+            (
+                field("INTERVAL_DAY_TIME", DataType::Int64, &[]),
+                &interval,
+                FetchAsStringType::String,
+                "7",
+            ),
+            (
+                time_field("0"),
+                &time,
+                FetchAsStringType::String,
+                "10:30:00",
+            ),
+        ];
+        for (field, array, data_type, expected) in cases {
+            let reader =
+                try_reader_with_options(&field, array, &as_string(data_type, true)).unwrap();
+            assert_eq!(reader.read(0).unwrap(), str_cell(expected));
+            assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
+            let reader =
+                try_reader_with_options(&field, array, &as_string(data_type, false)).unwrap();
+            assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+        }
     }
 
     #[test]
@@ -992,10 +1092,7 @@ mod tests {
     fn date_as_string_represents_null_as_string_null_when_requested() {
         let field = field("DATE", DataType::Date32, &[]);
         let array = Date32Array::from(vec![None]);
-        let options = RowOptions {
-            represent_null_as_string_null: true,
-            ..date_as_string()
-        };
+        let options = as_string(FetchAsStringType::Date, true);
         let reader = try_reader_with_options(&field, &array, &options).unwrap();
         assert_eq!(reader.read(0).unwrap(), str_cell("NULL"));
     }
@@ -1004,10 +1101,7 @@ mod tests {
     fn time_ignores_date_fetch_as_string() {
         let field = time_field("0");
         let array = Int32Array::from(vec![None]);
-        let options = RowOptions {
-            represent_null_as_string_null: true,
-            ..date_as_string()
-        };
+        let options = as_string(FetchAsStringType::Date, true);
         let reader = try_reader_with_options(&field, &array, &options).unwrap();
         assert_eq!(reader.read(0).unwrap(), JsCell::Null);
     }
