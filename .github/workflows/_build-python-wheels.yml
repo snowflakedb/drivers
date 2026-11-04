@@ -8,7 +8,7 @@ on:
         required: true
         description: >
           JSON object mapping platform keys to Python version arrays.
-          Example: {"linux_x86": ["3.11","3.12","3.13","3.14","3.15","3.15t"], "macos_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
+          Example: {"linux_x86": ["3.11","3.12","3.13","3.14","3.14t","3.15","3.15t"], "macos_x86": ["3.11","3.12"], "windows_arm": ["3.11","3.12"]}
           Supported platforms: linux_x86, linux_aarch, macos_x86, macos_arm, windows_x86, windows_arm.
       cold_cache:
         type: boolean
@@ -282,7 +282,9 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: |
-          for v in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
+          # Python on Windows writes CRLF into this pipe today. Bash keeps
+          # the CR, and uv rejects a free-threaded request that ends in one.
+          for v in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]' | tr -d '\r'); do
             bash ./scripts/ci/uv-python-install.sh "$v"
           done
 
@@ -435,7 +437,9 @@ jobs:
           # openssl-src's Configure, and F2 removed the last thing that compiled
           # OpenSSL from source.
           mkdir -p python/src/snowflake/connector/_core
-          for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]'); do
+          # Python on Windows writes CRLF into this pipe today. Bash keeps
+          # the CR, and uv rejects a free-threaded request that ends in one.
+          for V in $(echo '${{ matrix.python_versions_json }}' | python3 -c 'import json,sys; [print(v) for v in json.load(sys.stdin)]' | tr -d '\r'); do
             PY="$(uv python find "$V")"
             PY_WIN="$(cygpath -w "$PY")"
             echo "── Building python_bridge for $V ($PY) ──"
@@ -597,6 +601,14 @@ jobs:
         with:
           name: ${{ matrix.artifact_id }}_py3.14
           path: python/dist/*-cp314-cp314-*.whl
+          if-no-files-found: error
+
+      - name: Upload py3.14t wheel
+        if: contains(fromJSON(matrix.python_versions_json), '3.14t')
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_id }}_py3.14t
+          path: python/dist/*-cp314-cp314t-*.whl
           if-no-files-found: error
 
       - name: Upload py3.15t wheel
