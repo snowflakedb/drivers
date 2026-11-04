@@ -51,6 +51,8 @@ public sealed class SnowflakeDbConnection : DbConnection
 
     public override ConnectionState State => _state;
 
+    public string SessionId => throw new NotImplementedException("TODO next milestone");
+
     internal IDatabaseDriverService Driver => _driver;
 
     internal DatabaseHandle? DbHandle => _dbHandle;

@@ -34,6 +34,8 @@ public sealed class PublicApiTest
             typeof(SnowflakeCredentialManagerFactory).FullName!,
             typeof(SnowflakeDbDriver).FullName!,
             typeof(SnowflakeFipsStatus).FullName!,
+            typeof(SnowflakeDbException).FullName!,
+            typeof(SFError).FullName!,
         };
 
         var violations = AssemblyUtil.LoadAssembly(AssembliesMetadata.RootAssembly).GetTypes()
@@ -71,6 +73,7 @@ public sealed class PublicApiTest
         $"P:get_{nameof(DbConnection.DataSource)}()",
         $"P:get_{nameof(DbConnection.ServerVersion)}()",
         $"P:get_{nameof(DbConnection.State)}()",
+        $"P:get_{nameof(SnowflakeDbConnection.SessionId)}()",
         $"M:{nameof(DbConnection.ChangeDatabase)}({nameof(String)})",
         $"M:{nameof(DbConnection.Open)}()",
         $"M:{nameof(DbConnection.OpenAsync)}({nameof(CancellationToken)})",
@@ -192,7 +195,7 @@ public sealed class PublicApiTest
 
     private static readonly HashSet<string> ChangedSessionBehaviorPublicApi = [];
 
-    private static readonly HashSet<string> ISnowflakeCredentialManagerPublicApi =
+    private static readonly HashSet<string> SnowflakeCredentialManagerPublicApi =
     [
         $"M:{nameof(ISnowflakeCredentialManager.GetCredentials)}({nameof(String)})",
         $"M:{nameof(ISnowflakeCredentialManager.RemoveCredentials)}({nameof(String)})",
@@ -262,6 +265,20 @@ public sealed class PublicApiTest
         $"P:get_{nameof(SnowflakeFipsStatus.IsFips)}()",
     ];
 
+    private static readonly HashSet<string> SnowflakeDbExceptionPublicApi =
+    [
+        "P:get_SqlState()",
+        "P:get_QueryId()",
+        "P:set_QueryId(String)",
+        "P:get_ErrorCode()",
+        "C:(String, Int32, String, String)",
+        "C:(SFError, String, Exception)",
+        "C:(SFError, Object[])",
+        "C:(String, SFError, Object[])",
+        "C:(Exception, SFError, Object[])",
+        "C:(Exception, String, SFError, Object[])",
+    ];
+
     public static IEnumerable<object[]> PublicAreSurfaceKeys => PublicApiSurface.Keys.Select(x => new object[] { x });
 
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
@@ -278,10 +295,11 @@ public sealed class PublicApiTest
         [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi,
         [typeof(SnowflakeActivityStarter)] = SnowflakeActivityStarterPublicApi,
         [typeof(ChangedSessionBehavior)] = ChangedSessionBehaviorPublicApi,
-        [typeof(ISnowflakeCredentialManager)] = ISnowflakeCredentialManagerPublicApi,
+        [typeof(ISnowflakeCredentialManager)] = SnowflakeCredentialManagerPublicApi,
         [typeof(SnowflakeCredentialManagerFactory)] = SnowflakeCredentialManagerFactoryPublicApi,
         [typeof(SnowflakeDbDriver)] = SnowflakeDbDriverPublicApi,
         [typeof(SnowflakeFipsStatus)] = SnowflakeFipsStatusPublicApi,
+        [typeof(SnowflakeDbException)] = SnowflakeDbExceptionPublicApi,
     };
 
     private static string? FormatMemberSignature(MemberInfo member)
