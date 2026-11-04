@@ -143,6 +143,14 @@ jobs:
           git fetch --no-tags --depth=1 origin "${ref}:refs/bd-base"
           echo "BD_BASE_SHA=$(git rev-parse refs/bd-base)" >> "$GITHUB_ENV"
 
+      - name: Setup FIPS build environment
+        # rust-clippy and rust-cargo-check pass --all-features, so they build
+        # aws-lc-fips-sys 0.13.17. This action exports CC=gcc-13 and
+        # CFLAGS=-Wno-error=discarded-qualifiers. glibc 2.41+ makes memchr
+        # return const void * under _GNU_SOURCE, and that crate's module
+        # build treats the discarded qualifier as -Werror.
+        uses: ./.github/actions/setup-fips-build-env
+
       - name: Run pre-commit
         # Skip regenerate-and-git-add hooks in CI: they `git add` on an
         # ephemeral runner. The Verify ConnectionConfig and
