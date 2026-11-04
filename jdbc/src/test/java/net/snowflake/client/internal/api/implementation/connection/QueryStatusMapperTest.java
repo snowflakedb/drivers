@@ -2,11 +2,14 @@ package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetQueryStatusResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class QueryStatusMapperTest {
 
@@ -121,5 +124,64 @@ class QueryStatusMapperTest {
     assertEquals("", status.getWarehouseExternalSize());
     assertEquals("", status.getWarehouseServerType());
     assertEquals("", status.getState());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "QUEUED_REPARING_WAREHOUSE, QUEUED_REPAIRING_WAREHOUSE, true, false",
+    "RESUMING_WAREHOUSE, RESUMING_WAREHOUSE, true, false",
+    "BLOCKED, BLOCKED, true, true",
+    "ABORTING, ABORTING, false, true",
+    "FAILED_WITH_INCIDENT, FAILED_WITH_INCIDENT, false, true",
+    "DISCONNECTED, DISCONNECTED, false, true",
+    "RESTARTED, RESTARTED, false, false"
+  })
+  void shouldClassifyRunningAndErrorStateOfWireStatus(
+      String wireName, QueryStatus.Status expected, boolean stillRunning, boolean anError) {
+    QueryStatus status =
+        QueryStatusMapper.fromCoreResponse(
+            ConnectionGetQueryStatusResponse.newBuilder().setStatusName(wireName).build());
+
+    assertEquals(expected, status.getStatus());
+    assertEquals(stillRunning, status.isStillRunning());
+    assertEquals(anError, status.isAnError());
+    assertFalse(status.isSuccess());
+  }
+
+  @Test
+  void shouldKeepLegacyMisspelledDescriptionForRepairingWarehouse() {
+    assertEquals(9, QueryStatus.Status.QUEUED_REPAIRING_WAREHOUSE.getValue());
+    assertEquals(
+        "QUEUED_REPARING_WAREHOUSE",
+        QueryStatus.Status.QUEUED_REPAIRING_WAREHOUSE.getDescription());
+  }
+
+  @Test
+  void shouldMapUnknownWireStatusToNoDataThatIsStillRunning() {
+    QueryStatus status =
+        QueryStatusMapper.fromCoreResponse(
+            ConnectionGetQueryStatusResponse.newBuilder().setStatusName("UNKNOWN_FUTURE").build());
+
+    assertFalse(status.isEmpty());
+    assertEquals(QueryStatus.Status.NO_DATA, status.getStatus());
+    assertTrue(status.isStillRunning());
+  }
+
+  @Test
+  void shouldReportEmptyStatusAsNoDataThatIsStillRunning() {
+    QueryStatus empty = QueryStatus.empty();
+
+    assertTrue(empty.isEmpty());
+    assertEquals(QueryStatus.Status.NO_DATA, empty.getStatus());
+    assertTrue(empty.isStillRunning());
+    assertFalse(empty.isSuccess());
+    assertFalse(empty.isAnError());
+  }
+
+  @Test
+  void shouldReturnNullStatusWhenConstructedWithNullStatusName() {
+    QueryStatus status = new QueryStatus(0, 0, "", "", null, 0, "", 0, "", 0, "", 0, "", "");
+
+    assertNull(status.getStatus());
   }
 }

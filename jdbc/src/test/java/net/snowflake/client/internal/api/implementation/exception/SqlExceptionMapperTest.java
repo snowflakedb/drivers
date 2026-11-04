@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.api.implementation.exception;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,8 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.sql.BatchUpdateException;
+import java.sql.ClientInfoStatus;
+import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
@@ -169,5 +175,40 @@ public class SqlExceptionMapperTest {
     SQLException thrown = SqlExceptionMapper.translate(cause);
     assertEquals("disk gone", thrown.getMessage());
     assertSame(cause, thrown.getCause());
+  }
+
+  @Test
+  public void shouldTranslateBatchUpdateAndClientInfoCarriersPreservingMetadata() {
+    RuntimeException rowCause = new RuntimeException("row 2 failed");
+    SFBatchUpdateException intBatch =
+        new SFBatchUpdateException("batch failed", "42000", 1003, new int[] {1, -3}, rowCause);
+    assertArrayEquals(new int[] {1, -3}, intBatch.getUpdateCounts());
+    assertNull(intBatch.getLargeUpdateCounts());
+
+    BatchUpdateException surfacedInt =
+        assertInstanceOf(BatchUpdateException.class, SqlExceptionMapper.translate(intBatch));
+    assertEquals("batch failed", surfacedInt.getMessage());
+    assertEquals("42000", surfacedInt.getSQLState());
+    assertEquals(1003, surfacedInt.getErrorCode());
+    assertArrayEquals(new int[] {1, -3}, surfacedInt.getUpdateCounts());
+    assertSame(rowCause, surfacedInt.getCause());
+
+    Map<String, ClientInfoStatus> failedProps =
+        Collections.singletonMap("ApplicationName", ClientInfoStatus.REASON_UNKNOWN_PROPERTY);
+    SFClientInfoException clientInfoCarrier =
+        new SFClientInfoException("bad client info", "22023", 200047, failedProps);
+    assertEquals("22023", clientInfoCarrier.getSqlState());
+    assertEquals(200047, clientInfoCarrier.getVendorCode());
+    assertSame(failedProps, clientInfoCarrier.getFailedProperties());
+
+    SQLClientInfoException surfacedClientInfo =
+        assertInstanceOf(
+            SQLClientInfoException.class, SqlExceptionMapper.translate(clientInfoCarrier));
+    assertEquals("bad client info", surfacedClientInfo.getMessage());
+    assertEquals("22023", surfacedClientInfo.getSQLState());
+    assertEquals(200047, surfacedClientInfo.getErrorCode());
+    assertEquals(
+        ClientInfoStatus.REASON_UNKNOWN_PROPERTY,
+        surfacedClientInfo.getFailedProperties().get("ApplicationName"));
   }
 }

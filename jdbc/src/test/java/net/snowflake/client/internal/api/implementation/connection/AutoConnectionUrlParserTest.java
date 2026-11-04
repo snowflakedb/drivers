@@ -310,6 +310,18 @@ class AutoConnectionUrlParserTest {
     assertFalse(aliasAfterEmpty.containsKey("db"));
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "jdbc:snowflake:auto?a=1&&b=2",
+        "jdbc:snowflake:auto?missingEquals",
+        "jdbc:snowflake:auto?bad=%ZZ"
+      })
+  void shouldRejectMalformedQueryComponents(String url) {
+    assertInvalidParameterValue(
+        assertThrows(SFSQLException.class, () -> AutoConnectionUrl.parseParameters(url)));
+  }
+
   private static void assertInvalidParameterValue(SFSQLException thrown) {
     assertEquals(ErrorCode.INVALID_PARAMETER_VALUE, thrown.getErrorCode());
   }

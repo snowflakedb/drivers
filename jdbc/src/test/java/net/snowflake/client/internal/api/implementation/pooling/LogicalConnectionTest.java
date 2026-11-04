@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.pooling;
 import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_CLOSED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
@@ -12,10 +13,19 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.sql.Blob;
 import java.sql.Connection;
+import java.sql.NClob;
+import java.sql.PreparedStatement;
 import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.SQLXML;
+import java.sql.Savepoint;
+import java.sql.Statement;
+import java.sql.Struct;
+import java.util.Collections;
+import java.util.Map;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
@@ -541,5 +551,126 @@ public class LogicalConnectionTest {
     // Positive control: the failing isValid must have been delegated to the physical connection.
     verify(physicalConnection).isValid(-1);
     verify(pooledConnection).fireConnectionErrorEvent(sqlException);
+  }
+
+  @Test
+  public void shouldWrapSqlExceptionWhenPhysicalIsClosedCheckThrowsInConstructor()
+      throws SQLException {
+    SnowflakePooledConnection pooledConnection = mock(SnowflakePooledConnection.class);
+    Connection physicalConnection = mock(Connection.class);
+    when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
+    SQLException isClosedFailure = new SQLException("status check failed");
+    when(physicalConnection.isClosed()).thenThrow(isClosedFailure);
+
+    SFSQLException carrier =
+        assertThrows(SFSQLException.class, () -> new LogicalConnection(pooledConnection));
+    assertEquals("Failed to check whether the physical connection is closed", carrier.getMessage());
+    assertSame(isClosedFailure, carrier.getCause());
+  }
+
+  @Test
+  public void shouldInvalidateHandleSilentlyWithoutFiringCloseOrErrorEvents() throws SQLException {
+    SnowflakePooledConnection pooledConnection = mock(SnowflakePooledConnection.class);
+    Connection physicalConnection = mock(Connection.class);
+    when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
+    when(physicalConnection.isClosed()).thenReturn(false);
+
+    LogicalConnection rawLogical = new LogicalConnection(pooledConnection);
+    Connection decorated = new DecoratedLogicalConnection(rawLogical, Telemetry.NOOP);
+
+    rawLogical.invalidate();
+    assertTrue(decorated.isClosed());
+
+    SnowflakeSQLException ex =
+        assertThrows(SnowflakeSQLException.class, decorated::createStatement);
+    assertEquals(CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
+    assertEquals(CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
+
+    decorated.close();
+    verify(pooledConnection, never()).fireConnectionCloseEvent();
+    verify(pooledConnection, never()).fireConnectionErrorEvent(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  public void shouldNotFireErrorEventWhenCallOnPhysicalThrowsFeatureNotSupported()
+      throws SQLException {
+    SnowflakePooledConnection pooledConnection = mock(SnowflakePooledConnection.class);
+    Connection physicalConnection = mock(Connection.class);
+    when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
+    when(physicalConnection.isClosed()).thenReturn(false);
+    when(physicalConnection.createBlob())
+        .thenThrow(new SQLFeatureNotSupportedException("createBlob not supported"));
+
+    Connection logicalConnection = logical(pooledConnection);
+
+    assertThrows(SQLFeatureNotSupportedException.class, logicalConnection::createBlob);
+    verify(physicalConnection).createBlob();
+    verify(pooledConnection, never()).fireConnectionErrorEvent(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  public void shouldDelegateStatementSavepointAndLobMethodsToPhysicalConnection()
+      throws SQLException {
+    SnowflakePooledConnection pooledConnection = mock(SnowflakePooledConnection.class);
+    Connection physicalConnection = mock(Connection.class);
+    when(pooledConnection.getPhysicalConnection()).thenReturn(physicalConnection);
+    when(physicalConnection.isClosed()).thenReturn(false);
+
+    Statement stmt2 = mock(Statement.class);
+    PreparedStatement ps3 = mock(PreparedStatement.class);
+    PreparedStatement ps4 = mock(PreparedStatement.class);
+    PreparedStatement psKeys = mock(PreparedStatement.class);
+    PreparedStatement psIdx = mock(PreparedStatement.class);
+    PreparedStatement psNames = mock(PreparedStatement.class);
+    Savepoint spUnnamed = mock(Savepoint.class);
+    Savepoint spNamed = mock(Savepoint.class);
+    Blob blob = mock(Blob.class);
+    NClob nclob = mock(NClob.class);
+    SQLXML sqlxml = mock(SQLXML.class);
+    Struct struct = mock(Struct.class);
+    int[] colIdx = new int[] {1};
+    String[] colNames = new String[] {"ID"};
+    Object[] attrs = new Object[] {"a"};
+    Map<String, Class<?>> typeMap = Collections.emptyMap();
+
+    when(physicalConnection.createStatement(1003, 1007)).thenReturn(stmt2);
+    when(physicalConnection.prepareStatement("SELECT 1", 1003, 1007)).thenReturn(ps3);
+    when(physicalConnection.prepareStatement("SELECT 1", 1003, 1007, 1)).thenReturn(ps4);
+    when(physicalConnection.prepareStatement("SELECT 1", 1)).thenReturn(psKeys);
+    when(physicalConnection.prepareStatement("SELECT 1", colIdx)).thenReturn(psIdx);
+    when(physicalConnection.prepareStatement("SELECT 1", colNames)).thenReturn(psNames);
+    when(physicalConnection.setSavepoint()).thenReturn(spUnnamed);
+    when(physicalConnection.setSavepoint("sp1")).thenReturn(spNamed);
+    when(physicalConnection.createBlob()).thenReturn(blob);
+    when(physicalConnection.createNClob()).thenReturn(nclob);
+    when(physicalConnection.createSQLXML()).thenReturn(sqlxml);
+    when(physicalConnection.createStruct("MY_TYPE", attrs)).thenReturn(struct);
+    when(physicalConnection.isValid(5)).thenReturn(true);
+
+    Connection logicalConnection = logical(pooledConnection);
+
+    assertSame(stmt2, logicalConnection.createStatement(1003, 1007));
+    assertSame(ps3, logicalConnection.prepareStatement("SELECT 1", 1003, 1007));
+    assertSame(ps4, logicalConnection.prepareStatement("SELECT 1", 1003, 1007, 1));
+    assertSame(psKeys, logicalConnection.prepareStatement("SELECT 1", 1));
+    assertSame(psIdx, logicalConnection.prepareStatement("SELECT 1", colIdx));
+    assertSame(psNames, logicalConnection.prepareStatement("SELECT 1", colNames));
+    assertSame(spUnnamed, logicalConnection.setSavepoint());
+    assertSame(spNamed, logicalConnection.setSavepoint("sp1"));
+    logicalConnection.rollback(spNamed);
+    logicalConnection.releaseSavepoint(spNamed);
+    logicalConnection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+    logicalConnection.setTypeMap(typeMap);
+    assertSame(blob, logicalConnection.createBlob());
+    assertSame(nclob, logicalConnection.createNClob());
+    assertSame(sqlxml, logicalConnection.createSQLXML());
+    assertSame(struct, logicalConnection.createStruct("MY_TYPE", attrs));
+    assertTrue(logicalConnection.isValid(5));
+
+    verify(physicalConnection).rollback(spNamed);
+    verify(physicalConnection).releaseSavepoint(spNamed);
+    verify(physicalConnection).setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+    verify(physicalConnection).setTypeMap(typeMap);
+    verify(pooledConnection, never()).fireConnectionErrorEvent(org.mockito.ArgumentMatchers.any());
   }
 }

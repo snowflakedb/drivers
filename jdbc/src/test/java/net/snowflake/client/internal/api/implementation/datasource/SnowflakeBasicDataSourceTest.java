@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.datasource;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -23,7 +24,11 @@ import java.util.Base64;
 import java.util.Properties;
 import java.util.stream.Stream;
 import javax.sql.DataSource;
+import net.snowflake.client.api.datasource.SnowflakeDataSource;
+import net.snowflake.client.api.datasource.SnowflakeDataSourceFactory;
+import net.snowflake.client.api.pooling.SnowflakeConnectionPoolDataSourceFactory;
 import net.snowflake.client.internal.api.decorator.Telemetry;
+import net.snowflake.client.internal.api.implementation.pooling.SnowflakePooledConnectionDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -758,6 +763,17 @@ public class SnowflakeBasicDataSourceTest {
     Properties props = dataSource.getProperties();
     assertNull(props.getProperty("user"));
     assertNull(props.getProperty("password"));
+  }
+
+  @Test
+  void shouldCreateDecoratedDataSourceAndPooledConnectionDataSourceFromFactories()
+      throws Exception {
+    SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
+    assertNotSame(ds, ds.unwrap(SnowflakeBasicDataSource.class));
+
+    assertInstanceOf(
+        SnowflakePooledConnectionDataSource.class,
+        SnowflakeConnectionPoolDataSourceFactory.createConnectionPoolDataSource());
   }
 
   private static PrivateKey generateRsaPrivateKey() throws Exception {
