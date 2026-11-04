@@ -537,8 +537,16 @@ pub struct MaterialDescription {
     pub query_id: String,
     #[serde(rename = "smkId")]
     pub smk_id: String,
-    #[serde(rename = "keySize")]
+    #[serde(rename = "keySize", default = "default_key_size")]
     pub key_size: String,
+}
+
+/// The server omits `keySize` from the matdesc when it equals its default of 256
+/// (XP `MaterialDescription::toJSONString()`, `DEFAULT_KEY_SIZE`), and GS
+/// `MaterialDescriptor` reads an absent `keySize` as 256. Files unloaded with
+/// `CLIENT_ENCRYPTION_KEY_SIZE = 256` carry no `keySize` today.
+fn default_key_size() -> String {
+    "256".to_string()
 }
 
 /// Encryption metadata envelope returned by cloud storage providers.
@@ -956,6 +964,16 @@ pub enum StageInfoRefreshError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_description_without_key_size_defaults_to_256() {
+        let desc: MaterialDescription =
+            serde_json::from_str(r#"{"queryId":"q","smkId":"22975407904029150"}"#)
+                .expect("parse matdesc");
+        assert_eq!(desc.query_id, "q");
+        assert_eq!(desc.smk_id, "22975407904029150");
+        assert_eq!(desc.key_size, "256");
+    }
 
     fn dummy_snapshot() -> StageInfoSnapshot {
         StageInfoSnapshot::creds_only(CloudCredentials::Azure {
