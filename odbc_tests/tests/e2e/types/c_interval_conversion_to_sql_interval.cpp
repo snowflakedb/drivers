@@ -731,6 +731,104 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should bind fractional SQL_C_INTERVAL_DAY_T
 }
 
 // ============================================================================
+// SQL_C_DEFAULT — the C type is the SQL_C_INTERVAL_* type with the same code as
+// the bound SQL_INTERVAL_* parameter type (ODBC Appendix D, "Default C Data
+// Types"). On the old driver a value whose leading field fits two digits reaches
+// the server and fails with HY000; a larger leading field fails with 22015.
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should bind SQL_C_DEFAULT to SQL_INTERVAL types as the matching SQL_C_INTERVAL type",
+                 "[e2e][types][c_interval][conversion][sql_interval]") {
+  auto [sql_type, val, literal, old_driver_sqlstate] =
+      GENERATE(Catch::Generators::table<SQLSMALLINT, SQL_INTERVAL_STRUCT, std::string, std::string>({
+          {SQL_INTERVAL_YEAR, ym_interval(SQL_FALSE, 5, 0), "5", "HY000"},
+          {SQL_INTERVAL_MONTH, ym_interval(SQL_FALSE, 0, 11), "11", "HY000"},
+          {SQL_INTERVAL_YEAR_TO_MONTH, ym_interval(SQL_FALSE, 3, 6), "3-06", "HY000"},
+          {SQL_INTERVAL_DAY, ds_interval(SQL_FALSE, 7, 0, 0, 0, 0), "7", "HY000"},
+          {SQL_INTERVAL_HOUR, ds_interval(SQL_FALSE, 0, 9, 0, 0, 0), "9", "HY000"},
+          {SQL_INTERVAL_MINUTE, ds_interval(SQL_FALSE, 0, 0, 30, 0, 0), "30", "HY000"},
+          {SQL_INTERVAL_SECOND, ds_interval(SQL_FALSE, 0, 0, 0, 45, 0), "45.000000", "HY000"},
+          {SQL_INTERVAL_DAY_TO_HOUR, ds_interval(SQL_FALSE, 1, 2, 0, 0, 0), "1 02", "HY000"},
+          {SQL_INTERVAL_DAY_TO_MINUTE, ds_interval(SQL_FALSE, 1, 2, 3, 0, 0), "1 02:03", "HY000"},
+          {SQL_INTERVAL_DAY_TO_SECOND, ds_interval(SQL_FALSE, 1, 2, 3, 4, 0), "1 02:03:04.000000", "HY000"},
+          {SQL_INTERVAL_HOUR_TO_MINUTE, ds_interval(SQL_FALSE, 0, 10, 30, 0, 0), "10:30", "HY000"},
+          {SQL_INTERVAL_HOUR_TO_SECOND, ds_interval(SQL_FALSE, 0, 10, 30, 15, 0), "10:30:15.000000", "HY000"},
+          {SQL_INTERVAL_MINUTE_TO_SECOND, ds_interval(SQL_FALSE, 0, 0, 30, 15, 0), "30:15.000000", "HY000"},
+          {SQL_INTERVAL_YEAR, ym_interval(SQL_FALSE, 100, 0), "100", "22015"},
+          {SQL_INTERVAL_DAY_TO_SECOND, ds_interval(SQL_FALSE, 100, 2, 3, 4, 0), "100 02:03:04.000000", "22015"},
+      }));
+  CAPTURE(sql_type, literal);
+
+  // Given a VARCHAR column and an interval struct for the parameter's SQL_INTERVAL type
+  conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col VARCHAR(200))");
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLLEN ind = sizeof(val);
+
+  // When the struct is bound as SQL_C_DEFAULT and inserted
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, sql_type, 0, 0, &val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+
+  // Then the new driver stores the literal of the matching SQL_C_INTERVAL type, and the old driver fails with
+  // `old_driver_sqlstate`
+  NEW_DRIVER_ONLY("BD#sql-c-default-interval-parameters") {
+    REQUIRE_ODBC(ret, stmt);
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == literal);
+  }
+  OLD_DRIVER_ONLY("BD#sql-c-default-interval-parameters") {
+    REQUIRE_EXPECTED_ERROR(ret, old_driver_sqlstate.c_str(), stmt.getHandle(), SQL_HANDLE_STMT);
+    // HY000 is also the SQLSTATE of unrelated failures; native error 18 identifies the server rejecting the
+    // SQL_INTERVAL_* bind type.
+    if (old_driver_sqlstate == "HY000") {
+      CHECK_THAT(OdbcResult(ret, stmt), OdbcMatchers::HasNativeError(18));
+    }
+  }
+}
+
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should bind SQL_C_DEFAULT parameter array to SQL_INTERVAL_YEAR_TO_MONTH with interval struct stride",
+                 "[e2e][types][c_interval][conversion][sql_interval]") {
+  // Given a VARCHAR column
+  conn.execute("CREATE OR REPLACE TEMPORARY TABLE t (col VARCHAR(200))");
+
+  // When a column-wise array of interval structs is bound with SQL_C_DEFAULT, SQL_INTERVAL_YEAR_TO_MONTH and
+  // BufferLength 0
+  constexpr SQLULEN num_rows = 3;
+  SQL_INTERVAL_STRUCT values[num_rows] = {ym_interval(SQL_FALSE, 1, 2), ym_interval(SQL_FALSE, 2, 3),
+                                          ym_interval(SQL_TRUE, 3, 4)};
+  SQLLEN indicators[num_rows] = {sizeof(SQL_INTERVAL_STRUCT), sizeof(SQL_INTERVAL_STRUCT), sizeof(SQL_INTERVAL_STRUCT)};
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_INTERVAL_YEAR_TO_MONTH, 0, 0, values,
+                         0, indicators);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+
+  // Then the new driver reads each row at a SQL_INTERVAL_STRUCT stride, and the old driver fails with HY000
+  NEW_DRIVER_ONLY("BD#sql-c-default-interval-parameters") {
+    REQUIRE_ODBC(ret, stmt);
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t ORDER BY col");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-3-04");
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "1-02");
+    REQUIRE_ODBC(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2-03");
+    REQUIRE_ODBC_NO_DATA(SQLFetch(fetch_stmt.getHandle()), fetch_stmt);
+  }
+  OLD_DRIVER_ONLY("BD#sql-c-default-interval-parameters") {
+    REQUIRE_THAT(OdbcResult(ret, stmt),
+                 OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY000") && OdbcMatchers::HasNativeError(18));
+  }
+}
+
+// ============================================================================
 // Cross-family binds are rejected with 07006 — a year-month source cannot be
 // bound to a day-time target and vice versa, for single-field AND compound
 // sources/targets.

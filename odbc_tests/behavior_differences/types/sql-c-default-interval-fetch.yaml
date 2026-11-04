@@ -1,0 +1,35 @@
+name: "SQL_C_DEFAULT on an INTERVAL result column returns SQL_INTERVAL_STRUCT"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  INTERVAL columns are SQL_VARCHAR, so SQLBindCol and SQLGetData with
+  SQL_C_DEFAULT return a character string with the scaled numeric value.
+  '-1-2'::INTERVAL YEAR TO MONTH returns "-14",
+  '12 3:4:5.678'::INTERVAL DAY TO SECOND returns "1047845678000.000", and
+  '100-0'::INTERVAL YEAR TO MONTH returns "1200".
+new_driver_behavior: |
+  INTERVAL columns are SQL_INTERVAL_YEAR_TO_MONTH or
+  SQL_INTERVAL_DAY_TO_SECOND, and SQLBindCol and SQLGetData with
+  SQL_C_DEFAULT write a SQL_INTERVAL_STRUCT with interval_type
+  SQL_IS_YEAR_TO_MONTH or SQL_IS_DAY_TO_SECOND. The length indicator is
+  sizeof(SQL_INTERVAL_STRUCT). '-1-2'::INTERVAL YEAR TO MONTH returns sign
+  SQL_TRUE, year 1, month 2; '12 3:4:5.678'::INTERVAL DAY TO SECOND returns
+  day 12, hour 3, minute 4, second 5, fraction 678000. A value whose leading
+  field has more digits than the ARD SQL_DESC_DATETIME_INTERVAL_PRECISION
+  (2 by default) fails with SQLSTATE 22015, so '100-0'::INTERVAL YEAR TO
+  MONTH and '100 0:0:0'::INTERVAL DAY TO SECOND fail unless the application
+  raises that precision. A nonzero BufferLength smaller than
+  sizeof(SQL_INTERVAL_STRUCT) fails SQLGetData and SQLFetch with SQLSTATE
+  HY090 and writes nothing to the buffer; BufferLength 0 or at least
+  sizeof(SQL_INTERVAL_STRUCT) receives the struct.
+description: |
+  ODBC Appendix D ("Default C Data Types") maps each SQL_INTERVAL_* type to
+  the SQL_C_INTERVAL_* type of the same subtype. An application that binds
+  SQL_C_DEFAULT to an INTERVAL column with a character buffer receives a
+  struct instead of a string; binding SQL_C_CHAR returns the ANSI interval
+  literal. ODBC ignores BufferLength for fixed-length C types, so the HY090
+  check departs from the specification: it rejects a character buffer
+  shorter than the struct instead of writing past its end.

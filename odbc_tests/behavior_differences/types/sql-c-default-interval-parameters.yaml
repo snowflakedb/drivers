@@ -1,0 +1,21 @@
+name: "SQL_C_DEFAULT on SQL_INTERVAL_* parameters reads the matching SQL_C_INTERVAL_* struct"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  SQLBindParameter with SQL_C_DEFAULT and a SQL_INTERVAL_* parameter type
+  succeeds, but SQLExecute fails. A SQL_INTERVAL_STRUCT whose leading field
+  fits in two digits fails with SQLSTATE HY000 and native error 18; a larger
+  leading field, such as 100 years, fails with SQLSTATE 22015. Column-wise
+  parameter arrays fail the same way.
+new_driver_behavior: |
+  SQL_C_DEFAULT on SQL_INTERVAL_<subtype> is SQL_C_INTERVAL_<subtype>, so the
+  bound SQL_INTERVAL_STRUCT is sent as its ANSI interval literal: a
+  SQL_INTERVAL_YEAR_TO_MONTH struct of 3 years 6 months inserts "3-06", and
+  100 years bound as SQL_INTERVAL_YEAR inserts "100". Column-wise parameter
+  arrays with BufferLength 0 advance by sizeof(SQL_INTERVAL_STRUCT).
+description: |
+  ODBC Appendix D ("Default C Data Types") maps each SQL_INTERVAL_* type to
+  the SQL_C_INTERVAL_* type of the same subtype.

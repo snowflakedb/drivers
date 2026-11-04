@@ -3267,6 +3267,34 @@ mod tests {
     }
 
     #[test]
+    fn json_multi_row_default_interval_zero_buffer_length_strides_by_interval_struct() -> TestResult
+    {
+        let vals = [
+            ym_interval(0, 1, 2),
+            ym_interval(0, 2, 3),
+            ym_interval(1, 3, 4),
+        ];
+        let (mut apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Default,
+            sql::SqlDataType(107),
+            vals.as_ptr() as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.array_size = 3;
+
+        let json = odbc_bindings_to_json(&apd, &ipd, 1)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
+        assert_eq!(parsed["1"]["type"], "INTERVAL_YEAR_MONTH");
+        assert_eq!(
+            parsed["1"]["value"],
+            serde_json::json!(["1-02", "2-03", "-3-04"])
+        );
+        Ok(())
+    }
+
+    #[test]
     fn json_multi_row_default_wvarchar_reads_wchar_rows() -> TestResult {
         let rows: [u16; 6] = [
             b'a' as u16,
@@ -5627,6 +5655,37 @@ mod tests {
             let (ty, v) = convert_default(sql_type, val.as_ptr() as sql::Pointer, 3)?;
             assert_eq!(ty, SnowflakeLogicalType::Text, "{sql_type:?}");
             assert_eq!(v, "hi", "{sql_type:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_sql_interval_reads_matching_interval_struct() -> TestResult {
+        let ym = SnowflakeLogicalType::IntervalYearMonth;
+        let dt = SnowflakeLogicalType::IntervalDayTime;
+        let cases = [
+            (101, ym_interval(0, 5, 0), ym, "5"),
+            (102, ym_interval(0, 0, 11), ym, "11"),
+            (107, ym_interval(0, 3, 6), ym, "3-06"),
+            (103, ds_interval(0, 7, 0, 0, 0, 0), dt, "7"),
+            (104, ds_interval(0, 0, 9, 0, 0, 0), dt, "9"),
+            (105, ds_interval(0, 0, 0, 30, 0, 0), dt, "30"),
+            (106, ds_interval(0, 0, 0, 0, 45, 0), dt, "45.000000"),
+            (108, ds_interval(0, 1, 2, 0, 0, 0), dt, "1 02"),
+            (109, ds_interval(0, 1, 2, 3, 0, 0), dt, "1 02:03"),
+            (110, ds_interval(0, 1, 2, 3, 4, 0), dt, "1 02:03:04.000000"),
+            (111, ds_interval(0, 0, 10, 30, 0, 0), dt, "10:30"),
+            (112, ds_interval(0, 0, 10, 30, 15, 0), dt, "10:30:15.000000"),
+            (113, ds_interval(0, 0, 0, 30, 15, 0), dt, "30:15.000000"),
+        ];
+        for (code, iv, expected_type, expected_value) in cases {
+            let (ty, v) = convert_default(
+                sql::SqlDataType(code),
+                &iv as *const sql::IntervalStruct as sql::Pointer,
+                0,
+            )?;
+            assert_eq!(ty, expected_type, "SQL type {code}");
+            assert_eq!(v, expected_value, "SQL type {code}");
         }
         Ok(())
     }

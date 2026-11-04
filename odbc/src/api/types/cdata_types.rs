@@ -125,21 +125,28 @@ impl CDataType {
             }
             CDataType::TypeTime | CDataType::Time => Some(std::mem::size_of::<sql::Time>()),
             CDataType::Guid => Some(16),
-            CDataType::IntervalYear
-            | CDataType::IntervalMonth
-            | CDataType::IntervalDay
-            | CDataType::IntervalHour
-            | CDataType::IntervalMinute
-            | CDataType::IntervalSecond
-            | CDataType::IntervalYearToMonth
-            | CDataType::IntervalDayToHour
-            | CDataType::IntervalDayToMinute
-            | CDataType::IntervalDayToSecond
-            | CDataType::IntervalHourToMinute
-            | CDataType::IntervalHourToSecond
-            | CDataType::IntervalMinuteToSecond => Some(std::mem::size_of::<sql::IntervalStruct>()),
+            _ if self.is_interval() => Some(std::mem::size_of::<sql::IntervalStruct>()),
             _ => None,
         }
+    }
+
+    pub fn is_interval(&self) -> bool {
+        matches!(
+            self,
+            CDataType::IntervalYear
+                | CDataType::IntervalMonth
+                | CDataType::IntervalDay
+                | CDataType::IntervalHour
+                | CDataType::IntervalMinute
+                | CDataType::IntervalSecond
+                | CDataType::IntervalYearToMonth
+                | CDataType::IntervalDayToHour
+                | CDataType::IntervalDayToMinute
+                | CDataType::IntervalDayToSecond
+                | CDataType::IntervalHourToMinute
+                | CDataType::IntervalHourToSecond
+                | CDataType::IntervalMinuteToSecond
+        )
     }
 }
 

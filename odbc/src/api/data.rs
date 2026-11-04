@@ -48,6 +48,16 @@ fn resolve_fetch_binding(
     // Converters and the row stride both need a concrete C type.
     let target_type = resolve_fetch_c_type(binding.target_type, field, numeric_settings)
         .context(ConversionSnafu)?;
+    let struct_len = std::mem::size_of::<sql::IntervalStruct>() as sql::Len;
+    if binding.target_type == CDataType::Default
+        && target_type.is_interval()
+        && (1..struct_len).contains(&binding.buffer_length)
+    {
+        return InvalidBufferLengthSnafu {
+            length: binding.buffer_length as i64,
+        }
+        .fail();
+    }
     Ok(Binding {
         target_type,
         ..*binding
@@ -1882,6 +1892,74 @@ mod tests {
             assert_eq!(numeric.scale, 0);
             assert_eq!(numeric.sign, 1);
             assert_eq!(u128::from_le_bytes(numeric.val), 42);
+        }
+    }
+
+    mod resolve_fetch_binding_buffer_length {
+        use super::*;
+
+        const STRUCT_LEN: sql::Len = std::mem::size_of::<sql::IntervalStruct>() as sql::Len;
+
+        fn interval_year_month_field() -> Field {
+            let metadata =
+                HashMap::from([("logicalType".to_string(), "INTERVAL_YEAR_MONTH".to_string())]);
+            Field::new("test", DataType::Int64, true).with_metadata(metadata)
+        }
+
+        fn resolve(
+            target_type: CDataType,
+            buffer_length: sql::Len,
+            field: &Field,
+        ) -> OdbcResult<Binding> {
+            let binding = Binding {
+                target_type,
+                buffer_length,
+                ..Default::default()
+            };
+            resolve_fetch_binding(&binding, field, &NumericSettings::default())
+        }
+
+        #[test]
+        fn default_on_interval_rejects_buffer_shorter_than_struct() {
+            let err = resolve(
+                CDataType::Default,
+                STRUCT_LEN - 1,
+                &interval_year_month_field(),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(err, OdbcError::InvalidBufferLength { length, .. } if length == (STRUCT_LEN - 1) as i64),
+                "{err:?}"
+            );
+        }
+
+        #[test]
+        fn default_on_interval_accepts_zero_or_struct_sized_buffer() {
+            for buffer_length in [0, STRUCT_LEN, 64] {
+                let resolved = resolve(
+                    CDataType::Default,
+                    buffer_length,
+                    &interval_year_month_field(),
+                )
+                .unwrap();
+                assert_eq!(
+                    resolved.target_type,
+                    CDataType::IntervalYearToMonth,
+                    "BufferLength {buffer_length}"
+                );
+            }
+        }
+
+        #[test]
+        fn explicit_char_on_interval_accepts_short_buffer() {
+            let resolved = resolve(CDataType::Char, 4, &interval_year_month_field()).unwrap();
+            assert_eq!(resolved.target_type, CDataType::Char);
+        }
+
+        #[test]
+        fn default_on_text_accepts_short_buffer() {
+            let resolved = resolve(CDataType::Default, 4, &field_with_text_meta()).unwrap();
+            assert_eq!(resolved.target_type, CDataType::Char);
         }
     }
 }

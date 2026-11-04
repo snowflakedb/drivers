@@ -1,6 +1,8 @@
 use odbc_sys as sql;
 
-use super::interval::{day_time_subtype_from_sql, year_month_subtype_from_sql};
+use super::interval::{
+    DayTimeSubtype, YearMonthSubtype, day_time_subtype_from_sql, year_month_subtype_from_sql,
+};
 use crate::api::CDataType;
 use crate::api::types::{
     SQL_SF_ARRAY, SQL_SF_OBJECT, SQL_SF_TIMESTAMP_LTZ, SQL_SF_TIMESTAMP_NTZ, SQL_SF_TIMESTAMP_TZ,
@@ -40,13 +42,12 @@ pub(crate) fn default_c_type(sql_type: sql::SqlDataType) -> Option<CDataType> {
         | SQL_SF_TIMESTAMP_TZ => CDataType::TimeStamp,
         // Only fetch reaches these; SQLBindParameter rejects them with HYC00.
         SQL_SF_ARRAY | SQL_SF_OBJECT | SQL_SF_VARIANT => CDataType::Char,
-        other
-            if year_month_subtype_from_sql(other.0).is_some()
-                || day_time_subtype_from_sql(other.0).is_some() =>
-        {
-            CDataType::Char
+        // On fetch, the ARD leading precision (2 by default) applies to the interval struct.
+        other => {
+            return year_month_subtype_from_sql(other.0)
+                .map(YearMonthSubtype::c_type)
+                .or_else(|| day_time_subtype_from_sql(other.0).map(DayTimeSubtype::c_type));
         }
-        _ => return None,
     };
     Some(c_type)
 }
@@ -109,10 +110,25 @@ mod tests {
         for (sql_type, expected) in cases {
             assert_eq!(default_c_type(sql_type), Some(expected), "{sql_type:?}");
         }
-        for code in 101..=113 {
+        let intervals = [
+            (101, CDataType::IntervalYear),
+            (102, CDataType::IntervalMonth),
+            (103, CDataType::IntervalDay),
+            (104, CDataType::IntervalHour),
+            (105, CDataType::IntervalMinute),
+            (106, CDataType::IntervalSecond),
+            (107, CDataType::IntervalYearToMonth),
+            (108, CDataType::IntervalDayToHour),
+            (109, CDataType::IntervalDayToMinute),
+            (110, CDataType::IntervalDayToSecond),
+            (111, CDataType::IntervalHourToMinute),
+            (112, CDataType::IntervalHourToSecond),
+            (113, CDataType::IntervalMinuteToSecond),
+        ];
+        for (code, expected) in intervals {
             assert_eq!(
                 default_c_type(sql::SqlDataType(code)),
-                Some(CDataType::Char),
+                Some(expected),
                 "interval code {code}"
             );
         }

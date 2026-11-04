@@ -5,7 +5,8 @@ mod tests {
     use crate::conversion::error::{ReadArrowError, WriteOdbcError};
     use crate::conversion::interval_result::{IntervalDayTimeReader, IntervalYearMonthReader};
     use crate::conversion::test_utils::helpers::{
-        binding_for_char_buffer, binding_for_interval, binding_for_wchar_buffer, zero_interval,
+        binding_for_char_buffer, binding_for_interval, binding_for_interval_with_precision,
+        binding_for_wchar_buffer, fetch_default_c_type, zero_interval,
     };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::{Warning, Warnings};
@@ -185,6 +186,109 @@ mod tests {
         assert_eq!(interval.interval_sign, 0);
         assert_eq!(unsafe { interval.interval_value.year_month.year }, 2);
         assert_eq!(unsafe { interval.interval_value.year_month.month }, 3);
+    }
+
+    #[test]
+    fn year_month_default_writes_interval_year_to_month() {
+        let reader = IntervalYearMonthReader;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(
+            fetch_default_c_type(reader.sql_type()),
+            &mut interval,
+            &mut str_len,
+        );
+
+        let warnings = reader.write_odbc_type(-27, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            str_len,
+            std::mem::size_of::<sql::IntervalStruct>() as sql::Len
+        );
+        assert_eq!(interval.interval_type, sql::Interval::YearToMonth as i32);
+        assert_eq!(interval.interval_sign, 1);
+        // SAFETY: a YEAR_TO_MONTH `interval_type` means the writer initialized `year_month`.
+        let year_month = unsafe { interval.interval_value.year_month };
+        assert_eq!(year_month.year, 2);
+        assert_eq!(year_month.month, 3);
+    }
+
+    #[test]
+    fn year_month_default_rejects_leading_field_over_default_precision() {
+        let reader = IntervalYearMonthReader;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(
+            fetch_default_c_type(reader.sql_type()),
+            &mut interval,
+            &mut str_len,
+        );
+
+        let err = reader
+            .write_odbc_type(1200, &binding, &mut None)
+            .unwrap_err();
+
+        assert!(
+            matches!(err, WriteOdbcError::IntervalFieldOverflow { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn year_month_default_honors_ard_leading_precision() {
+        let reader = IntervalYearMonthReader;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval_with_precision(
+            fetch_default_c_type(reader.sql_type()),
+            &mut interval,
+            &mut str_len,
+            9,
+        );
+
+        reader.write_odbc_type(1200, &binding, &mut None).unwrap();
+
+        assert_eq!(interval.interval_type, sql::Interval::YearToMonth as i32);
+        // SAFETY: a YEAR_TO_MONTH `interval_type` means the writer initialized `year_month`.
+        let year_month = unsafe { interval.interval_value.year_month };
+        assert_eq!(year_month.year, 100);
+        assert_eq!(year_month.month, 0);
+    }
+
+    #[test]
+    fn day_time_default_writes_interval_day_to_second() {
+        let reader = IntervalDayTimeReader { fraction_scale: 9 };
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(
+            fetch_default_c_type(reader.sql_type()),
+            &mut interval,
+            &mut str_len,
+        );
+
+        let warnings = reader
+            .write_odbc_type(
+                day_time_nanos(12, 3, 4, 5) + 678_000_000,
+                &binding,
+                &mut None,
+            )
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            str_len,
+            std::mem::size_of::<sql::IntervalStruct>() as sql::Len
+        );
+        assert_eq!(interval.interval_type, sql::Interval::DayToSecond as i32);
+        assert_eq!(interval.interval_sign, 0);
+        // SAFETY: a DAY_TO_SECOND `interval_type` means the writer initialized `day_second`.
+        let day_second = unsafe { interval.interval_value.day_second };
+        assert_eq!(day_second.day, 12);
+        assert_eq!(day_second.hour, 3);
+        assert_eq!(day_second.minute, 4);
+        assert_eq!(day_second.second, 5);
+        assert_eq!(day_second.fraction, 678_000);
     }
 
     #[test]

@@ -1692,7 +1692,7 @@ mod resolve_fetch_c_type_tests {
             (
                 field(DataType::Int64, &[("logicalType", "INTERVAL_YEAR_MONTH")]),
                 NumericSettings::default(),
-                CDataType::Char,
+                CDataType::IntervalYearToMonth,
             ),
             (
                 field(
@@ -1747,7 +1747,7 @@ mod resolve_fetch_c_type_tests {
                     &[("logicalType", "INTERVAL_DAY_TIME"), ("scale", "9")],
                 ),
                 NumericSettings::default(),
-                CDataType::Char,
+                CDataType::IntervalDayToSecond,
             ),
             (
                 field(

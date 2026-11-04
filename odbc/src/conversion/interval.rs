@@ -55,6 +55,14 @@ impl YearMonthSubtype {
     fn is_compound(self) -> bool {
         matches!(self, Self::YearToMonth)
     }
+
+    pub(crate) fn c_type(self) -> CDataType {
+        match self {
+            Self::Year => CDataType::IntervalYear,
+            Self::Month => CDataType::IntervalMonth,
+            Self::YearToMonth => CDataType::IntervalYearToMonth,
+        }
+    }
 }
 
 /// Day-time interval subtype, covering both single-field and compound
@@ -82,12 +90,25 @@ impl DayTimeSubtype {
     fn is_second(self) -> bool {
         matches!(self, Self::Second)
     }
+
+    pub(crate) fn c_type(self) -> CDataType {
+        match self {
+            Self::Day => CDataType::IntervalDay,
+            Self::Hour => CDataType::IntervalHour,
+            Self::Minute => CDataType::IntervalMinute,
+            Self::Second => CDataType::IntervalSecond,
+            Self::DayToHour => CDataType::IntervalDayToHour,
+            Self::DayToMinute => CDataType::IntervalDayToMinute,
+            Self::DayToSecond => CDataType::IntervalDayToSecond,
+            Self::HourToMinute => CDataType::IntervalHourToMinute,
+            Self::HourToSecond => CDataType::IntervalHourToSecond,
+            Self::MinuteToSecond => CDataType::IntervalMinuteToSecond,
+        }
+    }
 }
 
 /// Map a SQL data type code (101..=113) to its corresponding subtype, or
-/// `None` if the code does not name a SQL_INTERVAL_* type. Used by the
-/// `make_converter` factory in `param_binding.rs` to decide which of the
-/// two interval converters to instantiate.
+/// `None` if the code does not name a SQL_INTERVAL_* type.
 pub(crate) fn year_month_subtype_from_sql(code: i16) -> Option<YearMonthSubtype> {
     match code {
         101 => Some(YearMonthSubtype::Year),
