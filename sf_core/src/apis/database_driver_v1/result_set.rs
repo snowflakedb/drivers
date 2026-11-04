@@ -445,7 +445,14 @@ pub(super) async fn resolve_reader_ctx(
         .clone()
         .context(ConnectionNotInitializedSnafu)?;
     let session_params = conn_guard.session_parameters.read().await;
-    let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+    let prefetch_config = PrefetchConfig::from_connection_params(
+        &session_params,
+        conn_guard
+            .resolved_connect
+            .as_ref()
+            .unwrap_or(&conn_guard.connection_seed),
+        &conn_guard.session_overrides,
+    );
     Ok(ReaderContext {
         http_client,
         prefetch_config,
@@ -790,7 +797,16 @@ impl DatabaseDriverV1 {
 
             let data = fetch_query_response_data(&conn_ptr, &query_id).await?;
             let descriptor = response_to_descriptor(&data, &self.wrapper_presets);
-            let reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            let mut reader_ctx = resolve_reader_ctx(&conn_ptr).await?;
+            if let Some(config) = conn_ptr
+                .lock()
+                .await
+                .statement_prefetch_by_query_id
+                .get(&query_id)
+                .cloned()
+            {
+                reader_ctx.prefetch_config = config;
+            }
             let handle =
                 self.create_result_set(descriptor.clone(), data.into_rowset_data(), reader_ctx);
 
@@ -806,6 +822,7 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
     use crate::apis::database_driver_v1::global_state::DriverProviders;
+    use crate::config::settings::Setting;
     use crate::file_manager::UploadResult;
     use crate::rest::snowflake::query_response::Data;
     use arrow::array::{Array, Int64Array, RecordBatch, StringArray};
@@ -924,6 +941,36 @@ mod tests {
             .expect("column 1 should be Utf8");
         assert_eq!(names.value(0), "alice");
         assert_eq!(names.value(1), "bob");
+    }
+
+    #[tokio::test]
+    async fn reader_context_uses_client_only_connection_and_session_queue_settings() {
+        let driver = DatabaseDriverV1::new();
+        let handle = driver.connection_new();
+        let conn_ptr = driver.connections.get_obj(handle).unwrap();
+        {
+            let mut conn = conn_ptr.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.connection_seed
+                .insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(3));
+            conn.connection_seed
+                .insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(7));
+        }
+        let connection_ctx = resolve_reader_ctx(&conn_ptr).await.unwrap();
+        assert_eq!(connection_ctx.prefetch_config.prefetch_threads, 3);
+        assert_eq!(connection_ctx.prefetch_config.result_queue_size, Some(7));
+
+        {
+            let mut conn = conn_ptr.lock().await;
+            conn.session_overrides
+                .insert("CLIENT_PREFETCH_THREADS".into(), Setting::Int(8));
+            conn.session_overrides
+                .insert("CLIENT_RESULT_QUEUE_SIZE".into(), Setting::Int(2));
+        }
+        let session_ctx = resolve_reader_ctx(&conn_ptr).await.unwrap();
+        assert_eq!(session_ctx.prefetch_config.prefetch_threads, 8);
+        assert_eq!(session_ctx.prefetch_config.result_queue_size, Some(2));
+        driver.connection_release(handle).unwrap();
     }
 
     #[test]

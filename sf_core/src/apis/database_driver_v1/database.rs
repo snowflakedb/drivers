@@ -95,7 +95,13 @@ impl DatabaseDriverV1 {
                     .clone()
                     .ok_or_else(|| ConnectionNotInitializedSnafu.build())?;
                 let session_params = conn.session_parameters.read().await;
-                let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+                let prefetch_config = PrefetchConfig::from_connection_params(
+                    &session_params,
+                    conn.resolved_connect
+                        .as_ref()
+                        .unwrap_or(&conn.connection_seed),
+                    &conn.session_overrides,
+                );
                 let xp_backend = conn.xp_backend_arc().context(QuerySnafu)?;
                 (client, prefetch_config, xp_backend)
             }
