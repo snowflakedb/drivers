@@ -23,6 +23,10 @@ Outside pull requests, the job also runs `actions/attest@v4` twice per library: 
 
 https://github.com/snowflakedb/self-serve-snowflakedb/blob/26ecbd5af4827db3e40fe9cdbad9777d7abd3e35/configs/snowflakedb/default/default_actions.yml
 
+## Package bundle
+
+`package_evidence.py` writes a bundle for one finished package file (`.rpm`, `.deb`, `.tar.gz`, `.pkg`, or `.msi`). The subject is that package file. `sbom.cdx.json` lists the files the package installs, and `manifest.json` sets `stage` to `gha-package-candidate` with `covers_releng_published_bytes` false. The package jobs do not call this script yet.
+
 ## Other packages
 
 Python, JDBC, and .NET release workflows do not build FIPS packages yet. A FIPS lane calls `.github/actions/fips-release-evidence` with the bridge `Cargo.toml`, the same features and target as the build, and the unstripped library before any byte-changing sign or strip step. npm has no lockfile in this repo, so the Node bundle does not include an npm dependency SBOM.

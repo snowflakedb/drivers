@@ -194,6 +194,7 @@ jobs:
               - 'ci/test_matrix/models/core_fips.py'
               - 'ci/test_matrix/mappings/core.py'
               - 'ci/test_matrix/mappings/core_fips.py'
+              - 'ci/fips/**'
             dotnet:
               - 'dotnet/**'
               - '.github/workflows/test-dotnet.yml'
