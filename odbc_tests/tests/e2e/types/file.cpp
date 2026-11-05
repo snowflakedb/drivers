@@ -4,11 +4,14 @@
 
 #include <cstring>
 #include <optional>
+#include <random>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "ReadOnlyDbFixture.hpp"
+#include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "WideString.hpp"
 #include "compatibility.hpp"
@@ -17,7 +20,9 @@
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
+#include "query_helpers.hpp"
 #include "sf_odbc.h"
+#include "test_setup.hpp"
 
 namespace {
 
@@ -68,6 +73,82 @@ void require_wide_file_doc(const std::u32string& json, const char* relative_path
   };
   REQUIRE(contains(relative_path));
   REQUIRE(contains(stage));
+}
+
+// Schema names must not contain '_' because SQLProcedureColumns matches
+// procedure_schema with LIKE, and '_' is a single-character wildcard. The
+// shared Schema helper always generates TEMP_TEST_SCHEMA_<n>, so this RAII
+// type owns a no-underscore name and drops it at the end of the test.
+class ProcedureSchema {
+ public:
+  explicit ProcedureSchema(Connection& conn) : conn_(conn) {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    name_ = "FILEPROCSCHEMA" + std::to_string(gen());
+    conn_.execute("CREATE SCHEMA IF NOT EXISTS " + name_);
+    conn_.execute("USE SCHEMA " + name_);
+  }
+
+  ~ProcedureSchema() {
+    try {
+      conn_.execute("DROP SCHEMA IF EXISTS " + name_ + " CASCADE");
+    } catch (...) {
+      // A failed drop must not escape the destructor.
+    }
+  }
+
+  ProcedureSchema(const ProcedureSchema&) = delete;
+  ProcedureSchema& operator=(const ProcedureSchema&) = delete;
+
+  const std::string& name() const { return name_; }
+
+ private:
+  Connection& conn_;
+  std::string name_;
+};
+
+struct CatalogSize {
+  std::string type_name;
+  SQLINTEGER column_size = -1;
+  SQLINTEGER buffer_length = -1;
+};
+
+CatalogSize read_catalog_size(const StatementHandleWrapper& stmt, SQLUSMALLINT type_col, SQLUSMALLINT size_col,
+                              SQLUSMALLINT buffer_col, const char* expected_name) {
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  char name[64];
+  std::memset(name, 0xFF, sizeof(name));
+  SQLLEN name_ind = -1;
+  ret = SQLGetData(stmt.getHandle(), 4, SQL_C_CHAR, name, sizeof(name), &name_ind);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(name_ind > 0);
+  REQUIRE(std::string(name, static_cast<size_t>(name_ind)) == expected_name);
+
+  char type_name[64];
+  std::memset(type_name, 0xFF, sizeof(type_name));
+  SQLLEN type_ind = -1;
+  ret = SQLGetData(stmt.getHandle(), type_col, SQL_C_CHAR, type_name, sizeof(type_name), &type_ind);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(type_ind > 0);
+
+  CatalogSize meta;
+  meta.type_name.assign(type_name, static_cast<size_t>(type_ind));
+  SQLLEN size_ind = -1;
+  ret = SQLGetData(stmt.getHandle(), size_col, SQL_C_SLONG, &meta.column_size, 0, &size_ind);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(size_ind == sizeof(SQLINTEGER));
+  SQLLEN buffer_ind = -1;
+  ret = SQLGetData(stmt.getHandle(), buffer_col, SQL_C_SLONG, &meta.buffer_length, 0, &buffer_ind);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(buffer_ind == sizeof(SQLINTEGER));
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC_NO_DATA(ret, stmt);
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
+  REQUIRE_ODBC(ret, stmt);
+  return meta;
 }
 
 }  // namespace
@@ -318,4 +399,78 @@ TEST_CASE("should download FILE data in multiple chunks", "[e2e][types][file]") 
     row_count++;
   }
   REQUIRE(row_count == 20000);
+}
+
+TEST_CASE("should report the session maximum for a FILE column in SQLColumns when DEFAULT_VARCHAR_SIZE is set",
+          "[e2e][types][file]") {
+  // Given Snowflake client is logged in
+  const std::string connection = get_connection_string();
+
+  // And DEFAULT_VARCHAR_SIZE is set
+  Connection conn(connection + "DEFAULT_VARCHAR_SIZE=100;");
+  Schema::use_temp_session_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE file_sqlcols (file_col FILE, variant_col VARIANT)");
+
+  // When SQLColumns is called for a table with FILE and VARIANT columns
+  const auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_METADATA_ID, sqlptr_value(SQL_TRUE), 0);
+  REQUIRE_ODBC(ret, stmt);
+  const std::string catalog = get_current_database(conn.handleWrapper().getHandle());
+  auto column_meta = [&](const char* column) {
+    ret = SQLColumns(stmt.getHandle(), sqlchar(catalog.c_str()), SQL_NTS, sqlchar(Schema::name().c_str()), SQL_NTS,
+                     sqlchar("FILE_SQLCOLS"), SQL_NTS, sqlchar(column), SQL_NTS);
+    REQUIRE_ODBC(ret, stmt);
+    return read_catalog_size(stmt, 6, 7, 8, column);
+  };
+  const CatalogSize file_col = column_meta("FILE_COL");
+  const CatalogSize variant_col = column_meta("VARIANT_COL");
+
+  // Then TYPE_NAME is FILE and COLUMN_SIZE matches the VARIANT column
+  CHECK(file_col.type_name == "FILE");
+  CHECK(file_col.column_size == variant_col.column_size);
+  CHECK(file_col.buffer_length == variant_col.buffer_length);
+  NEW_DRIVER_ONLY("BD#file-sqlcolumns-ignores-default-varchar-size") {
+    CHECK((file_col.column_size == 16777216 || file_col.column_size == 134217728));
+  }
+  OLD_DRIVER_ONLY("BD#file-sqlcolumns-ignores-default-varchar-size") { CHECK(file_col.column_size == 100); }
+}
+
+TEST_CASE("should report the session maximum for a FILE procedure argument when DEFAULT_VARCHAR_SIZE is set",
+          "[e2e][types][file]") {
+  // Given Snowflake client is logged in
+  const std::string connection = get_scratch_db_connection_string();
+
+  // And DEFAULT_VARCHAR_SIZE is set
+  Connection conn(connection + "DEFAULT_VARCHAR_SIZE=100;");
+  const ProcedureSchema proc_schema(conn);
+  conn.execute(
+      "CREATE OR REPLACE PROCEDURE fileproc(filearg FILE, variantarg VARIANT) "
+      "RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN ''ok''; END'");
+
+  // When SQLProcedureColumns is called for a procedure with FILE and VARIANT arguments
+  const auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_METADATA_ID, sqlptr_value(SQL_TRUE), 0);
+  REQUIRE_ODBC(ret, stmt);
+  const std::string catalog = get_current_database(conn.handleWrapper().getHandle());
+  auto argument_meta = [&](const char* column) {
+    ret = SQLProcedureColumns(stmt.getHandle(), sqlchar(catalog.c_str()), SQL_NTS, sqlchar(proc_schema.name().c_str()),
+                              SQL_NTS, sqlchar("FILEPROC"), SQL_NTS, sqlchar(column), SQL_NTS);
+    REQUIRE_ODBC(ret, stmt);
+    return read_catalog_size(stmt, 7, 8, 9, column);
+  };
+  const CatalogSize file_arg = argument_meta("FILEARG");
+  const CatalogSize variant_arg = argument_meta("VARIANTARG");
+
+  // Then TYPE_NAME is FILE and COLUMN_SIZE matches the VARIANT argument
+  CHECK(file_arg.type_name == "FILE");
+  CHECK(file_arg.column_size == variant_arg.column_size);
+  CHECK(file_arg.buffer_length == variant_arg.buffer_length);
+  NEW_DRIVER_ONLY("BD#file-procedure-arguments-use-session-varchar-max") {
+    CHECK((file_arg.column_size == 16777216 || file_arg.column_size == 134217728));
+    CHECK(file_arg.buffer_length == file_arg.column_size);
+  }
+  OLD_DRIVER_ONLY("BD#file-procedure-arguments-use-session-varchar-max") {
+    CHECK(file_arg.column_size == 0);
+    CHECK(file_arg.buffer_length == 0);
+  }
 }

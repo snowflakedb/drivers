@@ -1,0 +1,21 @@
+name: "SQLProcedureColumns FILE arguments report the session VARCHAR maximum"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLProcedureColumns COLUMN_SIZE and BUFFER_LENGTH for a FILE argument
+  are 0. TYPE_NAME is FILE. DEFAULT_VARCHAR_SIZE does not change those
+  zeros. A VARIANT argument in the same signature is also 0.
+new_driver_behavior: |
+  SQLProcedureColumns COLUMN_SIZE and BUFFER_LENGTH for a FILE argument
+  match a VARIANT argument: the session VARCHAR maximum
+  (VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT, 16777216 by default).
+  DEFAULT_VARCHAR_SIZE does not shrink FILE. An unbounded VARCHAR
+  argument in the same signature still reports DEFAULT_VARCHAR_SIZE
+  when that parameter is set. TYPE_NAME is FILE.
+description: |
+  A zero COLUMN_SIZE is not a usable length for a FILE argument. FILE
+  reports the same session VARCHAR maximum as VARIANT, including when
+  DEFAULT_VARCHAR_SIZE is set.

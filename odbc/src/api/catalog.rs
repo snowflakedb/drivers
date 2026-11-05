@@ -1933,6 +1933,7 @@ fn field_from_sql_type_string(type_str: &str, numeric_settings: &NumericSettings
             rehydrate_field("BINARY", None, None, None, Some(byte_len), true)
         }
         "VARIANT" => rehydrate_field("VARIANT", None, None, Some(session_varchar), None, true),
+        "FILE" => rehydrate_field("FILE", None, None, Some(session_varchar), None, true),
         "OBJECT" => rehydrate_field("OBJECT", None, None, Some(session_varchar), None, true),
         "ARRAY" => rehydrate_field("ARRAY", None, None, Some(session_varchar), None, true),
         "VECTOR" => rehydrate_field("VECTOR", None, None, Some(session_varchar), None, true),
@@ -5394,6 +5395,40 @@ mod procedure_columns_tests {
             "GEOGRAPHY argument must report CHAR_OCTET_LENGTH, got NULL"
         );
         assert_eq!(geo.char_octet, txt.char_octet);
+    }
+
+    #[test]
+    fn file_procedure_argument_keeps_session_varchar_size_when_default_varchar_size_is_set() {
+        let ns = NumericSettings {
+            max_varchar_size: 1_000_000,
+            default_varchar_size: 100,
+            ..NumericSettings::default()
+        };
+        let mut rows = Vec::new();
+        append_procedure_column_rows(
+            &mut rows,
+            &Some("CAT".to_string()),
+            &Some("SCHEM".to_string()),
+            &Some("FILEPROC".to_string()),
+            "(F FILE, V VARIANT, T VARCHAR)",
+            "VARCHAR",
+            None,
+            &ns,
+        );
+        let row = |name: &str| {
+            rows.iter()
+                .find(|r| r.col_name.as_deref() == Some(name))
+                .expect("procedure argument row")
+        };
+        let file = row("F");
+        let variant = row("V");
+        let text = row("T");
+        assert_eq!(file.type_name.as_deref(), Some("FILE"));
+        assert_eq!(variant.type_name.as_deref(), Some("VARIANT"));
+        assert_eq!(file.col_size, variant.col_size);
+        assert_eq!(file.buf_len, variant.buf_len);
+        assert_ne!(file.col_size.as_deref(), text.col_size.as_deref());
+        assert_eq!(text.col_size.as_deref(), Some("100"));
     }
 
     #[test]

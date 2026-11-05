@@ -170,21 +170,33 @@ class UseCurrentCatalogScratchDbStmtFixture : public StmtFixture {
 // Connection string helper for e2e tests (Connection class pattern)
 // =============================================================================
 
-inline std::string get_readonly_db_connection_string() {
+inline std::string get_db_connection_string(const char* database, const char* schema = nullptr) {
   const auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params, {"DATABASE", "SCHEMA"});
-  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  if (params.count("SNOWFLAKE_TEST_IS_USUT")) {
+    add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  } else {
+    ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
 #ifdef SNOWFLAKE_OLD_DRIVER
-  ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
+    ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
 #else
-  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+    ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
 #endif
-  ss << "DATABASE=" << READONLY_DB_NAME << ";";
-  ss << "SCHEMA=" << READONLY_SCHEMA_NAME << ";";
+  }
+  ss << "DATABASE=" << database << ";";
+  if (schema != nullptr) {
+    ss << "SCHEMA=" << schema << ";";
+  }
   return ss.str();
 }
+
+inline std::string get_readonly_db_connection_string() {
+  return get_db_connection_string(READONLY_DB_NAME, READONLY_SCHEMA_NAME);
+}
+
+inline std::string get_scratch_db_connection_string() { return get_db_connection_string(SCRATCH_DB_NAME); }
 
 #endif  // READONLY_DB_FIXTURE_HPP

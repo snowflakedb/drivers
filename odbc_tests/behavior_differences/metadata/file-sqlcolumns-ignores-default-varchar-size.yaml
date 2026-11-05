@@ -1,0 +1,17 @@
+name: "SQLColumns FILE size stays at the session VARCHAR maximum when DEFAULT_VARCHAR_SIZE is set"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  With DEFAULT_VARCHAR_SIZE set, SQLColumns COLUMN_SIZE for a FILE column
+  is that default. It matches a VARIANT column in the same table.
+  TYPE_NAME is FILE.
+new_driver_behavior: |
+  With DEFAULT_VARCHAR_SIZE set, SQLColumns COLUMN_SIZE for a FILE column
+  is the session VARCHAR maximum. It matches a VARIANT column in the same
+  table. TYPE_NAME is FILE.
+description: |
+  FILE catalog sizes follow the session VARCHAR maximum on the new driver.
+  The old driver reports the configured DEFAULT_VARCHAR_SIZE.

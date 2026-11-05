@@ -92,6 +92,20 @@ Feature: FILE type support
     Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
 
   @odbc_e2e @python_not_needed
+  Scenario: should report the session maximum for a FILE column in SQLColumns when DEFAULT_VARCHAR_SIZE is set
+    Given Snowflake client is logged in
+    And DEFAULT_VARCHAR_SIZE is set
+    When SQLColumns is called for a table with FILE and VARIANT columns
+    Then TYPE_NAME is FILE and COLUMN_SIZE matches the VARIANT column
+
+  @odbc_e2e @python_not_needed
+  Scenario: should report the session maximum for a FILE procedure argument when DEFAULT_VARCHAR_SIZE is set
+    Given Snowflake client is logged in
+    And DEFAULT_VARCHAR_SIZE is set
+    When SQLProcedureColumns is called for a procedure with FILE and VARIANT arguments
+    Then TYPE_NAME is FILE and COLUMN_SIZE matches the VARIANT argument
+
+  @odbc_e2e @python_not_needed
   Scenario: should truncate FILE data as SQL_C_WCHAR when the buffer is too short
     Given Snowflake client is logged in
     When A FILE column is populated via TO_FILE and queried
