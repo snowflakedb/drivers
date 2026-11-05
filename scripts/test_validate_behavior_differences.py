@@ -206,18 +206,58 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
         )
         self.assertEqual(result.errors, [])
 
-    def test_dotnet_reviewed_file_requires_status_rationale(self) -> None:
-        reviewed = _entry_body().replace("reviewed: false", "reviewed: true")
+    def test_dotnet_file_requires_rationale(self) -> None:
+        missing = self.mod.check_bd_files(
+            DOTNET_DIR,
+            [("connection/untrusted-root-rejected.yaml", _entry_body())],
+            require_rationale=True,
+        )
+        self.assertTrue(any("'rationale' is required" in err for err in missing.errors))
+
+        blank = self.mod.check_bd_files(
+            DOTNET_DIR,
+            [("connection/untrusted-root-rejected.yaml", _entry_body(rationale='"  "'))],
+            require_rationale=True,
+        )
+        self.assertTrue(any("'rationale' is required" in err for err in blank.errors))
+
+        present = self.mod.check_bd_files(
+            DOTNET_DIR,
+            [("connection/untrusted-root-rejected.yaml", _entry_body(rationale='"The shared core enforces TLS validation."'))],
+            require_rationale=True,
+        )
+        self.assertEqual(present.errors, [])
+
+    def test_rationale_is_an_unknown_field_outside_dotnet(self) -> None:
         result = self.mod.check_bd_files(
+            ODBC_DIR,
+            [("put-get/put-expands-leading-tilde.yaml", _entry_body(rationale='"Why."'))],
+            require_status_rationale=True,
+        )
+        self.assertTrue(any("unknown field(s): rationale" in err for err in result.errors))
+
+    def test_dotnet_reviewed_file_requires_status_rationale(self) -> None:
+        reviewed = _entry_body(rationale='"Why."').replace("reviewed: false", "reviewed: true")
+        missing = self.mod.check_bd_files(
             DOTNET_DIR,
             [("connection/untrusted-root-rejected.yaml", reviewed)],
             require_status_rationale=True,
+            require_rationale=True,
         )
-        self.assertTrue(any("status_rationale" in err for err in result.errors))
+        self.assertTrue(any("status_rationale" in err for err in missing.errors))
 
-    def test_dotnet_is_gated_and_requires_status_rationale(self) -> None:
+        complete = self.mod.check_bd_files(
+            DOTNET_DIR,
+            [("connection/untrusted-root-rejected.yaml", reviewed + 'status_rationale: "Accepted."\n')],
+            require_status_rationale=True,
+            require_rationale=True,
+        )
+        self.assertEqual(complete.errors, [])
+
+    def test_dotnet_is_gated_and_requires_both_rationales(self) -> None:
         self.assertEqual(self.mod.GATED_FILE_DIRS[DOTNET_BD], DOTNET_DIR)
         self.assertIn(DOTNET_BD, self.mod.STATUS_RATIONALE_REQUIRED)
+        self.assertEqual(self.mod.RATIONALE_REQUIRED, frozenset({DOTNET_BD}))
 
     def test_nodejs_removal_is_an_error(self) -> None:
         result = self.mod.check_monolith_text(

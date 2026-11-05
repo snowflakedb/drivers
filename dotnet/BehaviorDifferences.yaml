@@ -21,6 +21,11 @@
 #  - true: the BD has been reviewed and its status is accepted
 #  - false (default): the BD has not yet been reviewed
 #
+# rationale (required on every entry):
+#  Explain why the new driver introduces the difference, for example a shared-core
+#  behavior the wrapper inherits, a spec or security requirement, or an API the
+#  wrapper does not carry over.
+#
 # status_rationale (required when reviewed is true):
 #  Explain why this entry has the chosen 'status'. Type and behavior deltas alone often do not
 #  imply whether we intend to ship the difference, regress compatibility, track a fix, etc.

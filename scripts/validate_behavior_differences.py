@@ -34,6 +34,8 @@ Per-entry schema:
   Optional:
     reviewed (bool) — triage flag; must be true/false when present.
     status_rationale (str) — required when reviewed is true (ODBC/JDBC/.NET convention).
+    rationale (str) — .NET only, and required there: why the new driver introduces
+      the difference.
     description (str) — extra context, migration notes, spec links.
     old_driver_behavior (str) — behavior of the legacy/reference driver.
     new_driver_behavior (str) — behavior of the universal driver.
@@ -44,6 +46,9 @@ Per-entry schema:
 
   ODBC, JDBC, and .NET rule:
     When reviewed is true, status_rationale must be a non-empty string.
+
+  .NET rule:
+    rationale must be a non-empty string on every entry, reviewed or not.
 
   Conventions for new entries (not auto-filled by this script):
     impact: high
@@ -169,6 +174,12 @@ STATUS_RATIONALE_REQUIRED = frozenset({
     "dotnet/BehaviorDifferences.yaml",
 })
 
+# Monolith paths whose entries, and per-file entries, accept and require a
+# non-empty rationale on every entry. Other drivers reject the field.
+RATIONALE_REQUIRED = frozenset({
+    "dotnet/BehaviorDifferences.yaml",
+})
+
 DEFAULT_IMPACT = BDImpact.HIGH
 DEFAULT_IS_BREAKING_CHANGE = True
 
@@ -290,8 +301,18 @@ def _field_errors(
     *,
     known_fields: set[str],
     require_status_rationale: bool,
+    require_rationale: bool = False,
 ) -> list[str]:
     errors: list[str] = []
+
+    if require_rationale:
+        known_fields = known_fields | {"rationale"}
+        rationale = entry.get("rationale")
+        if not rationale or not isinstance(rationale, str) or not rationale.strip():
+            errors.append(
+                f"{prefix}: non-empty 'rationale' is required "
+                f"(why the new driver introduces this difference)"
+            )
 
     unknown_fields = set(entry.keys()) - known_fields
     if unknown_fields:
@@ -429,6 +450,7 @@ def check_monolith_text(
                 entry,
                 known_fields=KNOWN_FIELDS,
                 require_status_rationale=git_relpath in STATUS_RATIONALE_REQUIRED,
+                require_rationale=git_relpath in RATIONALE_REQUIRED,
             )
         )
 
@@ -470,13 +492,15 @@ def check_bd_files(
     files: list[tuple[str, str]],
     *,
     require_status_rationale: bool = False,
+    require_rationale: bool = False,
 ) -> BdFilesCheck:
     """Validate per-file entries.
 
     ``files`` is ``(path relative to dir_label, YAML text)`` using forward
     slashes, each expected to be ``<area>/<slug>.yaml``. ODBC, JDBC, and .NET
     pass ``require_status_rationale`` so a reviewed entry still needs a non-empty
-    ``status_rationale``.
+    ``status_rationale``. .NET passes ``require_rationale`` so every entry needs
+    a non-empty ``rationale``.
     """
     errors: list[str] = []
     legacy_ids: dict[int, str] = {}
@@ -524,6 +548,7 @@ def check_bd_files(
                 data,
                 known_fields=FILE_KNOWN_FIELDS,
                 require_status_rationale=require_status_rationale,
+                require_rationale=require_rationale,
             )
         )
 
@@ -613,6 +638,7 @@ def validate() -> list[str]:
             gated_file_dir,
             _read_bd_dir(dir_path),
             require_status_rationale=git_relpath in STATUS_RATIONALE_REQUIRED,
+            require_rationale=git_relpath in RATIONALE_REQUIRED,
         )
         errors.extend(file_check.errors)
         errors.extend(
