@@ -1829,15 +1829,16 @@ unsafe impl Send for Connection {}
 /// Application Parameter Descriptor (APD) record.
 ///
 /// Stores the application-side view of a bound parameter: the C data type,
-/// the pointer to the application's data buffer, its length, and the
-/// indicator/length pointer. Populated by `SQLBindParameter` or
-/// `SQLSetDescField` on the APD handle.
+/// the pointer to the application's data buffer, its length, and the deferred
+/// indicator and octet-length pointers. Populated by `SQLBindParameter` (both
+/// pointers receive `StrLen_or_IndPtr`) or `SQLSetDescField` on the APD handle.
 #[derive(Debug, Clone, Copy)]
 pub struct ApdRecord {
     pub value_type: CDataType,
     pub data_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
-    pub str_len_or_ind_ptr: *mut sql::Len,
+    pub indicator_ptr: *mut sql::Len,
+    pub octet_length_ptr: *mut sql::Len,
 }
 
 impl Default for ApdRecord {
@@ -1846,7 +1847,8 @@ impl Default for ApdRecord {
             value_type: CDataType::Default,
             data_ptr: std::ptr::null_mut(),
             buffer_length: 0,
-            str_len_or_ind_ptr: std::ptr::null_mut(),
+            indicator_ptr: std::ptr::null_mut(),
+            octet_length_ptr: std::ptr::null_mut(),
         }
     }
 }
@@ -1854,36 +1856,28 @@ impl Default for ApdRecord {
 /// Project an explicit descriptor's `Binding` onto the APD view used by the
 /// parameter-execution path. An explicit descriptor is physically an
 /// `ArdDescriptor` (so it stores `Binding`s); when it serves as the active APD
-/// the parameter path only needs the C type, data pointer, buffer length, and
-/// the length/indicator pointer. `SQLSetDescField` may set the length pointer
-/// via either `SQL_DESC_INDICATOR_PTR` or `SQL_DESC_OCTET_LENGTH_PTR`, so prefer
-/// the indicator pointer and fall back to the octet-length pointer.
+/// the parameter path needs the C type, data pointer, buffer length, and the
+/// separate indicator / octet-length pointers.
 pub(crate) fn apd_record_from_binding(binding: &Binding) -> ApdRecord {
-    let str_len_or_ind_ptr = if binding.indicator_ptr.is_null() {
-        binding.octet_length_ptr
-    } else {
-        binding.indicator_ptr
-    };
     ApdRecord {
         value_type: binding.target_type,
         data_ptr: binding.target_value_ptr,
         buffer_length: binding.buffer_length,
-        str_len_or_ind_ptr,
+        indicator_ptr: binding.indicator_ptr,
+        octet_length_ptr: binding.octet_length_ptr,
     }
 }
 
 /// Build a `Binding` from an APD record so a parameter bound via
 /// `SQLBindParameter` can be stored on an explicit descriptor (which is backed
-/// by `ArdDescriptor`). The single `str_len_or_ind_ptr` populates both the
-/// indicator and octet-length pointers, matching `SQLBindParameter`'s combined
-/// `StrLen_or_IndPtr`.
+/// by `ArdDescriptor`).
 pub(crate) fn binding_from_apd_record(record: &ApdRecord) -> Binding {
     Binding {
         target_type: record.value_type,
         target_value_ptr: record.data_ptr,
         buffer_length: record.buffer_length,
-        octet_length_ptr: record.str_len_or_ind_ptr,
-        indicator_ptr: record.str_len_or_ind_ptr,
+        octet_length_ptr: record.octet_length_ptr,
+        indicator_ptr: record.indicator_ptr,
         ..Binding::default()
     }
 }
@@ -1946,7 +1940,8 @@ pub struct ParameterBinding {
     pub value_type: CDataType,
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
-    pub str_len_or_ind_ptr: *mut sql::Len,
+    pub indicator_ptr: *mut sql::Len,
+    pub octet_length_ptr: *mut sql::Len,
     /// Mirrors `IpdRecord::sf_subtype`. Lets the converter dispatch route a
     /// timestamp bind to the right Snowflake logical type (NTZ / LTZ / TZ)
     /// when the application opted in via a vendor code.
@@ -1965,7 +1960,8 @@ impl ParameterBinding {
             value_type: apd.value_type,
             parameter_value_ptr: apd.data_ptr,
             buffer_length: apd.buffer_length,
-            str_len_or_ind_ptr: apd.str_len_or_ind_ptr,
+            indicator_ptr: apd.indicator_ptr,
+            octet_length_ptr: apd.octet_length_ptr,
             sf_subtype: ipd.sf_subtype,
         }
     }

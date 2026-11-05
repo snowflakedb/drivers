@@ -331,6 +331,162 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: Partially populated IP
   OLD_DRIVER_ONLY("BD#161") { REQUIRE_EXPECTED_ERROR(ret, "HY021", stmt_handle(), SQL_HANDLE_STMT); }
 }
 
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLExecDirect succeeds when an APD record holds only a deferred length pointer",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  const struct {
+    SQLSMALLINT field;
+    bool null_pointer;
+  } cases[] = {
+      {SQL_DESC_OCTET_LENGTH_PTR, true},
+      {SQL_DESC_OCTET_LENGTH_PTR, false},
+      {SQL_DESC_INDICATOR_PTR, true},
+      {SQL_DESC_INDICATOR_PTR, false},
+  };
+
+  for (const auto& current : cases) {
+    INFO("field " << current.field << " null_pointer " << current.null_pointer);
+    SQLRETURN ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLLEN length = 0;
+    SQLPOINTER pointer = current.null_pointer ? nullptr : static_cast<SQLPOINTER>(&length);
+    ret = SQLSetDescField(apd, 1, current.field, pointer, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+
+    SQLINTEGER result = 0x7FFFFFFF;
+    SQLLEN result_ind = 0x7FFFFFFF;
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(result == 1);
+    REQUIRE(result_ind == sizeof(result));
+  }
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect keeps a length pointer set before the APD type and data pointer",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+  SQLINTEGER value = 42;
+  SQLLEN indicator = SQL_NULL_DATA;
+
+  SQLRETURN ret = SQLSetDescField(apd, 1, SQL_DESC_OCTET_LENGTH_PTR, &indicator, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_DATA_PTR, &value, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = 0x7FFFFFFF;
+  SQLLEN result_ind = 0x7FFFFFFF;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 42);
+  REQUIRE(result_ind == sizeof(result));
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect treats INDICATOR_PTR SQL_NULL_DATA as null",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+  SQLINTEGER value = 42;
+  SQLLEN indicator = SQL_NULL_DATA;
+  SQLLEN octet_length = sizeof(value);
+
+  SQLRETURN ret = SQLSetDescField(apd, 1, SQL_DESC_INDICATOR_PTR, &indicator, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_OCTET_LENGTH_PTR, &octet_length, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_DATA_PTR, &value, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = 0x7FFFFFFF;
+  SQLLEN result_ind = 0x7FFFFFFF;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result_ind == SQL_NULL_DATA);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture,
+                 "SQLExecDirect treats INDICATOR_PTR SQL_NULL_DATA as null without an octet-length pointer",
+                 "[odbc-api][setdescfield][descriptor]") {
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  const SQLHDESC ipd = get_descriptor(stmt_handle(), SQL_ATTR_IMP_PARAM_DESC);
+  SQLINTEGER value = 42;
+  SQLLEN indicator = SQL_NULL_DATA;
+
+  SQLRETURN ret = SQLSetDescField(apd, 1, SQL_DESC_INDICATOR_PTR, &indicator, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_C_SLONG), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(apd, 1, SQL_DESC_DATA_PTR, &value, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(ipd, 1, SQL_DESC_TYPE, reinterpret_cast<SQLPOINTER>(SQL_INTEGER), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = 0x7FFFFFFF;
+  SQLLEN result_ind = 0x7FFFFFFF;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result_ind == SQL_NULL_DATA);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect ignores a length pointer past the last bound parameter",
+                 "[odbc-api][setdescfield][descriptor]") {
+  SQLINTEGER value = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &value, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  const SQLHDESC apd = get_descriptor(stmt_handle(), SQL_ATTR_APP_PARAM_DESC);
+  SQLLEN trailing = 0;
+  ret = SQLSetDescField(apd, 2, SQL_DESC_OCTET_LENGTH_PTR, &trailing, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER result = 0x7FFFFFFF;
+  SQLLEN result_ind = 0x7FFFFFFF;
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(result == 42);
+  REQUIRE(result_ind == sizeof(result));
+}
+
 // ============================================================================
 // SQLSetDescField - Deferred Fields on Application Descriptors
 // ============================================================================

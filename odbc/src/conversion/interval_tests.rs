@@ -40,7 +40,8 @@ fn make_binding(
         value_type,
         data_ptr: ptr,
         buffer_length,
-        str_len_or_ind_ptr: ind_ptr,
+        indicator_ptr: ind_ptr,
+        octet_length_ptr: ind_ptr,
     };
     let ipd = IpdRecord {
         sql_data_type: parameter_type,

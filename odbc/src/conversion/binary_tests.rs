@@ -611,7 +611,8 @@ mod tests {
             value_type,
             parameter_value_ptr: ptr,
             buffer_length: buffer_len,
-            str_len_or_ind_ptr: std::ptr::null_mut(),
+            indicator_ptr: std::ptr::null_mut(),
+            octet_length_ptr: std::ptr::null_mut(),
             sf_subtype: None,
         }
     }
@@ -627,7 +628,8 @@ mod tests {
             value_type,
             parameter_value_ptr: ptr,
             buffer_length: buffer_len,
-            str_len_or_ind_ptr: ind as *mut sql::Len,
+            indicator_ptr: ind as *mut sql::Len,
+            octet_length_ptr: ind as *mut sql::Len,
             sf_subtype: None,
         }
     }

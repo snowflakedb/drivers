@@ -728,7 +728,8 @@ mod tests {
             value_type: CDataType::Char,
             parameter_value_ptr: s.as_mut_ptr() as sql::Pointer,
             buffer_length: s.len() as sql::Len,
-            str_len_or_ind_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: str_len as *mut sql::Len,
             sf_subtype: Some(crate::api::TimestampSubtype::Tz),
         }
     }

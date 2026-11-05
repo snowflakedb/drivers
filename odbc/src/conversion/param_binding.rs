@@ -437,7 +437,8 @@ pub(crate) fn validate_c_to_sql_at_bind(
         value_type,
         parameter_value_ptr: std::ptr::null_mut(),
         buffer_length: 0,
-        str_len_or_ind_ptr: std::ptr::null_mut(),
+        indicator_ptr: std::ptr::null_mut(),
+        octet_length_ptr: std::ptr::null_mut(),
         sf_subtype,
     };
     let converter = match make_converter(&binding) {
@@ -462,8 +463,8 @@ pub(crate) fn validate_c_to_sql_at_bind(
 ///
 /// # Safety contract
 /// The APD records' `data_ptr` pointers must remain valid for the duration
-/// of this call. If `str_len_or_ind_ptr` is non-null, it must also point to
-/// valid memory for reads.
+/// of this call. If `indicator_ptr` or `octet_length_ptr` is non-null, it must
+/// also point to valid memory for reads.
 ///
 /// # Wire format
 /// Single-row (`apd.array_size == 1`, scalar `value`):
@@ -675,7 +676,8 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
 /// **Column-wise binding** (`bind_type == 0`, i.e. `SQL_PARAM_BIND_BY_COLUMN`):
 /// * For each column the application provided a contiguous array of values.
 ///   Row `i`'s data is `data_ptr + bind_offset + i * buffer_length` bytes.
-/// * Row `i`'s indicator is at `str_len_or_ind_ptr + bind_offset + i`.
+/// * Row `i`'s indicator / octet-length values are at
+///   `ptr + bind_offset + i` for each deferred length pointer.
 ///
 /// **Row-wise binding** (`bind_type == row_size`):
 /// * The application provided a single buffer where each row occupies
@@ -685,6 +687,33 @@ fn param_set_ignored(apd: &ApdDescriptor, row_idx: usize) -> bool {
 ///
 /// `bind_offset` is the dereferenced value of `APD.SQL_DESC_BIND_OFFSET_PTR`
 /// (i.e. `*SQL_ATTR_PARAM_BIND_OFFSET_PTR`), or 0 when that pointer is null.
+fn offset_deferred_len_ptr(
+    ptr: *mut sql::Len,
+    data_ptr: sql::Pointer,
+    row_idx: usize,
+    bind_type: sql::ULen,
+    bind_offset: sql::Len,
+) -> *mut sql::Len {
+    if ptr.is_null() {
+        return ptr;
+    }
+    if bind_type == 0 {
+        unsafe {
+            (ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_idx * std::mem::size_of::<sql::Len>()) as *mut sql::Len
+        }
+    } else {
+        let base_offset = unsafe { (ptr as *mut u8).offset_from(data_ptr as *mut u8) };
+        unsafe {
+            (data_ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_idx * bind_type)
+                .offset(base_offset) as *mut sql::Len
+        }
+    }
+}
+
 fn binding_for_row(
     apd_rec: &crate::api::ApdRecord,
     ipd_rec: &crate::api::IpdRecord,
@@ -692,71 +721,45 @@ fn binding_for_row(
     bind_type: sql::ULen,
     bind_offset: sql::Len,
 ) -> ParameterBinding {
-    use std::mem::size_of;
-
     let value_type = resolve_default_c_type(apd_rec.value_type, ipd_rec.sql_data_type);
-    let (data_ptr, str_len_or_ind_ptr) = if bind_type == 0 {
-        // Fixed-size types are bound with BufferLength=0; stride by the C type's octet length.
+    let data_ptr = if apd_rec.data_ptr.is_null() {
+        apd_rec.data_ptr
+    } else if bind_type == 0 {
         let stride = value_type
             .fixed_size()
             .unwrap_or(apd_rec.buffer_length as usize);
-        let data_ptr = if apd_rec.data_ptr.is_null() {
-            apd_rec.data_ptr
-        } else {
-            unsafe {
-                (apd_rec.data_ptr as *mut u8)
-                    .offset(bind_offset)
-                    .add(row_idx * stride) as sql::Pointer
-            }
-        };
-        let ind_ptr = if apd_rec.str_len_or_ind_ptr.is_null() {
-            apd_rec.str_len_or_ind_ptr
-        } else {
-            unsafe {
-                (apd_rec.str_len_or_ind_ptr as *mut u8)
-                    .offset(bind_offset)
-                    .add(row_idx * size_of::<sql::Len>()) as *mut sql::Len
-            }
-        };
-        (data_ptr, ind_ptr)
+        unsafe {
+            (apd_rec.data_ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_idx * stride) as sql::Pointer
+        }
     } else {
-        // Row-wise: the entire row occupies `bind_type` bytes; stride == bind_type.
-        let row_stride = bind_type;
-        let data_ptr = if apd_rec.data_ptr.is_null() {
-            apd_rec.data_ptr
-        } else {
-            unsafe {
-                (apd_rec.data_ptr as *mut u8)
-                    .offset(bind_offset)
-                    .add(row_idx * row_stride) as sql::Pointer
-            }
-        };
-        let ind_ptr = if apd_rec.str_len_or_ind_ptr.is_null() {
-            apd_rec.str_len_or_ind_ptr
-        } else {
-            // Indicator lives inside the row struct; its byte offset from the
-            // row base is fixed (same as for row 0).  We advance by full
-            // `row_stride` bytes per row.
-            let base_offset = unsafe {
-                (apd_rec.str_len_or_ind_ptr as *mut u8).offset_from(apd_rec.data_ptr as *mut u8)
-            };
-            unsafe {
-                (apd_rec.data_ptr as *mut u8)
-                    .offset(bind_offset)
-                    .add(row_idx * row_stride)
-                    .offset(base_offset) as *mut sql::Len
-            }
-        };
-        (data_ptr, ind_ptr)
+        unsafe {
+            (apd_rec.data_ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_idx * bind_type) as sql::Pointer
+        }
     };
 
-    let _ = size_of::<sql::Len>(); // keep import live
     ParameterBinding {
         sql_data_type: ipd_rec.sql_data_type,
         value_type,
         parameter_value_ptr: data_ptr,
         buffer_length: apd_rec.buffer_length,
-        str_len_or_ind_ptr,
+        indicator_ptr: offset_deferred_len_ptr(
+            apd_rec.indicator_ptr,
+            apd_rec.data_ptr,
+            row_idx,
+            bind_type,
+            bind_offset,
+        ),
+        octet_length_ptr: offset_deferred_len_ptr(
+            apd_rec.octet_length_ptr,
+            apd_rec.data_ptr,
+            row_idx,
+            bind_type,
+            bind_offset,
+        ),
         sf_subtype: ipd_rec.sf_subtype,
     }
 }
@@ -788,14 +791,20 @@ fn append_escaped_csv_cell(out: &mut String, s: &str) {
 
 const SQL_DEFAULT_PARAM: sql::Len = -5;
 
+fn read_deferred_len(ptr: *mut sql::Len) -> Option<sql::Len> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::ptr::read_unaligned(ptr) })
+    }
+}
+
 fn is_null_indicator(binding: &ParameterBinding) -> bool {
-    !binding.str_len_or_ind_ptr.is_null()
-        && unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) == sql::NULL_DATA }
+    read_deferred_len(binding.indicator_ptr) == Some(sql::NULL_DATA)
 }
 
 fn is_default_param_indicator(binding: &ParameterBinding) -> bool {
-    !binding.str_len_or_ind_ptr.is_null()
-        && unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) == SQL_DEFAULT_PARAM }
+    read_deferred_len(binding.octet_length_ptr) == Some(SQL_DEFAULT_PARAM)
 }
 
 /// Read a fixed-size value using `read_unaligned` for ODBC pointer safety.
@@ -902,16 +911,15 @@ pub(crate) fn buffer_data_len(binding: &ParameterBinding) -> usize {
         binding.buffer_length as usize
     };
 
-    if !binding.str_len_or_ind_ptr.is_null() {
-        let indicated_len = unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) };
-        if indicated_len >= 0 {
-            let indicated = indicated_len as usize;
-            return if max_len > 0 {
-                indicated.min(max_len)
-            } else {
-                indicated
-            };
-        }
+    if let Some(indicated_len) = read_deferred_len(binding.octet_length_ptr)
+        && indicated_len >= 0
+    {
+        let indicated = indicated_len as usize;
+        return if max_len > 0 {
+            indicated.min(max_len)
+        } else {
+            indicated
+        };
     }
 
     max_len
@@ -1008,14 +1016,14 @@ use super::error::AcpConversionSnafu;
 
 /// Read a SQL_C_CHAR value, converting from the system ANSI code page to UTF-8.
 ///
-/// Per ODBC spec: when the indicator is SQL_NTS or the indicator pointer is
-/// NULL, character data is null-terminated. The null-terminator scan is
-/// bounded by `buffer_length`; a non-positive `buffer_length` falls back to an
-/// unbounded scan that relies on the application-supplied terminator.
-/// Otherwise we use the indicated length (clamped to buffer_length).
+/// Per ODBC spec: when `SQL_DESC_OCTET_LENGTH_PTR` is SQL_NTS or null, character
+/// data is null-terminated. The null-terminator scan is bounded by
+/// `buffer_length`; a non-positive `buffer_length` falls back to an unbounded
+/// scan that relies on the application-supplied terminator. Otherwise we use
+/// the indicated length (clamped to buffer_length).
 pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, BindingError> {
-    let null_terminated = binding.str_len_or_ind_ptr.is_null()
-        || unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) } == sql::NTS;
+    let null_terminated =
+        read_deferred_len(binding.octet_length_ptr).is_none_or(|len| len == sql::NTS);
 
     let bytes = if null_terminated {
         if binding.buffer_length > 0 {
@@ -1052,12 +1060,12 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, Bindin
 /// wide-character encoding (UTF-16 or UTF-32) is the one negotiated at
 /// driver startup; see [`WideChar`] and the `encoding` module for details.
 ///
-/// When `StrLen_or_IndPtr` is NULL or points to `SQL_NTS`, the buffer is
-/// treated as null-terminated (scans for the first null DM-side unit,
+/// When `SQL_DESC_OCTET_LENGTH_PTR` is null or points to `SQL_NTS`, the buffer
+/// is treated as null-terminated (scans for the first null DM-side unit,
 /// bounded by `buffer_length`). Otherwise the indicated byte length is used.
 pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, BindingError> {
-    let null_terminated = binding.str_len_or_ind_ptr.is_null()
-        || unsafe { std::ptr::read_unaligned(binding.str_len_or_ind_ptr) } == sql::NTS;
+    let null_terminated =
+        read_deferred_len(binding.octet_length_ptr).is_none_or(|len| len == sql::NTS);
     let unit_size = wchar_byte_size();
     let ptr = binding.parameter_value_ptr as *const WideChar;
 
@@ -1197,7 +1205,8 @@ mod tests {
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
-            str_len_or_ind_ptr: ind_ptr,
+            indicator_ptr: ind_ptr,
+            octet_length_ptr: ind_ptr,
             sf_subtype,
         }
     }
@@ -1221,7 +1230,8 @@ mod tests {
                     value_type,
                     data_ptr: ptr,
                     buffer_length: buf_len,
-                    str_len_or_ind_ptr: ind_ptr,
+                    indicator_ptr: ind_ptr,
+                    octet_length_ptr: ind_ptr,
                 },
             );
             ipd.records.insert(
@@ -1252,7 +1262,8 @@ mod tests {
             value_type: CDataType::Default,
             data_ptr: ptr,
             buffer_length,
-            str_len_or_ind_ptr: std::ptr::null_mut(),
+            indicator_ptr: std::ptr::null_mut(),
+            octet_length_ptr: std::ptr::null_mut(),
         };
         let ipd_rec = IpdRecord {
             sql_data_type: parameter_type,
@@ -1272,7 +1283,7 @@ mod tests {
         ind_buf[1..].copy_from_slice(&indicated.to_ne_bytes());
         // SAFETY: `ind_buf` holds a full `sql::Len` starting at byte offset 1, so
         // the pointer is in bounds; it is deliberately unaligned to exercise the
-        // `read_unaligned` reads of `str_len_or_ind_ptr`.
+        // `read_unaligned` reads of `octet_length_ptr`.
         let ind_ptr = unsafe { ind_buf.as_mut_ptr().add(1).cast::<sql::Len>() };
         let binding = make_binding(
             CDataType::Char,
@@ -3059,7 +3070,8 @@ mod tests {
                 value_type: CDataType::Long,
                 data_ptr: &val as *const i32 as sql::Pointer,
                 buffer_length: 0,
-                str_len_or_ind_ptr: std::ptr::null_mut(),
+                indicator_ptr: std::ptr::null_mut(),
+                octet_length_ptr: std::ptr::null_mut(),
             },
         );
         ipd.records.insert(

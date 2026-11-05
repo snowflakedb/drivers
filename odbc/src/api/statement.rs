@@ -59,11 +59,11 @@ fn find_dae_params(apd: &crate::api::ApdDescriptor, param_limit: Option<u16>) ->
         {
             continue;
         }
-        if !record.str_len_or_ind_ptr.is_null() {
+        if !record.octet_length_ptr.is_null() {
             // SAFETY: the guard above ensures the pointer is non-null; a row-wise
             // `SQL_ATTR_ROW_BIND_TYPE` stride can leave the address unaligned, which
             // `read_unaligned` tolerates where a plain dereference would be UB.
-            let ind = unsafe { std::ptr::read_unaligned(record.str_len_or_ind_ptr) };
+            let ind = unsafe { std::ptr::read_unaligned(record.octet_length_ptr) };
             // SQL_DATA_AT_EXEC (-2): simple DAE flag.
             // SQL_LEN_DATA_AT_EXEC(len) = (-len - 100): DAE with size hint, always <= -100.
             if ind == sql::DATA_AT_EXEC || ind <= -100 {
@@ -1450,8 +1450,10 @@ pub(crate) enum BindingMode {
 ///
 /// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
 /// provided parameter count and we validate that the APD covers every marker.
-/// When `prepared` is false (SQLExecDirect), the IPD only has records from
-/// SQLBindParameter — we send whatever the APD has and let the server validate.
+/// When `prepared` is false (SQLExecDirect), the count is the highest APD
+/// record that holds a C type, a data pointer, or a buffer length. A record
+/// that stores only a deferred length or indicator pointer is not a binding.
+/// The server validates the resulting bindings.
 ///
 /// `prepared_param_count` caps how many parameters are serialized for prepared
 /// statements, preventing phantom bindings beyond the server-reported marker
@@ -1472,7 +1474,7 @@ fn apply_parameter_bindings(
             reason: "prepared statement is missing prepared_param_count".to_string(),
         })?
     } else {
-        apd.desc_count()
+        exec_direct_param_count(apd)
     };
 
     if effective_count == 0 {
@@ -1658,6 +1660,26 @@ mod should_retry_with_inline_json_tests {
     }
 }
 
+/// SQLExecDirect counts the highest record that is a parameter. Setting one
+/// deferred pointer creates a record and is not a bind. `SQLBindParameter` writes
+/// `StrLen_or_IndPtr` into both pointers, including a `SQL_C_DEFAULT` NULL with a
+/// null value buffer.
+fn apd_record_is_bound(record: &ApdRecord) -> bool {
+    record.value_type != CDataType::Default
+        || !record.data_ptr.is_null()
+        || record.buffer_length != 0
+        || (!record.indicator_ptr.is_null() && !record.octet_length_ptr.is_null())
+}
+
+fn exec_direct_param_count(apd: &crate::api::ApdDescriptor) -> u16 {
+    apd.records
+        .iter()
+        .filter(|(_, record)| apd_record_is_bound(record))
+        .map(|(number, _)| *number)
+        .max()
+        .unwrap_or(0)
+}
+
 fn effective_param_count(
     apd: &crate::api::ApdDescriptor,
     prepared: bool,
@@ -1666,7 +1688,7 @@ fn effective_param_count(
     if prepared {
         prepared_param_count.unwrap_or(0)
     } else {
-        apd.desc_count()
+        exec_direct_param_count(apd)
     }
 }
 
@@ -1780,7 +1802,8 @@ pub fn bind_parameter(
             value_type,
             data_ptr: parameter_value_ptr,
             buffer_length,
-            str_len_or_ind_ptr,
+            indicator_ptr: str_len_or_ind_ptr,
+            octet_length_ptr: str_len_or_ind_ptr,
         },
     );
 
@@ -3540,7 +3563,7 @@ fn mark_apd_record_null(
     null_indicators.push(sql::NULL_DATA);
     if let Some(rec) = apd.records.get_mut(&param_num) {
         rec.data_ptr = std::ptr::null_mut();
-        rec.str_len_or_ind_ptr = null_indicators
+        rec.indicator_ptr = null_indicators
             .last_mut()
             .expect("NULL_DATA was just pushed above");
     }
@@ -3586,7 +3609,8 @@ fn execute_dae(
                     value_type: rec.value_type,
                     data_ptr: rec.data_ptr,
                     buffer_length: rec.buffer_length,
-                    str_len_or_ind_ptr: rec.str_len_or_ind_ptr,
+                    indicator_ptr: rec.indicator_ptr,
+                    octet_length_ptr: rec.octet_length_ptr,
                 },
             );
         }
@@ -3616,7 +3640,7 @@ fn execute_dae(
                 if let Some(rec) = temp_apd.records.get_mut(&param_num) {
                     rec.data_ptr = buf.as_ptr() as sql::Pointer;
                     rec.buffer_length = buf.len() as sql::Len;
-                    rec.str_len_or_ind_ptr = len_indicators
+                    rec.octet_length_ptr = len_indicators
                         .last_mut()
                         .expect("length indicator was just pushed above");
                 }
@@ -3879,6 +3903,252 @@ mod tests {
             slot.lock().is_none(),
             "guard must clear the operation slot even when the runtime is unavailable",
         );
+    }
+
+    #[test]
+    fn exec_direct_ignores_apd_record_with_only_a_null_length_pointer() {
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(1, ApdRecord::default());
+        let ipd = IpdDescriptor::new();
+
+        let (bindings, owner, warnings) =
+            apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+                .expect("a null length pointer is not a binding");
+
+        assert!(bindings.is_none());
+        assert!(owner.is_none());
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn exec_direct_ignores_apd_record_with_only_a_length_pointer() {
+        let mut length: sql::Len = 4;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                octet_length_ptr: &mut length,
+                ..ApdRecord::default()
+            },
+        );
+        let ipd = IpdDescriptor::new();
+
+        let (bindings, _, _) = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect("a length pointer on an otherwise empty record is not a binding");
+
+        assert!(bindings.is_none());
+    }
+
+    #[test]
+    fn exec_direct_binds_parameter_and_skips_trailing_length_pointer() {
+        let mut value: i32 = 7;
+        let mut indicator: sql::Len = sql::NULL_DATA;
+        let mut trailing: sql::Len = 4;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                value_type: CDataType::SLong,
+                data_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: std::mem::size_of::<i32>() as sql::Len,
+                indicator_ptr: &mut indicator,
+                octet_length_ptr: std::ptr::null_mut(),
+            },
+        );
+        apd.records.insert(
+            2,
+            ApdRecord {
+                octet_length_ptr: &mut trailing,
+                ..ApdRecord::default()
+            },
+        );
+        let mut ipd = IpdDescriptor::new();
+        ipd.records.insert(1, IpdRecord::default());
+
+        let (bindings, owner, _) =
+            apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+                .expect("parameter 1 is bound");
+        assert!(bindings.is_some());
+        let owner = owner.expect("json owner");
+        assert!(owner.contains("\"1\""));
+        assert!(!owner.contains("\"2\""));
+        assert!(owner.contains("\"value\":null"));
+    }
+
+    #[test]
+    fn exec_direct_ignores_sql_null_data_in_octet_length_ptr_for_integer() {
+        let mut value: i32 = 42;
+        let mut octet_length: sql::Len = sql::NULL_DATA;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                value_type: CDataType::SLong,
+                data_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: std::mem::size_of::<i32>() as sql::Len,
+                octet_length_ptr: &mut octet_length,
+                ..ApdRecord::default()
+            },
+        );
+        let mut ipd = IpdDescriptor::new();
+        ipd.records.insert(
+            1,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
+        );
+
+        let (_, owner, _) = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect("integer payload is bound");
+        let owner = owner.expect("json owner");
+        assert!(owner.contains("\"value\":\"42\""));
+        assert!(!owner.contains("\"value\":null"));
+    }
+
+    #[test]
+    fn exec_direct_reads_sql_null_data_from_indicator_ptr() {
+        let mut value: i32 = 42;
+        let mut indicator: sql::Len = sql::NULL_DATA;
+        let mut octet_length: sql::Len = 4;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                value_type: CDataType::SLong,
+                data_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: std::mem::size_of::<i32>() as sql::Len,
+                indicator_ptr: &mut indicator,
+                octet_length_ptr: &mut octet_length,
+            },
+        );
+        let mut ipd = IpdDescriptor::new();
+        ipd.records.insert(
+            1,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
+        );
+
+        let (_, owner, _) = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect("null indicator is bound");
+        let owner = owner.expect("json owner");
+        assert!(owner.contains("\"value\":null"));
+    }
+
+    #[test]
+    fn exec_direct_sends_c_default_null_bind_as_only_parameter() {
+        let mut indicator: sql::Len = sql::NULL_DATA;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                indicator_ptr: &mut indicator,
+                octet_length_ptr: &mut indicator,
+                ..ApdRecord::default()
+            },
+        );
+        let mut ipd = IpdDescriptor::new();
+        ipd.records.insert(
+            1,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
+        );
+
+        let (_, owner, _) = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect("SQL_C_DEFAULT NULL from SQLBindParameter is bound");
+        let owner = owner.expect("json owner");
+        assert!(owner.contains("\"1\""));
+        assert!(owner.contains("\"value\":null"));
+    }
+
+    #[test]
+    fn exec_direct_sends_c_default_null_bind_as_last_parameter() {
+        let mut value: i32 = 7;
+        let mut indicator: sql::Len = sql::NULL_DATA;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                value_type: CDataType::SLong,
+                data_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: std::mem::size_of::<i32>() as sql::Len,
+                ..ApdRecord::default()
+            },
+        );
+        apd.records.insert(
+            2,
+            ApdRecord {
+                indicator_ptr: &mut indicator,
+                octet_length_ptr: &mut indicator,
+                ..ApdRecord::default()
+            },
+        );
+        let mut ipd = IpdDescriptor::new();
+        ipd.records.insert(
+            1,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
+        );
+        ipd.records.insert(
+            2,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
+        );
+
+        let (_, owner, _) = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect("the trailing SQL_C_DEFAULT NULL stays in the count");
+        let owner = owner.expect("json owner");
+        assert!(owner.contains("\"1\""));
+        assert!(owner.contains("\"2\""));
+        assert!(owner.contains("\"value\":\"7\""));
+        assert!(owner.contains("\"value\":null"));
+    }
+
+    #[test]
+    fn exec_direct_rejects_typed_apd_record_without_ipd() {
+        let mut value: i32 = 7;
+        let mut indicator: sql::Len = sql::NULL_DATA;
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                value_type: CDataType::SLong,
+                data_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: std::mem::size_of::<i32>() as sql::Len,
+                indicator_ptr: &mut indicator,
+                octet_length_ptr: std::ptr::null_mut(),
+            },
+        );
+        let ipd = IpdDescriptor::new();
+
+        let err = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect_err("a typed APD record still requires an IPD record");
+        assert_eq!(err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn exec_direct_counts_apd_record_with_buffer_length() {
+        let mut apd = ApdDescriptor::new();
+        apd.records.insert(
+            1,
+            ApdRecord {
+                buffer_length: 4,
+                ..ApdRecord::default()
+            },
+        );
+        let ipd = IpdDescriptor::new();
+
+        let err = apply_parameter_bindings(&apd, &ipd, false, None, BindingMode::Json)
+            .expect_err("a buffer length makes the record a binding");
+        assert_eq!(err.to_sql_state(), SqlState::GeneralError);
     }
 
     #[test]

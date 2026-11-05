@@ -1163,12 +1163,15 @@ fn get_apd_field(
             }
             Ok(())
         }
-        DescField::IndicatorPtr | DescField::OctetLengthPtr => {
+        DescField::IndicatorPtr => {
             unsafe {
-                std::ptr::write_unaligned(
-                    value_ptr as *mut *mut sql::Len,
-                    record.str_len_or_ind_ptr,
-                );
+                std::ptr::write_unaligned(value_ptr as *mut *mut sql::Len, record.indicator_ptr);
+            }
+            Ok(())
+        }
+        DescField::OctetLengthPtr => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut *mut sql::Len, record.octet_length_ptr);
             }
             Ok(())
         }
@@ -1255,8 +1258,12 @@ fn set_apd_field(
                 record.buffer_length = value_ptr as sql::Len;
                 Ok(())
             }
-            DescField::IndicatorPtr | DescField::OctetLengthPtr => {
-                record.str_len_or_ind_ptr = value_ptr as *mut sql::Len;
+            DescField::IndicatorPtr => {
+                record.indicator_ptr = value_ptr as *mut sql::Len;
+                Ok(())
+            }
+            DescField::OctetLengthPtr => {
+                record.octet_length_ptr = value_ptr as *mut sql::Len;
                 Ok(())
             }
             _ => {
@@ -1676,11 +1683,8 @@ fn set_apd_rec(
     record.value_type = c_type;
     record.buffer_length = length;
     record.data_ptr = data_ptr;
-    record.str_len_or_ind_ptr = if !indicator_ptr.is_null() {
-        indicator_ptr
-    } else {
-        octet_length_ptr
-    };
+    record.octet_length_ptr = octet_length_ptr;
+    record.indicator_ptr = indicator_ptr;
 
     Ok(())
 }
@@ -1841,7 +1845,8 @@ impl ArdCopyData {
                     value_type: binding.target_type,
                     data_ptr: binding.target_value_ptr,
                     buffer_length: binding.buffer_length,
-                    str_len_or_ind_ptr: binding.indicator_ptr,
+                    indicator_ptr: binding.indicator_ptr,
+                    octet_length_ptr: binding.octet_length_ptr,
                 },
             );
         }
@@ -1888,8 +1893,8 @@ impl ApdCopyData {
                     target_type: record.value_type,
                     target_value_ptr: record.data_ptr,
                     buffer_length: record.buffer_length,
-                    indicator_ptr: record.str_len_or_ind_ptr,
-                    octet_length_ptr: record.str_len_or_ind_ptr,
+                    indicator_ptr: record.indicator_ptr,
+                    octet_length_ptr: record.octet_length_ptr,
                     ..Default::default()
                 },
             );
