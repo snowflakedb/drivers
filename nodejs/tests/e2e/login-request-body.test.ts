@@ -43,6 +43,16 @@ describe('Login Request Body', () => {
     );
   });
 
+  it('should send a password-only PAT as TOKEN', async () => {
+    const data = await connectAndGetLoginRequestData({
+      account: 'MOCK_ACCOUNT_NAME',
+      authenticator: 'PROGRAMMATIC_ACCESS_TOKEN',
+      password: 'MOCK_TOKEN',
+    });
+    expect(data.TOKEN).toBe('MOCK_TOKEN');
+    expect(data.AUTHENTICATOR).toBe('PROGRAMMATIC_ACCESS_TOKEN');
+  });
+
   describe('CLIENT_ENVIRONMENT', () => {
     it('should contain APPLICATION if passed in connection config', async () => {
       const { CLIENT_ENVIRONMENT } = await connectAndGetLoginRequestData({

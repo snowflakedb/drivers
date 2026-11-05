@@ -60,6 +60,12 @@ Deferred work — covered **last**, only once the corresponding feature support 
     `should_retry_with_browser_flow_when_cached_id_token_fails`).
   - [`authentication/testMfa.js`](./authentication/testMfa.js) — migrated to
     `nodejs/tests/e2e/authentication/user-password-mfa.test.ts`.
+  - [`authentication/testPAT.js`](./authentication/testPAT.js) — deleted from the snapshot.
+    Coverage is in [`../e2e/authentication/pat.test.ts`](../e2e/authentication/pat.test.ts).
+    `Successful connection` is `should authenticate using PAT as token`.
+    `Invalid PAT` is `should fail PAT authentication when invalid token provided`.
+    `Mismatched username` is `should fail PAT authentication when the username does not match the token`.
+    The old file minted the secret with an Okta `ALTER USER`. The new file reads `SNOWFLAKE_TEST_PAT`.
   - [`authentication/testOauth.js`](./authentication/testOauth.js) — not a whole-file
     move. `Successful connection` runs as `oauth should authenticate with pre acquired access token`.
     `Mismatched username` is `should reject a mismatched username for a pre-acquired token`.
@@ -323,8 +329,13 @@ Each of these depends on the corresponding auth provider landing in `sf_core` + 
   integration test plus the Node tests that branch on BD 138. The kept `OAUTH_TYPE`
   assertion checks `data.OAUTH_TYPE`, not the old `data.CLIENT_ENVIRONMENT.OAUTH_TYPE`
   matcher.
-- `integration/wiremock/testOauthPat.js` — migrate once PAT is implemented in `sf_core` and the
-  new Node driver.
+- `integration/wiremock/testOauthPat.js` — deleted from the snapshot.
+  `PAT as token` is `should authenticate using PAT as token` and `Invalid token` is
+  `should fail PAT authentication when invalid token provided`, both in
+  [`../e2e/authentication/pat.test.ts`](../e2e/authentication/pat.test.ts).
+  `PAT as password` is `should send a password-only PAT as TOKEN` in
+  [`../e2e/login-request-body.test.ts`](../e2e/login-request-body.test.ts), which checks the
+  login body has `TOKEN` from `password` and `AUTHENTICATOR` `PROGRAMMATIC_ACCESS_TOKEN`.
 - `integration/wiremock/testExternalBrowserSsoUrlError.ts` — runnable case replaced by the
   comment in that file pointing at `nodejs/tests/e2e/authentication/external-browser.test.ts`
   (`should fail when authenticator-request reports SSO URL generation failure`).
