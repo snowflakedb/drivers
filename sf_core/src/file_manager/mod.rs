@@ -468,8 +468,8 @@ pub async fn upload_files(
     // sequential loop issued them one after another. Bounded by the fan-out and
     // by the two-strike `PresignedUrlExpired` guard at the call site, so it
     // cannot loop — but it is a burst GS did not previously see.
-    let outcomes = futures::stream::iter(file_locations)
-        .map(|file_location| {
+    let mut outcomes = futures::stream::iter(file_locations.into_iter().enumerate())
+        .map(|(index, file_location)| {
             let abort = &abort;
             async move {
                 // Retained for the aggregate-failure report: `filename` moves
@@ -477,7 +477,7 @@ pub async fn upload_files(
                 // needs a name to list in `UploadBatch`.
                 let name = file_location.filename.clone();
                 if abort.is_aborted() {
-                    return (name, None);
+                    return (index, name, None);
                 }
                 let single_upload_data = SingleUploadData {
                     source: ByteSource::Path(PathBuf::from(&file_location.path)),
@@ -500,20 +500,21 @@ pub async fn upload_files(
                 if outcome.is_err() {
                     abort.record_failure();
                 }
-                (name, Some(outcome))
+                (index, name, Some(outcome))
             }
         })
-        // `buffered`, not `buffer_unordered`: PUT results are one row per input
-        // file and callers (and the wrappers' tests) read them positionally, so
-        // the row order must stay the input order regardless of which transfer
-        // finishes first.
-        .buffered(batch.scheduler.file_fanout())
+        // `buffer_unordered` refills a slot as soon as any file finishes;
+        // `buffered` would hold every slot until the oldest file is done. PUT
+        // results are one row per input file and callers read them
+        // positionally, so the outcomes are sorted back into input order.
+        .buffer_unordered(batch.scheduler.file_fanout())
         .collect::<Vec<_>>()
         .await;
+    outcomes.sort_unstable_by_key(|(index, _, _)| *index);
 
     let mut results = Vec::with_capacity(outcomes.len());
     let mut failures: Vec<String> = Vec::new();
-    for (name, outcome) in outcomes {
+    for (_, name, outcome) in outcomes {
         match outcome {
             Some(Ok(result)) => results.push(result),
             // Fail-fast aborts the batch at the first error; collect-all (the
@@ -1073,7 +1074,7 @@ pub async fn download_files(
 
     let data = &data;
     let local_location = &local_location;
-    let outcomes = futures::stream::iter(download_iter)
+    let mut outcomes = futures::stream::iter(download_iter)
         .map(
             |(index, ((file_location, encryption_material), presigned_url))| {
                 let abort = &abort;
@@ -1083,7 +1084,7 @@ pub async fn download_files(
                     // transfer still needs a `file` column to report.
                     let name = file_location.clone();
                     if abort.is_aborted() {
-                        return (name, None);
+                        return (index, name, None);
                     }
                     let single_download_data = SingleDownloadData {
                         src_location: file_location,
@@ -1102,19 +1103,21 @@ pub async fn download_files(
                     if outcome.is_err() {
                         abort.record_failure();
                     }
-                    (name, Some(outcome))
+                    (index, name, Some(outcome))
                 }
             },
         )
-        // `buffered`, not `buffer_unordered`: GET emits one result row per
-        // requested file and callers read them positionally, so row order must
-        // stay the input order regardless of completion order.
-        .buffered(batch.scheduler.file_fanout())
+        // `buffer_unordered` so a slow file does not hold its slot until the
+        // oldest file finishes. GET emits one result row per requested file and
+        // callers read them positionally, so the outcomes are sorted back into
+        // input order.
+        .buffer_unordered(batch.scheduler.file_fanout())
         .collect::<Vec<_>>()
         .await;
+    outcomes.sort_unstable_by_key(|(index, _, _)| *index);
 
     let mut results = Vec::with_capacity(outcomes.len());
-    for (name, outcome) in outcomes {
+    for (_, name, outcome) in outcomes {
         match outcome {
             Some(Ok(result)) => results.push(result),
 
@@ -3152,7 +3155,8 @@ mod tests {
 
     /// Result rows must stay in input (glob) order even though the transfers
     /// finish out of order. Callers read PUT/GET rows positionally, so
-    /// `buffer_unordered` here would silently mis-pair rows with files.
+    /// dropping the sort after `buffer_unordered` would silently mis-pair rows
+    /// with files.
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_returns_results_in_input_order_despite_out_of_order_completion() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -3190,6 +3194,46 @@ mod tests {
             names.to_vec(),
             "result rows must follow input order, not completion order"
         );
+    }
+
+    /// A stuck first file must not pin its fan-out slot's neighbours: with a
+    /// fan-out of 2, every other file goes through the second slot while the
+    /// first upload is still waiting on its response.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_refills_free_slots_while_an_earlier_file_is_still_in_flight() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names = ["a.dat", "b.dat", "c.dat", "d.dat", "e.dat"];
+        for name in names {
+            std::fs::write(tmp.path().join(name), name).unwrap();
+        }
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path(mock_object_path("a.dat")))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)),
+            )
+            .mount(&mock)
+            .await;
+        let fast_arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(CountingSlowPut {
+                arrivals: Arc::clone(&fast_arrivals),
+                delay: std::time::Duration::ZERO,
+            })
+            .mount(&mock)
+            .await;
+        let data = parallel_batch_upload_data_for(tmp.path(), &mock.uri(), false, 2);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let scheduler = internal::test_scheduler(data.multipart);
+
+        tokio::select! {
+            _ = upload_files(&data, &policy, TransferCtx::default().with_scheduler(&scheduler)) => {
+                panic!("the stuck first file must not let the batch finish")
+            }
+            _ = wait_for_arrivals(&fast_arrivals, names.len() - 1) => {}
+        }
     }
 
     /// Mock S3 endpoint that answers every `PutObject` after `delay`, counting
