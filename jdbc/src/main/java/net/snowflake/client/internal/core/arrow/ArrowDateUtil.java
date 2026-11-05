@@ -80,10 +80,7 @@ public class ArrowDateUtil {
    * @return epoch-nanoseconds decimal string to send to the server
    */
   public static String timestampToBindString(Timestamp ts) {
-    return String.valueOf(
-        BigDecimal.valueOf((ts.getTime() - msDiffJulianToGregorian(ts)) / 1000)
-            .scaleByPowerOfTen(9)
-            .add(BigDecimal.valueOf(ts.getNanos())));
+    return epochNanos(ts.getTime() - msDiffJulianToGregorian(ts), ts.getNanos());
   }
 
   /**
@@ -100,10 +97,7 @@ public class ArrowDateUtil {
    */
   public static String timestampWithCalendarToBindString(Timestamp ts, TimeZone tz) {
     long milliSecSinceEpoch = ts.getTime() + tz.getOffset(ts.getTime());
-    return String.valueOf(
-        BigDecimal.valueOf(milliSecSinceEpoch / 1000)
-            .scaleByPowerOfTen(9)
-            .add(BigDecimal.valueOf(ts.getNanos())));
+    return epochNanos(milliSecSinceEpoch, ts.getNanos());
   }
 
   /**
@@ -121,13 +115,22 @@ public class ArrowDateUtil {
    */
   public static String timestampTzToBindString(Timestamp ts, TimeZone tz) {
     long milliSecSinceEpoch = ts.getTime();
-    String value =
-        String.valueOf(
-            BigDecimal.valueOf(milliSecSinceEpoch / 1000)
-                .scaleByPowerOfTen(9)
-                .add(BigDecimal.valueOf(ts.getNanos())));
     int offset = tz.getOffset(milliSecSinceEpoch) / 60000 + 1440;
-    return value + " " + offset;
+    return epochNanos(milliSecSinceEpoch, ts.getNanos()) + " " + offset;
+  }
+
+  /**
+   * Epoch-nanoseconds decimal string. Whole seconds are floored, so a negative millisecond count
+   * that is not a multiple of 1000 stays on the earlier second.
+   *
+   * <p>The divisor is a {@code long} because this module targets Java 8. An {@code int} literal
+   * resolves to {@code Math.floorDiv(long, int)}, which does not exist before Java 9.
+   */
+  private static String epochNanos(long millis, int nanos) {
+    return String.valueOf(
+        BigDecimal.valueOf(Math.floorDiv(millis, 1000L))
+            .scaleByPowerOfTen(9)
+            .add(BigDecimal.valueOf(nanos)));
   }
 
   /**

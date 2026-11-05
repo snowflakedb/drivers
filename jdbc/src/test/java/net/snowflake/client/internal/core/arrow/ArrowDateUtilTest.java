@@ -5,8 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.TimeZone;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Unit tests for {@link ArrowDateUtil#adjustTimestamp} (the Julian→Gregorian timestamp shift) and
@@ -111,9 +114,59 @@ public class ArrowDateUtilTest {
         ArrowDateUtil.timestampTzToBindString(ts, TimeZone.getTimeZone("GMT-08:00")));
   }
 
-  /** Recomputes the legacy epoch-nanoseconds string for a given millis/nanos pair. */
+  /**
+   * Pre-1970 instants whose fraction is at least 1 ms, plus whole seconds, sub-millisecond
+   * fractions, the epoch, and post-1970 values. The fractional pre-1970 rows are one second early
+   * of a truncating {@code / 1000}.
+   */
+  @ParameterizedTest
+  @CsvSource({
+    "1969-12-31T23:59:59.123456Z, -876544000",
+    "1969-12-31T23:59:59.001Z, -999000000",
+    "1969-12-31T23:59:59.999999999Z, -1",
+    "1950-06-15T12:00:00.500Z, -616852799500000000",
+    "1969-12-31T23:59:59.000123Z, -999877000",
+    "1969-12-31T23:59:59Z, -1000000000",
+    "1970-01-01T00:00:00Z, 0",
+    "1970-01-01T00:00:00.123456Z, 123456000",
+    "2024-02-29T12:34:56.789Z, 1709210096789000000"
+  })
+  public void shouldEncodeTimestampAsFloorDividedEpochNanos(String instant, String expected) {
+    Timestamp ts = Timestamp.from(Instant.parse(instant));
+    assertEquals(expected, ArrowDateUtil.timestampToBindString(ts));
+  }
+
+  /**
+   * Calendar overload. {@code TZ} keeps the instant and stores the offset; any other kind shifts
+   * the instant by the zone offset. {@code 1970-01-01T03:00:00.500Z} with {@code GMT-05:00} is
+   * before 1970 only after that shift.
+   */
+  @ParameterizedTest
+  @CsvSource({
+    "1969-12-31T23:59:59.123456Z, UTC, TZ, -876544000 1440",
+    "1969-12-31T23:59:59.123456Z, UTC, LTZ, -876544000",
+    "1969-12-31T23:59:59.123456Z, GMT-05:00, TZ, -876544000 1140",
+    "1969-12-31T23:59:59.123456Z, GMT-05:00, NTZ, -18000876544000",
+    "1970-01-01T03:00:00.500Z, GMT-05:00, LTZ, -7199500000000",
+    "1970-01-01T03:00:00.500Z, GMT-05:00, TZ, 10800500000000 1140",
+    "1969-12-31T23:59:59.000123Z, GMT-05:00, LTZ, -18000999877000",
+    "2024-02-29T12:34:56.789Z, GMT+01:00, TZ, 1709210096789000000 1500",
+    "2024-02-29T12:34:56.789Z, GMT+01:00, LTZ, 1709213696789000000"
+  })
+  public void shouldEncodeCalendarTimestampAsFloorDividedEpochNanos(
+      String instant, String zone, String kind, String expected) {
+    Timestamp ts = Timestamp.from(Instant.parse(instant));
+    TimeZone tz = TimeZone.getTimeZone(zone);
+    String actual =
+        "TZ".equals(kind)
+            ? ArrowDateUtil.timestampTzToBindString(ts, tz)
+            : ArrowDateUtil.timestampWithCalendarToBindString(ts, tz);
+    assertEquals(expected, actual);
+  }
+
+  /** Epoch-nanoseconds string for a millis/nanos pair. Whole seconds are floored. */
   private static String expectedEpochNanos(long millis, int nanos) {
-    return java.math.BigDecimal.valueOf(millis / 1000)
+    return java.math.BigDecimal.valueOf(Math.floorDiv(millis, 1000L))
         .scaleByPowerOfTen(9)
         .add(java.math.BigDecimal.valueOf(nanos))
         .toString();
