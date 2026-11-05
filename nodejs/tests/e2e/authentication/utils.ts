@@ -147,6 +147,13 @@ function isMfaLockoutError(error: unknown): boolean {
   return message.includes('394512') || message.toLowerCase().includes('too many failed mfa');
 }
 
+// TODO(SNOW-3996212): provideBrowserCredentials.js mints its own code from the seed, outside
+// this claim. A browser login and a password-MFA login for the same user in the same 30s window
+// collide: the server answers TOTP Invalid (394507) to whichever submits second, and a waiter
+// here sleeps 30s per taken window, which can pass the 120s test timeout. The auth-browser stage
+// binds a separate user to the OAuth keys, so the two flows no longer meet. Two OAuth browser
+// logins for one user in one window still can. The honest fix claims and mints the code here and
+// passes the claimed code to the helper instead of the seed.
 export async function acquireTotpPasscode(
   seed: string,
   skip: (note?: string) => never,
