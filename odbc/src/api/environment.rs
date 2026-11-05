@@ -1,6 +1,8 @@
 use crate::api::{
-    OdbcResult, env_from_handle,
-    error::{InvalidAttributeValueSnafu, ReadOnlyAttributeSnafu, UnsupportedAttributeSnafu},
+    OdbcResult,
+    encoding::{WCharEncoding, current_wchar_encoding},
+    env_from_handle,
+    error::{InvalidAttributeValueSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu},
 };
 use odbc_sys as sql;
 
@@ -10,6 +12,17 @@ const SQL_ATTR_ODBC_VERSION: sql::Integer = 200;
 pub(crate) const SQL_OV_ODBC2: sql::Integer = 2;
 pub(crate) const SQL_OV_ODBC3: sql::Integer = 3;
 pub(crate) const SQL_OV_ODBC3_80: sql::Integer = 380;
+
+const SQL_ATTR_DRIVER_UNICODE_TYPE: sql::Integer = 1065;
+const SQL_DM_CP_UTF16: sql::Integer = 1;
+const SQL_DM_CP_UCS4: sql::Integer = 3;
+
+fn driver_unicode_type(encoding: WCharEncoding) -> sql::Integer {
+    match encoding {
+        WCharEncoding::Utf16 => SQL_DM_CP_UTF16,
+        WCharEncoding::Utf32 => SQL_DM_CP_UCS4,
+    }
+}
 
 fn to_env_attr(attribute: i32) -> Option<sql::EnvironmentAttribute> {
     match attribute {
@@ -62,8 +75,14 @@ pub fn set_env_attribute(
     tracing::debug!("Setting environment attribute: {attribute}");
 
     let env = env_from_handle(environment_handle)?;
+
+    if attribute == SQL_ATTR_DRIVER_UNICODE_TYPE {
+        tracing::warn!("SQL_ATTR_DRIVER_UNICODE_TYPE is read-only");
+        return ReadOnlyAttributeSnafu { attribute }.fail();
+    }
+
     let mut environment = env.environment.lock();
-    let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
+    let attr = to_env_attr(attribute).ok_or(UnknownAttributeSnafu { attribute }.build())?;
 
     match attr {
         sql::EnvironmentAttribute::OdbcVersion => {
@@ -114,8 +133,6 @@ pub fn get_env_attribute(
     tracing::debug!("Getting environment attribute: {attribute}");
 
     let env = env_from_handle(environment_handle)?;
-    let environment = env.environment.lock();
-    let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
 
     let write_string_length = || {
         if !string_length_ptr.is_null() {
@@ -127,6 +144,20 @@ pub fn get_env_attribute(
             }
         }
     };
+
+    if attribute == SQL_ATTR_DRIVER_UNICODE_TYPE {
+        let encoding = current_wchar_encoding();
+        let unicode_type = driver_unicode_type(encoding);
+        tracing::debug!("Getting driver unicode type: {unicode_type} ({encoding})");
+        if !value.is_null() {
+            unsafe { std::ptr::write(value as *mut sql::Integer, unicode_type) };
+        }
+        write_string_length();
+        return Ok(());
+    }
+
+    let environment = env.environment.lock();
+    let attr = to_env_attr(attribute).ok_or(UnknownAttributeSnafu { attribute }.build())?;
 
     match attr {
         sql::EnvironmentAttribute::OdbcVersion => {
@@ -254,6 +285,94 @@ mod tests {
             err,
             crate::api::error::OdbcError::InvalidAttributeValue { .. }
         ));
+
+        free_environment(env_handle).expect("free_environment");
+    }
+
+    #[test]
+    fn driver_unicode_type_maps_encoding_to_iodbc_code_page() {
+        assert_eq!(driver_unicode_type(WCharEncoding::Utf16), 1);
+        assert_eq!(driver_unicode_type(WCharEncoding::Utf32), 3);
+    }
+
+    #[test]
+    fn driver_unicode_type_reports_negotiated_encoding() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+        let mut value: sql::Integer = -1;
+        let mut string_length: sql::Integer = -1;
+
+        get_env_attribute(
+            env_handle,
+            SQL_ATTR_DRIVER_UNICODE_TYPE,
+            &mut value as *mut sql::Integer as sql::Pointer,
+            0,
+            &mut string_length,
+        )
+        .expect("get_env_attribute(SQL_ATTR_DRIVER_UNICODE_TYPE)");
+
+        assert_eq!(value, driver_unicode_type(current_wchar_encoding()));
+        assert_eq!(
+            string_length,
+            std::mem::size_of::<sql::Integer>() as sql::Integer
+        );
+
+        free_environment(env_handle).expect("free_environment");
+    }
+
+    #[test]
+    fn driver_unicode_type_is_read_only() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+
+        let err = set_env_attribute(
+            env_handle,
+            SQL_ATTR_DRIVER_UNICODE_TYPE,
+            SQL_DM_CP_UTF16 as sql::Pointer,
+            0,
+        )
+        .expect_err("SQL_ATTR_DRIVER_UNICODE_TYPE must not be settable");
+        assert!(matches!(
+            err,
+            crate::api::error::OdbcError::ReadOnlyAttribute {
+                attribute: SQL_ATTR_DRIVER_UNICODE_TYPE,
+                ..
+            }
+        ));
+
+        free_environment(env_handle).expect("free_environment");
+    }
+
+    #[test]
+    fn unrecognized_env_attribute_is_an_unknown_identifier() {
+        let _guard = crate::api::HANDLE_ALLOC_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let env_handle = alloc_environment().expect("alloc_environment");
+
+        let get_err = get_env_attribute(
+            env_handle,
+            99999,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        )
+        .expect_err("get of an unrecognized environment attribute");
+        let set_err = set_env_attribute(env_handle, 99999, 1 as sql::Pointer, 0)
+            .expect_err("set of an unrecognized environment attribute");
+        for err in [get_err, set_err] {
+            assert!(matches!(
+                err,
+                crate::api::error::OdbcError::UnknownAttribute {
+                    attribute: 99999,
+                    ..
+                }
+            ));
+        }
 
         free_environment(env_handle).expect("free_environment");
     }

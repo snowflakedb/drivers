@@ -1,0 +1,23 @@
+name: "SQLGetEnvAttr and SQLSetEnvAttr of an attribute that is not an ODBC environment attribute return HY092"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  SQLGetEnvAttr of an attribute identifier that is not an ODBC environment
+  attribute returns SQL_NO_DATA with no diagnostic record. SQLSetEnvAttr of
+  one, including SQL_ATTR_DRIVER_UNICODE_TYPE, returns SQL_ERROR with HY000.
+new_driver_behavior: |
+  SQLGetEnvAttr and SQLSetEnvAttr of an attribute identifier that is not an
+  ODBC environment attribute return SQL_ERROR with HY092. SQLSetEnvAttr of
+  SQL_ATTR_DRIVER_UNICODE_TYPE also returns HY092, and the reported encoding
+  is unchanged.
+description: |
+  The SQLGetEnvAttr reference assigns HY092 to an attribute that is not valid
+  for the ODBC version the driver supports, as a driver-reported SQLSTATE, and
+  does not describe SQL_NO_DATA for this function. The SQLSetEnvAttr reference
+  assigns HY092 to the same condition and defines no driver-specific
+  environment attributes, so SQL_ATTR_DRIVER_UNICODE_TYPE, an iODBC extension,
+  falls under it. HY000 is defined for errors with no specific SQLSTATE, which
+  does not hold when HY092 applies.

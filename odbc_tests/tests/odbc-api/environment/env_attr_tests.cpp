@@ -2,6 +2,10 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstdint>
+#include <cstring>
+#include <string>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -20,6 +24,17 @@
 // SQL_CP_DRIVER_AWARE is defined in ODBC 3.8 but may not be in all system headers
 #ifndef SQL_CP_DRIVER_AWARE
 #define SQL_CP_DRIVER_AWARE 3UL
+#endif
+
+// iODBC extension attribute and code pages, defined only in iODBC's iodbcext.h
+#ifndef SQL_ATTR_DRIVER_UNICODE_TYPE
+#define SQL_ATTR_DRIVER_UNICODE_TYPE 1065
+#endif
+#ifndef SQL_DM_CP_UTF16
+#define SQL_DM_CP_UTF16 1
+#endif
+#ifndef SQL_DM_CP_UCS4
+#define SQL_DM_CP_UCS4 3
 #endif
 
 // ============================================================================
@@ -431,6 +446,8 @@ using SQLSetEnvAttrFn = SQLRETURN (*)(SQLHENV, SQLINTEGER, SQLPOINTER, SQLINTEGE
 using SQLGetEnvAttrFn = SQLRETURN (*)(SQLHENV, SQLINTEGER, SQLPOINTER, SQLINTEGER, SQLINTEGER*);
 using SQLGetDiagRecFn = SQLRETURN (*)(SQLSMALLINT, SQLHANDLE, SQLSMALLINT, SQLCHAR*, SQLINTEGER*, SQLCHAR*, SQLSMALLINT,
                                       SQLSMALLINT*);
+using SQLGetDiagRecWFn = SQLRETURN (*)(SQLSMALLINT, SQLHANDLE, SQLSMALLINT, SQLWCHAR*, SQLINTEGER*, SQLWCHAR*,
+                                       SQLSMALLINT, SQLSMALLINT*);
 
 struct DirectDriver {
   void* handle = nullptr;
@@ -439,6 +456,7 @@ struct DirectDriver {
   SQLSetEnvAttrFn SetEnvAttr = nullptr;
   SQLGetEnvAttrFn GetEnvAttr = nullptr;
   SQLGetDiagRecFn GetDiagRec = nullptr;
+  SQLGetDiagRecWFn GetDiagRecW = nullptr;
 
   DirectDriver() {
     std::string path = DriverConfig::get_driver_path();
@@ -450,12 +468,14 @@ struct DirectDriver {
     SetEnvAttr = reinterpret_cast<SQLSetEnvAttrFn>(dlsym(handle, "SQLSetEnvAttr"));
     GetEnvAttr = reinterpret_cast<SQLGetEnvAttrFn>(dlsym(handle, "SQLGetEnvAttr"));
     GetDiagRec = reinterpret_cast<SQLGetDiagRecFn>(dlsym(handle, "SQLGetDiagRec"));
+    GetDiagRecW = reinterpret_cast<SQLGetDiagRecWFn>(dlsym(handle, "SQLGetDiagRecW"));
 
     REQUIRE(AllocHandle != nullptr);
     REQUIRE(FreeHandle != nullptr);
     REQUIRE(SetEnvAttr != nullptr);
     REQUIRE(GetEnvAttr != nullptr);
     REQUIRE(GetDiagRec != nullptr);
+    REQUIRE(GetDiagRecW != nullptr);
   }
 
   ~DirectDriver() {
@@ -540,22 +560,21 @@ TEST_CASE("direct driver: should return error for unknown attribute", "[odbc-api
   // When An unknown attribute is set
   ret = drv.SetEnvAttr(env, 99999, reinterpret_cast<SQLPOINTER>(1), 0);
 
-  // Then New driver returns HYC00 (optional feature not implemented);
-  // old driver returns HY000 (general error)
+  // Then New driver returns HY092 (invalid attribute identifier); old driver returns HY000 (general error)
   REQUIRE(ret == SQL_ERROR);
-  NEW_DRIVER_ONLY() { CHECK(drv.get_sqlstate(env) == "HYC00"); }
-  OLD_DRIVER_ONLY() { CHECK(drv.get_sqlstate(env) == "HY000"); }
+  NEW_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(drv.get_sqlstate(env) == "HY092"); }
+  OLD_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(drv.get_sqlstate(env) == "HY000"); }
 
   // When An unknown attribute is queried
   SQLINTEGER value = 0;
   ret = drv.GetEnvAttr(env, 99999, &value, 0, nullptr);
 
-  // Then New driver returns SQL_ERROR with HYC00; old driver returns SQL_NO_DATA
-  NEW_DRIVER_ONLY() {
+  // Then New driver returns SQL_ERROR with HY092; old driver returns SQL_NO_DATA
+  NEW_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") {
     REQUIRE(ret == SQL_ERROR);
-    CHECK(drv.get_sqlstate(env) == "HYC00");
+    CHECK(drv.get_sqlstate(env) == "HY092");
   }
-  OLD_DRIVER_ONLY() { REQUIRE(ret == SQL_NO_DATA); }
+  OLD_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { REQUIRE(ret == SQL_NO_DATA); }
 
   drv.FreeHandle(SQL_HANDLE_ENV, env);
 }
@@ -581,6 +600,85 @@ TEST_CASE("direct driver: should write StringLengthPtr for integer attributes",
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(version == SQL_OV_ODBC3);
   CHECK(string_length == static_cast<SQLINTEGER>(sizeof(SQLINTEGER)));
+
+  drv.FreeHandle(SQL_HANDLE_ENV, env);
+}
+
+TEST_CASE("direct driver: should report SQL_ATTR_DRIVER_UNICODE_TYPE matching the width of its wide output",
+          "[odbc-api][env_attr][driver_unicode_type][direct]") {
+  // Given A driver loaded directly with DriverManagerEncoding pinned to the suite's driver manager
+  PinDriverManagerEncoding pin_encoding;
+  DirectDriver drv;
+  SQLHENV env = SQL_NULL_HENV;
+  SQLRETURN ret = drv.AllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = drv.SetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQL_ATTR_DRIVER_UNICODE_TYPE is queried, as iODBC 3.52.14 and later do while loading the driver
+  SQLINTEGER unicode_type = -1;
+  ret = drv.GetEnvAttr(env, SQL_ATTR_DRIVER_UNICODE_TYPE, &unicode_type, 0, nullptr);
+
+  // Then It returns SQL_SUCCESS with the code page pinned by DriverManagerEncoding
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(unicode_type == (is_iodbc_test_suite() ? SQL_DM_CP_UCS4 : SQL_DM_CP_UTF16));
+
+  // And SQLGetDiagRecW writes the SQLSTATE in code units of that width
+  ret = drv.SetEnvAttr(env, 99999, reinterpret_cast<SQLPOINTER>(1), 0);
+  REQUIRE(ret == SQL_ERROR);
+  const size_t unit_size = unicode_type == SQL_DM_CP_UTF16 ? 2 : 4;
+  alignas(4) unsigned char state[6 * 4];
+  std::memset(state, 0xFF, sizeof(state));
+  alignas(4) unsigned char message[256 * 4];
+  SQLINTEGER native = 0;
+  SQLSMALLINT message_length = 0;
+  ret = drv.GetDiagRecW(SQL_HANDLE_ENV, env, 1, reinterpret_cast<SQLWCHAR*>(state), &native,
+                        reinterpret_cast<SQLWCHAR*>(message), 256, &message_length);
+  REQUIRE(SQL_SUCCEEDED(ret));
+
+  std::string sqlstate;
+  for (size_t i = 0; i < 5; ++i) {
+    uint32_t code_unit = 0;
+    std::memcpy(&code_unit, state + i * unit_size, unit_size);
+    sqlstate.push_back(code_unit < 0x80 ? static_cast<char>(code_unit) : '?');
+  }
+  uint32_t terminator = 0;
+  std::memcpy(&terminator, state + 5 * unit_size, unit_size);
+  CHECK(terminator == 0);
+  NEW_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(sqlstate == "HY092"); }
+  OLD_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(sqlstate == "HY000"); }
+
+  drv.FreeHandle(SQL_HANDLE_ENV, env);
+}
+
+TEST_CASE("direct driver: should reject setting SQL_ATTR_DRIVER_UNICODE_TYPE and keep the reported encoding",
+          "[odbc-api][env_attr][driver_unicode_type][error][direct]") {
+  // Given A driver loaded directly with ODBC version set and its reported SQL_ATTR_DRIVER_UNICODE_TYPE
+  DirectDriver drv;
+  SQLHENV env = SQL_NULL_HENV;
+  SQLRETURN ret = drv.AllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = drv.SetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  SQLINTEGER before = -1;
+  ret = drv.GetEnvAttr(env, SQL_ATTR_DRIVER_UNICODE_TYPE, &before, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE((before == SQL_DM_CP_UTF16 || before == SQL_DM_CP_UCS4));
+
+  // When SQL_ATTR_DRIVER_UNICODE_TYPE is set to the other code page
+  const SQLINTEGER other = before == SQL_DM_CP_UTF16 ? SQL_DM_CP_UCS4 : SQL_DM_CP_UTF16;
+  ret = drv.SetEnvAttr(env, SQL_ATTR_DRIVER_UNICODE_TYPE, reinterpret_cast<SQLPOINTER>(static_cast<SQLLEN>(other)), 0);
+
+  // Then New driver returns HY092 (not an ODBC environment attribute); old driver returns HY000 (general error)
+  REQUIRE(ret == SQL_ERROR);
+  NEW_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(drv.get_sqlstate(env) == "HY092"); }
+  OLD_DRIVER_ONLY("BD#env-attr-unknown-id-hy092") { CHECK(drv.get_sqlstate(env) == "HY000"); }
+
+  // And The reported encoding is unchanged
+  SQLINTEGER after = -1;
+  ret = drv.GetEnvAttr(env, SQL_ATTR_DRIVER_UNICODE_TYPE, &after, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(after == before);
 
   drv.FreeHandle(SQL_HANDLE_ENV, env);
 }
