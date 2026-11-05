@@ -16,19 +16,37 @@ public class ITFixture
     private static string? _baseSchema;
     private string? _schemaName;
 
+    static ITFixture()
+    {
+        InitializeEnvironment();
+    }
+
+#if NETFRAMEWORK
+    public ITFixture()
+    {
+        var suffix = Guid.NewGuid().ToString("N").Substring(0, 8);
+        _schemaName = $"{_baseSchema}_DOTNET_{suffix}";
+
+        try
+        {
+            DDLCallAsync($"CREATE OR REPLACE SCHEMA {_schemaName}").GetAwaiter().GetResult();
+        }
+        catch(Exception ex)
+        {
+            Console.WriteLine($"[Fixture] Schema creation failed: {ex.Message}");
+            throw;
+        }
+    }
+#endif
+
+    public static ITestConnectionFactory? OverriddenFactory { get; set; }
+
     public virtual ITestConnectionFactory Factory
     {
         get => OverriddenFactory ?? field;
     } = new DefaultTestConnectionFactory();
 
-    public static ITestConnectionFactory? OverriddenFactory { get; set; }
-
     private static ITestOutputHelper? TestOutputHelper => TestContext.Current.TestOutputHelper;
-
-    static ITFixture()
-    {
-        InitializeEnvironment();
-    }
 
 #if !NETFRAMEWORK
     public virtual async ValueTask InitializeAsync()
@@ -75,22 +93,6 @@ public class ITFixture
         catch(Exception ex)
         {
             TestOutputHelper?.WriteLine($"[Fixture] Schema cleanup failed {ex.Message}");
-        }
-    }
-
-    public ITFixture()
-    {
-        var suffix = Guid.NewGuid().ToString("N").Substring(0, 8);
-        _schemaName = $"{_baseSchema}_DOTNET_{suffix}";
-
-        try
-        {
-            DDLCallAsync($"CREATE OR REPLACE SCHEMA {_schemaName}").GetAwaiter().GetResult();
-        }
-        catch(Exception ex)
-        {
-            Console.WriteLine($"[Fixture] Schema creation failed: {ex.Message}");
-            throw;
         }
     }
 #endif

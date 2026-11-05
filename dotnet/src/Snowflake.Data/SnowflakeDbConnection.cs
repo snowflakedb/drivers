@@ -14,17 +14,6 @@ public sealed class SnowflakeDbConnection : DbConnection
     private DatabaseHandle? _dbHandle;
     private ConnectionHandle? _connHandle;
 
-    internal SnowflakeDbConnection(ICoreTransport transport)
-    {
-        _driver = new DatabaseDriverServiceClient(transport);
-    }
-
-    internal SnowflakeDbConnection(ICoreTransport transport, string connectionString)
-        : this(transport)
-    {
-        _connectionString = connectionString;
-    }
-
     public SnowflakeDbConnection()
         : this(SfCoreTransport.Instance)
     {
@@ -32,6 +21,17 @@ public sealed class SnowflakeDbConnection : DbConnection
 
     public SnowflakeDbConnection(string connectionString)
         : this(SfCoreTransport.Instance)
+    {
+        _connectionString = connectionString;
+    }
+
+    internal SnowflakeDbConnection(ICoreTransport transport)
+    {
+        _driver = new DatabaseDriverServiceClient(transport);
+    }
+
+    internal SnowflakeDbConnection(ICoreTransport transport, string connectionString)
+        : this(transport)
     {
         _connectionString = connectionString;
     }

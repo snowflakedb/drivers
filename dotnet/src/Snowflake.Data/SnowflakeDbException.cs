@@ -5,18 +5,6 @@ namespace Snowflake.Data;
 // TODO this is just a PoC to get foot into the door. It will be completely overhauled. It's just to settle contract.
 public sealed class SnowflakeDbException : DbException
 {
-#pragma warning disable CS0108, CS0114
-    public string SqlState => throw new NotImplementedException("TODO next milestone");
-#pragma warning restore CS0108, CS0114
-
-    public string QueryId
-    {
-        get => throw new NotImplementedException("TODO next milestone");
-        set => throw new NotImplementedException("TODO next milestone");
-    }
-
-    public override int ErrorCode => throw new NotImplementedException("TODO next milestone");
-
     public SnowflakeDbException(
         string sqlState,
         int vendorCode,
@@ -54,4 +42,16 @@ public sealed class SnowflakeDbException : DbException
     {
         throw new NotImplementedException("TODO next milestone");
     }
+
+#pragma warning disable CS0108, CS0114
+    public string SqlState => throw new NotImplementedException("TODO next milestone");
+#pragma warning restore CS0108, CS0114
+
+    public string QueryId
+    {
+        get => throw new NotImplementedException("TODO next milestone");
+        set => throw new NotImplementedException("TODO next milestone");
+    }
+
+    public override int ErrorCode => throw new NotImplementedException("TODO next milestone");
 }

@@ -15,6 +15,52 @@ namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 [Trait("Category", "Unit")]
 public sealed class AsyncMethodInvariantsTest
 {
+    private static readonly string[] ExpectedDummyExceptions = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:25: {nameof(Task)}.{nameof(Task.Delay)}(11)",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:10: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:16: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:11: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:8: {nameof(Task)}.{nameof(Task.Delay)}(1)",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:17: {nameof(AsyncInvariantsDummy.DoSomething2)}()",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:15: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:14: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:13: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:12: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:18: {nameof(Task)}.{nameof(Task.Run)}(...);",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:18: {nameof(Task)}.{nameof(Task.Delay)}(6)",
+    ];
+
+    private static readonly string[] ExpectedDummyExceptions2 = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:7: {nameof(AsyncMethodDummy.DoWork)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:13: {nameof(AsyncMethodDummy.RunJob)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:6: {nameof(AsyncInvariantsDummy.DoSomething)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:21: {nameof(AsyncInvariantsDummy.DoSomething2)}",
+    ];
+
+    private static readonly string[] ExpectedDummyExceptions3 = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:7: {nameof(AsyncMethodDummy.DoWork)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:13: {nameof(AsyncMethodDummy.RunJob)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:19: {nameof(AsyncMethodDummy.ProcessAsync)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:6: {nameof(AsyncInvariantsDummy.DoSomething)}",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:21: {nameof(AsyncInvariantsDummy.DoSomething2)}",
+    ];
+
+    private static readonly string[] ExpectedDummyExceptions4 = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:45: Task.Delay(1).GetAwaiter().GetResult()",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:51: Task.Delay(1).Wait()",
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:57: Task.FromResult(42).Result",
+    ];
+
+    private static readonly string[] ExpectedDummyExceptions5 = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
+    ];
+
+    private static readonly string[] ExpectedDummyExceptions7 = [
+        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:8: Thread.Sleep(...)",
+    ];
+
     [SnowflakeTheory]
     [ClassData(typeof(DriverAssemblies))]
     public void TestConfigureAwaitFalse_AllAwaitsInProductionCodeMustHaveConfigureAwaitFalse(string assemblyMetadata)
@@ -339,50 +385,4 @@ public sealed class AsyncMethodInvariantsTest
         IdentifierNameSyntax identifier => identifier.Identifier.Text,
         _ => invocation.Expression.ToString(),
     };
-
-    private static readonly string[] ExpectedDummyExceptions = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:25: {nameof(Task)}.{nameof(Task.Delay)}(11)",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:10: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:16: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:11: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:8: {nameof(Task)}.{nameof(Task.Delay)}(1)",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:17: {nameof(AsyncInvariantsDummy.DoSomething2)}()",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:15: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:14: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:13: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:12: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:18: {nameof(Task)}.{nameof(Task.Run)}(...);",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:18: {nameof(Task)}.{nameof(Task.Delay)}(6)",
-    ];
-
-    private static readonly string[] ExpectedDummyExceptions2 = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:7: {nameof(AsyncMethodDummy.DoWork)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:13: {nameof(AsyncMethodDummy.RunJob)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:6: {nameof(AsyncInvariantsDummy.DoSomething)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:21: {nameof(AsyncInvariantsDummy.DoSomething2)}",
-    ];
-
-    private static readonly string[] ExpectedDummyExceptions3 = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:7: {nameof(AsyncMethodDummy.DoWork)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:13: {nameof(AsyncMethodDummy.RunJob)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:19: {nameof(AsyncMethodDummy.ProcessAsync)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:6: {nameof(AsyncInvariantsDummy.DoSomething)}",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncInvariantsDummy)}.cs:21: {nameof(AsyncInvariantsDummy.DoSomething2)}",
-    ];
-
-    private static readonly string[] ExpectedDummyExceptions4 = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:45: Task.Delay(1).GetAwaiter().GetResult()",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:51: Task.Delay(1).Wait()",
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy)}.cs:57: Task.FromResult(42).Result",
-    ];
-
-    private static readonly string[] ExpectedDummyExceptions5 = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:6: {nameof(AsyncMethodDummy2.FireAndForget)}",
-    ];
-
-    private static readonly string[] ExpectedDummyExceptions7 = [
-        $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:8: Thread.Sleep(...)",
-    ];
 }

@@ -6,8 +6,6 @@ namespace Snowflake.Data.Tests.Attributes;
 [XunitTestCaseDiscoverer(typeof(SnowflakeTheoryDiscoverer))]
 public sealed class SnowflakeTheoryAttribute : TheoryAttribute
 {
-    public RetriesCount RetriesCount { get; set; }
-
     public SnowflakeTheoryAttribute(
         SkipCondition skip = SkipCondition.None,
         RetriesCount retriesCount = RetriesCount.Twice,
@@ -21,4 +19,6 @@ public sealed class SnowflakeTheoryAttribute : TheoryAttribute
         if (skipEvaluationResult.ShouldSkip)
             Skip = skipEvaluationResult.SkipMessage;
     }
+
+    public RetriesCount RetriesCount { get; set; }
 }

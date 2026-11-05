@@ -12,18 +12,15 @@ namespace Snowflake.Data.Tests.Discovery;
 /// </summary>
 public static class JunitRetryXml
 {
-    public readonly struct AttemptFailure
-    {
-        public AttemptFailure(string type, string message, string? stack)
-        {
-            Type = type;
-            Message = message;
-            Stack = stack;
-        }
+    private static readonly ConcurrentDictionary<string, string> Cases = new(StringComparer.Ordinal);
 
-        public string Type { get; }
-        public string Message { get; }
-        public string? Stack { get; }
+    private static readonly object FileLock = new();
+    private static readonly string? OutputPath = BlankToNull(Environment.GetEnvironmentVariable("SNOWFLAKE_JUNIT_PATH"));
+    static JunitRetryXml()
+    {
+        if (OutputPath is null)
+            return;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush();
     }
 
     public enum CaseStatus
@@ -32,17 +29,6 @@ public static class JunitRetryXml
         Failed,
         Skipped,
         Error,
-    }
-
-    private static readonly ConcurrentDictionary<string, string> Cases = new(StringComparer.Ordinal);
-    private static readonly object FileLock = new();
-    private static readonly string? OutputPath = BlankToNull(Environment.GetEnvironmentVariable("SNOWFLAKE_JUNIT_PATH"));
-
-    static JunitRetryXml()
-    {
-        if (OutputPath is null)
-            return;
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush();
     }
 
     public static void Record(
@@ -151,4 +137,18 @@ public static class JunitRetryXml
 
     private static string? BlankToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
+
+    public readonly struct AttemptFailure
+    {
+        public AttemptFailure(string type, string message, string? stack)
+        {
+            Type = type;
+            Message = message;
+            Stack = stack;
+        }
+
+        public string Type { get; }
+        public string Message { get; }
+        public string? Stack { get; }
+    }
 }

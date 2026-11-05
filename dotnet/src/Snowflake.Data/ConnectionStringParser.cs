@@ -14,6 +14,11 @@ internal sealed class ConnectionStringParser
     }
 
     /// <summary>
+    /// True when the connection string had zero user-supplied parameters.
+    /// </summary>
+    public bool IsEmpty => _builder.Count == 0;
+
+    /// <summary>
     /// Convert parsed key-value pairs to proto ConfigSetting map.
     /// All values are passed as strings — sf_core handles type coercion.
     /// </summary>
@@ -31,9 +36,4 @@ internal sealed class ConnectionStringParser
 
         return options;
     }
-
-    /// <summary>
-    /// True when the connection string had zero user-supplied parameters.
-    /// </summary>
-    public bool IsEmpty => _builder.Count == 0;
 }

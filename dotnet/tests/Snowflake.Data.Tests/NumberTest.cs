@@ -5,11 +5,11 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "E2E")]
 public class NumberTest : IClassFixture<ITFixture>
 {
-    private static readonly string[] NumberTypeSynonyms =
-        ["NUMBER", "NUMERIC", "DECIMAL", "DEC"];
-
     protected readonly ITestOutputHelper Output;
     protected readonly ITFixture Fixture;
+
+    private static readonly string[] NumberTypeSynonyms =
+        ["NUMBER", "NUMERIC", "DECIMAL", "DEC"];
 
     public NumberTest(ITFixture fixture, ITestOutputHelper output)
     {

@@ -167,6 +167,8 @@ public sealed class WiremockClient : IDisposable
         }
     }
 
+    public void Dispose() => Stop();
+
     private void Stop()
     {
         if (_process is null)
@@ -200,8 +202,6 @@ public sealed class WiremockClient : IDisposable
             _httpClient = null;
         }
     }
-
-    public void Dispose() => Stop();
 
     private async Task RegisterSingleMappingAsync(string mappingJson, CancellationToken cancellationToken = default)
     {

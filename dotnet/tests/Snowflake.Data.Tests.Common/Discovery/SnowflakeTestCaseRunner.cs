@@ -135,23 +135,29 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
     }
 }
 
-public class SnowflakeCaseRunnerContext(
-    int maxRetries,
-    IXunitTestCase testCase,
-    IReadOnlyCollection<IXunitTest> tests,
-    IMessageBus messageBus,
-    ExceptionAggregator aggregator,
-    CancellationTokenSource cancellationTokenSource,
-    string displayName,
-    string? skipReason,
-    ExplicitOption explicitOption,
-    object?[] constructorArguments,
-    ParallelMode parallelMode,
-    ExecutionScheduler scheduler,
-    FixtureMappingManager fixtureMappingManager) :
-    XunitTestCaseRunnerBaseContext<IXunitTestCase, IXunitTest>(testCase, tests, explicitOption, messageBus, aggregator,
-        displayName, skipReason, cancellationTokenSource, parallelMode, scheduler, constructorArguments, fixtureMappingManager)
+public class SnowflakeCaseRunnerContext : XunitTestCaseRunnerBaseContext<IXunitTestCase, IXunitTest>
 {
-    public int MaxRetries { get; } = maxRetries;
-    public FixtureMappingManager FixtureMappingManager { get; } = fixtureMappingManager;
+    public SnowflakeCaseRunnerContext(
+        int maxRetries,
+        IXunitTestCase testCase,
+        IReadOnlyCollection<IXunitTest> tests,
+        IMessageBus messageBus,
+        ExceptionAggregator aggregator,
+        CancellationTokenSource cancellationTokenSource,
+        string displayName,
+        string? skipReason,
+        ExplicitOption explicitOption,
+        object?[] constructorArguments,
+        ParallelMode parallelMode,
+        ExecutionScheduler scheduler,
+        FixtureMappingManager fixtureMappingManager)
+        : base(testCase, tests, explicitOption, messageBus, aggregator,
+        displayName, skipReason, cancellationTokenSource, parallelMode, scheduler, constructorArguments, fixtureMappingManager)
+    {
+        MaxRetries = maxRetries;
+        FixtureMappingManager = fixtureMappingManager;
+    }
+
+    public int MaxRetries { get; }
+    public FixtureMappingManager FixtureMappingManager { get; }
 }

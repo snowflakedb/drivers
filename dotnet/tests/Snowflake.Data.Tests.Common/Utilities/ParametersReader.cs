@@ -4,8 +4,8 @@ namespace Snowflake.Data.Tests.Utilities;
 
 public static class ParametersReader
 {
-    private static readonly Lazy<Dictionary<string, string>> Parameters = new(LoadParameters);
     private const int MaxDirLevels = 10;
+    private static readonly Lazy<Dictionary<string, string>> Parameters = new(LoadParameters);
     private static ITestOutputHelper? _testOutputHelper;
 
     public static void Init(ITestOutputHelper? testOutputHelper) => _testOutputHelper = testOutputHelper;

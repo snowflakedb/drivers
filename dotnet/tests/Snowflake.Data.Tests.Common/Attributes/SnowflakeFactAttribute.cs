@@ -3,11 +3,17 @@ using Snowflake.Data.Tests.Discovery;
 
 namespace Snowflake.Data.Tests.Attributes;
 
+public enum RetriesCount
+{
+    NoRetries = 0,
+    Once = 1,
+    Twice = 2,
+    Thrice = 3,
+}
+
 [XunitTestCaseDiscoverer(typeof(SnowflakeTestCaseDiscoverer))]
 public sealed class SnowflakeFactAttribute : FactAttribute
 {
-    public RetriesCount RetriesCount { get; set; }
-
     public SnowflakeFactAttribute(
         SkipCondition skip = SkipCondition.None,
         string skipMessage = "",
@@ -22,12 +28,6 @@ public sealed class SnowflakeFactAttribute : FactAttribute
         if (skipEvaluationResult.ShouldSkip)
             Skip = skipEvaluationResult.SkipMessage + skipMessage;
     }
-}
 
-public enum RetriesCount
-{
-    NoRetries = 0,
-    Once = 1,
-    Twice = 2,
-    Thrice = 3,
+    public RetriesCount RetriesCount { get; set; }
 }

@@ -5,6 +5,9 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "E2E")]
 public class StringTest : IClassFixture<ITFixture>
 {
+    protected readonly ITestOutputHelper Output;
+    protected readonly ITFixture Fixture;
+
     // Corner case string values matching the feature file definition
     private static readonly (string Sql, string? Expected)[] CornerCaseValues =
     [
@@ -21,9 +24,6 @@ public class StringTest : IClassFixture<ITFixture>
         ("'y\u0306es'", "y\u0306es"),
         ("'\U0001D11E'", "\U0001D11E"),
     ];
-
-    protected readonly ITestOutputHelper Output;
-    protected readonly ITFixture Fixture;
 
     public StringTest(ITFixture fixture, ITestOutputHelper output)
     {

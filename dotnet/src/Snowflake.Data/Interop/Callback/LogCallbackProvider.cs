@@ -4,12 +4,12 @@ namespace Snowflake.Data.Interop.Callback;
 internal static unsafe class LogCallbackProvider
 {
     private static readonly PtrToStringUtf8Delegate PtrToStringUtf8;
-    private delegate string PtrToStringUtf8Delegate(byte* ptr);
-
     static LogCallbackProvider()
     {
         PtrToStringUtf8 = SfCoreInteropProvider.StringHelper.PtrToStringUtf8;
     }
+
+    private delegate string PtrToStringUtf8Delegate(byte* ptr);
 
     internal static uint LogCallback(uint level, byte* message, byte* filename, uint line, byte* function, byte* loggerName)
     {

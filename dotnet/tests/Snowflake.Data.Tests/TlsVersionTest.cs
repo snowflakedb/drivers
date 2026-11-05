@@ -14,6 +14,9 @@ public class TlsVersionTest : IClassFixture<ITFixture>
         Output = output;
     }
 
+    protected virtual string ExpectedTlsRejectErrorMessage =>
+        "max_tls_version (TLS 1.2) must be at least min_tls_version (TLS 1.3)";
+
     // Scenario: should negotiate TLS when the server offers a version inside the window
     [SnowflakeFact(SkipCondition.SkipOnMacOS, "TLS 1.3 is not supported on macOS due to lack of support from the CoreTLS system library.")]
     public virtual async Task ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync()
@@ -79,9 +82,6 @@ public class TlsVersionTest : IClassFixture<ITFixture>
         // Then a configuration error is returned
         Assert.Contains(ExpectedTlsRejectErrorMessage, ex.Message, StringComparison.OrdinalIgnoreCase);
     }
-
-    protected virtual string ExpectedTlsRejectErrorMessage =>
-        "max_tls_version (TLS 1.2) must be at least min_tls_version (TLS 1.3)";
 
     private static string BuildHttpsConnectionString(
         WiremockClient wiremock,

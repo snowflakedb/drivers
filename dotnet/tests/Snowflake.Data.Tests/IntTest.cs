@@ -5,11 +5,11 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "E2E")]
 public class IntTest : IClassFixture<ITFixture>
 {
-    private static readonly string[] IntTypeSynonyms =
-        ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"];
-
     protected readonly ITestOutputHelper Output;
     protected readonly ITFixture Fixture;
+
+    private static readonly string[] IntTypeSynonyms =
+        ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"];
 
     public IntTest(ITFixture fixture, ITestOutputHelper output)
     {

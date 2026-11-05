@@ -33,12 +33,6 @@ public class SnowflakeTestCase : XunitTestCase, ISelfExecutingXunitTestCase
 
     public int MaxRetries { get; private set; }
 
-    protected override void Deserialize(IXunitSerializationInfo info)
-    {
-        base.Deserialize(info);
-        MaxRetries = info.GetValue<int>(nameof(MaxRetries));
-    }
-
     public ValueTask<RunSummary> Run(ExplicitOption explicitOption, IMessageBus messageBus,
         object?[] constructorArguments,
         ExceptionAggregator aggregator, CancellationTokenSource cancellationTokenSource, ParallelMode parallelMode,
@@ -57,6 +51,12 @@ public class SnowflakeTestCase : XunitTestCase, ISelfExecutingXunitTestCase
             scheduler,
             methodFixtureMappings
         );
+
+    protected override void Deserialize(IXunitSerializationInfo info)
+    {
+        base.Deserialize(info);
+        MaxRetries = info.GetValue<int>(nameof(MaxRetries));
+    }
 
     protected override void Serialize(IXunitSerializationInfo info)
     {
@@ -94,12 +94,6 @@ public class SnowflakeEnumeratedTestCase : XunitDelayEnumeratedTheoryTestCase, I
 
     public int MaxRetries { get; private set; }
 
-    protected override void Deserialize(IXunitSerializationInfo info)
-    {
-        base.Deserialize(info);
-        MaxRetries = info.GetValue<int>(nameof(MaxRetries));
-    }
-
     public ValueTask<RunSummary> Run(ExplicitOption explicitOption, IMessageBus messageBus,
         object?[] constructorArguments,
         ExceptionAggregator aggregator, CancellationTokenSource cancellationTokenSource, ParallelMode parallelMode,
@@ -118,6 +112,12 @@ public class SnowflakeEnumeratedTestCase : XunitDelayEnumeratedTheoryTestCase, I
             scheduler,
             methodFixtureMappings
         );
+
+    protected override void Deserialize(IXunitSerializationInfo info)
+    {
+        base.Deserialize(info);
+        MaxRetries = info.GetValue<int>(nameof(MaxRetries));
+    }
 
     protected override void Serialize(IXunitSerializationInfo info)
     {

@@ -12,6 +12,8 @@ namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 [Trait("Category", "Unit")]
 public sealed class DynamicCodeTest
 {
+    private const string ExpectedDummyExceptions = $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:12: dynamic x";
+
     [SnowflakeTheory]
     [ClassData(typeof(DriverAssemblies))]
     public void TestNoDynamic_DynamicVariablesMustNotExist(string assemblyMetadata)
@@ -76,6 +78,4 @@ public sealed class DynamicCodeTest
         var lineNumber = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         return $"{relativePath}:{lineNumber}: dynamic return in {method.Identifier.Text}";
     }
-
-    private const string ExpectedDummyExceptions = $"ArchitectureInvariantTests/Dummies/{nameof(AsyncMethodDummy2)}.cs:12: dynamic x";
 }

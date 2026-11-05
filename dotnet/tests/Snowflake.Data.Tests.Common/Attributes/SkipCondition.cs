@@ -32,18 +32,6 @@ public enum SkipCondition
 
 internal static class SkipConditionEvaluator
 {
-    internal readonly struct SkipEvaluationResult
-    {
-        internal readonly string? SkipMessage;
-        internal readonly bool ShouldSkip;
-
-        public SkipEvaluationResult(string? skipMessage, bool shouldSkip)
-        {
-            SkipMessage = skipMessage;
-            ShouldSkip = shouldSkip;
-        }
-    }
-
     internal static SkipEvaluationResult Evaluate(SkipCondition condition)
     {
         var skipMessage = EvaluateInner(condition);
@@ -85,5 +73,17 @@ internal static class SkipConditionEvaluator
             return "Test is skipped on GCP.";
 
         return null;
+    }
+
+    internal readonly struct SkipEvaluationResult
+    {
+        internal readonly string? SkipMessage;
+        internal readonly bool ShouldSkip;
+
+        public SkipEvaluationResult(string? skipMessage, bool shouldSkip)
+        {
+            SkipMessage = skipMessage;
+            ShouldSkip = shouldSkip;
+        }
     }
 }

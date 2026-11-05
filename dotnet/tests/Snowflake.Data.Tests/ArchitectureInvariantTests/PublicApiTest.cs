@@ -13,56 +13,6 @@ namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 [Trait("Category", "Unit")]
 public sealed class PublicApiTest
 {
-    [SnowflakeFact]
-    public void TestPublicTypesAllowList_NoPublicTypesOutsideAllowList()
-    {
-        var allowedPublicTypes = new HashSet<string>
-        {
-            typeof(SnowflakeDbConnection).FullName!,
-            typeof(SnowflakeDbCommand).FullName!,
-            typeof(SnowflakeDbCommandBuilder).FullName!,
-            typeof(SnowflakeDbDataAdapter).FullName!,
-            typeof(SnowflakeDbDataReader).FullName!,
-            typeof(SnowflakeDbLoggerConfig).FullName!,
-            typeof(SnowflakeDbParameter).FullName!,
-            typeof(SnowflakeDbParameterCollection).FullName!,
-            typeof(SnowflakeDbSessionPool).FullName!,
-            typeof(SnowflakeDbTransaction).FullName!,
-            typeof(SnowflakeActivityStarter).FullName!,
-            typeof(ChangedSessionBehavior).FullName!,
-            typeof(ISnowflakeCredentialManager).FullName!,
-            typeof(SnowflakeCredentialManagerFactory).FullName!,
-            typeof(SnowflakeDbDriver).FullName!,
-            typeof(SnowflakeFipsStatus).FullName!,
-            typeof(SnowflakeDbException).FullName!,
-            typeof(SFError).FullName!,
-        };
-
-        var violations = AssemblyUtil.LoadAssembly(AssembliesMetadata.RootAssembly).GetTypes()
-            .Where(t => t.IsPublic || t.IsNestedPublic)
-            .Select(type => type.FullName ?? type.Name)
-            .Where(fullName => !allowedPublicTypes.Contains(fullName))
-            .ToList();
-
-        violations.ShouldBeEmpty("Public types not in allow-list found");
-    }
-
-    [SnowflakeTheory]
-    [MemberData(nameof(PublicAreSurfaceKeys))]
-    public void TestPublicApiSurface_PublicMembersMustNotGrowBeyondAllowList(Type type)
-    {
-        var allowedMembers = PublicApiSurface[type];
-        var members = type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
-
-        var violations = members
-            .Select(FormatMemberSignature)
-            .OfType<string>()
-            .Where(signature => !allowedMembers.Contains(signature))
-            .Select(signature => $"{type.Name}.{signature}").ToList();
-
-        violations.ShouldBeEmpty($"New public members found on {type.Name} not in allow-list");
-    }
-
     private static readonly HashSet<string> SnowflakeDbConnectionPublicApi =
     [
         "C:()",
@@ -279,8 +229,6 @@ public sealed class PublicApiTest
         "C:(Exception, String, SFError, Object[])",
     ];
 
-    public static IEnumerable<object[]> PublicAreSurfaceKeys => PublicApiSurface.Keys.Select(x => new object[] { x });
-
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
     {
         [typeof(SnowflakeDbConnection)] = SnowflakeDbConnectionPublicApi,
@@ -301,6 +249,84 @@ public sealed class PublicApiTest
         [typeof(SnowflakeFipsStatus)] = SnowflakeFipsStatusPublicApi,
         [typeof(SnowflakeDbException)] = SnowflakeDbExceptionPublicApi,
     };
+
+    public static IEnumerable<object[]> PublicAreSurfaceKeys => PublicApiSurface.Keys.Select(x => new object[] { x });
+
+    [SnowflakeFact]
+    public void TestPublicTypesAllowList_NoPublicTypesOutsideAllowList()
+    {
+        var allowedPublicTypes = new HashSet<string>
+        {
+            typeof(SnowflakeDbConnection).FullName!,
+            typeof(SnowflakeDbCommand).FullName!,
+            typeof(SnowflakeDbCommandBuilder).FullName!,
+            typeof(SnowflakeDbDataAdapter).FullName!,
+            typeof(SnowflakeDbDataReader).FullName!,
+            typeof(SnowflakeDbLoggerConfig).FullName!,
+            typeof(SnowflakeDbParameter).FullName!,
+            typeof(SnowflakeDbParameterCollection).FullName!,
+            typeof(SnowflakeDbSessionPool).FullName!,
+            typeof(SnowflakeDbTransaction).FullName!,
+            typeof(SnowflakeActivityStarter).FullName!,
+            typeof(ChangedSessionBehavior).FullName!,
+            typeof(ISnowflakeCredentialManager).FullName!,
+            typeof(SnowflakeCredentialManagerFactory).FullName!,
+            typeof(SnowflakeDbDriver).FullName!,
+            typeof(SnowflakeFipsStatus).FullName!,
+            typeof(SnowflakeDbException).FullName!,
+            typeof(SFError).FullName!,
+        };
+
+        var violations = AssemblyUtil.LoadAssembly(AssembliesMetadata.RootAssembly).GetTypes()
+            .Where(t => t.IsPublic || t.IsNestedPublic)
+            .Select(type => type.FullName ?? type.Name)
+            .Where(fullName => !allowedPublicTypes.Contains(fullName))
+            .ToList();
+
+        violations.ShouldBeEmpty("Public types not in allow-list found");
+    }
+
+    [SnowflakeTheory]
+    [MemberData(nameof(PublicAreSurfaceKeys))]
+    public void TestPublicApiSurface_PublicMembersMustNotGrowBeyondAllowList(Type type)
+    {
+        var allowedMembers = PublicApiSurface[type];
+        var members = type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+
+        var violations = members
+            .Select(FormatMemberSignature)
+            .OfType<string>()
+            .Where(signature => !allowedMembers.Contains(signature))
+            .Select(signature => $"{type.Name}.{signature}").ToList();
+
+        violations.ShouldBeEmpty($"New public members found on {type.Name} not in allow-list");
+    }
+
+    [SnowflakeFact]
+    public void TestNoProtoTypesInPublicApi_ProtoTypesMustNotLeakThroughPublicSurface()
+    {
+        var violations = new List<string>();
+
+        var publicTypes = AssemblyUtil
+            .LoadAssembly(AssembliesMetadata.RootAssembly)
+            .GetTypes()
+            .Where(t => t.IsPublic || t.IsNestedPublic);
+
+        foreach (var type in publicTypes)
+        {
+            var members = type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
+
+            foreach (var member in members)
+            {
+                var referencedTypes = GetReferencedTypes(member);
+                violations.AddRange(referencedTypes
+                    .Where(refType => refType.Namespace?.StartsWith(AssembliesMetadata.ProtoAssembly.Name, StringComparison.Ordinal) == true)
+                    .Select(refType => $"{type.Name}.{member.Name} references {refType.FullName}"));
+            }
+        }
+
+        violations.ShouldBeEmpty("Proto types must not appear in public API signatures");
+    }
 
     private static string? FormatMemberSignature(MemberInfo member)
     {
@@ -331,32 +357,6 @@ public sealed class PublicApiTest
         var name = type.Name.Split('`')[0];
         var args = string.Join(", ", type.GetGenericArguments().Select(FormatTypeName));
         return $"{name}<{args}>";
-    }
-
-    [SnowflakeFact]
-    public void TestNoProtoTypesInPublicApi_ProtoTypesMustNotLeakThroughPublicSurface()
-    {
-        var violations = new List<string>();
-
-        var publicTypes = AssemblyUtil
-            .LoadAssembly(AssembliesMetadata.RootAssembly)
-            .GetTypes()
-            .Where(t => t.IsPublic || t.IsNestedPublic);
-
-        foreach (var type in publicTypes)
-        {
-            var members = type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
-
-            foreach (var member in members)
-            {
-                var referencedTypes = GetReferencedTypes(member);
-                violations.AddRange(referencedTypes
-                    .Where(refType => refType.Namespace?.StartsWith(AssembliesMetadata.ProtoAssembly.Name, StringComparison.Ordinal) == true)
-                    .Select(refType => $"{type.Name}.{member.Name} references {refType.FullName}"));
-            }
-        }
-
-        violations.ShouldBeEmpty("Proto types must not appear in public API signatures");
     }
 
     private static IEnumerable<Type> GetReferencedTypes(MemberInfo member)

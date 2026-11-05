@@ -5,11 +5,11 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "E2E")]
 public class FloatTest : IClassFixture<ITFixture>
 {
-    private static readonly string[] FloatTypeSynonyms =
-        ["FLOAT", "DOUBLE", "REAL"];
-
     protected readonly ITestOutputHelper Output;
     protected readonly ITFixture Fixture;
+
+    private static readonly string[] FloatTypeSynonyms =
+        ["FLOAT", "DOUBLE", "REAL"];
 
     public FloatTest(ITFixture fixture, ITestOutputHelper output)
     {

@@ -147,8 +147,11 @@ repos:
         language: system
     -   id: dotnet-checks
         name: dotnet code checks (format)
-        description: Run dotnet format on changed dotnet files
-        entry: bash -c 'cd dotnet && dotnet format --verify-no-changes'
+        description: >-
+          Run dotnet format on changed dotnet files. The analyzers pass compiles the
+          projects, so the gitignored proto C# sources are regenerated first when they are
+          missing or older than the .proto schema.
+        entry: bash -c 'cd dotnet && { [ src/Snowflake.Data.Proto/DatabaseDriverV1.cs -nt ../protobuf/database_driver_v1.proto ] || dotnet msbuild -t:RegenerateProto -v:q -nologo src/Snowflake.Data.Proto/; } && dotnet format --verify-no-changes'
         pass_filenames: false
         files: ^dotnet/.*\.(cs|csproj|sln|props|targets|editorconfig)$
         language: system

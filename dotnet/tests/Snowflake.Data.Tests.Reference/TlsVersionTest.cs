@@ -18,6 +18,10 @@ public class TlsVersionTest : Snowflake.Data.Tests.TlsVersionTest, IReferenceTes
     public new ReferenceITFixture Fixture { get; }
     public new ITestOutputHelper Output => base.Output;
 
+    protected override string ExpectedTlsRejectErrorMessage => GlobalState.UseOldDriver
+        ? "Error: Connection string is invalid: Parameter MINTLS value cannot be higher than MAXTLS value."
+        : base.ExpectedTlsRejectErrorMessage;
+
     public override Task ShouldNegotiateTlsWhenTheServerOffersAVersionInsideTheWindowAsync()
     {
         Skip.When(GlobalState.UseOldDriver, SkipReason);
@@ -29,8 +33,4 @@ public class TlsVersionTest : Snowflake.Data.Tests.TlsVersionTest, IReferenceTes
         Skip.When(GlobalState.UseOldDriver, SkipReason);
         return base.ShouldFailTheHandshakeWhenTheServerOnlyOffersAVersionBelowTheMinimumAsync();
     }
-
-    protected override string ExpectedTlsRejectErrorMessage => GlobalState.UseOldDriver
-        ? "Error: Connection string is invalid: Parameter MINTLS value cannot be higher than MAXTLS value."
-        : base.ExpectedTlsRejectErrorMessage;
 }

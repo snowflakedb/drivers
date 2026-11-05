@@ -4,5 +4,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>14</LangVersion>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="StyleCop.Analyzers" Version="1.3.171-beta" PrivateAssets="all" Condition="'$(MSBuildProjectName)' != 'Snowflake.Data.Proto'" />
+  </ItemGroup>
 </Project>
