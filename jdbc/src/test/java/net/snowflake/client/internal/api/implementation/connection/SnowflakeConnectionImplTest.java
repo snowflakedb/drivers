@@ -1791,6 +1791,33 @@ class SnowflakeConnectionImplTest {
           () -> assertEquals(200L, options.get("HTTP_CLIENT_SOCKET_TIMEOUT").getIntValue()),
           () -> assertEquals(3L, options.get("networkTimeout").getIntValue()));
     }
+
+    @Test
+    void shouldSendPlatformDetectionSystemPropertiesToCore() throws Exception {
+      Properties props = new Properties();
+      props.setProperty("account", "test_account");
+      props.setProperty("user", "test_user");
+      props.setProperty("password", "dummy");
+
+      @SuppressWarnings("unchecked")
+      ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+
+      System.setProperty("net.snowflake.jdbc.platformDetectionTimeoutMs", "250");
+      System.setProperty("net.snowflake.jdbc.disablePlatformDetection", "true");
+      try {
+        new SnowflakeConnectionImpl(
+            "jdbc:snowflake://test.snowflakecomputing.com", props, mockCoreApi);
+      } finally {
+        System.clearProperty("net.snowflake.jdbc.platformDetectionTimeoutMs");
+        System.clearProperty("net.snowflake.jdbc.disablePlatformDetection");
+      }
+
+      verify(mockCoreApi).connectionSetOptions(any(), optionsCaptor.capture());
+      Map<String, ConfigSetting> options = optionsCaptor.getValue();
+      assertAll(
+          () -> assertEquals("250", options.get("platform_detection_timeout_ms").getStringValue()),
+          () -> assertEquals("true", options.get("disable_platform_detection").getStringValue()));
+    }
   }
 
   @Nested

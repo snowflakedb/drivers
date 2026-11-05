@@ -63,6 +63,7 @@ import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterKeyNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParameterValueNormalizer;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
+import net.snowflake.client.internal.api.implementation.parameters.PlatformDetectionProperties;
 import net.snowflake.client.internal.api.implementation.parameters.ProxyOptionsResolver;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
@@ -153,6 +154,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
     Properties resolvedProperties =
         ProxyOptionsResolver.resolve(
             ConnectionOptionsResolver.resolve(url, properties, environment));
+    PlatformDetectionProperties.apply(resolvedProperties);
     try {
       Jdk14LoggerBootstrap.initFromConnectionIfConfigured(resolvedProperties);
     } catch (IOException e) {

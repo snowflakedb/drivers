@@ -72,6 +72,9 @@ public enum SessionProperty implements Property {
   PROXY_PROTOCOL("proxyProtocol"),
   DISABLE_SOCKS_PROXY("disableSocksProxy"),
 
+  PLATFORM_DETECTION_TIMEOUT_MS("platformDetectionTimeoutMs"),
+  DISABLE_PLATFORM_DETECTION("disablePlatformDetection"),
+
   // Connection diagnostics
   ENABLE_DIAGNOSTICS("enableDiagnostics"),
   DIAGNOSTICS_ALLOWLIST_FILE("diagnosticsAllowlistFile");

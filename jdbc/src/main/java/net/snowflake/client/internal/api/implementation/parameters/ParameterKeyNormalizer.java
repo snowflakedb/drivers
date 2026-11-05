@@ -48,6 +48,8 @@ public final class ParameterKeyNormalizer {
     LEGACY_KEY_ALIASES.put("proxyuser", "proxy_user");
     LEGACY_KEY_ALIASES.put("proxypassword", "proxy_password");
     LEGACY_KEY_ALIASES.put("nonproxyhosts", "no_proxy");
+    LEGACY_KEY_ALIASES.put("platformdetectiontimeoutms", "platform_detection_timeout_ms");
+    LEGACY_KEY_ALIASES.put("disableplatformdetection", "disable_platform_detection");
     LEGACY_KEY_ALIASES.put("enablediagnostics", "enable_connection_diag");
     LEGACY_KEY_ALIASES.put("diagnosticsallowlistfile", "connection_diag_allowlist_path");
     LEGACY_KEY_ALIASES.put("browser_response_timeout", "authentication_timeout");

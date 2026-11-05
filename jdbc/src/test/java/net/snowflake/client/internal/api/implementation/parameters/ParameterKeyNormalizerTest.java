@@ -128,6 +128,14 @@ class ParameterKeyNormalizerTest {
         () ->
             assertEquals(
                 "connection_diag_allowlist_path",
-                ParameterKeyNormalizer.normalize("diagnosticsAllowlistFile")));
+                ParameterKeyNormalizer.normalize("diagnosticsAllowlistFile")),
+        () ->
+            assertEquals(
+                "platform_detection_timeout_ms",
+                ParameterKeyNormalizer.normalize("platformDetectionTimeoutMs")),
+        () ->
+            assertEquals(
+                "disable_platform_detection",
+                ParameterKeyNormalizer.normalize("disablePlatformDetection")));
   }
 }

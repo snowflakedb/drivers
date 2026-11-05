@@ -11,6 +11,7 @@ use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
+use crate::config::ParamStore;
 use crate::config::param_registry::{JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS, Wrapper};
 use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
@@ -334,9 +335,9 @@ impl DatabaseDriverV1 {
         self.log_manager.as_ref().map(|lm| lm.telemetry())
     }
 
-    pub(super) fn start_platform_detection(&self) {
+    pub(super) fn start_platform_detection_with(&self, params: &ParamStore) {
         if self.log_manager.is_some() {
-            self.platform_detector.start();
+            self.platform_detector.start_with(params);
         }
     }
 
@@ -472,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn platform_detection_stays_idle_without_a_log_manager() {
         let driver = DatabaseDriverV1::new();
-        driver.start_platform_detection();
+        driver.start_platform_detection_with(&ParamStore::new());
         assert!(
             !driver.platform_detector.has_started(),
             "detection starts only when a LogManager can receive the result"

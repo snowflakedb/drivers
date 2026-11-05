@@ -6,6 +6,9 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use tracing::instrument::WithSubscriber;
 
+use crate::config::param_names;
+use crate::config::param_store::ParamStore;
+use crate::config::settings::Setting;
 use crate::env_vars;
 use crate::telemetry::session_telemetry::SessionTelemetry;
 use crate::tls::RootStoreProvider;
@@ -20,6 +23,7 @@ mod gcp;
 mod tests;
 
 const DETECTION_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_DETECTION_TIMEOUT_MS: i64 = 5_000;
 
 #[derive(Clone)]
 pub(crate) struct DetectionConfig {
@@ -29,6 +33,19 @@ pub(crate) struct DetectionConfig {
     pub(crate) azure_metadata_base_url: String,
     pub(crate) gce_metadata_root_url: String,
     pub(crate) gce_metadata_base_url: String,
+    pub(crate) timeout: Duration,
+    /// `Some` is the disable flag from the connection setting. `None` consults
+    /// `SNOWFLAKE_DISABLE_PLATFORM_DETECTION` when detection runs.
+    pub(crate) disabled: Option<bool>,
+}
+
+/// Timeout and disable flag from JDBC.
+///
+/// A negative timeout becomes 0, which skips metadata and STS probes. A timeout
+/// above 5000 ms becomes 5000 ms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlatformDetectionChoice {
+    pub(crate) disabled: bool,
     pub(crate) timeout: Duration,
 }
 
@@ -44,8 +61,147 @@ impl DetectionConfig {
             gce_metadata_root_url: "http://metadata.google.internal".to_string(),
             gce_metadata_base_url: "http://metadata.google.internal/computeMetadata/v1".to_string(),
             timeout: DETECTION_TIMEOUT,
+            disabled: None,
         }
     }
+}
+
+pub(crate) fn resolve_from_params(params: &ParamStore) -> PlatformDetectionChoice {
+    let disable_env = std::env::var(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION).ok();
+    let timeout_env = std::env::var(env_vars::SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS).ok();
+    resolve_platform_detection(
+        connection_disabled(params.get(param_names::DISABLE_PLATFORM_DETECTION)),
+        connection_timeout_ms(params.get(param_names::PLATFORM_DETECTION_TIMEOUT_MS)),
+        disable_env.as_deref(),
+        timeout_env.as_deref(),
+    )
+}
+
+pub(crate) fn resolve_platform_detection(
+    connection_disabled: Option<bool>,
+    connection_timeout_ms: Option<i64>,
+    disable_env: Option<&str>,
+    timeout_env: Option<&str>,
+) -> PlatformDetectionChoice {
+    PlatformDetectionChoice {
+        disabled: resolve_disabled(connection_disabled, disable_env),
+        timeout: resolve_timeout(connection_timeout_ms, timeout_env),
+    }
+}
+
+fn connection_disabled(setting: Option<&Setting>) -> Option<bool> {
+    match setting? {
+        Setting::Bool(value) => Some(*value),
+        Setting::String(value) => crate::utils::parse_setting_bool_token(value.trim()),
+        _ => None,
+    }
+}
+
+fn connection_timeout_ms(setting: Option<&Setting>) -> Option<i64> {
+    let setting = setting?;
+    match setting {
+        Setting::Int(value) => Some(*value),
+        Setting::String(value) => parse_timeout_text(value, "platform_detection_timeout_ms"),
+        _ => None,
+    }
+}
+
+fn resolve_disabled(connection_disabled: Option<bool>, disable_env: Option<&str>) -> bool {
+    if let Some(disabled) = connection_disabled {
+        return disabled;
+    }
+    if let Some(value) = disable_env
+        && let Some(disabled) =
+            parse_disable_global(value, env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION)
+    {
+        return disabled;
+    }
+    false
+}
+
+fn parse_disable_global(value: &str, source: &'static str) -> Option<bool> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.eq_ignore_ascii_case("true") {
+        return Some(true);
+    }
+    if !trimmed.eq_ignore_ascii_case("false") {
+        tracing::warn!(
+            source,
+            value,
+            "ignoring unrecognized platform-detection disable value; only \"true\" disables it"
+        );
+    }
+    Some(false)
+}
+
+fn env_disables_platform_detection() -> bool {
+    std::env::var(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION)
+        .ok()
+        .and_then(|value| {
+            parse_disable_global(&value, env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION)
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_timeout(connection_timeout_ms: Option<i64>, timeout_env: Option<&str>) -> Duration {
+    if let Some(timeout_ms) = connection_timeout_ms {
+        return Duration::from_millis(clamp_timeout_ms(
+            timeout_ms,
+            "platform_detection_timeout_ms",
+        ));
+    }
+    if let Some(value) = timeout_env
+        && let Some(timeout_ms) =
+            parse_timeout_text(value, env_vars::SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS)
+    {
+        return Duration::from_millis(clamp_timeout_ms(
+            timeout_ms,
+            env_vars::SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS,
+        ));
+    }
+    DETECTION_TIMEOUT
+}
+
+fn parse_timeout_text(value: &str, source: &'static str) -> Option<i64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<i64>() {
+        Ok(timeout_ms) => Some(timeout_ms),
+        Err(_) => {
+            tracing::warn!(
+                source,
+                value,
+                "failed to parse platform detection timeout; trying the next source"
+            );
+            None
+        }
+    }
+}
+
+fn clamp_timeout_ms(timeout_ms: i64, source: &'static str) -> u64 {
+    if timeout_ms < 0 {
+        tracing::warn!(
+            source,
+            timeout_ms,
+            "negative platform detection timeout is treated as 0, which skips network checks"
+        );
+        return 0;
+    }
+    if timeout_ms > MAX_DETECTION_TIMEOUT_MS {
+        tracing::warn!(
+            source,
+            timeout_ms,
+            max_ms = MAX_DETECTION_TIMEOUT_MS,
+            "platform detection timeout exceeds the maximum and is clamped"
+        );
+        return MAX_DETECTION_TIMEOUT_MS as u64;
+    }
+    timeout_ms as u64
 }
 
 /// Run all detectors concurrently with a per-detector `DetectionConfig::timeout`.
@@ -55,7 +211,10 @@ impl DetectionConfig {
 /// Returns the names of only those detectors that succeeded. Order matches
 /// the detector list below so the serialized array is stable across runs.
 pub(crate) async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
-    if crate::utils::env_flag(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION) {
+    let disabled = config
+        .disabled
+        .unwrap_or_else(env_disables_platform_detection);
+    if disabled {
         return vec!["disabled".to_string()];
     }
 
@@ -238,14 +397,24 @@ impl PlatformDetector {
         }
     }
 
-    pub(crate) fn start(&self) {
+    pub(crate) fn start_with(&self, params: &ParamStore) {
+        if self.started.load(Ordering::Relaxed) {
+            return;
+        }
+        let choice = resolve_from_params(params);
+        let mut config = self.config.clone();
+        config.timeout = choice.timeout;
+        config.disabled = Some(choice.disabled);
+        self.spawn(config);
+    }
+
+    fn spawn(&self, config: DetectionConfig) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
         if self.started.swap(true, Ordering::Relaxed) {
             return;
         }
-        let config = self.config.clone();
         let platforms = Arc::clone(&self.platforms);
         runtime.spawn(
             async move {

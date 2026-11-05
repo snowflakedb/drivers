@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 use sf_core::fs_adapter::RealFs;
 use sf_core::logging::LogManager;
-use sf_core::protobuf::apis::database_driver_v1::DriverProviders;
+use sf_core::protobuf::apis::database_driver_v1::{DriverProviders, WrapperPresets};
 use sf_core::telemetry::platform_detection::platform_detection_env_vars;
 use wiremock::matchers::{body_partial_json, method, path, path_regex, query_param};
 use wiremock::{Mock, ResponseTemplate};
@@ -27,10 +27,19 @@ impl PlatformDetectionFixture {
         Self::with(login_with_telemetry_disabled())
     }
 
+    fn jdbc() -> Self {
+        Self::with_presets(password::login_success(), WrapperPresets::jdbc())
+    }
+
     fn with(login: Mock) -> Self {
+        Self::with_presets(login, WrapperPresets::default())
+    }
+
+    fn with_presets(login: Mock, wrapper_presets: WrapperPresets) -> Self {
         let mock = MockServerWithTls::start();
         let providers = DriverProviders {
             log_manager: Some(LogManager::with_none_subscriber(Arc::new(RealFs))),
+            wrapper_presets,
             ..Default::default()
         };
         let client =
@@ -146,6 +155,23 @@ fn should_report_the_cached_detection_result_once_per_session() {
             vec![json!(["disabled"]), json!(["disabled"])]
         );
         assert_logins_omit_platform(&fixture.mock);
+    });
+}
+
+#[test]
+fn should_report_disabled_when_the_connection_disables_platform_detection() {
+    temp_env::with_vars(platform_detection_env_vars(&[]), || {
+        let fixture = PlatformDetectionFixture::jdbc();
+        fixture
+            .client
+            .set_connection_option("disable_platform_detection", "true");
+
+        fixture.connect_and_close();
+
+        assert_eq!(
+            platform_detection_status_values(&fixture.mock),
+            vec![json!(["disabled"])]
+        );
     });
 }
 

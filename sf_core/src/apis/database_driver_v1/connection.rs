@@ -284,7 +284,6 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         db_handle: Handle,
     ) -> Result<(), ApiError> {
-        self.start_platform_detection();
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let database_seed = self.database_settings(db_handle).await?;
@@ -319,6 +318,7 @@ impl DatabaseDriverV1 {
                         &mut resolved,
                         self.wrapper_presets.use_proxy_env_default,
                     );
+                    self.start_platform_detection_with(&resolved);
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);
@@ -415,7 +415,7 @@ impl DatabaseDriverV1 {
                         let host_str = host.clone().unwrap_or_default();
                         let diag_proxy = config.proxy.clone();
                         let diag_client_info = login_parameters.client_info.clone();
-                        self.platform_detector.start();
+                        self.platform_detector.start_with(&resolved_snapshot);
                         tokio::task::spawn_blocking(move || {
                             let mut runner = DiagnosticRunner::new(
                                 &account,

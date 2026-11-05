@@ -1,5 +1,8 @@
 use super::aws::tests::FakeCallerIdentityProvider;
 use super::*;
+use crate::config::param_names;
+use crate::config::param_store::ParamStore;
+use crate::config::settings::Setting;
 use crate::env_vars;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -21,6 +24,7 @@ fn test_detection_config() -> DetectionConfig {
         gce_metadata_root_url: unreachable_url.clone(),
         gce_metadata_base_url: unreachable_url,
         timeout: DETECTION_TIMEOUT,
+        disabled: None,
     }
 }
 
@@ -40,7 +44,7 @@ async fn returns_disabled_when_env_flag_true() {
 
 #[tokio::test]
 async fn disabled_flag_accepts_truthy_values() {
-    for flag_value in ["true", "TRUE", "True", "tRuE", "1"] {
+    for flag_value in ["true", "TRUE", "True", "tRuE", "  true  "] {
         temp_env::async_with_vars(
             platform_detection_env_vars(&[(
                 env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
@@ -594,10 +598,9 @@ async fn wait_for_platforms(detector: &PlatformDetector) -> Vec<String> {
 
 #[test]
 fn start_outside_a_runtime_leaves_detection_to_a_later_start() {
-    let mut cfg = test_detection_config();
-    cfg.timeout = Duration::ZERO;
-    let detector = PlatformDetector::new(cfg);
-    detector.start();
+    let detector = PlatformDetector::new(test_detection_config());
+    let params = ParamStore::new();
+    detector.start_with(&params);
     assert!(!detector.has_started());
 
     let runtime = tokio::runtime::Runtime::new().expect("test runtime");
@@ -605,9 +608,423 @@ fn start_outside_a_runtime_leaves_detection_to_a_later_start() {
         platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
         || {
             runtime.block_on(async {
-                detector.start();
+                detector.start_with(&params);
                 assert_eq!(wait_for_platforms(&detector).await, vec!["is_aws_lambda"]);
             });
         },
     );
+}
+
+fn choice(
+    connection_disabled: Option<bool>,
+    connection_timeout_ms: Option<i64>,
+    disable_env: Option<&str>,
+    timeout_env: Option<&str>,
+) -> PlatformDetectionChoice {
+    resolve_platform_detection(
+        connection_disabled,
+        connection_timeout_ms,
+        disable_env,
+        timeout_env,
+    )
+}
+
+#[test]
+fn defaults_to_enabled_with_builtin_timeout() {
+    let resolved = choice(None, None, None, None);
+    assert!(!resolved.disabled);
+    assert_eq!(resolved.timeout, DETECTION_TIMEOUT);
+}
+
+#[test]
+fn connection_disable_wins_over_env() {
+    assert!(choice(Some(true), None, Some("false"), None).disabled);
+    assert!(!choice(Some(false), None, Some("true"), None).disabled);
+}
+
+#[test]
+fn env_disable_applies_when_the_connection_setting_is_unset() {
+    assert!(choice(None, None, Some("true"), None).disabled);
+    assert!(!choice(None, None, Some("   "), None).disabled);
+}
+
+#[test]
+fn disable_env_accepts_only_padded_literal_true() {
+    for value in ["TRUE", "True", "  true  "] {
+        assert!(choice(None, None, Some(value), None).disabled, "{value}");
+    }
+}
+
+#[test]
+fn disable_env_rejects_values_other_than_true() {
+    for value in ["1", "yes", "on", "", "false", "garbage"] {
+        assert!(!choice(None, None, Some(value), None).disabled, "{value}");
+    }
+}
+
+#[test]
+fn connection_disable_uses_setting_bool_tokens() {
+    assert_eq!(connection_disabled(None), None);
+    assert_eq!(connection_disabled(Some(&Setting::Bool(true))), Some(true));
+    assert_eq!(
+        connection_disabled(Some(&Setting::Bool(false))),
+        Some(false)
+    );
+    for value in ["true", "TRUE", "1", "on", "ON", "  true  ", " 1 "] {
+        assert_eq!(
+            connection_disabled(Some(&Setting::String(value.to_string()))),
+            Some(true),
+            "{value}"
+        );
+    }
+    for value in ["false", "FALSE", "0", "off", "OFF", "  false  "] {
+        assert_eq!(
+            connection_disabled(Some(&Setting::String(value.to_string()))),
+            Some(false),
+            "{value}"
+        );
+    }
+    for value in ["yes", "no", "", "trueish", "garbage"] {
+        assert_eq!(
+            connection_disabled(Some(&Setting::String(value.to_string()))),
+            None,
+            "{value}"
+        );
+    }
+    assert_eq!(connection_disabled(Some(&Setting::Int(1))), None);
+}
+
+#[test]
+fn timeout_precedence_is_connection_then_env() {
+    assert_eq!(
+        choice(None, Some(11), None, Some("33")).timeout,
+        Duration::from_millis(11)
+    );
+    assert_eq!(
+        choice(None, None, None, Some("33")).timeout,
+        Duration::from_millis(33)
+    );
+    assert_eq!(
+        choice(None, None, None, Some("")).timeout,
+        DETECTION_TIMEOUT
+    );
+    assert_eq!(
+        choice(None, None, None, Some("   ")).timeout,
+        DETECTION_TIMEOUT
+    );
+}
+
+#[test]
+fn timeout_above_5000ms_is_clamped() {
+    for configured in [5001_i64, 300_000, i64::MAX] {
+        assert_eq!(
+            choice(None, Some(configured), None, None).timeout,
+            Duration::from_millis(5000),
+            "{configured}"
+        );
+        let text = configured.to_string();
+        assert_eq!(
+            choice(None, None, None, Some(&text)).timeout,
+            Duration::from_millis(5000),
+            "{configured}"
+        );
+    }
+}
+
+#[test]
+fn timeout_at_5000ms_is_preserved() {
+    assert_eq!(
+        choice(None, Some(5000), None, None).timeout,
+        Duration::from_millis(5000)
+    );
+}
+
+#[test]
+fn zero_timeout_is_preserved_from_each_source() {
+    assert!(choice(None, Some(0), None, None).timeout.is_zero());
+    assert!(choice(None, None, None, Some("0")).timeout.is_zero());
+}
+
+#[test]
+fn negative_timeout_is_clamped_to_zero() {
+    for configured in [-1_i64, -200] {
+        assert!(
+            choice(None, Some(configured), None, None).timeout.is_zero(),
+            "{configured}"
+        );
+        let text = configured.to_string();
+        assert!(
+            choice(None, None, None, Some(&text)).timeout.is_zero(),
+            "{configured}"
+        );
+    }
+}
+
+#[test]
+fn unparseable_timeout_falls_through() {
+    for value in ["abc", "1.5"] {
+        assert_eq!(
+            connection_timeout_ms(Some(&Setting::String(value.to_string()))),
+            None,
+            "{value}"
+        );
+        assert_eq!(
+            choice(None, None, None, Some(value)).timeout,
+            DETECTION_TIMEOUT,
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn resolve_from_params_prefers_connection_property_over_env() {
+    temp_env::with_var(
+        env_vars::SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS,
+        Some("33"),
+        || {
+            let mut params = ParamStore::new();
+            params.insert(
+                param_names::PLATFORM_DETECTION_TIMEOUT_MS
+                    .as_str()
+                    .to_owned(),
+                Setting::Int(11),
+            );
+            params.insert(
+                param_names::DISABLE_PLATFORM_DETECTION.as_str().to_owned(),
+                Setting::String("on".to_string()),
+            );
+            let resolved = resolve_from_params(&params);
+            assert!(resolved.disabled);
+            assert_eq!(resolved.timeout, Duration::from_millis(11));
+        },
+    );
+}
+
+#[test]
+fn resolve_from_params_clamps_string_timeouts() {
+    let cases = [
+        ("0", 0),
+        ("-1", 0),
+        ("-200", 0),
+        ("5000", 5000),
+        ("5001", 5000),
+        ("300000", 5000),
+        ("2147483647", 5000),
+    ];
+    temp_env::with_var(
+        env_vars::SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS,
+        Some("33"),
+        || {
+            for (configured, expected_ms) in cases {
+                let mut params = ParamStore::new();
+                params.insert(
+                    param_names::PLATFORM_DETECTION_TIMEOUT_MS
+                        .as_str()
+                        .to_owned(),
+                    Setting::String(configured.to_string()),
+                );
+                assert_eq!(
+                    resolve_from_params(&params).timeout,
+                    Duration::from_millis(expected_ms),
+                    "{configured}"
+                );
+            }
+        },
+    );
+}
+
+#[test]
+fn resolve_from_params_string_disable_wins_over_env() {
+    let cases = [
+        ("true", "false", true),
+        ("false", "true", false),
+        ("1", "false", true),
+        ("on", "false", true),
+        ("off", "true", false),
+        ("  true  ", "false", true),
+    ];
+    for (connection, env, expected) in cases {
+        temp_env::with_var(
+            env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
+            Some(env),
+            || {
+                let mut params = ParamStore::new();
+                params.insert(
+                    param_names::DISABLE_PLATFORM_DETECTION.as_str().to_owned(),
+                    Setting::String(connection.to_string()),
+                );
+                assert_eq!(
+                    resolve_from_params(&params).disabled,
+                    expected,
+                    "connection {connection}, env {env}"
+                );
+            },
+        );
+    }
+}
+
+#[test]
+fn resolve_from_params_unrecognized_disable_falls_through_to_env() {
+    temp_env::with_var(
+        env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION,
+        Some("true"),
+        || {
+            let mut params = ParamStore::new();
+            params.insert(
+                param_names::DISABLE_PLATFORM_DETECTION.as_str().to_owned(),
+                Setting::String("yes".to_string()),
+            );
+            assert!(resolve_from_params(&params).disabled);
+        },
+    );
+}
+
+#[tokio::test]
+async fn start_with_runs_detection_once_per_detector() {
+    let detector = PlatformDetector::new(test_detection_config());
+    let mut params = ParamStore::new();
+    params.insert(
+        param_names::PLATFORM_DETECTION_TIMEOUT_MS
+            .as_str()
+            .to_owned(),
+        Setting::Int(0),
+    );
+    let metrics = tokio::runtime::Handle::current().metrics();
+
+    temp_env::async_with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        async {
+            detector.start_with(&params);
+            assert_eq!(wait_for_platforms(&detector).await, vec!["is_aws_lambda"]);
+            let first = detector.platforms().expect("first detection").as_ptr();
+
+            let alive_before = metrics.num_alive_tasks();
+            detector.start_with(&params);
+            assert_eq!(metrics.num_alive_tasks(), alive_before);
+            assert!(std::ptr::eq(
+                first,
+                detector.platforms().expect("cached detection").as_ptr()
+            ));
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn disable_env_value_one_does_not_disable() {
+    temp_env::async_with_vars(
+        platform_detection_env_vars(&[(env_vars::SNOWFLAKE_DISABLE_PLATFORM_DETECTION, "1")]),
+        async {
+            let platforms = detect_platforms(&test_detection_config()).await;
+            assert!(
+                platforms.is_empty(),
+                "only the literal true disables detection, got {platforms:?}"
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn start_with_connection_timeout_zero_skips_endpoint_probes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut cfg = test_detection_config();
+    cfg.aws_metadata_base_url = server.uri();
+    cfg.azure_metadata_base_url = server.uri();
+    cfg.gce_metadata_root_url = server.uri();
+    cfg.gce_metadata_base_url = server.uri();
+    let detector = PlatformDetector::new(cfg);
+
+    let mut params = ParamStore::new();
+    params.insert(
+        param_names::PLATFORM_DETECTION_TIMEOUT_MS
+            .as_str()
+            .to_owned(),
+        Setting::Int(0),
+    );
+
+    temp_env::async_with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        async {
+            detector.start_with(&params);
+            assert_eq!(
+                wait_for_platforms(&detector).await,
+                vec!["is_aws_lambda".to_string()]
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn start_with_disable_reports_disabled_without_probes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut cfg = test_detection_config();
+    cfg.aws_metadata_base_url = server.uri();
+    cfg.azure_metadata_base_url = server.uri();
+    cfg.gce_metadata_root_url = server.uri();
+    cfg.gce_metadata_base_url = server.uri();
+    cfg.caller_identity_provider = Arc::new(FakeCallerIdentityProvider::new(Some(
+        "arn:aws:iam::123456789012:user/alice".into(),
+    )));
+    let detector = PlatformDetector::new(cfg);
+
+    let mut params = ParamStore::new();
+    params.insert(
+        param_names::DISABLE_PLATFORM_DETECTION.as_str().to_owned(),
+        Setting::Bool(true),
+    );
+
+    temp_env::async_with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        async {
+            detector.start_with(&params);
+            assert_eq!(
+                wait_for_platforms(&detector).await,
+                vec!["disabled".to_string()]
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn negative_connection_timeout_skips_endpoint_detectors() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let mut cfg = test_detection_config();
+    let resolved = choice(None, Some(-200), None, None);
+    assert!(resolved.timeout.is_zero());
+    cfg.timeout = resolved.timeout;
+    cfg.disabled = Some(resolved.disabled);
+    cfg.aws_metadata_base_url = server.uri();
+    cfg.azure_metadata_base_url = server.uri();
+    cfg.gce_metadata_root_url = server.uri();
+    cfg.gce_metadata_base_url = server.uri();
+
+    temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+        let platforms = detect_platforms(&cfg).await;
+        assert!(
+            platforms.is_empty(),
+            "a negative timeout skips endpoint detectors, got {platforms:?}"
+        );
+    })
+    .await;
 }

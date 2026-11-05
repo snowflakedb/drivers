@@ -1,0 +1,24 @@
+name: "disablePlatformDetection and its JVM system property accept the shared setting boolean tokens"
+status: unknown
+type: unknown
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The `disablePlatformDetection` connection property disables detection for `true` or
+  `on`, case-insensitive and not trimmed. Any other value, including `1`, `yes`, and
+  ` true `, keeps detection on and blocks the system property and environment variable.
+  The `net.snowflake.jdbc.disablePlatformDetection` system property is trimmed and
+  disables detection only for `true`. Any other non-blank value keeps detection on and
+  blocks `SNOWFLAKE_DISABLE_PLATFORM_DETECTION`.
+new_driver_behavior: |
+  The connection property and the system property are both trimmed, and both disable
+  detection for `true`, `1`, or `on` and keep it on for `false`, `0`, or `off`,
+  case-insensitive. Any other value, such as `yes`, is ignored. An ignored connection
+  value still blocks the system property, and `SNOWFLAKE_DISABLE_PLATFORM_DETECTION`
+  applies instead. `SNOWFLAKE_DISABLE_PLATFORM_DETECTION` still disables detection only
+  for `true`.
+description: |
+  `disablePlatformDetection=1` and `-Dnet.snowflake.jdbc.disablePlatformDetection=1` or
+  `=on` now disable platform detection. An unrecognized value no longer keeps detection
+  on by itself; the next source decides.

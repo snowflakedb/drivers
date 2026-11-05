@@ -45,7 +45,12 @@ pub const XDG_CACHE_HOME: &str = "XDG_CACHE_HOME";
 pub const HOME: &str = "HOME";
 
 /// Disable automatic platform / cloud-provider detection.
+/// Only the literal `true`, case-insensitive, turns detection off.
 pub const SNOWFLAKE_DISABLE_PLATFORM_DETECTION: &str = "SNOWFLAKE_DISABLE_PLATFORM_DETECTION";
+
+/// Per-detector platform-detection timeout in milliseconds.
+/// Used when the connection setting is unset.
+pub const SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS: &str = "SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS";
 
 /// Test-only override for the browser opener used during external-browser auth.
 /// Set to `"noop"` to suppress actual browser launches in tests.

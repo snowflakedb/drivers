@@ -232,6 +232,10 @@ pub mod param_names {
     pub const LOGIN_TIMEOUT: ParamKey = ParamKey("login_timeout");
     pub const PLATFORM_DETECTION_TIMEOUT_SECONDS: ParamKey =
         ParamKey("platform_detection_timeout_seconds");
+    /// JDBC `platformDetectionTimeoutMs`. Milliseconds, not the Python seconds param.
+    pub const PLATFORM_DETECTION_TIMEOUT_MS: ParamKey = ParamKey("platform_detection_timeout_ms");
+    /// JDBC `disablePlatformDetection`.
+    pub const DISABLE_PLATFORM_DETECTION: ParamKey = ParamKey("disable_platform_detection");
     pub const QUERY_TIMEOUT: ParamKey = ParamKey("query_timeout");
     pub const REQUEST_TIMEOUT: ParamKey = ParamKey("request_timeout");
     pub const RETRY_TIMEOUT: ParamKey = ParamKey("retry_timeout");
@@ -2077,6 +2081,42 @@ static PARAM_DEFS: &[ParamDef] = &[
         .visible_to(visible_to!(Python))
         .build(),
     ParamDef::builder()
+        .canonical_name(param_names::PLATFORM_DETECTION_TIMEOUT_MS.as_str())
+        .aliases(aliases![Jdbc; "platformDetectionTimeoutMs"])
+        .value_type(ValueType::Int)
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "JDBC-only. Per-detector platform-detection timeout in milliseconds. \
+             0 skips metadata and STS probes and keeps environment-variable checks. \
+             A negative value is treated as 0. A value above 5000 is clamped to 5000. \
+             A value that is not an integer is rejected. \
+             When unset, SNOWFLAKE_PLATFORM_DETECTION_TIMEOUT_MS applies. Otherwise \
+             each probe is limited to 2 seconds.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Jdbc))
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::DISABLE_PLATFORM_DETECTION.as_str())
+        .aliases(aliases![Jdbc; "disablePlatformDetection"])
+        .value_type(ValueType::String)
+        .additional_value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description(
+            "JDBC-only. When true, platform detection reports [\"disabled\"] and \
+             does not probe. The value is trimmed and accepts true, 1, and on, or false, \
+             0, and off. When it is unset or another value, \
+             SNOWFLAKE_DISABLE_PLATFORM_DETECTION applies, and that accepts only the \
+             literal true.",
+        )
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Jdbc))
+        .build(),
+    ParamDef::builder()
         .canonical_name(param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str())
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
@@ -3149,6 +3189,16 @@ mod tests {
                 &[Jdbc],
             ),
             ("enablePutGet", "enable_put_get", &[Jdbc]),
+            (
+                "platformDetectionTimeoutMs",
+                "platform_detection_timeout_ms",
+                &[Jdbc],
+            ),
+            (
+                "disablePlatformDetection",
+                "disable_platform_detection",
+                &[Jdbc],
+            ),
             (
                 "workloadIdentityProvider",
                 "workload_identity_provider",
