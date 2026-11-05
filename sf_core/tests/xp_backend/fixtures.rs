@@ -61,7 +61,7 @@ pub fn login_parameters() -> LoginParameters {
         spcs_token: None,
         disable_parallel_user_prompt: true,
         validate_session_token: true,
-        browser_opener: None,
+        browser_hooks: Default::default(),
     }
 }
 

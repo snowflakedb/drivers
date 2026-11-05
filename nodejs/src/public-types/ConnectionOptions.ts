@@ -553,4 +553,33 @@ export type ConnectionOptions = {
    * redirect async so login can keep waiting.
    */
   openExternalBrowserCallback?: (url: string) => void;
+
+  /**
+   * Lets you customize the web page a user sees in their browser after they
+   * finish signing in, instead of the default confirmation message. Use it to
+   * show your own branding, wording, or a "you can close this tab" page.
+   *
+   * Supported when authenticator is set to:
+   * * EXTERNALBROWSER
+   * * OAUTH_AUTHORIZATION_CODE
+   *
+   * Return the full HTML page to display.
+   *
+   * With EXTERNALBROWSER this function runs only after a successful sign-in.
+   * A callback that reports failure (`?error=`) does not call this function.
+   *
+   * With OAUTH_AUTHORIZATION_CODE, `error` is `null` on success. If sign-in
+   * failed, `error` is the driver's message, already HTML-escaped, not the
+   * raw text from the identity provider.
+   * It is safe to embed it directly.
+   *
+   * @example
+   * browserResponseRenderer: ({ error }) => {
+   *   const message = error
+   *     ? `<h1>Login failed</h1><p>${error}</p>`
+   *     : '<h1>All set! You can close this tab.</h1>';
+   *   return `<html><body>${message}</body></html>`;
+   * }
+   */
+  browserResponseRenderer?: (result: { error: string | null }) => string;
 };

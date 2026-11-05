@@ -378,7 +378,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: false,
             validate_session_token: true,
-            browser_opener: None,
+            browser_hooks: Default::default(),
         };
 
         let Err(err) = create_credentials(&params).await else {

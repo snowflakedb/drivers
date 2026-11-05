@@ -3623,3 +3623,106 @@ behavior_differences:
       so they return { isFips: false }.
     status_rationale: |
       A new method. The old driver has no equivalent, so no existing code changes.
+
+  168:
+    name: 'The OAuth identity provider error text differs'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      On an OAUTH_AUTHORIZATION_CODE redirect that carries error:
+      - browserResponseRenderer is called with error set to the HTML-escaped "Error while
+        getting oauth authorization code. ErrorCode <error>. Message: <error_description>"
+      - connect rejects with an Error whose message is the same text, not escaped
+    new_driver_behavior: |
+      On the same redirect:
+      - browserResponseRenderer is called with error set to the HTML-escaped "Identity
+        Provider responded with error: <error>: <error_description>"
+      - connect rejects with an Error whose message is "Failed to login: OAuth flow failed:
+        Identity Provider responded with error: <error>: <error_description>", not escaped
+
+  169:
+    name: 'EXTERNALBROWSER does not render an error page for an error callback'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A callback whose request line contains ?error= is answered with the
+      browserResponseRenderer page (or, without a renderer, the HTML-escaped error text) and
+      login fails immediately with that error.
+    new_driver_behavior: |
+      A callback without a token is ignored. browserResponseRenderer is not called, no
+      page is written, and login waits until browserActionTimeout.
+
+  170:
+    name: 'An EXTERNALBROWSER POST with Origin skips browserResponseRenderer'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The callback listener answers every request with an HTML page. It does not answer
+      a token POST with JSON.
+    new_driver_behavior: |
+      A token POST whose Origin matches the Snowflake host is answered with JSON
+      ({"consent":...} or {}), and browserResponseRenderer is not called. A GET without
+      an Origin still uses the renderer.
+    status_rationale: |
+      The POST with Origin is sent by a script on the Snowflake login page (today's server
+      behavior), not by a browser navigation, so the user never sees the reply. The script
+      reads a JSON body behind CORS headers; a rendered HTML page in its place would be
+      useless to it.
+
+  171:
+    name: 'The default browser callback page differs'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Without browserResponseRenderer set:
+      - OAUTH_AUTHORIZATION_CODE redirect is answered:
+        - for success with the plain text "Your identity was confirmed and propagated to
+          Snowflake Node.js driver. You can close this window now and go back where you
+          started from."
+        - for error with the HTML-escaped error text, e.g. "Error while getting oauth
+          authorization code. ErrorCode invalid_scope. Message: bad scope"
+      - EXTERNALBROWSER redirect is answered:
+        - for success with the same plain text as OAUTH_AUTHORIZATION_CODE
+        - for error: see BD#169
+    new_driver_behavior: |
+      Without browserResponseRenderer set:
+      - OAUTH_AUTHORIZATION_CODE redirect is answered:
+        - for success with an HTML page reading "Authorization completed successfully."
+        - for error with an HTML page reading "Authorization failed.", without the identity
+          provider error
+      - EXTERNALBROWSER redirect is answered:
+        - for success with an HTML page reading "Your identity was confirmed" and "You can
+          close this browser tab."
+        - for error: see BD#169
+    status_rationale: |
+      The default page is informational text for the person in the browser; the driver's
+      result does not depend on it. The pages come from the shared core, so the new driver
+      shows this text. A caller that needs specific content sets
+      browserResponseRenderer.
+
+  172:
+    name: 'A thrown browserResponseRenderer is answered with an empty 500'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When browserResponseRenderer throws, EXTERNALBROWSER and OAUTH_AUTHORIZATION_CODE
+      both close the browser connection with no HTTP response. Login fails with the
+      renderer error.
+    new_driver_behavior: |
+      EXTERNALBROWSER and OAUTH_AUTHORIZATION_CODE both answer the browser with an
+      empty HTTP 500. Login fails with the renderer error.

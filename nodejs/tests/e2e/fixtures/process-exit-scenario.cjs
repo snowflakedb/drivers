@@ -14,16 +14,21 @@ const connect = (options = {}) =>
     ...options,
   });
 
+const connectWithExternalBrowser = (options = {}) =>
+  connect({
+    authenticator: 'EXTERNALBROWSER',
+    openExternalBrowserCallback: (url) => {
+      const port = new URL(url).searchParams.get('browser_mode_redirect_port');
+      http.get(`http://127.0.0.1:${port}/?token=test-token`, (res) => res.resume());
+    },
+    ...options,
+  });
+
 const RESOURCES = {
   'no resource-holding options': () => connect(),
-  openExternalBrowserCallback: () =>
-    connect({
-      authenticator: 'EXTERNALBROWSER',
-      openExternalBrowserCallback: (url) => {
-        const port = new URL(url).searchParams.get('browser_mode_redirect_port');
-        http.get(`http://127.0.0.1:${port}/?token=test-token`, (res) => res.resume());
-      },
-    }),
+  openExternalBrowserCallback: () => connectWithExternalBrowser(),
+  browserResponseRenderer: () =>
+    connectWithExternalBrowser({ browserResponseRenderer: () => 'done' }),
   customCredentialManager: () => {
     snowflake.configure({
       customCredentialManager: { read: () => null, write: () => {}, remove: () => {} },

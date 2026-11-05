@@ -10,7 +10,7 @@ use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity as CoreWrapperIdentity;
 use sf_core::config::param_names;
-use sf_core::config::rest_parameters::BrowserOpenFn;
+use sf_core::config::rest_parameters::{BrowserOpenFn, BrowserResponseRenderFn};
 use sf_core::config::settings::Setting;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,12 +52,18 @@ pub struct ConnectionTokenInfo {
     pub master_token_expires_at_ms: Option<i64>,
 }
 
+#[napi(object, use_nullable = true)]
+pub struct BrowserResponseResult {
+    pub error: Option<String>,
+}
+
 #[napi(object, object_to_js = false)]
 pub struct ConnectionParams<'a> {
     pub options: HashMap<String, String>,
     pub session_parameters: HashMap<String, String>,
     pub wrapper_identity: WrapperIdentity,
     pub open_external_browser_callback: Option<Function<'a, String, ()>>,
+    pub browser_response_renderer: Option<Function<'a, BrowserResponseResult, String>>,
     pub token_info: Option<ConnectionTokenInfo>,
     pub no_connection_details: Option<bool>,
 }
@@ -116,11 +122,16 @@ impl Connection {
             .open_external_browser_callback
             .map(browser_opener_from_js)
             .transpose()?;
+        let browser_response_renderer = params
+            .browser_response_renderer
+            .map(browser_response_renderer_from_js)
+            .transpose()?;
         let session = block_on(Session::open(SessionConfig {
             options,
             no_connection_details: params.no_connection_details.unwrap_or(false),
             session_parameters: params.session_parameters,
             browser_opener,
+            browser_response_renderer,
             wrapper_identity: params.wrapper_identity.into(),
         }))
         .map_err(|e| e.to_js_error(*env))?;
@@ -266,14 +277,39 @@ impl Connection {
 
 /// Adapts `openExternalBrowserCallback` to the synchronous opener core invokes.
 fn browser_opener_from_js(callback: Function<String, ()>) -> Result<BrowserOpenFn> {
-    let open_in_js = callback
-        .build_threadsafe_function::<String>()
+    let open = blocking_js_call("openExternalBrowserCallback", callback)?;
+    Ok(Arc::new(move |url: &str| open(url.to_string())))
+}
+
+fn browser_response_renderer_from_js(
+    callback: Function<BrowserResponseResult, String>,
+) -> Result<BrowserResponseRenderFn> {
+    let render = blocking_js_call("browserResponseRenderer", callback)?;
+    Ok(Arc::new(move |error: Option<&str>| {
+        render(BrowserResponseResult {
+            error: error.map(str::to_string),
+        })
+    }))
+}
+
+/// Wraps a JS callback as a blocking Rust call: queues it on the JS thread,
+/// waits for the return value, and turns a throw into `Err`.
+fn blocking_js_call<Arg, Ret>(
+    name: &'static str,
+    callback: Function<Arg, Ret>,
+) -> Result<impl Fn(Arg) -> std::result::Result<Ret, String> + Send + Sync + 'static>
+where
+    Arg: JsValuesTupleIntoVec + 'static,
+    Ret: FromNapiValue + 'static,
+{
+    let js = callback
+        .build_threadsafe_function::<Arg>()
         .weak::<true>()
         .build()?;
-    Ok(Arc::new(move |url: &str| {
+    Ok(move |arg: Arg| {
         let (outcome_tx, outcome_rx) = std::sync::mpsc::sync_channel(1);
-        let queued = open_in_js.call_with_return_value(
-            url.to_string(),
+        let queued = js.call_with_return_value(
+            arg,
             ThreadsafeFunctionCallMode::NonBlocking,
             move |returned, _| {
                 let _ = outcome_tx.send(returned.map_err(|thrown| thrown.reason));
@@ -281,10 +317,10 @@ fn browser_opener_from_js(callback: Function<String, ()>) -> Result<BrowserOpenF
             },
         );
         if queued != Status::Ok {
-            return Err(format!("openExternalBrowserCallback failed: {queued}"));
+            return Err(format!("{name} failed: {queued}"));
         }
         outcome_rx
             .recv()
-            .unwrap_or_else(|_| Err("openExternalBrowserCallback did not return".into()))
-    }))
+            .unwrap_or_else(|_| Err(format!("{name} did not return")))
+    })
 }

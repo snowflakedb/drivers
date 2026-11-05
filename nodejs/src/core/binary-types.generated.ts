@@ -92,11 +92,16 @@ export declare class Statement {
   cancel(): void
 }
 
+export interface BrowserResponseResult {
+  error: string | null
+}
+
 export interface ConnectionParams {
   options: Record<string, string>
   sessionParameters: Record<string, string>
   wrapperIdentity: WrapperIdentity
   openExternalBrowserCallback?: (arg: string) => void
+  browserResponseRenderer?: (arg: BrowserResponseResult) => string
   tokenInfo?: ConnectionTokenInfo
   noConnectionDetails?: boolean
 }

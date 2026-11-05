@@ -122,6 +122,7 @@ export class Connection {
       streamResult,
       arrayBindingThreshold,
       openExternalBrowserCallback,
+      browserResponseRenderer,
       [TOKEN_INFO]: tokenInfo,
       ...coreOptions
     } = callerOptions as InternalConnectionOptions;
@@ -156,6 +157,7 @@ export class Connection {
       }),
       sessionParameters,
       openExternalBrowserCallback,
+      browserResponseRenderer,
       tokenInfo,
       noConnectionDetails,
       wrapperIdentity: getWrapperIdentity(),

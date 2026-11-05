@@ -1,4 +1,4 @@
-use crate::config::rest_parameters::LoginParameters;
+use crate::config::rest_parameters::{BrowserResponseRenderFn, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::env_vars;
 use crate::http::retry::{HttpContext, HttpError};
@@ -107,6 +107,12 @@ pub enum ExternalBrowserError {
     },
     #[snafu(display("{reason}"))]
     BrowserCallback {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Browser response renderer failed: {reason}"))]
+    BrowserResponseRenderer {
         reason: String,
         #[snafu(implicit)]
         location: Location,
@@ -236,7 +242,11 @@ pub(crate) async fn external_browser_authenticate(
     tokio::pin!(open_fut);
     let accept_fut = tokio::time::timeout(
         remaining,
-        accept_token_from_callback(&listener, &login_parameters.server_url),
+        accept_token_from_callback(
+            &listener,
+            &login_parameters.server_url,
+            login_parameters.browser_hooks.response_renderer.as_ref(),
+        ),
     );
     tokio::pin!(accept_fut);
     let timeout_err = || ExternalBrowserError::AuthenticationTimeout {
@@ -392,6 +402,7 @@ struct TokenFromCallback {
 async fn accept_token_from_callback(
     listener: &TcpListener,
     allowed_origin: &str,
+    response_renderer: Option<&BrowserResponseRenderFn>,
 ) -> Result<TokenFromCallback, ExternalBrowserError> {
     loop {
         let (mut stream, _addr) = listener.accept().await.context(CallbackIoSnafu)?;
@@ -453,7 +464,20 @@ async fn accept_token_from_callback(
             continue;
         };
 
-        let resp = success_response(cors_origin.as_deref(), callback.consent_cache_id_token);
+        let resp = match success_response(
+            cors_origin.as_deref(),
+            callback.consent_cache_id_token,
+            response_renderer,
+        )
+        .await
+        {
+            Ok(resp) => resp,
+            Err(err) => {
+                let failure = http_response("500 Internal Server Error", &[], "");
+                send_response(&mut stream, &failure).await;
+                return Err(err);
+            }
+        };
         send_response(&mut stream, &resp).await;
 
         return Ok(callback);
@@ -606,14 +630,31 @@ fn cors_preflight_response(origin: &str) -> String {
     )
 }
 
-fn success_response(origin: Option<&str>, consent: Option<bool>) -> String {
+async fn render_success_html(
+    renderer: Option<&BrowserResponseRenderFn>,
+) -> Result<String, ExternalBrowserError> {
+    let Some(renderer) = renderer else {
+        return Ok(SUCCESS_HTML.to_string());
+    };
+    let render = Arc::clone(renderer);
+    tokio::task::spawn_blocking(move || -> Result<String, String> { render(None) })
+        .await
+        .unwrap_or_else(|join_err| Err(join_err.to_string()))
+        .map_err(|reason| BrowserResponseRendererSnafu { reason }.build())
+}
+
+async fn success_response(
+    origin: Option<&str>,
+    consent: Option<bool>,
+    renderer: Option<&BrowserResponseRenderFn>,
+) -> Result<String, ExternalBrowserError> {
     match origin {
         Some(origin) => {
             let body = match consent {
                 Some(v) => format!(r#"{{"consent":{v}}}"#),
                 None => "{}".to_string(),
             };
-            http_response(
+            Ok(http_response(
                 "200 OK",
                 &[
                     ("Content-Type", "application/json"),
@@ -621,9 +662,16 @@ fn success_response(origin: Option<&str>, consent: Option<bool>) -> String {
                     ("Vary", "Accept-Encoding, Origin"),
                 ],
                 &body,
-            )
+            ))
         }
-        None => http_response("200 OK", &[("Content-Type", "text/html")], SUCCESS_HTML),
+        None => {
+            let body = render_success_html(renderer).await?;
+            Ok(http_response(
+                "200 OK",
+                &[("Content-Type", "text/html; charset=utf-8")],
+                &body,
+            ))
+        }
     }
 }
 
@@ -1109,7 +1157,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1130,12 +1178,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn listener_serves_renderer_html_for_get_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let seen_cb = Arc::clone(&seen);
+        let renderer: BrowserResponseRenderFn = Arc::new(move |error| {
+            *seen_cb.lock().expect("seen lock") = Some(error.map(str::to_string));
+            Ok("<html>BROWSER OK</html>".to_string())
+        });
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, Some(&renderer)).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=test_token_value HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "test_token_value");
+        let response = String::from_utf8_lossy(&response);
+        assert!(response.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(response.contains("<html>BROWSER OK</html>"));
+        assert_eq!(seen.lock().expect("seen lock").clone(), Some(None));
+    }
+
+    #[tokio::test]
+    async fn listener_ignores_renderer_for_origin_post() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let renderer: BrowserResponseRenderFn =
+            Arc::new(|_| panic!("renderer must not run for an Origin POST"));
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, Some(&renderer)).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        let body = r#"{"token":"post_json_token","consent":true}"#;
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: localhost\r\nOrigin: https://acct.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let cb = server.await.unwrap().unwrap();
+        assert_eq!(cb.token.reveal(), "post_json_token");
+        let response = String::from_utf8_lossy(&response);
+        assert!(response.contains("Content-Type: application/json"));
+        assert!(response.contains(r#""consent":true"#));
+        assert!(!response.contains("BROWSER OK"));
+    }
+
+    #[tokio::test]
+    async fn listener_fails_when_renderer_returns_err() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let renderer: BrowserResponseRenderFn = Arc::new(|_| Err("render failed".to_string()));
+
+        let server = tokio::spawn(async move {
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, Some(&renderer)).await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .unwrap();
+        client
+            .write_all(b"GET /?token=test_token_value HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        let _ = client.read_to_end(&mut response).await;
+
+        let response = String::from_utf8_lossy(&response);
+        assert_eq!(
+            response,
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+
+        let err = server
+            .await
+            .unwrap()
+            .expect_err("renderer Err fails the flow");
+        assert!(
+            matches!(
+                err,
+                ExternalBrowserError::BrowserResponseRenderer { ref reason, .. }
+                    if reason == "render failed"
+            ),
+            "expected BrowserResponseRenderer, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn listener_accepts_get_token_with_null_origin() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1164,7 +1316,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1191,7 +1343,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut favicon = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1224,7 +1376,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1275,7 +1427,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1319,7 +1471,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut foreign = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1360,7 +1512,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut foreign = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1401,7 +1553,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut post = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1442,7 +1594,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut options_client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1490,7 +1642,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let server = tokio::spawn(async move {
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL).await
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None).await
         });
 
         let mut client = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
@@ -1534,7 +1686,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             Duration::from_millis(50),
-            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL),
+            accept_token_from_callback(&listener, SNOWFLAKE_SERVER_URL, None),
         )
         .await;
 
@@ -1680,7 +1832,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: true,
             validate_session_token: true,
-            browser_opener: None,
+            browser_hooks: Default::default(),
         };
 
         let result = external_browser_authenticate(
@@ -1748,7 +1900,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: true,
             validate_session_token: true,
-            browser_opener: None,
+            browser_hooks: Default::default(),
         };
 
         let err = external_browser_authenticate(
@@ -1849,7 +2001,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: true,
             validate_session_token: true,
-            browser_opener: None,
+            browser_hooks: Default::default(),
         };
 
         let started = Instant::now();

@@ -16,19 +16,24 @@ import {
 import { verifySimpleQuery } from '../utils/query.js';
 import {
   clientCredentialsTokenStubs,
+  heartbeatSuccess,
   jsonResponse,
   loginSuccess,
   logoutSuccess,
+  oauthTokenRequestSuccess,
   type StubMapping,
   WiremockServer,
 } from '../utils/wiremock/index.js';
 import {
+  createCallbackPage,
   cleanBrowserProcesses,
   connectWithBrowserAutomation,
   destroyConnectionAfterTest,
   expectConnectionNotUp,
+  getHttpBody,
   provideBrowserCredentials,
   NEVER_ESTABLISHED_QUERY,
+  requestLoopback,
   requireOktaCredentials,
   TERMINATED_QUERY,
 } from './utils.js';
@@ -1340,6 +1345,171 @@ describe('authorization code against wiremock', () => {
     );
     expect(await wiremock.findRequests('/oauth/token-request.*')).toHaveLength(1);
     expect(await wiremock.findRequests('/session/v1/login-request.*')).toEqual([]);
+  });
+});
+
+describe('OAuth authorization code callback page', () => {
+  let wiremock: WiremockServer;
+
+  beforeAll(async () => {
+    wiremock = await WiremockServer.spawn();
+  });
+
+  afterAll(async () => {
+    await wiremock.destroy();
+  });
+
+  beforeEach(async () => {
+    await wiremock.reset();
+  });
+
+  function authorizationCodeOptions(
+    openExternalBrowserCallback: (url: string) => void,
+    renderer?: (result: { error: string | null }) => string,
+  ): ConnectionOptions {
+    return {
+      account: 'test_account',
+      username: 'alice',
+      authenticator: 'OAUTH_AUTHORIZATION_CODE',
+      oauthClientId: '123',
+      oauthClientSecret: 'clientSecret',
+      clientStoreTemporaryCredential: false,
+      browserActionTimeout: 10000,
+      ...wiremock.connectionOptions,
+      oauthAuthorizationUrl: `https://127.0.0.1:${new URL(wiremock.url).port}/oauth/authorize`,
+      oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
+      ...(isRunningNewDriverWithBD('BD#102') ? {} : { oauthHttpAllowed: true }),
+      ...(renderer ? { browserResponseRenderer: renderer } : {}),
+      openExternalBrowserCallback,
+    } as ConnectionOptions;
+  }
+
+  function deliverLoopback(authorizeUrl: string, query: Record<string, string>): Promise<string> {
+    const authorize = new URL(authorizeUrl);
+    const redirectUri = authorize.searchParams.get('redirect_uri');
+    if (!redirectUri) {
+      return Promise.reject(new Error(`authorize URL missing redirect_uri: ${authorizeUrl}`));
+    }
+    const target = new URL(redirectUri);
+    for (const [key, value] of Object.entries(query)) {
+      target.searchParams.set(key, value);
+    }
+    const state = authorize.searchParams.get('state');
+    if (state !== null && !target.searchParams.has('state')) {
+      target.searchParams.set('state', state);
+    }
+    return requestLoopback(target).then(getHttpBody);
+  }
+
+  it('should use browserResponseRenderer for the OAuth callback response', async () => {
+    await wiremock.stub(oauthTokenRequestSuccess());
+    await wiremock.stub(loginSuccess());
+    await wiremock.stub(logoutSuccess());
+    await wiremock.stub(heartbeatSuccess());
+
+    const { page, capture } = createCallbackPage();
+    const connection = snowflake.createConnection({
+      ...authorizationCodeOptions(
+        (url) => {
+          capture(deliverLoopback(url, { code: 'auth-code' }));
+        },
+        () => 'Custom message',
+      ),
+    }) as Connection;
+
+    await Promise.all([connection.connectAsync(), page]);
+    destroyConnectionAfterTest(connection);
+
+    expect(connection.isUp()).toBe(true);
+    await expect(page).resolves.toBe('Custom message');
+  });
+
+  it('should pass the identity provider error to browserResponseRenderer', async () => {
+    let seenError: string | null = null;
+    const { page, capture } = createCallbackPage();
+    const connection = snowflake.createConnection({
+      ...authorizationCodeOptions(
+        (url) => {
+          capture(deliverLoopback(url, { error: 'invalid_scope', error_description: 'a<b' }));
+        },
+        ({ error }) => {
+          seenError = error;
+          return 'ERR PAGE';
+        },
+      ),
+    }) as Connection;
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'Error',
+      message: isRunningNewDriverWithBD('BD#168')
+        ? 'Failed to login: OAuth flow failed: Identity Provider responded with error: invalid_scope: a<b'
+        : 'Error while getting oauth authorization code. ErrorCode invalid_scope. Message: a<b',
+      ...(isRunningNewDriverWithBD('BD#66') ? { code: undefined } : {}),
+    });
+    await expect(page).resolves.toBe('ERR PAGE');
+    expect(seenError).toBe(
+      isRunningNewDriverWithBD('BD#168')
+        ? 'Identity Provider responded with error: invalid_scope: a&lt;b'
+        : 'Error while getting oauth authorization code. ErrorCode invalid_scope. Message: a&lt;b',
+    );
+    await expectConnectionNotUp(
+      connection,
+      isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
+    );
+  });
+
+  it('should serve the default page when browserResponseRenderer is not set', async () => {
+    await wiremock.stub(oauthTokenRequestSuccess());
+    await wiremock.stub(loginSuccess());
+    await wiremock.stub(logoutSuccess());
+    await wiremock.stub(heartbeatSuccess());
+
+    const { page, capture } = createCallbackPage();
+    const connection = snowflake.createConnection({
+      ...authorizationCodeOptions((url) => {
+        capture(deliverLoopback(url, { code: 'auth-code' }));
+      }),
+    }) as Connection;
+
+    await Promise.all([connection.connectAsync(), page]);
+    destroyConnectionAfterTest(connection);
+
+    expect(connection.isUp()).toBe(true);
+    await expect(page).resolves.toBe(
+      isRunningNewDriverWithBD('BD#171')
+        ? '<!doctype html><html><head><meta charset="utf-8"><title>Authorization Complete</title>' +
+            '</head><body><h1>Authorization completed successfully.</h1>' +
+            '<p>You may close this window.</p></body></html>'
+        : 'Your identity was confirmed and propagated to Snowflake Node.js driver. ' +
+            'You can close this window now and go back where you started from.',
+    );
+  });
+
+  it('should serve the default error page when browserResponseRenderer is not set', async () => {
+    const { page, capture } = createCallbackPage();
+    const connection = snowflake.createConnection({
+      ...authorizationCodeOptions((url) => {
+        capture(deliverLoopback(url, { error: 'invalid_scope', error_description: 'bad scope' }));
+      }),
+    }) as Connection;
+
+    await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+      name: 'Error',
+      message: isRunningNewDriverWithBD('BD#168')
+        ? 'Failed to login: OAuth flow failed: Identity Provider responded with error: invalid_scope: bad scope'
+        : 'Error while getting oauth authorization code. ErrorCode invalid_scope. Message: bad scope',
+      ...(isRunningNewDriverWithBD('BD#66') ? { code: undefined } : {}),
+    });
+    await expect(page).resolves.toBe(
+      isRunningNewDriverWithBD('BD#171')
+        ? '<!doctype html><html><body><h1>Authorization failed.</h1>' +
+            '<p>You may close this window and check the driver logs.</p></body></html>'
+        : 'Error while getting oauth authorization code. ErrorCode invalid_scope. Message: bad scope',
+    );
+    await expectConnectionNotUp(
+      connection,
+      isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
+    );
   });
 });
 

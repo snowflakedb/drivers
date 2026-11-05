@@ -12,7 +12,7 @@ use super::token::{
 use crate::config::ParamStore;
 use crate::config::param_names::*;
 use crate::config::rest_parameters::{
-    BrowserOpenFn, ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
+    BrowserHooks, ClientInfo, DEFAULT_AUTHENTICATION_TIMEOUT_SECS, LoginMethod, LoginParameters,
     NativeOktaConfig, OAuthAuthorizationCodeConfig, OAuthClientCredentialsConfig, OAuthFlowOptions,
     WifProvider, WorkloadIdentityConfig, jwt_timeout_secs, parse_browser_redirect_port,
     require_http_header_value,
@@ -634,7 +634,7 @@ impl LoginParameters {
         session_parameters: Option<HashMap<String, String>>,
         spcs_token: Option<SensitiveString>,
         validate_session_token: bool,
-        browser_opener: Option<BrowserOpenFn>,
+        browser_hooks: BrowserHooks,
     ) -> Self {
         Self {
             account_name: config.server.account.clone(),
@@ -650,7 +650,7 @@ impl LoginParameters {
             spcs_token,
             disable_parallel_user_prompt: config.disable_parallel_user_prompt,
             validate_session_token,
-            browser_opener,
+            browser_hooks,
         }
     }
 }

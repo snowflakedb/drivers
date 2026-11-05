@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::response::Html;
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
 use snafu::ResultExt;
@@ -20,10 +21,11 @@ use tracing::instrument::WithSubscriber;
 use url::Url;
 
 use super::error::{
-    BrowserTimeoutSnafu, IdpSnafu, MissingAuthorizationCodeSnafu, OAuthError, PortBindSnafu,
-    RedirectUriParseSnafu,
+    BrowserResponseRendererSnafu, BrowserTimeoutSnafu, IdpSnafu, MissingAuthorizationCodeSnafu,
+    OAuthError, PortBindSnafu, RedirectUriParseSnafu,
 };
 use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
+use crate::config::rest_parameters::BrowserResponseRenderFn;
 use crate::sensitive::SensitiveString;
 
 const SUCCESS_HTML: &str = concat!(
@@ -195,6 +197,7 @@ impl LoopbackBinding {
     pub(crate) async fn wait_for_redirect(
         self,
         timeout: Duration,
+        renderer: Option<BrowserResponseRenderFn>,
     ) -> Result<RedirectResult, OAuthError> {
         let LoopbackBinding {
             listener,
@@ -207,6 +210,7 @@ impl LoopbackBinding {
         let state = RedirectState {
             tx: Arc::new(Mutex::new(Some(result_tx))),
             shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
+            renderer,
         };
 
         let app: Router<()> = Router::new()
@@ -253,29 +257,49 @@ type RedirectSender = oneshot::Sender<Result<RedirectResult, OAuthError>>;
 struct RedirectState {
     tx: Arc<Mutex<Option<RedirectSender>>>,
     shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    renderer: Option<BrowserResponseRenderFn>,
 }
 
 #[tracing::instrument(skip(state, query))]
 async fn handle_redirect(
     State(state): State<RedirectState>,
     Query(query): Query<RedirectQuery>,
-) -> Html<&'static str> {
+) -> Response {
     tracing::debug!("OAuth loopback handler received redirect");
     let result = parse_redirect_query(query);
-    let body = if result.is_ok() {
-        SUCCESS_HTML
-    } else {
-        ERROR_HTML
+    let rendered = match (&state.renderer, &result) {
+        (Some(renderer), _) => render_page(renderer, result.as_ref().err()).await,
+        (None, Ok(_)) => Ok(SUCCESS_HTML.to_string()),
+        (None, Err(_)) => Ok(ERROR_HTML.to_string()),
+    };
+
+    let (outcome, response) = match rendered {
+        Ok(body) => (result, Html(body).into_response()),
+        Err(reason) => (
+            BrowserResponseRendererSnafu { reason }.fail(),
+            (StatusCode::INTERNAL_SERVER_ERROR, "").into_response(),
+        ),
     };
 
     if let Some(tx) = state.tx.lock().await.take() {
-        let _ = tx.send(result);
+        let _ = tx.send(outcome);
     }
     if let Some(stop) = state.shutdown.lock().await.take() {
         let _ = stop.send(());
     }
 
-    Html(body)
+    response
+}
+
+async fn render_page(
+    renderer: &BrowserResponseRenderFn,
+    error: Option<&OAuthError>,
+) -> Result<String, String> {
+    let render = Arc::clone(renderer);
+    let escaped = error.map(|err| html_escape::encode_safe(&err.to_string()).into_owned());
+    tokio::task::spawn_blocking(move || -> Result<String, String> { render(escaped.as_deref()) })
+        .await
+        .unwrap_or_else(|join_err| Err(join_err.to_string()))
 }
 
 fn parse_redirect_query(query: RedirectQuery) -> Result<RedirectResult, OAuthError> {
@@ -299,7 +323,8 @@ fn parse_redirect_query(query: RedirectQuery) -> Result<RedirectResult, OAuthErr
 mod tests {
     use super::*;
     use std::net::IpAddr;
-    use tokio::io::AsyncWriteExt;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
     fn hint(raw: &str) -> ConfiguredRedirectUri {
@@ -473,7 +498,8 @@ mod tests {
         assert_eq!(b.redirect_uri.parsed().host_str(), Some("localhost"));
         let addr = b.listener.local_addr().unwrap();
 
-        let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
+        let join =
+            tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5), None).await });
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(b"GET /cb?code=LH-CODE&state=LH-STATE HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
@@ -488,7 +514,8 @@ mod tests {
         let b = bind(None).await.expect("bind");
         let addr = b.listener.local_addr().unwrap();
 
-        let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
+        let join =
+            tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5), None).await });
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(
             b"GET /?code=AUTH-CODE-123&state=STATE-XYZ HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -505,7 +532,8 @@ mod tests {
         let b = bind(None).await.expect("bind");
         let addr = b.listener.local_addr().unwrap();
 
-        let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
+        let join =
+            tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5), None).await });
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(
             b"GET /?error=access_denied&error_description=user%20declined HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -528,7 +556,7 @@ mod tests {
     async fn timeout_surfaces_browser_timeout() {
         let b = bind(None).await.expect("bind");
         let err = b
-            .wait_for_redirect(Duration::from_millis(50))
+            .wait_for_redirect(Duration::from_millis(50), None)
             .await
             .expect_err("must time out");
         assert!(matches!(err, OAuthError::BrowserTimeout { .. }));
@@ -559,7 +587,8 @@ mod tests {
         let b = bind(None).await.expect("bind");
         let addr = b.listener.local_addr().unwrap();
 
-        let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
+        let join =
+            tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5), None).await });
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(b"GET /?state=ONLY HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
             .await
@@ -736,7 +765,8 @@ mod tests {
         assert_eq!(b.redirect_uri.parsed().path(), "/");
 
         let addr = b.listener.local_addr().unwrap();
-        let join = tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5)).await });
+        let join =
+            tokio::spawn(async move { b.wait_for_redirect(Duration::from_secs(5), None).await });
         let mut s = TcpStream::connect(addr).await.expect("connect loopback");
         s.write_all(b"GET /?code=VB-CODE&state=VB-STATE HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
@@ -745,5 +775,137 @@ mod tests {
         let res = join.await.unwrap().expect("wait_for_redirect");
         assert_eq!(res.code.reveal(), "VB-CODE");
         assert_eq!(res.state, "VB-STATE");
+    }
+
+    async fn read_loopback_response(addr: std::net::SocketAddr, request: &str) -> (String, String) {
+        let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("write redirect");
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        let response = String::from_utf8_lossy(&response);
+        let (head, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+        let status = head.lines().next().expect("status line");
+        (status.to_string(), body.to_string())
+    }
+
+    #[tokio::test]
+    async fn renderer_replaces_the_success_page() {
+        let b = bind(None).await.expect("bind");
+        let addr = b.listener.local_addr().unwrap();
+        let renderer: BrowserResponseRenderFn = Arc::new(|error| {
+            assert!(error.is_none());
+            Ok("Custom message".to_string())
+        });
+        let join = tokio::spawn(async move {
+            b.wait_for_redirect(Duration::from_secs(5), Some(renderer))
+                .await
+        });
+        let (status, body) = read_loopback_response(
+            addr,
+            "GET /?code=AUTH-CODE&state=STATE HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        )
+        .await;
+        let res = join.await.unwrap().expect("success redirect");
+        assert_eq!(res.code.reveal(), "AUTH-CODE");
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        assert_eq!(body, "Custom message");
+    }
+
+    async fn render_idp_error_into(template: fn(&str) -> String, description: &str) -> String {
+        let b = bind(None).await.expect("bind");
+        let addr = b.listener.local_addr().unwrap();
+        let renderer: BrowserResponseRenderFn =
+            Arc::new(move |error| Ok(template(error.expect("idp error text"))));
+        let join = tokio::spawn(async move {
+            b.wait_for_redirect(Duration::from_secs(5), Some(renderer))
+                .await
+        });
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("error", "access_denied")
+            .append_pair("error_description", description)
+            .finish();
+        let (status, body) = read_loopback_response(
+            addr,
+            &format!("GET /?{query} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+        )
+        .await;
+        let err = join.await.unwrap().expect_err("idp error");
+        assert!(matches!(err, OAuthError::IdpError { .. }), "got {err:?}");
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        body
+    }
+
+    #[tokio::test]
+    async fn renderer_receives_escaped_idp_error_text() {
+        let body = render_idp_error_into(|e| e.to_string(), "<script>").await;
+        assert_eq!(
+            body,
+            "Identity Provider responded with error: access_denied: &lt;script&gt;"
+        );
+    }
+
+    #[tokio::test]
+    async fn renderer_error_text_stays_inside_an_element() {
+        let body =
+            render_idp_error_into(|e| format!("<p>{e}</p>"), "<script>alert(1)</script>").await;
+        assert_eq!(
+            body,
+            "<p>Identity Provider responded with error: access_denied: &lt;script&gt;alert(1)&lt;&#x2F;script&gt;</p>"
+        );
+    }
+
+    #[tokio::test]
+    async fn renderer_error_text_stays_inside_a_double_quoted_attribute() {
+        let body = render_idp_error_into(
+            |e| format!(r#"<div title="{e}"></div>"#),
+            r#"" autofocus onfocus="alert(1)"#,
+        )
+        .await;
+        assert_eq!(
+            body,
+            r#"<div title="Identity Provider responded with error: access_denied: &quot; autofocus onfocus=&quot;alert(1)"></div>"#
+        );
+    }
+
+    #[tokio::test]
+    async fn renderer_error_text_stays_inside_a_script_string() {
+        let body = render_idp_error_into(
+            |e| format!(r#"<script>var errorText = "{e}";</script>"#),
+            r#"";alert(1)//"#,
+        )
+        .await;
+        assert_eq!(
+            body,
+            r#"<script>var errorText = "Identity Provider responded with error: access_denied: &quot;;alert(1)&#x2F;&#x2F;";</script>"#
+        );
+    }
+
+    #[tokio::test]
+    async fn renderer_error_fails_the_redirect() {
+        let b = bind(None).await.expect("bind");
+        let addr = b.listener.local_addr().unwrap();
+        let renderer: BrowserResponseRenderFn = Arc::new(|_| Err("render failed".to_string()));
+        let join = tokio::spawn(async move {
+            b.wait_for_redirect(Duration::from_secs(5), Some(renderer))
+                .await
+        });
+        let (status, body) = read_loopback_response(
+            addr,
+            "GET /?code=AUTH-CODE&state=STATE HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        )
+        .await;
+        let err = join.await.unwrap().expect_err("renderer error");
+        assert!(
+            matches!(
+                err,
+                OAuthError::BrowserResponseRenderer { ref reason, .. } if reason == "render failed"
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(status, "HTTP/1.1 500 Internal Server Error");
+        assert_eq!(body, "");
     }
 }

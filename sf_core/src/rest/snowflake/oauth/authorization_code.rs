@@ -625,7 +625,10 @@ async fn run_interactive_flow(
     tokio::pin!(launch_fut);
     let redirect: RedirectResult = tokio::select! {
         biased;
-        redirect = listener.wait_for_redirect(loopback_budget) => redirect?,
+        redirect = listener.wait_for_redirect(
+            loopback_budget,
+            config.browser_response_renderer.clone(),
+        ) => redirect?,
         Err(reason) = &mut launch_fut => return BrowserCallbackSnafu { reason }.fail(),
     };
 
@@ -1136,6 +1139,7 @@ mod tests {
             // (see `loopback_redirect_with`). Cache / refresh-only paths
             // never invoke the launcher, so `None` is safe.
             browser_launcher: None,
+            browser_response_renderer: None,
         }
     }
 

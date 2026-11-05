@@ -4,7 +4,7 @@ use crate::session_params::KnownSessionParameters;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity as CoreWrapperIdentity;
 use sf_core::apis::database_driver_v1::{ApiError, ConnectionInfo, ConnectionUsability};
 use sf_core::config::param_names;
-use sf_core::config::rest_parameters::BrowserOpenFn;
+use sf_core::config::rest_parameters::{BrowserOpenFn, BrowserResponseRenderFn};
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
 use std::collections::HashMap;
@@ -61,6 +61,7 @@ pub(crate) struct SessionConfig {
     pub(crate) no_connection_details: bool,
     pub(crate) session_parameters: HashMap<String, String>,
     pub(crate) browser_opener: Option<BrowserOpenFn>,
+    pub(crate) browser_response_renderer: Option<BrowserResponseRenderFn>,
     pub(crate) wrapper_identity: CoreWrapperIdentity,
 }
 
@@ -101,6 +102,12 @@ impl Session {
             BRIDGE
                 .driver
                 .connection_set_browser_opener(connection, opener)
+                .await?;
+        }
+        if let Some(renderer) = config.browser_response_renderer {
+            BRIDGE
+                .driver
+                .connection_set_browser_response_renderer(connection, renderer)
                 .await?;
         }
         BRIDGE
@@ -268,6 +275,7 @@ mod tests {
             no_connection_details: false,
             session_parameters: HashMap::new(),
             browser_opener: None,
+            browser_response_renderer: None,
             wrapper_identity: CoreWrapperIdentity::default(),
         })
         .await

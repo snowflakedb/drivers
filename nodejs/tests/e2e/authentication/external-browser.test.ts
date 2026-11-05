@@ -32,9 +32,12 @@ import {
   destroyConnectionAfterTest,
   NEVER_ESTABLISHED_QUERY,
   TERMINATED_QUERY,
+  createCallbackPage,
   cleanBrowserProcesses,
   connectWithBrowserAutomation,
   deliverBrowserCallbackAfter,
+  deliverBrowserRedirectAfter,
+  getHttpBody,
   patchOldDriverHttpsProtocol,
   provideBrowserCredentials,
   requireOktaCredentials,
@@ -444,7 +447,10 @@ describe('EXTERNALBROWSER authentication', () => {
             wiremock,
             'browser_sso_token_12345',
             2000,
-          ).catch(() => {});
+          ).then(
+            () => undefined,
+            () => undefined,
+          );
         },
       });
 
@@ -508,6 +514,136 @@ describe('EXTERNALBROWSER authentication', () => {
         code: '390191',
       });
       await expectConnectionNotUp(connection);
+    });
+
+    it('should log in with a custom browserResponseRenderer', async () => {
+      await wiremock.stubFromFile('auth/external_browser_authenticator_request.json');
+      await wiremock.stubFromFile('auth/login_success_external_browser.json');
+      await wiremock.stub(logoutSuccess());
+
+      const { page, capture } = createCallbackPage();
+      const connection = createWiremockExternalBrowserConnection(wiremock, {
+        browserResponseRenderer: () => 'BROWSER OK',
+        openExternalBrowserCallback: () => {
+          capture(deliverBrowserCallbackAfter(wiremock, 'browser_sso_token_12345', 0));
+        },
+      });
+
+      await Promise.all([connection.connectAsync(), page]);
+      destroyConnectionAfterTest(connection);
+
+      expect(connection.isUp()).toBe(true);
+      await expect(page.then(getHttpBody)).resolves.toBe('BROWSER OK');
+    });
+
+    it('should fail connect when browserResponseRenderer throws', async () => {
+      await wiremock.stubFromFile('auth/external_browser_authenticator_request.json');
+      await wiremock.stub(logoutSuccess());
+
+      const renderedPage = isRunningNewDriverWithBD('BD#172') ? createCallbackPage() : undefined;
+      const connection = createWiremockExternalBrowserConnection(wiremock, {
+        browserResponseRenderer: () => {
+          throw new Error('render failed');
+        },
+        openExternalBrowserCallback: () => {
+          const delivery = deliverBrowserCallbackAfter(wiremock, 'browser_sso_token_12345', 0);
+          renderedPage?.capture(delivery);
+        },
+      });
+
+      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+        message: isRunningNewDriverWithBD('BD#67')
+          ? expect.stringMatching(
+              /^Failed to login: External browser SSO failed: Browser response renderer failed: Error: render failed\n/,
+            )
+          : expect.stringContaining('render failed'),
+      });
+      if (renderedPage) {
+        await expect(renderedPage.page).resolves.toBe(
+          'HTTP/1.1 500 Internal Server Error\r\n' +
+            'Content-Length: 0\r\n' +
+            'Connection: close\r\n\r\n',
+        );
+      }
+      await expectConnectionNotUp(
+        connection,
+        isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
+      );
+    });
+
+    it('should serve the default page when browserResponseRenderer is not set', async () => {
+      await wiremock.stubFromFile('auth/external_browser_authenticator_request.json');
+      await wiremock.stubFromFile('auth/login_success_external_browser.json');
+      await wiremock.stub(logoutSuccess());
+
+      const { page, capture } = createCallbackPage();
+      const connection = createWiremockExternalBrowserConnection(wiremock, {
+        openExternalBrowserCallback: () => {
+          capture(deliverBrowserCallbackAfter(wiremock, 'browser_sso_token_12345', 0));
+        },
+      });
+
+      await connection.connectAsync();
+      destroyConnectionAfterTest(connection);
+
+      expect(connection.isUp()).toBe(true);
+      await expect(page).resolves.toBe(
+        isRunningNewDriverWithBD('BD#171')
+          ? 'HTTP/1.1 200 OK\r\n' +
+              'Content-Type: text/html; charset=utf-8\r\n' +
+              'Content-Length: 168\r\n' +
+              'Connection: close\r\n\r\n' +
+              '<!DOCTYPE html><html><head><title>Authentication Successful</title></head>' +
+              '<body><h1>Your identity was confirmed</h1><p>You can close this browser tab.</p>' +
+              '</body></html>'
+          : 'HTTP/1.1 200 OK\r\n' +
+              'Content-Type: text/html; charset=utf-8\r\n' +
+              'Connection: close\r\n\r\n' +
+              'Your identity was confirmed and propagated to Snowflake Node.js driver. ' +
+              'You can close this window now and go back where you started from.',
+      );
+    });
+
+    it('should fail connect on an identity provider error callback', async () => {
+      await wiremock.stubFromFile('auth/external_browser_authenticator_request.json');
+
+      const { page, capture } = createCallbackPage();
+      const connection = createWiremockExternalBrowserConnection(wiremock, {
+        browserActionTimeout: 2000,
+        openExternalBrowserCallback: () => {
+          capture(
+            deliverBrowserRedirectAfter(
+              wiremock,
+              { error: 'access_denied', error_description: 'denied' },
+              0,
+            ),
+          );
+        },
+      });
+
+      const connectionAttempt = connectAsyncWithErrorBD(connection);
+      if (isRunningNewDriverWithBD('BD#169')) {
+        await expect(connectionAttempt).rejects.toMatchObject({
+          name: 'Error',
+          message:
+            'Failed to login: External browser SSO failed: Authentication timeout exceeded (budget 2s)',
+          code: undefined,
+        });
+        await expect(page).resolves.toBe('');
+      } else {
+        await expect(connectionAttempt).rejects.toMatchObject({
+          name: 'Error',
+          message:
+            'Error while getting SAML token: Error while getting oauth authorization code. ErrorCode access_denied. Message: denied',
+        });
+        await expect(page.then(getHttpBody)).resolves.toBe(
+          'Error while getting oauth authorization code. ErrorCode access_denied. Message: denied',
+        );
+      }
+      await expectConnectionNotUp(
+        connection,
+        isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
+      );
     });
   });
 

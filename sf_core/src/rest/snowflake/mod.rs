@@ -914,7 +914,7 @@ pub(crate) async fn auth_request_data(
                 data.token_from_cache_used = true;
             } else {
                 let opener: std::sync::Arc<dyn external_browser::BrowserOpener> =
-                    match &login_parameters.browser_opener {
+                    match &login_parameters.browser_hooks.opener {
                         Some(f) => std::sync::Arc::new(FnBrowserOpener(std::sync::Arc::clone(f))),
                         None => std::sync::Arc::new(DefaultBrowserOpener),
                     };
@@ -944,10 +944,13 @@ pub(crate) async fn auth_request_data(
         // produced the token. LOGIN_NAME is always set.
         LoginMethod::OAuthAuthorizationCode(cfg) => {
             let mut cfg = std::borrow::Cow::Borrowed(cfg);
-            if let Some(opener) = &login_parameters.browser_opener {
+            if let Some(opener) = &login_parameters.browser_hooks.opener {
                 cfg.to_mut().browser_launcher = Some(oauth::launcher_from_url_opener(
                     std::sync::Arc::clone(opener),
                 ));
+            }
+            if let Some(renderer) = &login_parameters.browser_hooks.response_renderer {
+                cfg.to_mut().browser_response_renderer = Some(renderer.clone());
             }
             let acquired = oauth::run_oauth_authorization_code(
                 client,
@@ -3935,7 +3938,7 @@ mod tests {
             spcs_token: None,
             disable_parallel_user_prompt: false,
             validate_session_token: true,
-            browser_opener: None,
+            browser_hooks: Default::default(),
         }
     }
 

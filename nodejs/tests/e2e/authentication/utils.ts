@@ -353,11 +353,20 @@ export async function expectConnectionNotUp(
 // the step 2 request to that port itself.
 //
 // Call it from openExternalBrowserCallback, which runs after the authenticator-request is sent.
-export async function deliverBrowserCallbackAfter(
+// It resolves with the raw HTTP response the driver wrote back, which is what the browser shows.
+export function deliverBrowserCallbackAfter(
   wiremock: WiremockServer,
   token: string,
   delayMs: number,
-): Promise<void> {
+): Promise<string> {
+  return deliverBrowserRedirectAfter(wiremock, { token }, delayMs);
+}
+
+export async function deliverBrowserRedirectAfter(
+  wiremock: WiremockServer,
+  query: Record<string, string>,
+  delayMs: number,
+): Promise<string> {
   const requests = await wiremock.findRequests('/session/authenticator-request.*');
   const body = requests[0]?.body;
   const parsed = body
@@ -370,26 +379,55 @@ export async function deliverBrowserCallbackAfter(
     );
   }
   await sleepAsync(delayMs);
-  await deliverTokenToCallbackPort(port, token);
+  return requestLoopback(new URL(`http://127.0.0.1:${port}/?${new URLSearchParams(query)}`));
 }
 
-function deliverTokenToCallbackPort(port: number, token: string): Promise<void> {
+// Sends the browser's GET to the driver's loopback listener and resolves with the raw HTTP
+// response, headers included. A listener that closes without replying resolves with ''.
+export function requestLoopback(url: URL): Promise<string> {
   return new Promise((resolve, reject) => {
-    const socket = createConnection({ host: '127.0.0.1', port });
+    const socket = createConnection({ host: url.hostname, port: Number(url.port) });
+    const chunks: Buffer[] = [];
     const fail = (error: Error) => {
       socket.destroy();
       reject(error);
     };
     socket.once('error', fail);
     socket.setTimeout(5_000, () => {
-      fail(new Error(`Timed out delivering browser callback to port ${port}`));
+      fail(new Error(`Timed out delivering browser callback to ${url.host}`));
     });
     socket.once('connect', () => {
-      socket.write(`GET /?token=${token} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+      socket.write(`GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\n\r\n`);
     });
-    socket.once('data', () => {
-      socket.end();
-      resolve();
+    socket.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+    socket.once('end', () => {
+      resolve(Buffer.concat(chunks).toString('utf8'));
     });
   });
+}
+
+export function getHttpBody(response: string): string {
+  const separator = '\r\n\r\n';
+  const headersEnd = response.indexOf(separator);
+  if (headersEnd < 0) {
+    throw new Error(`Not an HTTP response: ${JSON.stringify(response)}`);
+  }
+  return response.slice(headersEnd + separator.length);
+}
+
+// The page the browser receives from the driver's loopback listener. `page` settles only after
+// `capture` is given a delivery, which happens inside openExternalBrowserCallback.
+export function createCallbackPage(): {
+  page: Promise<string>;
+  capture: (delivery: Promise<string>) => void;
+} {
+  let capture: (delivery: Promise<string>) => void = () => {};
+  const page = new Promise<string>((resolve, reject) => {
+    capture = (delivery) => {
+      delivery.then(resolve, reject);
+    };
+  });
+  return { page, capture };
 }

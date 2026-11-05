@@ -100,6 +100,21 @@ export function resultWithOneRemoteChunk(queryId: string, chunkUrl: string): Res
   });
 }
 
+export function oauthTokenRequestSuccess(): StubMapping {
+  return {
+    request: {
+      method: 'POST',
+      urlPath: '/oauth/token-request',
+    },
+    response: jsonResponse(200, {
+      access_token: 'ac-access-token-success',
+      refresh_token: 'ac-refresh-token-success',
+      token_type: 'Bearer',
+      expires_in: 600,
+    }),
+  };
+}
+
 export function loginSuccess(dataOverrides: Record<string, unknown> = {}): StubMapping {
   return {
     request: {

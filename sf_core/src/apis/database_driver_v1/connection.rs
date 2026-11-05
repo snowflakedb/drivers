@@ -26,8 +26,9 @@ use crate::config::{
     param_registry::{ParamKey, param_names},
     resolver,
     rest_parameters::{
-        BrowserOpenFn, ClientInfo, LoginMethod, LoginParameters, QueryParameters,
-        resolve_log_max_query_length, resolve_log_query_parameters, resolve_log_query_text,
+        BrowserHooks, BrowserOpenFn, BrowserResponseRenderFn, ClientInfo, LoginMethod,
+        LoginParameters, QueryParameters, resolve_log_max_query_length,
+        resolve_log_query_parameters, resolve_log_query_text,
     },
     retry::{RetryPolicy, read_optional_duration_secs},
     settings::Settings,
@@ -294,7 +295,7 @@ impl DatabaseDriverV1 {
                     client_info,
                     init_params,
                     resolved_snapshot,
-                    browser_opener,
+                    browser_hooks,
                 ) = {
                     let conn = conn_ptr.lock().await;
                     // TODO(sfc-gh-boler): Clone the mutable connection inputs under the mutex,
@@ -347,7 +348,7 @@ impl DatabaseDriverV1 {
                         None => None,
                     };
 
-                    let browser_opener = conn.browser_opener.clone();
+                    let browser_hooks = conn.browser_hooks.clone();
                     (
                         config,
                         host,
@@ -355,7 +356,7 @@ impl DatabaseDriverV1 {
                         client_info,
                         init_params,
                         resolved_snapshot,
-                        browser_opener,
+                        browser_hooks,
                     )
                 };
 
@@ -372,7 +373,7 @@ impl DatabaseDriverV1 {
                     None,
                     read_spcs_token(self.fs_adapter().as_ref()),
                     self.wrapper_presets.validate_session_token,
-                    browser_opener,
+                    browser_hooks,
                 );
 
                 // ---- Diagnostics: pre-connect -----------------------------------
@@ -922,7 +923,25 @@ impl DatabaseDriverV1 {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
-                conn.browser_opener = Some(opener);
+                conn.browser_hooks.opener = Some(opener);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub async fn connection_set_browser_response_renderer(
+        &self,
+        conn_handle: Handle,
+        renderer: BrowserResponseRenderFn,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                conn.browser_hooks.response_renderer = Some(renderer);
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -1198,7 +1217,7 @@ pub struct Connection {
     /// Per-connection gate when session operations are serialized.
     /// Acquire this before [`Mutex<Connection>`].
     session_mutex: Arc<Mutex<()>>,
-    pub(crate) browser_opener: Option<BrowserOpenFn>,
+    pub(crate) browser_hooks: BrowserHooks,
     /// Shared CRL caches plus this connection's `client_crl_stats` buffer.
     /// Set at the start of login, before the TLS client is built.
     pub(crate) connection_crl: Option<crate::crl::ConnectionCrl>,
@@ -1246,7 +1265,7 @@ impl Connection {
             xp_slot: Arc::new(XpSlot::new(false, None)),
             optimistic_alter_session_param_cache: false,
             session_mutex: Arc::new(Mutex::new(())),
-            browser_opener: None,
+            browser_hooks: BrowserHooks::default(),
             connection_crl: None,
         }
     }
@@ -4106,7 +4125,8 @@ mod tests {
 
         let conn_ptr = ds.connections.get_obj(handle).unwrap();
         let conn = conn_ptr.lock().await;
-        conn.browser_opener
+        conn.browser_hooks
+            .opener
             .as_ref()
             .expect("opener should be stored")("https://idp.snowflake.com/sso")
         .unwrap();
@@ -4116,6 +4136,32 @@ mod tests {
             seen.lock().unwrap().as_deref(),
             Some("https://idp.snowflake.com/sso")
         );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_browser_response_renderer_stores_the_callback() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_browser_response_renderer(
+            handle,
+            Arc::new(|error: Option<&str>| Ok(format!("page:{}", error.unwrap_or("none")))),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        let render = conn
+            .browser_hooks
+            .response_renderer
+            .as_ref()
+            .expect("renderer should be stored");
+        assert_eq!(render(None).unwrap(), "page:none");
+        assert_eq!(render(Some("access_denied")).unwrap(), "page:access_denied");
+        assert!(conn.browser_hooks.opener.is_none());
+        drop(conn);
+
         ds.connection_release(handle).unwrap();
     }
 
