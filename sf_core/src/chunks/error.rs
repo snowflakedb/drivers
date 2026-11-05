@@ -24,6 +24,15 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "Result chunk download timed out: no data received for {read_timeout:?}. \
+         Check your network connection or proxy, or increase chunkDownloadReadTimeout"
+    ))]
+    ChunkReadTimeout {
+        read_timeout: std::time::Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Snowflake responded with non-successful HTTP status"))]
     UnsuccessfulHttpStatusCode {
         status: reqwest::StatusCode,

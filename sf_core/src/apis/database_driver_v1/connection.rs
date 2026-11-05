@@ -17,6 +17,7 @@ use super::validation::{
 };
 use super::{Setting, WrapperPresets, logout};
 use crate::apis::operation_ctx::OperationCtx;
+use crate::chunks::PrefetchConfig;
 use crate::config::rest_parameters::resolve_include_retry_reason;
 use crate::config::{
     ParamStore,
@@ -360,8 +361,10 @@ impl DatabaseDriverV1 {
 
                 warn_query_logging_risk(&resolved_snapshot);
 
-                let timeout_config =
-                    crate::config::retry::TimeoutConfig::from_params(&resolved_snapshot);
+                let timeout_config = crate::config::retry::TimeoutConfig::from_params(
+                    &resolved_snapshot,
+                    self.wrapper_presets.chunk_download_read_timeout_default,
+                );
 
                 let login_parameters = LoginParameters::from_connection_config(
                     &config,
@@ -1488,6 +1491,14 @@ impl Connection {
     /// to apply the budget as an outer deadline to be bounded at all.
     pub(crate) fn request_timeout_budget(&self) -> Option<Duration> {
         read_optional_duration_secs(&self.effective_settings(), param_names::REQUEST_TIMEOUT)
+    }
+
+    pub(crate) async fn prefetch_config(&self) -> PrefetchConfig {
+        let session_params = self.session_parameters.read().await;
+        PrefetchConfig {
+            chunk_read_timeout: self.timeout_config.chunk_read_timeout,
+            ..PrefetchConfig::from_session_params(&session_params)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5848,6 +5859,51 @@ mod tests {
         assert_eq!(
             conn.session_parameters.read().await.get("SERVICE_NAME"),
             Some(&Setting::String("cluster-y".into()))
+        );
+    }
+
+    #[test]
+    fn jdbc_chunk_read_timeout_follows_connect_resolution() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::jdbc(),
+            ..Default::default()
+        });
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let paths = crate::config::path_resolver::ConfigPaths {
+            config_file: Some(temp_dir.path().join("config.toml")),
+            connections_file: Some(temp_dir.path().join("connections.toml")),
+        };
+        let flavor = ds.wrapper_presets.configuration_flavor;
+        let preset = ds.wrapper_presets.chunk_download_read_timeout_default;
+
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &ParamStore::new(),
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert!(resolved.get_int(param_names::RETRY_TIMEOUT).is_none());
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            Some(Duration::from_secs(30))
+        );
+
+        let socket_timeout = crate::config::param_registry::registry()
+            .resolve_for(flavor, "HTTP_CLIENT_SOCKET_TIMEOUT")
+            .unwrap();
+        let mut explicit = ParamStore::new();
+        explicit.insert(socket_timeout.canonical_name.to_owned(), Setting::Int(600));
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &explicit,
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            Some(Duration::from_secs(600))
         );
     }
 }

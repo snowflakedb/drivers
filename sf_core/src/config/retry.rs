@@ -342,6 +342,9 @@ pub struct TimeoutConfig {
     /// Connect timeout (name lookup, TCP, and TLS) for the HTTP client. `None`
     /// means no driver timer.
     pub connect_timeout: Option<Duration>,
+    /// How long a result chunk download may receive no data before it is
+    /// retried. `None` means no inactivity timer.
+    pub chunk_read_timeout: Option<Duration>,
 }
 
 impl TimeoutConfig {
@@ -352,7 +355,11 @@ impl TimeoutConfig {
     /// 60 seconds. Note that `request_timeout` is not here — it is a retry-loop
     /// budget consumed as [`RetryPolicy::http`]'s `max_elapsed`, not an outer-wrap
     /// operation timeout.
-    pub fn from_params(params: &ParamStore) -> Self {
+    ///
+    /// `chunk_read_timeout` comes from `chunk_download_read_timeout`. When that
+    /// is unset and the wrapper has a default, an explicit `retry_timeout` wins
+    /// over the default. Without a wrapper default it stays `None`.
+    pub fn from_params(params: &ParamStore, chunk_read_timeout_default: Option<Duration>) -> Self {
         Self {
             login_timeout: read_optional_duration_secs(params, param_names::LOGIN_TIMEOUT),
             query_timeout: read_optional_duration_secs(params, param_names::QUERY_TIMEOUT),
@@ -360,8 +367,26 @@ impl TimeoutConfig {
                 None => Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
                 Some(_) => read_optional_duration_secs(params, param_names::CONNECT_TIMEOUT),
             },
+            chunk_read_timeout: resolve_chunk_read_timeout(params, chunk_read_timeout_default),
         }
     }
+}
+
+fn resolve_chunk_read_timeout(
+    params: &ParamStore,
+    wrapper_default: Option<Duration>,
+) -> Option<Duration> {
+    if params
+        .get_int(param_names::CHUNK_DOWNLOAD_READ_TIMEOUT)
+        .is_some()
+    {
+        return read_optional_duration_secs(params, param_names::CHUNK_DOWNLOAD_READ_TIMEOUT);
+    }
+    let wrapper_default = wrapper_default?;
+    if params.get_int(param_names::RETRY_TIMEOUT).is_some() {
+        return read_optional_duration_secs(params, param_names::RETRY_TIMEOUT);
+    }
+    Some(wrapper_default)
 }
 
 impl Default for TimeoutConfig {
@@ -377,6 +402,7 @@ impl Default for TimeoutConfig {
                 Some(Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS))
             },
             connect_timeout: Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
+            chunk_read_timeout: None,
         }
     }
 }
@@ -547,21 +573,21 @@ mod tests {
             (param_names::LOGIN_TIMEOUT.as_str(), Setting::Int(0)),
             (param_names::QUERY_TIMEOUT.as_str(), Setting::Int(0)),
         ]);
-        let tc = TimeoutConfig::from_params(&store);
+        let tc = TimeoutConfig::from_params(&store, None);
         assert_eq!(tc.login_timeout, None);
         assert_eq!(tc.query_timeout, None);
     }
 
     #[test]
     fn timeout_config_absent_connect_timeout_uses_default() {
-        let tc = TimeoutConfig::from_params(&ParamStore::new());
+        let tc = TimeoutConfig::from_params(&ParamStore::new(), None);
         assert_eq!(tc.connect_timeout, Some(Duration::from_secs(60)));
     }
 
     #[test]
     fn timeout_config_zero_connect_timeout_disables_timer() {
         let store = params(&[(param_names::CONNECT_TIMEOUT.as_str(), Setting::Int(0))]);
-        let tc = TimeoutConfig::from_params(&store);
+        let tc = TimeoutConfig::from_params(&store, None);
         assert_eq!(tc.connect_timeout, None);
     }
 
@@ -590,10 +616,59 @@ mod tests {
             (param_names::QUERY_TIMEOUT.as_str(), Setting::Int(300)),
             (param_names::CONNECT_TIMEOUT.as_str(), Setting::Int(10)),
         ]);
-        let tc = TimeoutConfig::from_params(&store);
+        let tc = TimeoutConfig::from_params(&store, None);
         assert_eq!(tc.login_timeout, Some(Duration::from_secs(60)));
         assert_eq!(tc.query_timeout, Some(Duration::from_secs(300)));
         assert_eq!(tc.connect_timeout, Some(Duration::from_secs(10)));
+    }
+
+    const WRAPPER_CHUNK_DEFAULT: Option<Duration> = Some(Duration::from_secs(30));
+
+    #[test]
+    fn chunk_read_timeout_uses_wrapper_default_when_nothing_is_set() {
+        let tc = TimeoutConfig::from_params(&ParamStore::new(), WRAPPER_CHUNK_DEFAULT);
+        assert_eq!(tc.chunk_read_timeout, WRAPPER_CHUNK_DEFAULT);
+    }
+
+    #[test]
+    fn chunk_read_timeout_param_wins_over_retry_timeout_and_wrapper_default() {
+        let store = params(&[
+            (
+                param_names::CHUNK_DOWNLOAD_READ_TIMEOUT.as_str(),
+                Setting::Int(90),
+            ),
+            (param_names::RETRY_TIMEOUT.as_str(), Setting::Int(600)),
+        ]);
+        let tc = TimeoutConfig::from_params(&store, WRAPPER_CHUNK_DEFAULT);
+        assert_eq!(tc.chunk_read_timeout, Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn chunk_read_timeout_zero_param_disables_timer() {
+        let store = params(&[(
+            param_names::CHUNK_DOWNLOAD_READ_TIMEOUT.as_str(),
+            Setting::Int(0),
+        )]);
+        let tc = TimeoutConfig::from_params(&store, WRAPPER_CHUNK_DEFAULT);
+        assert_eq!(tc.chunk_read_timeout, None);
+    }
+
+    #[test]
+    fn chunk_read_timeout_falls_back_to_explicit_retry_timeout() {
+        let store = params(&[(param_names::RETRY_TIMEOUT.as_str(), Setting::Int(600))]);
+        let tc = TimeoutConfig::from_params(&store, WRAPPER_CHUNK_DEFAULT);
+        assert_eq!(tc.chunk_read_timeout, Some(Duration::from_secs(600)));
+
+        let store = params(&[(param_names::RETRY_TIMEOUT.as_str(), Setting::Int(0))]);
+        let tc = TimeoutConfig::from_params(&store, WRAPPER_CHUNK_DEFAULT);
+        assert_eq!(tc.chunk_read_timeout, None);
+    }
+
+    #[test]
+    fn chunk_read_timeout_ignores_retry_timeout_without_wrapper_default() {
+        let store = params(&[(param_names::RETRY_TIMEOUT.as_str(), Setting::Int(600))]);
+        let tc = TimeoutConfig::from_params(&store, None);
+        assert_eq!(tc.chunk_read_timeout, None);
     }
 
     #[test]

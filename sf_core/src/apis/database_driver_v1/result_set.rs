@@ -444,8 +444,7 @@ pub(super) async fn resolve_reader_ctx(
         .http_client
         .clone()
         .context(ConnectionNotInitializedSnafu)?;
-    let session_params = conn_guard.session_parameters.read().await;
-    let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+    let prefetch_config = conn_guard.prefetch_config().await;
     Ok(ReaderContext {
         http_client,
         prefetch_config,

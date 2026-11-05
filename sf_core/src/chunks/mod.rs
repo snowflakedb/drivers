@@ -11,9 +11,12 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::apis::database_driver_v1::Setting;
+use crate::config::retry::RetryPolicy;
 use crate::config::settings::Settings;
+use crate::http::retry::{HttpContext, HttpError, execute_with_retry, next_delay_ms};
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
 use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
@@ -29,9 +32,9 @@ use error::*;
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 pub(crate) use prefetch::PrefetchChunkReader;
 use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk};
-use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use snafu::{OptionExt, ResultExt, ensure};
+use reqwest::{Client, Method};
+use snafu::{IntoError, OptionExt, ResultExt, ensure};
 use tokio::task::AbortHandle;
 
 pub const DEFAULT_PREFETCH_THREADS: usize = 4;
@@ -44,6 +47,10 @@ pub struct PrefetchConfig {
     pub prefetch_threads: usize,
     /// Memory budget in MB for buffered chunks. 0 means unlimited.
     pub memory_limit_mb: u32,
+    /// How long a chunk GET may receive no data, while waiting for the response
+    /// or between body frames, before the whole GET is retried. `None` means no
+    /// inactivity timer.
+    pub chunk_read_timeout: Option<Duration>,
 }
 
 impl Default for PrefetchConfig {
@@ -51,6 +58,7 @@ impl Default for PrefetchConfig {
         Self {
             prefetch_threads: DEFAULT_PREFETCH_THREADS,
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
+            chunk_read_timeout: None,
         }
     }
 }
@@ -70,6 +78,7 @@ impl PrefetchConfig {
         Self {
             prefetch_threads,
             memory_limit_mb,
+            chunk_read_timeout: None,
         }
     }
 }
@@ -140,7 +149,10 @@ async fn open_json_prefetch(
     PrefetchChunkReader::open(
         Some(initial_future),
         chunk_download_data.into(),
-        HttpChunkDownloader { client },
+        HttpChunkDownloader {
+            client,
+            read_timeout: config.chunk_read_timeout,
+        },
         JsonChunkParser { row_types },
         config,
     )
@@ -189,7 +201,10 @@ pub(crate) async fn arrow_prefetch(
     PrefetchChunkReader::open(
         initial_base64_opt.map(spawn_initial_arrow_decode),
         chunk_download_data,
-        HttpChunkDownloader { client },
+        HttpChunkDownloader {
+            client,
+            read_timeout: config.chunk_read_timeout,
+        },
         ArrowChunkParser,
         config,
     )
@@ -204,6 +219,7 @@ async fn get_initial_chunk_reader(
     initial_base64_opt: Option<&str>,
     chunk_download_data: &mut VecDeque<ChunkDownloadData>,
     client: &Client,
+    read_timeout: Option<Duration>,
     remote_format: ChunkFormatKind,
     row_types: &[RowType],
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
@@ -217,7 +233,7 @@ async fn get_initial_chunk_reader(
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
-        let bytes = get_chunk_data(client.clone(), first).await?;
+        let bytes = get_chunk_data(client.clone(), first, read_timeout).await?;
         match remote_format {
             ChunkFormatKind::ArrowIpc => {
                 let cursor = io::Cursor::new(bytes);
@@ -402,6 +418,7 @@ pub async fn fetch_chunks_reader(
                 initial_base64_opt.as_deref(),
                 &mut remote_chunks,
                 &client,
+                prefetch_config.chunk_read_timeout,
                 ChunkFormatKind::Json,
                 &row_types,
             )
@@ -461,62 +478,145 @@ pub struct InitialChunkData {
 /// the returned bytes are already decompressed. Some cloud providers (notably
 /// GCS on GCP) may serve gzip-compressed data without setting that header, so
 /// we detect the gzip magic bytes and decompress explicitly when needed.
+///
+/// With a `read_timeout`, each attempt may wait that long for the response
+/// headers and for each body frame. A body that stalls or breaks off retries
+/// the whole GET with backoff, up to the retry policy's `max_attempts`. Each of
+/// those attempts also runs `execute_with_retry` with the same policy, so a mix
+/// of status or header failures and body stalls can issue up to `max_attempts`
+/// squared GETs. Callers pass [`RetryPolicy::default`]: the connection's
+/// `retry_max_attempts`, `request_timeout`, and `retry_timeout` do not bound
+/// this download. Without a `read_timeout`, there is no inactivity timer and a
+/// body failure is not retried.
 pub async fn get_chunk_data(
     client: Client,
     chunk: ChunkDownloadData,
+    read_timeout: Option<Duration>,
 ) -> Result<Vec<u8>, ChunkError> {
-    let url = &chunk.url;
+    get_chunk_data_with_policy(client, chunk, read_timeout, &RetryPolicy::default()).await
+}
+
+async fn get_chunk_data_with_policy(
+    client: Client,
+    chunk: ChunkDownloadData,
+    read_timeout: Option<Duration>,
+    policy: &RetryPolicy,
+) -> Result<Vec<u8>, ChunkError> {
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
         let header_name = HeaderName::from_str(key).context(HeaderNameSnafu { key })?;
         let header_value = HeaderValue::from_str(value).context(HeaderValueSnafu { key })?;
         headers.insert(header_name, header_value);
     }
-    use crate::config::retry::RetryPolicy;
-    use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
-    use reqwest::Method;
 
-    let policy = RetryPolicy::default();
-    let http_ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
+    let mut http_ctx = HttpContext::new(Method::GET, chunk.url.clone()).with_idempotent(true);
+    if let Some(timeout) = read_timeout {
+        http_ctx = http_ctx.with_response_timeout(timeout);
+    }
+    let max_attempts = if read_timeout.is_some() {
+        policy.max_attempts
+    } else {
+        1
+    };
+    let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
+    let build_request = || client.get(chunk.url.as_str()).headers(headers.clone());
 
-    let mut response = match execute_with_retry(
-        || client.get(url.clone()).headers(headers.clone()),
-        &http_ctx,
-        &policy,
-        |r| async move { Ok(r) },
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return match e {
-                HttpError::Transport { source, .. } => Err(source).context(CommunicationSnafu),
-                HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
-                    UnsuccessfulHttpStatusCodeSnafu {
-                        status: reqwest::StatusCode::REQUEST_TIMEOUT,
-                    }
-                    .fail()
-                }
-                HttpError::MaxAttempts { last_status, .. } => UnsuccessfulHttpStatusCodeSnafu {
-                    status: last_status,
-                }
-                .fail(),
-                HttpError::ResponseTooLarge { .. } => UnsuccessfulHttpStatusCodeSnafu {
-                    status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
-                }
-                .fail(),
-            };
+    let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+    let mut attempt = 1;
+    let bytes = loop {
+        match download_chunk_body(
+            &build_request,
+            &http_ctx,
+            policy,
+            uncompressed_size,
+            read_timeout,
+        )
+        .await
+        {
+            Ok(bytes) => break bytes,
+            Err(ChunkAttemptError::Retryable(error)) if attempt < max_attempts => {
+                let reason = if matches!(error, ChunkError::ChunkReadTimeout { .. }) {
+                    "no data before the read timeout"
+                } else {
+                    "transport error while reading the body"
+                };
+                tracing::warn!(
+                    attempt,
+                    path = chunk.url.split(['?', '#']).next().unwrap_or(""),
+                    reason,
+                    "Retrying chunk download"
+                );
+                sleep_ms = next_delay_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
+                attempt += 1;
+            }
+            Err(ChunkAttemptError::Retryable(error) | ChunkAttemptError::Fatal(error)) => {
+                return Err(error);
+            }
         }
     };
+    // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
+    // body doesn't stall this runtime worker.
+    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
+        .await
+        .context(SpawnBlockingSnafu)?
+}
+
+enum ChunkAttemptError {
+    Retryable(ChunkError),
+    Fatal(ChunkError),
+}
+
+async fn download_chunk_body<B>(
+    build_request: B,
+    http_ctx: &HttpContext,
+    policy: &RetryPolicy,
+    uncompressed_size: usize,
+    read_timeout: Option<Duration>,
+) -> Result<Vec<u8>, ChunkAttemptError>
+where
+    B: Fn() -> reqwest::RequestBuilder,
+{
+    use ChunkAttemptError::{Fatal, Retryable};
+
+    let mut response =
+        match execute_with_retry(build_request, http_ctx, policy, |r| async move { Ok(r) }).await {
+            Ok(r) => r,
+            Err(e) => {
+                let error = match e {
+                    HttpError::Transport { source, .. } => CommunicationSnafu.into_error(source),
+                    HttpError::ResponseTimeout { timeout, .. } => ChunkReadTimeoutSnafu {
+                        read_timeout: timeout,
+                    }
+                    .build(),
+                    HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
+                        UnsuccessfulHttpStatusCodeSnafu {
+                            status: reqwest::StatusCode::REQUEST_TIMEOUT,
+                        }
+                        .build()
+                    }
+                    HttpError::MaxAttempts { last_status, .. } => UnsuccessfulHttpStatusCodeSnafu {
+                        status: last_status,
+                    }
+                    .build(),
+                    HttpError::ResponseTooLarge { .. } => UnsuccessfulHttpStatusCodeSnafu {
+                        status: reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+                    }
+                    .build(),
+                };
+                return Err(Fatal(error));
+            }
+        };
 
     if !response.status().is_success() {
-        UnsuccessfulHttpStatusCodeSnafu {
-            status: response.status(),
-        }
-        .fail()?;
+        return Err(Fatal(
+            UnsuccessfulHttpStatusCodeSnafu {
+                status: response.status(),
+            }
+            .build(),
+        ));
     }
 
-    let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
     // One buffer for the body. reqwest drops `content_length()` after it
     // inflates `Content-Encoding: gzip`, so the reservation falls back to
     // `uncompressed_size`. A raw gzip body (GCS) still reports its compressed
@@ -524,7 +624,7 @@ pub async fn get_chunk_data(
     // read stops at `MAX_CHUNK_BYTES`, and spare capacity is released before
     // return because the Arrow decoder keeps the allocation.
     if let Some(len) = response.content_length() {
-        ensure_chunk_content_length(len)?;
+        ensure_chunk_content_length(len).map_err(Fatal)?;
     }
     let capacity = chunk_reservation(
         response
@@ -533,14 +633,25 @@ pub async fn get_chunk_data(
             .unwrap_or(uncompressed_size),
     );
     let mut bytes = Vec::with_capacity(capacity);
-    while let Some(frame) = response.chunk().await.context(CommunicationSnafu)? {
-        append_chunk_bytes(&mut bytes, &frame)?;
+    loop {
+        let next = match read_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, response.chunk())
+                .await
+                .map_err(|_| {
+                    Retryable(
+                        ChunkReadTimeoutSnafu {
+                            read_timeout: timeout,
+                        }
+                        .build(),
+                    )
+                })?,
+            None => response.chunk().await,
+        };
+        let Some(frame) = next.context(CommunicationSnafu).map_err(Retryable)? else {
+            return Ok(bytes);
+        };
+        append_chunk_bytes(&mut bytes, &frame).map_err(Fatal)?;
     }
-    // gzip inflate is CPU-bound; run it on the blocking pool so a large chunk
-    // body doesn't stall this runtime worker.
-    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
-        .await
-        .context(SpawnBlockingSnafu)?
 }
 
 /// First allocation taken from an advertised length. Larger bodies grow from
@@ -628,6 +739,9 @@ fn inflate_gzip(data: &[u8], reservation: usize, max_bytes: usize) -> Result<Vec
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use arrow::array::{Array, ArrayRef, Int64Array, RecordBatch, StringArray};
     use arrow::datatypes::DataType;
@@ -1049,7 +1163,7 @@ mod tests {
                     compressed_size: compressed.len() as i64,
                     headers: HashMap::new(),
                 };
-                let bytes = get_chunk_data(Client::new(), chunk)
+                let bytes = get_chunk_data(Client::new(), chunk, None)
                     .await
                     .unwrap_or_else(|e| panic!("{name}: download failed: {e:?}"));
                 assert_eq!(bytes, plain, "{name} with size {uncompressed_size}");
@@ -1135,5 +1249,258 @@ mod tests {
             result,
             Err(ChunkError::MultipleInlineChunks { .. })
         ));
+    }
+
+    #[derive(Clone, Copy)]
+    enum Serve {
+        StallBeforeHeaders,
+        StallMidBody,
+        CloseMidBody,
+        Full,
+    }
+
+    /// Serves connection `n` according to `plan[n]`, repeating the last entry.
+    /// A stalled connection stays open and sends nothing more.
+    async fn chunk_server(plan: Vec<Serve>, body: Vec<u8>) -> (String, Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let index = counter.fetch_add(1, Ordering::SeqCst);
+                let serve = plan[index.min(plan.len() - 1)];
+                let body = body.clone();
+                tokio::spawn(async move {
+                    if !read_request_head(&mut socket).await {
+                        return;
+                    }
+                    let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", body.len());
+                    match serve {
+                        Serve::StallBeforeHeaders => {}
+                        Serve::StallMidBody => {
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(&body[..body.len() / 2]).await;
+                        }
+                        Serve::CloseMidBody => {
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(&body[..body.len() / 2]).await;
+                            return;
+                        }
+                        Serve::Full => {
+                            let _ = socket.write_all(head.as_bytes()).await;
+                            let _ = socket.write_all(&body).await;
+                            return;
+                        }
+                    }
+                    std::future::pending::<()>().await;
+                });
+            }
+        });
+        (url, accepted)
+    }
+
+    async fn read_request_head(socket: &mut tokio::net::TcpStream) -> bool {
+        let mut request = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            match socket.read(&mut buf).await {
+                Ok(0) | Err(_) => return false,
+                Ok(n) => request.extend_from_slice(&buf[..n]),
+            }
+        }
+        true
+    }
+
+    fn served_chunk(url: String, body: &[u8]) -> ChunkDownloadData {
+        ChunkDownloadData {
+            url,
+            row_count: 1,
+            uncompressed_size: body.len() as i64,
+            compressed_size: body.len() as i64,
+            headers: HashMap::new(),
+        }
+    }
+
+    const TEST_READ_TIMEOUT: Duration = Duration::from_millis(300);
+    const TEST_MAX_ATTEMPTS: u32 = 3;
+
+    fn fixed_backoff_policy(delay: Duration) -> RetryPolicy {
+        RetryPolicy {
+            max_attempts: TEST_MAX_ATTEMPTS,
+            backoff: crate::config::retry::BackoffConfig {
+                base: delay,
+                factor: 1.0,
+                cap: delay,
+                jitter: crate::config::retry::Jitter::None,
+            },
+            ..RetryPolicy::default()
+        }
+    }
+
+    fn served_body() -> Vec<u8> {
+        (0..64_000u32).flat_map(|i| i.to_le_bytes()).collect()
+    }
+
+    async fn fetch_served(
+        url: String,
+        body: &[u8],
+        read_timeout: Option<Duration>,
+    ) -> Result<Vec<u8>, ChunkError> {
+        get_chunk_data_with_policy(
+            Client::new(),
+            served_chunk(url, body),
+            read_timeout,
+            &fixed_backoff_policy(Duration::ZERO),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_retries_a_response_that_stalls_mid_body() {
+        let body = served_body();
+        let (url, accepted) =
+            chunk_server(vec![Serve::StallMidBody, Serve::Full], body.clone()).await;
+
+        let bytes = fetch_served(url, &body, Some(TEST_READ_TIMEOUT))
+            .await
+            .expect("the retried GET should return the full body");
+
+        assert_eq!(bytes, body);
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_retries_a_response_that_never_sends_headers() {
+        let body = served_body();
+        let (url, accepted) =
+            chunk_server(vec![Serve::StallBeforeHeaders, Serve::Full], body.clone()).await;
+
+        let bytes = fetch_served(url, &body, Some(TEST_READ_TIMEOUT))
+            .await
+            .expect("the retried GET should return the full body");
+
+        assert_eq!(bytes, body);
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_fails_with_a_read_timeout_once_every_body_stalls() {
+        let body = served_body();
+        let (url, accepted) = chunk_server(vec![Serve::StallMidBody], body.clone()).await;
+
+        let error = fetch_served(url, &body, Some(TEST_READ_TIMEOUT))
+            .await
+            .expect_err("a body that never finishes should fail the download");
+
+        assert!(
+            matches!(error, ChunkError::ChunkReadTimeout { read_timeout, .. } if read_timeout == TEST_READ_TIMEOUT),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), TEST_MAX_ATTEMPTS as usize);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_fails_with_a_read_timeout_once_every_response_wait_stalls() {
+        let body = served_body();
+        let (url, accepted) = chunk_server(vec![Serve::StallBeforeHeaders], body.clone()).await;
+
+        let error = fetch_served(url, &body, Some(TEST_READ_TIMEOUT))
+            .await
+            .expect_err("a response that never arrives should fail the download");
+
+        assert!(
+            matches!(error, ChunkError::ChunkReadTimeout { read_timeout, .. } if read_timeout == TEST_READ_TIMEOUT),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), TEST_MAX_ATTEMPTS as usize);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_keeps_a_slow_body_that_keeps_arriving() {
+        let body = served_body();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+        let served = body.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert!(read_request_head(&mut socket).await);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n",
+                served.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+            for part in served.chunks(served.len() / 4) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                socket.write_all(part).await.unwrap();
+            }
+        });
+
+        let bytes = fetch_served(url, &body, Some(Duration::from_secs(1)))
+            .await
+            .expect("a body that keeps arriving should not time out");
+
+        assert_eq!(bytes, body);
+        server
+            .await
+            .expect("the server should serve one connection");
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_backoff_between_status_retries_does_not_count_as_inactivity() {
+        let body = served_body();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.clone()))
+            .mount(&server)
+            .await;
+
+        let bytes = get_chunk_data_with_policy(
+            Client::new(),
+            served_chunk(format!("{}/chunk", server.uri()), &body),
+            Some(TEST_READ_TIMEOUT),
+            &fixed_backoff_policy(TEST_READ_TIMEOUT * 2),
+        )
+        .await
+        .expect("a 503 followed by a backoff longer than the read timeout should still succeed");
+
+        assert_eq!(bytes, body);
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_without_read_timeout_does_not_retry_a_broken_body() {
+        let body = served_body();
+        let (url, accepted) =
+            chunk_server(vec![Serve::CloseMidBody, Serve::Full], body.clone()).await;
+
+        let error = fetch_served(url, &body, None)
+            .await
+            .expect_err("a body cut short should fail when no read timeout is set");
+
+        assert!(
+            matches!(error, ChunkError::Communication { .. }),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn get_chunk_data_with_read_timeout_retries_a_broken_body() {
+        let body = served_body();
+        let (url, accepted) =
+            chunk_server(vec![Serve::CloseMidBody, Serve::Full], body.clone()).await;
+
+        let bytes = fetch_served(url, &body, Some(TEST_READ_TIMEOUT))
+            .await
+            .expect("the retried GET should return the full body");
+
+        assert_eq!(bytes, body);
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
     }
 }

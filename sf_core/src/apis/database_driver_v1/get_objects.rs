@@ -33,7 +33,6 @@ use super::connection::{Connection, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
-use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
@@ -699,8 +698,7 @@ async fn execute_show(
             .context(ConnectionNotInitializedSnafu)?;
         let query_parameters = conn.query_transport_parameters().await?;
         let retry_policy = conn.retry_policy.clone();
-        let session_params = conn.session_parameters.read().await;
-        let prefetch_config = PrefetchConfig::from_session_params(&session_params);
+        let prefetch_config = conn.prefetch_config().await;
         (
             query_parameters,
             http_client,

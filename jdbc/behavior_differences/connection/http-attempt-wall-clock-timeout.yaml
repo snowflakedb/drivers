@@ -1,7 +1,7 @@
 name: "HTTP attempts use a 300-second wall-clock timeout instead of socket inactivity"
 status: allowed
 type: api_incompatibility
-reviewed: true
+reviewed: false
 is_breaking_change: true
 impact: low
 old_driver_behavior: |
@@ -12,14 +12,20 @@ new_driver_behavior: |
   `retry_timeout` defaults to 300 seconds and bounds each ordinary HTTP attempt from its
   start until the response body finishes; arriving bytes do not extend it, and `0` removes
   the limit. `HTTP_CLIENT_SOCKET_TIMEOUT` is its JDBC alias. Result-chunk downloads are not
-  bounded by it and have no read timeout of their own.
+  bounded by it. They use an inactivity timeout instead, which limits the wait for response
+  headers and for each next piece of the body, and retries the chunk with backoff when it
+  expires. That timeout is `chunkDownloadReadTimeout` in seconds when set, otherwise an
+  explicitly set `HTTP_CLIENT_SOCKET_TIMEOUT`, otherwise 30 seconds. `0` or a negative
+  value disables the timer and also disables retries of a body that fails mid-download.
+  The timeout error names `chunkDownloadReadTimeout`.
 description: |
   A login or query attempt whose response body takes more than five minutes fails where it
-  previously completed, while a slow result chunk can now run indefinitely because the
-  per-packet timeout no longer covers it. The millisecond-to-second conversion of the alias
-  is BD#78.
+  previously completed. A result chunk that stops sending data fails after its retries once
+  30 seconds pass without data, where the old driver waited 300 seconds per packet; setting
+  `HTTP_CLIENT_SOCKET_TIMEOUT` explicitly restores the old wait for chunks. The
+  millisecond-to-second conversion of the alias is BD#78.
 status_rationale: |
   Accepted. The default duration is the same on both drivers; what differs is the model — a
   per-attempt wall-clock cap rather than an inactivity timer that resets on every packet —
-  and the new driver has no per-packet timer to reproduce.
+  and the new driver has no per-packet timer to reproduce outside result-chunk downloads.
 legacy_id: 77

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 
@@ -10,7 +11,7 @@ use super::database::Database;
 use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
-use crate::config::param_registry::Wrapper;
+use crate::config::param_registry::{JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS, Wrapper};
 use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -93,6 +94,12 @@ pub struct WrapperPresets {
     /// unset. Python and Node.js read `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`.
     /// JDBC, ODBC, and the shared default do not.
     pub use_proxy_env_default: bool,
+    /// Inactivity timeout for result chunk downloads when
+    /// `chunk_download_read_timeout` is unset. When `Some`, an explicit
+    /// `retry_timeout` overrides it; when `None`, chunk downloads have no
+    /// inactivity timer and `retry_timeout` does not apply to them. Only JDBC
+    /// sets it.
+    pub chunk_download_read_timeout_default: Option<Duration>,
 }
 
 impl Default for WrapperPresets {
@@ -120,6 +127,7 @@ impl Default for WrapperPresets {
             serialize_session_operations: false,
             validate_session_token: true,
             use_proxy_env_default: false,
+            chunk_download_read_timeout_default: None,
         }
     }
 }
@@ -151,6 +159,7 @@ impl WrapperPresets {
             serialize_session_operations: true,
             validate_session_token: true,
             use_proxy_env_default: false,
+            chunk_download_read_timeout_default: None,
         }
     }
 
@@ -163,6 +172,9 @@ impl WrapperPresets {
             honor_put_get_disable: true,
             clear_query_context_on_null_entries: false,
             put_compress_level_default: 6,
+            chunk_download_read_timeout_default: Some(Duration::from_secs(
+                JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
+            )),
             ..Self::default()
         }
     }
@@ -727,6 +739,30 @@ mod tests {
         assert!(WrapperPresets::odbc().legacy_empty_get_on_missing);
         assert!(!WrapperPresets::python().legacy_empty_get_on_missing);
         assert!(!WrapperPresets::default().legacy_empty_get_on_missing);
+    }
+
+    #[test]
+    fn only_jdbc_times_out_idle_chunk_downloads_by_default() {
+        assert_eq!(
+            WrapperPresets::jdbc().chunk_download_read_timeout_default,
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            WrapperPresets::python().chunk_download_read_timeout_default,
+            None
+        );
+        assert_eq!(
+            WrapperPresets::odbc().chunk_download_read_timeout_default,
+            None
+        );
+        assert_eq!(
+            WrapperPresets::nodejs().chunk_download_read_timeout_default,
+            None
+        );
+        assert_eq!(
+            WrapperPresets::default().chunk_download_read_timeout_default,
+            None
+        );
     }
 
     #[test]

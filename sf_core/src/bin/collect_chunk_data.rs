@@ -192,7 +192,7 @@ async fn save_arrow_data(
         let row_count = chunk.row_count;
         let uncompressed_size = chunk.uncompressed_size;
         let compressed_size = chunk.compressed_size;
-        let bytes = get_chunk_data(client.clone(), chunk).await?;
+        let bytes = get_chunk_data(client.clone(), chunk, None).await?;
         let saved_size = bytes.len() as u64;
         let path = output_dir.join(format!("chunk_{i}.bin"));
         tokio::fs::write(&path, &bytes).await?;
@@ -265,7 +265,7 @@ async fn save_json_data(
         let row_count = chunk.row_count;
         let uncompressed_size = chunk.uncompressed_size;
         let compressed_size = chunk.compressed_size;
-        let bytes = get_chunk_data(client.clone(), chunk).await?;
+        let bytes = get_chunk_data(client.clone(), chunk, None).await?;
         let saved_size = bytes.len() as u64;
         let path = output_dir.join(format!("chunk_{i}.bin"));
         tokio::fs::write(&path, &bytes).await?;

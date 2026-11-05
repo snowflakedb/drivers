@@ -13,6 +13,10 @@ pub struct HttpContext {
     pub idempotent: bool,
     /// Whether to allow POST/PATCH retries for this request (overrides global default).
     pub allow_post_retry: bool,
+    /// How long one attempt may wait for the response headers. An attempt that
+    /// waits longer is retried like a transport error. Backoff sleeps between
+    /// attempts do not count. `None` means no such timer.
+    pub response_timeout: Option<Duration>,
 }
 
 impl HttpContext {
@@ -22,9 +26,15 @@ impl HttpContext {
         Self {
             idempotent: matches!(method_clone, Method::PUT | Method::DELETE),
             allow_post_retry: false,
+            response_timeout: None,
             method,
             path: path.into(),
         }
+    }
+
+    pub fn with_response_timeout(mut self, timeout: Duration) -> Self {
+        self.response_timeout = Some(timeout);
+        self
     }
 
     /// Mark this context as explicitly idempotent (useful for DELETE, PUT, or POST overrides).
@@ -74,6 +84,13 @@ pub enum HttpError {
     ResponseTooLarge {
         size: u64,
         max_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("no response within {timeout:?} after {attempts} attempts"))]
+    ResponseTimeout {
+        timeout: Duration,
+        attempts: u32,
         #[snafu(implicit)]
         location: Location,
     },
@@ -229,7 +246,36 @@ where
             "outbound HTTP call"
         );
 
-        let result = req_builder.send().await;
+        let result = match http_ctx.response_timeout {
+            Some(response_timeout) => {
+                match tokio::time::timeout(response_timeout, req_builder.send()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        if !allow_retry(http_ctx, &policy.http)
+                            || retry_state.attempt >= max_attempts
+                        {
+                            return ResponseTimeoutSnafu {
+                                timeout: response_timeout,
+                                attempts: retry_state.attempt,
+                            }
+                            .fail();
+                        }
+                        tracing::warn!(
+                            method = %http_ctx.method,
+                            path = %log_path,
+                            attempt = retry_state.attempt,
+                            timeout_secs = response_timeout.as_secs(),
+                            "No response before the response timeout, retrying"
+                        );
+                        retry_state.last_status = LastStatus::Transport;
+                        let delay = transport_retry_delay(&mut sleep_ms, backoff, remaining)?;
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+            }
+            None => req_builder.send().await,
+        };
 
         match result {
             Ok(resp) => {
@@ -274,22 +320,31 @@ where
                     return Err(TransportSnafu.into_error(e));
                 }
                 retry_state.last_status = LastStatus::Transport;
-                sleep_ms = next_delay_ms(sleep_ms, backoff);
-                let delay = Duration::from_millis(sleep_ms as u64);
-                if let Some(rem) = remaining
-                    && delay > rem
-                {
-                    return RetryAfterExceededSnafu {
-                        retry_after: delay,
-                        remaining: rem,
-                    }
-                    .fail();
-                }
+                let delay = transport_retry_delay(&mut sleep_ms, backoff, remaining)?;
                 tokio::time::sleep(delay).await;
                 continue;
             }
         }
     }
+}
+
+fn transport_retry_delay(
+    sleep_ms: &mut f64,
+    backoff: &BackoffConfig,
+    remaining: Option<Duration>,
+) -> Result<Duration, HttpError> {
+    *sleep_ms = next_delay_ms(*sleep_ms, backoff);
+    let delay = Duration::from_millis(*sleep_ms as u64);
+    if let Some(rem) = remaining
+        && delay > rem
+    {
+        return RetryAfterExceededSnafu {
+            retry_after: delay,
+            remaining: rem,
+        }
+        .fail();
+    }
+    Ok(delay)
 }
 
 fn should_retry_status(status: StatusCode, extra: &BTreeSet<u16>) -> bool {
@@ -310,7 +365,7 @@ fn allow_retry(http_ctx: &HttpContext, http: &HttpPolicy) -> bool {
     }
 }
 
-fn next_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
+pub(crate) fn next_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
     match backoff.jitter {
         Jitter::None => ((prev_ms.max(backoff.base.as_millis() as f64)) * backoff.factor)
             .min(backoff.cap.as_millis() as f64),

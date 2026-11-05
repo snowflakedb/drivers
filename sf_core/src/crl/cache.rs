@@ -1334,6 +1334,7 @@ impl CrlCache {
                     }),
                     HttpError::DeadlineExceeded { .. }
                     | HttpError::RetryAfterExceeded { .. }
+                    | HttpError::ResponseTimeout { .. }
                     | HttpError::MaxAttempts { .. } => {
                         crate::crl::error::HttpTimeoutSnafu {}.fail()
                     }

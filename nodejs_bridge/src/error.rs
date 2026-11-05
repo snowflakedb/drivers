@@ -350,7 +350,9 @@ fn chunk_download_failure(error: &ApiError) -> Option<ChunkDownloadFailure> {
         direct => direct,
     };
     match download_error {
-        ChunkError::Communication { .. } => Some(ChunkDownloadFailure::Unreachable),
+        ChunkError::Communication { .. } | ChunkError::ChunkReadTimeout { .. } => {
+            Some(ChunkDownloadFailure::Unreachable)
+        }
         ChunkError::UnsuccessfulHttpStatusCode { status, .. } => {
             Some(ChunkDownloadFailure::ErrorStatus(status.to_string()))
         }
