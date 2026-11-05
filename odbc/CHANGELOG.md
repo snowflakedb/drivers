@@ -4,6 +4,52 @@
 
 In-progress notes are files under `changelog/unreleased/`.
 
+## v4.3.0
+
+Breaking changes:
+
+- Changed `SQLBindCol` and `SQLGetData` with `SQL_C_DEFAULT` on `INTERVAL` result columns to return a `SQL_INTERVAL_STRUCT` instead of the ANSI interval literal string, failing with `22015` when the leading field exceeds the interval leading precision (2 digits by default) and with `HY090` when a nonzero buffer length is smaller than the struct; binding `SQL_C_CHAR` still returns the string. (snowflakedb/drivers#3020)
+
+New features:
+
+- Added support for a leading `~` in `token_file_path`, so a path such as `~/.snowflake/pat.token` is read from the home directory when loading a PAT, OAuth, or OIDC bearer token. (snowflakedb/drivers#3049)
+
+Changes:
+
+- Changed query-result `SQL_DESC_TYPE_NAME` for FILE columns to report `FILE`. `SQLDescribeCol` stays `SQL_VARCHAR`, including when `ODBC_USE_CUSTOM_SQL_DATA_TYPES` is enabled. (snowflakedb/drivers#2833)
+- Changed the Windows installer to reject a driver name that contains `#`. (snowflakedb/drivers#2963)
+
+Bug fixes:
+
+- Added the `X-Snowflake-Service` request header, echoing the `SERVICE_NAME` session parameter on queries so the proxy routes requests to the correct HTAP cluster. (snowflakedb/drivers#3068)
+- Fixed catalog function SMALLINT and INTEGER result columns reporting NUMBER display size, octet length, and type names. `SQL_DESC_LOCAL_TYPE_NAME` on those columns now matches the 3.x driver (`SSMALLINT`, `USMALLINT`, `SINTEGER`), and unsigned `USER_DATA_TYPE` reports display size 5. Catalog wide-character columns report octet length as four bytes per character, and `SQLSpecialColumns` `COLUMN_NAME` reports character length 255. (snowflakedb/drivers#2760)
+- Fixed the driver resubmitting a running query when the session token expired during a long-running server-side poll; the driver now refreshes the token and retries only the result poll. (snowflakedb/drivers#3127)
+- Fixed `SQLGetEnvAttr` and `SQLSetEnvAttr` of an unrecognized environment attribute returning HYC00 instead of HY092. (snowflakedb/drivers#3179)
+- Fixed SQLExecDirect failing with a parameter-binding error for statements that have no parameters when only a deferred length or indicator pointer was set. (snowflakedb/drivers#3045)
+- Fixed SQLExecDirect treating SQL_DESC_OCTET_LENGTH_PTR as a null indicator on non-character parameters. (snowflakedb/drivers#3045)
+- Fixed the Linux RPM and deb packages so removing a package unregisters the driver name recorded at install, including a custom `SF_DRIVER_NAME`, and an upgrade keeps that registration unless `SF_DRIVER_NAME` names a different driver, which replaces the old registration. (snowflakedb/drivers#2964)
+- Fixed the Linux RPM upgrade so the driver and the `snowflake` DSN stay registered, while an upgrade from a driver version released before this fix registers `SF_DRIVER_NAME` or the default `Snowflake ODBC` name and leaves a different custom name from that version registered. (snowflakedb/drivers#2964)
+- Fixed the macOS ODBC driver library so its install name is `/opt/snowflake/snowflakeodbc/lib/libsfodbc.dylib`. (snowflakedb/drivers#3051)
+- Fixed the macOS installer so installed driver files are owned by root. (snowflakedb/drivers#3046)
+- Fixed the macOS installer so it registers the driver in the system-wide `/Library/ODBC/odbcinst.ini` as well as for the installing user. (snowflakedb/drivers#3055)
+- Fixed `SQLGetEnvAttr(SQL_ATTR_DRIVER_UNICODE_TYPE)` returning an unsupported-attribute error, so iODBC 3.52.14 and later converts wide strings to the driver's UTF-16 or UTF-32 encoding. (snowflakedb/drivers#3179)
+- Fixed column-wise `SQLBindCol` arrays bound as `SQL_C_DEFAULT` with a zero `BufferLength` writing every fetched row into the first array element instead of advancing by the size of the default C type. (snowflakedb/drivers#3027)
+- Fixed `SQLBindParameter` with `SQL_C_DEFAULT` and a `SQL_INTERVAL_*` parameter type reading the bound `SQL_INTERVAL_STRUCT` as a character string instead of as the matching `SQL_C_INTERVAL_*` type. (snowflakedb/drivers#3020)
+- Fixed `SQLPutData` rejecting character and binary data bound as `SQL_C_DEFAULT` with `HY019` when it was sent in more than one piece. (snowflakedb/drivers#3027)
+- Fixed `SQLBindParameter` with `SQL_C_DEFAULT` and `SQL_REAL` reading the bound value as an 8-byte double instead of a 4-byte `SQL_C_FLOAT`, which inserted wrong values and misread parameter arrays. (snowflakedb/drivers#3010)
+- Fixed `SQL_C_DEFAULT` on `SQL_WCHAR`, `SQL_WVARCHAR`, and `SQL_WLONGVARCHAR` treating data as narrow characters instead of `SQL_C_WCHAR`, which truncated or corrupted bound wide-string parameters and returned catalog function wide-character columns as narrow strings. (snowflakedb/drivers#3013)
+- Fixed `SQLColumns` and `SQLGetTypeInfo` `NUM_PREC_RADIX` reporting INTEGER instead of the SMALLINT type the ODBC specification defines. (snowflakedb/drivers#2760)
+- Fixed `SQLTables` and `SQLColumns` so that, with `CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX` enabled, a non-NULL catalog argument such as `%` is no longer limited to the current schema, and an unset session database or schema no longer makes the call return no rows. (snowflakedb/drivers#2862)
+- Fixed the Windows installer so uninstalling or upgrading a driver registered under a custom `DRIVER_NAME` removes that registration when this version or a later one installed it and leaves any other `Snowflake ODBC` registration in place, while an upgrade from an earlier installer still removes the default `Snowflake ODBC` registration unless that version is uninstalled with its original `DRIVER_NAME` first. (snowflakedb/drivers#2963)
+- Fixed the Windows ODBC driver so applications can call `SFGetFipsStatus` before connecting. (snowflakedb/drivers#2837)
+- Fixed the macOS ODBC installer so the driver-name dialog appears only during an interactive Installer.app install. (snowflakedb/drivers#3048)
+- Fixed `validate_default_parameters=true` not failing login when the specified database, schema, or warehouse does not exist. (snowflakedb/drivers#2974)
+- Fixed Windows wide-string calls being mis-decoded, which failed or crashed the connection, when `sf.odbc.ini` sets `DriverManagerEncoding=UTF-32`; the driver now uses UTF-16 and logs a warning. (snowflakedb/drivers#2961)
+
+Internal changes:
+
+- Changed `SQL_C_DEFAULT` handling to resolve the C type once from a shared SQL-type table before parameter binding and result conversion, replacing the per-converter `SQL_C_DEFAULT` arms. (snowflakedb/drivers#3027)
+
 ## v4.2.0
 
 Changes:
