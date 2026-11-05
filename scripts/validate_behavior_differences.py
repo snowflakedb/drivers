@@ -6,11 +6,13 @@ Monolith file shape (every driver):
     <positive_int_id>:
       <fields...>
 
-Python, ODBC, and JDBC also accept one file per entry under
+Python, ODBC, JDBC, and .NET also accept one file per entry under
 ``<driver>/behavior_differences/<area>/<slug>.yaml`` (``python/behavior_differences``,
-``odbc_tests/behavior_differences``, or ``jdbc/behavior_differences``). The file body is
-the entry itself (no behavior_differences wrapper). The slug is the id. A new Python,
-ODBC, or JDBC integer key in the monolith is rejected. Deleting an existing integer key
+``odbc_tests/behavior_differences``, ``jdbc/behavior_differences``, or
+``dotnet/behavior_differences``). The file body is the entry itself (no
+behavior_differences wrapper). The slug is the id. A new Python, ODBC, JDBC, or .NET
+integer key in the monolith is rejected. The .NET monolith has no entries; every .NET
+entry is a file. Deleting an existing integer key
 there is allowed only when exactly one of those files sets legacy_id to that key, and
 the key is no longer in the monolith. That legacy_id stays valid after the deletion is
 in the baseline. The baseline is HEAD locally and BD_BASE_SHA in CI (the pull-request
@@ -31,7 +33,7 @@ Per-entry schema:
 
   Optional:
     reviewed (bool) — triage flag; must be true/false when present.
-    status_rationale (str) — required when reviewed is true (ODBC/JDBC convention).
+    status_rationale (str) — required when reviewed is true (ODBC/JDBC/.NET convention).
     description (str) — extra context, migration notes, spec links.
     old_driver_behavior (str) — behavior of the legacy/reference driver.
     new_driver_behavior (str) — behavior of the universal driver.
@@ -40,7 +42,7 @@ Per-entry schema:
       rejected while the integer is still a key in the monolith. It stays set after
       the baseline itself no longer has the key, so BD#<integer> keeps resolving.
 
-  ODBC and JDBC rule:
+  ODBC, JDBC, and .NET rule:
     When reviewed is true, status_rationale must be a non-empty string.
 
   Conventions for new entries (not auto-filled by this script):
@@ -156,6 +158,7 @@ GATED_FILE_DIRS: dict[str, str] = {
     "python/BehaviorDifferences.yaml": "python/behavior_differences",
     "odbc_tests/BehaviorDifferences.yaml": "odbc_tests/behavior_differences",
     "jdbc/BehaviorDifferences.yaml": "jdbc/behavior_differences",
+    "dotnet/BehaviorDifferences.yaml": "dotnet/behavior_differences",
 }
 
 # Monolith paths whose entries, and per-file entries, need a non-empty
@@ -163,6 +166,7 @@ GATED_FILE_DIRS: dict[str, str] = {
 STATUS_RATIONALE_REQUIRED = frozenset({
     "odbc_tests/BehaviorDifferences.yaml",
     "jdbc/BehaviorDifferences.yaml",
+    "dotnet/BehaviorDifferences.yaml",
 })
 
 DEFAULT_IMPACT = BDImpact.HIGH
@@ -176,6 +180,7 @@ BD_FILES: list[tuple[str, Path]] = [
     ("python/BehaviorDifferences.yaml", _REPO_ROOT / "python" / "BehaviorDifferences.yaml"),
     ("jdbc/BehaviorDifferences.yaml", _REPO_ROOT / "jdbc" / "BehaviorDifferences.yaml"),
     ("nodejs/BehaviorDifferences.yaml", _REPO_ROOT / "nodejs" / "BehaviorDifferences.yaml"),
+    ("dotnet/BehaviorDifferences.yaml", _REPO_ROOT / "dotnet" / "BehaviorDifferences.yaml"),
 ]
 
 
@@ -469,8 +474,8 @@ def check_bd_files(
     """Validate per-file entries.
 
     ``files`` is ``(path relative to dir_label, YAML text)`` using forward
-    slashes, each expected to be ``<area>/<slug>.yaml``. ODBC and JDBC pass
-    ``require_status_rationale`` so a reviewed entry still needs a non-empty
+    slashes, each expected to be ``<area>/<slug>.yaml``. ODBC, JDBC, and .NET
+    pass ``require_status_rationale`` so a reviewed entry still needs a non-empty
     ``status_rationale``.
     """
     errors: list[str] = []

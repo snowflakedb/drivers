@@ -114,7 +114,7 @@ When no `type` is specified in the YAML:
 
 ### Test Implementation
 
-Behavior Differences are referenced in test code using `BD#<id>`. `<id>` is a number for Node.js and for existing Python, ODBC, and JDBC entries. A new Python, ODBC, or JDBC entry uses a kebab-case slug, for example `BD#private-key-password-renamed`.
+Behavior Differences are referenced in test code using `BD#<id>`. `<id>` is a number for Node.js and for existing Python, ODBC, and JDBC entries. A new Python, ODBC, JDBC, or .NET entry uses a kebab-case slug, for example `BD#private-key-password-renamed`.
 
 ```python
 # Python example
@@ -142,9 +142,9 @@ NEW_DRIVER_ONLY("BD#1") {
 
 ### Adding New Behavior Differences
 
-**Python, ODBC, and JDBC** — add a file. Do not add a new integer key to `python/BehaviorDifferences.yaml`, `odbc_tests/BehaviorDifferences.yaml`, or `jdbc/BehaviorDifferences.yaml`.
+**Python, ODBC, JDBC, and .NET** — add a file. Do not add a new integer key to `python/BehaviorDifferences.yaml`, `odbc_tests/BehaviorDifferences.yaml`, `jdbc/BehaviorDifferences.yaml`, or `dotnet/BehaviorDifferences.yaml`. `dotnet/BehaviorDifferences.yaml` has no entries.
 
-1. **Add a file**: `python/behavior_differences/<area>/<slug>.yaml`, `odbc_tests/behavior_differences/<area>/<slug>.yaml`, or `jdbc/behavior_differences/<area>/<slug>.yaml`. `<area>` is a name in `BD_AREAS` in `scripts/validate_behavior_differences.py`. `<slug>` is a kebab-case id such as `private-key-password-renamed`. The file body is the entry itself (`name`, `status`, `type`, `impact`, `is_breaking_change`, and the optional fields). A new entry has `reviewed: false` and no `legacy_id`. A reviewed ODBC or JDBC entry includes a non-empty `status_rationale`.
+1. **Add a file**: `python/behavior_differences/<area>/<slug>.yaml`, `odbc_tests/behavior_differences/<area>/<slug>.yaml`, `jdbc/behavior_differences/<area>/<slug>.yaml`, or `dotnet/behavior_differences/<area>/<slug>.yaml`. `<area>` is a name in `BD_AREAS` in `scripts/validate_behavior_differences.py`. `<slug>` is a kebab-case id such as `private-key-password-renamed`. The file body is the entry itself (`name`, `status`, `type`, `impact`, `is_breaking_change`, and the optional fields). A new entry has `reviewed: false` and no `legacy_id`. A reviewed ODBC, JDBC, or .NET entry includes a non-empty `status_rationale`.
 2. **Implement tests**: reference `BD#<slug>`, for example `OLD_DRIVER_ONLY("BD#private-key-password-renamed")` or `@SkipOldDriver("BD#private-key-password-renamed")`.
 3. **Run the check**: `python3 scripts/validate_behavior_differences.py`.
 

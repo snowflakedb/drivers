@@ -158,7 +158,7 @@ repos:
         entry: python3 scripts/validate_behavior_differences.py
         pass_filenames: false
         additional_dependencies: ['pyyaml']
-        files: ^(odbc_tests|python|jdbc|nodejs)/BehaviorDifferences\.yaml$|^(python|odbc_tests|jdbc)/behavior_differences/.+\.yaml$|^scripts/validate_behavior_differences\.py$
+        files: ^(odbc_tests|python|jdbc|nodejs|dotnet)/BehaviorDifferences\.yaml$|^(python|odbc_tests|jdbc|dotnet)/behavior_differences/.+\.yaml$|^scripts/validate_behavior_differences\.py$
         language: python
     -   id: behavior-differences-validator-test
         name: Behavioral Differences validator tests

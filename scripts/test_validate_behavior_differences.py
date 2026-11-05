@@ -27,6 +27,8 @@ ODBC_LEGACY_PATH = f"{ODBC_DIR}/put-get/put-expands-leading-tilde.yaml"
 JDBC_BD = "jdbc/BehaviorDifferences.yaml"
 JDBC_DIR = "jdbc/behavior_differences"
 JDBC_LEGACY_PATH = f"{JDBC_DIR}/session/query-context-cache-same-priority.yaml"
+DOTNET_BD = "dotnet/BehaviorDifferences.yaml"
+DOTNET_DIR = "dotnet/behavior_differences"
 
 
 def _load():
@@ -182,6 +184,40 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
         text = _monolith(1).replace("reviewed: false", "reviewed: true")
         result = self.mod.check_monolith_text(JDBC_BD, text, {1}, gated_file_dir=JDBC_DIR)
         self.assertTrue(any("status_rationale" in err for err in result.errors))
+
+    def test_new_dotnet_integer_key_is_rejected(self) -> None:
+        result = self.mod.check_monolith_text(
+            DOTNET_BD,
+            _monolith(99),
+            set(),
+            gated_file_dir=DOTNET_DIR,
+        )
+        self.assertTrue(
+            any("BD-99" in err and "new entries must be a file" in err for err in result.errors)
+        )
+        self.assertEqual(result.removed, set())
+
+    def test_empty_dotnet_monolith_is_valid(self) -> None:
+        result = self.mod.check_monolith_text(
+            DOTNET_BD,
+            "behavior_differences: {}\n",
+            set(),
+            gated_file_dir=DOTNET_DIR,
+        )
+        self.assertEqual(result.errors, [])
+
+    def test_dotnet_reviewed_file_requires_status_rationale(self) -> None:
+        reviewed = _entry_body().replace("reviewed: false", "reviewed: true")
+        result = self.mod.check_bd_files(
+            DOTNET_DIR,
+            [("connection/untrusted-root-rejected.yaml", reviewed)],
+            require_status_rationale=True,
+        )
+        self.assertTrue(any("status_rationale" in err for err in result.errors))
+
+    def test_dotnet_is_gated_and_requires_status_rationale(self) -> None:
+        self.assertEqual(self.mod.GATED_FILE_DIRS[DOTNET_BD], DOTNET_DIR)
+        self.assertIn(DOTNET_BD, self.mod.STATUS_RATIONALE_REQUIRED)
 
     def test_nodejs_removal_is_an_error(self) -> None:
         result = self.mod.check_monolith_text(
