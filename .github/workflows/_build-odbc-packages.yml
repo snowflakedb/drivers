@@ -489,6 +489,21 @@ jobs:
         if: matrix.fips && success()
         run: python3 ci/fips/check_linked_crypto.py ".cargo-target-rpm/${{ matrix.target }}/release/libsfodbc.so"
 
+      - name: Record FIPS RPM evidence
+        if: matrix.fips && success()
+        run: |
+          set -euo pipefail
+          matches=()
+          while IFS= read -r -d '' file; do
+            matches+=("$file")
+          done < <(find build -maxdepth 1 -name 'snowflake-odbc-fips-*.rpm' -print0)
+          if [[ ${#matches[@]} -ne 1 ]]; then
+            echo "expected one FIPS RPM, found ${#matches[@]}" >&2
+            exit 1
+          fi
+          python3 ci/fips/package_evidence.py --package "${matches[0]}" --output-dir fips-evidence/rpm
+          echo "FIPS_RPM_PACKAGE=${matches[0]}" >> "$GITHUB_ENV"
+
       - name: Save Cargo registry cache (RPM build)
         if: steps.rpm-cargo-registry.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -511,11 +526,22 @@ jobs:
           path: .cargo-target-rpm
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Check linked FIPS crypto in the hashed RPM
+        if: matrix.fips && success()
+        run: python3 ci/fips/check_packaged_driver.py --package "$FIPS_RPM_PACKAGE"
+
       - name: Upload RPM
         uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}rpm-${{ matrix.arch }}
           path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.rpm
+
+      - name: Upload FIPS RPM evidence
+        if: matrix.fips && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-odbc-fips-rpm-${{ matrix.arch }}-evidence
+          path: fips-evidence/rpm/
 
   build_pkg:
     # The FIPS row builds both slices with --features fips and leaves release
@@ -624,11 +650,37 @@ jobs:
           DRIVER_ARM64: .cargo-target-pkg/aarch64-apple-darwin/release/libsfodbc.dylib
           PKG_VARIANT: ${{ matrix.fips && 'fips' || '' }}
 
+      - name: Record FIPS pkg evidence
+        if: matrix.fips && success()
+        run: |
+          set -euo pipefail
+          matches=()
+          while IFS= read -r -d '' file; do
+            matches+=("$file")
+          done < <(find build -maxdepth 1 -name 'snowflake-odbc-fips-*.universal.pkg' -print0)
+          if [[ ${#matches[@]} -ne 1 ]]; then
+            echo "expected one FIPS pkg, found ${#matches[@]}" >&2
+            exit 1
+          fi
+          python3 ci/fips/package_evidence.py --package "${matches[0]}" --output-dir fips-evidence/pkg
+          echo "FIPS_PKG_PACKAGE=${matches[0]}" >> "$GITHUB_ENV"
+
+      - name: Check linked FIPS crypto in the hashed pkg
+        if: matrix.fips && success()
+        run: python3 ci/fips/check_packaged_driver.py --package "$FIPS_PKG_PACKAGE"
+
       - name: Upload pkg
         uses: actions/upload-artifact@v7
         with:
           name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}macos-universal
           path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.universal.pkg
+
+      - name: Upload FIPS pkg evidence
+        if: matrix.fips && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-odbc-fips-macos-universal-evidence
+          path: fips-evidence/pkg/
 
   build_deb:
     # FIPS rows are a second package. The image's FIPS=1 layer supplies GCC 13
@@ -743,6 +795,28 @@ jobs:
         if: matrix.fips && success()
         run: python3 ci/fips/check_linked_crypto.py ".cargo-target-deb/${{ matrix.target }}/release/libsfodbc.so"
 
+      - name: Record FIPS deb and tgz evidence
+        if: matrix.fips && success()
+        run: |
+          set -euo pipefail
+          record() {
+            local pattern="$1"
+            local out="$2"
+            local env_name="$3"
+            local matches=()
+            while IFS= read -r -d '' file; do
+              matches+=("$file")
+            done < <(find build -maxdepth 1 -name "$pattern" -print0)
+            if [[ ${#matches[@]} -ne 1 ]]; then
+              echo "expected one ${pattern}, found ${#matches[@]}" >&2
+              exit 1
+            fi
+            python3 ci/fips/package_evidence.py --package "${matches[0]}" --output-dir "$out"
+            echo "${env_name}=${matches[0]}" >> "$GITHUB_ENV"
+          }
+          record 'snowflake-odbc-fips-*.deb' fips-evidence/deb FIPS_DEB_PACKAGE
+          record 'snowflake-odbc-fips-*.tar.gz' fips-evidence/tgz FIPS_TGZ_PACKAGE
+
       - name: Save Cargo registry cache (DEB build)
         if: steps.deb-cargo-registry.outputs.cache-hit != 'true'
         continue-on-error: true
@@ -765,6 +839,12 @@ jobs:
           path: .cargo-target-deb
           key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ matrix.fips && 'fips-' || '' }}deb-release-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Check linked FIPS crypto in the hashed deb and tgz
+        if: matrix.fips && success()
+        run: |
+          python3 ci/fips/check_packaged_driver.py --package "$FIPS_DEB_PACKAGE"
+          python3 ci/fips/check_packaged_driver.py --package "$FIPS_TGZ_PACKAGE"
+
       - name: Upload .deb
         uses: actions/upload-artifact@v7
         with:
@@ -776,3 +856,17 @@ jobs:
         with:
           name: snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}tgz-${{ matrix.arch }}
           path: build/snowflake-odbc-${{ matrix.fips && 'fips-' || '' }}*.tar.gz
+
+      - name: Upload FIPS deb evidence
+        if: matrix.fips && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-odbc-fips-deb-${{ matrix.arch }}-evidence
+          path: fips-evidence/deb/
+
+      - name: Upload FIPS tgz evidence
+        if: matrix.fips && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-odbc-fips-tgz-${{ matrix.arch }}-evidence
+          path: fips-evidence/tgz/

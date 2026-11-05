@@ -25,8 +25,10 @@ https://github.com/snowflakedb/self-serve-snowflakedb/blob/26ecbd5af4827db3e40fe
 
 ## Package bundle
 
-`package_evidence.py` writes a bundle for one finished package file (`.rpm`, `.deb`, `.tar.gz`, `.pkg`, or `.msi`). The subject is that package file. `sbom.cdx.json` lists the files the package installs, and `manifest.json` sets `stage` to `gha-package-candidate` with `covers_releng_published_bytes` false. The package jobs do not call this script yet.
+`package_evidence.py` writes a bundle for one finished package file (`.rpm`, `.deb`, `.tar.gz`, `.pkg`, or `.msi`). The subject is that package file. `sbom.cdx.json` lists the files the package installs, and `manifest.json` sets `stage` to `gha-package-candidate` with `covers_releng_published_bytes` false. The FIPS rows of the RPM, deb, tgz, and macOS pkg jobs run it after the package file exists and upload the bundle next to that package. The FIPS Windows MSI job does not record a bundle.
 
 ## Other packages
+
+The FIPS RPM, deb, tgz, and macOS pkg jobs extract `libsfodbc.so` or `libsfodbc.dylib` from the package file they hashed and run `check_linked_crypto.py` on that extracted file. The earlier linkage check still reads the library in the Cargo target directory, before packaging.
 
 Python, JDBC, and .NET release workflows do not build FIPS packages yet. A FIPS lane calls `.github/actions/fips-release-evidence` with the bridge `Cargo.toml`, the same features and target as the build, and the unstripped library before any byte-changing sign or strip step. npm has no lockfile in this repo, so the Node bundle does not include an npm dependency SBOM.

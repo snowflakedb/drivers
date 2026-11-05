@@ -19,6 +19,8 @@ on:
       - '.github/actions/install-wix-from-artifact/**'
       - '.github/workflows/build-odbc-packages.yml'
       - '.github/workflows/_build-odbc-packages.yml'
+      - 'ci/fips/package_evidence.py'
+      - 'ci/fips/check_packaged_driver.py'
   workflow_dispatch:
 
 concurrency:

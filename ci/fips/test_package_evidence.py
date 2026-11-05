@@ -166,6 +166,42 @@ class PackageEvidenceTests(unittest.TestCase):
         with self.assertRaises(evidence.PackageEvidenceError):
             evidence.write_bundle(package, output)
 
+    def test_packaged_driver_is_the_regular_file_inside_the_archive(self) -> None:
+        body = b"driver-bytes"
+        package, _output = self.write(
+            "snowflake-odbc-fips-1.2.3.x86_64.tar.gz",
+            _tar_gz([
+                ("usr/lib/libsfodbc.so", body),
+                ("usr/lib/libsfodbc.so.link", None),
+            ]),
+        )
+        dest = package.parent / "payload"
+        dest.mkdir()
+        found = evidence.packaged_driver(package, dest)
+        self.assertEqual(found.read_bytes(), body)
+        self.assertEqual(found.name, "libsfodbc.so")
+
+    def test_packaged_driver_rejects_a_missing_or_duplicate_driver(self) -> None:
+        missing, _output = self.write(
+            "snowflake-odbc-fips-1.2.3.x86_64.tar.gz",
+            _tar_gz([("usr/lib/libsfodbc.so", None)]),
+        )
+        missing_dest = missing.parent / "payload"
+        missing_dest.mkdir()
+        with self.assertRaises(evidence.PackageEvidenceError):
+            evidence.packaged_driver(missing, missing_dest)
+        duplicate, _output = self.write(
+            "snowflake-odbc-fips-1.2.3.x86_64.tar.gz",
+            _tar_gz([
+                ("usr/lib/libsfodbc.so", b"one"),
+                ("opt/lib/libsfodbc.so", b"two"),
+            ]),
+        )
+        duplicate_dest = duplicate.parent / "payload"
+        duplicate_dest.mkdir()
+        with self.assertRaises(evidence.PackageEvidenceError):
+            evidence.packaged_driver(duplicate, duplicate_dest)
+
     def test_unknown_package_type_is_rejected(self) -> None:
         package, output = self.write("notes.txt", b"hello")
         with self.assertRaises(evidence.PackageEvidenceError):

@@ -216,6 +216,22 @@ def extract_msi(package: Path, dest: Path, runner=subprocess.run) -> None:
     _run(["msiexec", "/a", str(package), "/qn", f"TARGETDIR={target}"], runner)
 
 
+DRIVER_FILENAMES = frozenset({"libsfodbc.so", "libsfodbc.dylib"})
+
+
+def packaged_driver(package: Path, dest: Path, runner=subprocess.run) -> Path:
+    extract_payload(package, dest, runner)
+    found = sorted(
+        path for path in dest.rglob("*")
+        if path.is_file() and not path.is_symlink() and path.name in DRIVER_FILENAMES
+    )
+    if len(found) != 1:
+        raise PackageEvidenceError(
+            f"{package.name}: expected one packaged libsfodbc driver, found {len(found)}"
+        )
+    return found[0]
+
+
 def extract_payload(package: Path, dest: Path, runner=subprocess.run) -> None:
     name = package.name.lower()
     if name.endswith((".tar.gz", ".tgz")):
