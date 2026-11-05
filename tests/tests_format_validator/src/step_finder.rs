@@ -23,7 +23,7 @@ static JAVA_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static DOTNET_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static DOTNET_METHOD_DECL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:public|protected|private)?\s*(?:static\s+)?(?:(?:virtual|override)\s+)?(?:async\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
     )
@@ -56,7 +56,9 @@ static JS_PENDING_TEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Returns true if the trimmed line is a recognized xUnit C# test attribute.
-fn is_dotnet_test_attribute(s: &str) -> bool {
+pub(crate) const DOTNET_ATTRIBUTE_LOOKAHEAD_LINES: usize = 20;
+
+pub(crate) fn is_dotnet_test_attribute(s: &str) -> bool {
     s.starts_with("[SnowflakeFact") || s.starts_with("[SnowflakeTheory")
 }
 
@@ -292,7 +294,12 @@ impl MethodBoundaryFinder {
                         // Look ahead for the method declaration (up to 20 lines to handle
                         // multiple [InlineData]/[MemberData] attributes between the test
                         // attribute and the method signature)
-                        for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(20) {
+                        for (j, method_line) in lines
+                            .iter()
+                            .enumerate()
+                            .skip(i + 1)
+                            .take(DOTNET_ATTRIBUTE_LOOKAHEAD_LINES)
+                        {
                             if let Some(captures) = dotnet_method_regex.captures(method_line.trim())
                             {
                                 let method_name = captures[1].to_string();

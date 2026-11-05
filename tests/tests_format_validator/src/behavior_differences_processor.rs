@@ -51,6 +51,7 @@ impl BehaviorDifferencesProcessor {
             Language::Odbc,
             Language::Jdbc,
             Language::Python,
+            Language::Dotnet,
             Language::Rust,
         ] {
             let handler = factory.create_handler(language);

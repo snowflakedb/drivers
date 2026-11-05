@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use super::base_handler::BaseDriverHandler;
+use super::dotnet_handler::DotnetHandler;
 use super::jdbc_handler::JdbcHandler;
 use super::odbc_handler::OdbcHandler;
 use super::python_handler::PythonHandler;
@@ -20,6 +21,7 @@ impl DriverHandlerFactory {
             Language::Odbc => Box::new(OdbcHandler::new(self.workspace_root.clone())),
             Language::Python => Box::new(PythonHandler::new(self.workspace_root.clone())),
             Language::Jdbc => Box::new(JdbcHandler::new(self.workspace_root.clone())),
+            Language::Dotnet => Box::new(DotnetHandler::new(self.workspace_root.clone())),
             // Other languages don't support Behavior Differences yet
             _ => Box::new(NoOpHandler::new()),
         }

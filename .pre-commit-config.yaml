@@ -214,7 +214,7 @@ repos:
             | tests/tests_format_validator/.*\.(rs|toml|lock|sh)
             | (sf_core/tests|jdbc/src/test|odbc_tests|python/tests|dotnet/tests|nodejs/tests)/.*\.(rs|java|cpp|hpp|py|cs|ts|js)
             | (odbc_tests|python|jdbc|nodejs|dotnet)/BehaviorDifferences\.yaml
-            | (python|odbc_tests|jdbc)/behavior_differences/.*\.yaml
+            | (python|odbc_tests|jdbc|dotnet)/behavior_differences/.*\.yaml
           )$
         language: system
     -   id: ai-rules-sync

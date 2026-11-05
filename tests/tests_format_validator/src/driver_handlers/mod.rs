@@ -1,4 +1,5 @@
 pub mod base_handler;
+pub mod dotnet_handler;
 pub mod factory;
 pub mod jdbc_handler;
 pub mod odbc_handler;
