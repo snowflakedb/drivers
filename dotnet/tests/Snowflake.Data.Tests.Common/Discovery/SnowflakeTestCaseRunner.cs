@@ -16,6 +16,8 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
         string? skipReason,
         ExplicitOption explicitOption,
         object?[] constructorArguments,
+        ParallelMode parallelMode,
+        ExecutionScheduler scheduler,
         FixtureMappingManager fixtureMappingManager)
     {
         var tests = await aggregator.RunAsync(testCase.CreateTests, []).ConfigureAwait(false);
@@ -41,7 +43,7 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
         }
 
         await using var ctxt = new SnowflakeCaseRunnerContext(maxRetries, testCase, tests, messageBus, aggregator, cancellationTokenSource,
-            displayName, skipReason, explicitOption, constructorArguments, fixtureMappingManager);
+            displayName, skipReason, explicitOption, constructorArguments, parallelMode, scheduler, fixtureMappingManager);
         await ctxt.InitializeAsync().ConfigureAwait(false);
 
         return await Run(ctxt).ConfigureAwait(false);
@@ -72,6 +74,8 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
                 ctxt.ExplicitOption,
                 aggregator,
                 ctxt.CancellationTokenSource,
+                ctxt.ParallelMode,
+                ctxt.Scheduler,
                 ctxt.BeforeAfterTestAttributes,
                 ctxt.FixtureMappingManager
             ).ConfigureAwait(false);
@@ -142,9 +146,11 @@ public class SnowflakeCaseRunnerContext(
     string? skipReason,
     ExplicitOption explicitOption,
     object?[] constructorArguments,
+    ParallelMode parallelMode,
+    ExecutionScheduler scheduler,
     FixtureMappingManager fixtureMappingManager) :
-    XunitTestCaseRunnerBaseContext<IXunitTestCase, IXunitTest>(testCase, tests, messageBus, aggregator, cancellationTokenSource, displayName,
-        skipReason, explicitOption, constructorArguments, fixtureMappingManager)
+    XunitTestCaseRunnerBaseContext<IXunitTestCase, IXunitTest>(testCase, tests, explicitOption, messageBus, aggregator,
+        displayName, skipReason, cancellationTokenSource, parallelMode, scheduler, constructorArguments, fixtureMappingManager)
 {
     public int MaxRetries { get; } = maxRetries;
     public FixtureMappingManager FixtureMappingManager { get; } = fixtureMappingManager;

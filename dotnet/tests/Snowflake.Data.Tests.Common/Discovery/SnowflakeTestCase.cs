@@ -25,7 +25,8 @@ public class SnowflakeTestCase : XunitTestCase, ISelfExecutingXunitTestCase
         string? sourceFilePath = null,
         int? sourceLineNumber = null,
         int? timeout = null) :
-            base(testMethod, testCaseDisplayName, uniqueID, @explicit, skipExceptions, skipReason, skipType, skipUnless, skipWhen, traits, testMethodArguments, sourceFilePath, sourceLineNumber, timeout)
+        base(testMethod, testCaseDisplayName, uniqueID, @explicit, skipExceptions, skipReason, skipType, skipUnless,
+            skipWhen, traits, testMethodArguments, sourceFilePath, sourceLineNumber, timeout)
     {
         MaxRetries = maxRetries;
     }
@@ -38,25 +39,24 @@ public class SnowflakeTestCase : XunitTestCase, ISelfExecutingXunitTestCase
         MaxRetries = info.GetValue<int>(nameof(MaxRetries));
     }
 
-    public ValueTask<RunSummary> Run(
-        ExplicitOption explicitOption,
-        IMessageBus messageBus,
+    public ValueTask<RunSummary> Run(ExplicitOption explicitOption, IMessageBus messageBus,
         object?[] constructorArguments,
-        FixtureMappingManager fixtureMappingManager,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource) =>
-            SnowflakeTestCaseRunner.Instance.Run(
-                MaxRetries,
-                this,
-                messageBus,
-                aggregator.Clone(),
-                cancellationTokenSource,
-                TestCaseDisplayName,
-                SkipReason,
-                explicitOption,
-                constructorArguments,
-                fixtureMappingManager
-            );
+        ExceptionAggregator aggregator, CancellationTokenSource cancellationTokenSource, ParallelMode parallelMode,
+        ExecutionScheduler scheduler, FixtureMappingManager methodFixtureMappings) =>
+        SnowflakeTestCaseRunner.Instance.Run(
+            MaxRetries,
+            this,
+            messageBus,
+            aggregator.Clone(),
+            cancellationTokenSource,
+            TestCaseDisplayName,
+            SkipReason,
+            explicitOption,
+            constructorArguments,
+            parallelMode,
+            scheduler,
+            methodFixtureMappings
+        );
 
     protected override void Serialize(IXunitSerializationInfo info)
     {
@@ -86,7 +86,8 @@ public class SnowflakeEnumeratedTestCase : XunitDelayEnumeratedTheoryTestCase, I
         string? sourceFilePath = null,
         int? sourceLineNumber = null,
         int? timeout = null) :
-            base(testMethod, testCaseDisplayName, uniqueID, @explicit, skipTestWithoutData, skipExceptions, skipReason, skipType, skipUnless, skipWhen, traits, sourceFilePath, sourceLineNumber, timeout)
+        base(testMethod, testCaseDisplayName, uniqueID, @explicit, skipTestWithoutData, skipExceptions, skipReason,
+            skipType, skipUnless, skipWhen, traits, sourceFilePath, sourceLineNumber, timeout)
     {
         MaxRetries = maxRetries;
     }
@@ -99,25 +100,24 @@ public class SnowflakeEnumeratedTestCase : XunitDelayEnumeratedTheoryTestCase, I
         MaxRetries = info.GetValue<int>(nameof(MaxRetries));
     }
 
-    public ValueTask<RunSummary> Run(
-        ExplicitOption explicitOption,
-        IMessageBus messageBus,
+    public ValueTask<RunSummary> Run(ExplicitOption explicitOption, IMessageBus messageBus,
         object?[] constructorArguments,
-        FixtureMappingManager fixtureMappingManager,
-        ExceptionAggregator aggregator,
-        CancellationTokenSource cancellationTokenSource) =>
-            SnowflakeTestCaseRunner.Instance.Run(
-                MaxRetries,
-                this,
-                messageBus,
-                aggregator.Clone(),
-                cancellationTokenSource,
-                TestCaseDisplayName,
-                SkipReason,
-                explicitOption,
-                constructorArguments,
-                fixtureMappingManager
-            );
+        ExceptionAggregator aggregator, CancellationTokenSource cancellationTokenSource, ParallelMode parallelMode,
+        ExecutionScheduler scheduler, FixtureMappingManager methodFixtureMappings) =>
+        SnowflakeTestCaseRunner.Instance.Run(
+            MaxRetries,
+            this,
+            messageBus,
+            aggregator.Clone(),
+            cancellationTokenSource,
+            TestCaseDisplayName,
+            SkipReason,
+            explicitOption,
+            constructorArguments,
+            parallelMode,
+            scheduler,
+            methodFixtureMappings
+        );
 
     protected override void Serialize(IXunitSerializationInfo info)
     {

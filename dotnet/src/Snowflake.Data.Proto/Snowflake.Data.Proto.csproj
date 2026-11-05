@@ -4,7 +4,7 @@
     <RootNamespace>Snowflake.Data.Proto</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Google.Protobuf" Version="3.35.1" />
+    <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <InternalsVisibleTo Include="Snowflake.Data.UD" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
