@@ -126,7 +126,6 @@ rules:
     #- piotr-bulawa_snow  # also temporarily OOO from active pools
     #- michal-lorenc-cepiga_snow
   odbc:
-    - michal-hofman_snow
     - devansh-das_snow
     - maxymilian-kowalski_snow
     - piotr-bulawa_snow
