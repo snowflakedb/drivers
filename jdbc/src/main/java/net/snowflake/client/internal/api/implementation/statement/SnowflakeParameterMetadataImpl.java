@@ -9,11 +9,13 @@ import lombok.Value;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
+import net.snowflake.client.internal.codegen.NoTelemetry;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.util.DelegatingWrapper;
 import net.snowflake.client.internal.util.SnowflakeTypeHelper;
 
 @JdbcBoundary
+@NoTelemetry
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 class SnowflakeParameterMetadataImpl implements ParameterMetaData, DelegatingWrapper {
   private final List<BindMetadata> binds;

@@ -190,11 +190,14 @@ public class DecoratorProcessor extends AbstractProcessor {
       w.println("    super(delegate, telemetry);");
       w.println("  }");
 
+      boolean classNoTelemetry = implElement.getAnnotation(NoTelemetry.class) != null;
+
       boolean needsSneakyThrow = false;
       for (MethodInfo mi : methods.values()) {
         // A hot accessor that declares SQLException translates directly (throw translateHot(e))
         // and never sneaky-throws; every other sneaky-using shape is covered by the two clauses.
-        if (!declaresSqlException(mi.method) || (!isHotAccessor(mi) && delegateThrowsChecked(mi))) {
+        if (!declaresSqlException(mi.method)
+            || (!isHotAccessor(mi, classNoTelemetry) && delegateThrowsChecked(mi))) {
           needsSneakyThrow = true;
           break;
         }
@@ -202,7 +205,7 @@ public class DecoratorProcessor extends AbstractProcessor {
 
       for (MethodInfo mi : methods.values()) {
         w.println();
-        writeMethod(w, mi);
+        writeMethod(w, mi, classNoTelemetry);
       }
 
       if (needsSneakyThrow) {
@@ -313,13 +316,12 @@ public class DecoratorProcessor extends AbstractProcessor {
     }
   }
 
-  private void writeMethod(PrintWriter w, MethodInfo mi) {
+  private void writeMethod(PrintWriter w, MethodInfo mi, boolean classNoTelemetry) {
     ExecutableElement method = mi.method;
     String returnType = typeToString(method.getReturnType());
     String methodName = method.getSimpleName().toString();
     boolean isVoid = method.getReturnType().getKind() == TypeKind.VOID;
-    boolean noTelemetry =
-        mi.implMethod != null && mi.implMethod.getAnnotation(NoTelemetry.class) != null;
+    boolean noTelemetry = isHotAccessor(mi, classNoTelemetry);
     boolean needsTryCatch = delegateThrowsChecked(mi);
 
     ExecutableElement nameSource = mi.implMethod != null ? mi.implMethod : method;
@@ -405,8 +407,14 @@ public class DecoratorProcessor extends AbstractProcessor {
     w.println();
   }
 
-  /** True for a {@link NoTelemetry}-marked method, matching {@code noTelemetry} in writeMethod. */
-  private boolean isHotAccessor(MethodInfo mi) {
+  /**
+   * True when the impl class or the impl method is marked {@link NoTelemetry}, matching {@code
+   * noTelemetry} in writeMethod.
+   */
+  private boolean isHotAccessor(MethodInfo mi, boolean classNoTelemetry) {
+    if (classNoTelemetry) {
+      return true;
+    }
     return mi.implMethod != null && mi.implMethod.getAnnotation(NoTelemetry.class) != null;
   }
 

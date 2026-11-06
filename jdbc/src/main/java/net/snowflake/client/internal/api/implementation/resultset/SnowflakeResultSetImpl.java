@@ -360,6 +360,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
+  @NoTelemetry
   public ResultSetMetaData getMetaData() {
     checkClosed();
     // No connection in scope for serializable-derived result sets (statement == null) — NOOP then.
@@ -813,6 +814,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
+  @NoTelemetry
   public Clob getClob(int columnIndex) {
     String value = getString(columnIndex);
     return value == null ? null : new SnowflakeClob(value);
@@ -840,6 +842,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
+  @NoTelemetry
   public Clob getClob(String columnLabel) {
     return getClob(findColumn(columnLabel));
   }
@@ -966,6 +969,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
+  @NoTelemetry
   public boolean isClosed() {
     return closed;
   }
@@ -1257,6 +1261,7 @@ public class SnowflakeResultSetImpl implements InternalResultSet, DelegatingWrap
   }
 
   @Override
+  @NoTelemetry
   public <T> T[] getArray(int columnIndex, Class<T> type) {
     checkClosed();
     // TODO(SNOW-3445814): getArray supported for structured types (not only VECTOR)

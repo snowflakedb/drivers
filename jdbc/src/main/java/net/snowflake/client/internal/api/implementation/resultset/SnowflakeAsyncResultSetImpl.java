@@ -112,6 +112,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   }
 
   @Override
+  @NoTelemetry
   public boolean isClosed() {
     return closed;
   }
@@ -158,6 +159,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   }
 
   @Override
+  @NoTelemetry
   public ResultSetMetaData getMetaData() {
     materialize();
     SnowflakeResultSetMetaDataImpl metaData = delegate.getMetaDataImpl();
@@ -893,6 +895,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   }
 
   @Override
+  @NoTelemetry
   public Clob getClob(int columnIndex) {
     materialize();
     return delegate.getClob(columnIndex);
@@ -924,6 +927,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   }
 
   @Override
+  @NoTelemetry
   public Clob getClob(String columnLabel) {
     materialize();
     return delegate.getClob(columnLabel);
@@ -1344,6 +1348,7 @@ public class SnowflakeAsyncResultSetImpl implements InternalAsyncResultSet {
   }
 
   @Override
+  @NoTelemetry
   public <T> T[] getArray(int columnIndex, Class<T> type) {
     materialize();
     return delegate.getArray(columnIndex, type);

@@ -10,15 +10,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.sql.Clob;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Supplier;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeResultSet;
 import net.snowflake.client.internal.api.implementation.Decorators;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -26,6 +31,8 @@ import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowf
 import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowflakeResultSetImpl;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeAsyncResultSetImpl;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
+import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeStatementImpl;
@@ -109,6 +116,64 @@ public class AbstractDecoratorTest {
   public void shouldNotRecordApiUsageForHotAccessor() throws SQLException {
     decorator.hotCall(() -> "value");
     assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldNotRecordApiUsageForResultSetMetaDataAccessors() throws SQLException {
+    SnowflakeResultSetMetaDataImpl meta = mock(SnowflakeResultSetMetaDataImpl.class);
+    when(meta.getColumnCount()).thenReturn(9);
+    when(meta.getColumnType(1)).thenReturn(Types.BIGINT);
+    ResultSetMetaData decorated = new DecoratedSnowflakeResultSetMetaDataImpl(meta, telemetry);
+    assertEquals(9, decorated.getColumnCount());
+    assertEquals(Types.BIGINT, decorated.getColumnType(1));
+    decorated.getColumnLabel(1);
+    decorated.getColumnName(1);
+    decorated.getPrecision(1);
+    decorated.getScale(1);
+    assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldNotRecordApiUsageForResultSetGetMetaData() throws SQLException {
+    SnowflakeResultSetImpl resultSet = mock(SnowflakeResultSetImpl.class);
+    when(resultSet.getMetaData()).thenReturn(mock(ResultSetMetaData.class));
+    when(resultSet.isClosed()).thenReturn(false);
+    ResultSet decorated = Decorators.resultSet(resultSet, telemetry);
+    decorated.getMetaData();
+    decorated.isClosed();
+    assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldNotRecordApiUsageForResultSetGetClobAndVectorArray() throws SQLException {
+    SnowflakeResultSetImpl resultSet = mock(SnowflakeResultSetImpl.class);
+    when(resultSet.getClob(1)).thenReturn(mock(Clob.class));
+    when(resultSet.getClob("c")).thenReturn(mock(Clob.class));
+    when(resultSet.getArray(1, Integer.class)).thenReturn(new Integer[] {1});
+    ResultSet decorated = Decorators.resultSet(resultSet, telemetry);
+    decorated.getClob(1);
+    decorated.getClob("c");
+    ((SnowflakeResultSet) decorated).getArray(1, Integer.class);
+    assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldNotRecordApiUsageForPreparedStatementBinds() throws SQLException {
+    SnowflakePreparedStatementImpl prepared = mock(SnowflakePreparedStatementImpl.class);
+    PreparedStatement decorated = (PreparedStatement) Decorators.statement(prepared, telemetry);
+    decorated.setInt(1, 7);
+    decorated.setString(2, "x");
+    decorated.addBatch();
+    assertTrue(telemetry.apiUsage.isEmpty());
+  }
+
+  @Test
+  public void shouldRecordApiUsageForPreparedStatementExecuteQuery() throws SQLException {
+    SnowflakePreparedStatementImpl prepared = mock(SnowflakePreparedStatementImpl.class);
+    when(prepared.executeQuery()).thenReturn(mock(ResultSet.class));
+    PreparedStatement decorated = (PreparedStatement) Decorators.statement(prepared, telemetry);
+    decorated.executeQuery();
+    assertEquals(Arrays.asList("PreparedStatement.executeQuery"), telemetry.apiUsage);
   }
 
   @Test

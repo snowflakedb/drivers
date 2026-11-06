@@ -44,6 +44,7 @@ import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.DecoratedSnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
+import net.snowflake.client.internal.codegen.NoTelemetry;
 import net.snowflake.client.internal.core.arrow.ArrowDateUtil;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
 import net.snowflake.client.internal.core.arrow.converters.SessionDataConversionContext;
@@ -150,6 +151,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setNull(int parameterIndex, int sqlType) {
     checkClosed();
     // ANY is the sentinel; addBatch promotes the column to a real type on first non-null.
@@ -157,48 +159,56 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setBoolean(int parameterIndex, boolean x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.BOOLEAN, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setByte(int parameterIndex, byte x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setShort(int parameterIndex, short x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setInt(int parameterIndex, int x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setLong(int parameterIndex, long x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.FIXED, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setFloat(int parameterIndex, float x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.REAL, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setDouble(int parameterIndex, double x) {
     checkClosed();
     setParameter(parameterIndex, SnowflakeType.REAL, String.valueOf(x));
   }
 
   @Override
+  @NoTelemetry
   public void setBigDecimal(int parameterIndex, BigDecimal x) {
     checkClosed();
     setNullableParameter(
@@ -206,6 +216,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setString(int parameterIndex, String x) {
     checkClosed();
     setNullableParameter(
@@ -213,6 +224,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setBytes(int parameterIndex, byte[] x) {
     checkClosed();
     setNullableParameter(
@@ -220,12 +232,14 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setDate(int parameterIndex, Date x) {
     checkClosed();
     setDate(parameterIndex, x, TimeZone.getDefault());
   }
 
   @Override
+  @NoTelemetry
   public void setTime(int parameterIndex, Time x) {
     checkClosed();
     DataConversionContext context = conversionContext();
@@ -264,6 +278,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setTimestamp(int parameterIndex, Timestamp x) {
     checkClosed();
     setTimestampWithType(parameterIndex, x, Types.TIMESTAMP);
@@ -299,21 +314,25 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setAsciiStream(int parameterIndex, InputStream x, int length) {
     throw new SFSQLFeatureNotSupportedException("setAsciiStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setUnicodeStream(int parameterIndex, InputStream x, int length) {
     throw new SFSQLFeatureNotSupportedException("setUnicodeStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBinaryStream(int parameterIndex, InputStream x, int length) {
     throw new SFSQLFeatureNotSupportedException("setBinaryStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void clearParameters() {
     checkClosed();
     logger.debug("Clearing prepared parameters: binds={}", parameterValues.size());
@@ -321,6 +340,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setObject(int parameterIndex, Object x, int targetSqlType) {
     checkClosed();
     if (x == null) {
@@ -384,6 +404,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setObject(int parameterIndex, Object x) {
     checkClosed();
     if (x == null) {
@@ -463,6 +484,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void addBatch() {
     checkClosed();
     batch.addRow(parameterValues);
@@ -501,21 +523,25 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setCharacterStream(int parameterIndex, Reader reader, int length) {
     throw new SFSQLFeatureNotSupportedException("setCharacterStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setRef(int parameterIndex, Ref x) {
     throw new SFSQLFeatureNotSupportedException("setRef not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBlob(int parameterIndex, Blob x) {
     throw new SFSQLFeatureNotSupportedException("setBlob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setClob(int parameterIndex, Clob x) {
     if (x == null) {
       setNull(parameterIndex, CLOB);
@@ -536,6 +562,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setArray(int parameterIndex, Array x) {
     throw new SFSQLFeatureNotSupportedException("setArray not supported");
   }
@@ -550,6 +577,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setDate(int parameterIndex, Date x, Calendar cal) {
     checkClosed();
     setDate(parameterIndex, x, cal == null ? TimeZone.getDefault() : cal.getTimeZone());
@@ -571,6 +599,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setTime(int parameterIndex, Time x, Calendar cal) {
     setTime(parameterIndex, x);
   }
@@ -586,6 +615,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
    * zone, matching {@link #setDate(int, Date, Calendar)}.
    */
   @Override
+  @NoTelemetry
   public void setTimestamp(int parameterIndex, Timestamp x, Calendar cal) {
     checkClosed();
     SnowflakeType bindType = mappedTimestampBindType();
@@ -602,11 +632,13 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setNull(int parameterIndex, int sqlType, String typeName) {
     setNull(parameterIndex, sqlType);
   }
 
   @Override
+  @NoTelemetry
   public void setURL(int parameterIndex, URL x) {
     throw new SFSQLFeatureNotSupportedException("setURL not supported");
   }
@@ -621,96 +653,115 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setRowId(int parameterIndex, RowId x) {
     throw new SFSQLFeatureNotSupportedException("setRowId not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setNString(int parameterIndex, String value) {
     setString(parameterIndex, value);
   }
 
   @Override
+  @NoTelemetry
   public void setNCharacterStream(int parameterIndex, Reader value, long length) {
     throw new SFSQLFeatureNotSupportedException("setNCharacterStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setNClob(int parameterIndex, NClob value) {
     throw new SFSQLFeatureNotSupportedException("setNClob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setClob(int parameterIndex, Reader reader, long length) {
     throw new SFSQLFeatureNotSupportedException("setClob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBlob(int parameterIndex, InputStream inputStream, long length) {
     throw new SFSQLFeatureNotSupportedException("setBlob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setNClob(int parameterIndex, Reader reader, long length) {
     throw new SFSQLFeatureNotSupportedException("setNClob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setSQLXML(int parameterIndex, SQLXML xmlObject) {
     throw new SFSQLFeatureNotSupportedException("setSQLXML not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setObject(int parameterIndex, Object x, int targetSqlType, int scaleOrLength) {
     setObject(parameterIndex, x, targetSqlType);
   }
 
   @Override
+  @NoTelemetry
   public void setAsciiStream(int parameterIndex, InputStream x, long length) {
     throw new SFSQLFeatureNotSupportedException("setAsciiStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBinaryStream(int parameterIndex, InputStream x, long length) {
     throw new SFSQLFeatureNotSupportedException("setBinaryStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setCharacterStream(int parameterIndex, Reader reader, long length) {
     throw new SFSQLFeatureNotSupportedException("setCharacterStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setAsciiStream(int parameterIndex, InputStream x) {
     throw new SFSQLFeatureNotSupportedException("setAsciiStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBinaryStream(int parameterIndex, InputStream x) {
     throw new SFSQLFeatureNotSupportedException("setBinaryStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setCharacterStream(int parameterIndex, Reader reader) {
     throw new SFSQLFeatureNotSupportedException("setCharacterStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setNCharacterStream(int parameterIndex, Reader value) {
     throw new SFSQLFeatureNotSupportedException("setNCharacterStream not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setClob(int parameterIndex, Reader reader) {
     throw new SFSQLFeatureNotSupportedException("setClob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setBlob(int parameterIndex, InputStream inputStream) {
     throw new SFSQLFeatureNotSupportedException("setBlob not supported");
   }
 
   @Override
+  @NoTelemetry
   public void setNClob(int parameterIndex, Reader reader) {
     throw new SFSQLFeatureNotSupportedException("setNClob not supported");
   }
@@ -807,6 +858,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  @NoTelemetry
   public void setBigInteger(int parameterIndex, BigInteger x) {
     checkClosed();
     throw new SFSQLFeatureNotSupportedException("setBigInteger not supported");

@@ -14,6 +14,7 @@ import java.sql.Clob;
 import java.sql.SQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
+import net.snowflake.client.internal.codegen.NoTelemetry;
 
 /**
  * A simple mutable {@link Clob} backed by a {@link StringBuilder}. {@link
@@ -23,6 +24,7 @@ import net.snowflake.client.internal.codegen.JdbcBoundary;
  * are 1-based per the JDBC contract.
  */
 @JdbcBoundary
+@NoTelemetry
 public class SnowflakeClob implements Clob {
 
   private StringBuilder buffer;
