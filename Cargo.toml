@@ -25,7 +25,8 @@ resolver = "2"
 
 [profile.release]
 strip = true
-opt-level = "z"
+# Optimized for speed over binary size, which matters on CPU-bound hot paths.
+opt-level = 3
 lto = "thin"
 codegen-units = 1
 

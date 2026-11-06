@@ -175,20 +175,26 @@ jobs:
             exit 1
           fi
 
-      # 25 MiB is our size budget for one sdk-core binary. Before you raise it,
-      # find out why the binary grew past it, and agree on the bump with the
-      # team. The limit is for the unpacked .node file, which is what users
+      # Our size budget for one sdk-core binary is 25 MiB, and we are currently
+      # over it. Since the release build switched to opt-level 3, these
+      # binaries exceed 25 MiB: win32-x64-msvc, linux-x64-gnu, linux-x64-musl,
+      # win32-arm64-msvc, darwin-x64 and linux-arm64-musl. The 35 MiB limit
+      # below is a temporary ceiling, not the budget.
+      # TODO(SNOW-4428119): bring the binaries back under 25 MiB.
+      # Before you raise the limit
+      # again, find out why the binary grew past it, and agree on the bump with
+      # the team. The limit is for the unpacked .node file, which is what users
       # get on disk. The npm tarball is compressed and much smaller.
       - name: Check @snowflake/sdk-core binary size
         shell: bash
         run: |
           set -euo pipefail
-          max_bytes=$((25 * 1024 * 1024))
+          max_bytes=$((35 * 1024 * 1024))
           for binary in _build/@snowflake/sdk-core/*.node; do
             size=$(wc -c < "$binary" | tr -d '[:space:]')
-            echo "$binary: $size bytes (budget: $max_bytes bytes)"
+            echo "$binary: $size bytes (limit: $max_bytes bytes)"
             if (( size > max_bytes )); then
-              echo "::error::$binary is $size bytes, over the $max_bytes byte (25 MiB) budget."
+              echo "::error::$binary is $size bytes, over the $max_bytes byte (35 MiB) limit."
               exit 1
             fi
           done
