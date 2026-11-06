@@ -153,13 +153,18 @@ describe('FILE data type', () => {
     );
   });
 
-  // fetchAsString JSON does not stringify object, array, or map; see BCR_LOG.md
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
-    it('should return FILE unchanged when fetchAsString is set', async () => {
+  describe('fetchAsString', () => {
+    it('should return FILE as a JSON string when fetchAsString is set', async () => {
       const { rows } = await executeAsync(connection, `SELECT ${FILE_EXPRESSION}`, {
         fetchAsString: ['JSON'],
       });
-      expect(Object.values(rows[0])).toEqual([FILE_DOCUMENT]);
+      const [value] = Object.values(rows[0]);
+      if (isRunningNewDriverWithBD('BD#18')) {
+        expect(typeof value).toBe('string');
+        expect(JSON.parse(value as string)).toEqual(FILE_DOCUMENT);
+      } else {
+        expect(value).toEqual(FILE_DOCUMENT);
+      }
     });
 
     it("should render a NULL FILE cell as the string 'NULL' when fetchAsString is set", async () => {

@@ -420,18 +420,29 @@ behavior_differences:
       the driver for a cosmetic difference.
 
   18:
-    name: "fetchAsString renders NULL as 'NULL' for every type"
+    name: "fetchAsString covers every type and renders NULL as 'NULL' for each"
     status: allowed
     type: bugfix
-    reviewed: false
-    is_breaking_change: false
+    reviewed: true
+    is_breaking_change: true
     impact: low
     old_driver_behavior: |
       Under fetchAsString a NULL cell becomes the string 'NULL' (representNullAsStringNull, on by
       default), but some types never reach that rule and stay null -- e.g. DECFLOAT, VARIANT,
       INTERVAL, FILE, GEOGRAPHY and GEOMETRY.
+      Some types cannot be fetched as strings at all. fetchAsString: ['JSON'] returns only
+      VARIANT columns as strings. OBJECT, ARRAY and MAP columns still come back parsed. This
+      includes FILE columns, and GEOGRAPHY and GEOMETRY columns in the default GeoJSON output
+      format, because Column.getType() reports all of them as 'object'.
     new_driver_behavior: |
+      Every type can be fetched as a string. fetchAsString: ['JSON'] returns VARIANT, OBJECT,
+      ARRAY and MAP columns, including FILE, GEOGRAPHY and GEOMETRY in GeoJSON format, as the JSON
+      text Snowflake sent, for example '{\n  "key": "value"\n}'.
       Every type fetched as a string renders NULL as 'NULL', with no exceptions.
+    description: |
+      The old driver maps 'object', 'array' and 'map' to their own fetchAsString values (OBJECT,
+      ARRAY, MAP) instead of JSON. Its validator accepts those values at runtime, but they are not
+      in the TypeScript DataType type or in the fetchAsString error message.
     status_rationale: |
       One rule for every type is easier to rely on than a rule with exceptions, and the old
       driver's exceptions came from its internals rather than from a decision.

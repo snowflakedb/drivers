@@ -9,7 +9,7 @@ use super::column_source::{ColumnId, ColumnSource};
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
 use super::numeric::{FloatColumn, IntColumn, decimal_string};
-use super::row_options::{ColumnOutput, RowOptions};
+use super::row_options::{ColumnOutput, FetchAsStringType, RowOptions};
 use super::temporal::{SnowflakeDateFormat, TimeColumn, TimeFormat, TimestampColumn};
 use super::vector::vector_numbers;
 use crate::date_format::{ResolvedTimezone, compiled_format};
@@ -71,6 +71,7 @@ impl ColumnReader {
     pub(super) fn for_field(
         index: usize,
         field: &Field,
+        column_type: &str,
         column: &dyn Array,
         session_params: &KnownSessionParameters,
         row_options: &RowOptions,
@@ -90,12 +91,12 @@ impl ColumnReader {
                 logical_type: logical_type.clone(),
             },
         };
-        let decoder = ColumnDecoder::for_field(logical_type, &src, session_params)
+        let decoder = ColumnDecoder::for_field(logical_type, column_type, &src, session_params)
             .map_err(|message| RowDecodeError::Schema { message })?;
         Ok(Self {
             id: src.id,
             nulls: column.nulls().cloned(),
-            output: row_options.output_for(logical_type),
+            output: row_options.output_for(decoder.fetch_as_string_type()),
             decoder,
         })
     }
@@ -121,6 +122,7 @@ impl ColumnReader {
 impl ColumnDecoder {
     fn for_field(
         logical_type: &str,
+        column_type: &str,
         src: &ColumnSource,
         params: &KnownSessionParameters,
     ) -> Result<Self, String> {
@@ -139,6 +141,7 @@ impl ColumnDecoder {
             "FIXED" => Self::Fixed(src.int_column()?, src.metadata("scale")?),
             "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME" => Self::Interval(src.int_column()?),
             "REAL" => Self::Real(src.float_column()?),
+            "TEXT" if column_type.eq_ignore_ascii_case("object") => Self::Structured(src.array()?),
             "TEXT" => Self::Text(src.array()?),
             "TIME" => Self::Time(
                 src.time_column()?,
@@ -176,6 +179,22 @@ impl ColumnDecoder {
             "VECTOR" => Self::Vector(src.array()?),
             _ => return Err(format!("{} has an unsupported logicalType", src.id)),
         })
+    }
+
+    fn fetch_as_string_type(&self) -> Option<FetchAsStringType> {
+        match self {
+            Self::Binary(_) => Some(FetchAsStringType::Buffer),
+            Self::Boolean(_) => Some(FetchAsStringType::Boolean),
+            Self::Date(..) | Self::Timestamp(..) | Self::TimestampTz(..) => {
+                Some(FetchAsStringType::Date)
+            }
+            Self::Decfloat(..) | Self::Interval(_) | Self::Text(_) | Self::Time(..) => {
+                Some(FetchAsStringType::String)
+            }
+            Self::Fixed(..) => Some(FetchAsStringType::Number),
+            Self::Structured(_) | Self::Variant(_) => Some(FetchAsStringType::Json),
+            Self::Real(_) | Self::Vector(_) => None,
+        }
     }
 
     fn read(&self, row: usize, output: ColumnOutput) -> Result<JsCell<'_>, ReadArrowError> {
@@ -234,7 +253,6 @@ impl ColumnDecoder {
 mod tests {
     use super::*;
     use crate::date_format::ResolvedTimezone;
-    use crate::rows::row_options::FetchAsStringType;
     use arrow::array::{
         BinaryArray, BooleanArray, Decimal128Array, FixedSizeListArray, Float32Array, Float64Array,
         Int8Array, Int16Array, Int32Array, Int64Array, StringArray, StructArray,
@@ -267,6 +285,7 @@ mod tests {
         ColumnReader::for_field(
             0,
             field,
+            "",
             column,
             &session_params(time_format),
             &RowOptions::default(),
@@ -286,7 +305,7 @@ mod tests {
         column: &dyn Array,
         options: &RowOptions,
     ) -> Result<ColumnReader, String> {
-        ColumnReader::for_field(0, field, column, &session_params("HH24:MI:SS"), options)
+        ColumnReader::for_field(0, field, "", column, &session_params("HH24:MI:SS"), options)
             .map_err(|err| err.to_string())
     }
 
@@ -657,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn object_and_array_ignore_json_fetch_as_string() {
+    fn object_and_array_as_json_string_keep_text_and_honor_null_as_string() {
         let array = StringArray::from(vec![Some("{}"), None]);
         for logical in ["OBJECT", "ARRAY"] {
             let reader = try_reader_with_options(
@@ -671,8 +690,43 @@ mod tests {
                 "{logical} should route to the Structured arm"
             );
             assert_eq!(reader.read(0).unwrap(), str_cell("{}"));
-            assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+            assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
         }
+    }
+
+    #[test]
+    fn text_column_typed_object_is_json_under_fetch_as_string() {
+        let field = field("TEXT", DataType::Utf8, &[]);
+        let array = StringArray::from(vec![Some("{}"), None]);
+        let reader = ColumnReader::for_field(
+            0,
+            &field,
+            "OBJECT",
+            &array,
+            &session_params("HH24:MI:SS"),
+            &as_string(FetchAsStringType::Json, true),
+        )
+        .unwrap();
+        assert!(matches!(reader.decoder, ColumnDecoder::Structured(_)));
+        assert_eq!(reader.read(0).unwrap(), str_cell("{}"));
+        assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn real_and_vector_stay_native_under_number_fetch_as_string() {
+        let options = as_string(FetchAsStringType::Number, true);
+        let real = Float64Array::from(vec![Some(1.5), None]);
+        let reader =
+            try_reader_with_options(&field("REAL", DataType::Float64, &[]), &real, &options)
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::Number(1.5));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+
+        let vector = int_vector_array(&[Some(vec![1]), None], 1);
+        let reader =
+            try_reader_with_options(&vector_field(DataType::Int32, 1), &vector, &options).unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::NumberArray(vec![1.0]));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
     }
 
     #[test]
@@ -1146,7 +1200,7 @@ mod tests {
             timezone: "Not/AZone".to_string(),
             ..KnownSessionParameters::defaults()
         };
-        let err = ColumnReader::for_field(0, &field, &array, &params, &RowOptions::default())
+        let err = ColumnReader::for_field(0, &field, "", &array, &params, &RowOptions::default())
             .err()
             .unwrap()
             .to_string();

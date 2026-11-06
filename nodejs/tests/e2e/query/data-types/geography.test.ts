@@ -244,13 +244,18 @@ describe('GEOGRAPHY data type', () => {
     });
   });
 
-  // fetchAsString JSON does not stringify object, array, or map; see BCR_LOG.md
-  describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('fetchAsString', () => {
-    it('should return GEOGRAPHY unchanged when fetchAsString is set', async () => {
+  describe('fetchAsString', () => {
+    it('should return GEOGRAPHY as a GeoJSON string when fetchAsString is set', async () => {
       const { rows } = await executeAsync(connection, `SELECT TO_GEOGRAPHY('${POINT_SQL}')`, {
         fetchAsString: ['JSON'],
       });
-      expect(Object.values(rows[0])).toEqual([POINT_GEOJSON]);
+      const [value] = Object.values(rows[0]);
+      if (isRunningNewDriverWithBD('BD#18')) {
+        expect(typeof value).toBe('string');
+        expect(JSON.parse(value as string)).toEqual(POINT_GEOJSON);
+      } else {
+        expect(value).toEqual(POINT_GEOJSON);
+      }
     });
 
     it("should render a NULL GEOGRAPHY cell as the string 'NULL' when fetchAsString is set", async () => {

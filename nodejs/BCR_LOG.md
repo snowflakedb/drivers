@@ -83,7 +83,6 @@ of the old Node format converter.
   - `TIMESTAMP_OUTPUT_FORMAT`
 - Binary data type doesn't honor BINARY_OUTPUT_FORMAT when fetchAsString is used (should behave similar to timestamp output formats)
 - Binding `"42.0"` to a DECFLOAT column returns `"42"`, dropping the trailing zero. The `decfloat.feature` "should select decfloat using parameter binding" scenario specifies `42.0` as the returned value, so both drivers deviate from the shared spec; the tests assert the observed `"42"` and cite this entry.
-- `fetchAsString: ['JSON']` stringifies only `variant`. `object`, `array`, and `map` have no string converter, so the parsed JS value is left in place. FILE, GEOMETRY, and GEOGRAPHY report as `object` and inherit that gap. They should stringify like VARIANT.
 - `serialize()` on a connection that never connected, or that was destroyed, writes `{ tokenInfo: {} }`. That string has no session. `serialize()` should throw a plain error when there are no tokens. The new driver's `deserializeConnection` already rejects this payload (BD#71). The old driver builds a disconnected connection from it.
 
 ## Future Breaking Changes (BCRs)

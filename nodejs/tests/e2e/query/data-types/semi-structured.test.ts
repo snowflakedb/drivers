@@ -309,32 +309,50 @@ describe('semi-structured data type', () => {
 
   describe('fetchAsString', () => {
     it('should return VARIANT as the raw text the server sent when fetchAsString is set', async () => {
+      const { rows } = await executeAsync(connection, `SELECT parse_json('{"a": 1}')`, {
+        fetchAsString: ['JSON'],
+      });
+      expect(Object.values(rows[0])).toEqual(['{\n  "a": 1\n}']);
+    });
+
+    it('should return OBJECT, ARRAY and MAP as the raw text the server sent when fetchAsString is set', async () => {
       const { rows } = await executeAsync(
         connection,
-        `SELECT parse_json('{"a": 1}'), OBJECT_CONSTRUCT('key', 'value')`,
+        `SELECT
+            OBJECT_CONSTRUCT('key', 'value'),
+            ARRAY_CONSTRUCT(1, 2, 3),
+            {'key': 'value'}::MAP(VARCHAR, VARCHAR)`,
         { fetchAsString: ['JSON'] },
       );
-      // The 'JSON' token stringifies the VARIANT column but not the OBJECT column, so
-      // OBJECT_CONSTRUCT still comes back as a parsed object.
-      expect(Object.values(rows[0])).toEqual(['{\n  "a": 1\n}', { key: 'value' }]);
+      if (isRunningNewDriverWithBD('BD#18')) {
+        expect(Object.values(rows[0])).toEqual([
+          '{\n  "key": "value"\n}',
+          '[\n  1,\n  2,\n  3\n]',
+          '{\n  "key": "value"\n}',
+        ]);
+      } else {
+        expect(Object.values(rows[0])).toEqual([{ key: 'value' }, [1, 2, 3], { key: 'value' }]);
+      }
     });
 
-    it("should render a NULL VARIANT cell as the string 'NULL' when fetchAsString is set", async () => {
-      const { rows } = await executeAsync(connection, `SELECT NULL::VARIANT`, {
-        fetchAsString: ['JSON'],
-      });
-      // The old driver skips its whole conversion path for a variant fetched as a
-      // string, so its NULL rule never runs and the cell stays null (BD#18).
+    it("should render NULL VARIANT, OBJECT and ARRAY cells as the string 'NULL' when fetchAsString is set", async () => {
+      const { rows } = await executeAsync(
+        connection,
+        `SELECT NULL::VARIANT, NULL::OBJECT, NULL::ARRAY`,
+        { fetchAsString: ['JSON'] },
+      );
       const expectedNull = isRunningNewDriverWithBD('BD#18') ? 'NULL' : null;
-      expect(Object.values(rows[0])).toEqual([expectedNull]);
+      expect(Object.values(rows[0])).toEqual([expectedNull, expectedNull, expectedNull]);
     });
 
-    it('should render a NULL VARIANT cell as null when representNullAsStringNull is disabled', async () => {
+    it('should render NULL VARIANT, OBJECT and ARRAY cells as null when representNullAsStringNull is disabled', async () => {
       const nullPreservingConnection = await createLiveNullPreservingConnection();
-      const { rows } = await executeAsync(nullPreservingConnection, `SELECT NULL::VARIANT`, {
-        fetchAsString: ['JSON'],
-      });
-      expect(Object.values(rows[0])).toEqual([null]);
+      const { rows } = await executeAsync(
+        nullPreservingConnection,
+        `SELECT NULL::VARIANT, NULL::OBJECT, NULL::ARRAY`,
+        { fetchAsString: ['JSON'] },
+      );
+      expect(Object.values(rows[0])).toEqual([null, null, null]);
     });
   });
 

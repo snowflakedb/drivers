@@ -4,7 +4,7 @@ use crate::error::{BridgeError, ToJsError};
 use crate::session_params::KnownSessionParameters;
 use arrow::array::RecordBatch;
 use napi::bindgen_prelude::{Array as JsArray, Env};
-use sf_core::apis::database_driver_v1::AsyncArrowBatchFetcher;
+use sf_core::apis::database_driver_v1::{AsyncArrowBatchFetcher, ColumnMetadata};
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -13,13 +13,15 @@ use tokio::sync::Mutex as AsyncMutex;
 pub(crate) struct StreamState {
     fetcher: AsyncMutex<AsyncArrowBatchFetcher>,
     batch: Mutex<Option<CurrentBatch>>,
+    column_types: Vec<String>,
 }
 
 impl StreamState {
-    pub(crate) fn new(fetcher: AsyncArrowBatchFetcher) -> Self {
+    pub(crate) fn new(fetcher: AsyncArrowBatchFetcher, columns: &[ColumnMetadata]) -> Self {
         Self {
             fetcher: AsyncMutex::new(fetcher),
             batch: Mutex::new(None),
+            column_types: columns.iter().map(|column| column.r#type.clone()).collect(),
         }
     }
 
@@ -46,6 +48,7 @@ impl StreamState {
                     Some(batch) if batch.num_rows() > 0 => {
                         break Some(CurrentBatch::from_batch(
                             &batch,
+                            &self.column_types,
                             session_params,
                             row_options,
                         )?);
@@ -92,6 +95,7 @@ struct CurrentBatch {
 impl CurrentBatch {
     fn from_batch(
         batch: &RecordBatch,
+        column_types: &[String],
         session_params: &KnownSessionParameters,
         row_options: &RowOptions,
     ) -> Result<Self, RowDecodeError> {
@@ -104,6 +108,7 @@ impl CurrentBatch {
                 ColumnReader::for_field(
                     index,
                     field,
+                    column_types.get(index).map_or("", String::as_str),
                     batch.column(index),
                     session_params,
                     row_options,
@@ -162,7 +167,7 @@ mod tests {
     }
 
     fn state_over(schema: Arc<Schema>, batches: Vec<RecordBatch>) -> StreamState {
-        StreamState::new(AsyncArrowBatchFetcher::from_batches(schema, batches))
+        StreamState::new(AsyncArrowBatchFetcher::from_batches(schema, batches), &[])
     }
 
     async fn fetch(state: &StreamState, params: &KnownSessionParameters) -> bool {

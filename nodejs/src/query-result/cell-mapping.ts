@@ -9,7 +9,7 @@ import type {
 import { realAsStringConverter, vectorAsStringConverter } from './string-converters.js';
 import { createFixedConverter, variantConverter } from './value-converters.js';
 
-const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
+export const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   string,
   {
     asValue: ConverterFactory | null;
@@ -25,17 +25,17 @@ const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
   map: { asValue: () => variantConverter, asString: null },
 };
 
-const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
+export const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
   // Column types listed here skip their `asValue` converter when the token is requested.
-  // REAL and VECTOR are converted to strings by their `asString` converter. FIXED and VARIANT
-  // are already strings from the bridge and are listed only so `Number()`/JSON parsing does not
+  // REAL and VECTOR are converted to strings by their `asString` converter. FIXED and the JSON
+  // types are already strings from the bridge and are listed only so `Number()`/JSON parsing does not
   // run on them. Every other type is converted to a string in the bridge.
   String: [],
   Number: ['fixed', 'real', 'vector'],
   Boolean: [],
   Buffer: [],
   Date: [],
-  JSON: ['variant'],
+  JSON: ['variant', 'object', 'array', 'map'],
 };
 
 function createColumnConverter(

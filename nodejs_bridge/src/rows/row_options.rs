@@ -15,25 +15,6 @@ pub enum FetchAsStringType {
     Buffer,
 }
 
-impl FetchAsStringType {
-    fn bridge_logical_types(self) -> &'static [&'static str] {
-        match self {
-            Self::Boolean => &["BOOLEAN"],
-            Self::Buffer => &["BINARY"],
-            Self::Date => &["DATE", "TIMESTAMP_LTZ", "TIMESTAMP_NTZ", "TIMESTAMP_TZ"],
-            Self::Json => &["VARIANT"],
-            Self::Number => &["FIXED"],
-            Self::String => &[
-                "DECFLOAT",
-                "INTERVAL_DAY_TIME",
-                "INTERVAL_YEAR_MONTH",
-                "TEXT",
-                "TIME",
-            ],
-        }
-    }
-}
-
 #[napi(object)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RowOptions {
@@ -42,12 +23,8 @@ pub struct RowOptions {
 }
 
 impl RowOptions {
-    pub(super) fn output_for(&self, logical_type: &str) -> ColumnOutput {
-        let as_string = self
-            .fetch_as_string
-            .iter()
-            .any(|token| token.bridge_logical_types().contains(&logical_type));
-        if as_string {
+    pub(super) fn output_for(&self, token: Option<FetchAsStringType>) -> ColumnOutput {
+        if token.is_some_and(|token| self.fetch_as_string.contains(&token)) {
             ColumnOutput::String {
                 null_as_string: self.represent_null_as_string_null,
             }

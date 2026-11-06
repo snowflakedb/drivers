@@ -138,7 +138,7 @@ impl QueryResult {
         })?;
         Ok(Self {
             session_params: Arc::new(session_params),
-            stream_state: Arc::new(StreamState::new(stream)),
+            stream_state: Arc::new(StreamState::new(stream, &info.descriptor.columns)),
             result_set_handle: Some(info.handle),
             result_set_descriptor: info.descriptor,
             multi,
@@ -177,6 +177,7 @@ impl QueryResult {
                 .driver
                 .result_set_get_async_stream(info.handle)
                 .await?,
+            &self.result_set_descriptor.columns,
         ));
         Ok(true)
     }
