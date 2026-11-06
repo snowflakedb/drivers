@@ -444,7 +444,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .addAllChunks(chunks)
             .addAllColumns(columnMetadata)
             .build();
-    return invoke(() -> client.databaseFetchChunk(request));
+    return await(client.databaseFetchChunk(request));
   }
 
   // =========================================================================

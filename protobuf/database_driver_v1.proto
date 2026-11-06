@@ -1115,7 +1115,9 @@ service DatabaseDriver {
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
-  rpc DatabaseFetchChunk(DatabaseFetchChunkRequest) returns (DatabaseFetchChunkResponse);
+  rpc DatabaseFetchChunk(DatabaseFetchChunkRequest) returns (DatabaseFetchChunkResponse) {
+    option (async_first) = true;
+  }
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);

@@ -3,6 +3,7 @@ pub use super::http_downloader::HttpChunkDownloader;
 pub use super::json_parser::JsonChunkParser;
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -51,22 +52,53 @@ struct Chunk {
 /// [`tokio::sync::mpsc::Receiver::poll_recv`] and is the in-runtime consumer
 /// used by the async Arrow batch fetcher. Both APIs drain the same channel, so
 /// a given reader is consumed through one of them.
+///
+/// Dropping the reader aborts the coordinator and the chunk downloads it still
+/// owns. A coordinator parked in a download or memory-budget wait is not woken
+/// by dropping the channel receiver alone.
 pub struct PrefetchChunkReader {
     schema: SchemaRef,
     batch_rx: tokio::sync::mpsc::Receiver<Result<Chunk, ArrowError>>,
     /// Buffered batches from the current chunk, paired with the ticket that
     /// keeps the memory reservation alive until all batches are yielded.
     current: Option<Chunk>,
+    abort_handle: AbortHandle,
 }
 
-type ChunkTask = JoinHandle<Result<Chunk, ArrowError>>;
+type ChunkTask = AbortOnDrop<Result<Chunk, ArrowError>>;
 pub(crate) type InitialChunkTask = JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>>;
+
+/// Aborts the task on drop. [`JoinHandle`]'s own drop detaches it, which leaves
+/// a chunk download running after the prefetch that spawned it is gone.
+struct AbortOnDrop<T> {
+    handle: JoinHandle<T>,
+}
+
+impl<T> AbortOnDrop<T> {
+    fn new(handle: JoinHandle<T>) -> Self {
+        Self { handle }
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+impl<T> Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.get_mut().handle).poll(cx)
+    }
+}
 
 impl PrefetchChunkReader {
     /// Starts background download and parse and returns the reader plus an
-    /// [`AbortHandle`] for the coordinator task. The async batch fetcher aborts
-    /// that handle on drop; a coordinator parked in a download or memory-budget
-    /// wait is not woken by dropping the channel receiver alone.
+    /// [`AbortHandle`] for the coordinator task. Dropping the reader aborts
+    /// that task, and so does aborting the returned handle. The async batch
+    /// fetcher keeps the handle and aborts it on drop.
     pub async fn open<D: DownloadChunk, P: ParseChunk>(
         initial: Option<InitialChunkTask>,
         mut chunks: VecDeque<ChunkDownloadData>,
@@ -74,6 +106,7 @@ impl PrefetchChunkReader {
         parser: P,
         config: &PrefetchConfig,
     ) -> Result<(Self, AbortHandle), ChunkError> {
+        let initial = initial.map(AbortOnDrop::new);
         let prefetch_concurrency = config.prefetch_threads.max(1);
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
         let memory_budget = MemoryBudget::new(config.memory_limit_mb);
@@ -91,7 +124,6 @@ impl PrefetchChunkReader {
 
         let (schema, head_chunk) = match initial {
             Some(initial_chunk_task) => {
-                let _abort = AbortOnDrop(initial_chunk_task.abort_handle());
                 let (schema, batches) = initial_chunk_task.await.context(SpawnBlockingSnafu)??;
                 let chunk = if batches.is_empty() {
                     None
@@ -105,7 +137,6 @@ impl PrefetchChunkReader {
             }
             None => {
                 let task = tasks.pop_front().context(MissingInitialChunkSnafu)?;
-                let _abort = AbortOnDrop(task.abort_handle());
                 let chunk = task
                     .await
                     .context(SpawnBlockingSnafu)?
@@ -136,15 +167,23 @@ impl PrefetchChunkReader {
             }
             .with_current_subscriber(),
         );
+        let abort_handle = join.abort_handle();
 
         Ok((
             Self {
                 schema,
                 batch_rx: rx,
                 current: None,
+                abort_handle: abort_handle.clone(),
             },
-            join.abort_handle(),
+            abort_handle,
         ))
+    }
+}
+
+impl Drop for PrefetchChunkReader {
+    fn drop(&mut self) {
+        self.abort_handle.abort();
     }
 }
 
@@ -179,22 +218,6 @@ impl ChunkTasks {
     }
 }
 
-impl Drop for ChunkTasks {
-    fn drop(&mut self) {
-        for task in self.0.drain(..) {
-            task.abort();
-        }
-    }
-}
-
-struct AbortOnDrop(AbortHandle);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 /// Spawn up to `concurrency` download+parse tasks from the front of `chunks`.
 async fn fill_window(
     downloader: &impl DownloadChunk,
@@ -209,9 +232,9 @@ async fn fill_window(
             break;
         };
         let ticket = budget.acquire(data.estimated_memory_mb()).await;
-        tasks.push_back(tokio::spawn(
+        tasks.push_back(AbortOnDrop::new(tokio::spawn(
             get_chunk(downloader.clone(), parser.clone(), data, ticket).with_current_subscriber(),
-        ));
+        )));
     }
 }
 
@@ -225,7 +248,6 @@ async fn drain_window(
     tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
 ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
     while let Some(task) = tasks.pop_front() {
-        let _abort = AbortOnDrop(task.abort_handle());
         let result = task
             .await
             .unwrap_or_else(|e| Err(ArrowError::ExternalError(Box::new(e))));
@@ -236,10 +258,10 @@ async fn drain_window(
         }
         if let Some(data) = chunks.pop_front() {
             let ticket = budget.acquire(data.estimated_memory_mb()).await;
-            tasks.push_back(tokio::spawn(
+            tasks.push_back(AbortOnDrop::new(tokio::spawn(
                 get_chunk(downloader.clone(), parser.clone(), data, ticket)
                     .with_current_subscriber(),
-            ));
+            )));
         }
     }
     Ok(())

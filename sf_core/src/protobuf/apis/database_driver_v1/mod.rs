@@ -158,9 +158,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(DatabaseReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_fetch_chunk", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::database_fetch_chunk",
+        skip(self, operation_ctx, input)
+    )]
     async fn database_fetch_chunk(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: DatabaseFetchChunkRequest,
     ) -> Result<DatabaseFetchChunkResponse, DriverException> {
         let conn_handle = input.conn_handle.map(|h| h.into());
@@ -197,6 +201,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let stream = self
             .driver
             .database_fetch_chunk(
+                operation_ctx,
                 conn_handle,
                 chunks,
                 chunk_format,

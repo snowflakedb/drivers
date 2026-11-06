@@ -126,10 +126,12 @@ impl Drop for AsyncArrowBatchFetcher {
 mod tests {
     use std::collections::{HashMap, VecDeque};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use arrow::array::{Array, ArrayRef, Int64Array, RecordBatch};
     use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::error::ArrowError;
     use arrow::ipc::writer::StreamWriter;
     use tokio::sync::Semaphore;
     use tokio::task::AbortHandle;
@@ -384,5 +386,173 @@ mod tests {
             0,
             "the stalled download should never have been released"
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_the_reader_aborts_a_prefetch_still_awaiting_a_download() {
+        let gate = Arc::new(Semaphore::new(0));
+        let (reader, abort_handle) = PrefetchChunkReader::open(
+            Some(spawn_initial_arrow_decode(int64_batch_base64(vec![1]))),
+            VecDeque::from([chunk_at("stalled")]),
+            StalledChunkDownloader {
+                gate: Arc::clone(&gate),
+            },
+            ArrowChunkParser,
+            &single_threaded_prefetch(),
+        )
+        .await
+        .expect("reader should open on inline initial");
+        let prefetch_task = abort_handle.clone();
+        drop(abort_handle);
+        tokio::task::yield_now().await;
+        assert!(
+            !prefetch_task.is_finished(),
+            "dropping only the abort handle must leave the prefetch running"
+        );
+
+        drop(reader);
+
+        await_task_finished(
+            &prefetch_task,
+            "dropping the reader must abandon the prefetch without waiting for the download",
+        )
+        .await;
+        assert_eq!(
+            gate.available_permits(),
+            0,
+            "the stalled download should never have been released"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_open_aborts_the_in_flight_download() {
+        let started = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let config = single_threaded_prefetch();
+        let open = tokio::spawn({
+            let started = Arc::clone(&started);
+            let dropped = Arc::clone(&dropped);
+            async move {
+                let _ = PrefetchChunkReader::open(
+                    None,
+                    VecDeque::from([chunk_at("stalled")]),
+                    DropSignalDownloader { started, dropped },
+                    ArrowChunkParser,
+                    &config,
+                )
+                .await;
+            }
+        });
+
+        let saw_start = tokio::time::timeout(Duration::from_secs(5), async {
+            while !started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(saw_start.is_ok(), "the download should start");
+
+        open.abort();
+
+        let saw_drop = tokio::time::timeout(Duration::from_secs(5), async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            saw_drop.is_ok(),
+            "dropping open must abort the in-flight download"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_open_during_a_budget_wait_aborts_the_initial_decode() {
+        let decode_started = Arc::new(AtomicBool::new(false));
+        let decode_dropped = Arc::new(AtomicBool::new(false));
+        let initial = tokio::spawn({
+            let decode_started = Arc::clone(&decode_started);
+            let decode_dropped = Arc::clone(&decode_dropped);
+            async move {
+                struct Flag(Arc<AtomicBool>);
+                impl Drop for Flag {
+                    fn drop(&mut self) {
+                        self.0.store(true, Ordering::SeqCst);
+                    }
+                }
+                decode_started.store(true, Ordering::SeqCst);
+                let _flag = Flag(decode_dropped);
+                std::future::pending::<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>>().await
+            }
+        });
+
+        let download_started = Arc::new(AtomicBool::new(false));
+        let config = PrefetchConfig {
+            prefetch_threads: 2,
+            memory_limit_mb: 1,
+            ..PrefetchConfig::default()
+        };
+        let open = tokio::spawn({
+            let download_started = Arc::clone(&download_started);
+            async move {
+                let _ = PrefetchChunkReader::open(
+                    Some(initial),
+                    VecDeque::from([chunk_at("first"), chunk_at("second")]),
+                    DropSignalDownloader {
+                        started: download_started,
+                        dropped: Arc::new(AtomicBool::new(false)),
+                    },
+                    ArrowChunkParser,
+                    &config,
+                )
+                .await;
+            }
+        });
+
+        let parked = tokio::time::timeout(Duration::from_secs(5), async {
+            while !decode_started.load(Ordering::SeqCst) || !download_started.load(Ordering::SeqCst)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            parked.is_ok(),
+            "open should park in fill_window after spawning the first download"
+        );
+
+        open.abort();
+
+        let saw_decode_drop = tokio::time::timeout(Duration::from_secs(5), async {
+            while !decode_dropped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            saw_decode_drop.is_ok(),
+            "dropping open during a budget wait must abort the initial decode"
+        );
+    }
+
+    #[derive(Clone)]
+    struct DropSignalDownloader {
+        started: Arc<AtomicBool>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl DownloadChunk for DropSignalDownloader {
+        async fn download_chunk(&self, _chunk: ChunkDownloadData) -> Result<Vec<u8>, ArrowError> {
+            struct Flag(Arc<AtomicBool>);
+            impl Drop for Flag {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::SeqCst);
+                }
+            }
+
+            self.started.store(true, Ordering::SeqCst);
+            let _flag = Flag(Arc::clone(&self.dropped));
+            std::future::pending().await
+        }
     }
 }

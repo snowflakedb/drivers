@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::chunks::{ChunkFormatKind, FetchChunkInput, PrefetchConfig, fetch_chunks_reader};
 use crate::config::ParamStore;
 use crate::config::settings::Setting;
@@ -73,7 +74,32 @@ impl DatabaseDriverV1 {
         }
     }
 
+    /// Cancelling drops in-flight chunk downloads. A chunk fetch submits no
+    /// query, so nothing is aborted on the server.
     pub async fn database_fetch_chunk(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Option<Handle>,
+        chunks: Vec<FetchChunkInput>,
+        chunk_format: ChunkFormatKind,
+        nullable_flags: &[bool],
+        row_types: Vec<RowType>,
+    ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
+        run_opt(
+            operation_ctx,
+            "database_fetch_chunk",
+            Box::pin(self.database_fetch_chunk_inner(
+                conn_handle,
+                chunks,
+                chunk_format,
+                nullable_flags,
+                row_types,
+            )),
+        )
+        .await
+    }
+
+    async fn database_fetch_chunk_inner(
         &self,
         conn_handle: Option<Handle>,
         chunks: Vec<FetchChunkInput>,

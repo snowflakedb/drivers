@@ -18,16 +18,17 @@ use prost::Message as _;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
-    CancellationAbortOutcome, ConfigSetting, ConnectionGetObjectsRequest,
+    CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionGetObjectsRequest,
     ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
-    ConnectionTokenRequest, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
-    DatabaseNewResponse, DriverException, ErrorKind, StatementExecuteAsyncRequest,
-    StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
-    TokenRequestType, config_setting,
+    ConnectionTokenRequest, DatabaseFetchChunkRequest, DatabaseInitRequest, DatabaseInitResponse,
+    DatabaseNewRequest, DatabaseNewResponse, DriverException, ErrorKind, RemoteChunk, ResultChunk,
+    StatementExecuteAsyncRequest, StatementExecuteQueryRequest, StatementHandle,
+    StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
+    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
+    result_chunk,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -152,6 +153,8 @@ enum HangOn {
     TokenRequest,
     /// `POST /session/heartbeat` — `connection_heartbeat`.
     Heartbeat,
+    /// `GET /chunk-hang` — the remote chunk `database_fetch_chunk` downloads.
+    ChunkDownload,
     /// [`SEND_HTTP_PROBE_PATH`], parked *after* the response headers are written,
     /// so the caller's `send()` resolves and it blocks reading the body instead.
     /// That is the shape a server which accepted the request and then went quiet
@@ -255,6 +258,14 @@ async fn spawn_hanging_heartbeat(state: Arc<HangingServer>) -> (SocketAddr, Hang
     spawn_hanging_server(state, HangOn::Heartbeat).await
 }
 
+/// Spawn a mock that logs in, then never answers `GET /chunk-hang`, so only
+/// cancellation can end `database_fetch_chunk`.
+async fn spawn_hanging_chunk_download(
+    state: Arc<HangingServer>,
+) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::ChunkDownload).await
+}
+
 /// Spawn a mock that answers the query-request immediately, for the
 /// no-cancellation control case.
 async fn spawn_answering_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
@@ -344,6 +355,15 @@ async fn spawn_hanging_server(
                     }
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::Heartbeat {
+                        std::future::pending::<()>().await;
+                    }
+                    CATCH_ALL_OK.to_string()
+                } else if target.starts_with("/chunk-hang") {
+                    if hang_on == HangOn::ChunkDownload {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::ChunkDownload {
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
@@ -1283,6 +1303,45 @@ async fn cancelling_an_in_flight_get_objects_aborts_the_show() {
     assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
     assert_hung_on(&state, "/queries/v1/query-request");
     assert_aborted_sql(&state, "SHOW DATABASES IN ACCOUNT");
+}
+
+/// `database_fetch_chunk` downloads a remote chunk over HTTP and waits for the
+/// first one before returning. Cancelling drops that download and issues no
+/// abort-request, because a chunk fetch submits no query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_chunk_download_reports_cancelled_without_aborting() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_chunk_download(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "database_fetch_chunk",
+        "chunk download",
+        DatabaseFetchChunkRequest {
+            conn_handle: Some(conn),
+            chunks: vec![ResultChunk {
+                format: ChunkFormat::ArrowIpc as i32,
+                data: Some(result_chunk::Data::Remote(RemoteChunk {
+                    url: format!("http://{addr}/chunk-hang"),
+                    headers: HashMap::new(),
+                    compressed_size: 64,
+                    uncompressed_size: 64,
+                })),
+                row_count: 1,
+            }],
+            columns: Vec::new(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/chunk-hang");
+    assert_no_abort_requests(&state);
 }
 
 /// `connection_send_http` forwards a caller-chosen request on the connection's
