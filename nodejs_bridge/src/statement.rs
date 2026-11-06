@@ -343,7 +343,7 @@ impl Statement {
             };
             if let Err(error) = BRIDGE
                 .driver
-                .connection_abort_query(ready.connection(), query_id.clone())
+                .connection_abort_query(None, ready.connection(), query_id.clone())
                 .await
             {
                 tracing::warn!(%query_id, ?error, "abort request failed, ignoring");

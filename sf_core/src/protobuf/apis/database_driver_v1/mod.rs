@@ -317,15 +317,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_close", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_close",
+        skip(self, operation_ctx, input)
+    )]
     async fn connection_close(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionCloseRequest,
     ) -> Result<ConnectionCloseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .connection_close(conn_handle.into())
+            .connection_close(operation_ctx, conn_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionCloseResponse {})
@@ -836,16 +840,20 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_abort_query", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_abort_query",
+        skip(self, operation_ctx, input)
+    )]
     async fn connection_abort_query(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionAbortQueryRequest,
     ) -> Result<ConnectionAbortQueryResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let outcome = self
             .driver
-            .connection_abort_query(conn_handle.into(), input.query_id)
+            .connection_abort_query(operation_ctx, conn_handle.into(), input.query_id)
             .await
             .to_protobuf()?;
 

@@ -470,6 +470,14 @@ mod tests {
             "database_fetch_chunk is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("connection_close"),
+            "connection_close is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("connection_abort_query"),
+            "connection_abort_query is marked async_first in the proto"
+        );
+        assert!(
             !observes_cancellation("connection_new"),
             "unmarked RPCs must not claim to observe cancellation themselves"
         );

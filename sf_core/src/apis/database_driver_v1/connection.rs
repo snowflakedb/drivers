@@ -3092,6 +3092,10 @@ impl DatabaseDriverV1 {
 
     /// Close a connection and optionally send logout request.
     ///
+    /// Cancelling drops an in-flight logout and leaves the connection open, so a
+    /// later close can retry. Streams may already have been reaped and telemetry
+    /// flushed before that logout was dropped.
+    ///
     /// Behavior depends on `config.error_strategy`:
     /// - `Strict`: surface errors to the caller (close() may fail)
     /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
@@ -3108,7 +3112,20 @@ impl DatabaseDriverV1 {
     ///
     /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
     /// which configure logout behavior at connection initialization, not at close time.
-    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
+    pub async fn connection_close(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+    ) -> Result<(), ApiError> {
+        run_opt(
+            operation_ctx,
+            "connection_close",
+            Box::pin(self.connection_close_inner(conn_handle)),
+        )
+        .await
+    }
+
+    async fn connection_close_inner(&self, conn_handle: Handle) -> Result<(), ApiError> {
         let conn_ptr = self
             .connections
             .get_obj(conn_handle)
@@ -3139,8 +3156,10 @@ impl DatabaseDriverV1 {
                     // This caller now owns the close and must leave the state either
                     // `Closed` or back at `Open`.
                     Ok(()) => {
+                        let mut attempt =
+                            CloseAttempt::new(close_state.clone(), close_done.clone());
                         return self
-                            .perform_close(conn_handle, &conn_ptr, &close_done)
+                            .perform_close(conn_handle, &conn_ptr, &mut attempt)
                             .await;
                     }
                     // Lost the race; re-read and either wait or take over.
@@ -3152,28 +3171,16 @@ impl DatabaseDriverV1 {
 
     /// Drive one close attempt, having already claimed the closer role.
     ///
-    /// Every exit path publishes a terminal state and wakes waiters: `Closed` when
-    /// the session is gone, `Open` when it may still be alive so a later close can
-    /// reclaim it.
+    /// Every exit path publishes a terminal state and wakes waiters. `Closed` is
+    /// stored once logout has succeeded, before local cleanup, so a cancelled
+    /// cleanup cannot reopen a session the server has already ended. `Open` is
+    /// stored when the session may still be alive, so a later close can reclaim it.
     async fn perform_close(
         &self,
         conn_handle: Handle,
         conn_ptr: &Arc<Mutex<Connection>>,
-        close_done: &Arc<Notify>,
+        attempt: &mut CloseAttempt,
     ) -> Result<(), ApiError> {
-        let settle = |state: CloseState| {
-            let conn_ptr = conn_ptr.clone();
-            let close_done = close_done.clone();
-            async move {
-                conn_ptr
-                    .lock()
-                    .await
-                    .close_state
-                    .store(state, Ordering::SeqCst);
-                close_done.notify_waiters();
-            }
-        };
-
         // Single lock acquisition for all pre-network synchronous work, so a
         // concurrent set_option_int cannot race between reading the config and
         // extracting the logout data from it.
@@ -3210,7 +3217,7 @@ impl DatabaseDriverV1 {
             // session — if there is one — is untouched. Reopen so the caller can
             // retry rather than leaving it unreachable.
             Err(e) => {
-                settle(CloseState::Open).await;
+                attempt.settle(conn_ptr, CloseState::Open).await;
                 return Err(e);
             }
         };
@@ -3241,13 +3248,14 @@ impl DatabaseDriverV1 {
 
         if logged_out {
             tracing::info!("Logout completed successfully");
+            attempt.session_ended();
+            attempt.settle(conn_ptr, CloseState::Closed).await;
             // Only tear down local resources once the session is actually gone; a
             // retry needs the HTTP client this would otherwise clear.
             cleanup_connection(conn_ptr).await?;
-            settle(CloseState::Closed).await;
             tracing::info!("Connection closed successfully");
         } else {
-            settle(CloseState::Open).await;
+            attempt.settle(conn_ptr, CloseState::Open).await;
         }
         returned
     }
@@ -3334,6 +3342,58 @@ impl AtomicCloseState {
             )
             .map(|_| ())
             .map_err(CloseState::from_u8)
+    }
+}
+
+/// One close that won [`AtomicCloseState::try_begin_close`].
+///
+/// Dropping it before [`CloseAttempt::settle`] publishes a terminal state and
+/// wakes anyone waiting on this close. Once logout has succeeded the connection
+/// stays [`CloseState::Closed`]. Otherwise it goes back to [`CloseState::Open`],
+/// so a cancelled logout cannot leave it in [`CloseState::Closing`].
+struct CloseAttempt {
+    state: Arc<AtomicCloseState>,
+    done: Arc<Notify>,
+    settled: bool,
+    session_ended: bool,
+}
+
+impl CloseAttempt {
+    fn new(state: Arc<AtomicCloseState>, done: Arc<Notify>) -> Self {
+        Self {
+            state,
+            done,
+            settled: false,
+            session_ended: false,
+        }
+    }
+
+    fn session_ended(&mut self) {
+        self.session_ended = true;
+    }
+
+    async fn settle(&mut self, conn_ptr: &Arc<Mutex<Connection>>, state: CloseState) {
+        conn_ptr
+            .lock()
+            .await
+            .close_state
+            .store(state, Ordering::SeqCst);
+        self.done.notify_waiters();
+        self.settled = true;
+    }
+}
+
+impl Drop for CloseAttempt {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        if self.session_ended {
+            self.state.store(CloseState::Closed, Ordering::SeqCst);
+        } else if self.state.load(Ordering::SeqCst) == CloseState::Closing {
+            self.state.store(CloseState::Open, Ordering::SeqCst);
+        }
+        self.done.notify_waiters();
     }
 }
 
@@ -3607,6 +3667,28 @@ mod tests {
         driver.connection_release(handle).unwrap();
     }
 
+    #[test]
+    fn a_dropped_close_reopens_when_logout_has_not_finished() {
+        let state = Arc::new(AtomicCloseState::new(CloseState::Closing));
+        let done = Arc::new(Notify::new());
+
+        drop(CloseAttempt::new(state.clone(), done));
+
+        assert_eq!(state.load(Ordering::SeqCst), CloseState::Open);
+    }
+
+    #[test]
+    fn a_dropped_close_stays_closed_once_logout_has_succeeded() {
+        let state = Arc::new(AtomicCloseState::new(CloseState::Closing));
+        let done = Arc::new(Notify::new());
+        let mut attempt = CloseAttempt::new(state.clone(), done);
+        attempt.session_ended();
+
+        drop(attempt);
+
+        assert_eq!(state.load(Ordering::SeqCst), CloseState::Closed);
+    }
+
     #[tokio::test]
     async fn should_report_a_connection_as_initialized_once_the_transport_is_ready() {
         let driver = DatabaseDriverV1::new();
@@ -3630,7 +3712,7 @@ mod tests {
             conn.http_client = Some(reqwest::Client::new());
         }
 
-        driver.connection_close(handle).await.unwrap();
+        driver.connection_close(None, handle).await.unwrap();
 
         assert!(!driver.connection_is_initialized(handle).await.unwrap());
         assert!(driver.connection_is_closed(handle).await.unwrap());
@@ -3693,7 +3775,7 @@ mod tests {
             conn.http_client = Some(reqwest::Client::new());
         }
 
-        driver.connection_close(handle).await.unwrap();
+        driver.connection_close(None, handle).await.unwrap();
 
         assert_eq!(
             driver.connection_is_usable(handle).await.unwrap(),

@@ -163,7 +163,7 @@ impl Session {
         if result.is_err() {
             let _ = BRIDGE
                 .driver
-                .connection_close(self.handles.connection)
+                .connection_close(None, self.handles.connection)
                 .await;
         }
         result.map_err(BridgeError::from)
@@ -226,7 +226,7 @@ impl Session {
         }
         let close = BRIDGE
             .driver
-            .connection_close(self.handles.connection)
+            .connection_close(None, self.handles.connection)
             .await;
         if close.is_ok() {
             self.handles.release();
@@ -304,7 +304,7 @@ mod tests {
         let session = session();
         BRIDGE
             .driver
-            .connection_close(session.handles.connection)
+            .connection_close(None, session.handles.connection)
             .await
             .unwrap();
 
@@ -338,7 +338,7 @@ mod tests {
         let session = session();
         BRIDGE
             .driver
-            .connection_close(session.handles.connection)
+            .connection_close(None, session.handles.connection)
             .await
             .unwrap();
 

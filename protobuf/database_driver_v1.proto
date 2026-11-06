@@ -1126,7 +1126,9 @@ service DatabaseDriver {
     option (async_first) = true;
   }
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
-  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
+  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
   rpc ConnectionIsExpired(ConnectionIsExpiredRequest) returns (ConnectionIsExpiredResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
@@ -1165,7 +1167,9 @@ service DatabaseDriver {
     option (async_first) = true;
   }
   // Abort a running query by Snowflake Query ID
-  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
+  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse) {
+    option (async_first) = true;
+  }
   // Streaming PUT (upload bytes) / GET (download to bytes) from a stage.
   // Chunked streaming PUT: begin a session, feed it chunks, then finish (or
   // abort). Bounds wrapper memory to ~one chunk regardless of source size.

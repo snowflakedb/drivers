@@ -231,7 +231,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   public ConnectionCloseResponse connectionClose(ConnectionHandle connHandle) {
     ConnectionCloseRequest request =
         ConnectionCloseRequest.newBuilder().setConnHandle(connHandle).build();
-    return invoke(() -> client.connectionClose(request));
+    return await(client.connectionClose(request));
   }
 
   public ConnectionReleaseResponse connectionRelease(ConnectionHandle connHandle) {
@@ -319,7 +319,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setQueryId(queryId)
             .build();
-    return invoke(() -> client.connectionAbortQuery(request));
+    return await(client.connectionAbortQuery(request));
   }
 
   public ConnectionSendHttpResponse connectionSendHttp(ConnectionSendHttpRequest request) {

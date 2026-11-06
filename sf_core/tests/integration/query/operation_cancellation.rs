@@ -18,10 +18,12 @@ use prost::Message as _;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
-    CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionGetObjectsRequest,
+    CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionAbortQueryRequest,
+    ConnectionCloseRequest, ConnectionCloseResponse, ConnectionGetObjectsRequest,
     ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
-    ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest, ConnectionNewResponse,
+    ConnectionInitRequest, ConnectionInitResponse, ConnectionIsClosedRequest,
+    ConnectionIsClosedResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
     ConnectionTokenRequest, DatabaseFetchChunkRequest, DatabaseInitRequest, DatabaseInitResponse,
     DatabaseNewRequest, DatabaseNewResponse, DriverException, ErrorKind, RemoteChunk, ResultChunk,
@@ -32,7 +34,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -155,6 +157,13 @@ enum HangOn {
     Heartbeat,
     /// `GET /chunk-hang` — the remote chunk `database_fetch_chunk` downloads.
     ChunkDownload,
+    /// `POST /session?delete=true` — `connection_close`. The first one parks; a
+    /// later one is answered so a retried close can finish.
+    Logout,
+    /// `POST /queries/{id}/abort-request` — `connection_abort_query`. Distinct
+    /// from `/queries/v1/abort-request`, which is the cancellation cleanup and
+    /// is always answered.
+    QueryAbort,
     /// [`SEND_HTTP_PROBE_PATH`], parked *after* the response headers are written,
     /// so the caller's `send()` resolves and it blocks reading the body instead.
     /// That is the shape a server which accepted the request and then went quiet
@@ -198,6 +207,9 @@ struct HangingServer {
     /// matches two different endpoints, so without recording this a test could
     /// pass having hung the wrong one.
     hung_target: Mutex<Option<String>>,
+    /// How many logout requests have been seen. Only the first parks when
+    /// [`HangOn::Logout`] is set.
+    logout_seen: AtomicUsize,
     connections: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
@@ -266,6 +278,18 @@ async fn spawn_hanging_chunk_download(
     spawn_hanging_server(state, HangOn::ChunkDownload).await
 }
 
+/// Spawn a mock that logs in, then never answers the first `POST /session`,
+/// so only cancellation can end `connection_close`. A later logout is answered.
+async fn spawn_hanging_logout(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::Logout).await
+}
+
+/// Spawn a mock that logs in, then never answers `POST /queries/{id}/abort-request`,
+/// so only cancellation can end `connection_abort_query`.
+async fn spawn_hanging_query_abort(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::QueryAbort).await
+}
+
 /// Spawn a mock that answers the query-request immediately, for the
 /// no-cancellation control case.
 async fn spawn_answering_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
@@ -316,6 +340,13 @@ async fn spawn_hanging_server(
                 } else if target.contains("/queries/v1/abort-request") {
                     state.abort_bodies.lock().unwrap().push(body);
                     ABORT_OK.to_string()
+                } else if target.contains("/abort-request") {
+                    if hang_on == HangOn::QueryAbort {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                        let _ = state.request_received.lock().unwrap().try_send(());
+                        std::future::pending::<()>().await;
+                    }
+                    CATCH_ALL_OK.to_string()
                 } else if is_finished_query_lookup(&target) {
                     if hang_on == HangOn::FinishedQueryLookup {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
@@ -355,6 +386,14 @@ async fn spawn_hanging_server(
                     }
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::Heartbeat {
+                        std::future::pending::<()>().await;
+                    }
+                    CATCH_ALL_OK.to_string()
+                } else if target.starts_with("/session?") {
+                    let first = state.logout_seen.fetch_add(1, Ordering::SeqCst) == 0;
+                    if hang_on == HangOn::Logout && first {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                        let _ = state.request_received.lock().unwrap().try_send(());
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
@@ -611,6 +650,7 @@ fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
             abort_bodies: Mutex::new(Vec::new()),
             omit_query_id: AtomicBool::new(false),
             hung_target: Mutex::new(None),
+            logout_seen: AtomicUsize::new(0),
             connections: Mutex::new(Vec::new()),
         }),
         request_received,
@@ -1470,4 +1510,106 @@ async fn an_async_submission_without_a_query_id_aborts_the_query_it_cannot_name(
     // submission was sent with, which is the only handle left once GS has
     // withheld the id.
     assert_aborted_the_submitted_query(&state);
+}
+
+const ABORT_QUERY_ID: &str = "00000000-0000-0000-0000-000000000001";
+
+/// Cancelling `connection_close` drops the logout and leaves the connection
+/// open. A second close can then finish, which is what shows the first one did
+/// not stay in `Closing`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_close_reopens_the_connection() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_logout(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_close",
+        "logout",
+        ConnectionCloseRequest {
+            conn_handle: Some(conn),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/session");
+    assert_no_abort_requests(&state);
+
+    let still_open = tokio::time::timeout(
+        BOUND,
+        call::<_, ConnectionIsClosedResponse>(
+            &transport,
+            "connection_is_closed",
+            ConnectionIsClosedRequest {
+                conn_handle: Some(conn),
+            },
+        ),
+    )
+    .await
+    .expect("is_closed should answer");
+    assert!(
+        !still_open.is_closed,
+        "a cancelled close must not report the connection closed"
+    );
+
+    tokio::time::timeout(
+        BOUND,
+        call::<_, ConnectionCloseResponse>(
+            &transport,
+            "connection_close",
+            ConnectionCloseRequest {
+                conn_handle: Some(conn),
+            },
+        ),
+    )
+    .await
+    .expect("a retried close should finish once logout is answered");
+
+    let closed = tokio::time::timeout(
+        BOUND,
+        call::<_, ConnectionIsClosedResponse>(
+            &transport,
+            "connection_is_closed",
+            ConnectionIsClosedRequest {
+                conn_handle: Some(conn),
+            },
+        ),
+    )
+    .await
+    .expect("is_closed should answer");
+    assert!(closed.is_closed, "the retried close should complete");
+}
+
+/// Cancelling `connection_abort_query` drops that abort-request and does not
+/// send the cancellation cleanup's `/queries/v1/abort-request`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_abort_query_reports_cancelled_without_a_second_abort() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query_abort(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_abort_query",
+        "abort-request",
+        ConnectionAbortQueryRequest {
+            conn_handle: Some(conn),
+            query_id: ABORT_QUERY_ID.to_string(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, &format!("/queries/{ABORT_QUERY_ID}/abort-request"));
+    assert_no_abort_requests(&state);
 }

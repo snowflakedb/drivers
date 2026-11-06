@@ -863,7 +863,23 @@ impl DatabaseDriverV1 {
         run_opt(operation_ctx, "connection_get_query_result", fetch).await
     }
 
+    /// Cancelling drops the in-flight abort-request. The server may already
+    /// have processed it. This call does not send another abort.
     pub async fn connection_abort_query(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<AbortOutcome, ApiError> {
+        run_opt(
+            operation_ctx,
+            "connection_abort_query",
+            Box::pin(self.connection_abort_query_inner(conn_handle, query_id)),
+        )
+        .await
+    }
+
+    async fn connection_abort_query_inner(
         &self,
         conn_handle: Handle,
         query_id: String,
