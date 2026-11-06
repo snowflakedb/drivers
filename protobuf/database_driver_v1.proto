@@ -1137,8 +1137,12 @@ service DatabaseDriver {
   }
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
-  rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
-  rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse) {
+    option (async_first) = true;
+  }
+  rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
   rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
   rpc ConnectionUseSchema(ConnectionUseSchemaRequest) returns (ConnectionUseSchemaResponse);

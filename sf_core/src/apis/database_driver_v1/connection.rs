@@ -8,7 +8,9 @@ use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::heartbeat::{HeartbeatHandle, compute_heartbeat_interval, spawn_heartbeat_task};
-use super::query_submit::{query_context, submit_query, update_caches};
+use super::query_submit::{
+    AbortReport, query_context, run_reporting_abort, submit_query, update_caches,
+};
 use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key,
@@ -77,7 +79,7 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(&conn_ptr, sql).await
+                    self.execute_session_sql(None, &conn_ptr, sql).await
                 } else {
                     let mut conn = conn_ptr.lock().await;
                     conn.init_session_parameters
@@ -124,7 +126,7 @@ impl DatabaseDriverV1 {
                         .fail();
                     }
                 }
-                self.execute_session_sql(&conn_ptr, &sql).await
+                self.execute_session_sql(None, &conn_ptr, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -134,23 +136,61 @@ impl DatabaseDriverV1 {
     }
 
     /// Commit the open transaction on the given connection by executing `COMMIT`.
+    ///
+    /// Cancelling aborts the submitted statement and leaves the session cache
+    /// unchanged. The server may already have applied the commit.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
-    pub async fn connection_commit(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        self.execute_transaction_control(conn_handle, "COMMIT")
-            .await
+    pub async fn connection_commit(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+    ) -> Result<(), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_commit",
+            &report,
+            Box::pin(self.execute_transaction_control(
+                operation_ctx,
+                &report,
+                conn_handle,
+                "COMMIT",
+            )),
+        )
+        .await
     }
 
     /// Roll back the open transaction on the given connection by executing `ROLLBACK`.
+    ///
+    /// Cancelling aborts the submitted statement and leaves the session cache
+    /// unchanged. The server may already have applied the rollback.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
-    pub async fn connection_rollback(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        self.execute_transaction_control(conn_handle, "ROLLBACK")
-            .await
+    pub async fn connection_rollback(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+    ) -> Result<(), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_rollback",
+            &report,
+            Box::pin(self.execute_transaction_control(
+                operation_ctx,
+                &report,
+                conn_handle,
+                "ROLLBACK",
+            )),
+        )
+        .await
     }
 
     /// Shared implementation for `connection_commit` / `connection_rollback`:
     /// run the transaction-control statement on the connection's session.
     async fn execute_transaction_control(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        report: &AbortReport,
         conn_handle: Handle,
         sql: &str,
     ) -> Result<(), ApiError> {
@@ -166,7 +206,12 @@ impl DatabaseDriverV1 {
                         .fail();
                     }
                 }
-                self.execute_session_sql(&conn_ptr, sql).await
+                self.execute_session_sql(
+                    operation_ctx.map(|operation_ctx| (operation_ctx, report)),
+                    &conn_ptr,
+                    sql,
+                )
+                .await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -206,7 +251,7 @@ impl DatabaseDriverV1 {
                     let database = resolve_session_database(&conn)?;
                     build_use_schema_sql(database.as_deref(), schema)
                 };
-                self.execute_session_sql(&conn_ptr, &sql).await
+                self.execute_session_sql(None, &conn_ptr, &sql).await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -217,9 +262,12 @@ impl DatabaseDriverV1 {
 
     /// Execute a session-scoped SQL command without creating a statement.
     ///
-    /// Not cancellable: none of the callers reach core with an operation handle.
+    /// `cancellation` arms an abort-request if the submit is dropped. Callers
+    /// that are not cancellable pass `None`. The session cache is updated only
+    /// after a response comes back.
     async fn execute_session_sql(
         &self,
+        cancellation: Option<(&OperationCtx, &AbortReport)>,
         conn_ptr: &Arc<Mutex<Connection>>,
         sql: &str,
     ) -> Result<(), ApiError> {
@@ -230,7 +278,7 @@ impl DatabaseDriverV1 {
         };
 
         let response = submit_query(
-            None,
+            cancellation,
             conn_ptr,
             &transport,
             QueryInput::new(sql),

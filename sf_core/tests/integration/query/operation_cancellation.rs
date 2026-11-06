@@ -19,18 +19,18 @@ use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
     CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionAbortQueryRequest,
-    ConnectionCloseRequest, ConnectionCloseResponse, ConnectionGetObjectsRequest,
-    ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
+    ConnectionCloseRequest, ConnectionCloseResponse, ConnectionCommitRequest,
+    ConnectionGetObjectsRequest, ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionIsClosedRequest,
     ConnectionIsClosedResponse, ConnectionNewRequest, ConnectionNewResponse,
-    ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
-    ConnectionTokenRequest, DatabaseFetchChunkRequest, DatabaseInitRequest, DatabaseInitResponse,
-    DatabaseNewRequest, DatabaseNewResponse, DriverException, ErrorKind, RemoteChunk, ResultChunk,
-    StatementExecuteAsyncRequest, StatementExecuteQueryRequest, StatementHandle,
-    StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
-    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
-    result_chunk,
+    ConnectionRollbackRequest, ConnectionSendHttpRequest, ConnectionSetOptionsRequest,
+    ConnectionSetOptionsResponse, ConnectionTokenRequest, DatabaseFetchChunkRequest,
+    DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
+    DriverException, ErrorKind, RemoteChunk, ResultChunk, StatementExecuteAsyncRequest,
+    StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
+    TokenRequestType, config_setting, result_chunk,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -1612,4 +1612,60 @@ async fn cancelling_an_in_flight_abort_query_reports_cancelled_without_a_second_
     assert_cancelled(result);
     assert_hung_on(&state, &format!("/queries/{ABORT_QUERY_ID}/abort-request"));
     assert_no_abort_requests(&state);
+}
+
+/// Cancelling `connection_commit` aborts the `COMMIT` it submitted. The session
+/// cache is written only after that statement returns, so a cancel leaves it
+/// unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_commit_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_commit",
+        "query-request",
+        ConnectionCommitRequest {
+            conn_handle: Some(conn),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_sql(&state, "COMMIT");
+    assert_hung_on(&state, "/queries/v1/query-request");
+}
+
+/// The same guarantee for `connection_rollback`. It shares
+/// `execute_transaction_control` with commit, and reaches the wire through its
+/// own entry point.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_rollback_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_rollback",
+        "query-request",
+        ConnectionRollbackRequest {
+            conn_handle: Some(conn),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_sql(&state, "ROLLBACK");
+    assert_hung_on(&state, "/queries/v1/query-request");
 }

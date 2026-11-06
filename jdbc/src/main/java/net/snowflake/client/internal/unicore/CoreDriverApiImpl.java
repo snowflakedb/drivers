@@ -209,13 +209,13 @@ class CoreDriverApiImpl implements CoreDriverApi {
   public ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle) {
     ConnectionCommitRequest request =
         ConnectionCommitRequest.newBuilder().setConnHandle(connHandle).build();
-    return invoke(() -> client.connectionCommit(request));
+    return await(client.connectionCommit(request));
   }
 
   public ConnectionRollbackResponse connectionRollback(ConnectionHandle connHandle) {
     ConnectionRollbackRequest request =
         ConnectionRollbackRequest.newBuilder().setConnHandle(connHandle).build();
-    return invoke(() -> client.connectionRollback(request));
+    return await(client.connectionRollback(request));
   }
 
   public ConnectionSetSessionParametersResponse connectionSetSessionParameters(

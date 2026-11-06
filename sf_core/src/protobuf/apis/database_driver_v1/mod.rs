@@ -447,17 +447,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_commit",
-        skip(self, input),
+        skip(self, operation_ctx, input),
         fields(conn_handle = tracing::field::Empty)
     )]
     async fn connection_commit(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionCommitRequest,
     ) -> Result<ConnectionCommitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         self.driver
-            .connection_commit(conn_handle.into())
+            .connection_commit(operation_ctx, conn_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionCommitResponse {})
@@ -465,17 +466,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_rollback",
-        skip(self, input),
+        skip(self, operation_ctx, input),
         fields(conn_handle = tracing::field::Empty)
     )]
     async fn connection_rollback(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         self.driver
-            .connection_rollback(conn_handle.into())
+            .connection_rollback(operation_ctx, conn_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionRollbackResponse {})
