@@ -375,9 +375,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_objects",
+        skip(self, operation_ctx, input)
+    )]
     async fn connection_get_objects(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionGetObjectsRequest,
     ) -> Result<ConnectionGetObjectsResponse, DriverException> {
         use crate::apis::database_driver_v1::GetObjectsRequest;
@@ -396,7 +400,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let info = self
             .driver
-            .connection_get_objects(req)
+            .connection_get_objects(operation_ctx, req)
             .await
             .to_protobuf()?;
 
@@ -911,9 +915,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_heartbeat", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_heartbeat",
+        skip(self, operation_ctx, input)
+    )]
     async fn connection_heartbeat(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionHeartbeatRequest,
     ) -> Result<ConnectionHeartbeatResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -922,7 +930,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .map(|s| std::time::Duration::from_secs(s as u64));
         let valid = self
             .driver
-            .connection_heartbeat_with_timeout(conn_handle.into(), timeout)
+            .connection_heartbeat_with_timeout(operation_ctx, conn_handle.into(), timeout)
             .await
             .to_protobuf()?;
         Ok(ConnectionHeartbeatResponse { valid })

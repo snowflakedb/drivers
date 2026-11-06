@@ -18,8 +18,9 @@ use prost::Message as _;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
-    CancellationAbortOutcome, ConfigSetting, ConnectionGetQueryResultRequest,
-    ConnectionGetQueryStatusRequest, ConnectionGetResultSetRequest, ConnectionHandle,
+    CancellationAbortOutcome, ConfigSetting, ConnectionGetObjectsRequest,
+    ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
+    ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionSendHttpRequest, ConnectionSetOptionsRequest, ConnectionSetOptionsResponse,
     ConnectionTokenRequest, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
@@ -149,6 +150,8 @@ enum HangOn {
     SendHttpRequest,
     /// `POST /session/token-request` — `connection_request_token`.
     TokenRequest,
+    /// `POST /session/heartbeat` — `connection_heartbeat`.
+    Heartbeat,
     /// [`SEND_HTTP_PROBE_PATH`], parked *after* the response headers are written,
     /// so the caller's `send()` resolves and it blocks reading the body instead.
     /// That is the shape a server which accepted the request and then went quiet
@@ -246,6 +249,12 @@ async fn spawn_hanging_token_request(
     spawn_hanging_server(state, HangOn::TokenRequest).await
 }
 
+/// Spawn a mock that logs in, then never answers `POST /session/heartbeat`, so
+/// only cancellation can end `connection_heartbeat`.
+async fn spawn_hanging_heartbeat(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
+    spawn_hanging_server(state, HangOn::Heartbeat).await
+}
+
 /// Spawn a mock that answers the query-request immediately, for the
 /// no-cancellation control case.
 async fn spawn_answering_query(state: Arc<HangingServer>) -> (SocketAddr, HangingServerHandle) {
@@ -326,6 +335,15 @@ async fn spawn_hanging_server(
                     }
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::TokenRequest {
+                        std::future::pending::<()>().await;
+                    }
+                    CATCH_ALL_OK.to_string()
+                } else if target.starts_with("/session/heartbeat") {
+                    if hang_on == HangOn::Heartbeat {
+                        *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
+                    let _ = state.request_received.lock().unwrap().try_send(());
+                    if hang_on == HangOn::Heartbeat {
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
@@ -665,6 +683,12 @@ fn assert_cancelled_with_abort(
 /// is what makes this an abort *of the cancelled query* instead of an abort of
 /// something. The count pins at-most-one-abort-per-cancelled-query.
 fn assert_aborted_the_submitted_query(state: &HangingServer) {
+    assert_aborted_sql(state, SLOW_QUERY);
+}
+
+/// Assert that cancellation emitted exactly one abort-request, and that it
+/// targeted the `requestId` the mock saw on the query-request and echoed `sql`.
+fn assert_aborted_sql(state: &HangingServer, sql: &str) {
     let query_request_id = state
         .query_request_id
         .lock()
@@ -683,7 +707,7 @@ fn assert_aborted_the_submitted_query(state: &HangingServer) {
         abort_bodies[0]
     );
     assert!(
-        abort_bodies[0].contains(&format!(r#""sqlText":"{SLOW_QUERY}""#)),
+        abort_bodies[0].contains(&format!(r#""sqlText":"{sql}""#)),
         "abort body must echo the cancelled query's sqlText; body: {}",
         abort_bodies[0]
     );
@@ -1196,6 +1220,69 @@ async fn cancelling_an_in_flight_token_request_reports_cancelled() {
     assert_cancelled(result);
     assert_hung_on(&state, "/session/token-request");
     assert_no_abort_requests(&state);
+}
+
+/// `connection_heartbeat` posts `/session/heartbeat` and retries while the
+/// session looks expired, so an unanswered server holds the caller until the
+/// request timeout. Cancelling reports `ERROR_KIND_CANCELLED` and issues no
+/// abort-request, because a heartbeat submits no query.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_heartbeat_reports_cancelled_without_aborting() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_heartbeat(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_heartbeat",
+        "heartbeat",
+        ConnectionHeartbeatRequest {
+            conn_handle: Some(conn),
+            timeout_seconds: None,
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/session/heartbeat");
+    assert_no_abort_requests(&state);
+}
+
+/// `connection_get_objects` runs its `SHOW` queries on `/queries/v1/query-request`.
+/// Cancelling aborts the in-flight `SHOW` by the request id that request carried.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_get_objects_aborts_the_show() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_get_objects",
+        "query-request",
+        ConnectionGetObjectsRequest {
+            conn_handle: Some(conn),
+            depth: 1,
+            catalog: None,
+            db_schema: None,
+            table_name: None,
+            table_type: Vec::new(),
+            column_name: None,
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_hung_on(&state, "/queries/v1/query-request");
+    assert_aborted_sql(&state, "SHOW DATABASES IN ACCOUNT");
 }
 
 /// `connection_send_http` forwards a caller-chosen request on the connection's

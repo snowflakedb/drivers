@@ -458,6 +458,14 @@ mod tests {
             "statement_execute_async is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("connection_heartbeat"),
+            "connection_heartbeat is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("connection_get_objects"),
+            "connection_get_objects is marked async_first in the proto"
+        );
+        assert!(
             !observes_cancellation("connection_new"),
             "unmarked RPCs must not claim to observe cancellation themselves"
         );

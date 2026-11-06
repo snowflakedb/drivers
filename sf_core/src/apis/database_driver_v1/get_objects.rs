@@ -33,6 +33,9 @@ use super::connection::{Connection, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
+use super::query_submit::{AbortReport, abort_on_cancel, run_reporting_abort};
+use crate::apis::operation_ctx::{CleanupScope, OperationCtx};
+use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
@@ -203,74 +206,98 @@ fn escape_show_like(pattern: &str) -> String {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/// A cancellable `SHOW`: the scope the abort cleanup registers on, and the
+/// report that cleanup writes. `None` when this call cannot be cancelled.
+type ShowCancel = Option<(CleanupScope, AbortReport)>;
+
 impl DatabaseDriverV1 {
+    /// Cancelling aborts each in-flight `SHOW` by the request id it was submitted
+    /// with, and stops a chunk drain that is still reading a result.
     pub async fn connection_get_objects(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         req: GetObjectsRequest,
     ) -> Result<super::result_set::ResultSetInfo, ApiError> {
-        let conn_ptr = self
-            .connections
-            .get_obj(req.conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
-        let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+        let report = AbortReport::default();
+        let show_cancel =
+            operation_ctx.map(|operation| (operation.cleanup_scope().clone(), report.clone()));
+        let fetch = async move {
+            let conn_ptr =
+                self.connections
+                    .get_obj(req.conn_handle)
+                    .context(InvalidArgumentSnafu {
+                        argument: "Connection handle not found".to_string(),
+                    })?;
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
 
-        let (catalog_filter, schema_filter) = {
-            let conn = conn_ptr.lock().await;
-            apply_connection_context(&conn, req.catalog, req.db_schema).await
-        };
+            let (catalog_filter, schema_filter) = {
+                let conn = conn_ptr.lock().await;
+                apply_connection_context(&conn, req.catalog, req.db_schema).await
+            };
 
-        // `depth` arrives as a raw proto i32. Dispatch only the implemented depths
-        // explicitly; reject COLUMNS (deferred) and unknown values rather than
-        // letting them fall through to a TABLES catch-all.
-        let batch = match req.depth {
-            DEPTH_CATALOGS => fetch_catalogs(&conn_ptr, catalog_filter.as_deref()).await?,
-            DEPTH_DB_SCHEMAS => {
-                fetch_schemas(
-                    &conn_ptr,
-                    catalog_filter.as_deref(),
-                    schema_filter.as_deref(),
-                )
-                .await?
-            }
-            DEPTH_TABLES => {
-                let table_types = normalize_table_types(&req.table_type);
-                fetch_tables(
-                    &conn_ptr,
-                    catalog_filter.as_deref(),
-                    schema_filter.as_deref(),
-                    req.table_name.as_deref(),
-                    &table_types,
-                )
-                .await?
-            }
-            DEPTH_COLUMNS => {
-                fetch_columns(
-                    &conn_ptr,
-                    catalog_filter.as_deref(),
-                    schema_filter.as_deref(),
-                    req.table_name.as_deref(),
-                    req.column_name.as_deref(),
-                )
-                .await?
-            }
-            other => {
-                return InvalidArgumentSnafu {
-                    argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
+            // `depth` arrives as a raw proto i32. Dispatch only the implemented depths
+            // explicitly; reject COLUMNS (deferred) and unknown values rather than
+            // letting them fall through to a TABLES catch-all.
+            let batch = match req.depth {
+                DEPTH_CATALOGS => {
+                    fetch_catalogs(&conn_ptr, catalog_filter.as_deref(), show_cancel).await?
                 }
-                .fail();
-            }
-        };
+                DEPTH_DB_SCHEMAS => {
+                    fetch_schemas(
+                        &conn_ptr,
+                        catalog_filter.as_deref(),
+                        schema_filter.as_deref(),
+                        show_cancel,
+                    )
+                    .await?
+                }
+                DEPTH_TABLES => {
+                    let table_types = normalize_table_types(&req.table_type);
+                    fetch_tables(
+                        &conn_ptr,
+                        catalog_filter.as_deref(),
+                        schema_filter.as_deref(),
+                        req.table_name.as_deref(),
+                        &table_types,
+                        show_cancel,
+                    )
+                    .await?
+                }
+                DEPTH_COLUMNS => {
+                    fetch_columns(
+                        &conn_ptr,
+                        catalog_filter.as_deref(),
+                        schema_filter.as_deref(),
+                        req.table_name.as_deref(),
+                        req.column_name.as_deref(),
+                        show_cancel,
+                    )
+                    .await?
+                }
+                other => {
+                    return InvalidArgumentSnafu {
+                        argument: format!("GetObjects depth {other} is invalid (expected 1..=4)"),
+                    }
+                    .fail();
+                }
+            };
 
-        let http_client = {
-            let conn = conn_ptr.lock().await;
-            conn.http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?
-        };
+            let http_client = {
+                let conn = conn_ptr.lock().await;
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?
+            };
 
-        self.register_arrow_batch_as_result_set(&batch, http_client)
+            self.register_arrow_batch_as_result_set(&batch, http_client)
+        };
+        run_reporting_abort(
+            operation_ctx,
+            "connection_get_objects",
+            &report,
+            Box::pin(fetch),
+        )
+        .await
     }
 }
 
@@ -308,16 +335,18 @@ async fn apply_connection_context(
 async fn fetch_catalogs(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<RecordBatch, ApiError> {
-    let names = fetch_catalog_names(conn_ptr, catalog_filter).await?;
+    let names = fetch_catalog_names(conn_ptr, catalog_filter, show_cancel).await?;
     build_catalogs_batch(names)
 }
 
 async fn fetch_catalog_names(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<Vec<String>, ApiError> {
-    let rows = execute_show(conn_ptr, "SHOW DATABASES IN ACCOUNT").await?;
+    let rows = execute_show(conn_ptr, "SHOW DATABASES IN ACCOUNT", show_cancel).await?;
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -335,10 +364,13 @@ async fn fetch_catalog_names(
 async fn resolve_catalog_pattern(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<Option<Vec<String>>, ApiError> {
     match catalog_filter {
         Some(pattern) if like_pattern::is_exact(pattern).is_none() => {
-            fetch_catalog_names(conn_ptr, Some(pattern)).await.map(Some)
+            fetch_catalog_names(conn_ptr, Some(pattern), show_cancel)
+                .await
+                .map(Some)
         }
         _ => Ok(None),
     }
@@ -352,10 +384,17 @@ async fn fetch_schemas(
     conn_ptr: &Arc<Mutex<Connection>>,
     catalog_filter: Option<&str>,
     schema_filter: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<RecordBatch, ApiError> {
-    let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter).await?;
-    let schemas =
-        fetch_schema_names(conn_ptr, catalog_filter, schema_filter, catalogs.as_deref()).await?;
+    let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter, show_cancel.clone()).await?;
+    let schemas = fetch_schema_names(
+        conn_ptr,
+        catalog_filter,
+        schema_filter,
+        catalogs.as_deref(),
+        show_cancel,
+    )
+    .await?;
     build_schemas_batch(schemas)
 }
 
@@ -381,9 +420,10 @@ async fn fetch_schema_names(
     catalog_filter: Option<&str>,
     schema_filter: Option<&str>,
     resolved_catalogs: Option<&[String]>,
+    show_cancel: ShowCancel,
 ) -> Result<BTreeMap<String, Vec<String>>, ApiError> {
     let scopes = schema_lookup_scopes(catalog_filter, resolved_catalogs);
-    let rows = execute_scoped_show(conn_ptr, "SHOW SCHEMAS", "", &scopes).await?;
+    let rows = execute_scoped_show(conn_ptr, "SHOW SCHEMAS", "", &scopes, show_cancel).await?;
     Ok(schema_names_from_rows(&rows, catalog_filter, schema_filter))
 }
 
@@ -475,16 +515,23 @@ async fn object_show_scopes(
     catalog_filter: Option<&str>,
     schema_filter: Option<&str>,
     exact_table: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<Vec<String>, ApiError> {
     let exact_catalog = catalog_filter.and_then(like_pattern::is_exact);
     let exact_schema = schema_filter.and_then(like_pattern::is_exact);
     if (catalog_filter.is_some() && exact_catalog.is_none())
         || (schema_filter.is_some() && exact_schema.is_none())
     {
-        let catalogs = resolve_catalog_pattern(conn_ptr, catalog_filter).await?;
-        let schemas =
-            fetch_schema_names(conn_ptr, catalog_filter, schema_filter, catalogs.as_deref())
-                .await?;
+        let catalogs =
+            resolve_catalog_pattern(conn_ptr, catalog_filter, show_cancel.clone()).await?;
+        let schemas = fetch_schema_names(
+            conn_ptr,
+            catalog_filter,
+            schema_filter,
+            catalogs.as_deref(),
+            show_cancel,
+        )
+        .await?;
         return Ok(scopes_for_schemas(&schemas, exact_table));
     }
     Ok(vec![scope_for_exact_names(
@@ -533,6 +580,7 @@ async fn fetch_tables(
     schema_filter: Option<&str>,
     table_name_filter: Option<&str>,
     table_types: &TableTypeFilter,
+    show_cancel: ShowCancel,
 ) -> Result<RecordBatch, ApiError> {
     if matches!(table_types, TableTypeFilter::Unsupported) {
         return build_tables_batch(BTreeMap::new());
@@ -542,14 +590,22 @@ async fn fetch_tables(
         return build_tables_batch(BTreeMap::new());
     }
 
-    let scopes = object_show_scopes(conn_ptr, catalog_filter, schema_filter, None).await?;
+    let scopes = object_show_scopes(
+        conn_ptr,
+        catalog_filter,
+        schema_filter,
+        None,
+        show_cancel.clone(),
+    )
+    .await?;
     // Always issue `SHOW OBJECTS`: it lists both tables and views with a
     // reliable `kind` column. `SHOW VIEWS` omits `kind` on some Snowflake
     // versions, so switching commands per requested type leaves the row
     // loop unable to tell tables and views apart. The TABLE/VIEW distinction
     // is applied client-side via the `kind`-derived `normalized_type` below.
     let like_clause = build_like_clause(table_name_filter);
-    let rows = execute_scoped_show(conn_ptr, "SHOW OBJECTS", &like_clause, &scopes).await?;
+    let rows =
+        execute_scoped_show(conn_ptr, "SHOW OBJECTS", &like_clause, &scopes, show_cancel).await?;
 
     let mut by_cat_sch: BTreeMap<String, BTreeMap<String, Vec<(String, String)>>> = BTreeMap::new();
 
@@ -633,11 +689,15 @@ async fn execute_scoped_show(
     show_cmd: &str,
     like_clause: &str,
     scopes: &[String],
+    show_cancel: ShowCancel,
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
-    let results: Vec<_> = futures::stream::iter(0..scopes.len())
-        .map(|index| {
-            let sql = format_show_sql(show_cmd, like_clause, &scopes[index]);
-            async move { execute_show(conn_ptr, &sql).await }
+    let conn_ptr = Arc::clone(conn_ptr);
+    let results: Vec<_> = futures::stream::iter(scopes.iter().cloned())
+        .map(|scope| {
+            let sql = format_show_sql(show_cmd, like_clause, &scope);
+            let conn_ptr = Arc::clone(&conn_ptr);
+            let show_cancel = show_cancel.clone();
+            async move { execute_show(&conn_ptr, &sql, show_cancel).await }
         })
         .buffered(MAX_CONCURRENT_METADATA_SHOWS)
         .try_collect()
@@ -689,6 +749,7 @@ fn map_execute_show_error(
 async fn execute_show(
     conn_ptr: &Arc<Mutex<Connection>>,
     sql: &str,
+    show_cancel: ShowCancel,
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
     let (query_parameters, http_client, retry_policy, prefetch_config, xp_backend) = {
         let conn = conn_ptr.lock().await;
@@ -710,8 +771,9 @@ async fn execute_show(
 
     let sql_owned = sql.to_string();
     let query_input = QueryInput::new(sql_owned.clone());
+    let request_id = uuid::Uuid::new_v4();
 
-    let response = with_valid_session(conn_ptr, |token| {
+    let submit = Box::pin(with_valid_session(conn_ptr, |token| {
         let http_client = http_client.clone();
         let query_parameters = query_parameters.clone();
         let query_input = query_input.clone();
@@ -725,14 +787,27 @@ async fn execute_show(
                 query_input,
                 QueryOptions {
                     retry_policy,
+                    request_id: Some(request_id),
                     ..Default::default()
                 },
                 xp_backend.as_deref(),
             )
             .await
         }
-    })
-    .await;
+    }));
+    let response = match show_cancel {
+        Some((scope, report)) => {
+            let cleanup = abort_on_cancel(
+                Arc::clone(conn_ptr),
+                request_id,
+                sql_owned.clone(),
+                &report,
+                "metadata SHOW",
+            );
+            scope.with_cleanup(cleanup, submit).await
+        }
+        None => submit.await,
+    };
 
     let response = match response {
         Ok(resp) => resp,
@@ -746,7 +821,7 @@ async fn execute_show(
     // Account-wide `SHOW OBJECTS` spills to external chunks; parsing only the
     // inline rowset here would silently drop most rows.
     let rowset_data = response.data.into_rowset_data();
-    let reader =
+    let (reader, _prefetch_stop) =
         super::query::read_batches(rowset_data, http_client, &prefetch_config, None, xp_backend)
             .await
             .map_err(|e| {
@@ -1238,6 +1313,7 @@ async fn fetch_columns(
     schema_filter: Option<&str>,
     table_name_filter: Option<&str>,
     column_name_filter: Option<&str>,
+    show_cancel: ShowCancel,
 ) -> Result<RecordBatch, ApiError> {
     // Empty string means "match nothing".
     if matches!(table_name_filter, Some("")) || matches!(column_name_filter, Some("")) {
@@ -1252,11 +1328,19 @@ async fn fetch_columns(
         catalog_filter,
         schema_filter,
         exact_table.as_deref(),
+        show_cancel.clone(),
     )
     .await?;
     // Coarse column-name pushdown; build_like_clause handles None/"" → no LIKE.
     let col_like_clause = build_like_clause(column_name_filter);
-    let rows = execute_scoped_show(conn_ptr, "SHOW COLUMNS", &col_like_clause, &scopes).await?;
+    let rows = execute_scoped_show(
+        conn_ptr,
+        "SHOW COLUMNS",
+        &col_like_clause,
+        &scopes,
+        show_cancel,
+    )
+    .await?;
 
     // Group columns by (catalog, schema, table), preserving SHOW row order for
     // ordinal_position assignment. BTreeMap gives deterministic lexicographic sort.

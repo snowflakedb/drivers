@@ -78,7 +78,7 @@ impl PrefetchChunkReader {
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
         let memory_budget = MemoryBudget::new(config.memory_limit_mb);
 
-        let mut tasks: VecDeque<ChunkTask> = VecDeque::new();
+        let mut tasks = ChunkTasks::new();
         fill_window(
             &downloader,
             &parser,
@@ -91,6 +91,7 @@ impl PrefetchChunkReader {
 
         let (schema, head_chunk) = match initial {
             Some(initial_chunk_task) => {
+                let _abort = AbortOnDrop(initial_chunk_task.abort_handle());
                 let (schema, batches) = initial_chunk_task.await.context(SpawnBlockingSnafu)??;
                 let chunk = if batches.is_empty() {
                     None
@@ -104,6 +105,7 @@ impl PrefetchChunkReader {
             }
             None => {
                 let task = tasks.pop_front().context(MissingInitialChunkSnafu)?;
+                let _abort = AbortOnDrop(task.abort_handle());
                 let chunk = task
                     .await
                     .context(SpawnBlockingSnafu)?
@@ -157,12 +159,48 @@ async fn send_result(
     Ok(())
 }
 
+struct ChunkTasks(VecDeque<ChunkTask>);
+
+impl ChunkTasks {
+    fn new() -> Self {
+        Self(VecDeque::new())
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn push_back(&mut self, task: ChunkTask) {
+        self.0.push_back(task);
+    }
+
+    fn pop_front(&mut self) -> Option<ChunkTask> {
+        self.0.pop_front()
+    }
+}
+
+impl Drop for ChunkTasks {
+    fn drop(&mut self) {
+        for task in self.0.drain(..) {
+            task.abort();
+        }
+    }
+}
+
+struct AbortOnDrop(AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// Spawn up to `concurrency` download+parse tasks from the front of `chunks`.
 async fn fill_window(
     downloader: &impl DownloadChunk,
     parser: &impl ParseChunk,
     chunks: &mut VecDeque<ChunkDownloadData>,
-    tasks: &mut VecDeque<ChunkTask>,
+    tasks: &mut ChunkTasks,
     budget: &MemoryBudget,
     concurrency: usize,
 ) {
@@ -182,11 +220,12 @@ async fn drain_window(
     downloader: &impl DownloadChunk,
     parser: &impl ParseChunk,
     chunks: &mut VecDeque<ChunkDownloadData>,
-    tasks: &mut VecDeque<ChunkTask>,
+    tasks: &mut ChunkTasks,
     budget: &MemoryBudget,
     tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
 ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
     while let Some(task) = tasks.pop_front() {
+        let _abort = AbortOnDrop(task.abort_handle());
         let result = task
             .await
             .unwrap_or_else(|e| Err(ArrowError::ExternalError(Box::new(e))));

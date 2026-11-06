@@ -187,7 +187,7 @@ impl Session {
         match self.ready().await {
             Ok(ready) => BRIDGE
                 .driver
-                .connection_heartbeat(ready.connection())
+                .connection_heartbeat(None, ready.connection())
                 .await
                 .unwrap_or(false),
             Err(_) => false,

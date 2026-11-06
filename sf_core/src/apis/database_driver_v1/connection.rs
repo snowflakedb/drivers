@@ -16,7 +16,7 @@ use super::validation::{
     validate_connection_seed_write, validate_session_override_write,
 };
 use super::{Setting, WrapperPresets, logout};
-use crate::apis::operation_ctx::OperationCtx;
+use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::chunks::PrefetchConfig;
 use crate::config::rest_parameters::resolve_include_retry_reason;
 use crate::config::{
@@ -262,7 +262,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         db_handle: Handle,
     ) -> Result<(), ApiError> {
-        crate::apis::operation_ctx::run_opt(
+        run_opt(
             operation_ctx,
             "connection_init",
             Box::pin(self.connection_init_inner(conn_handle, db_handle)),
@@ -2510,8 +2510,7 @@ impl DatabaseDriverV1 {
             })
             .await
         };
-        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_get_query_status", status)
-            .await
+        run_opt(operation_ctx, "connection_get_query_status", status).await
     }
 
     pub async fn connection_get_all_parameters(
@@ -2826,7 +2825,7 @@ impl DatabaseDriverV1 {
                 body: response_body.to_vec(),
             })
         };
-        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_send_http", send).await
+        run_opt(operation_ctx, "connection_send_http", send).await
     }
 
     /// Send a heartbeat to validate that the connection and session are still alive.
@@ -2835,19 +2834,27 @@ impl DatabaseDriverV1 {
     /// Automatically attempts one token refresh on 401 (session expired),
     /// except when the connection has an external session id. There is no
     /// master token to renew, so a 401 is reported as invalid.
-    pub async fn connection_heartbeat(&self, conn_handle: Handle) -> Result<bool, ApiError> {
-        self.connection_heartbeat_with_timeout(conn_handle, None)
+    ///
+    /// Cancelling drops the in-flight request. A heartbeat changes no query, so
+    /// nothing is aborted on the server.
+    pub async fn connection_heartbeat(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+    ) -> Result<bool, ApiError> {
+        self.connection_heartbeat_with_timeout(operation_ctx, conn_handle, None)
             .await
     }
 
     /// Like [`Self::connection_heartbeat`] but with an optional HTTP request timeout override.
     pub async fn connection_heartbeat_with_timeout(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
         timeout: Option<Duration>,
     ) -> Result<bool, ApiError> {
         let telemetry_id = self.telemetry_id_for_conn(conn_handle).await;
-        async {
+        let beat = async {
             let conn_ptr = self
                 .connections
                 .get_obj(conn_handle)
@@ -2904,8 +2911,8 @@ impl DatabaseDriverV1 {
         .instrument(crate::snowflake_op_span!(
             "connection_heartbeat",
             telemetry_id
-        ))
-        .await
+        ));
+        run_opt(operation_ctx, "connection_heartbeat", beat).await
     }
 
     /// Execute a token request (ISSUE/RENEW) using the connection's master token.
@@ -2983,7 +2990,7 @@ impl DatabaseDriverV1 {
             .await
             .context(TokenRequestSnafu)
         };
-        crate::apis::operation_ctx::run_opt(operation_ctx, "connection_request_token", token).await
+        run_opt(operation_ctx, "connection_request_token", token).await
     }
 }
 
@@ -4940,7 +4947,7 @@ mod tests {
             });
         }
 
-        assert!(ds.connection_heartbeat(handle).await.unwrap());
+        assert!(ds.connection_heartbeat(None, handle).await.unwrap());
         ds.connection_release(handle).unwrap();
     }
 
@@ -4977,7 +4984,7 @@ mod tests {
             });
         }
 
-        assert!(!ds.connection_heartbeat(handle).await.unwrap());
+        assert!(!ds.connection_heartbeat(None, handle).await.unwrap());
         ds.connection_release(handle).unwrap();
     }
 
@@ -5079,7 +5086,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
 
-        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        let valid = ds.connection_heartbeat(None, handle).await.unwrap();
         assert!(valid, "heartbeat should return true on success");
 
         ds.connection_release(handle).unwrap();
@@ -5102,7 +5109,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
 
-        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        let valid = ds.connection_heartbeat(None, handle).await.unwrap();
         assert!(!valid, "heartbeat should return false on failure response");
 
         ds.connection_release(handle).unwrap();
@@ -5127,7 +5134,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = setup_connection_for_heartbeat_tests(&ds, &server.uri()).await;
 
-        assert!(!ds.connection_heartbeat(handle).await.unwrap());
+        assert!(!ds.connection_heartbeat(None, handle).await.unwrap());
         assert_eq!(
             ds.connection_is_usable(handle).await.unwrap(),
             ConnectionUsability::Terminated,
@@ -5173,7 +5180,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = setup_connection_for_heartbeat_tests(&ds, &format!("http://{addr}")).await;
 
-        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        let valid = ds.connection_heartbeat(None, handle).await.unwrap();
         assert!(!valid, "heartbeat should return false on network error");
 
         ds.connection_release(handle).unwrap();
@@ -5199,7 +5206,7 @@ mod tests {
         let handle = setup_connection_for_heartbeat_tests(&ds, &format!("http://{addr}")).await;
         attach_host_backend(&ds, handle).await;
 
-        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        let valid = ds.connection_heartbeat(None, handle).await.unwrap();
         assert!(valid, "XP heartbeat must not contact the session endpoint");
 
         ds.connection_release(handle).unwrap();
@@ -5694,7 +5701,7 @@ mod tests {
         let ds = DatabaseDriverV1::new();
         let handle = ds.connection_new();
 
-        let valid = ds.connection_heartbeat(handle).await.unwrap();
+        let valid = ds.connection_heartbeat(None, handle).await.unwrap();
         assert!(
             !valid,
             "heartbeat should return false on uninitialized connection"

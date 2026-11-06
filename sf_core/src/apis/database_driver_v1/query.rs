@@ -657,19 +657,30 @@ pub(super) async fn read_batches(
     prefetch_config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
     xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
-) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
-    Ok(into_sync_reader(
-        read_query_rowset(
-            data,
-            http_client,
-            prefetch_config,
-            nullable_flags,
-            xp_backend,
-        )
-        .await
-        .context(BatchReadSnafu)?,
+) -> Result<(Box<dyn RecordBatchReader + Send>, Option<PrefetchStop>), QueryResponseProcessingError>
+{
+    let opened = read_query_rowset(
+        data,
+        http_client,
+        prefetch_config,
         nullable_flags,
-    ))
+        xp_backend,
+    )
+    .await
+    .context(BatchReadSnafu)?;
+    Ok(split_sync_reader(opened, nullable_flags))
+}
+
+/// Aborts the chunk-prefetch coordinator when dropped.
+///
+/// Held beside a `spawn_blocking` drain: dropping the join handle detaches that
+/// thread, and aborting the coordinator is what makes `blocking_recv` return.
+pub(super) struct PrefetchStop(tokio::task::AbortHandle);
+
+impl Drop for PrefetchStop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 pub(super) async fn build_async_stream(
@@ -795,9 +806,24 @@ fn into_sync_reader(
 ) -> Box<dyn RecordBatchReader + Send> {
     match opened {
         OpenedBatches::Reader(reader) => reader,
+        // Dropping the handle does not abort. The reader drains this coordinator;
+        // `read_batches` is the caller that must stop it when the drain is cancelled.
         OpenedBatches::Prefetch(reader, _abort_handle) => {
             maybe_inject_nullable(Box::new(reader), nullable_flags)
         }
+    }
+}
+
+fn split_sync_reader(
+    opened: OpenedBatches,
+    nullable_flags: Option<&[bool]>,
+) -> (Box<dyn RecordBatchReader + Send>, Option<PrefetchStop>) {
+    match opened {
+        OpenedBatches::Reader(reader) => (reader, None),
+        OpenedBatches::Prefetch(reader, abort_handle) => (
+            maybe_inject_nullable(Box::new(reader), nullable_flags),
+            Some(PrefetchStop(abort_handle)),
+        ),
     }
 }
 

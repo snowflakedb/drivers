@@ -253,7 +253,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
     if (timeoutSeconds > 0) {
       builder.setTimeoutSeconds(timeoutSeconds);
     }
-    return invoke(() -> client.connectionHeartbeat(builder.build()));
+    return await(client.connectionHeartbeat(builder.build()));
   }
 
   public ConnectionGetInfoResponse connectionGetInfo(ConnectionHandle connHandle) {

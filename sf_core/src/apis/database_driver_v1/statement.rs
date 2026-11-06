@@ -8,8 +8,8 @@ use super::global_state::DatabaseDriverV1;
 use super::multistatement;
 use super::query::{StageInfoRefreshContext, perform_put_get_transfer};
 use super::query_submit::{
-    AbortReport, abort_on_cancel, abort_query_by_request_id, query_context, submit_query,
-    update_caches,
+    AbortReport, abort_on_cancel, abort_query_by_request_id, query_context, run_reporting_abort,
+    submit_query, update_caches,
 };
 use super::result_set::{
     ColumnMetadata, ExecuteQueryResult, fetch_query_response_data, resolve_reader_ctx,
@@ -82,28 +82,6 @@ pub enum BindingType<'a> {
     Json(DataPtr<'a>),
     /// CSV bindings - pointer to raw CSV data bytes for bulk upload.
     Csv(DataPtr<'a>),
-}
-
-/// Run a query-submitting operation under `operation_ctx`, attaching to a resulting
-/// cancellation whatever its abort-cleanup reported.
-///
-/// Shared by both entry points into `execute_query_internal` so the
-/// "cancelled → attach the acknowledgement" step cannot be wired into one and
-/// forgotten in the other. Safe to call after `run_opt`: `OperationCtx::run`
-/// awaits registered cleanup before reporting, so in the healthy case the report
-/// is already final by the time this reads it.
-async fn run_reporting_abort<T, F>(
-    operation_ctx: Option<&OperationCtx>,
-    method: &str,
-    report: &AbortReport,
-    fut: F,
-) -> Result<T, ApiError>
-where
-    F: Future<Output = Result<T, ApiError>>,
-{
-    run_opt(operation_ctx, method, fut)
-        .await
-        .map_err(|e| report.attach(e))
 }
 
 /// Result returned from async query submission (non-blocking).

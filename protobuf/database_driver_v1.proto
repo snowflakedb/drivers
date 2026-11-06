@@ -1128,7 +1128,9 @@ service DatabaseDriver {
   rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
   rpc ConnectionIsExpired(ConnectionIsExpiredRequest) returns (ConnectionIsExpiredResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
-  rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
+  rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
@@ -1184,7 +1186,9 @@ service DatabaseDriver {
     option (async_first) = true;
   }
   // Heartbeat to validate connection and session are still alive
-  rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse);
+  rpc ConnectionHeartbeat(ConnectionHeartbeatRequest) returns (ConnectionHeartbeatResponse) {
+    option (async_first) = true;
+  }
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

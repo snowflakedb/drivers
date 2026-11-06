@@ -1,4 +1,5 @@
 use snafu::{OptionExt, ResultExt};
+use std::future::Future;
 use std::sync::{Arc, OnceLock, atomic::Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -7,7 +8,7 @@ use super::connection::{
     CloseState, Connection, FinalSessionNames, with_session_refresh, with_valid_session,
 };
 use super::error::*;
-use crate::apis::operation_ctx::OperationCtx;
+use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::query_response::Response;
@@ -36,23 +37,92 @@ pub(super) struct QueryTransport {
 /// execute future, so its return value is unreadable. `std::sync::Mutex` because
 /// the read must not `.await`.
 #[derive(Clone, Debug, Default)]
-pub(super) struct AbortReport(Arc<std::sync::Mutex<Option<CancellationAbortResult>>>);
+pub(super) struct AbortReport(Arc<std::sync::Mutex<Vec<CancellationAbortResult>>>);
+
+/// One in-flight abort inside an [`AbortReport`]. Replacing this slot leaves
+/// every sibling abort's outcome intact.
+struct AbortSlot {
+    report: AbortReport,
+    index: usize,
+}
 
 impl AbortReport {
-    fn set(&self, outcome: CancellationAbortResult) {
-        *self.0.lock_recover() = Some(outcome);
+    /// Record that an abort has been issued and is not yet confirmed.
+    ///
+    /// Called from the cleanup task, not when the cleanup is armed: a query
+    /// that finishes disarms its cleanup, and that must stay "no abort was
+    /// issued".
+    fn begin(&self) -> AbortSlot {
+        let mut slots = self.0.lock_recover();
+        let index = slots.len();
+        slots.push(CancellationAbortResult::NotConfirmed);
+        AbortSlot {
+            report: self.clone(),
+            index,
+        }
     }
 
-    /// Attach the abort outcome to a `Cancelled` error; leave every other error as-is.
+    /// Attach the combined abort outcome to a `Cancelled` error; leave every
+    /// other error as-is. Several aborts (a metadata call with concurrent
+    /// `SHOW`s) collapse to one acknowledgement: all aborted, all not running,
+    /// or not confirmed when the results disagree or any of them is unknown.
     pub(super) fn attach(&self, error: ApiError) -> ApiError {
         match error {
             ApiError::Cancelled { location, .. } => ApiError::Cancelled {
-                abort: *self.0.lock_recover(),
+                abort: self.outcome(),
                 location,
             },
             other => other,
         }
     }
+
+    fn outcome(&self) -> Option<CancellationAbortResult> {
+        let slots = self.0.lock_recover();
+        if slots.is_empty() {
+            return None;
+        }
+        if slots
+            .iter()
+            .all(|outcome| *outcome == CancellationAbortResult::Aborted)
+        {
+            return Some(CancellationAbortResult::Aborted);
+        }
+        if slots
+            .iter()
+            .all(|outcome| *outcome == CancellationAbortResult::NotRunning)
+        {
+            return Some(CancellationAbortResult::NotRunning);
+        }
+        Some(CancellationAbortResult::NotConfirmed)
+    }
+}
+
+impl AbortSlot {
+    fn set(&self, outcome: CancellationAbortResult) {
+        let mut slots = self.report.0.lock_recover();
+        if let Some(slot) = slots.get_mut(self.index) {
+            *slot = outcome;
+        }
+    }
+}
+
+/// Run a query-submitting operation under `operation_ctx`, attaching to a
+/// resulting cancellation whatever its abort-cleanup reported.
+///
+/// `OperationCtx::run` awaits registered cleanup before reporting, so in the
+/// healthy case the report is already final by the time this reads it.
+pub(super) async fn run_reporting_abort<T, F>(
+    operation_ctx: Option<&OperationCtx>,
+    method: &str,
+    report: &AbortReport,
+    fut: F,
+) -> Result<T, ApiError>
+where
+    F: Future<Output = Result<T, ApiError>>,
+{
+    run_opt(operation_ctx, method, fut)
+        .await
+        .map_err(|error| report.attach(error))
 }
 
 /// Abort `request_id` server-side and record the outcome. Owns its inputs because
@@ -67,12 +137,10 @@ pub(super) fn abort_on_cancel(
     let report = report.clone();
     let request_id = request_id.to_string();
     async move {
-        // Unset still means "no abort was issued": record NotConfirmed before
-        // awaiting so a cleanup that never finishes is distinguishable.
-        report.set(CancellationAbortResult::NotConfirmed);
+        let slot = report.begin();
         match abort_query_by_request_id(&conn_arc, request_id, sql).await {
             Ok(outcome) => {
-                report.set(match outcome {
+                slot.set(match outcome {
                     AbortOutcome::Aborted => CancellationAbortResult::Aborted,
                     AbortOutcome::NotRunning => CancellationAbortResult::NotRunning,
                 });
