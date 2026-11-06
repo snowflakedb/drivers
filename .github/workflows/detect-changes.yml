@@ -10,6 +10,9 @@ on:
       dotnet:
         description: "True if dotnet wrapper code changed"
         value: ${{ jobs.detect.outputs.dotnet }}
+      gosnowflake:
+        description: "True if gosnowflake wrapper code changed"
+        value: ${{ jobs.detect.outputs.gosnowflake }}
       jdbc:
         description: "True if JDBC wrapper code changed"
         value: ${{ jobs.detect.outputs.jdbc }}
@@ -40,6 +43,9 @@ on:
       run_dotnet:
         description: "True if dotnet tests should run"
         value: ${{ jobs.detect.outputs.run_dotnet }}
+      run_gosnowflake:
+        description: "True if gosnowflake tests should run"
+        value: ${{ jobs.detect.outputs.run_gosnowflake }}
       run_jdbc:
         description: "True if JDBC tests should run"
         value: ${{ jobs.detect.outputs.run_jdbc }}
@@ -99,6 +105,9 @@ on:
       dotnet_wanted:
         description: "True if any .NET lane should run"
         value: ${{ jobs.detect.outputs.dotnet_wanted }}
+      gosnowflake_wanted:
+        description: "True if gosnowflake tests should run"
+        value: ${{ jobs.detect.outputs.gosnowflake_wanted }}
 
 jobs:
   detect:
@@ -107,6 +116,7 @@ jobs:
       # Raw outputs
       core: ${{ steps.filter.outputs.core }}
       dotnet: ${{ steps.filter.outputs.dotnet }}
+      gosnowflake: ${{ steps.filter.outputs.gosnowflake }}
       jdbc: ${{ steps.filter.outputs.jdbc }}
       nodejs: ${{ steps.filter.outputs.nodejs }}
       odbc: ${{ steps.filter.outputs.odbc }}
@@ -117,6 +127,7 @@ jobs:
       no_build_impact: ${{ steps.computed.outputs.no_build_impact }}
       # Pre-computed "should run" outputs
       run_dotnet: ${{ steps.computed.outputs.run_dotnet }}
+      run_gosnowflake: ${{ steps.computed.outputs.run_gosnowflake }}
       run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
       run_nodejs: ${{ steps.computed.outputs.run_nodejs }}
       run_odbc: ${{ steps.computed.outputs.run_odbc }}
@@ -136,6 +147,7 @@ jobs:
       rust_core_wanted: ${{ steps.computed.outputs.rust_core_wanted }}
       nodejs_wanted: ${{ steps.computed.outputs.nodejs_wanted }}
       dotnet_wanted: ${{ steps.computed.outputs.dotnet_wanted }}
+      gosnowflake_wanted: ${{ steps.computed.outputs.gosnowflake_wanted }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -199,6 +211,9 @@ jobs:
               - 'dotnet/**'
               - '.github/workflows/test-dotnet.yml'
               - 'scripts/validate_behavior_differences.py'
+            gosnowflake:
+              - 'gosnowflake/**'
+              - '.github/workflows/test-gosnowflake.yml'
             dotnet_e2e_integ:
               - 'dotnet/tests/**'
               - '.github/workflows/test-dotnet.yml'
@@ -400,6 +415,15 @@ jobs:
             echo "run_dotnet=false" >> $GITHUB_OUTPUT
           fi
 
+          # gosnowflake should run only if its own files changed.
+          # The wrapper does not depend on the shared core yet.
+          if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
+             [[ "${{ steps.filter.outputs.gosnowflake }}" == "true" ]]; then
+            echo "run_gosnowflake=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_gosnowflake=false" >> $GITHUB_OUTPUT
+          fi
+
           # JDBC should run if: jdbc OR core OR shared changed
           if [[ "$IS_SNOWFLAKE_ENG" == "true" ]] && \
              { [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
@@ -515,7 +539,7 @@ jobs:
 
           if [[ "$NO_BUILD_IMPACT" == "true" ]]; then
             for v in run_jdbc run_odbc run_python run_python_packaging run_python_fips \
-                     run_rust_core run_nodejs run_dotnet run_jdbc_reference \
+                     run_rust_core run_nodejs run_dotnet run_gosnowflake run_jdbc_reference \
                      run_odbc_reference run_python_reference \
                      run_nodejs_reference run_dotnet_reference run_odbc_packaging; do
               echo "$v=false" >> $GITHUB_OUTPUT
@@ -538,6 +562,7 @@ jobs:
             echo "rust_core_wanted=$(any_lane run_rust_core)"
             echo "nodejs_wanted=$(any_lane run_nodejs run_nodejs_reference)"
             echo "dotnet_wanted=$(any_lane run_dotnet run_dotnet_reference)"
+            echo "gosnowflake_wanted=$(any_lane run_gosnowflake)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Output summary
@@ -556,6 +581,7 @@ jobs:
           echo "| Python FIPS | ${{ steps.filter.outputs.python_fips }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.filter.outputs.nodejs }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.filter.outputs.dotnet }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| gosnowflake | ${{ steps.filter.outputs.gosnowflake }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
           echo "| No Build Impact | ${{ steps.computed.outputs.no_build_impact }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -576,6 +602,7 @@ jobs:
           echo "| Node.js Reference | ${{ steps.computed.outputs.run_nodejs_reference }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.computed.outputs.run_dotnet }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet Reference | ${{ steps.computed.outputs.run_dotnet_reference }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| gosnowflake | ${{ steps.computed.outputs.run_gosnowflake }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Driver workflows to invoke" >> $GITHUB_STEP_SUMMARY
           echo "| Driver | Wanted |" >> $GITHUB_STEP_SUMMARY
@@ -586,6 +613,7 @@ jobs:
           echo "| Rust Core | ${{ steps.computed.outputs.rust_core_wanted }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | ${{ steps.computed.outputs.nodejs_wanted }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dotnet | ${{ steps.computed.outputs.dotnet_wanted }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| gosnowflake | ${{ steps.computed.outputs.gosnowflake_wanted }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Write detected-scope artifact
         run: |
@@ -597,6 +625,7 @@ jobs:
             "event_name": "${{ github.event_name }}",
             "core": ${{ steps.filter.outputs.core }},
             "dotnet": ${{ steps.filter.outputs.dotnet }},
+            "gosnowflake": ${{ steps.filter.outputs.gosnowflake }},
             "jdbc": ${{ steps.filter.outputs.jdbc }},
             "nodejs": ${{ steps.filter.outputs.nodejs }},
             "odbc": ${{ steps.filter.outputs.odbc }},
@@ -606,6 +635,7 @@ jobs:
             "shared": ${{ steps.filter.outputs.shared }},
             "no_build_impact": ${{ steps.computed.outputs.no_build_impact }},
             "run_dotnet": ${{ steps.computed.outputs.run_dotnet }},
+            "run_gosnowflake": ${{ steps.computed.outputs.run_gosnowflake }},
             "run_jdbc": ${{ steps.computed.outputs.run_jdbc }},
             "run_odbc": ${{ steps.computed.outputs.run_odbc }},
             "run_nodejs": ${{ steps.computed.outputs.run_nodejs }},
@@ -624,7 +654,8 @@ jobs:
             "odbc_wanted": ${{ steps.computed.outputs.odbc_wanted }},
             "rust_core_wanted": ${{ steps.computed.outputs.rust_core_wanted }},
             "nodejs_wanted": ${{ steps.computed.outputs.nodejs_wanted }},
-            "dotnet_wanted": ${{ steps.computed.outputs.dotnet_wanted }}
+            "dotnet_wanted": ${{ steps.computed.outputs.dotnet_wanted }},
+            "gosnowflake_wanted": ${{ steps.computed.outputs.gosnowflake_wanted }}
           }
           EOF
 

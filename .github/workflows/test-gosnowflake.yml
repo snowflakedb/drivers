@@ -1,0 +1,44 @@
+name: gosnowflake tests
+
+# database/sql tests for the gosnowflake module. driver-status.yml calls this
+# when detect-changes selects the gosnowflake paths.
+
+on:
+  workflow_call:
+    inputs:
+      run_gosnowflake:
+        description: "Run gosnowflake tests."
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  # The prefix is a literal, not ${{ github.workflow }}: inside a workflow_call
+  # the github context belongs to the caller, so github.workflow would resolve
+  # to "Driver CI" and put this run in the orchestrator's own group. GitHub
+  # reads that as a deadlock and fails the call before any job starts.
+  group: gosnowflake-ci-${{ github.event.pull_request.number || github.run_id }}
+  # Cancel only in-flight PR runs. Push-to-main must never cancel a sibling run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    if: inputs.run_gosnowflake
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          # The module has no go.sum, which is what setup-go uses as a cache key.
+          cache: false
+
+      - name: Test
+        working-directory: gosnowflake
+        run: go test ./...

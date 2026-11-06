@@ -39,6 +39,7 @@ on:
           - rust-core
           - nodejs
           - dotnet
+          - gosnowflake
 
 concurrency:
   # Literal prefix, distinct from every workflow this one calls: a callee that
@@ -112,6 +113,8 @@ jobs:
       rust_core_wanted: ${{ steps.resolve.outputs.rust_core_wanted }}
       nodejs_wanted: ${{ steps.resolve.outputs.nodejs_wanted }}
       dotnet_wanted: ${{ steps.resolve.outputs.dotnet_wanted }}
+      gosnowflake: ${{ steps.resolve.outputs.gosnowflake }}
+      gosnowflake_wanted: ${{ steps.resolve.outputs.gosnowflake_wanted }}
     steps:
       - name: Resolve driver suites
         id: resolve
@@ -137,12 +140,14 @@ jobs:
           RUN_NODEJS_REFERENCE: ${{ needs.detect-changes.outputs.run_nodejs_reference }}
           RUN_DOTNET: ${{ needs.detect-changes.outputs.run_dotnet }}
           RUN_DOTNET_REFERENCE: ${{ needs.detect-changes.outputs.run_dotnet_reference }}
+          RUN_GOSNOWFLAKE: ${{ needs.detect-changes.outputs.run_gosnowflake }}
           PYTHON_WANTED: ${{ needs.detect-changes.outputs.python_wanted }}
           JDBC_WANTED: ${{ needs.detect-changes.outputs.jdbc_wanted }}
           ODBC_WANTED: ${{ needs.detect-changes.outputs.odbc_wanted }}
           RUST_CORE_WANTED: ${{ needs.detect-changes.outputs.rust_core_wanted }}
           NODEJS_WANTED: ${{ needs.detect-changes.outputs.nodejs_wanted }}
           DOTNET_WANTED: ${{ needs.detect-changes.outputs.dotnet_wanted }}
+          GOSNOWFLAKE_WANTED: ${{ needs.detect-changes.outputs.gosnowflake_wanted }}
         run: |
           set -euo pipefail
 
@@ -152,9 +157,10 @@ jobs:
           core=false
           node=false; node_ref=false
           net=false; net_ref=false
+          gs=false
           odbc_long=false
           py_w=false; jdbc_w=false; odbc_w=false
-          core_w=false; node_w=false; net_w=false
+          core_w=false; node_w=false; net_w=false; gs_w=false
 
           # Turn on every lane of a driver. Release-branch pushes, manual
           # dispatch, and the per-driver nightly cron slots use this.
@@ -167,8 +173,10 @@ jobs:
               rust-core) core=true; core_w=true ;;
               nodejs)    node=true; node_ref=true; node_w=true ;;
               dotnet)    net=true; net_ref=true; net_w=true ;;
+              gosnowflake) gs=true; gs_w=true ;;
               all)       enable python; enable jdbc; enable odbc
-                         enable rust-core; enable nodejs; enable dotnet ;;
+                         enable rust-core; enable nodejs; enable dotnet
+                         enable gosnowflake ;;
               *)         echo "::error::Unknown driver '$1'"; exit 1 ;;
             esac
           }
@@ -197,12 +205,14 @@ jobs:
             node_ref=$(norm "$RUN_NODEJS_REFERENCE")
             net=$(norm "$RUN_DOTNET")
             net_ref=$(norm "$RUN_DOTNET_REFERENCE")
+            gs=$(norm "$RUN_GOSNOWFLAKE")
             py_w=$(norm "$PYTHON_WANTED")
             jdbc_w=$(norm "$JDBC_WANTED")
             odbc_w=$(norm "$ODBC_WANTED")
             core_w=$(norm "$RUST_CORE_WANTED")
             node_w=$(norm "$NODEJS_WANTED")
             net_w=$(norm "$DOTNET_WANTED")
+            gs_w=$(norm "$GOSNOWFLAKE_WANTED")
           }
 
           emit() {
@@ -220,6 +230,7 @@ jobs:
               echo "nodejs_reference=$node_ref"
               echo "dotnet=$net"
               echo "dotnet_reference=$net_ref"
+              echo "gosnowflake=$gs"
               echo "odbc_long_running=$odbc_long"
               echo "python_wanted=$py_w"
               echo "jdbc_wanted=$jdbc_w"
@@ -227,6 +238,7 @@ jobs:
               echo "rust_core_wanted=$core_w"
               echo "nodejs_wanted=$node_w"
               echo "dotnet_wanted=$net_w"
+              echo "gosnowflake_wanted=$gs_w"
             } | tee -a "$GITHUB_OUTPUT"
           }
 
@@ -282,8 +294,8 @@ jobs:
               # main uses the same suite selection as a pull request. The
               # called workflows still see event push, so a selected driver
               # runs its merge-level matrix. A release branch runs that
-              # driver's whole suite. Rust Core, Node.js and .NET have no
-              # release lines.
+              # driver's whole suite. Rust Core, Node.js, .NET, and gosnowflake
+              # have no release lines.
               case "$REF" in
                 refs/heads/main)             apply_detected ;;
                 refs/heads/release/python-*) enable python ;;
@@ -381,9 +393,20 @@ jobs:
       run_dotnet: ${{ needs.plan.outputs.dotnet == 'true' }}
       run_dotnet_reference: ${{ needs.plan.outputs.dotnet_reference == 'true' }}
 
+  gosnowflake:
+    needs: plan
+    if: >-
+      !cancelled()
+      && needs.plan.result == 'success'
+      && needs.plan.outputs.gosnowflake_wanted == 'true'
+    uses: ./.github/workflows/test-gosnowflake.yml
+    secrets: inherit
+    with:
+      run_gosnowflake: ${{ needs.plan.outputs.gosnowflake == 'true' }}
+
   driver-status:
     name: driver-status
-    needs: [scope-label-gate, detect-changes, plan, python, jdbc, odbc, rust-core, nodejs, dotnet]
+    needs: [scope-label-gate, detect-changes, plan, python, jdbc, odbc, rust-core, nodejs, dotnet, gosnowflake]
     if: always()
     runs-on: ubuntu-slim
     steps:
@@ -398,12 +421,14 @@ jobs:
           RUST_CORE_RESULT: ${{ needs.rust-core.result }}
           NODEJS_RESULT: ${{ needs.nodejs.result }}
           DOTNET_RESULT: ${{ needs.dotnet.result }}
+          GOSNOWFLAKE_RESULT: ${{ needs.gosnowflake.result }}
           PYTHON_WANTED: ${{ needs.plan.outputs.python_wanted }}
           JDBC_WANTED: ${{ needs.plan.outputs.jdbc_wanted }}
           ODBC_WANTED: ${{ needs.plan.outputs.odbc_wanted }}
           RUST_CORE_WANTED: ${{ needs.plan.outputs.rust_core_wanted }}
           NODEJS_WANTED: ${{ needs.plan.outputs.nodejs_wanted }}
           DOTNET_WANTED: ${{ needs.plan.outputs.dotnet_wanted }}
+          GOSNOWFLAKE_WANTED: ${{ needs.plan.outputs.gosnowflake_wanted }}
         run: |
           failed=0
           for entry in \
@@ -415,7 +440,8 @@ jobs:
             "odbc:$ODBC_RESULT" \
             "rust-core:$RUST_CORE_RESULT" \
             "nodejs:$NODEJS_RESULT" \
-            "dotnet:$DOTNET_RESULT"; do
+            "dotnet:$DOTNET_RESULT" \
+            "gosnowflake:$GOSNOWFLAKE_RESULT"; do
             name="${entry%%:*}"
             result="${entry#*:}"
             echo "$name: $result"
@@ -432,7 +458,8 @@ jobs:
               "odbc:$ODBC_WANTED:$ODBC_RESULT" \
               "rust-core:$RUST_CORE_WANTED:$RUST_CORE_RESULT" \
               "nodejs:$NODEJS_WANTED:$NODEJS_RESULT" \
-              "dotnet:$DOTNET_WANTED:$DOTNET_RESULT"; do
+              "dotnet:$DOTNET_WANTED:$DOTNET_RESULT" \
+              "gosnowflake:$GOSNOWFLAKE_WANTED:$GOSNOWFLAKE_RESULT"; do
               name="${entry%%:*}"
               rest="${entry#*:}"
               wanted="${rest%%:*}"

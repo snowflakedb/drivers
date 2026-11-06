@@ -110,7 +110,7 @@ rules:
   gosnowflake:
     - piotr-fus_snow
     - bartosz-oler_snow
-    - ruslan-savenok_snow
+    # - ruslan-savenok_snow TODO uncomment once Ruslan has more time for review
     - dawid-heyman_snow
   jdbc:
     - antoni-solarski_snow
