@@ -744,7 +744,9 @@ async fn read_query_rowset(
     match data {
         RowsetData::Upload(_) | RowsetData::Download(_) => UnexpectedPutGetRowsetSnafu.fail(),
         RowsetData::ArrowSingleChunk { chunk_base64 } => Ok(OpenedBatches::Reader(
-            single_chunk_reader(&chunk_base64, nullable_flags).context(ChunkReadSnafu)?,
+            single_chunk_reader(chunk_base64, nullable_flags)
+                .await
+                .context(ChunkReadSnafu)?,
         )),
         RowsetData::ArrowMultiChunk {
             initial_base64_opt,

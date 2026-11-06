@@ -9,12 +9,15 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, BinaryIO, Self, cast, overload
 
 from .._common.extras import pandas, pyarrow, requires_dependency
+from .._core import sf_core_python
 from .._internal.api_client.client_api import CHUNK_SIZE, core_driver
 from .._internal.arrow_context import ArrowConverterContext
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
+    create_row_iterator_from_result_set,
     create_table_iterator,
+    create_table_iterator_from_result_set,
 )
 from .._internal.binding_converters import ParamStyle
 from .._internal.cursor import (
@@ -63,7 +66,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from .._internal.arrow import ArrowRowIterator
+    from .._internal.arrow import ArrowRowIterator, ArrowTableIterator
     from ..connection import Connection
 
 logger = get_logger(__name__)
@@ -773,12 +776,38 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     def _create_row_iterator(self) -> ArrowRowIterator:
+        context = ArrowConverterContext.create(self._connection)
+        if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
+            return create_row_iterator_from_result_set(
+                self._result_set._require_handle(),
+                context=context,
+                use_dict_result=self._use_dict_result,
+                use_numpy=bool(self._connection.config.numpy),
+            )
         stream_ptr = self._result_set.get_arrow_stream_ptr()
         return create_row_iterator(
             stream_ptr=stream_ptr,
-            context=ArrowConverterContext.create(self._connection),
+            context=context,
             use_dict_result=self._use_dict_result,
             use_numpy=bool(self._connection.config.numpy),
+            use_core_arrow=bool(self._connection.config.use_core_arrow),
+        )
+
+    def _create_table_iterator(self, force_microsecond_precision: bool) -> ArrowTableIterator:
+        context = ArrowConverterContext.create(self._connection)
+        number_to_decimal = self._connection.arrow_number_to_decimal
+        if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
+            return create_table_iterator_from_result_set(
+                self._result_set._require_handle(),
+                context=context,
+                number_to_decimal=number_to_decimal,
+                force_microsecond_precision=force_microsecond_precision,
+            )
+        return create_table_iterator(
+            stream_ptr=self._result_set.get_arrow_stream_ptr(),
+            context=context,
+            number_to_decimal=number_to_decimal,
+            force_microsecond_precision=force_microsecond_precision,
             use_core_arrow=bool(self._connection.config.use_core_arrow),
         )
 
@@ -923,15 +952,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         the connection's ``force_microsecond_precision`` is used.
         """
         force_microsecond_precision = self._resolve_force_microsecond_precision(force_microsecond_precision)
-        stream_ptr = self._result_set.get_arrow_stream_ptr()
-        iterator = create_table_iterator(
-            stream_ptr=stream_ptr,
-            context=ArrowConverterContext.create(self._connection),
-            number_to_decimal=self._connection.arrow_number_to_decimal,
-            force_microsecond_precision=force_microsecond_precision,
-            use_core_arrow=bool(self._connection.config.use_core_arrow),
-        )
-        for batch in iterator:
+        for batch in self._create_table_iterator(force_microsecond_precision):
             yield pyarrow.Table.from_batches([batch])
 
     @requires_dependency(pyarrow)
@@ -950,16 +971,8 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         the connection's ``force_microsecond_precision`` is used.
         """
         force_microsecond_precision = self._resolve_force_microsecond_precision(force_microsecond_precision)
-        stream_ptr = self._result_set.get_arrow_stream_ptr()
-        iterator = create_table_iterator(
-            stream_ptr=stream_ptr,
-            context=ArrowConverterContext.create(self._connection),
-            number_to_decimal=self._connection.arrow_number_to_decimal,
-            force_microsecond_precision=force_microsecond_precision,
-            use_core_arrow=bool(self._connection.config.use_core_arrow),
-        )
         return collect_arrow_table(
-            table_iterator=iterator,
+            table_iterator=self._create_table_iterator(force_microsecond_precision),
             columns_metadata=self._query_result.description,
             force_return_table=force_return_table,
         )

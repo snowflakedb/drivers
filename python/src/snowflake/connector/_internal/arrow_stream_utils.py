@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from .arrow import ArrowRowIterator, ArrowTableIterator
     from .cursor.result_metadata import ResultMetadata
+    from .protobuf_gen.database_driver_v1_pb2 import ResultSetHandle
 
 
 def _missing_native_class(name: str) -> InternalError:
@@ -82,6 +83,50 @@ def create_row_iterator(
         context,
         use_dict_result=use_dict_result,
         use_numpy=use_numpy,
+    )
+
+
+def create_row_iterator_from_result_set(
+    result_set_handle: ResultSetHandle,
+    *,
+    context: ArrowConverterContext,
+    use_dict_result: bool = False,
+    use_numpy: bool = False,
+) -> ArrowRowIterator:
+    iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
+    if iterator_cls is None:
+        raise _missing_native_class("ArrowStreamIterator")
+    return cast(
+        "ArrowRowIterator",
+        iterator_cls.from_result_set(
+            result_set_handle.id,
+            result_set_handle.magic,
+            session_timezone=context.timezone,
+            use_dict_result=use_dict_result,
+            use_numpy=use_numpy,
+        ),
+    )
+
+
+def create_table_iterator_from_result_set(
+    result_set_handle: ResultSetHandle,
+    *,
+    context: ArrowConverterContext,
+    number_to_decimal: bool = False,
+    force_microsecond_precision: bool = False,
+) -> ArrowTableIterator:
+    iterator_cls = getattr(sf_core_python, "ArrowStreamTableIterator", None)
+    if iterator_cls is None:
+        raise _missing_native_class("ArrowStreamTableIterator")
+    return cast(
+        "ArrowTableIterator",
+        iterator_cls.from_result_set(
+            result_set_handle.id,
+            result_set_handle.magic,
+            session_timezone=context.timezone,
+            number_to_decimal=number_to_decimal,
+            force_microsecond_precision=force_microsecond_precision,
+        ),
     )
 
 

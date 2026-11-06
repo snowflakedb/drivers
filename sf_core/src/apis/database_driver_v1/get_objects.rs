@@ -1941,8 +1941,8 @@ mod tests {
         assert_eq!(clause.matches('\'').count(), 2);
     }
 
-    #[test]
-    fn rows_from_reader_round_trip() {
+    #[tokio::test]
+    async fn rows_from_reader_round_trip() {
         use crate::chunks::single_chunk_reader;
         use arrow::ipc::writer::StreamWriter;
         use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -1967,7 +1967,7 @@ mod tests {
             writer.finish().unwrap();
         }
         let chunk_base64 = BASE64.encode(&buf);
-        let reader = single_chunk_reader(&chunk_base64, None).unwrap();
+        let reader = single_chunk_reader(chunk_base64, None).await.unwrap();
         let rows = rows_from_reader(reader).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0].1, "MY_TABLE");

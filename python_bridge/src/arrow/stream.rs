@@ -2,14 +2,20 @@ use arrow::array::RecordBatchReader;
 use arrow::datatypes::SchemaRef;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use arrow::record_batch::RecordBatch;
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::prelude::*;
+use sf_core::handle_manager::Handle;
 use snafu::{ResultExt, ensure};
+use tracing::instrument::WithSubscriber;
+
+use crate::initialized_bridge;
 
 use crate::arrow::error::{
     BatchReadSnafu, NullStreamPointerSnafu, ReaderCreateSnafu, StreamError, StreamNotReleasedSnafu,
 };
 
 pub(crate) struct RowStream {
-    reader: ArrowArrayStreamReader,
+    reader: Box<dyn RecordBatchReader + Send>,
 }
 
 impl RowStream {
@@ -21,6 +27,34 @@ impl RowStream {
         let owned_stream = unsafe { FFI_ArrowArrayStream::from_raw(raw) };
         let reader = ArrowArrayStreamReader::try_new(owned_stream).context(ReaderCreateSnafu)?;
 
+        Ok(Self {
+            reader: Box::new(reader),
+        })
+    }
+
+    pub(crate) fn from_result_set(
+        py: Python<'_>,
+        handle_id: i64,
+        handle_magic: i64,
+    ) -> PyResult<Self> {
+        let bridge =
+            initialized_bridge().ok_or_else(|| PyRuntimeError::new_err("init was not called"))?;
+        let handle = Handle {
+            id: handle_id as u64,
+            magic: handle_magic as u64,
+        };
+        // TODO(SNOW-4438601): map the ApiError to a typed driver error instead of RuntimeError.
+        let reader = py
+            .detach(|| {
+                bridge.runtime.block_on(
+                    bridge
+                        .transport
+                        .database_driver()
+                        .result_set_get_stream(handle)
+                        .with_subscriber(bridge.dispatch.clone()),
+                )
+            })
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         Ok(Self { reader })
     }
 

@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyType};
 use sf_core::utils::sync::MutexRecoverExt;
 
 use crate::arrow::batch_converter::BatchConverter;
@@ -34,6 +34,27 @@ impl ArrowStreamIterator {
             .map_err(|err| wrap_row_conversion(py, err))
     }
 
+    #[classmethod]
+    #[pyo3(signature = (handle_id, handle_magic, session_timezone=None, use_dict_result=false, use_numpy=false))]
+    fn from_result_set(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        handle_id: i64,
+        handle_magic: i64,
+        session_timezone: Option<String>,
+        use_dict_result: bool,
+        use_numpy: bool,
+    ) -> PyResult<Self> {
+        Self::from_stream(
+            py,
+            RowStream::from_result_set(py, handle_id, handle_magic)?,
+            session_timezone,
+            use_dict_result,
+            use_numpy,
+        )
+        .map_err(|err| wrap_row_conversion(py, err))
+    }
+
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -62,11 +83,21 @@ impl ArrowStreamIterator {
         use_dict_result: bool,
         use_numpy: bool,
     ) -> PyResult<Self> {
-        let debug_enabled = iterator_debug_enabled(py);
         let stream = RowStream::from_stream_ptr(stream_ptr)?;
+        Self::from_stream(py, stream, session_timezone, use_dict_result, use_numpy)
+    }
+
+    fn from_stream(
+        py: Python<'_>,
+        stream: RowStream,
+        session_timezone: Option<String>,
+        use_dict_result: bool,
+        use_numpy: bool,
+    ) -> PyResult<Self> {
+        let debug_enabled = iterator_debug_enabled(py);
         if debug_enabled {
             log_iterator_debug(&format!(
-                "CArrowStreamIterator initialized with {} columns",
+                "ArrowStreamIterator initialized with {} columns",
                 stream.schema().fields().len()
             ));
         }

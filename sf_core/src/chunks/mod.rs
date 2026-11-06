@@ -170,14 +170,15 @@ pub(crate) fn drain_reader_to_batches(
     Ok((schema, batches))
 }
 
+fn decode_inline_arrow(b64: &str) -> Result<(SchemaRef, Vec<RecordBatch>), ChunkError> {
+    let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
+    arrow_parser::decode_ipc_in_place(bytes).context(ChunkReadSnafu)
+}
+
 fn spawn_initial_arrow_decode(
     b64: String,
 ) -> tokio::task::JoinHandle<Result<(SchemaRef, Vec<RecordBatch>), ChunkError>> {
-    tokio::task::spawn_blocking(move || {
-        let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
-        let reader = StreamReader::try_new(io::Cursor::new(bytes), None).context(ChunkReadSnafu)?;
-        drain_reader_to_batches(reader)
-    })
+    tokio::task::spawn_blocking(move || decode_inline_arrow(&b64))
 }
 
 pub async fn arrow_prefetch_reader(
@@ -262,14 +263,17 @@ async fn get_initial_chunk_reader(
     }
 }
 
-pub fn single_chunk_reader(
-    base64: &str,
+pub async fn single_chunk_reader(
+    base64: String,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let bytes = BASE64.decode(base64).context(Base64DecodeSnafu)?;
-    let cursor = io::Cursor::new(bytes);
-    let reader = StreamReader::try_new(cursor, None).context(ChunkReadSnafu)?;
-    let boxed: Box<dyn RecordBatchReader + Send> = Box::new(reader);
+    let (schema, batches) = spawn_initial_arrow_decode(base64)
+        .await
+        .context(SpawnBlockingSnafu)??;
+    let boxed: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
+        batches.into_iter().map(Ok::<_, arrow::error::ArrowError>),
+        schema,
+    ));
     Ok(maybe_inject_nullable(boxed, nullable_flags))
 }
 
@@ -959,8 +963,8 @@ mod tests {
         assert_eq!(batches[0].schema().fields().len(), 2);
     }
 
-    #[test]
-    fn single_chunk_reader_decodes_arrow_ipc_batch() {
+    #[tokio::test]
+    async fn single_chunk_reader_decodes_arrow_ipc_batch() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int64, false),
             Field::new("name", DataType::Utf8, true),
@@ -975,7 +979,9 @@ mod tests {
         .expect("RecordBatch should build");
         let base64 = encode_arrow_ipc_base64(schema, &[batch]);
 
-        let reader = single_chunk_reader(&base64, None).expect("arrow chunk should decode");
+        let reader = single_chunk_reader(base64, None)
+            .await
+            .expect("arrow chunk should decode");
         let batches = drain_reader(reader);
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].num_rows(), 2);
@@ -989,8 +995,8 @@ mod tests {
         assert_eq!(ids.value(1), 20);
     }
 
-    #[test]
-    fn single_chunk_reader_injects_nullable_metadata() {
+    #[tokio::test]
+    async fn single_chunk_reader_injects_nullable_metadata() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("nullable_col", DataType::Utf8, true),
             Field::new("required_col", DataType::Int64, false),
@@ -998,8 +1004,9 @@ mod tests {
         let batch = RecordBatch::new_empty(schema.clone());
         let base64 = encode_arrow_ipc_base64(schema, &[batch]);
 
-        let reader =
-            single_chunk_reader(&base64, Some(&[true, false])).expect("arrow chunk should decode");
+        let reader = single_chunk_reader(base64, Some(&[true, false]))
+            .await
+            .expect("arrow chunk should decode");
         let schema = reader.schema();
         assert_eq!(
             schema.field(0).metadata().get("nullable"),
@@ -1011,9 +1018,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn single_chunk_reader_rejects_invalid_base64() {
-        let result = single_chunk_reader("!!!not-base64!!!", None);
+    #[tokio::test]
+    async fn single_chunk_reader_rejects_invalid_base64() {
+        let result = single_chunk_reader("!!!not-base64!!!".to_string(), None).await;
         assert!(matches!(result, Err(ChunkError::Base64Decode { .. })));
     }
 

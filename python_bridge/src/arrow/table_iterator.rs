@@ -6,6 +6,7 @@ use arrow::ffi::{FFI_ArrowSchema, to_ffi};
 use arrow::record_batch::RecordBatch;
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
 use pyo3::prelude::*;
+use pyo3::types::PyType;
 use sf_core::utils::sync::MutexRecoverExt;
 
 use super::table::TableConverter;
@@ -88,18 +89,37 @@ impl ArrowStreamTableIterator {
         number_to_decimal: bool,
         force_microsecond_precision: bool,
     ) -> PyResult<Self> {
-        let stream = RowStream::from_stream_ptr(stream_ptr)?;
-        Ok(Self {
-            wire_schema: stream.schema(),
-            stream: Mutex::new(stream),
-            converter: TableConverter::new(
-                number_to_decimal,
-                force_microsecond_precision,
-                session_timezone,
-            ),
-            pyarrow: None,
-            converted_schema: None,
-        })
+        Ok(Self::from_stream(
+            RowStream::from_stream_ptr(stream_ptr)?,
+            session_timezone,
+            number_to_decimal,
+            force_microsecond_precision,
+        ))
+    }
+
+    #[classmethod]
+    #[pyo3(signature = (
+        handle_id,
+        handle_magic,
+        session_timezone=None,
+        number_to_decimal=false,
+        force_microsecond_precision=false
+    ))]
+    fn from_result_set(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        handle_id: i64,
+        handle_magic: i64,
+        session_timezone: Option<String>,
+        number_to_decimal: bool,
+        force_microsecond_precision: bool,
+    ) -> PyResult<Self> {
+        Ok(Self::from_stream(
+            RowStream::from_result_set(py, handle_id, handle_magic)?,
+            session_timezone,
+            number_to_decimal,
+            force_microsecond_precision,
+        ))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -118,6 +138,25 @@ impl ArrowStreamTableIterator {
 }
 
 impl ArrowStreamTableIterator {
+    fn from_stream(
+        stream: RowStream,
+        session_timezone: Option<String>,
+        number_to_decimal: bool,
+        force_microsecond_precision: bool,
+    ) -> Self {
+        Self {
+            wire_schema: stream.schema(),
+            stream: Mutex::new(stream),
+            converter: TableConverter::new(
+                number_to_decimal,
+                force_microsecond_precision,
+                session_timezone,
+            ),
+            pyarrow: None,
+            converted_schema: None,
+        }
+    }
+
     fn pyarrow(&mut self, py: Python<'_>) -> PyResult<&PyArrowTypes> {
         if self.pyarrow.is_none() {
             self.pyarrow = Some(PyArrowTypes::import(py)?);

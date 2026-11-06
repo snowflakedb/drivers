@@ -81,6 +81,7 @@ impl AsyncArrowStreamIterator {
                 id: handle_id as u64,
                 magic: handle_magic as u64,
             };
+            // TODO(SNOW-4438601): map the ApiError to a typed driver error instead of RuntimeError.
             let fetcher = bridge
                 .transport
                 .database_driver()

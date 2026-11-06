@@ -1,5 +1,6 @@
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
+use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamDecoder;
 
@@ -9,9 +10,6 @@ use super::prefetch::ParseChunk;
 pub struct ArrowChunkParser;
 
 impl ParseChunk for ArrowChunkParser {
-    /// Decodes the IPC stream in place: record batch buffers slice the chunk
-    /// allocation instead of being copied out of it, so a chunk occupies its
-    /// decoded size once rather than twice while it is parsed.
     #[tracing::instrument(
         name = "core_arrow_decode",
         target = "sf_core::perf",
@@ -19,26 +17,33 @@ impl ParseChunk for ArrowChunkParser {
         skip_all
     )]
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError> {
-        let mut buffer = Buffer::from_vec(data);
-        let mut decoder = StreamDecoder::new();
-        let mut batches = Vec::new();
-        while !buffer.is_empty() {
-            if let Some(batch) = decoder.decode(&mut buffer)? {
-                batches.push(batch);
-            }
-        }
-        decoder.finish()?;
-        // `finish` accepts a decoder still waiting for its first message, so an
-        // empty body would otherwise yield no batches and no schema. A real
-        // zero-row chunk still carries a schema message; reject the empty
-        // stream as `StreamReader` (and the other language drivers) do.
-        if decoder.schema().is_none() {
-            return Err(ArrowError::IpcError(
-                "Expected schema message, found empty stream.".to_string(),
-            ));
-        }
-        Ok(batches)
+        decode_ipc_in_place(data).map(|(_, batches)| batches)
     }
+}
+
+/// Decodes an Arrow IPC stream in place: record batch buffers slice the chunk
+/// allocation instead of being copied out of it, so a chunk occupies its
+/// decoded size once rather than twice while it is parsed.
+pub(crate) fn decode_ipc_in_place(
+    data: Vec<u8>,
+) -> Result<(SchemaRef, Vec<RecordBatch>), ArrowError> {
+    let mut buffer = Buffer::from_vec(data);
+    let mut decoder = StreamDecoder::new();
+    let mut batches = Vec::new();
+    while !buffer.is_empty() {
+        if let Some(batch) = decoder.decode(&mut buffer)? {
+            batches.push(batch);
+        }
+    }
+    decoder.finish()?;
+    // `finish` accepts a decoder still waiting for its first message, so an
+    // empty body would otherwise yield no batches and no schema. A real
+    // zero-row chunk still carries a schema message; reject the empty
+    // stream as `StreamReader` (and the other language drivers) do.
+    let schema = decoder.schema().ok_or_else(|| {
+        ArrowError::IpcError("Expected schema message, found empty stream.".to_string())
+    })?;
+    Ok((schema, batches))
 }
 
 #[cfg(test)]
