@@ -528,6 +528,17 @@ mod tests {
     }
 
     #[test]
+    fn use_core_arrow_is_known_for_python() {
+        let mut options = HashMap::new();
+        options.insert("use_core_arrow".to_string(), Setting::Bool(true));
+
+        let (resolved, issues) = resolve_options(Wrapper::Python, options);
+
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+        assert_eq!(resolved.get("use_core_arrow"), Some(&Setting::Bool(true)));
+    }
+
+    #[test]
     fn type_mismatch_produces_error() {
         let mut options = HashMap::new();
         options.insert("host".to_string(), Setting::Int(42));

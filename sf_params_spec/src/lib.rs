@@ -226,6 +226,7 @@ pub mod param_names {
     // `use_s3_regional_url` connection attribute).
     pub const USE_S3_REGIONAL_URL: ParamKey = ParamKey("use_s3_regional_url");
     pub const VALIDATE_DEFAULT_PARAMETERS: ParamKey = ParamKey("validate_default_parameters");
+    pub const USE_CORE_ARROW: ParamKey = ParamKey("use_core_arrow");
     // ── Timeout configuration ──────────────────────────────────────────
     pub const CHUNK_DOWNLOAD_READ_TIMEOUT: ParamKey = ParamKey("chunk_download_read_timeout");
     pub const CONNECT_TIMEOUT: ParamKey = ParamKey("connect_timeout");
@@ -2352,6 +2353,17 @@ static PARAM_DEFS: &[ParamDef] = &[
         .send_as_session_parameter(SendAsSessionParameter::Aliased {
             alias: "CLIENT_VALIDATE_DEFAULT_PARAMETERS",
         })
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::USE_CORE_ARROW.as_str())
+        .value_type(ValueType::Bool)
+        .sensitive(false)
+        .auth(false)
+        .description("Python-only. Use the core Arrow converter for result fetches")
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .send_as_session_parameter(SendAsSessionParameter::Exact)
+        .visible_to(visible_to!(Python))
         .build(),
     // ── Proxy ──────────────────────────────────────────────────────────
     ParamDef::builder()

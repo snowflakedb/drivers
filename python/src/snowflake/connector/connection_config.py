@@ -386,6 +386,9 @@ class ConnectionConfig(ConnectionConfigMixin):
     Default: False
     """
 
+    use_core_arrow: bool | None = None
+    """Python-only. Use the core Arrow converter for result fetches"""
+
     use_current_catalog: bool | None = False
     """When true, a NULL CatalogName on catalog functions is the current database. When false (default), the catalog is
     unconstrained unless CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX fills it.
