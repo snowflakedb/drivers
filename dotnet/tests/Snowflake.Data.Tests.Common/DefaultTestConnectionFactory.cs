@@ -1,4 +1,3 @@
-using System.Data.Common;
 using Snowflake.Data.Tests.Config;
 using Snowflake.Data.Tests.Utilities;
 
@@ -6,7 +5,7 @@ namespace Snowflake.Data.Tests;
 
 public sealed class DefaultTestConnectionFactory : ITestConnectionFactory
 {
-    public DbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null) => new SnowflakeDbConnection(connectionStringOverride ?? BuildConnectionString(testOutputHelper));
+    public ISnowflakeDbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null) => new SnowflakeDbConnection(connectionStringOverride ?? BuildConnectionString(testOutputHelper));
 
     private static string BuildConnectionString(ITestOutputHelper? testOutputHelper)
     {

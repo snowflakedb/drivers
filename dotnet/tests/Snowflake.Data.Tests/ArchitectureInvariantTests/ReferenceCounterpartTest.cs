@@ -31,7 +31,6 @@ public sealed class ReferenceCounterpartTest
 
         List<string> expectedViolations =
         [
-            typeof(ConnectionTest).FullName!,
             typeof(DataReaderTest).FullName!,
         ];
 

@@ -423,7 +423,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
 
 
 
-    private static async Task SetTimezoneToNonUtcAsync(DbConnection connection, CancellationToken cancelToken)
+    private static async Task SetTimezoneToNonUtcAsync(ISnowflakeDbConnection connection, CancellationToken cancelToken)
     {
         using var cmd1 = connection.CreateCommand();
         cmd1.CommandText = "ALTER SESSION SET TIMEZONE = 'Asia/Kathmandu'";

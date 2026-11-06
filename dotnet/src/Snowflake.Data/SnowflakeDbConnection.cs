@@ -6,7 +6,7 @@ using Snowflake.Data.Proto;
 
 namespace Snowflake.Data;
 
-public sealed class SnowflakeDbConnection : DbConnection
+public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 {
     private readonly IDatabaseDriverService _driver;
     private string _connectionString = string.Empty;
@@ -154,6 +154,45 @@ public sealed class SnowflakeDbConnection : DbConnection
 
         _state = ConnectionState.Closed;
     }
+
+    public bool IsOpen() => _state == ConnectionState.Open;
+
+    public Task CloseAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
+        try
+        {
+            Close();
+            return Task.CompletedTask;
+        }
+        catch (Exception e)
+        {
+            return Task.FromException(e);
+        }
+    }
+
+    public bool IsStillRunning(QueryStatus status) => status switch
+    {
+        QueryStatus.Running => true,
+        QueryStatus.ResumingWarehouse => true,
+        QueryStatus.Queued => true,
+        QueryStatus.QueuedReparingWarehouse => true,
+        QueryStatus.NoData => true,
+        _ => false,
+    };
+
+    public bool IsAnError(QueryStatus status) => status switch
+    {
+        QueryStatus.Aborting => true,
+        QueryStatus.FailedWithError => true,
+        QueryStatus.Aborted => true,
+        QueryStatus.FailedWithIncident => true,
+        QueryStatus.Disconnected => true,
+        QueryStatus.Blocked => true,
+        _ => false,
+    };
 
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
         throw new NotImplementedException();

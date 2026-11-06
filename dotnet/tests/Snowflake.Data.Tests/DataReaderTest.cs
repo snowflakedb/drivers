@@ -1,5 +1,3 @@
-using System.Data.Common;
-
 namespace Snowflake.Data.Tests;
 
 // TODO these tests are just PoC and will undergo heavy refactoring.
@@ -89,7 +87,7 @@ public sealed class DataReaderTest : IClassFixture<ITFixture>
         }
     }
 
-    private static void ExecuteNonQuery(DbConnection connection, string sql)
+    private static void ExecuteNonQuery(ISnowflakeDbConnection connection, string sql)
     {
         using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;

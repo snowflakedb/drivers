@@ -3,7 +3,7 @@
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "E2E")]
-public sealed class ConnectionTest : IClassFixture<ITFixture>
+public class ConnectionTest : IClassFixture<ITFixture>
 {
     private readonly ITestOutputHelper _testOutputHelper;
     private readonly ITFixture _fixture;

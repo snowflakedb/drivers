@@ -1,19 +1,18 @@
-using System.Data.Common;
 using Snowflake.Data.Tests.Config;
 using Snowflake.Data.Tests.Reference.Config;
+using Snowflake.Data.Tests.Reference.Legacy;
 using Snowflake.Data.Tests.Utilities;
 using NewSnowflakeDbConnection = Snowflake.Data.SnowflakeDbConnection;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
 namespace Snowflake.Data.Tests.Reference;
 
 public sealed class TestConnectionFactory : ITestConnectionFactory
 {
-    public DbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
+    public ISnowflakeDbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
     {
         var connStr = connectionStringOverride ?? BuildConnectionString(testOutputHelper);
 
         if (GlobalState.UseOldDriver)
-            return new OldSnowflakeDbConnection { ConnectionString = connStr };
+            return new LegacySnowflakeConnection(connStr);
 
         return new NewSnowflakeDbConnection(connStr);
     }

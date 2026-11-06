@@ -28,7 +28,23 @@ public sealed class PublicApiTest
         $"M:{nameof(DbConnection.Open)}()",
         $"M:{nameof(DbConnection.OpenAsync)}({nameof(CancellationToken)})",
         $"M:{nameof(DbConnection.Close)}()",
+        $"M:{nameof(ISnowflakeDbConnection.IsOpen)}()",
+        $"M:{nameof(ISnowflakeDbConnection.CloseAsync)}({nameof(CancellationToken)})",
+        $"M:{nameof(ISnowflakeDbConnection.IsStillRunning)}({nameof(QueryStatus)})",
+        $"M:{nameof(ISnowflakeDbConnection.IsAnError)}({nameof(QueryStatus)})",
     ];
+
+    private static readonly HashSet<string> ISnowflakeDbConnectionPublicApi =
+    [
+        $"M:{nameof(ISnowflakeDbConnection.IsOpen)}()",
+        $"M:{nameof(ISnowflakeDbConnection.CloseAsync)}({nameof(CancellationToken)})",
+        $"M:{nameof(ISnowflakeDbConnection.IsStillRunning)}({nameof(QueryStatus)})",
+        $"M:{nameof(ISnowflakeDbConnection.IsAnError)}({nameof(QueryStatus)})",
+        $"M:{nameof(ISnowflakeDbConnection.OpenAsync)}({nameof(CancellationToken)})",
+        $"M:{nameof(ISnowflakeDbConnection.CreateCommand)}()",
+    ];
+
+    private static readonly HashSet<string> QueryStatusPublicApi = [];
 
     private static readonly HashSet<string> SnowflakeDbCommandPublicApi =
     [
@@ -232,6 +248,8 @@ public sealed class PublicApiTest
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
     {
         [typeof(SnowflakeDbConnection)] = SnowflakeDbConnectionPublicApi,
+        [typeof(ISnowflakeDbConnection)] = ISnowflakeDbConnectionPublicApi,
+        [typeof(QueryStatus)] = QueryStatusPublicApi,
         [typeof(SnowflakeDbCommand)] = SnowflakeDbCommandPublicApi,
         [typeof(SnowflakeDbCommandBuilder)] = SnowflakeDbCommandBuilderPublicApi,
         [typeof(SnowflakeDbDataAdapter)] = SnowflakeDbDataAdapterPublicApi,
@@ -275,6 +293,8 @@ public sealed class PublicApiTest
             typeof(SnowflakeFipsStatus).FullName!,
             typeof(SnowflakeDbException).FullName!,
             typeof(SFError).FullName!,
+            typeof(ISnowflakeDbConnection).FullName!,
+            typeof(QueryStatus).FullName!,
         };
 
         var violations = AssemblyUtil.LoadAssembly(AssembliesMetadata.RootAssembly).GetTypes()
