@@ -1378,7 +1378,7 @@ describe('OAuth authorization code callback page', () => {
       ...wiremock.connectionOptions,
       oauthAuthorizationUrl: `https://127.0.0.1:${new URL(wiremock.url).port}/oauth/authorize`,
       oauthTokenRequestUrl: `${wiremock.url}/oauth/token-request`,
-      ...(isRunningNewDriverWithBD('BD#102') ? {} : { oauthHttpAllowed: true }),
+      ...(isRunningNewDriverWithBD('BD#141') ? {} : { oauthHttpAllowed: true }),
       ...(renderer ? { browserResponseRenderer: renderer } : {}),
       openExternalBrowserCallback,
     } as ConnectionOptions;
@@ -1510,24 +1510,5 @@ describe('OAuth authorization code callback page', () => {
       connection,
       isRunningNewDriverWithBD('BD#61') ? TERMINATED_QUERY : NEVER_ESTABLISHED_QUERY,
     );
-  });
-});
-
-describe('sfRetryMaxLoginRetries', () => {
-  it('should reject sfRetryMaxLoginRetries as an unknown option', () => {
-    const options = {
-      account: 'test-account',
-      username: 'test-user',
-      authenticator: 'OAUTH',
-      token: 'fake.jwt.token',
-      sfRetryMaxLoginRetries: 0,
-    };
-    if (isRunningNewDriverWithBD('BD#90')) {
-      expect(() => snowflake.createConnection({ ...options })).toThrow(
-        'Unknown connection option: sfRetryMaxLoginRetries',
-      );
-    } else {
-      snowflake.createConnection({ ...options });
-    }
   });
 });

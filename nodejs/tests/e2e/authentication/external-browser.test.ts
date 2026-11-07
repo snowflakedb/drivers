@@ -717,23 +717,4 @@ describe('EXTERNALBROWSER authentication', () => {
       });
     }
   });
-
-  it('should reject disableConsoleLogin as unknown on the new driver and accept it on the old driver', () => {
-    const options = {
-      account: 'test_account',
-      username: 'test_user',
-      authenticator: 'EXTERNALBROWSER',
-      disableConsoleLogin: true,
-    } satisfies ConnectionOptions;
-    if (isRunningNewDriverWithBD('BD#63')) {
-      expect(() => snowflake.createConnection(options)).toThrow(
-        expect.objectContaining({
-          name: 'InvalidParameterError',
-          message: 'Unknown connection option: disableConsoleLogin',
-        }),
-      );
-    } else {
-      expect(() => snowflake.createConnection(options)).not.toThrow();
-    }
-  });
 });

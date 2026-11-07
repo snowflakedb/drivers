@@ -145,6 +145,17 @@ describe('tests/definitions/shared/session/connection_config_file.feature', () =
   );
 });
 
+describe('unknown option in a connection profile', () => {
+  it('should connect when connections.toml contains an unknown option', async () => {
+    const home = createSnowflakeHome();
+    createConnectionsToml(home, {
+      default: { ...createValidProfile(home), not_a_real_option: 'value' },
+    });
+    const connection = await createBareConnection();
+    await expectSelectOne(connection);
+  });
+});
+
 async function expectProfileLoadFailure(open: () => Connection, reason: RegExp): Promise<void> {
   if (!isRunningNewDriverWithBD('BD#103')) {
     expect(open).toThrow('Connection options must be specified.');

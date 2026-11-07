@@ -427,27 +427,6 @@ behavior_differences:
       The default store is initialized on first use rather than at connect, so its failure is
       handled like any other best-effort cache failure.
 
-  102:
-    name: 'Unknown connection options are rejected with InvalidParameterError'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      createConnection ignores an option it does not know. With validateDefaultParameters
-      set it also logs "'<key>' is an unknown connection parameter. Did you mean '<name>'?".
-    new_driver_behavior: |
-      createConnection throws InvalidParameterError "Unknown connection option: <key>",
-      `error.code` undefined. This includes old-driver options the new driver does not
-      support: clientConfigFile (BD#159), clientRequestMFAToken (BD#117), disableConsoleLogin
-      (BD#63), forceStageBindError, gcsUseDownscopedCredential, includeRetryReason,
-      oauthChallengeMethod, oauthHttpAllowed (BD#141), region (BD#160), resultPrefetch,
-      serviceName (BD#158), sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
-    description: |
-      An option that is silently ignored leaves the application believing it took effect,
-      so the new driver fails instead.
-
   106:
     name: 'WIF validation and OIDC-impersonation error messages use snake_case core wording'
     status: todo

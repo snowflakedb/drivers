@@ -224,19 +224,15 @@ describe('toCoreConnectionOptions', () => {
     });
   });
 
-  it('should reject a key that is not in the alias map', () => {
-    expect(() =>
+  it('should drop a key that is not in the alias map', () => {
+    expect(
       toCoreConnectionOptions({
         account: 'sfctest0',
         notARealOption: 'x',
       }),
-    ).toThrow(
-      expect.objectContaining({
-        name: 'InvalidParameterError',
-        code: undefined,
-        message: 'Unknown connection option: notARealOption',
-      }),
-    );
+    ).toEqual({
+      account: 'sfctest0',
+    });
   });
 
   it('should copy a PAT password into token when token and tokenFilePath are absent', () => {

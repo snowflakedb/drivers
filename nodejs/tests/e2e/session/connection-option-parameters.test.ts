@@ -3,6 +3,7 @@ import { createConnection, createLiveConnection } from '../utils/fixtures.js';
 import {
   baseConnectionOptions,
   destroyConnectionAsync,
+  executeAsync,
   isRunningNewDriverWithBD,
   snowflake,
 } from '../utils/index.js';
@@ -205,4 +206,13 @@ describe('accessUrl parameter', () => {
       );
     }
   });
+});
+
+it('should ignore an unknown option', async () => {
+  const connection = await createLiveConnection({
+    // @ts-expect-error test overwrite
+    notARealOption: 'value',
+  });
+  const { rows } = await executeAsync(connection, 'SELECT 1');
+  expect(Object.values(rows[0])).toEqual([1]);
 });

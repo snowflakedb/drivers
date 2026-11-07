@@ -1,4 +1,4 @@
-import { invalidParameterError } from './error.js';
+import { logger } from './logging/index.js';
 
 // TODO: In future we should register an alias in core for each parameter. This map then becomes a
 // set: the Node driver's whitelist of connection options, even when core
@@ -6,9 +6,8 @@ import { invalidParameterError } from './error.js';
 //
 // Maps every camelCase connection option this driver accepts (the
 // snowflake-sdk `ConnectionOptions` shape) onto the snake_case key sf_core
-// understands. A key absent from this map is rejected, so a typo or an
-// unsupported option surfaces at construction time rather than being forwarded
-// to the bridge and silently ignored.
+// understands. A key absent from this map is dropped - the driver
+// ignores options it does not know and they are not forwarded to sf_core.
 const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   account: 'account',
   accessUrl: 'server_url',
@@ -93,7 +92,8 @@ export function toCoreConnectionOptions(options: Record<string, unknown>): Recor
     }
     const sfCoreKey = CONNECTION_OPTION_ALIASES[key];
     if (sfCoreKey === undefined) {
-      throw invalidParameterError(`Unknown connection option: ${key}`);
+      logger.warn(`Unknown option ${key} is ignored`);
+      continue;
     }
     if (MILLISECOND_OPTIONS.has(key) && typeof value === 'number' && Number.isFinite(value)) {
       // Milliseconds in, seconds out (BD#59, BD#122, BD#123).

@@ -1444,8 +1444,8 @@ behavior_differences:
     old_driver_behavior: |
       createConnection accepts disableConsoleLogin (boolean; default true).
     new_driver_behavior: |
-      disableConsoleLogin is rejected as an unknown connection option
-      (InvalidParameterError, see BD#102). The key is not going to be added.
+      createConnection ignores disableConsoleLogin, like any other unknown connection option
+      (BD#102). The key is not going to be added.
     status_rationale: |
       Dropped in all drivers unless someone asks for it back. Setting it to false opened
       /console/login so a user could pick one of several identity providers. The server makes
@@ -2070,8 +2070,8 @@ behavior_differences:
       `sfRetryMaxLoginRetries` is an accepted connection option (default 7). A value of 0
       disables login retries so the first network/login failure is returned immediately.
     new_driver_behavior: |
-      `sfRetryMaxLoginRetries` is rejected as an unknown connection option. There is no
-      equivalent login-retry count option.
+      `sfRetryMaxLoginRetries` is ignored, like any other unknown connection option (BD#102).
+      There is no equivalent login-retry count option.
     status_rationale: |
       The option is deprecated and is not carried into the new driver. Callers that relied on
       a configurable login-retry count must use the new driver's timeout model instead.
@@ -2280,7 +2280,7 @@ behavior_differences:
       Snowflake rejects the rest during login, for example a wrong password.
     new_driver_behavior: |
       createConnection does not check the settings. The ConnectionOptions type reports a
-      value of the wrong type at compile time.
+      value of the wrong type at compile time. Unknown options are ignored (BD#102).
 
       Every other check runs in connect(). A missing or invalid setting rejects with
       InvalidParameterError, `error.code` undefined, and a message that names the failing
@@ -2311,25 +2311,25 @@ behavior_differences:
       - BD#127, BD#128: an empty or missing PAT token file
 
   102:
-    name: 'Unknown connection options are rejected with InvalidParameterError'
+    name: 'Unknown connection options are ignored with a warning'
     status: allowed
     type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
+    reviewed: true
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
       createConnection ignores an option it does not know. With validateDefaultParameters
       set it also logs "'<key>' is an unknown connection parameter. Did you mean '<name>'?".
     new_driver_behavior: |
-      createConnection throws InvalidParameterError "Unknown connection option: <key>",
-      `error.code` undefined. This includes old-driver options the new driver does not
-      support: clientConfigFile (BD#159), clientRequestMFAToken (BD#117), disableConsoleLogin
-      (BD#63), forceStageBindError, gcsUseDownscopedCredential, includeRetryReason,
-      oauthChallengeMethod, oauthHttpAllowed (BD#141), region (BD#160), resultPrefetch,
-      serviceName (BD#158), sfRetryMaxLoginRetries (BD#90) and validateDefaultParameters.
-    description: |
-      An option that is silently ignored leaves the application believing it took effect,
-      so the new driver fails instead.
+      createConnection ignores an option it does not know and always logs the warning
+      "Unknown option <key> is ignored". This includes old-driver options the new driver does
+      not support, and validateDefaultParameters itself. A connections.toml or config.toml
+      profile also ignores keys it does not know.
+    status_rationale: |
+      Ignoring unknown options keeps code that passes old-driver options working. TypeScript
+      reports an unknown key only in an inline object literal, so options built in a variable,
+      read from JSON or carried over from the old driver would otherwise fail at runtime. The
+      warning is always on, so validateDefaultParameters is no longer needed.
 
   103:
     name: 'TOML connection profiles support connectionName, config.toml and explicit overrides'
@@ -2457,8 +2457,7 @@ behavior_differences:
       credentialCacheDir selects the first directory for the JSON credential
       file on every platform. The file is the credential store.
     new_driver_behavior: |
-      credentialCacheDir is not accepted. createConnection throws
-      InvalidParameterError "Unknown connection option: credentialCacheDir".
+      credentialCacheDir is ignored, like any other unknown connection option (BD#102).
       Tokens are stored in the system keyring when that store keeps credentials
       until they are deleted (macOS, Windows, and Linux with a keyring). The
       JSON file is used only when no such keyring is available. Its directory
@@ -2637,8 +2636,8 @@ behavior_differences:
       OAUTH_AUTHORIZATION_CODE tokens.
     new_driver_behavior: |
       clientStoreTemporaryCredential controls MFA token caching as well as ID and OAuth
-      token caching, and defaults to true (BD#39). clientRequestMFAToken is removed.
-      Passing it throws the unknown-option error of BD#102.
+      token caching, and defaults to true (BD#39). clientRequestMFAToken is ignored,
+      like any other unknown connection option (BD#102).
     description: |
       If this difference blocks users, the driver could follow
       Python and accept clientRequestMFAToken as an alias that maps to
@@ -3104,11 +3103,10 @@ behavior_differences:
       OAuth token URL, including a loopback one, is rejected with "only requests to
       HTTPS are allowed" unless the option is true.
     new_driver_behavior: |
-      `oauthHttpAllowed` is an unknown connection option and createConnection throws
-      the unknown-option error of BD#102. An `http://` token URL is accepted without
-      that option only when the host is loopback (`localhost`, `127.0.0.0/8`, `::1`).
-      Any other `http://` token URL fails on connect with "OAuth endpoint must use
-      https (http is permitted only for loopback hosts)".
+      `oauthHttpAllowed` is ignored, like any other unknown connection option (BD#102).
+      An `http://` token URL is accepted without that option only when the host is loopback
+      (`localhost`, `127.0.0.0/8`, `::1`). Any other `http://` token URL fails on connect
+      with "OAuth endpoint must use https (http is permitted only for loopback hosts)".
     description: |
       The option existed so tests could point the token endpoint at an http WireMock.
       The new driver does not keep the testing switch.
