@@ -24,8 +24,9 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionIsClosedRequest,
     ConnectionIsClosedResponse, ConnectionNewRequest, ConnectionNewResponse,
-    ConnectionRollbackRequest, ConnectionSendHttpRequest, ConnectionSetOptionsRequest,
-    ConnectionSetOptionsResponse, ConnectionTokenRequest, DatabaseFetchChunkRequest,
+    ConnectionRollbackRequest, ConnectionSendHttpRequest, ConnectionSetAutocommitRequest,
+    ConnectionSetOptionsRequest, ConnectionSetOptionsResponse, ConnectionTokenRequest,
+    ConnectionUseDatabaseRequest, ConnectionUseSchemaRequest, DatabaseFetchChunkRequest,
     DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
     DriverException, ErrorKind, RemoteChunk, ResultChunk, StatementExecuteAsyncRequest,
     StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
@@ -766,8 +767,9 @@ fn assert_aborted_sql(state: &HangingServer, sql: &str) {
         "abort body must target the cancelled query's requestId {query_request_id}; body: {}",
         abort_bodies[0]
     );
+    let sql_json = sql.replace('\\', "\\\\").replace('"', "\\\"");
     assert!(
-        abort_bodies[0].contains(&format!(r#""sqlText":"{sql}""#)),
+        abort_bodies[0].contains(&format!(r#""sqlText":"{sql_json}""#)),
         "abort body must echo the cancelled query's sqlText; body: {}",
         abort_bodies[0]
     );
@@ -1667,5 +1669,89 @@ async fn cancelling_an_in_flight_rollback_aborts_it_server_side() {
 
     assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
     assert_aborted_sql(&state, "ROLLBACK");
+    assert_hung_on(&state, "/queries/v1/query-request");
+}
+
+/// Cancelling `connection_set_autocommit` after connect aborts the
+/// `ALTER SESSION` it submitted. The session cache is written only after that
+/// statement returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_set_autocommit_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_set_autocommit",
+        "query-request",
+        ConnectionSetAutocommitRequest {
+            conn_handle: Some(conn),
+            autocommit: true,
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_sql(&state, "ALTER SESSION SET AUTOCOMMIT = TRUE");
+    assert_hung_on(&state, "/queries/v1/query-request");
+}
+
+/// Cancelling `connection_use_database` aborts the `USE DATABASE` it submitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_use_database_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_use_database",
+        "query-request",
+        ConnectionUseDatabaseRequest {
+            conn_handle: Some(conn),
+            database: "OTHER".to_string(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_sql(&state, "USE DATABASE \"OTHER\"");
+    assert_hung_on(&state, "/queries/v1/query-request");
+}
+
+/// Cancelling `connection_use_schema` aborts the `USE SCHEMA` it submitted.
+/// The mock connection's database is `test_database`, so the statement names both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_in_flight_use_schema_aborts_it_server_side() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_use_schema",
+        "query-request",
+        ConnectionUseSchemaRequest {
+            conn_handle: Some(conn),
+            schema: "SCH".to_string(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_aborted_sql(&state, "USE SCHEMA \"test_database\".\"SCH\"");
     assert_hung_on(&state, "/queries/v1/query-request");
 }

@@ -60,8 +60,28 @@ impl DatabaseDriverV1 {
     /// Pre-connect: stores `AUTOCOMMIT` in `init_session_parameters` so it is applied
     /// at login time — no SQL execution required.
     /// Post-connect: executes `ALTER SESSION SET AUTOCOMMIT = TRUE/FALSE`.
+    /// Cancelling that statement aborts it and leaves the session cache unchanged.
+    /// The server may already have applied the change.
     pub async fn connection_set_autocommit(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        autocommit: bool,
+    ) -> Result<(), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_set_autocommit",
+            &report,
+            Box::pin(self.set_autocommit(operation_ctx, &report, conn_handle, autocommit)),
+        )
+        .await
+    }
+
+    async fn set_autocommit(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        report: &AbortReport,
         conn_handle: Handle,
         autocommit: bool,
     ) -> Result<(), ApiError> {
@@ -79,7 +99,12 @@ impl DatabaseDriverV1 {
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(None, &conn_ptr, sql).await
+                    self.execute_session_sql(
+                        operation_ctx.map(|operation_ctx| (operation_ctx, report)),
+                        &conn_ptr,
+                        sql,
+                    )
+                    .await
                 } else {
                     let mut conn = conn_ptr.lock().await;
                     conn.init_session_parameters
@@ -97,9 +122,29 @@ impl DatabaseDriverV1 {
 
     /// Execute `USE DATABASE "<name>"` on the given connection.
     /// The database name is escaped (internal `"` doubled).
+    /// Cancelling aborts the submitted statement and leaves the session cache
+    /// unchanged. The server may already have applied the change.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
     pub async fn connection_use_database(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        database: &str,
+    ) -> Result<(), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_use_database",
+            &report,
+            Box::pin(self.use_database(operation_ctx, &report, conn_handle, database)),
+        )
+        .await
+    }
+
+    async fn use_database(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        report: &AbortReport,
         conn_handle: Handle,
         database: &str,
     ) -> Result<(), ApiError> {
@@ -126,7 +171,12 @@ impl DatabaseDriverV1 {
                         .fail();
                     }
                 }
-                self.execute_session_sql(None, &conn_ptr, &sql).await
+                self.execute_session_sql(
+                    operation_ctx.map(|operation_ctx| (operation_ctx, report)),
+                    &conn_ptr,
+                    &sql,
+                )
+                .await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -222,9 +272,29 @@ impl DatabaseDriverV1 {
 
     /// Execute `USE SCHEMA "<name>"` or `USE SCHEMA "<db>"."<name>"` when a session database is set.
     /// Schema and database names are escaped (internal `"` doubled).
+    /// Cancelling aborts the submitted statement and leaves the session cache
+    /// unchanged. The server may already have applied the change.
     /// Must only be called after the connection is initialised (`is_post_connect()`).
     pub async fn connection_use_schema(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        schema: &str,
+    ) -> Result<(), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_use_schema",
+            &report,
+            Box::pin(self.use_schema(operation_ctx, &report, conn_handle, schema)),
+        )
+        .await
+    }
+
+    async fn use_schema(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        report: &AbortReport,
         conn_handle: Handle,
         schema: &str,
     ) -> Result<(), ApiError> {
@@ -251,7 +321,12 @@ impl DatabaseDriverV1 {
                     let database = resolve_session_database(&conn)?;
                     build_use_schema_sql(database.as_deref(), schema)
                 };
-                self.execute_session_sql(None, &conn_ptr, &sql).await
+                self.execute_session_sql(
+                    operation_ctx.map(|operation_ctx| (operation_ctx, report)),
+                    &conn_ptr,
+                    &sql,
+                )
+                .await
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),

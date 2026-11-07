@@ -1143,9 +1143,15 @@ service DatabaseDriver {
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse) {
     option (async_first) = true;
   }
-  rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
-  rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
-  rpc ConnectionUseSchema(ConnectionUseSchemaRequest) returns (ConnectionUseSchemaResponse);
+  rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse) {
+    option (async_first) = true;
+  }
+  rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse) {
+    option (async_first) = true;
+  }
+  rpc ConnectionUseSchema(ConnectionUseSchemaRequest) returns (ConnectionUseSchemaResponse) {
+    option (async_first) = true;
+  }
   // sets initial session parameters connection should be initialized with
   // call before opening the connection
   rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);

@@ -203,7 +203,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setAutocommit(autocommit)
             .build();
-    return invoke(() -> client.connectionSetAutocommit(request));
+    return await(client.connectionSetAutocommit(request));
   }
 
   public ConnectionCommitResponse connectionCommit(ConnectionHandle connHandle) {
@@ -269,14 +269,14 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setConnHandle(connHandle)
             .setDatabase(database)
             .build();
-    return invoke(() -> client.connectionUseDatabase(request));
+    return await(client.connectionUseDatabase(request));
   }
 
   public ConnectionUseSchemaResponse connectionUseSchema(
       ConnectionHandle connHandle, String schema) {
     ConnectionUseSchemaRequest request =
         ConnectionUseSchemaRequest.newBuilder().setConnHandle(connHandle).setSchema(schema).build();
-    return invoke(() -> client.connectionUseSchema(request));
+    return await(client.connectionUseSchema(request));
   }
 
   public ConnectionGetQueryStatusResponse connectionGetQueryStatus(

@@ -485,18 +485,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_set_autocommit",
-        skip(self, input),
+        skip(self, operation_ctx, input),
         fields(conn_handle = tracing::field::Empty, autocommit = tracing::field::Empty)
     )]
     async fn connection_set_autocommit(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionSetAutocommitRequest,
     ) -> Result<ConnectionSetAutocommitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("autocommit", input.autocommit);
         self.driver
-            .connection_set_autocommit(conn_handle.into(), input.autocommit)
+            .connection_set_autocommit(operation_ctx, conn_handle.into(), input.autocommit)
             .await
             .to_protobuf()?;
         Ok(ConnectionSetAutocommitResponse {})
@@ -504,11 +505,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_use_database",
-        skip(self, input),
+        skip(self, operation_ctx, input),
         fields(conn_handle = tracing::field::Empty, database = tracing::field::Empty)
     )]
     async fn connection_use_database(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionUseDatabaseRequest,
     ) -> Result<ConnectionUseDatabaseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -517,7 +519,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("database", input.database.trim());
         self.driver
-            .connection_use_database(conn_handle.into(), &input.database)
+            .connection_use_database(operation_ctx, conn_handle.into(), &input.database)
             .await
             .to_protobuf()?;
         Ok(ConnectionUseDatabaseResponse {})
@@ -525,18 +527,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_use_schema",
-        skip(self, input),
+        skip(self, operation_ctx, input),
         fields(conn_handle = tracing::field::Empty, schema = tracing::field::Empty)
     )]
     async fn connection_use_schema(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionUseSchemaRequest,
     ) -> Result<ConnectionUseSchemaResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
         tracing::Span::current().record("schema", input.schema.trim());
         self.driver
-            .connection_use_schema(conn_handle.into(), &input.schema)
+            .connection_use_schema(operation_ctx, conn_handle.into(), &input.schema)
             .await
             .to_protobuf()?;
         Ok(ConnectionUseSchemaResponse {})
