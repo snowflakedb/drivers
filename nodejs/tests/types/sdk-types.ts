@@ -22,4 +22,3 @@ export type QueryStatus = newSnowflakeSdk.QueryStatus | oldSnowflakeSdk.QuerySta
 
 export type SessionState = newSnowflakeSdk.SessionState;
 export type Pool<T> = newSnowflakeSdk.Pool<T> | oldSnowflakeSdk.Pool<T>;
-export type FileAndStageBindStatement = oldSnowflakeSdk.FileAndStageBindStatement;

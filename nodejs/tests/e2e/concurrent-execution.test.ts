@@ -1,46 +1,59 @@
 import { describe, it, expect } from 'vitest';
-import type { RowStatement } from '../types/sdk-types.js';
+import type { Connection } from '../types/sdk-types.js';
 import { createLiveConnection } from './utils/fixtures.js';
-import { executeAsync, NOT_IMPLEMENTED_IN_NEW_DRIVER } from './utils/index.js';
+import { executeAsync } from './utils/index.js';
+
+const ROW_COUNTS = [37, 14, 92, 71, 63];
 
 const selectRows = (rowCount: number) => `select true from table(generator(rowcount=>${rowCount}))`;
 
-function streamRowCount(stmt: RowStatement): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const stream = stmt.streamRows();
-    let rowCount = 0;
-    stream.on('readable', () => {
-      while (stream.read() !== null) {
-        rowCount++;
-      }
+describe('Concurrent Execution', () => {
+  describe('Regular result', () => {
+    async function getRowCount(connection: Connection, rowCount: number): Promise<number> {
+      const { rows } = await executeAsync(connection, selectRows(rowCount));
+      return rows.length;
+    }
+
+    it('should run many concurrent select queries on a single connection', async () => {
+      const connection = await createLiveConnection();
+      const rowCounts = await Promise.all(
+        ROW_COUNTS.map((rowCount) => getRowCount(connection, rowCount)),
+      );
+      expect(rowCounts).toEqual(ROW_COUNTS);
     });
-    stream.on('error', reject);
-    stream.on('end', () => resolve(rowCount));
-  });
-}
 
-describe.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('Concurrent Execution', () => {
-  it('runs many concurrent select queries on a single connection', async () => {
-    const expectedRowCounts = [2837, 6104, 1592, 8471, 3963];
-    const connection = await createLiveConnection();
-    const rowCounts = await Promise.all(
-      expectedRowCounts.map(async (expected) => {
-        const { statement } = await executeAsync(connection, selectRows(expected));
-        return streamRowCount(statement as RowStatement);
-      }),
-    );
-    expect(rowCounts).toEqual(expectedRowCounts);
+    it('should run concurrent select queries on independent connections', async () => {
+      const connections = await Promise.all(ROW_COUNTS.map(() => createLiveConnection()));
+      const rowCounts = await Promise.all(
+        connections.map((connection, i) => getRowCount(connection, ROW_COUNTS[i])),
+      );
+      expect(rowCounts).toEqual(ROW_COUNTS);
+    });
   });
 
-  it('runs concurrent select queries on independent connections', async () => {
-    const expectedRowCounts = [4218, 1736, 7905, 2649, 5380];
-    const connections = await Promise.all(expectedRowCounts.map(() => createLiveConnection()));
-    const rowCounts = await Promise.all(
-      connections.map(async (connection, i) => {
-        const { statement } = await executeAsync(connection, selectRows(expectedRowCounts[i]));
-        return streamRowCount(statement as RowStatement);
-      }),
-    );
-    expect(rowCounts).toEqual(expectedRowCounts);
+  describe('Streamed result', () => {
+    async function streamRowCount(connection: Connection, rowCount: number): Promise<number> {
+      const { statement } = await executeAsync(connection, selectRows(rowCount), {
+        streamResult: true,
+      });
+      const rows = await statement.streamRows().toArray();
+      return rows.length;
+    }
+
+    it('should run many concurrent select queries on a single connection', async () => {
+      const connection = await createLiveConnection();
+      const rowCounts = await Promise.all(
+        ROW_COUNTS.map((rowCount) => streamRowCount(connection, rowCount)),
+      );
+      expect(rowCounts).toEqual(ROW_COUNTS);
+    });
+
+    it('should run concurrent select queries on independent connections', async () => {
+      const connections = await Promise.all(ROW_COUNTS.map(() => createLiveConnection()));
+      const rowCounts = await Promise.all(
+        connections.map((connection, i) => streamRowCount(connection, ROW_COUNTS[i])),
+      );
+      expect(rowCounts).toEqual(ROW_COUNTS);
+    });
   });
 });

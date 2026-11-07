@@ -696,6 +696,7 @@ mod tests {
         assert!(!WrapperPresets::default().serialize_session_operations);
         assert!(!WrapperPresets::python().serialize_session_operations);
         assert!(!WrapperPresets::jdbc().serialize_session_operations);
+        assert!(!WrapperPresets::nodejs().serialize_session_operations);
         assert!(WrapperPresets::odbc().serialize_session_operations);
     }
 

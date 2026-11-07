@@ -10,7 +10,6 @@ import type {
   Connection,
   ConnectionOptions,
   FetchResultOptions,
-  FileAndStageBindStatement,
   QueryStatus,
   RowStatement,
   StatementOption,
@@ -145,15 +144,15 @@ export function sendExecute(
   sqlText: string,
   additionalParameters: Partial<Omit<StatementOption, 'sqlText' | 'complete'>> = {},
 ): {
-  statement: RowStatement | FileAndStageBindStatement;
+  statement: RowStatement;
   completion: Promise<{
-    statement: RowStatement | FileAndStageBindStatement;
+    statement: RowStatement;
     rows: Record<string, unknown>[];
   }>;
 } {
-  let statement!: RowStatement | FileAndStageBindStatement;
+  let statement!: RowStatement;
   const completion = new Promise<{
-    statement: RowStatement | FileAndStageBindStatement;
+    statement: RowStatement;
     rows: Record<string, unknown>[];
   }>((resolve, reject) => {
     statement = connection.execute({
@@ -184,7 +183,7 @@ export function executeAsync(
   sqlText: string,
   additionalParameters: Partial<Omit<StatementOption, 'sqlText' | 'complete'>> = {},
 ): Promise<{
-  statement: RowStatement | FileAndStageBindStatement;
+  statement: RowStatement;
   rows: Record<string, unknown>[];
 }> {
   return sendExecute(connection, sqlText, additionalParameters).completion;
@@ -218,7 +217,7 @@ export function fetchResultAsync(
 export function getResultFromQueryIdForTest(
   connection: Connection,
   options: FetchResultOptions,
-): Promise<RowStatement | FileAndStageBindStatement> {
+): Promise<RowStatement> {
   return Promise.resolve(
     connection.getResultsFromQueryId({
       ...options,
@@ -231,7 +230,7 @@ export function getResultsFromQueryIdAsync(
   connection: Connection,
   options: FetchResultOptions,
 ): Promise<{
-  statement: RowStatement | FileAndStageBindStatement;
+  statement: RowStatement;
   rows: Record<string, unknown>[];
 }> {
   return new Promise((resolve, reject) => {
