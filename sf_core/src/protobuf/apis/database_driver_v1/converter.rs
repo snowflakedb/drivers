@@ -729,6 +729,7 @@ fn is_storage_full(error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 fn to_driver_exception(error: ApiError) -> DriverException {
+    let diagnostics = error.diagnostics();
     let error_trace = error
         .error_trace()
         .into_iter()
@@ -743,11 +744,11 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         message: error.to_string(),
         kind: ErrorKind::from(error.kind()) as i32,
         error_trace,
-        vendor_code: error.vendor_code(),
-        sql_state: error.sql_state(),
+        vendor_code: diagnostics.vendor_code,
+        sql_state: diagnostics.sql_state,
         root_cause: error.root_cause(),
-        query_id: error.query_id(),
-        request_id: error.request_id(),
+        query_id: diagnostics.query_id,
+        request_id: diagnostics.request_id,
         parameter: error.parameter(),
         parameter_value: error.parameter_value(),
         validation_code: error.validation_code().map(core_validation_code_to_proto),
@@ -806,8 +807,8 @@ mod tests {
     }
 
     fn vendor_pair(err: &ApiError) -> (Option<i32>, Option<String>) {
-        let snowflake_ctx = err.snowflake_context();
-        (snowflake_ctx.vendor_code, snowflake_ctx.sql_state)
+        let diagnostics = err.diagnostics();
+        (diagnostics.vendor_code, diagnostics.sql_state)
     }
 
     fn query_failed(code: Option<i32>, sql_state: Option<&str>) -> ApiError {
@@ -1237,13 +1238,10 @@ mod tests {
             }),
         };
         assert_eq!(
-            err.snowflake_context().query_id.as_deref(),
-            Some("01abc-def-12345")
+            err.diagnostics().query_id,
+            Some("01abc-def-12345".to_owned())
         );
-        assert_eq!(
-            err.snowflake_context().request_id,
-            Some(request_id.to_string())
-        );
+        assert_eq!(err.diagnostics().request_id, Some(request_id.to_string()));
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, Some("01abc-def-12345".to_owned()));
@@ -1251,13 +1249,13 @@ mod tests {
     }
 
     #[test]
+
     fn query_failed_without_ids_leaves_fields_unset() {
         // When the server omits the query_id and no request_id was recorded,
         // both fields stay None on DriverException.
         let err = query_failed(Some(1003), Some("42000"));
-        let snowflake_ctx = err.snowflake_context();
-        assert_eq!(snowflake_ctx.query_id, None);
-        assert_eq!(snowflake_ctx.request_id, None);
+        assert_eq!(err.diagnostics().query_id, None);
+        assert_eq!(err.diagnostics().request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
@@ -1482,9 +1480,8 @@ mod tests {
             argument: "bad".to_owned(),
         }
         .build();
-        let snowflake_ctx = err.snowflake_context();
-        assert_eq!(snowflake_ctx.query_id, None);
-        assert_eq!(snowflake_ctx.request_id, None);
+        assert_eq!(err.diagnostics().query_id, None);
+        assert_eq!(err.diagnostics().request_id, None);
 
         let exc = to_driver_exception(err);
         assert_eq!(exc.query_id, None);
