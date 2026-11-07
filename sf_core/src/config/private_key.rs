@@ -1,8 +1,10 @@
 use std::fs;
+use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::config::param_names::{PRIVATE_KEY, PRIVATE_KEY_FILE};
+use crate::config::path_resolver::expand_tilde;
 use crate::config::settings::{Setting, Settings};
 use crate::config::toml_loader::{FilePermissionCheck, check_file_permissions};
 use crate::config::{
@@ -139,34 +141,7 @@ pub(super) fn read_private_key(settings: &dyn Settings) -> Result<SensitiveStrin
 
     // File path
     if let Some(private_key_file) = settings.get_string("private_key_file") {
-        // Gate the read on the same file-permission check that protects other
-        // credential-bearing config files, honoring the unsafe opt-out.
-        let permission_check =
-            if settings.get_bool("unsafe_skip_config_file_permissions_check") == Some(true) {
-                FilePermissionCheck::UnsafeDisabled
-            } else {
-                FilePermissionCheck::Enabled
-            };
-
-        let path = std::path::Path::new(&private_key_file);
-        // The permission gate only guards files that actually exist — the same
-        // order `load_toml_file` uses. A missing or inaccessible file must
-        // surface the private-key-specific read error below (the driver's
-        // documented error for a bad `private_key_file` path), not a generic
-        // config-read error raised while stat-ing the file for its mode.
-        if path.try_exists().unwrap_or(false) {
-            check_file_permissions(path, permission_check)?;
-        }
-
-        let private_key = fs::read_to_string(path).map_err(|e| {
-            InvalidParameterValueSnafu {
-                parameter: "private_key_file".to_string(),
-                value: private_key_file,
-                explanation: format!("Could not read private key file: {e}"),
-            }
-            .build()
-        })?;
-        return Ok(SensitiveString::from(private_key));
+        return read_private_key_file(private_key_file, settings, dirs::home_dir().as_deref());
     }
 
     MissingEitherParameterSnafu {
@@ -174,6 +149,43 @@ pub(super) fn read_private_key(settings: &dyn Settings) -> Result<SensitiveStrin
         alternative: PRIVATE_KEY_FILE.to_string(),
     }
     .fail()
+}
+
+fn read_private_key_file(
+    private_key_file: String,
+    settings: &dyn Settings,
+    home_dir: Option<&Path>,
+) -> Result<SensitiveString, ConfigError> {
+    // Gate the read on the same file-permission check that protects other
+    // credential-bearing config files, honoring the unsafe opt-out.
+    let permission_check =
+        if settings.get_bool("unsafe_skip_config_file_permissions_check") == Some(true) {
+            FilePermissionCheck::UnsafeDisabled
+        } else {
+            FilePermissionCheck::Enabled
+        };
+
+    // `~/.ssh/rsa_key.p8` resolves against the user's home, as in the legacy
+    // Python connector.
+    let path = expand_tilde(&private_key_file, home_dir);
+    // The permission gate only guards files that actually exist — the same
+    // order `load_toml_file` uses. A missing or inaccessible file must
+    // surface the private-key-specific read error below (the driver's
+    // documented error for a bad `private_key_file` path), not a generic
+    // config-read error raised while stat-ing the file for its mode.
+    if path.try_exists().unwrap_or(false) {
+        check_file_permissions(&path, permission_check)?;
+    }
+
+    let private_key = fs::read_to_string(&path).map_err(|e| {
+        InvalidParameterValueSnafu {
+            parameter: "private_key_file".to_string(),
+            value: private_key_file,
+            explanation: format!("Could not read private key file: {e}"),
+        }
+        .build()
+    })?;
+    Ok(SensitiveString::from(private_key))
 }
 
 pub(super) fn has_private_key_params(settings: &dyn Settings) -> bool {
@@ -511,5 +523,59 @@ mod tests {
             let result = read_private_key(&settings).unwrap();
             assert_eq!(result.reveal(), pem_key_content());
         }
+
+        #[test]
+        fn should_check_permissions_of_expanded_tilde_path() {
+            let home = tempfile::tempdir().unwrap();
+            let key_path = home.path().join("rsa_key.p8");
+            fs::write(&key_path, pem_key_content()).unwrap();
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o666)).unwrap();
+            let settings = settings_with(&[]);
+
+            let err = read_private_key_file("~/rsa_key.p8".into(), &settings, Some(home.path()))
+                .unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InsecurePermissions { .. }),
+                "Expected InsecurePermissions, got: {err:?}"
+            );
+        }
+    }
+
+    // --- private_key_file tilde expansion ---
+
+    #[test]
+    fn read_private_key_file_expands_tilde_to_home() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n";
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join(".ssh")).unwrap();
+        let key_path = home.path().join(".ssh").join("rsa_key.p8");
+        fs::write(&key_path, pem).unwrap();
+        // Pin the mode so the permission gate does not depend on the umask.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let settings = settings_with(&[]);
+
+        let key = read_private_key_file("~/.ssh/rsa_key.p8".into(), &settings, Some(home.path()))
+            .unwrap();
+
+        assert_eq!(key.reveal(), pem);
+    }
+
+    #[test]
+    fn read_private_key_file_missing_tilde_path_reports_path_as_given() {
+        let home = tempfile::tempdir().unwrap();
+        let settings = settings_with(&[]);
+
+        let err =
+            read_private_key_file("~/missing.p8".into(), &settings, Some(home.path())).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ConfigError::InvalidParameterValue { ref parameter, ref value, .. }
+                if parameter == PRIVATE_KEY_FILE.as_str() && value == "~/missing.p8"
+        ));
     }
 }
