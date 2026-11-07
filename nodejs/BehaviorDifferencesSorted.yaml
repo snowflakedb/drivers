@@ -332,66 +332,6 @@ behavior_differences:
       `account`, or `account` without `host`, and restore the session.
       serialize() and deserializeConnection() may later be replaced by the child-session API.
 
-  87:
-    name: 'account validation differs from the old driver'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection checks account before connect.
-      - Missing: with no account, host, or accessUrl, throws MissingParameterError 404007
-        ("An account must be specified."). When host is set and account is omitted, the
-        account is copied from the host and createConnection does not throw.
-      - Empty: throws InvalidParameterError 404045 ("Invalid account. The specified value
-        must be a valid subdomain string.").
-      - Non-string: throws InvalidParameterError 404008 ("Invalid account. The specified
-        value must be a string.").
-      - Other values: must match /^\w+([.-]\w+)*$/i. A "." or "-" cannot start or end the
-        value, and separators cannot repeat. A failure is the same 404045 as an empty string.
-    new_driver_behavior: |
-      account is typed as string on ConnectionOptions. createConnection accepts the value.
-      connectAsync fails in core.
-      - Missing: a non-empty account is required even when host is set. connectAsync fails
-        with "Missing required parameter 'account'".
-      - Empty: the same missing-account error as above.
-      - Non-string: rejected by the TypeScript type. There is no runtime 404008.
-      - Other values: each character must be an ASCII letter, digit, ".", "-", or "_".
-        A leading or trailing separator and repeated separators ("--", "..") are allowed.
-        Any other character fails connectAsync.
-
-  88:
-    name: 'accessUrl does not fill account'
-    status: unknown
-    type: unknown
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection with accessUrl "https://access-url.snowflakecomputing.com" and no
-      account sets account to "access-url". createConnection does not throw.
-    new_driver_behavior: |
-      accessUrl does not fill account. account is required. With accessUrl and no
-      account, connectAsync fails with "Missing required parameter 'account'". The
-      error name is "InvalidParameterError" and code is undefined (BD#101).
-
-  89:
-    name: 'a non-URL accessUrl is not rejected at createConnection'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      createConnection rejects "not-a-url" and "" with InvalidParameterError 404010
-      before connect. A non-string gets the same error.
-    new_driver_behavior: |
-      createConnection accepts "not-a-url" and "". The driver does not validate the
-      string. connectAsync fails with NetworkError 401001 ("Network error. Could not
-      reach Snowflake.") because the login request cannot reach that URL.
-    status_rationale: If possible the validation should be done by the server.
-
   90:
     name: 'sfRetryMaxLoginRetries is not accepted; the new driver has no login-retry count option'
     status: allowed
@@ -486,29 +426,6 @@ behavior_differences:
     description: |
       The default store is initialized on first use rather than at connect, so its failure is
       handled like any other best-effort cache failure.
-
-  101:
-    name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      createConnection throws as soon as a required setting is missing or a value is
-      invalid. A missing setting is MissingParameterError with a 404xxx code (404007
-      "An account must be specified.", 404003 "A user name must be specified."). An
-      invalid value is InvalidParameterError with a 404xxx code.
-    new_driver_behavior: |
-      createConnection accepts the options. connect() and connectAsync() reject with
-      InvalidParameterError, `error.code` undefined, and a message that lists every
-      failing setting, for example "Configuration error: Configuration validation failed
-      (1 issue(s)): user: Missing required parameter 'user'". There is no
-      MissingParameterError. Unknown options still throw from createConnection (BD#102).
-    description: |
-      Settings are validated once, by the core, when the connection logs in. Repeating
-      that validation in createConnection would keep a second copy of the rules in the
-      wrapper.
 
   102:
     name: 'Unknown connection options are rejected with InvalidParameterError'

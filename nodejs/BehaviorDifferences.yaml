@@ -1997,7 +1997,7 @@ behavior_differences:
     name: 'account format checks are looser than in the old driver'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -2013,6 +2013,10 @@ behavior_differences:
       the login. A non-string account is sent as its string form: 123 becomes "123" and
       fails the same way, {} becomes "[object Object]" and is rejected for its characters.
       null is covered by BD#124.
+    status_rationale: |
+      The affected values never connect in either driver, so only the error and the step
+      that reports it differ. Settings are checked at connect, not in createConnection
+      (BD#101).
     description: |
       Every value affected here is one the old driver would never connect with; only the
       error differs. A missing, empty or invalid account fails at connect with
@@ -2023,8 +2027,8 @@ behavior_differences:
     name: 'accessUrl does not fill account'
     status: fixed
     type: bug
-    reviewed: false
-    is_breaking_change: true
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createConnection with accessUrl "https://access-url.snowflakecomputing.com" and no
@@ -2034,12 +2038,13 @@ behavior_differences:
       Same as the old driver: with accessUrl "https://access-url.snowflakecomputing.com"
       and no account, the connection uses account "access-url", including when host is
       also set. An accessUrl that is not a URL fills nothing (BD#89).
+    status_rationale: The new driver takes account from accessUrl the same way as the old driver.
 
   89:
     name: 'a non-URL accessUrl is not rejected at createConnection'
     status: allowed
-    type: bugfix
-    reviewed: false
+    type: api_incompatibility
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
@@ -2049,7 +2054,10 @@ behavior_differences:
       createConnection accepts "not-a-url" and "". The driver does not validate the
       string. connectAsync fails with NetworkError 401001 ("Network error. Could not
       reach Snowflake.") because the login request cannot reach that URL.
-    status_rationale: If possible the validation should be done by the server.
+    status_rationale: |
+      Settings are checked at connect, not in createConnection (BD#101). The driver does
+      not check the URL format, so a bad accessUrl fails when the login request cannot
+      reach it. Only the error differs.
 
   90:
     name: 'sfRetryMaxLoginRetries is not accepted; the new driver has no login-retry count option'
@@ -2247,29 +2255,50 @@ behavior_differences:
 
   101:
     name: 'Missing or invalid connection settings reject connect() with InvalidParameterError and no code'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      createConnection throws as soon as a required setting is missing or a value is
+      createConnection checks most settings and throws as soon as one is missing or
       invalid. A missing setting is MissingParameterError with a 404xxx code (404007
       "An account must be specified.", 404003 "A user name must be specified."). An
-      invalid value is InvalidParameterError with a 404xxx code.
+      invalid value is InvalidParameterError with a 404xxx code. JavaScript types are
+      checked too: `warehouse: 123` throws 404011. With no options, createConnection also
+      reads the connections.toml profile and checks its values the same way:
+      `client_session_keep_alive = "yes"` throws 404023.
+
+      Some settings are checked only by connect():
+      - SNOWFLAKE_JWT without privateKey or privateKeyPath fails with "secretOrPrivateKey
+        must have a value".
+      - A privateKey with a valid PEM header and footer but a damaged body fails with the
+        OpenSSL error from crypto.createPrivateKey (BD#73).
+      - A privateKeyPath that cannot be read fails with the fs error, for example ENOENT.
+      - WORKLOAD_IDENTITY with an unknown workloadIdentityProvider, or with OIDC and no
+        token, fails with InvalidParameterError 404062.
+      Snowflake rejects the rest during login, for example a wrong password.
     new_driver_behavior: |
-      createConnection accepts the options. connect() and connectAsync() reject with
-      InvalidParameterError, `error.code` undefined, and a message that lists every
-      failing setting, for example "Configuration error: Configuration validation failed
-      (1 issue(s)): user: Missing required parameter 'user'". There is no
-      MissingParameterError. Unknown options still throw from createConnection (BD#102).
+      createConnection does not check the settings. The ConnectionOptions type reports a
+      value of the wrong type at compile time.
+
+      Every other check runs in connect(). A missing or invalid setting rejects with
+      InvalidParameterError, `error.code` undefined, and a message that names the failing
+      settings. There is no MissingParameterError.
+
+      Values in a connections.toml or config.toml profile are not type-checked. A value that
+      cannot be read as the option's type is treated as not set.
+    status_rationale: |
+      connect() is the only step that can tell whether the settings work: it loads the
+      profile, reads key and token files, and lets Snowflake check the credentials. In the
+      old driver a createConnection() that did not throw never meant the settings would
+      work, because the checks were split between createConnection(), connect() and the
+      server with no clear rule. With every check in connect(), callers handle option
+      errors in one place.
     description: |
       Settings are validated once, by the core, when the connection logs in. Repeating
       that validation in createConnection would keep a second copy of the rules in the
       wrapper.
-
-      Status is unknown: failing in createConnection, as the old driver does, is probably the
-      behavior we want. A fix may be a new design rather than a copy of the old driver.
 
       These entries describe specific settings that the old driver rejects in createConnection
       and the new driver rejects at connect:
