@@ -138,6 +138,9 @@ describe('ConnectionConfig: basic', function () {
       },
       errorCode: ErrorCodes.ERR_CONN_CREATE_INVALID_USERNAME,
     },
+    // The missing, undefined and null password rows are partly covered by "should reject $label" in
+    // nodejs/tests/e2e/authentication/user-password.test.ts. The new driver rejects them at connect,
+    // as InvalidParameterError with no code (BD#101).
     {
       name: 'missing password',
       options: {

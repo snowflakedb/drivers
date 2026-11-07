@@ -435,6 +435,8 @@ called out explicitly.
     `privateKeyPath` / `privateKeyPass`) assert `ERR_CONN_CREATE_*` on `new ConnectionConfig`.
     The new driver reports these at connect as InvalidParameterError without a code (BD#101), so
     no case here migrates as written.
+  - `missing password`, `undefined password` and `null password` stay for the same reason.
+    `user-password.test.ts` connects with each of them and asserts the BD#101 error.
 - `unit/connection/normalize_connection_options_test.ts` — migrated and deleted. Its cases live in
   `nodejs/tests/unit/normalize-connection-options.test.ts`, with
   `nodejs/tests/e2e/normalize-connection-options.test.ts` connecting through the normalized options.
@@ -496,6 +498,9 @@ called out explicitly.
   `nodejs/tests/e2e/connection-state-errors.test.ts`.
   The `connection.destroy()` refusals in the pristine and disconnected states, and destroy
   while a login is in flight, now live in `nodejs/tests/e2e/connection-state-errors.test.ts`.
+  The `missing password`, `undefined password` and `null password` rows are partly covered by
+  `nodejs/tests/e2e/authentication/user-password.test.ts`, which asserts the BD#101 error at
+  connect instead of `ERR_CONN_CREATE_MISSING_PASSWORD` from `createConnection`.
 
 ### Authentication
 

@@ -59,6 +59,8 @@ pub struct BrowserResponseResult {
 
 #[napi(object, object_to_js = false)]
 pub struct ConnectionParams<'a> {
+    // TODO(SNOW-4452005): check whether this can take typed values (bool, number) and map them to
+    // the matching `Setting` variants, instead of sending every value as `Setting::String`.
     pub options: HashMap<String, String>,
     pub session_parameters: HashMap<String, String>,
     pub wrapper_identity: WrapperIdentity,
@@ -70,7 +72,6 @@ pub struct ConnectionParams<'a> {
 
 impl ConnectionParams<'_> {
     fn build_connection_options(&self) -> HashMap<String, Setting> {
-        // TODO: temporary conversion, proper options mapping will be done later
         let mut core_options: HashMap<String, Setting> = self
             .options
             .iter()

@@ -108,6 +108,7 @@ describe('password inputs', { tags: ['requires_no_mfa'] }, () => {
   it.each([
     { label: 'an omitted password', overrides: {} },
     { label: 'an undefined password', overrides: { password: undefined } },
+    { label: 'a null password', overrides: { password: null } },
   ])('should reject $label', async ({ overrides }) => {
     if (isRunningNewDriverWithBD('BD#101')) {
       const connection = createPasswordConnection(overrides);
@@ -118,27 +119,6 @@ describe('password inputs', { tags: ['requires_no_mfa'] }, () => {
       });
     } else {
       expect(() => createPasswordConnection(overrides)).toThrow(
-        expect.objectContaining({
-          name: 'MissingParameterError',
-          code: 404005,
-          message: 'A password must be specified.',
-        }),
-      );
-    }
-  });
-
-  it('should reject a null password', async () => {
-    const options = { password: null };
-    if (isRunningNewDriverWithBD('BD#124')) {
-      const connection = createPasswordConnection(options);
-      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
-        name: 'OperationFailedError',
-        code: '390100',
-        message: expect.stringContaining(INCORRECT_USERNAME_OR_PASSWORD_MESSAGE),
-      });
-      await expectConnectionNotUp(connection, TERMINATED_QUERY);
-    } else {
-      expect(() => createPasswordConnection(options)).toThrow(
         expect.objectContaining({
           name: 'MissingParameterError',
           code: 404005,

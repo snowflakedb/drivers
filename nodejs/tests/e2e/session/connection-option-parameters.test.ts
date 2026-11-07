@@ -6,6 +6,7 @@ import {
   executeAsync,
   isRunningNewDriverWithBD,
   snowflake,
+  TEST_CONNECTION_OPTIONS,
 } from '../utils/index.js';
 import { loginSuccess, logoutSuccess, WiremockServer } from '../utils/wiremock/index.js';
 
@@ -20,6 +21,30 @@ describe('account parameter', () => {
       });
     } else {
       expect(() => createConnection({ account: undefined, host: undefined })).toThrow(
+        expect.objectContaining({
+          name: 'MissingParameterError',
+          code: 404007,
+          message: 'An account must be specified.',
+        }),
+      );
+    }
+  });
+
+  it('should reject a null account', async () => {
+    const options: Record<string, unknown> = {
+      ...TEST_CONNECTION_OPTIONS,
+      account: null,
+      host: undefined,
+    };
+    if (isRunningNewDriverWithBD('BD#101')) {
+      const connection = snowflake.createConnection(options);
+      await expect(connection.connectAsync()).rejects.toMatchObject({
+        name: 'InvalidParameterError',
+        code: undefined,
+        message: expect.stringContaining("Missing required parameter 'account'"),
+      });
+    } else {
+      expect(() => snowflake.createConnection(options)).toThrow(
         expect.objectContaining({
           name: 'MissingParameterError',
           code: 404007,

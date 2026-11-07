@@ -1,4 +1,28 @@
+import type { ConfigureOptions } from './global-config.js';
+import type { ConnectionOptions } from './public-types/index.js';
 import { logger } from './logging/index.js';
+
+// The Connection constructor handles these options itself, so they never reach nodejs_bridge.
+type WrapperOnlyConnectionOption =
+  | 'rowMode'
+  | 'fetchAsString'
+  | 'jsTreatIntegerAsBigInt'
+  | 'representNullAsStringNull'
+  | 'rowStreamHighWaterMark'
+  | 'streamResult'
+  | 'arrayBindingThreshold'
+  | 'openExternalBrowserCallback'
+  | 'browserResponseRenderer';
+
+export type CoreConnectionOptionsInput = Omit<ConnectionOptions, WrapperOnlyConnectionOption> &
+  Pick<
+    ConfigureOptions,
+    | 'useEnvProxy'
+    | 'crlDownloadTimeout'
+    | 'crlDownloadMaxSize'
+    | 'crlCacheValidityTime'
+    | 'crlCacheDir'
+  >;
 
 // TODO: In future we should register an alias in core for each parameter. This map then becomes a
 // set: the Node driver's whitelist of connection options, even when core
@@ -8,7 +32,7 @@ import { logger } from './logging/index.js';
 // snowflake-sdk `ConnectionOptions` shape) onto the snake_case key sf_core
 // understands. A key absent from this map is dropped - the driver
 // ignores options it does not know and they are not forwarded to sf_core.
-const CONNECTION_OPTION_ALIASES: Record<string, string> = {
+const CONNECTION_OPTION_ALIASES = {
   account: 'account',
   accessUrl: 'server_url',
   host: 'host',
@@ -75,26 +99,37 @@ const CONNECTION_OPTION_ALIASES: Record<string, string> = {
   crlDownloadMaxSize: 'crl_max_download_size',
   crlCacheValidityTime: 'crl_validity_time',
   crlCacheDir: 'crl_cache_dir',
-};
+} satisfies Record<keyof CoreConnectionOptionsInput, string>;
 
-const MILLISECOND_OPTIONS = new Set([
+const MILLISECOND_OPTIONS = new Set<keyof CoreConnectionOptionsInput>([
   'browserActionTimeout',
   'timeout',
   'crlDownloadTimeout',
   'crlCacheValidityTime',
 ]);
 
-export function toCoreConnectionOptions(options: Record<string, unknown>): Record<string, string> {
+function isKnownOption(key: string): key is keyof CoreConnectionOptionsInput {
+  return Object.hasOwn(CONNECTION_OPTION_ALIASES, key);
+}
+
+export function toCoreConnectionOptions(
+  options: CoreConnectionOptionsInput,
+): Record<string, string> {
   const normalized: Record<string, string> = {};
+
   for (const [key, value] of Object.entries(options)) {
-    if (value === undefined) {
-      continue;
-    }
-    const sfCoreKey = CONNECTION_OPTION_ALIASES[key];
-    if (sfCoreKey === undefined) {
+    if (!isKnownOption(key)) {
       logger.warn(`Unknown option ${key} is ignored`);
       continue;
     }
+
+    // The type does not allow null, but plain JavaScript callers can pass it.
+    // Like the old driver, null means "not set".
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    const sfCoreKey = CONNECTION_OPTION_ALIASES[key];
     if (MILLISECOND_OPTIONS.has(key) && typeof value === 'number' && Number.isFinite(value)) {
       // Milliseconds in, seconds out (BD#59, BD#122, BD#123).
       // TODO(SNOW-4263660): take seconds, or replace browserActionTimeout with authenticationTimeout.
@@ -103,25 +138,26 @@ export function toCoreConnectionOptions(options: Record<string, unknown>): Recor
         seconds = 1;
       }
       normalized[sfCoreKey] = String(seconds);
-      continue;
+    } else {
+      normalized[sfCoreKey] = String(value);
     }
-    normalized[sfCoreKey] = String(value);
   }
-  applyNodeTokenOverrides(normalized);
+
+  applyOldDriverTokenRules(normalized);
   return normalized;
 }
 
-function applyNodeTokenOverrides(normalized: Record<string, string>): void {
+// sf_core reads `token` and `token_file_path` with different rules than the
+// old Node driver. This keeps the old Node behavior:
+// - An inline `token` wins over `tokenFilePath`. sf_core reads the file when
+//   both are set.
+// - With PROGRAMMATIC_ACCESS_TOKEN, the old driver accepted the token in
+//   `password` alone and sent it as TOKEN. sf_core needs `token` or
+//   `token_file_path`, so the value moves from `password` to `token`.
+function applyOldDriverTokenRules(normalized: Record<string, string>): void {
   if (normalized.token) {
-    // Backward compatibility. An inline token wins over tokenFilePath
-    // (sf_core prefers the file).
     delete normalized.token_file_path;
   } else if (
-    // Backward compatibility with the old Node driver: unlike other drivers,
-    // it accepted PROGRAMMATIC_ACCESS_TOKEN with only a password and sent that
-    // value as TOKEN, not also as password. sf_core requires token or
-    // token_file_path, but never validates the value, so its errors and logs
-    // remain accurate.
     normalized.authenticator?.toUpperCase() === 'PROGRAMMATIC_ACCESS_TOKEN' &&
     !normalized.token_file_path &&
     normalized.password

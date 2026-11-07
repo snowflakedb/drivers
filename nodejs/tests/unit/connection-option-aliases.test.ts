@@ -228,7 +228,20 @@ describe('toCoreConnectionOptions', () => {
     expect(
       toCoreConnectionOptions({
         account: 'sfctest0',
+        // @ts-expect-error plain JavaScript callers can pass any key
         notARealOption: 'x',
+      }),
+    ).toEqual({
+      account: 'sfctest0',
+    });
+  });
+
+  it('should skip options set to null', () => {
+    expect(
+      toCoreConnectionOptions({
+        account: 'sfctest0',
+        password: null as unknown as string,
+        timeout: null as unknown as number,
       }),
     ).toEqual({
       account: 'sfctest0',

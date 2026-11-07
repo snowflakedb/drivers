@@ -558,26 +558,6 @@ behavior_differences:
          "Expected type Int for parameter 'timeout'".
       It applies to each attempt of login, query, and other requests.
 
-  124:
-    name: 'toCoreConnectionOptions stringifies null'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      password null is treated as absent. createConnection throws
-      MissingParameterError 404005 ("A password must be specified.").
-    new_driver_behavior: |
-      toCoreConnectionOptions skips only undefined and then calls String(value), so
-      null becomes "null". That string is sent as the password, and login fails with
-      OperationFailedError, code "390100", and a message containing "Incorrect
-      username or password was specified."
-    description: |
-      should reject a null password branches on this entry. The same null fails
-      at createConnection on the old driver and at login on the new driver.
-      This test does not assert sqlState.
-
   130:
     name: 'LargeResultSetError has the HTTP status on cause instead of the raw response object'
     status: allowed

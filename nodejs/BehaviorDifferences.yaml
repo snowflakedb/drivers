@@ -2012,7 +2012,7 @@ behavior_differences:
       later, when the host built from the account cannot be reached or the server rejects
       the login. A non-string account is sent as its string form: 123 becomes "123" and
       fails the same way, {} becomes "[object Object]" and is rejected for its characters.
-      null is covered by BD#124.
+      null is treated as absent (BD#124) and fails as a missing account (BD#101).
     status_rationale: |
       The affected values never connect in either driver, so only the error and the step
       that reports it differ. Settings are checked at connect, not in createConnection
@@ -2710,24 +2710,24 @@ behavior_differences:
       behavior gets no changelog entry either.
 
   124:
-    name: 'toCoreConnectionOptions stringifies null'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
+    name: 'A connection option set to null is treated as not set'
+    status: fixed
+    type: bug
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
-      password null is treated as absent. createConnection throws
-      MissingParameterError 404005 ("A password must be specified.").
+      A connection option set to null is treated as not set. A null password throws
+      MissingParameterError 404005 ("A password must be specified."), the same as an
+      omitted password.
     new_driver_behavior: |
-      toCoreConnectionOptions skips only undefined and then calls String(value), so
-      null becomes "null". That string is sent as the password, and login fails with
-      OperationFailedError, code "390100", and a message containing "Incorrect
-      username or password was specified."
-    description: |
-      should reject a null password branches on this entry. The same null fails
-      at createConnection on the old driver and at login on the new driver.
-      This test does not assert sqlState.
+      Same as the old driver: a connection option set to null is treated as not set. A null
+      password fails the same way as an omitted password, at connect (BD#101).
+    status_rationale: |
+      The new driver used to send null as the string "null". A null password reached
+      Snowflake and failed login with 390100, and a null number or boolean option failed as
+      the wrong type. null is now skipped like undefined. Where and how a missing setting is
+      reported is covered by BD#101.
 
   125:
     name: 'A rejected password login sets SQLSTATE 28000 only on the new driver'
@@ -2749,7 +2749,7 @@ behavior_differences:
     description: |
       The wrong-password test asserts sqlState "28000" on the new driver and
       asserts that the old driver leaves sqlState unset. Empty and null password
-      failures keep their own entries (BD#124 and BD#126)
+      failures keep their own entries (BD#126 and BD#101)
       and do not assert sqlState.
     status_rationale: |
       Snowflake does not send a sqlState for rejected logins, so the old driver left it unset.
