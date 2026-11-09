@@ -522,7 +522,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.transactionIsolation = level;
       return;
     }
-    throw featureNotSupported("Transaction Isolation " + level + " not supported.");
+    throw featureNotSupportedWithSqlState("Transaction Isolation " + level + " not supported.");
   }
 
   @Override
@@ -1055,24 +1055,26 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private static void validateStmtType(
       int resultSetType, int resultSetConcurrency, int resultSetHoldability) {
     if (resultSetType != TYPE_FORWARD_ONLY) {
-      throw featureNotSupported(
+      throw featureNotSupportedWithSqlState(
           String.format("ResultSet type %d is not supported.", resultSetType));
     }
 
     if (resultSetConcurrency != CONCUR_READ_ONLY) {
-      throw featureNotSupported(
+      throw featureNotSupportedWithSqlState(
           String.format("ResultSet concurrency %d is not supported.", resultSetConcurrency));
     }
 
     if (resultSetHoldability != CLOSE_CURSORS_AT_COMMIT) {
-      throw featureNotSupported(
+      throw featureNotSupportedWithSqlState(
           String.format("ResultSet holdability %d is not supported.", resultSetHoldability));
     }
   }
 
   private static SFSQLFeatureNotSupportedException featureNotSupported(String message) {
-    // Carry FEATURE_UNSUPPORTED's SQLState / vendor code through the cause; toSQLException()
-    // re-derives them so the surfaced SQLFeatureNotSupportedException is byte-identical.
+    return new SFSQLFeatureNotSupportedException(message);
+  }
+
+  private static SFSQLFeatureNotSupportedException featureNotSupportedWithSqlState(String message) {
     return new SFSQLFeatureNotSupportedException(
         new SQLFeatureNotSupportedException(
             message, FEATURE_UNSUPPORTED.getSqlState(), FEATURE_UNSUPPORTED.getMessageCode()));

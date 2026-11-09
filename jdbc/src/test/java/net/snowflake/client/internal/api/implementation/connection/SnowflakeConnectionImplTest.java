@@ -3,6 +3,7 @@ package net.snowflake.client.internal.api.implementation.connection;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedClientInfoException;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertConnectionClosedException;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertFeatureNotSupported;
+import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.assertFeatureNotSupportedWithoutSqlState;
 import static net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImplTestFixtures.boundary;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,6 +25,7 @@ import java.io.File;
 import java.sql.ClientInfoStatus;
 import java.sql.Clob;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
@@ -1174,7 +1176,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectSetTypeMap() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.setTypeMap(Collections.emptyMap())));
@@ -1290,7 +1292,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectSetSavepoint() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, conn::setSavepoint));
       }
     }
@@ -1298,7 +1300,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectSetSavepointWithName() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, () -> conn.setSavepoint("sp")));
       }
     }
@@ -1307,7 +1309,7 @@ class SnowflakeConnectionImplTest {
     void shouldRejectRollbackToSavepoint() throws Exception {
       Savepoint savepoint = new FakeSavepoint();
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, () -> conn.rollback(savepoint)));
       }
     }
@@ -1316,7 +1318,7 @@ class SnowflakeConnectionImplTest {
     void shouldRejectReleaseSavepoint() throws Exception {
       Savepoint savepoint = new FakeSavepoint();
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class, () -> conn.releaseSavepoint(savepoint)));
       }
@@ -1325,7 +1327,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectPrepareStatementWithColumnIndexes() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.prepareStatement("select 1", new int[] {1})));
@@ -1335,7 +1337,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectPrepareStatementWithColumnNames() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.prepareStatement("select 1", new String[] {"c1"})));
@@ -1345,7 +1347,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectPrepareStatementWithGeneratedKeys() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.prepareStatement("select 1", Statement.RETURN_GENERATED_KEYS)));
@@ -1353,9 +1355,22 @@ class SnowflakeConnectionImplTest {
     }
 
     @Test
+    void shouldAcceptPrepareStatementWithNoGeneratedKeys() throws Exception {
+      StatementHandle stmtHandle = StatementHandle.newBuilder().setId(10).setMagic(1000).build();
+      when(mockCoreApi.statementNew(any()))
+          .thenReturn(StatementNewResponse.newBuilder().setStmtHandle(stmtHandle).build());
+      when(mockCoreApi.statementRelease(any()))
+          .thenReturn(StatementReleaseResponse.getDefaultInstance());
+      try (Connection conn = boundary(createConnection());
+          PreparedStatement stmt = conn.prepareStatement("select 1", Statement.NO_GENERATED_KEYS)) {
+        assertFalse(stmt.isClosed());
+      }
+    }
+
+    @Test
     void shouldRejectCreateBlob() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createBlob));
       }
     }
@@ -1363,7 +1378,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectCreateNClob() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createNClob));
       }
     }
@@ -1371,7 +1386,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectCreateSQLXML() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(SQLFeatureNotSupportedException.class, conn::createSQLXML));
       }
     }
@@ -1379,7 +1394,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectCreateStruct() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.createStruct("fakeType", new Object[] {})));
@@ -1607,7 +1622,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldPreserveDefaultHoldabilityAfterRejectedSet() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.setHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT)));
@@ -1625,7 +1640,7 @@ class SnowflakeConnectionImplTest {
     @Test
     void shouldRejectUnsupportedHoldability() throws Exception {
       try (Connection conn = boundary(createConnection())) {
-        assertFeatureNotSupported(
+        assertFeatureNotSupportedWithoutSqlState(
             assertThrows(
                 SQLFeatureNotSupportedException.class,
                 () -> conn.setHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT)));

@@ -14,9 +14,11 @@ import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowf
 import net.snowflake.client.internal.api.implementation.resultset.DecoratedSnowflakeResultSetImpl;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeAsyncResultSetImpl;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.api.implementation.statement.DecoratedEmptyGeneratedKeysResultSet;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowflakeStatementImpl;
+import net.snowflake.client.internal.api.implementation.statement.EmptyGeneratedKeysResultSet;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
@@ -65,6 +67,10 @@ public final class Decorators {
     }
     if (resultSet instanceof SnowflakeResultSetImpl) {
       return new DecoratedSnowflakeResultSetImpl((SnowflakeResultSetImpl) resultSet, telemetry);
+    }
+    if (resultSet instanceof EmptyGeneratedKeysResultSet) {
+      return new DecoratedEmptyGeneratedKeysResultSet(
+          (EmptyGeneratedKeysResultSet) resultSet, telemetry);
     }
     return resultSet;
   }

@@ -252,3 +252,17 @@ Feature: Connection pooling
       | Hikari | 10           |
       | C3P0   | 10           |
       | DBCP   | 10           |
+
+  @jdbc_e2e
+  Scenario: should keep Hikari connection usable when generated keys are not supported
+    Given A Hikari pool with a single connection
+    When prepareStatement is called with RETURN_GENERATED_KEYS, column indexes, and column names
+    Then none of the failures carries a SQLState or vendor code that makes Hikari evict
+    And the connection stays usable for the retry without generated keys
+
+  @jdbc_e2e
+  Scenario: should keep Hikari connection usable when unsupported connection features throw
+    Given A Hikari pool with a single connection
+    When Connection methods that 4.x rejects without a SQLState are called
+    Then none of the failures carries a SQLState or vendor code that makes Hikari evict
+    And the connection stays usable for a later query

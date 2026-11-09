@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
@@ -104,5 +105,11 @@ final class SnowflakeConnectionImplTestFixtures {
   static void assertFeatureNotSupported(SQLFeatureNotSupportedException ex) {
     assertEquals(ErrorCode.FEATURE_UNSUPPORTED.getSqlState(), ex.getSQLState());
     assertEquals(ErrorCode.FEATURE_UNSUPPORTED.getMessageCode(), ex.getErrorCode());
+  }
+
+  /** HikariCP evicts a connection when an exception carries SQLSTATE 0A000. */
+  static void assertFeatureNotSupportedWithoutSqlState(SQLFeatureNotSupportedException ex) {
+    assertNull(ex.getSQLState());
+    assertEquals(0, ex.getErrorCode());
   }
 }

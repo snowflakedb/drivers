@@ -477,6 +477,56 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
+  void shouldReturnEmptyGeneratedKeys() throws Exception {
+    try (Statement stmt = createDecoratedStatement();
+        ResultSet keys = stmt.getGeneratedKeys()) {
+      assertFalse(keys.isBeforeFirst());
+      assertFalse(keys.isAfterLast());
+      assertFalse(keys.isFirst());
+      assertFalse(keys.isLast());
+      assertFalse(keys.next());
+      assertFalse(keys.isClosed());
+      assertEquals(0, keys.getInt(1));
+      assertFalse(keys.wasNull());
+      assertEquals("", keys.getString("col1"));
+      assertFalse(keys.wasNull());
+      assertNull(keys.getMetaData());
+      assertNull(keys.getStatement());
+    }
+  }
+
+  @Test
+  void shouldRejectGeneratedKeysAfterStatementClosed() throws Exception {
+    Statement stmt = createDecoratedStatement();
+    stmt.close();
+    assertThrows(SQLException.class, stmt::getGeneratedKeys);
+  }
+
+  @Test
+  void shouldRejectExecuteWithGeneratedKeysOtherThanNone() throws Exception {
+    try (Statement stmt = createDecoratedStatement()) {
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.execute("INSERT INTO t VALUES (1)", Statement.RETURN_GENERATED_KEYS));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.executeUpdate("INSERT INTO t VALUES (1)", Statement.RETURN_GENERATED_KEYS));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.execute("INSERT INTO t VALUES (1)", new int[] {1}));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.execute("INSERT INTO t VALUES (1)", new String[] {"id"}));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.executeUpdate("INSERT INTO t VALUES (1)", new int[] {1}));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () -> stmt.executeUpdate("INSERT INTO t VALUES (1)", new String[] {"id"}));
+    }
+  }
+
+  @Test
   void shouldDelegateExecuteQueryInternalToUnboundQueryWhenParametersAreNullOrEmpty()
       throws Exception {
     when(mockCoreApi.statementExecuteQuery(eq(stmtHandle), isNull()))
@@ -745,11 +795,9 @@ public class SnowflakeStatementImplTest {
       assertNull(cursorEx.getSQLState());
       assertEquals(0, cursorEx.getErrorCode());
 
-      SQLFeatureNotSupportedException keysEx =
-          assertThrows(SQLFeatureNotSupportedException.class, stmt::getGeneratedKeys);
-      assertEquals("getGeneratedKeys not supported", keysEx.getMessage());
-      assertNull(keysEx.getSQLState());
-      assertEquals(0, keysEx.getErrorCode());
+      try (ResultSet keys = stmt.getGeneratedKeys()) {
+        assertFalse(keys.next());
+      }
 
       SQLFeatureNotSupportedException asyncTimeoutEx =
           assertThrows(

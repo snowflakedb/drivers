@@ -1047,6 +1047,94 @@ public class ConnectionPoolTests extends PoolingE2ETestBase {
     assertEachThreadReadExpectedRow(dbcpResults, 10);
   }
 
+  @Test
+  public void shouldKeepHikariConnectionUsableWhenGeneratedKeysAreNotSupported() throws Exception {
+    // Given A Hikari pool with a single connection
+    try (HikariDataSource hikariDataSource = createHikariDataSource(1);
+        Connection connection = hikariDataSource.getConnection()) {
+      // When prepareStatement is called with RETURN_GENERATED_KEYS, column indexes, and column
+      // names
+      List<SQLFeatureNotSupportedException> failures = new ArrayList<>();
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.prepareStatement("select 1", Statement.RETURN_GENERATED_KEYS)));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.prepareStatement("select 1", new int[] {1})));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.prepareStatement("select 1", new String[] {"c1"})));
+
+      // Then none of the failures carries a SQLState or vendor code that makes Hikari evict
+      for (SQLFeatureNotSupportedException failure : failures) {
+        assertNull(failure.getSQLState());
+        assertEquals(0, failure.getErrorCode());
+      }
+
+      // And the connection stays usable for the retry without generated keys
+      assertFalse(connection.isClosed());
+      try (PreparedStatement retry = connection.prepareStatement("select 1");
+          ResultSet resultSet = retry.executeQuery()) {
+        assertTrue(resultSet.next());
+        assertEquals(1, resultSet.getInt(1));
+      }
+    }
+  }
+
+  @Test
+  public void shouldKeepHikariConnectionUsableWhenUnsupportedConnectionFeaturesThrow()
+      throws Exception {
+    // Given A Hikari pool with a single connection
+    try (HikariDataSource hikariDataSource = createHikariDataSource(1);
+        Connection connection = hikariDataSource.getConnection()) {
+      // When Connection methods that 4.x rejects without a SQLState are called
+      List<SQLFeatureNotSupportedException> failures = new ArrayList<>();
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class, () -> connection.setTypeMap(new HashMap<>())));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.setHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT)));
+      failures.add(assertThrows(SQLFeatureNotSupportedException.class, connection::setSavepoint));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class, () -> connection.setSavepoint("fake")));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.rollback(new FakeSavepoint())));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.releaseSavepoint(new FakeSavepoint())));
+      failures.add(assertThrows(SQLFeatureNotSupportedException.class, connection::createBlob));
+      failures.add(assertThrows(SQLFeatureNotSupportedException.class, connection::createNClob));
+      failures.add(assertThrows(SQLFeatureNotSupportedException.class, connection::createSQLXML));
+      failures.add(
+          assertThrows(
+              SQLFeatureNotSupportedException.class,
+              () -> connection.createStruct("fakeType", new Object[] {})));
+
+      // Then none of the failures carries a SQLState or vendor code that makes Hikari evict
+      for (SQLFeatureNotSupportedException failure : failures) {
+        assertNull(failure.getSQLState());
+        assertEquals(0, failure.getErrorCode());
+      }
+
+      // And the connection stays usable for a later query
+      assertFalse(connection.isClosed());
+      try (PreparedStatement retry = connection.prepareStatement("select 1");
+          ResultSet resultSet = retry.executeQuery()) {
+        assertTrue(resultSet.next());
+        assertEquals(1, resultSet.getInt(1));
+      }
+    }
+  }
+
   private static void assertEachThreadReadExpectedRow(List<String> values, int threadCount) {
     assertEquals(threadCount, values.size());
     for (String value : values) {
