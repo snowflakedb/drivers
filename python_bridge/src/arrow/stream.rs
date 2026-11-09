@@ -32,10 +32,37 @@ impl RowStream {
         })
     }
 
+    /// Opens the result set stream with full schema metadata, including the
+    /// per-column `"nullable"` flag. Use it when the schema reaches the user
+    /// (e.g. the pyarrow table from `fetch_arrow_all` / `fetch_pandas_all`).
     pub(crate) fn from_result_set(
         py: Python<'_>,
         handle_id: i64,
         handle_magic: i64,
+    ) -> PyResult<Self> {
+        Self::open(py, handle_id, handle_magic, true)
+    }
+
+    /// Opens the result set stream for converting rows into Python objects
+    /// (`fetchone` / `fetchmany` / `fetchall`).
+    ///
+    /// Skips the per-column `"nullable"` flag: row conversion only needs to know
+    /// whether each value is NULL, which comes from the Arrow validity bitmap,
+    /// never whether the column could contain NULL. Building the flag clones
+    /// every field's metadata on each fetch, a noticeable cost for small results.
+    pub(crate) fn from_result_set_for_rows(
+        py: Python<'_>,
+        handle_id: i64,
+        handle_magic: i64,
+    ) -> PyResult<Self> {
+        Self::open(py, handle_id, handle_magic, false)
+    }
+
+    fn open(
+        py: Python<'_>,
+        handle_id: i64,
+        handle_magic: i64,
+        with_nullable: bool,
     ) -> PyResult<Self> {
         let bridge =
             initialized_bridge().ok_or_else(|| PyRuntimeError::new_err("init was not called"))?;
@@ -44,14 +71,20 @@ impl RowStream {
             magic: handle_magic as u64,
         };
         // TODO(SNOW-4438601): map the ApiError to a typed driver error instead of RuntimeError.
+        let driver = bridge.transport.database_driver();
         let reader = py
             .detach(|| {
                 bridge.runtime.block_on(
-                    bridge
-                        .transport
-                        .database_driver()
-                        .result_set_get_stream(handle)
-                        .with_subscriber(bridge.dispatch.clone()),
+                    async {
+                        if with_nullable {
+                            driver.result_set_get_stream(handle).await
+                        } else {
+                            driver
+                                .result_set_get_stream_without_nullable_metadata(handle)
+                                .await
+                        }
+                    }
+                    .with_subscriber(bridge.dispatch.clone()),
                 )
             })
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;

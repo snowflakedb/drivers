@@ -2,6 +2,7 @@ use std::sync::Mutex;
 
 use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyList, PyType};
 use sf_core::utils::sync::MutexRecoverExt;
 
@@ -47,7 +48,7 @@ impl ArrowStreamIterator {
     ) -> PyResult<Self> {
         Self::from_stream(
             py,
-            RowStream::from_result_set(py, handle_id, handle_magic)?,
+            RowStream::from_result_set_for_rows(py, handle_id, handle_magic)?,
             session_timezone,
             use_dict_result,
             use_numpy,
@@ -199,19 +200,20 @@ impl ArrowStreamIterator {
 const ITERATOR_LOGGER: &str = "snowflake.connector.CArrowStreamIterator";
 
 fn iterator_debug_enabled(py: Python<'_>) -> bool {
-    let Ok(logging) = py.import("logging") else {
+    static LOGGER: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
+    let Ok(logger) = LOGGER.get_or_try_init(py, || {
+        py.import("logging")?
+            .call_method1("getLogger", (ITERATOR_LOGGER,))
+            .map(Bound::unbind)
+    }) else {
         return false;
     };
-    let Ok(level) = logging.getattr("DEBUG") else {
-        return false;
-    };
-    let Ok(logger) = logging.call_method1("getLogger", (ITERATOR_LOGGER,)) else {
-        return false;
-    };
-    let Ok(enabled) = logger.call_method1("isEnabledFor", (level,)) else {
-        return false;
-    };
-    enabled.is_truthy().unwrap_or(false)
+    const LOGGING_DEBUG: i32 = 10;
+    logger
+        .bind(py)
+        .call_method1(pyo3::intern!(py, "isEnabledFor"), (LOGGING_DEBUG,))
+        .and_then(|enabled| enabled.is_truthy())
+        .unwrap_or(false)
 }
 
 fn log_iterator_debug(message: &str) {

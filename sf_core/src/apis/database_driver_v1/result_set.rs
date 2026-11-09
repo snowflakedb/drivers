@@ -604,17 +604,49 @@ impl DatabaseDriverV1 {
     /// runtime would call `blocking_recv` and panic. Drain after returning from
     /// `block_on` (keeping the runtime alive), on a dedicated `std::thread`, or
     /// via `tokio::task::spawn_blocking`.
+    ///
+    /// Each field carries `"nullable"` metadata (whether the column may contain
+    /// NULL). Use [`Self::result_set_get_stream_without_nullable_metadata`] when
+    /// only the values are read.
     pub async fn result_set_get_stream(
         &self,
         result_handle: Handle,
     ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
+        self.build_stream(result_handle, true).await
+    }
+
+    /// Like [`Self::result_set_get_stream`], but without the `"nullable"` field
+    /// metadata.
+    ///
+    /// `"nullable"` describes a column ("may this column contain NULL at all?",
+    /// taken from the result descriptor). It is needed by consumers that report
+    /// column descriptions to their caller, e.g. ODBC `SQL_DESC_NULLABLE` /
+    /// `SQLDescribeCol`, or the
+    /// pyarrow schema returned by `fetch_arrow_all`. Building it clones every
+    /// field's metadata map on each call.
+    ///
+    /// Consumers that only convert values do not need it: whether a given value
+    /// is NULL comes from the Arrow validity bitmap, which is always in the data.
+    pub async fn result_set_get_stream_without_nullable_metadata(
+        &self,
+        result_handle: Handle,
+    ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
+        self.build_stream(result_handle, false).await
+    }
+
+    async fn build_stream(
+        &self,
+        result_handle: Handle,
+        inject_nullable: bool,
+    ) -> Result<Box<dyn RecordBatchReader + Send>, ApiError> {
         let inputs = snapshot_reader_inputs(self, result_handle).await?;
+        let nullable_flags = inputs.nullable_flags.as_deref().filter(|_| inject_nullable);
         let reader = build_reader_from_rowset_data(
             inputs.data,
             inputs.http_client,
             &inputs.prefetch_config,
             &self.wrapper_presets,
-            inputs.nullable_flags.as_deref(),
+            nullable_flags,
             inputs.xp_backend,
         )
         .await
@@ -975,6 +1007,47 @@ mod tests {
             .expect("result_set_get_stream should succeed for an inline Arrow rowset");
 
         assert_id_name_reader(reader);
+        drop(runtime);
+    }
+
+    #[test]
+    fn result_set_get_stream_without_nullable_metadata_omits_nullable_metadata() {
+        let driver = DatabaseDriverV1::new();
+        let data: Data = serde_json::from_str(ARROW_DATA)
+            .expect("fixture must deserialize into query_response::Data");
+        let descriptor = response_to_descriptor(&data, &WrapperPresets::default());
+        let reader_ctx = ReaderContext {
+            http_client: reqwest::Client::new(),
+            prefetch_config: PrefetchConfig::default(),
+            xp_backend: None,
+        };
+        let rowset_data = RowsetData::ArrowSingleChunk {
+            chunk_base64: arrow_ipc_rowset_base64(),
+        };
+        let handle = driver.create_result_set(descriptor, rowset_data, reader_ctx);
+        let runtime = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
+
+        let with = runtime
+            .block_on(driver.result_set_get_stream(handle))
+            .unwrap();
+        let without = runtime
+            .block_on(driver.result_set_get_stream_without_nullable_metadata(handle))
+            .unwrap();
+
+        assert!(
+            with.schema()
+                .fields()
+                .iter()
+                .all(|f| f.metadata().contains_key("nullable"))
+        );
+        assert!(
+            without
+                .schema()
+                .fields()
+                .iter()
+                .all(|f| !f.metadata().contains_key("nullable"))
+        );
+        assert_id_name_reader(without);
         drop(runtime);
     }
 

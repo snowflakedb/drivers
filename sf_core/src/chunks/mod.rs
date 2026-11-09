@@ -170,6 +170,11 @@ pub(crate) fn drain_reader_to_batches(
     Ok((schema, batches))
 }
 
+/// Inline chunks up to this size are decoded on the calling task: handing them to
+/// the blocking pool costs a thread wake-up, which dominates small results.
+/// The limit is a heuristic, not a measured optimum; tune it if benchmarks say so.
+const INLINE_DECODE_MAX_BASE64_BYTES: usize = 64 * 1024;
+
 fn decode_inline_arrow(b64: &str) -> Result<(SchemaRef, Vec<RecordBatch>), ChunkError> {
     let bytes = BASE64.decode(b64).context(Base64DecodeSnafu)?;
     arrow_parser::decode_ipc_in_place(bytes).context(ChunkReadSnafu)
@@ -267,9 +272,13 @@ pub async fn single_chunk_reader(
     base64: String,
     nullable_flags: Option<&[bool]>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let (schema, batches) = spawn_initial_arrow_decode(base64)
-        .await
-        .context(SpawnBlockingSnafu)??;
+    let (schema, batches) = if base64.len() <= INLINE_DECODE_MAX_BASE64_BYTES {
+        decode_inline_arrow(&base64)?
+    } else {
+        spawn_initial_arrow_decode(base64)
+            .await
+            .context(SpawnBlockingSnafu)??
+    };
     let boxed: Box<dyn RecordBatchReader + Send> = Box::new(RecordBatchIterator::new(
         batches.into_iter().map(Ok::<_, arrow::error::ArrowError>),
         schema,
@@ -1016,6 +1025,27 @@ mod tests {
             schema.field(1).metadata().get("nullable"),
             Some(&"false".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn single_chunk_reader_decodes_payload_above_inline_threshold() {
+        let schema = Arc::new(Schema::new(vec![Field::new("s", DataType::Utf8, false)]));
+        let long_value = "x".repeat(INLINE_DECODE_MAX_BASE64_BYTES);
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(StringArray::from(vec![long_value.as_str()])) as ArrayRef],
+        )
+        .expect("RecordBatch should build");
+        let base64 = encode_arrow_ipc_base64(schema, &[batch]);
+        assert!(base64.len() > INLINE_DECODE_MAX_BASE64_BYTES);
+
+        let batches = drain_reader(single_chunk_reader(base64, None).await.unwrap());
+        let values = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("column should be Utf8");
+        assert_eq!(values.value(0), long_value);
     }
 
     #[tokio::test]
