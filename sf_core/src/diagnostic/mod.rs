@@ -35,6 +35,9 @@ use crate::log_foreign_error;
 use crate::tls::config::ProxyConfig;
 
 const REPORT_FILENAME: &str = "SnowflakeConnectionTestReport.txt";
+const ALLOWLIST_PATH_HINT: &str = "Only the account host will be probed. To probe the allowlist \
+     hosts, save the unmodified JSON output of 'select system$allowlist();' to a file \
+     and set connection_diag_allowlist_path to its absolute path.";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// HTTP status codes that indicate successful connectivity (mirrors gosnowflake).
@@ -174,21 +177,13 @@ impl DiagnosticRunner {
                     "Path '{}' for connection test allowlist is not absolute.",
                     ap.display()
                 );
-                warn!(
-                    "Will connect to Snowflake for allowlist json instead.  \
-                     If you did not provide a valid password, please make sure \
-                     to update and run again."
-                );
+                warn!("{ALLOWLIST_PATH_HINT}");
             } else if !ap.exists() {
                 warn!(
                     "File '{}' for connection test allowlist does not exist.",
                     ap.display()
                 );
-                warn!(
-                    "Will connect to Snowflake for allowlist json instead.  \
-                     If you did not provide a valid password, please make sure \
-                     to update and run again."
-                );
+                warn!("{ALLOWLIST_PATH_HINT}");
             }
         }
 
@@ -397,7 +392,7 @@ impl DiagnosticRunner {
         } else {
             msg.push_str(
                 "\n=========Snowflake Stage information - Unavailable=====================\n\
-                 We could not connect to Snowflake to get allowlist, so we do not have stage\n\
+                 No allowlist file was provided, so we do not have stage\n\
                  diagnostic info\n",
             );
         }

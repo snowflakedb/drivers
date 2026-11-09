@@ -400,7 +400,7 @@ class TestStageSection:
         """Without an allowlist source the stage section is marked Unavailable."""
         report = _run_diag(tmp_path)
         assert "=========Snowflake Stage information - Unavailable" in report
-        assert "We could not connect to Snowflake to get allowlist" in report
+        assert "No allowlist file was provided" in report
 
     def test_stage_retrieved_with_empty_allowlist(self, tmp_path):
         """An empty allowlist [] is valid and produces the 'retrieved' stage section."""
