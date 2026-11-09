@@ -151,6 +151,16 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   @Override
+  public long executeLargeUpdate() {
+    checkClosed();
+    invalidateConversionContext();
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
+      return executeLargeUpdateWithBindings(sql, nativeBindings);
+    }
+  }
+
+  @Override
   @NoTelemetry
   public void setNull(int parameterIndex, int sqlType) {
     checkClosed();

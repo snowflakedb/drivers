@@ -1,18 +1,25 @@
-name: "Statement.executeLargeUpdate(String) is the JDK default"
-status: unknown
+name: "Statement.executeLargeUpdate(String) was the JDK default"
+status: fixed
 type: api_incompatibility
-reviewed: false
+reviewed: true
 is_breaking_change: true
 impact: high
 old_driver_behavior: |
   `Statement.executeLargeUpdate(String)` executes the statement and returns the
-  update count as a long.
+  update count as a long. `executeLargeUpdate(sql, Statement.NO_GENERATED_KEYS)`
+  runs the statement; `RETURN_GENERATED_KEYS`, column indexes, or column names
+  throw `SQLFeatureNotSupportedException`.
 new_driver_behavior: |
-  `Statement.executeLargeUpdate(String)` throws `UnsupportedOperationException`
-  with the message "executeLargeUpdate not implemented".
+  `Statement.executeLargeUpdate(String)`, `PreparedStatement.executeLargeUpdate()`, and
+  `Statement.getLargeUpdateCount()` execute the statement and return the update count as a
+  long, as the old driver does. `executeLargeUpdate(sql, Statement.NO_GENERATED_KEYS)` runs
+  the statement; `RETURN_GENERATED_KEYS`, column indexes, or column names throw
+  `SQLFeatureNotSupportedException`, matching `executeUpdate`.
 description: |
-  The public method is still the JDK default. `executeLargeBatch` goes through
-  `executeLargeUpdateWithBindings`, which is implemented. This entry records
-  the gap so the unit test does not treat the exception as accepted behavior.
-  `reviewed` stays false until a reviewer accepts the omission or the method
-  is implemented.
+  Before this change, the public `executeLargeUpdate` methods were the JDK default and threw
+  `UnsupportedOperationException`. They now share the path that `executeLargeBatch` already
+  used, including the generated-keys overloads that match `executeUpdate`.
+status_rationale: |
+  For `Statement.executeLargeUpdate` (including generated-keys overloads),
+  `PreparedStatement.executeLargeUpdate()`, and `Statement.getLargeUpdateCount()`, the new
+  driver matches the old driver, so no difference remains for these methods.

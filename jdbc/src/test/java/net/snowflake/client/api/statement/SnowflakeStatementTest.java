@@ -116,6 +116,28 @@ public class SnowflakeStatementTest extends SnowflakeIntegrationTestBase {
   }
 
   @Test
+  public void testStatementExecuteLargeUpdateTracksUpdateCount() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_stmt_large_", "v INTEGER");
+
+    try (Statement stmt = conn.createStatement()) {
+      assertEquals(1L, stmt.executeLargeUpdate("INSERT INTO " + tableName + " VALUES (7)"));
+      assertNull(stmt.getResultSet(), "executeLargeUpdate should not expose a ResultSet");
+      assertEquals(1L, stmt.getLargeUpdateCount(), "INSERT should report affected rows as a long");
+      assertEquals(1, stmt.getUpdateCount(), "INSERT should still report the int update count");
+    }
+  }
+
+  @Test
+  public void testStatementExecuteLargeUpdateRejectsSelect() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement()) {
+      SQLException ex = assertThrows(SQLException.class, () -> stmt.executeLargeUpdate("SELECT 1"));
+      assertEquals("0A000", ex.getSQLState());
+      assertEquals(200042, ex.getErrorCode());
+    }
+  }
+
+  @Test
   public void testStatementExecuteReplacesPreviousResultSet() throws Exception {
     try (Statement stmt = getDefaultConnection().createStatement()) {
       assertTrue(stmt.execute("SELECT 1"));

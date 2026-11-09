@@ -159,6 +159,7 @@ public enum ErrorSource {
       case INVALID_PARAMETER_TYPE:
         return API_MISUSE;
       case FEATURE_UNSUPPORTED:
+      case UPDATE_API_WITH_RESULT_SET:
       case ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED:
       case COMPRESSION_TYPE_NOT_SUPPORTED:
         return UNSUPPORTED;

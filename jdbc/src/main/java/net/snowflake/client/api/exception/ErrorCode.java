@@ -18,6 +18,7 @@ public enum ErrorCode {
   RESULTSET_ALREADY_CLOSED(200037, "0A000", null),
   ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED(200023, "0A000", null),
   FEATURE_UNSUPPORTED(200035, "0A000", null),
+  UPDATE_API_WITH_RESULT_SET(200042, "0A000", null),
   INVALID_PARAMETER_VALUE(200047, "22023", null),
   INVALID_PARAMETER_TYPE(200033, "22023", "Invalid parameter value type: {0}, expected type: {1}."),
   INVALID_CONNECTION_STRING(200059, "08000", "Connection string is invalid. Unable to parse."),

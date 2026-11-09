@@ -3,6 +3,8 @@ package net.snowflake.client.internal.api.implementation.statement;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -35,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeClob;
@@ -375,6 +378,62 @@ public class SnowflakePreparedStatementImplTest {
     ps.executeUpdate();
 
     assertEquals("qid-prepared", ps.getQueryID());
+  }
+
+  @Test
+  void shouldReturnRowsAffectedFromPreparedExecuteLargeUpdate() throws Exception {
+    long overflowCount = (long) Integer.MAX_VALUE + 5L;
+    when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
+        .thenReturn(insertResponse(1L, "qid-prepared"))
+        .thenReturn(insertResponse(overflowCount, "qid-overflow"));
+
+    try (PreparedStatement decorated =
+        createDecoratedPreparedStatement("INSERT INTO t VALUES (?)")) {
+      decorated.setInt(1, 1);
+      assertEquals(1L, decorated.executeLargeUpdate());
+      assertEquals(1L, decorated.getLargeUpdateCount());
+      assertEquals(1, decorated.getUpdateCount());
+      assertNull(decorated.getResultSet());
+
+      decorated.setInt(1, 2);
+      assertEquals(overflowCount, decorated.executeLargeUpdate());
+      assertEquals(overflowCount, decorated.getLargeUpdateCount());
+      SnowflakeSQLException countEx =
+          assertInstanceOf(
+              SnowflakeSQLException.class,
+              assertThrows(SQLException.class, decorated::getUpdateCount));
+      assertEquals("Update count exceeds JDBC int range", countEx.getMessage());
+      assertEquals("qid-overflow", countEx.getQueryId());
+      assertInstanceOf(ArithmeticException.class, countEx.getCause());
+    }
+  }
+
+  @Test
+  void shouldRejectPreparedExecuteLargeUpdateWhenStatementProducesResultSet() throws Exception {
+    SnowflakePreparedStatementImpl raw =
+        new SnowflakePreparedStatementImpl(mockConnection, "SELECT ?", mockCoreApi) {
+          @Override
+          protected boolean executeWithBindings(
+              String sql, PreparedStatementBindingSerializer.NativeBindings bindings) {
+            this.queryId = "qid-select";
+            return true;
+          }
+        };
+
+    try (PreparedStatement decorated =
+        new DecoratedSnowflakePreparedStatementImpl(raw, Telemetry.NOOP)) {
+      decorated.setInt(1, 1);
+      SnowflakeSQLException largeUpdateEx =
+          assertInstanceOf(
+              SnowflakeSQLException.class,
+              assertThrows(SQLException.class, decorated::executeLargeUpdate));
+      assertEquals(
+          "executeLargeUpdate() cannot be used for statements that produce a ResultSet",
+          largeUpdateEx.getMessage());
+      assertEquals("qid-select", largeUpdateEx.getQueryId());
+      assertEquals("0A000", largeUpdateEx.getSQLState());
+      assertEquals(200042, largeUpdateEx.getErrorCode());
+    }
   }
 
   @Test

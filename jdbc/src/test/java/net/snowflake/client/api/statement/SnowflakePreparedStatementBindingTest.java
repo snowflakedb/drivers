@@ -280,6 +280,25 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   }
 
   @Test
+  public void testPreparedStatementExecuteLargeUpdateReturnsAffectedRows() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "v INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
+      insert.setInt(1, 7);
+
+      assertEquals(
+          1L, insert.executeLargeUpdate(), "executeLargeUpdate should report affected rows");
+      assertNull(insert.getResultSet(), "executeLargeUpdate should not expose a ResultSet");
+      assertEquals(
+          1L, insert.getLargeUpdateCount(), "Statement state should retain the large update count");
+    }
+
+    verifySingleValue(conn, "SELECT v FROM " + tableName, rs -> assertEquals(7, rs.getInt(1)));
+  }
+
+  @Test
   public void testPreparedStatementExecuteQueryAllowsInsertForLegacyCompatibility()
       throws Exception {
     Connection conn = getDefaultConnection();
@@ -306,6 +325,19 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
       stmt.setInt(1, 99);
 
       assertThrows(SQLException.class, stmt::executeUpdate);
+    }
+  }
+
+  @Test
+  public void testPreparedStatementExecuteLargeUpdateRejectsSelect() throws Exception {
+    Connection conn = getDefaultConnection();
+
+    try (PreparedStatement stmt = conn.prepareStatement("SELECT ?")) {
+      stmt.setInt(1, 99);
+
+      SQLException ex = assertThrows(SQLException.class, stmt::executeLargeUpdate);
+      assertEquals("0A000", ex.getSQLState());
+      assertEquals(200042, ex.getErrorCode());
     }
   }
 

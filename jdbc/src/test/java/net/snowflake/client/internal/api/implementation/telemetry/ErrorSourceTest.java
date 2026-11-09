@@ -265,6 +265,7 @@ public class ErrorSourceTest {
     mapped.put(ErrorCode.INVALID_PARAMETER_VALUE, ErrorSource.API_MISUSE);
     mapped.put(ErrorCode.INVALID_PARAMETER_TYPE, ErrorSource.API_MISUSE);
     mapped.put(ErrorCode.FEATURE_UNSUPPORTED, ErrorSource.UNSUPPORTED);
+    mapped.put(ErrorCode.UPDATE_API_WITH_RESULT_SET, ErrorSource.UNSUPPORTED);
     mapped.put(ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED, ErrorSource.UNSUPPORTED);
     mapped.put(ErrorCode.COMPRESSION_TYPE_NOT_SUPPORTED, ErrorSource.UNSUPPORTED);
     mapped.put(ErrorCode.CONNECTION_ESTABLISHED_WITH_DIFFERENT_PROP, ErrorSource.SERVER_ERROR);

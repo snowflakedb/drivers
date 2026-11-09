@@ -115,6 +115,31 @@ public class GeneratedKeysTests extends SnowflakeIntegrationTestBase {
           SQLFeatureNotSupportedException.class,
           () ->
               statement.executeUpdate("INSERT INTO t VALUES (1)", Statement.RETURN_GENERATED_KEYS));
+      assertThrows(
+          SQLFeatureNotSupportedException.class,
+          () ->
+              statement.executeLargeUpdate(
+                  "INSERT INTO t VALUES (1)", Statement.RETURN_GENERATED_KEYS));
+    }
+  }
+
+  @Test
+  public void shouldExecuteLargeUpdateWhenGeneratedKeysFlagIsNone() throws Exception {
+    // Given Snowflake client is logged in and a temporary table exists
+    Connection connection = getDefaultConnection();
+    String tableName = createTempTable(connection, "ud_genkeys_", "id INT");
+
+    // When executeLargeUpdate is called with NO_GENERATED_KEYS
+    try (Statement statement = connection.createStatement()) {
+      assertEquals(
+          1L,
+          statement.executeLargeUpdate(
+              "INSERT INTO " + tableName + " VALUES (1)", Statement.NO_GENERATED_KEYS));
+      // Then the statement reports the long update count and getGeneratedKeys is empty
+      assertEquals(1L, statement.getLargeUpdateCount());
+      try (ResultSet keys = statement.getGeneratedKeys()) {
+        assertEmptyGeneratedKeys(keys);
+      }
     }
   }
 
