@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Security;
 using OldQueryStatus = Snowflake.Data.Core.QueryStatus;
 using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
 
@@ -28,6 +29,30 @@ sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
 
     public ConnectionState State => _inner.State;
 
+    public SecureString Password
+    {
+        get => _inner.Password;
+        set => _inner.Password = value;
+    }
+
+    public SecureString Passcode
+    {
+        get => _inner.Passcode;
+        set => _inner.Passcode = value;
+    }
+
+    public SecureString OAuthClientSecret
+    {
+        get => _inner.OAuthClientSecret;
+        set => _inner.OAuthClientSecret = value;
+    }
+
+    public SecureString Token
+    {
+        get => _inner.Token;
+        set => _inner.Token = value;
+    }
+
     public IDbTransaction BeginTransaction() => _inner.BeginTransaction();
 
     public IDbTransaction BeginTransaction(IsolationLevel isolationLevel) => _inner.BeginTransaction(isolationLevel);
@@ -47,6 +72,8 @@ sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
     public Task OpenAsync(CancellationToken cancellationToken = default) => _inner.OpenAsync(cancellationToken);
 
     public bool IsOpen() => _inner.IsOpen();
+
+    public void PreventPooling() => _inner.PreventPooling();
 
     public Task CloseAsync(CancellationToken cancellationToken) => _inner.CloseAsync(cancellationToken);
 

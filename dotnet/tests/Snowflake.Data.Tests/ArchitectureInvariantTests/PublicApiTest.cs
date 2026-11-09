@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics;
 using System.Reflection;
+using System.Security;
 using Microsoft.Extensions.Logging;
 using Snowflake.Data.Core.Session;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
@@ -28,7 +29,16 @@ public sealed class PublicApiTest
         $"M:{nameof(DbConnection.Open)}()",
         $"M:{nameof(DbConnection.OpenAsync)}({nameof(CancellationToken)})",
         $"M:{nameof(DbConnection.Close)}()",
+        $"P:get_{nameof(ISnowflakeDbConnection.Password)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Password)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.Passcode)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Passcode)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.OAuthClientSecret)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.OAuthClientSecret)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.Token)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Token)}({nameof(SecureString)})",
         $"M:{nameof(ISnowflakeDbConnection.IsOpen)}()",
+        $"M:{nameof(ISnowflakeDbConnection.PreventPooling)}()",
         $"M:{nameof(ISnowflakeDbConnection.CloseAsync)}({nameof(CancellationToken)})",
         $"M:{nameof(ISnowflakeDbConnection.IsStillRunning)}({nameof(QueryStatus)})",
         $"M:{nameof(ISnowflakeDbConnection.IsAnError)}({nameof(QueryStatus)})",
@@ -36,7 +46,16 @@ public sealed class PublicApiTest
 
     private static readonly HashSet<string> ISnowflakeDbConnectionPublicApi =
     [
+        $"P:get_{nameof(ISnowflakeDbConnection.Password)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Password)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.Passcode)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Passcode)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.OAuthClientSecret)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.OAuthClientSecret)}({nameof(SecureString)})",
+        $"P:get_{nameof(ISnowflakeDbConnection.Token)}()",
+        $"P:set_{nameof(ISnowflakeDbConnection.Token)}({nameof(SecureString)})",
         $"M:{nameof(ISnowflakeDbConnection.IsOpen)}()",
+        $"M:{nameof(ISnowflakeDbConnection.PreventPooling)}()",
         $"M:{nameof(ISnowflakeDbConnection.CloseAsync)}({nameof(CancellationToken)})",
         $"M:{nameof(ISnowflakeDbConnection.IsStillRunning)}({nameof(QueryStatus)})",
         $"M:{nameof(ISnowflakeDbConnection.IsAnError)}({nameof(QueryStatus)})",

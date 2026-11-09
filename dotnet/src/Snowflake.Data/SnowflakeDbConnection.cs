@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Security;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
@@ -52,6 +53,15 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
     public override ConnectionState State => _state;
 
     public string SessionId => throw new NotImplementedException("TODO next milestone");
+
+    // Open() and OpenAsync() do not read these yet; ConnectionStringParser is the only source of connection options.
+    public SecureString Password { get; set; } = null!;
+
+    public SecureString Passcode { get; set; } = null!;
+
+    public SecureString OAuthClientSecret { get; set; } = null!;
+
+    public SecureString Token { get; set; } = null!;
 
     internal IDatabaseDriverService Driver => _driver;
 
@@ -156,6 +166,9 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
     }
 
     public bool IsOpen() => _state == ConnectionState.Open;
+
+    public void PreventPooling() => throw new NotImplementedException(
+        "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
 
     public Task CloseAsync(CancellationToken cancellationToken)
     {
