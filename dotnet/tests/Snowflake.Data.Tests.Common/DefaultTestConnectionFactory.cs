@@ -5,6 +5,8 @@ namespace Snowflake.Data.Tests;
 
 public sealed class DefaultTestConnectionFactory : ITestConnectionFactory
 {
+    public TestDriver.Kind Driver => TestDriver.Kind.New;
+
     public ISnowflakeDbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null) => new SnowflakeDbConnection(connectionStringOverride ?? BuildConnectionString(testOutputHelper));
 
     private static string BuildConnectionString(ITestOutputHelper? testOutputHelper)

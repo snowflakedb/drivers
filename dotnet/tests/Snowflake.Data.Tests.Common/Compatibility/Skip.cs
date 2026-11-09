@@ -19,4 +19,10 @@ public static class Skip
         if (conditionResult.ShouldSkip)
             throw SkipException.ForSkip(rationale);
     }
+
+    public static void OnOldDriver(string rationale) =>
+        When(TestDriver.Current == TestDriver.Kind.Old, rationale);
+
+    public static void OnNewDriver(string rationale) =>
+        When(TestDriver.Current == TestDriver.Kind.New, rationale);
 }

@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Security;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
@@ -54,14 +55,14 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     public string SessionId => throw new NotImplementedException("TODO next milestone");
 
-    // Open() and OpenAsync() do not read these yet; ConnectionStringParser is the only source of connection options.
-    public SecureString Password { get; set; } = null!;
+    // TODO Open() and OpenAsync() do not read these properties; ConnectionStringParser is the only source of connection options.
+    public SecureString Password { get; set => throw new NotImplementedException(SecretSetterNotSupported()); } = null!;
 
-    public SecureString Passcode { get; set; } = null!;
+    public SecureString Passcode { get; set => throw new NotImplementedException(SecretSetterNotSupported()); } = null!;
 
-    public SecureString OAuthClientSecret { get; set; } = null!;
+    public SecureString OAuthClientSecret { get; set => throw new NotImplementedException(SecretSetterNotSupported()); } = null!;
 
-    public SecureString Token { get; set; } = null!;
+    public SecureString Token { get; set => throw new NotImplementedException(SecretSetterNotSupported()); } = null!;
 
     internal IDatabaseDriverService Driver => _driver;
 
@@ -212,6 +213,9 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     protected override DbCommand CreateDbCommand() =>
         new SnowflakeDbCommand { Connection = this };
+
+    private static string SecretSetterNotSupported([CallerMemberName] string? propertyName = null) =>
+        $"Setting {propertyName} is not supported yet; supply it in the connection string.";
 
     private static WrapperIdentity BuildWrapperIdentity() => new()
     {

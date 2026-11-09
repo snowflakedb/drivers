@@ -7,11 +7,14 @@ namespace Snowflake.Data.Tests.Reference;
 
 public sealed class TestConnectionFactory : ITestConnectionFactory
 {
+    public TestDriver.Kind Driver { get; } =
+        GlobalState.UseOldDriver ? TestDriver.Kind.Old : TestDriver.Kind.New;
+
     public ISnowflakeDbConnection Create(ITestOutputHelper? testOutputHelper, string? connectionStringOverride = null)
     {
         var connStr = connectionStringOverride ?? BuildConnectionString(testOutputHelper);
 
-        if (GlobalState.UseOldDriver)
+        if (Driver == TestDriver.Kind.Old)
             return new LegacySnowflakeConnection(connStr);
 
         return new NewSnowflakeDbConnection(connStr);
