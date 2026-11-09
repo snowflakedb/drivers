@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Connection, FetchResultOptions, RowStatement } from '../../types/sdk-types.js';
 import { createLiveConnection } from '../utils/fixtures.js';
-import {
-  collectStreamedRows,
-  executeAsync,
-  fetchResultAsync,
-  getResultsFromQueryIdAsync,
-} from '../utils/index.js';
+import { executeAsync, fetchResultAsync, getResultsFromQueryIdAsync } from '../utils/index.js';
 
 const SQL = 'SELECT seq4() AS ID FROM table(generator(rowCount => 3)) ORDER BY ID';
 const EXPECTED_ROWS = [{ ID: 0 }, { ID: 1 }, { ID: 2 }];
@@ -41,7 +36,7 @@ describe('streamResult', () => {
 
         if (rowsFrom === 'streamRows') {
           expect(rows).toBeUndefined();
-          expect(await collectStreamedRows(statement as RowStatement)).toEqual(EXPECTED_ROWS);
+          expect(await statement.streamRows().toArray()).toEqual(EXPECTED_ROWS);
         } else {
           expect(rows).toEqual(EXPECTED_ROWS);
         }
@@ -62,10 +57,7 @@ describe('streamResult', () => {
     },
     {
       method: 'getResultsFromQueryId',
-      fetch: async (connection, options) => {
-        const { statement, rows } = await getResultsFromQueryIdAsync(connection, options);
-        return { statement: statement as RowStatement, rows };
-      },
+      fetch: (connection, options) => getResultsFromQueryIdAsync(connection, options),
     },
   ])('$method', ({ fetch }) => {
     async function runQuery(connection: Connection): Promise<string> {
@@ -78,7 +70,7 @@ describe('streamResult', () => {
       const queryId = await runQuery(connection);
       const { statement, rows } = await fetch(connection, { queryId });
       expect(rows).toBeUndefined();
-      expect(await collectStreamedRows(statement)).toEqual(EXPECTED_ROWS);
+      expect(await statement.streamRows().toArray()).toEqual(EXPECTED_ROWS);
     });
 
     it('should let its own streamResult override the connection streamResult', async () => {

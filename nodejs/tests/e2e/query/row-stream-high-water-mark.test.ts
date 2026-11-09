@@ -1,6 +1,5 @@
 import { once } from 'node:events';
 import { describe, it, expect } from 'vitest';
-import type { RowStatement } from '../../types/sdk-types.js';
 import { createLiveConnection } from '../utils/fixtures.js';
 import { executeAsync } from '../utils/index.js';
 
@@ -9,7 +8,7 @@ async function createRowStreamHighWaterMark(rowStreamHighWaterMark?: number): Pr
     rowStreamHighWaterMark === undefined ? {} : { rowStreamHighWaterMark },
   );
   const { statement } = await executeAsync(connection, 'SELECT 1', { streamResult: true });
-  const stream = (statement as RowStatement).streamRows();
+  const stream = statement.streamRows();
   const highWaterMark = stream.readableHighWaterMark;
   await stream.toArray();
   return highWaterMark;
@@ -31,7 +30,7 @@ describe('rowStreamHighWaterMark', () => {
       'SELECT seq8() FROM table(generator(rowCount => 200))',
       { streamResult: true },
     );
-    const stream = (statement as RowStatement).streamRows();
+    const stream = statement.streamRows();
 
     await once(stream, 'readable');
     expect(stream.readableLength).toBe(5);

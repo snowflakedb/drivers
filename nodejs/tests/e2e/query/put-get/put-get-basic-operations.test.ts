@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import type { Connection, RowStatement } from '../../../types/sdk-types.js';
+import type { Connection } from '../../../types/sdk-types.js';
 import { sharedTestDataDir, toFileUrl } from '../../utils/files.js';
 import { createLiveConnection, createTempDir } from '../../utils/fixtures.js';
 import {
@@ -161,7 +161,7 @@ describe('PUT GET basic operations', () => {
       );
 
       // Then Column metadata for PUT command should be correct
-      expectColumnsNames(statement as RowStatement, PUT_COLUMNS);
+      expectColumnsNames(statement, PUT_COLUMNS);
       expect(rows[0].status).toBe('UPLOADED');
     });
 
@@ -180,7 +180,7 @@ describe('PUT GET basic operations', () => {
       );
 
       // Then Column metadata for GET command should be correct
-      expectColumnsNames(statement as RowStatement, GET_COLUMNS);
+      expectColumnsNames(statement, GET_COLUMNS);
       expect(rows[0].status).toBe('DOWNLOADED');
     });
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { Connection, RowStatement } from '../../../types/sdk-types.js';
+import type { Connection } from '../../../types/sdk-types.js';
 import {
   createRandomFileName,
   createTestDir,
@@ -106,7 +106,7 @@ describe('PUT GET', () => {
         connection,
         `PUT ${toFileUrl(uploadedFile)} ${stage}`,
       );
-      expectColumnsNames(statement as RowStatement, PUT_COLUMNS);
+      expectColumnsNames(statement, PUT_COLUMNS);
 
       expect(rows).toMatchObject([
         {
@@ -139,7 +139,7 @@ describe('PUT GET', () => {
         connection,
         `GET ${stage} ${toFileUrl(downloadDir)}`,
       );
-      expectColumnsNames(statement as RowStatement, GET_COLUMNS);
+      expectColumnsNames(statement, GET_COLUMNS);
 
       expect(rows).toMatchObject([
         {

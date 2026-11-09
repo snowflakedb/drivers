@@ -6,7 +6,6 @@ import {
   destroyConnectionAsync,
   executeAsync,
   expectColumnsNames,
-  collectStreamedRows,
   getResultFromQueryIdForTest,
   getResultsFromQueryIdAsync,
   IS_RUNNING_FOR_OLD_DRIVER,
@@ -52,10 +51,10 @@ describe('getResultsFromQueryId', () => {
       queryId,
       streamResult: true,
     });
-    const rows = await collectStreamedRows(statement as RowStatement);
+    const rows = await statement.streamRows().toArray();
 
     expect(rows).toEqual(expectedRows);
-    expectColumnsNames(statement as RowStatement, ['A', 'B']);
+    expectColumnsNames(statement, ['A', 'B']);
   });
 
   it('should return rows and column names for a completed query via complete callback', async () => {
@@ -68,7 +67,7 @@ describe('getResultsFromQueryId', () => {
     const { statement, rows } = await getResultsFromQueryIdAsync(connection, { queryId });
 
     expect(rows).toEqual(expectedRows);
-    expectColumnsNames(statement as RowStatement, ['A', 'B']);
+    expectColumnsNames(statement, ['A', 'B']);
   });
 
   it('should reject with OperationFailedError for a query that failed server-side', async () => {
@@ -130,7 +129,7 @@ describe('getResultsFromQueryId with Wiremock', () => {
     const { statement, rows } = await getResultsFromQueryIdAsync(connection, { queryId });
 
     expect(rows).toEqual(expectedRows);
-    expectColumnsNames(statement as RowStatement, ['A', 'B']);
+    expectColumnsNames(statement, ['A', 'B']);
   });
 
   // old driver doesn't allow to configure sleep time between retries, so we skip this test for it

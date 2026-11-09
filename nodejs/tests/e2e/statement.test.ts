@@ -91,8 +91,8 @@ describe('RowStatement', () => {
       expect(statement.getStatus()).toBe('complete');
       expect(statement.getNumRows()).toBe(1);
       expect(statement.getNumUpdatedRows()).toBe(-1);
-      expectColumnsNames(statement as RowStatement, ['N']);
-      expect(getStatementColumn(statement as RowStatement, 0).getName()).toBe('N');
+      expectColumnsNames(statement, ['N']);
+      expect(getStatementColumn(statement, 0).getName()).toBe('N');
       expect(statement.getSessionState()).toBeDefined();
     });
 

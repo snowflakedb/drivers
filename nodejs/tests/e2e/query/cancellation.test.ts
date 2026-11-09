@@ -93,7 +93,7 @@ describe('Query Cancellation', () => {
     );
     const queryId = await waitForRunningQueryId(connection, queryTag);
 
-    await cancelStatementAsync(statement as RowStatement);
+    await cancelStatementAsync(statement);
 
     expect(await failure).toMatchObject(CANCELED_EXECUTE);
     expect(
@@ -126,7 +126,7 @@ describe('Query Cancellation', () => {
     );
     const queryId = await waitForRunningQueryId(connection, queryTag);
 
-    await cancelStatementAsync(statement as RowStatement);
+    await cancelStatementAsync(statement);
 
     expect(
       await waitForStatus(connection, queryId, (status) => !connection.isStillRunning(status)),
@@ -249,7 +249,7 @@ describe('Query Cancellation with Wiremock', () => {
       })
       .toBeGreaterThan(0);
     return {
-      statement: statement as RowStatement,
+      statement,
       failure: completion.then(
         () => undefined,
         (rejection: { error: SnowflakeError }) => rejection.error,

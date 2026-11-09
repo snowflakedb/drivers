@@ -1,8 +1,8 @@
 import BigInteger from 'big-integer';
 import { describe, expect, it } from 'vitest';
-import type { Connection, RowStatement } from '../../types/sdk-types.js';
+import type { Connection } from '../../types/sdk-types.js';
 import { createLiveConnection } from '../utils/fixtures.js';
-import { collectStreamedRows, executeAsync, isRunningNewDriverWithBD } from '../utils/index.js';
+import { executeAsync, isRunningNewDriverWithBD } from '../utils/index.js';
 import { getSessionParameterFromServer, setSessionParameter } from '../utils/query.js';
 
 // How session parameters travel: out to the server when set as a connection option,
@@ -32,7 +32,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
     if (options.streamResult !== true) {
       return rows[0].INT_COLUMN;
     }
-    const streamedRows = await collectStreamedRows(statement as RowStatement);
+    const streamedRows = await statement.streamRows().toArray();
     expect(streamedRows).toHaveLength(1);
     return streamedRows[0].INT_COLUMN;
   }
@@ -94,7 +94,7 @@ describe('JS_TREAT_INTEGER_AS_BIGINT', () => {
     });
 
     await setSessionParameter(connection, PARAMETER_NAME, true);
-    const rows = await collectStreamedRows(statement as RowStatement);
+    const rows = await statement.streamRows().toArray();
 
     expect(rows).toHaveLength(1);
     expect(rows[0].INT_COLUMN).toBe(7);

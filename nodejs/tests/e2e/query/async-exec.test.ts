@@ -102,14 +102,7 @@ describe('Async Query Execution', () => {
     // TODO: re-enable when running streamRows() is fixed for non completed statements
     it.skip('should return rows via stream', async () => {
       const resultQuery = await connection.getResultsFromQueryId({ queryId });
-      const rows: Record<string, unknown>[] = [];
-      await new Promise<void>((resolve, reject) => {
-        resultQuery
-          .streamRows()
-          .on('error', reject)
-          .on('data', (row: Record<string, unknown>) => rows.push(row))
-          .on('end', () => resolve());
-      });
+      const rows = await resultQuery.streamRows().toArray();
       expect(rows).toEqual([{ SYSTEM$WAIT: EXPECTED_WAIT_RESULT }]);
       expect(await connection.getQueryStatus(queryId)).toBe('SUCCESS');
     });

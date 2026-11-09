@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Connection, RowStatement } from '../../../types/sdk-types.js';
+import type { Connection } from '../../../types/sdk-types.js';
 import { createLiveConnection } from '../../utils/fixtures.js';
 import {
   baseConnectionOptions,
-  collectStreamedRows,
   executeAsync,
   isRunningNewDriverWithBD,
   resetGlobalConfig,
@@ -193,7 +192,7 @@ describe('Numeric precision loss', () => {
       'SELECT 9007199254740995::INT UNION ALL SELECT 9007199254740997::INT',
       { streamResult: true },
     );
-    const rows = await collectStreamedRows(statement as RowStatement);
+    const rows = await statement.streamRows().toArray();
 
     expect(rows.map((row) => Object.values(row)[0])).toEqual([9007199254740996, 9007199254740996]);
     const logs = await destroyConnectionAndCollectPrecisionLossLogs(connection, 1);
