@@ -48,6 +48,7 @@ export declare class Connection {
   isAnError(status: QueryStatus): boolean
   isStillRunning(status: QueryStatus): boolean
   sendTelemetryEvent(eventType: string, queryId?: string | undefined | null): Promise<undefined>
+  sendErrorTelemetryEvent(exceptionType: string, errorSource: string): void
   destroy(): Promise<undefined>
 }
 

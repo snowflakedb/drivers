@@ -1,4 +1,5 @@
 use crate::rows::RowDecodeError;
+use crate::session::Session;
 use arrow::error::ArrowError;
 use napi::bindgen_prelude::*;
 use sf_core::apis::database_driver_v1::{ApiError, ErrorKind};
@@ -8,8 +9,19 @@ use sf_core::rest::snowflake::RestError;
 use std::future::Future;
 use std::sync::Arc;
 
-pub trait ToJsError {
-    fn to_js_error(&self, env: Env) -> napi::Error;
+pub(crate) trait ToJsError {
+    fn client_error(&self) -> ClientError;
+
+    fn telemetry(&self) -> Option<(&'static str, &'static str)>;
+
+    fn to_js_error(&self, env: Env, session: Option<&Session>) -> Error {
+        if let (Some(session), Some((exception_type, error_source))) = (session, self.telemetry()) {
+            session.record_wrapper_error(exception_type, error_source);
+        }
+        self.client_error()
+            .build(env)
+            .unwrap_or_else(construct_js_error_fail)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +45,52 @@ pub(crate) enum BridgeError {
     },
     RowDecode(Arc<RowDecodeError>),
     Message(String),
+    Reported(Arc<BridgeError>),
+}
+
+impl BridgeError {
+    pub(crate) fn inner(&self) -> &BridgeError {
+        match self {
+            BridgeError::Reported(inner) => inner.inner(),
+            other => other,
+        }
+    }
+
+    pub(crate) fn error_source(&self) -> &'static str {
+        match self {
+            BridgeError::Core(error) => core_error_source(error),
+            BridgeError::UnusableConnection(..)
+            | BridgeError::AlreadyConnected
+            | BridgeError::AlreadyConnecting
+            | BridgeError::ConnectionTerminated => "cursor_state",
+            BridgeError::InvalidQueryId(_) | BridgeError::InvalidRequestId(_) => "api_misuse",
+            BridgeError::QueryStatusFailed { .. }
+            | BridgeError::QueryIdNoData(_)
+            | BridgeError::QueryIdNotSuccess { .. } => "server_error",
+            BridgeError::RowDecode(_) => "data_conversion",
+            BridgeError::Message(_) => "internal_error",
+            BridgeError::Reported(inner) => inner.error_source(),
+        }
+    }
+}
+
+fn core_error_source(error: &ApiError) -> &'static str {
+    match error.kind() {
+        ErrorKind::Io | ErrorKind::Timeout => "connectivity",
+        ErrorKind::QueryFailed
+        | ErrorKind::AuthenticationError
+        | ErrorKind::LoginError
+        | ErrorKind::StageBinding
+        | ErrorKind::RemoteFileNotFound
+        | ErrorKind::LocalFileNotFound
+        | ErrorKind::Cancelled => "server_error",
+        ErrorKind::InvalidArgument
+        | ErrorKind::InvalidParameterValue
+        | ErrorKind::MissingParameter => "api_misuse",
+        ErrorKind::NotImplemented | ErrorKind::UnsupportedCompression => "unsupported",
+        ErrorKind::InternalError => "internal_error",
+        ErrorKind::Unspecified => "unknown",
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -53,7 +111,7 @@ enum ErrorCode {
     Driver(i32),
 }
 
-struct ClientError {
+pub(crate) struct ClientError {
     name: Option<&'static str>,
     message: String,
     code: Option<ErrorCode>,
@@ -113,6 +171,7 @@ impl ClientError {
             }
             BridgeError::RowDecode(error) => Self::unnamed(error.to_string()),
             BridgeError::Message(message) => Self::unnamed(message.clone()),
+            BridgeError::Reported(inner) => Self::of_bridge(inner),
         }
     }
 
@@ -403,18 +462,31 @@ fn is_snowflake_unreachable(error: &ApiError) -> bool {
 }
 
 impl ToJsError for ApiError {
-    fn to_js_error(&self, env: Env) -> napi::Error {
+    fn client_error(&self) -> ClientError {
         ClientError::of(self)
-            .build(env)
-            .unwrap_or_else(construct_js_error_fail)
+    }
+
+    fn telemetry(&self) -> Option<(&'static str, &'static str)> {
+        Some((
+            ClientError::of(self).name.unwrap_or("Error"),
+            core_error_source(self),
+        ))
     }
 }
 
 impl ToJsError for BridgeError {
-    fn to_js_error(&self, env: Env) -> napi::Error {
+    fn client_error(&self) -> ClientError {
         ClientError::of_bridge(self)
-            .build(env)
-            .unwrap_or_else(construct_js_error_fail)
+    }
+
+    fn telemetry(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            BridgeError::Reported(_) => None,
+            _ => Some((
+                ClientError::of_bridge(self).name.unwrap_or("Error"),
+                self.error_source(),
+            )),
+        }
     }
 }
 
@@ -431,8 +503,12 @@ impl From<RowDecodeError> for BridgeError {
 }
 
 impl<T: ToJsError + ?Sized> ToJsError for Arc<T> {
-    fn to_js_error(&self, env: Env) -> napi::Error {
-        (**self).to_js_error(env)
+    fn client_error(&self) -> ClientError {
+        (**self).client_error()
+    }
+
+    fn telemetry(&self) -> Option<(&'static str, &'static str)> {
+        (**self).telemetry()
     }
 }
 
@@ -444,14 +520,26 @@ impl<T: ToJsError + ?Sized> ToJsError for Arc<T> {
 /// JS `Error` (see [`ToJsError`]). So the future can't fail directly. Instead it
 /// always succeeds with an inner `Result<Value, Failure>`, and we turn the
 /// error into a JS `Error` in the main-thread step.
-pub fn async_to_js<Value, Failure, Fut>(env: &Env, future: Fut) -> napi::Result<AsyncBlock<Value>>
+pub(crate) fn async_to_js<Value, Failure, Fut>(
+    env: &Env,
+    session: Option<Session>,
+    future: Fut,
+) -> napi::Result<AsyncBlock<Value>>
 where
     Value: ToNapiValue + Send + 'static,
     Failure: ToJsError + Send + 'static,
     Fut: Future<Output = std::result::Result<Value, Failure>> + Send + 'static,
 {
-    AsyncBlockBuilder::build_with_map(env, async move { Ok(future.await) }, |env, outcome| {
-        outcome.map_err(|e| e.to_js_error(env))
+    let reported = async move {
+        let outcome = future.await;
+        let telemetry = outcome.as_ref().err().and_then(ToJsError::telemetry);
+        if let (Some(session), Some((exception_type, error_source))) = (&session, telemetry) {
+            session.record_wrapper_error(exception_type, error_source);
+        }
+        Ok(outcome)
+    };
+    AsyncBlockBuilder::build_with_map(env, reported, |env, outcome| {
+        outcome.map_err(|e| e.to_js_error(env, None))
     })
 }
 
@@ -465,6 +553,32 @@ mod tests {
             Some(ErrorCode::Driver(code)) => Some(code.to_string()),
             None => None,
         }
+    }
+
+    #[test]
+    fn errors_classify_into_wrapper_error_categories() {
+        let core = BridgeError::from(ApiError::invalid_argument("row mode"));
+
+        assert_eq!(core.telemetry(), Some(("Error", "api_misuse")));
+        assert_eq!(
+            BridgeError::ConnectionTerminated.telemetry(),
+            Some(("ClientError", "cursor_state"))
+        );
+    }
+
+    #[test]
+    fn a_reported_error_is_not_reported_again_but_surfaces_unchanged() {
+        let original = BridgeError::from(ApiError::invalid_argument("row mode"));
+        let reported = BridgeError::Reported(Arc::new(original.clone()));
+
+        assert!(original.telemetry().is_some());
+        assert!(reported.telemetry().is_none());
+        let (original, reported) = (
+            ClientError::of_bridge(&original),
+            ClientError::of_bridge(&reported),
+        );
+        assert_eq!(reported.message, original.message);
+        assert_eq!(reported.name, original.name);
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub fn format_snowflake_date(
     scale: u32,
     timezone: Either<String, i32>,
 ) -> napi::Result<String> {
-    format_date(&format, epoch_millis, nanos, scale, timezone).map_err(|e| e.to_js_error(env))
+    format_date(&format, epoch_millis, nanos, scale, timezone).map_err(|e| e.to_js_error(env, None))
 }
 
 fn format_date(

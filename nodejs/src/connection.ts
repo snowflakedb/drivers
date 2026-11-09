@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { SnowflakeError } from './error.js';
 import type { ConnectionOptions } from './public-types/index.js';
 import type {
   StatementCallback,
@@ -17,6 +16,7 @@ import {
   type CoreStatementInstance,
   type ConnectionTokenInfo,
 } from './core/index.js';
+import { tryWithErrorReporter, type SnowflakeError } from './error.js';
 import { GlobalConfig } from './global-config.js';
 import { type Binds, buildBindsMap, selectBindPayload } from './query-result/binds.js';
 import { collectRows } from './query-result/rows.js';
@@ -202,9 +202,9 @@ export class Connection {
 
   execute(options: StatementOption): RowStatement {
     const { binds } = options;
-    const bindings = selectBindPayload(
-      binds,
-      this.#core.getSessionParameters().clientStageArrayBindingThreshold,
+    const threshold = this.#core.getSessionParameters().clientStageArrayBindingThreshold;
+    const bindings = tryWithErrorReporter(this.#core, 'api_misuse', () =>
+      selectBindPayload(binds, threshold),
     );
     // Binds are serialized here in JS, while the retry with inline binds after a failed stage
     // upload runs in the bridge, so the bridge calls back for the JSON payload. The intended end

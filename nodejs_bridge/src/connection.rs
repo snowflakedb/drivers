@@ -135,7 +135,7 @@ impl Connection {
             browser_response_renderer,
             wrapper_identity: params.wrapper_identity.into(),
         }))
-        .map_err(|e| e.to_js_error(*env))?;
+        .map_err(|e| e.to_js_error(*env, None))?;
 
         Ok(Self {
             session,
@@ -146,7 +146,9 @@ impl Connection {
     #[napi]
     pub fn connect(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let session = self.session.clone();
-        async_to_js(env, async move { session.connect().await })
+        async_to_js(env, Some(session.clone()), async move {
+            session.connect().await
+        })
     }
 
     #[napi]
@@ -157,19 +159,21 @@ impl Connection {
     #[napi]
     pub fn is_valid_async(&self, env: &Env) -> Result<AsyncBlock<bool>> {
         let session = self.session.clone();
-        async_to_js(env, async move {
+        async_to_js(env, Some(session.clone()), async move {
             Ok::<bool, BridgeError>(session.is_valid().await)
         })
     }
 
     #[napi]
     pub fn get_session_parameters(&self, env: &Env) -> Result<KnownSessionParameters> {
-        block_on(self.session.known_session_parameters()).map_err(|e| e.to_js_error(*env))
+        block_on(self.session.known_session_parameters())
+            .map_err(|e| e.to_js_error(*env, Some(&self.session)))
     }
 
     #[napi]
     pub fn get_token_info(&self, env: &Env) -> Result<Option<ConnectionTokenInfo>> {
-        let Some(info) = block_on(self.session.token_info()).map_err(|e| e.to_js_error(*env))?
+        let Some(info) = block_on(self.session.token_info())
+            .map_err(|e| e.to_js_error(*env, Some(&self.session)))?
         else {
             return Ok(None);
         };
@@ -201,16 +205,15 @@ impl Connection {
             })
             .transpose()?;
         Statement::execute(self.session.clone(), params, build_fallback_inline_bindings)
-            .map_err(|e| e.to_js_error(*env))
+            .map_err(|e| e.to_js_error(*env, Some(&self.session)))
     }
 
     #[napi]
     pub fn get_query_status(&self, env: &Env, query_id: String) -> Result<AsyncBlock<QueryStatus>> {
         let session = self.session.clone();
-        async_to_js(
-            env,
-            async move { query::get_status(&session, &query_id).await },
-        )
+        async_to_js(env, Some(session.clone()), async move {
+            query::get_status(&session, &query_id).await
+        })
     }
 
     #[napi]
@@ -220,7 +223,7 @@ impl Connection {
         query_id: String,
     ) -> Result<AsyncBlock<QueryStatus>> {
         let session = self.session.clone();
-        async_to_js(env, async move {
+        async_to_js(env, Some(session.clone()), async move {
             query::get_status_throw_if_error(&session, &query_id).await
         })
     }
@@ -234,7 +237,7 @@ impl Connection {
     ) -> Result<AsyncBlock<()>> {
         let session = self.session.clone();
         let retry_interval = retry_interval_ms.map(|ms| Duration::from_millis(ms as u64));
-        async_to_js(env, async move {
+        async_to_js(env, Some(session.clone()), async move {
             query::wait_for_result(&session, query_id, retry_interval).await
         })
     }
@@ -263,16 +266,27 @@ impl Connection {
     ) -> Result<AsyncBlock<()>> {
         let connection_handle = self.session.connection_handle();
         let telemetry = Arc::clone(&self.telemetry);
-        async_to_js(env, async move {
+        async_to_js(env, None, async move {
             telemetry
                 .send_event(connection_handle, event_type, query_id)
                 .await
         })
     }
+
+    #[napi]
+    pub fn send_error_telemetry_event(&self, exception_type: String, error_source: String) {
+        self.session
+            .record_wrapper_error(&exception_type, &error_source);
+    }
+
     #[napi]
     pub fn destroy(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let session = self.session.clone();
-        async_to_js(env, async move { session.close().await })
+        async_to_js(
+            env,
+            Some(session.clone()),
+            async move { session.close().await },
+        )
     }
 }
 

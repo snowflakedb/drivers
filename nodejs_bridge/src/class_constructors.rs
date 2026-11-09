@@ -18,7 +18,7 @@ impl ClassConstructors {
             .map(|ctors| &*ctors)
             .ok_or_else(|| {
                 BridgeError::Message("class constructors are not registered".to_string())
-                    .to_js_error(*env)
+                    .to_js_error(*env, None)
             })
     }
 }
@@ -31,7 +31,7 @@ fn constructor<Args: JsValuesTupleIntoVec>(
     constructors
         .get_named_property::<Function<Args, Unknown>>(name)
         .map_err(|e| {
-            BridgeError::Message(format!("class constructor {name}: {e}")).to_js_error(env)
+            BridgeError::Message(format!("class constructor {name}: {e}")).to_js_error(env, None)
         })?
         .create_ref()
 }

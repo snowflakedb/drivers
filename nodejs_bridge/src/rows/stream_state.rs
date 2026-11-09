@@ -1,6 +1,7 @@
 use super::column_reader::{ColumnReader, RowDecodeError};
 use super::row_options::RowOptions;
 use crate::error::{BridgeError, ToJsError};
+use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use arrow::array::RecordBatch;
 use napi::bindgen_prelude::{Array as JsArray, Env};
@@ -67,9 +68,13 @@ impl StreamState {
     /// Decodes one row of the resident batch into a fresh JS array, or `None`
     /// once that batch is drained and the caller should refill via
     /// [`fetch_next_batch`](Self::fetch_next_batch).
-    pub(crate) fn next_row<'env>(&self, env: &'env Env) -> napi::Result<Option<JsArray<'env>>> {
+    pub(crate) fn next_row<'env>(
+        &self,
+        env: &'env Env,
+        session: &Session,
+    ) -> napi::Result<Option<JsArray<'env>>> {
         match self.batch.lock().unwrap().as_mut() {
-            Some(batch) => batch.next_row(env),
+            Some(batch) => batch.next_row(env, session),
             None => Ok(None),
         }
     }
@@ -122,7 +127,11 @@ impl CurrentBatch {
         })
     }
 
-    fn next_row<'env>(&mut self, env: &'env Env) -> napi::Result<Option<JsArray<'env>>> {
+    fn next_row<'env>(
+        &mut self,
+        env: &'env Env,
+        session: &Session,
+    ) -> napi::Result<Option<JsArray<'env>>> {
         if self.row_index >= self.num_rows {
             return Ok(None);
         }
@@ -130,7 +139,7 @@ impl CurrentBatch {
         for (index, reader) in self.column_readers.iter().enumerate() {
             let cell = reader
                 .read(self.row_index)
-                .map_err(|e| BridgeError::from(e).to_js_error(*env))?;
+                .map_err(|e| BridgeError::from(e).to_js_error(*env, Some(session)))?;
             row.set(index as u32, cell)?;
         }
         self.row_index += 1;

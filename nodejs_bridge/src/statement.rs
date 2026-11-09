@@ -89,7 +89,7 @@ impl Statement {
         let task_ctx = Arc::clone(&operation_ctx);
         let task_session = session.clone();
         Ok(Self {
-            result: StatementResult::from_future(async move {
+            result: StatementResult::from_future(session.clone(), async move {
                 run_execute_with_inline_fallback(
                     task_session,
                     params,
@@ -110,7 +110,7 @@ impl Statement {
         let task_ctx = Arc::clone(&operation_ctx);
         let task_session = session.clone();
         Self {
-            result: StatementResult::from_future(async move {
+            result: StatementResult::from_future(session.clone(), async move {
                 require_valid_query_id(&query_id)?;
                 let ready = task_session.ready().await?;
                 let result = BRIDGE
@@ -128,7 +128,9 @@ impl Statement {
     #[napi]
     pub fn wait_for_completion(&self, env: &Env) -> Result<AsyncBlock<()>> {
         let result = self.result.clone();
-        async_to_js(env, async move { result.ready().await.map(|_| ()) })
+        async_to_js(env, Some(self.session.clone()), async move {
+            result.ready().await.map(|_| ())
+        })
     }
 
     /// Loads the next batch of rows. Returns `false` when the result set is
@@ -137,7 +139,7 @@ impl Statement {
     #[napi]
     pub fn fetch_next_batch(&self, env: &Env, row_options: RowOptions) -> Result<AsyncBlock<bool>> {
         let result = self.result.clone();
-        async_to_js(env, async move {
+        async_to_js(env, Some(self.session.clone()), async move {
             let value = result.ready().await?;
             let ResultValue::QueryResult(query_result) = value else {
                 return Ok(false);
@@ -159,9 +161,9 @@ impl Statement {
     pub fn get_next_row<'env>(&self, env: &'env Env) -> Result<Option<Array<'env>>> {
         match self.result.get() {
             None => Ok(None),
-            Some(Err(error)) => Err(error.to_js_error(*env)),
+            Some(Err(error)) => Err(error.to_js_error(*env, Some(&self.session))),
             Some(Ok(value)) => match value.lock_query_result() {
-                Some(query_result) => query_result.stream_state.next_row(env),
+                Some(query_result) => query_result.stream_state.next_row(env, &self.session),
                 None => Ok(None),
             },
         }
@@ -189,8 +191,10 @@ impl Statement {
         match self.result.get() {
             None => Ok(None),
             Some(Ok(value)) => Ok(Some(value.query_id())),
-            Some(Err(BridgeError::Core(api_error))) => Ok(api_error.query_id()),
-            Some(Err(_)) => Ok(None),
+            Some(Err(error)) => match error.inner() {
+                BridgeError::Core(api_error) => Ok(api_error.query_id()),
+                _ => Ok(None),
+            },
         }
     }
 
@@ -246,16 +250,16 @@ impl Statement {
             None => Err(BridgeError::Message(
                 "session parameters snapshot requested before the statement finished".to_string(),
             )
-            .to_js_error(*env)),
+            .to_js_error(*env, Some(&self.session))),
             Some(Ok(value)) => match value.lock_query_result() {
                 Some(query_result) => Ok((*query_result.session_params).clone()),
                 None => Err(BridgeError::Message(
                     "session parameters snapshot requested on a statement with no result set"
                         .to_string(),
                 )
-                .to_js_error(*env)),
+                .to_js_error(*env, Some(&self.session))),
             },
-            Some(Err(error)) => Err(error.to_js_error(*env)),
+            Some(Err(error)) => Err(error.to_js_error(*env, Some(&self.session))),
         }
     }
 
@@ -318,7 +322,7 @@ impl Statement {
     #[napi]
     pub fn next_result(&self, env: &Env) -> Result<AsyncBlock<bool>> {
         let result = self.result.clone();
-        async_to_js(env, async move {
+        async_to_js(env, Some(self.session.clone()), async move {
             let value = result.ready().await?;
             let ResultValue::QueryResult(query_result) = value else {
                 return Ok(false);

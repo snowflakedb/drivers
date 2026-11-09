@@ -2,11 +2,14 @@ use crate::BRIDGE;
 use crate::error::{BridgeError, ConnectionOperation, UnusableConnection};
 use crate::session_params::KnownSessionParameters;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity as CoreWrapperIdentity;
-use sf_core::apis::database_driver_v1::{ApiError, ConnectionInfo, ConnectionUsability};
+use sf_core::apis::database_driver_v1::{
+    ApiError, ConnectionInfo, ConnectionUsability, WrapperTelemetry,
+};
 use sf_core::config::param_names;
 use sf_core::config::rest_parameters::{BrowserOpenFn, BrowserResponseRenderFn};
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
+use sf_core::utils::sync::MutexRecoverExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,6 +57,7 @@ impl Drop for Handles {
 pub(crate) struct Session {
     handles: Arc<Handles>,
     connect_lock: Arc<Mutex<()>>,
+    telemetry: Arc<std::sync::Mutex<Option<WrapperTelemetry>>>,
 }
 
 pub(crate) struct SessionConfig {
@@ -122,6 +126,7 @@ impl Session {
                 .driver
                 .connection_init(None, connection, database)
                 .await?;
+            session.cache_telemetry().await;
         }
         Ok(session)
     }
@@ -138,6 +143,7 @@ impl Session {
                 released: AtomicBool::new(false),
             }),
             connect_lock: Arc::new(Mutex::new(())),
+            telemetry: Arc::default(),
         }
     }
 
@@ -160,11 +166,14 @@ impl Session {
             .driver
             .connection_init(None, self.handles.connection, self.handles.database)
             .await;
-        if result.is_err() {
-            let _ = BRIDGE
-                .driver
-                .connection_close(None, self.handles.connection)
-                .await;
+        match result {
+            Ok(()) => self.cache_telemetry().await,
+            Err(_) => {
+                let _ = BRIDGE
+                    .driver
+                    .connection_close(None, self.handles.connection)
+                    .await;
+            }
         }
         result.map_err(BridgeError::from)
     }
@@ -229,9 +238,24 @@ impl Session {
             .connection_close(None, self.handles.connection)
             .await;
         if close.is_ok() {
+            *self.telemetry.lock_recover() = None;
             self.handles.release();
         }
         close.map_err(BridgeError::from)
+    }
+
+    pub(crate) fn record_wrapper_error(&self, exception_type: &str, error_source: &str) {
+        if let Some(telemetry) = self.telemetry.lock_recover().as_ref() {
+            telemetry.record_error(exception_type, error_source);
+        }
+    }
+
+    async fn cache_telemetry(&self) {
+        let telemetry = BRIDGE
+            .driver
+            .wrapper_telemetry(self.handles.connection)
+            .await;
+        *self.telemetry.lock_recover() = telemetry;
     }
 
     async fn unusable_reason(&self) -> Option<UnusableConnection> {

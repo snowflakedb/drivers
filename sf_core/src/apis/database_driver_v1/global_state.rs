@@ -25,6 +25,27 @@ use crate::tls::RootStoreProvider;
 use crate::token_cache::{KeyringTokenCache, TokenCache, TokenCacheError};
 use crate::xp_backend::{SnowflakeBackend, XpSlot};
 
+/// Telemetry context of a logged-in connection. Recording through it takes no lock, so
+/// wrappers can report errors from threads that must not block.
+#[cfg(feature = "protobuf")]
+#[derive(Debug, Clone)]
+pub struct WrapperTelemetry {
+    telemetry_id: u64,
+    identity: Option<WrapperIdentity>,
+}
+
+#[cfg(feature = "protobuf")]
+impl WrapperTelemetry {
+    pub fn record_error(&self, exception_type: &str, error_source: &str) {
+        let span = crate::snowflake_op_span!("wrapper_error", Some(self.telemetry_id));
+        let _guard = span.enter();
+        if let Some(ref identity) = self.identity {
+            crate::telemetry::record_wrapper_identity_on_span(identity);
+        }
+        crate::telemetry::record_exception(exception_type, error_source);
+    }
+}
+
 /// Which shape the PUT/GET result set should take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PutGetResultsetFlavor {
@@ -372,6 +393,32 @@ impl DatabaseDriverV1 {
         };
         let conn = conn_ptr.lock().await;
         (conn.telemetry_id, conn.wrapper_identity.clone())
+    }
+
+    /// `None` until login assigns the connection a telemetry id, so errors raised before or
+    /// during login are never recorded.
+    #[cfg(feature = "protobuf")]
+    pub async fn wrapper_telemetry(&self, conn_handle: Handle) -> Option<WrapperTelemetry> {
+        match self.telemetry_id_and_identity_for_conn(conn_handle).await {
+            (Some(telemetry_id), identity) => Some(WrapperTelemetry {
+                telemetry_id,
+                identity,
+            }),
+            (None, _) => None,
+        }
+    }
+
+    /// Records a `wrapper_error` event for an error the wrapper surfaced to its caller.
+    #[cfg(feature = "protobuf")]
+    pub async fn record_wrapper_error(
+        &self,
+        conn_handle: Handle,
+        exception_type: &str,
+        error_source: &str,
+    ) {
+        if let Some(telemetry) = self.wrapper_telemetry(conn_handle).await {
+            telemetry.record_error(exception_type, error_source);
+        }
     }
 
     /// Flush buffered telemetry for a specific connection.

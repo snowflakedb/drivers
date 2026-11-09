@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import type { CoreConnectionInstance, CoreStatementInstance } from '../core/index.js';
+import { tryWithErrorReporter } from '../error.js';
 import { logger } from '../logging/index.js';
 import { createRowFormatter } from './cell-mapping.js';
 import { shouldRenameDuplicateColumns, type RowOptions } from './types.js';
@@ -34,7 +35,7 @@ function createStatementRowFormatter(
       .catch((err: Error) => logger.debug(`Failed to send ${eventType} telemetry: ${err}`));
   };
 
-  return createRowFormatter({
+  const formatRow = createRowFormatter({
     columns: coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!,
     sessionParameters: coreStatement.getSessionParametersSnapshot(),
     rowOptions,
@@ -43,6 +44,8 @@ function createStatementRowFormatter(
       sendTelemetryEventOnce('selecting_with_precision_loss');
     },
   });
+  return (row: unknown[]) =>
+    tryWithErrorReporter(connection, 'data_conversion', () => formatRow(row));
 }
 
 export async function collectRows(

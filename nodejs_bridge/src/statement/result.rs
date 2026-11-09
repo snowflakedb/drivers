@@ -1,6 +1,7 @@
 use crate::BRIDGE;
-use crate::error::BridgeError;
+use crate::error::{BridgeError, ToJsError};
 use crate::rows::StreamState;
+use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use napi::bindgen_prelude::spawn;
 use napi::tokio::sync::{Mutex, MutexGuard, Notify, OnceCell};
@@ -24,6 +25,7 @@ pub(super) struct StatementResult {
 
 impl StatementResult {
     pub(super) fn from_future(
+        session: Session,
         future: impl Future<Output = Result<ResultValue, BridgeError>> + Send + 'static,
     ) -> Self {
         let cell = Arc::new(OnceCell::new());
@@ -33,7 +35,13 @@ impl StatementResult {
             let cell = Arc::clone(&cell);
             let ready = Arc::clone(&ready);
             async move {
-                let _ = cell.set(future.await);
+                let result = future.await;
+                if let Some((exception_type, error_source)) =
+                    result.as_ref().err().and_then(ToJsError::telemetry)
+                {
+                    session.record_wrapper_error(exception_type, error_source);
+                }
+                let _ = cell.set(result);
                 ready.notify_waiters();
             }
         });
@@ -45,7 +53,7 @@ impl StatementResult {
         loop {
             let notified = self.ready.notified();
             if let Some(result) = self.cell.get() {
-                return result.as_ref().map_err(BridgeError::clone);
+                return result.as_ref().map_err(reported);
             }
             notified.await;
         }
@@ -54,8 +62,12 @@ impl StatementResult {
     pub(super) fn get(&self) -> Option<Result<&ResultValue, BridgeError>> {
         self.cell
             .get()
-            .map(|result| result.as_ref().map_err(BridgeError::clone))
+            .map(|result| result.as_ref().map_err(reported))
     }
+}
+
+fn reported(error: &BridgeError) -> BridgeError {
+    BridgeError::Reported(Arc::new(error.clone()))
 }
 
 pub(crate) enum ResultValue {

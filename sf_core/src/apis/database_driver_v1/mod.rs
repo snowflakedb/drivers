@@ -49,6 +49,8 @@ pub use get_objects::{
     FIELD_TABLE_COLUMNS, FIELD_TABLE_CONSTRAINTS, FIELD_TABLE_NAME, FIELD_TABLE_TYPE,
     GetObjectsRequest, nested_get_objects_schema,
 };
+#[cfg(feature = "protobuf")]
+pub use global_state::WrapperTelemetry;
 pub use global_state::{DatabaseDriverV1, DriverProviders, PutGetResultsetFlavor, WrapperPresets};
 pub use like_pattern::ESCAPE_CHAR;
 pub use result_set::{
