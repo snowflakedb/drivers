@@ -35,33 +35,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_DRIVER_NAME="Snowflake ODBC"
 ALT_DRIVER_NAME="SnowflakeDSIIDriver"
 
-# pkg postinstall scripts run as root. This resolves the invoking user's
-# home and UID so the per-user driver registration and DSN land in
-# ~/Library/ODBC/ and that directory is owned by the user afterwards.
+# pkg postinstall scripts run as root. This resolves the invoking user and
+# home so the per-user driver registration and DSN land in ~/Library/ODBC/
+# and are written as that user.
 #
 # Resolution order:
-#   1. SUDO_USER / SUDO_UID set by sudo (sudo installer ... on the CLI)
+#   1. SUDO_USER set by sudo (sudo installer ... on the CLI)
 #   2. The logged-in console user (double-click install via Installer.app)
-#   3. $HOME / $(id -u) as a last resort (rare; usually only in CI)
+#   3. $HOME as the current user, as a last resort (rare; usually only in CI)
 if [ -n "${SUDO_USER:-}" ]; then
     INSTALL_USER="$SUDO_USER"
-    INSTALL_UID="${SUDO_UID:-$(id -u "$SUDO_USER")}"
-    INSTALL_GID="${SUDO_GID:-$(id -g "$SUDO_USER")}"
     USER_HOME=$(dscl . -read /Users/"$SUDO_USER" NFSHomeDirectory 2>/dev/null \
         | awk '{print $2}')
     USER_HOME="${USER_HOME:-/Users/$SUDO_USER}"
 else
     INSTALL_USER=$(stat -f "%Su" /dev/console 2>/dev/null || true)
     if [ -n "$INSTALL_USER" ] && [ "$INSTALL_USER" != "root" ]; then
-        INSTALL_UID=$(id -u "$INSTALL_USER" 2>/dev/null || true)
-        INSTALL_GID=$(id -g "$INSTALL_USER" 2>/dev/null || true)
         USER_HOME=$(dscl . -read /Users/"$INSTALL_USER" NFSHomeDirectory 2>/dev/null \
             | awk '{print $2}')
         USER_HOME="${USER_HOME:-/Users/$INSTALL_USER}"
     else
         INSTALL_USER=""
-        INSTALL_UID=""
-        INSTALL_GID=""
         USER_HOME="$HOME"
     fi
 fi
@@ -138,7 +132,6 @@ fi
 
 echo "Registering ODBC driver as: $DRIVER_NAME (source: $_DRIVER_NAME_SOURCE)"
 
-mkdir -p "$ODBC_DIR"
 mkdir -p "$SYSTEM_ODBC_DIR"
 
 parse_section_header() {
@@ -153,6 +146,18 @@ render_template() {
         -e "s|__DRIVER_PATH__|${DRIVER_PATH}|g" \
         -e "s|__SF_ACCOUNT__|${SF_ACCOUNT}|g" \
         "$1"
+}
+
+# Publishes tmp as target_file. A file whose bytes already match tmp is
+# left in place. Otherwise mv -h replaces the directory entry, including
+# when that name is a symlink to a file or a directory.
+commit_ini_file() {
+    local tmp="$1" target_file="$2"
+    if [ -f "$target_file" ] && cmp -s "$tmp" "$target_file"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    mv -h "$tmp" "$target_file" || { rm -f "$tmp"; return 1; }
 }
 
 # Replace (or append) a named ini section so re-running the installer with
@@ -187,7 +192,7 @@ write_ini_section() {
     fi
     printf '%s\n' "$section_content" >> "$tmp"
 
-    mv "$tmp" "$target_file"
+    commit_ini_file "$tmp" "$target_file"
 }
 
 upsert_ini_kv() {
@@ -240,41 +245,67 @@ upsert_ini_kv() {
         printf '%s\n%s=%s\n' "[$section]" "$key" "$value" > "$tmp"
     fi
 
-    mv "$tmp" "$target_file"
+    commit_ini_file "$tmp" "$target_file"
 }
 
 # Always upsert the driver registration - safe to overwrite on upgrade
 # because we only touch our own [DriverName] section and the index.
 register_driver() {
-    local target_file="$1"
-    write_ini_section "$target_file" "$(render_template "$SCRIPT_DIR/odbcinst.ini.template")"
-    upsert_ini_kv "$target_file" "ODBC Drivers" "$DRIVER_NAME" "Installed"
+    local target_file="$1" driver_name="$2" driver_section="$3"
+    write_ini_section "$target_file" "$driver_section" || return 1
+    upsert_ini_kv "$target_file" "ODBC Drivers" "$driver_name" "Installed"
 }
 
-register_driver "$SYSTEM_ODBCINST_FILE"
+# Registers the driver in odbc_dir/odbcinst.ini and writes the default DSN
+# to odbc_dir/odbc.ini unless that DSN section already exists. This runs as
+# the installing user, so a symlink under odbc_dir only reaches files that
+# user can already write.
+configure_user_odbc() {
+    local odbc_dir="$1" driver_name="$2" driver_section="$3"
+    local dsn_name="$4" dsn_section="$5"
+    local odbcinst_file="$odbc_dir/odbcinst.ini" odbc_file="$odbc_dir/odbc.ini"
+
+    mkdir -p "$odbc_dir" || return 1
+    register_driver "$odbcinst_file" "$driver_name" "$driver_section" || return 1
+
+    if ! grep -q "^\[$dsn_name\]" "$odbc_file" 2>/dev/null; then
+        write_ini_section "$odbc_file" "$dsn_section" || return 1
+        upsert_ini_kv "$odbc_file" "ODBC Data Sources" "$dsn_name" "$driver_name" || return 1
+        echo "Default Snowflake DSN '$dsn_name' written to $odbc_file"
+    else
+        echo "Existing DSN '$dsn_name' in $odbc_file preserved (not overwritten)"
+    fi
+
+    # mktemp creates files with mode 0600, and mv keeps that mode, so chmod
+    # must come after ALL writes.
+    chmod 644 "$odbcinst_file" "$odbc_file"
+}
+
+DRIVER_SECTION=$(render_template "$SCRIPT_DIR/odbcinst.ini.template")
+DSN_SECTION=$(render_template "$SCRIPT_DIR/odbc.ini.template")
+
+register_driver "$SYSTEM_ODBCINST_FILE" "$DRIVER_NAME" "$DRIVER_SECTION"
 chmod 644 "$SYSTEM_ODBCINST_FILE"
 chown root:wheel "$SYSTEM_ODBCINST_FILE"
 
-register_driver "$ODBCINST_FILE"
-
-# Write the default DSN only if this exact DSN section is not already present.
-if ! grep -q "^\[$DSN_NAME\]" "$ODBC_FILE" 2>/dev/null; then
-    write_ini_section "$ODBC_FILE" "$(render_template "$SCRIPT_DIR/odbc.ini.template")"
-    upsert_ini_kv "$ODBC_FILE" "ODBC Data Sources" "$DSN_NAME" "$DRIVER_NAME"
-    echo "Default Snowflake DSN '$DSN_NAME' written to $ODBC_FILE"
+# The per-user step runs in a fresh bash as INSTALL_USER. The function
+# definitions are passed inline, so that step does not need to read the pkg
+# scripts directory.
+if [ -n "$INSTALL_USER" ]; then
+    sudo -n -H -u "$INSTALL_USER" /bin/bash -c \
+        "$(declare -f commit_ini_file write_ini_section upsert_ini_kv register_driver configure_user_odbc)
+configure_user_odbc \"\$@\"" \
+        configure_user_odbc \
+        "$ODBC_DIR" "$DRIVER_NAME" "$DRIVER_SECTION" "$DSN_NAME" "$DSN_SECTION"
 else
-    echo "Existing DSN '$DSN_NAME' in $ODBC_FILE preserved (not overwritten)"
+    configure_user_odbc \
+        "$ODBC_DIR" "$DRIVER_NAME" "$DRIVER_SECTION" "$DSN_NAME" "$DSN_SECTION"
 fi
+USER_ODBC_STATUS=$?
 
-# mktemp creates files with mode 0600; both write_ini_section and upsert_ini_kv
-# use mktemp+mv, so chmod must come after ALL writes to take effect.
-chmod 644 "$ODBCINST_FILE" "$ODBC_FILE"
-
-# Restore ownership to the invoking user. Files in ~/Library/ODBC/ belong to
-# the user, not root. chown applies to the whole ODBC_DIR so the directory
-# itself is also fixed if we just created it.
-if [ -n "${INSTALL_UID:-}" ]; then
-    chown -R "$INSTALL_UID":"${INSTALL_GID:-$INSTALL_UID}" "$ODBC_DIR"
+if [ "$USER_ODBC_STATUS" -eq 0 ]; then
+    echo "Driver '$DRIVER_NAME' registered in $SYSTEM_ODBCINST_FILE and $ODBCINST_FILE"
+else
+    echo "[WARN] Driver '$DRIVER_NAME' registered in $SYSTEM_ODBCINST_FILE only; $ODBC_DIR could not be updated as ${INSTALL_USER:-$(id -un)}."
+    echo "[WARN] If $ODBC_DIR is not owned by that user, run: sudo chown -R \"\$USER\" \"$ODBC_DIR\", then reinstall."
 fi
-
-echo "Driver '$DRIVER_NAME' registered in $SYSTEM_ODBCINST_FILE and $ODBCINST_FILE"
