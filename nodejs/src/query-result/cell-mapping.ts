@@ -6,32 +6,21 @@ import type {
   DataType,
   RowOptions,
 } from './types.js';
-import { realAsStringConverter, vectorAsStringConverter } from './string-converters.js';
 import { createFixedConverter, variantConverter } from './value-converters.js';
 
-export const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<
-  string,
-  {
-    asValue: ConverterFactory | null;
-    asString: ConverterFactory | null;
-  }
-> = {
-  fixed: { asValue: createFixedConverter, asString: null },
-  real: { asValue: null, asString: () => realAsStringConverter },
-  vector: { asValue: null, asString: () => vectorAsStringConverter },
-  variant: { asValue: () => variantConverter, asString: null },
-  object: { asValue: () => variantConverter, asString: null },
-  array: { asValue: () => variantConverter, asString: null },
-  map: { asValue: () => variantConverter, asString: null },
+export const CONVERTER_FACTORIES_BY_COLUMN_TYPE: Record<string, ConverterFactory> = {
+  fixed: createFixedConverter,
+  variant: () => variantConverter,
+  object: () => variantConverter,
+  array: () => variantConverter,
+  map: () => variantConverter,
 };
 
+// When one of these tokens is in `fetchAsString`, the bridge already returns the listed column
+// types as strings, so their value converter must not run.
 export const COLUMN_TYPES_FOR_FETCH_AS_STRING_TOKEN: Record<DataType, string[]> = {
-  // Column types listed here skip their `asValue` converter when the token is requested.
-  // REAL and VECTOR are converted to strings by their `asString` converter. FIXED and the JSON
-  // types are already strings from the bridge and are listed only so `Number()`/JSON parsing does not
-  // run on them. Every other type is converted to a string in the bridge.
   String: [],
-  Number: ['fixed', 'real', 'vector'],
+  Number: ['fixed'],
   Boolean: [],
   Buffer: [],
   Date: [],
@@ -44,26 +33,11 @@ function createColumnConverter(
   context: ConverterContext,
 ): CellConverter | null {
   const columnType = column.getType();
-  const factories = CONVERTER_FACTORIES_BY_COLUMN_TYPE[columnType];
-  if (!factories) {
+  const factory = CONVERTER_FACTORIES_BY_COLUMN_TYPE[columnType];
+  if (!factory || asStringColumnTypes.has(columnType)) {
     return null;
   }
-
-  if (!asStringColumnTypes.has(columnType)) {
-    return factories.asValue?.(column, context) ?? null;
-  }
-
-  const asString = factories.asString?.(column, context) ?? null;
-  if (!asString) {
-    return null;
-  }
-
-  return (value) => {
-    if (value === null && !context.options.representNullAsStringNull) {
-      return null;
-    }
-    return asString(value);
-  };
+  return factory(column, context);
 }
 
 interface ColumnConverter {

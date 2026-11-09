@@ -8,10 +8,10 @@ use chrono::NaiveTime;
 use super::column_source::{ColumnId, ColumnSource};
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
-use super::numeric::{FloatColumn, IntColumn, decimal_string};
+use super::numeric::{FloatColumn, IntColumn, decimal_string, real_string};
 use super::row_options::{ColumnOutput, FetchAsStringType, RowOptions};
 use super::temporal::{SnowflakeDateFormat, TimeColumn, TimeFormat, TimestampColumn};
-use super::vector::vector_numbers;
+use super::vector::{vector_json, vector_numbers};
 use crate::date_format::{ResolvedTimezone, compiled_format};
 use crate::session_params::KnownSessionParameters;
 use sf_types::{ReadArrowError, ReadArrowType, SnowflakeTimestampTz};
@@ -191,9 +191,8 @@ impl ColumnDecoder {
             Self::Decfloat(..) | Self::Interval(_) | Self::Text(_) | Self::Time(..) => {
                 Some(FetchAsStringType::String)
             }
-            Self::Fixed(..) => Some(FetchAsStringType::Number),
+            Self::Fixed(..) | Self::Real(_) | Self::Vector(_) => Some(FetchAsStringType::Number),
             Self::Structured(_) | Self::Variant(_) => Some(FetchAsStringType::Json),
-            Self::Real(_) | Self::Vector(_) => None,
         }
     }
 
@@ -229,7 +228,13 @@ impl ColumnDecoder {
                 JsCell::Str(Cow::Owned(decimal_string(values.get(row)?, *scale)))
             }
             Self::Interval(values) => JsCell::Str(Cow::Owned(values.get(row)?.to_string())),
-            Self::Real(values) => JsCell::Number(values.get(row)?),
+            Self::Real(values) => {
+                let value = values.get(row)?;
+                match output {
+                    ColumnOutput::String { .. } => JsCell::Str(Cow::Owned(real_string(value))),
+                    ColumnOutput::Native => JsCell::Number(value),
+                }
+            }
             Self::Structured(array) | Self::Text(array) | Self::Variant(array) => JsCell::Str(
                 Cow::Borrowed(sf_types::SnowflakeText.read_arrow_type(array, row)?),
             ),
@@ -244,7 +249,10 @@ impl ColumnDecoder {
                 .read_arrow_type(array, row)?;
                 format.to_cell(instant.utc.and_utc(), Some(instant.offset_minutes), output)
             }
-            Self::Vector(array) => JsCell::NumberArray(vector_numbers(array, row)?),
+            Self::Vector(array) => match output {
+                ColumnOutput::String { .. } => JsCell::Str(Cow::Owned(vector_json(array, row)?)),
+                ColumnOutput::Native => JsCell::NumberArray(vector_numbers(array, row)?),
+            },
         })
     }
 }
@@ -713,23 +721,6 @@ mod tests {
     }
 
     #[test]
-    fn real_and_vector_stay_native_under_number_fetch_as_string() {
-        let options = as_string(FetchAsStringType::Number, true);
-        let real = Float64Array::from(vec![Some(1.5), None]);
-        let reader =
-            try_reader_with_options(&field("REAL", DataType::Float64, &[]), &real, &options)
-                .unwrap();
-        assert_eq!(reader.read(0).unwrap(), JsCell::Number(1.5));
-        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
-
-        let vector = int_vector_array(&[Some(vec![1]), None], 1);
-        let reader =
-            try_reader_with_options(&vector_field(DataType::Int32, 1), &vector, &options).unwrap();
-        assert_eq!(reader.read(0).unwrap(), JsCell::NumberArray(vec![1.0]));
-        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
-    }
-
-    #[test]
     fn boolean_as_string_reads_upper_case_and_null() {
         let field = field("BOOLEAN", DataType::Boolean, &[]);
         let array = BooleanArray::from(vec![Some(true), Some(false), None]);
@@ -897,6 +888,64 @@ mod tests {
         );
         assert_eq!(reader.read(0).unwrap(), JsCell::Number(1.5));
         assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+    }
+
+    #[test]
+    fn real_as_string_matches_js_number_to_string() {
+        let cases = [
+            (0.0, "0"),
+            (-0.0, "0"),
+            (123.456, "123.456"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (1e21, "1e+21"),
+            (123456789012345680000.0, "123456789012345680000"),
+            (1e-6, "0.000001"),
+            (1.23e-7, "1.23e-7"),
+            (5e-324, "5e-324"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+            (f64::NAN, "NaN"),
+        ];
+        let field = field("REAL", DataType::Float64, &[]);
+        let array = Float64Array::from(
+            cases
+                .iter()
+                .map(|(value, _)| Some(*value))
+                .chain([None])
+                .collect::<Vec<_>>(),
+        );
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Number, true))
+                .unwrap();
+        for (row, (_, expected)) in cases.iter().enumerate() {
+            assert_eq!(reader.read(row).unwrap(), str_cell(expected));
+        }
+        assert_eq!(reader.read(cases.len()).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn vector_as_string_matches_js_json_stringify() {
+        let options = as_string(FetchAsStringType::Number, true);
+        let int_array = int_vector_array(&[Some(vec![1, -2, 3]), None], 3);
+        let reader =
+            try_reader_with_options(&vector_field(DataType::Int32, 3), &int_array, &options)
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), str_cell("[1,-2,3]"));
+        assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
+
+        let float_array = float_vector_array(
+            &[
+                Some(vec![1.8, -0.0, 1e21, 1.23e-7]),
+                Some(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.5]),
+            ],
+            4,
+        );
+        let reader =
+            try_reader_with_options(&vector_field(DataType::Float32, 4), &float_array, &options)
+                .unwrap();
+        assert_eq!(reader.read(0).unwrap(), str_cell("[1.8,0,1e+21,1.23e-7]"));
+        assert_eq!(reader.read(1).unwrap(), str_cell("[null,null,null,0.5]"));
     }
 
     fn decfloat_struct(

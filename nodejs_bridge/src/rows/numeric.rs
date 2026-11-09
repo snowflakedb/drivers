@@ -42,6 +42,13 @@ impl FloatColumn {
     }
 }
 
+pub(super) fn real_string(value: f64) -> String {
+    if value.is_infinite() {
+        return if value > 0.0 { "inf" } else { "-inf" }.to_owned();
+    }
+    ryu_js::Buffer::new().format(value).to_owned()
+}
+
 /// Renders `unscaled x 10^-scale` as an exact decimal string — every digit the
 /// server sent, no rounding.
 ///
