@@ -76,30 +76,6 @@ describe('Statement Tests', function () {
           assert.ok(connection.isUp(), 'not active');
           callback();
         },
-        function (callback) {
-          const rows = [];
-          statement.fetchRows({
-            each: function (row) {
-              rows.push(row);
-            },
-            end: function (err, stmt) {
-              assert.ok(!err, 'there should be no error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the end() callback should be invoked with the statement',
-              );
-              assert.strictEqual(rows.length, 1, 'there should only be one row');
-              assert.strictEqual(
-                rows[0].getColumnValue('c1'),
-                1,
-                'the row should only have one column c1 and its value ' + 'should be 1',
-              );
-
-              callback();
-            },
-          });
-        },
       ],
       function () {
         done();

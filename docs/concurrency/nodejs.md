@@ -8,8 +8,8 @@ That matches the async API: several `connection.execute` calls may be in flight 
 ## What this means
 
 - `Promise.all` of several executes on one connection is supported for independent, read-only queries.
-- A single `Statement` is not safe to fetch from concurrently. `streamRows()`, `fetchRows()`, and the default
-  (buffered) `complete` callback share one row cursor on that instance. Do not start two fetches on the same
+- A single `Statement` is not safe to fetch from concurrently. `streamRows()` and the default (buffered)
+  `complete` callback share one row cursor on that instance. Do not start two fetches on the same
   statement. TODO: a second fetch throws an error with a dedicated message.
 - The `Readable` from `streamRows()` is a single-consumer stream. Two streams from two statements on the same
   connection may be consumed in parallel.

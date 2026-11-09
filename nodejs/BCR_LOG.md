@@ -47,13 +47,13 @@ The old driver types both as `(options?: StreamOptions): Readable`, but this is 
 - `fetchRows` is a callback API, not a stream. `options`, `options.each`, and `options.end` are all required at runtime (it throws `ERR_STMT_FETCH_ROWS_MISSING_OPTIONS` / `_MISSING_EACH` / `_MISSING_END` otherwise). `each(row)` is invoked per row (returning `false` stops iteration) and `end(err, statement)` is invoked once at completion or on error. The returned value is not a consumable `Readable`.
 - `StreamOptions.end` is typed as `number` (a row-range index), but `fetchRows` requires `end` to be a completion **function**. The same field means two different things across the two methods, so they cannot faithfully share `StreamOptions`.
 - `StreamOptions.each` is never read by `streamRows`: its `RowStream` destructures only `start`, `end`, and `fetchAsString`. `each` was only present because both methods were typed with one shared interface.
-- In the new driver, `fetchRows` gets a dedicated `FetchRowsOptions` (required `each` / `end` callbacks, no misleading `Readable` return), and `each` is removed from `StreamOptions` since `streamRows` does not use it.
+- The new driver removes `fetchRows`, which the old driver marks as deprecated (BD#173), and removes `each` from `StreamOptions` since `streamRows` does not use it.
 
 ### connection.fetchResult and connection.getResultsFromQueryId has wrong TypeScript typing
 
 - they both require `queryId` which is optional in StatementOption
 - most of `StatementOption` does not apply to fetch/get results. They work only for `.execute()`
-- `getResultsFromQueryId` has inconsistent async patterns: it's an async method but also accepts a `complete` callback. The Promise settles when status polling finishes; `complete` is invoked later when `fetchResult` has collected rows. Taking both a callback and a Promise is a poor Node API. A later BCR should drop `complete`, settle the Promise when fetch is finished, and always treat `streamResult` as true so callers can `streamRows()` / `fetchRows()` after await. `fetchResult` remains the callback-shaped counterpart.
+- `getResultsFromQueryId` has inconsistent async patterns: it's an async method but also accepts a `complete` callback. The Promise settles when status polling finishes; `complete` is invoked later when `fetchResult` has collected rows. Taking both a callback and a Promise is a poor Node API. A later BCR should drop `complete`, settle the Promise when fetch is finished, and always treat `streamResult` as true so callers can `streamRows()` after await. `fetchResult` remains the callback-shaped counterpart.
 
 ### snowflake .connectAsync(callback)
 

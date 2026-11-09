@@ -444,88 +444,6 @@ describe('connection.execute() synchronous errors', function () {
   }
 });
 
-function testStatementFetchRows(statement) {
-  const testCases = [
-    {
-      name: 'fetchRows() missing options',
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_OPTIONS,
-    },
-    {
-      name: 'fetchRows() undefined options',
-      options: undefined,
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_OPTIONS,
-    },
-    {
-      name: 'fetchRows() null options',
-      options: null,
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_OPTIONS,
-    },
-    {
-      name: 'fetchRows() invalid options',
-      options: 'invalid',
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_INVALID_OPTIONS,
-    },
-    {
-      name: 'fetchRows() missing each()',
-      options: {},
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_EACH,
-    },
-    {
-      name: 'fetchRows() undefined each()',
-      options: {
-        each: undefined,
-      },
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_EACH,
-    },
-    {
-      name: 'fetchRows() null each()',
-      options: {
-        each: null,
-      },
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_EACH,
-    },
-    {
-      name: 'fetchRows() invalid each()',
-      options: {
-        each: 'invalid',
-      },
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_INVALID_EACH,
-    },
-    {
-      name: 'fetchRows() missing end()',
-      options: {
-        each: function () {},
-      },
-      errorCode: ErrorCodes.ERR_STMT_FETCH_ROWS_MISSING_END,
-    },
-    {
-      name: 'fetchRows() row mode invalid',
-      options: {
-        each: function () {},
-        end: function () {},
-        rowMode: 'invalid',
-      },
-      errorCode: ErrorCodes.ERR_STMT_STREAM_ROWS_INVALID_ROW_MODE,
-    },
-  ];
-
-  let index, length, testCase, error;
-  for (index = 0, length = testCases.length; index < length; index++) {
-    testCase = testCases[index];
-
-    error = null;
-
-    try {
-      statement.fetchRows(testCase.options);
-    } catch (err) {
-      error = err;
-    } finally {
-      assert.ok(error);
-      assert.strictEqual(error.code, testCase.errorCode);
-    }
-  }
-}
-
 describe('connection.execute() statement successful', function () {
   const connection = snowflake.createConnection(connectionOptions);
   const sqlText = 'select 1 as "c1";';
@@ -572,13 +490,9 @@ describe('connection.execute() statement successful', function () {
               assert.ok(Util.string.isNotNullOrEmpty(statement.getStatementId()));
               assert.ok(Util.string.isNotNullOrEmpty(statement.getQueryId()));
 
-              testStatementFetchRows(statement);
-
               callback();
             },
           });
-
-          testStatementFetchRows(statement);
 
           // the sql text and request id should be the same as what was passed
           // in
@@ -593,30 +507,6 @@ describe('connection.execute() statement successful', function () {
           assert.strictEqual(statement.getSessionState(), undefined);
           assert.strictEqual(statement.getStatementId(), undefined);
           assert.strictEqual(statement.getQueryId(), undefined);
-        },
-        function (callback) {
-          const rows = [];
-          statement.fetchRows({
-            each: function (row) {
-              rows.push(row);
-            },
-            end: function (err, stmt) {
-              assert.ok(!err, 'there should be no error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the end() callback should be invoked with the statement',
-              );
-              assert.strictEqual(rows.length, 1, 'there should only be one row');
-              assert.strictEqual(
-                rows[0].getColumnValue('c1'),
-                1,
-                'the row should only have one column c1 and its value ' + 'should be 1',
-              );
-
-              callback();
-            },
-          });
         },
       ],
       function () {
@@ -672,8 +562,6 @@ describe('connection.execute() statement failure', function () {
             },
           });
 
-          testStatementFetchRows(statement);
-
           // the sql text and request id should be the same as what was passed
           // in
           assert.strictEqual(statement.getSqlText(), sqlText);
@@ -687,23 +575,6 @@ describe('connection.execute() statement failure', function () {
           assert.strictEqual(statement.getSessionState(), undefined);
           assert.strictEqual(statement.getStatementId(), undefined);
           assert.strictEqual(statement.getQueryId(), undefined);
-        },
-        function (callback) {
-          testStatementFetchRows(statement);
-
-          statement.fetchRows({
-            each: function () {},
-            end: function (err, stmt) {
-              assert.ok(err, 'there should be an error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the execute() callback should be invoked with the statement',
-              );
-
-              callback();
-            },
-          });
         },
       ],
       function () {
@@ -904,13 +775,9 @@ describe('connection.fetchResult() statement successful', function () {
               assert.strictEqual(statement.getNumRows(), 1);
               assert.ok(Util.isObject(statement.getSessionState()));
 
-              testStatementFetchRows(statement);
-
               callback();
             },
           });
-
-          testStatementFetchRows(statement);
 
           // the query id should be the same as what was passed in
           assert.strictEqual(statement.getStatementId(), queryId);
@@ -926,30 +793,6 @@ describe('connection.fetchResult() statement successful', function () {
           assert.strictEqual(statement.getColumns(), undefined);
           assert.strictEqual(statement.getNumRows(), undefined);
           assert.strictEqual(statement.getSessionState(), undefined);
-        },
-        function (callback) {
-          const rows = [];
-          statement.fetchRows({
-            each: function (row) {
-              rows.push(row);
-            },
-            end: function (err, stmt) {
-              assert.ok(!err, 'there should be no error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the end() callback should be invoked with the statement',
-              );
-              assert.strictEqual(rows.length, 1, 'there should only be one row');
-              assert.strictEqual(
-                rows[0].getColumnValue('c1'),
-                1,
-                'the row should only have one column c1 and its value ' + 'should be 1',
-              );
-
-              callback();
-            },
-          });
         },
       ],
       function () {
@@ -1002,8 +845,6 @@ describe('connection.fetchResult() statement failure', function () {
             },
           });
 
-          testStatementFetchRows(statement);
-
           // the query id should be the same as what was passed in
           assert.strictEqual(statement.getStatementId(), queryId);
           assert.strictEqual(statement.getQueryId(), queryId);
@@ -1018,23 +859,6 @@ describe('connection.fetchResult() statement failure', function () {
           assert.strictEqual(statement.getColumns(), undefined);
           assert.strictEqual(statement.getNumRows(), undefined);
           assert.strictEqual(statement.getSessionState(), undefined);
-        },
-        function (callback) {
-          testStatementFetchRows(statement);
-
-          statement.fetchRows({
-            each: function () {},
-            end: function (err, stmt) {
-              assert.ok(err, 'there should be an error');
-              assert.strictEqual(
-                stmt,
-                statement,
-                'the execute() callback should be invoked with the statement',
-              );
-
-              callback();
-            },
-          });
         },
       ],
       function () {

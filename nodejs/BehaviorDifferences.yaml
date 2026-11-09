@@ -3764,3 +3764,26 @@ behavior_differences:
     new_driver_behavior: |
       EXTERNALBROWSER and OAUTH_AUTHORIZATION_CODE both answer the browser with an
       empty HTTP 500. Login fails with the renderer error.
+
+  173:
+    name: 'statement.fetchRows() is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      statement.fetchRows({ each, end }) calls each(row) for every row of the result and then
+      end(err, statement) once. Returning false from each() stops reading. index.d.ts marks it as
+      deprecated, says to use streamRows() instead, and types it as
+      fetchRows(options?: StreamOptions): Readable, although it takes callbacks and returns
+      nothing usable (see BCR_LOG.md).
+    new_driver_behavior: |
+      RowStatement has no fetchRows(), and the FetchRowsOptions type is gone. TypeScript code
+      that calls it does not compile, and JavaScript code fails with
+      "fetchRows is not a function". statement.streamRows() returns the same rows as a
+      Readable stream.
+    status_rationale: |
+      The method was already deprecated in favor of streamRows(), which reads the same rows.
+      Callers can switch to a for await loop over streamRows() or to its 'data', 'end' and
+      'error' events.

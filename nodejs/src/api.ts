@@ -22,7 +22,6 @@ export type {
   StatementCallback,
   StreamOptions,
   DataType,
-  FetchRowsOptions,
   Column,
   RowMode,
   QueryStatus,

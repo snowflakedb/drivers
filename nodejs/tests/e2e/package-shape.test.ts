@@ -159,7 +159,6 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('Package export list', () => {
       'DataType',
       'ErrorCode',
       'FetchResultOptions',
-      'FetchRowsOptions',
       'FipsStatus',
       'InsertBinds',
       'LogLevel',

@@ -97,7 +97,6 @@ declare namespace snowflake {
   type StatementCallback = api.StatementCallback;
   type StreamOptions = api.StreamOptions;
   type DataType = api.DataType;
-  type FetchRowsOptions = api.FetchRowsOptions;
   type Column = api.Column;
   type RowMode = api.RowMode;
   type QueryStatus = api.QueryStatus;

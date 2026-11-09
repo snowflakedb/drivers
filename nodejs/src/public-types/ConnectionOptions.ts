@@ -210,8 +210,7 @@ export type ConnectionOptions = {
 
   /**
    * When `true`, the `complete` callback of every statement on this connection gets no rows.
-   * Read the rows with `statement.streamRows()` or `statement.fetchRows()` instead. This keeps
-   * a large result out of memory.
+   * Read the rows with `statement.streamRows()` instead. This keeps a large result out of memory.
    *
    * Applies to `execute()`, `fetchResult()` and `getResultsFromQueryId()`. A call can override it
    * with its own `streamResult`.

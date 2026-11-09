@@ -156,7 +156,8 @@ Ensure the public API of the statement returned by `connection.execute` is fully
   `getSqlText()` behavior for successful and failed execution now lives in
   `nodejs/tests/e2e/statement.test.ts`. `with a valid token` and `with an invalid token` are
   not ported: they pass `sessionToken` to `createConnection`, which the new driver rejects
-  (BD#83). The remaining statement API is still pending.
+  (BD#83). The remaining statement API is still pending. The new driver removes `fetchRows()`
+  (BD#173), so this file has no `fetchRows()` step.
 - `integration/testStreamRows.js` — pending. `Test Stream Rows HighWaterMark` asserts at most
   `highWaterMark` rows per `readable` event; the new driver pushes rows synchronously, so one
   `readable` drain can exceed it. Buffer-level backpressure (`readableLength` stops at the mark)
@@ -492,6 +493,7 @@ called out explicitly.
   tests in the new driver. After beta, map each case to existing e2e tests and fill the gaps.
   The `getSqlText()` cases for execute success, execute failure, and `fetchResult()` now live
   in `nodejs/tests/e2e/statement.test.ts`; request-ID resubmission is still pending.
+  The new driver removes `fetchRows()` (BD#173), so this file has no `fetchRows()` cases.
   The `connect()` refusal for a fatally disconnected connection now lives in
   `nodejs/tests/e2e/connection-state-errors.test.ts`.
   The `connect()` refusal while a login is in flight now lives in

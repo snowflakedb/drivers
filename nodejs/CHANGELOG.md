@@ -61,6 +61,7 @@ You may need to adjust your setup if you:
 - Methods
   - Removed the `connection.getServiceName()` method. The service name is an internal session value that applications should never depend on.
   - Removed the `statement.getStatementId()` method, which was deprecated. It returned the same query ID as `statement.getQueryId()`, so call `getQueryId()` instead.
+  - Removed the `statement.fetchRows()` method, which was deprecated. Use `statement.streamRows()` instead, which returns the same rows as a `Readable` stream. Read it with `for await (const row of statement.streamRows())`, or replace the `each` callback with the `'data'` event and the `end` callback with the `'end'` and `'error'` events.
 - Types
   - Removed the `FileAndStageBindStatement` type and moved its `hasNext()` and `NextResult()` methods to `RowStatement`, which every query returns. These methods step through the results of a multi-statement query and have nothing to do with files or stages, so declaring them only on `FileAndStageBindStatement` was a mistake in the types. For a single statement, `hasNext()` returns `false`. If your code uses `FileAndStageBindStatement`, replace it with `RowStatement`.
   - Removed the `excludeGuid` and `queryId` fields from the `StatementOption` type. `connection.execute()` never used them, so setting them had no effect. If your TypeScript code sets them, remove them. To get the result of an earlier query by its ID, use `connection.getResultsFromQueryId({ queryId })`.

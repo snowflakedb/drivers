@@ -54,10 +54,4 @@ export interface StreamOptions {
   end?: number;
   fetchAsString?: DataType[];
 }
-
-export interface FetchRowsOptions {
-  each: (row: unknown) => boolean | void;
-  end: (err: SnowflakeError | undefined, stmt: RowStatement) => void;
-}
-
 export type { QueryStatus, StatementStatus } from '../core/index.js';

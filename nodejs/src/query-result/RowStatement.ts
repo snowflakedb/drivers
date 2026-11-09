@@ -3,7 +3,6 @@ import type { CoreConnectionInstance, CoreStatementInstance } from '../core/inde
 import type { SnowflakeError } from '../error.js';
 import type {
   Column,
-  FetchRowsOptions,
   RowOptions,
   SessionState,
   StatementCallback,
@@ -120,31 +119,6 @@ export class RowStatement {
       ...this.#rowOptions,
       fetchAsString: options?.fetchAsString ?? this.#rowOptions.fetchAsString,
     });
-  }
-
-  fetchRows(options: FetchRowsOptions): void {
-    const stream = createRowStream(this.#connection, this.#core, this.#rowOptions);
-    let finished = false;
-
-    const onComplete = (err: SnowflakeError | undefined) => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      options.end(err, this);
-    };
-
-    stream.on('data', (row: unknown) => {
-      if (finished) {
-        return;
-      }
-      if (options.each(row) === false) {
-        stream.destroy();
-        onComplete(undefined);
-      }
-    });
-    stream.on('end', () => onComplete(undefined));
-    stream.on('error', (err: Error) => onComplete(err as SnowflakeError));
   }
 
   #checkMultiSqlTexts(): void {
