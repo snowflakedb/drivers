@@ -83,6 +83,10 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
+      - name: Run type tests
+        run: npm run test:types -- --reporter=default --reporter=junit --outputFile=reports/nodejs-types.xml
+        working-directory: nodejs
+
       - name: Run unit tests
         run: npm run test:unit -- --reporter=default --reporter=junit --outputFile=reports/nodejs-unit.xml
         working-directory: nodejs

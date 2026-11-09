@@ -36,6 +36,7 @@ Do not edit it by hand. If you change the Rust API, run `npm run build:core` to 
 Tests live in `tests/` and run with [Vitest](https://vitest.dev/). The needed build steps run automatically before each suite (see `tests/setup/`), so just run:
 
 - `npm run test:unit` — fast tests against the TypeScript source in `src/`. Builds only the native core and links it.
+- `npm run test:types` — type tests in `tests/types/`. Compares the types of the built `snowflake-sdk` package with the old driver, and type-checks the whole project. Builds and links only the SDK, without the native core.
 - `npm run test:e2e` — end-to-end tests against a real Snowflake account. Builds and links the full SDK, then imports `snowflake-sdk` by name — the same package and addon resolution a real user gets.
 - `npm run test:e2e-old-driver` — the same e2e tests run against the old `snowflake-sdk` (v3) driver, so we can compare behavior.
 

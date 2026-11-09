@@ -4,8 +4,8 @@ import {
   type Options as PoolOptions,
   type Pool,
 } from 'generic-pool';
-import type { ConnectionOptions } from './public-types/index.js';
-import { createConnection, type Connection } from './connection.js';
+import type { Connection, ConnectionOptions } from './public-types/index.js';
+import { createConnection } from './connection.js';
 
 export type { Pool, PoolOptions };
 

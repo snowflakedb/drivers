@@ -51,11 +51,9 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('Package ESM vs CommonJS shape', () =
 // Missing checks:
 // - Each old driver export and type exists here with the same signature.
 //   Some old features are removed on purpose, for example OCSP
-//   (`OcspModes`, `setupOcspPrivateLink`, `ocspFailOpen`), so the check needs
-//   a list of known differences.
-// - Types that are interfaces in the old driver are interfaces here too.
-//   Today `RowStatement` and `Connection` are classes with `#private` fields,
-//   so a plain object with the same methods, like a fake in a user test, does not match them.
+//   (`OcspModes`, `ocspFailOpen`), so the check needs a list of known differences.
+//   tests/types/public-surface.test-d.ts compares the member names of `Connection`,
+//   `RowStatement` and `Column`, but not their signatures.
 // - The published `.d.ts` files are checked. These tests read `src/index.ts`.
 describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('Package export list', () => {
   const INDEX_PATH = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
@@ -111,7 +109,6 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('Package export list', () => {
     );
 
     expect(Object.keys(namedRuntimeExports).sort()).toEqual([
-      'Connection',
       'ErrorCode',
       'SnowflakeDate',
       'configure',
@@ -190,13 +187,7 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('Package export list', () => {
       .filter((symbol) => followExportAlias(symbol).flags & ts.SymbolFlags.Type)
       .map((symbol) => symbol.name);
 
-    expect([...classAndEnumNames].sort()).toEqual([
-      'Connection',
-      'ErrorCode',
-      'Pool',
-      'RowStatement',
-      'SnowflakeDate',
-    ]);
+    expect([...classAndEnumNames].sort()).toEqual(['ErrorCode', 'Pool', 'SnowflakeDate']);
     expect(classAndEnumNamesUsableAsTypes).toEqual(classAndEnumNames);
   });
 });

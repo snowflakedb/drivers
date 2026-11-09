@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { ConnectionOptions } from './public-types/index.js';
 import type {
-  StatementCallback,
-  DataType,
-  RowMode,
-  RowOptions,
-  QueryStatus,
-} from './query-result/types.js';
+  Connection,
+  ConnectionOptions,
+  FetchResultOptions,
+  RowStatement,
+  StatementOption,
+} from './public-types/index.js';
+import type { StatementCallback, RowOptions, QueryStatus } from './query-result/types.js';
 import { toCoreConnectionOptions } from './connection-option-aliases.js';
 import { serializeTokenInfo, deserializeTokenInfo } from './connection-serialization.js';
 import {
@@ -18,9 +18,9 @@ import {
 } from './core/index.js';
 import { tryWithErrorReporter, type SnowflakeError } from './error.js';
 import { GlobalConfig } from './global-config.js';
-import { type Binds, buildBindsMap, selectBindPayload } from './query-result/binds.js';
+import { buildBindsMap, selectBindPayload } from './query-result/binds.js';
 import { collectRows } from './query-result/rows.js';
-import { RowStatement } from './query-result/RowStatement.js';
+import { RowStatementImpl } from './query-result/RowStatement.js';
 import { getWrapperIdentity } from './wrapper-identity.js';
 
 export type ConnectionCallback = (err: SnowflakeError | undefined, conn: Connection) => void;
@@ -31,81 +31,8 @@ interface InternalConnectionOptions extends ConnectionOptions {
   [TOKEN_INFO]?: ConnectionTokenInfo;
 }
 
-// This should be called StatementOptions or ExecuteStatementOptions but we keep the name
-// for backwards compatibility
-export interface StatementOption {
-  sqlText: string;
-  complete?: StatementCallback;
-  asyncExec?: boolean;
-  streamResult?: boolean;
-
-  /**
-   * Parameters scoped to this single statement, sent with the execute request
-   * rather than applied to the whole session. Keys are Snowflake statement-level
-   * parameter names (e.g. `TIME_OUTPUT_FORMAT`);
-   */
-  parameters?: Record<string, unknown>;
-
-  rowMode?: RowMode;
-
-  fetchAsString?: DataType[];
-
-  /**
-   * Values for the placeholders in {@link StatementOption.sqlText}. Write `?` (or
-   * `:1`, `:2`, ...) in the SQL, and list the values here in the same order. The
-   * driver sends them as bind parameters, so they are safe from SQL injection.
-   *
-   * Pass one row of values to run the statement once:
-   *
-   * @example
-   * connection.execute({
-   *   sqlText: 'SELECT c1 FROM t WHERE c1 = ?',
-   *   binds: [1],
-   * });
-   *
-   * Pass an array of rows to run a bulk `INSERT` (one row per inner array):
-   *
-   * @example
-   * connection.execute({
-   *   sqlText: 'INSERT INTO t(c1, c2, c3) VALUES(?, ?, ?)',
-   *   binds: [[1, 'string1', 2.0], [2, 'string2', 4.0]],
-   * });
-   *
-   * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
-   */
-  binds?: Binds;
-
-  /**
-   * Current working directory to use for GET/PUT execution using relative paths from a client location
-   * that is different from the connector directory.
-   */
-  cwd?: string;
-
-  /**
-   * UUID used to resubmit a request. When omitted, the driver creates one.
-   *
-   * @see https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-execute
-   */
-  requestId?: string;
-
-  /**
-   * When `true`, the query is submitted for column metadata only.
-   */
-  describeOnly?: boolean;
-}
-
-export interface FetchResultOptions {
-  queryId: string;
-  complete?: StatementCallback;
-  streamResult?: boolean;
-  rowMode?: RowMode;
-  fetchAsString?: DataType[];
-}
-
-// TODO:
-// - think whether we should have connection class only in bridge that exposes same api as old driver
-// - think how to export nicer types so we wouldnt have to use typeof
-export class Connection {
+// TODO: think whether we should have connection class only in bridge that exposes same api as old driver
+export class ConnectionImpl implements Connection {
   #core: CoreConnectionInstance;
   #defaultRowOptions: RowOptions;
   #defaultStreamResult: boolean;
@@ -192,10 +119,6 @@ export class Connection {
     return this.#id;
   }
 
-  /**
-   * Sends a heartbeat to the server, which also renews the session. Resolves `false` when the
-   * session is gone rather than rejecting.
-   */
   isValidAsync(): Promise<boolean> {
     return this.#core.isValidAsync();
   }
@@ -297,7 +220,13 @@ export class Connection {
   ): RowStatement {
     const { complete, sqlText, asyncExec, rowOptions } = options;
     const streamResult = options.streamResult ?? this.#defaultStreamResult;
-    const statement = new RowStatement(this.#core, coreStatement, rowOptions, sqlText, complete);
+    const statement = new RowStatementImpl(
+      this.#core,
+      coreStatement,
+      rowOptions,
+      sqlText,
+      complete,
+    );
     (async () => {
       try {
         await coreStatement.waitForCompletion();
@@ -317,7 +246,7 @@ export class Connection {
     return statement;
   }
 
-  destroy(callback?: ConnectionCallback) {
+  destroy(callback?: ConnectionCallback): void {
     this.#core
       .destroy()
       .then(() => callback?.(undefined, this))
@@ -325,7 +254,8 @@ export class Connection {
   }
 }
 
-export const createConnection = (options?: ConnectionOptions) => new Connection(options);
+export const createConnection = (options?: ConnectionOptions): Connection =>
+  new ConnectionImpl(options);
 export const serializeConnection = (connection: Connection): string => connection.serialize();
 /**
  * Rebuilds a connection from a string produced by {@link Connection.serialize}.
@@ -341,5 +271,5 @@ export const deserializeConnection = (
     ...options,
     [TOKEN_INFO]: deserializeTokenInfo(serializedConnection),
   };
-  return new Connection(internalOptions);
+  return new ConnectionImpl(internalOptions);
 };

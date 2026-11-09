@@ -54,6 +54,20 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          name: { label: 'types', color: 'blue' },
+          // Vitest type-checks every file in tsconfig.json, not only `include`.
+          // So this project also catches type errors in `src/` and in e2e tests.
+          typecheck: {
+            enabled: true,
+            only: true,
+            include: ['tests/types/**/*.test-d.ts'],
+          },
+          globalSetup: ['./tests/setup/types.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: { label: 'e2e', color: 'magenta' },
           environment: 'node',
           include: ['tests/e2e/**/*.test.ts'],

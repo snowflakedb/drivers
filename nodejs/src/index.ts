@@ -46,10 +46,10 @@ logRouter.setup({
 // Values are exported with `export import`, because only this form gives both:
 // - Users can replace an export, for example stub `createConnection` in tests.
 //   `export { createConnection } from` compiles to a read-only getter, so it can not be replaced.
-// - A class name works as a value and as a type: `new Connection()` and `conn: Connection`.
-//   With `export const Connection = api.Connection`, it works only as a value.
+// - A class name works as a value and as a type: `value instanceof SnowflakeDate` and
+//   `value: SnowflakeDate`. With `export const SnowflakeDate = api.SnowflakeDate`, it works
+//   only as a value.
 export import SnowflakeDate = api.SnowflakeDate;
-export import Connection = api.Connection;
 export import ErrorCode = api.ErrorCode;
 export import createConnection = api.createConnection;
 export import createPool = api.createPool;
@@ -60,8 +60,8 @@ export import getFipsStatus = api.getFipsStatus;
 export import configure = api.configure;
 
 // Exports every type from `api.ts` by name: `import type { ConnectionOptions } from 'snowflake-sdk'`.
-// - Some names, like `Connection`, are also exported above with `export import`.
-// - That export wins, so `Connection` stays a value too, not only a type.
+// - Some names, like `SnowflakeDate`, are also exported above with `export import`.
+// - That export wins, so `SnowflakeDate` stays a value too, not only a type.
 export type * from './api.js';
 
 // The default export is this module's own exports object (`self`):

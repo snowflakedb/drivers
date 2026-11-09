@@ -4,7 +4,7 @@ import type {
   CoreSessionStateInstance,
 } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
-import type { RowStatement } from './RowStatement.js';
+import type { RowStatement } from '../public-types/index.js';
 
 // TODO: consider converting to an enum -- these string literals are reused
 // as bare values across many test cases, which risks silent typos. Public API
@@ -31,8 +31,6 @@ export type ConverterFactory = (
 ) => CellConverter;
 
 export type CellConverter = (value: unknown) => unknown;
-
-export type Column = CoreColumnInstance;
 
 export type SessionState = CoreSessionStateInstance;
 
