@@ -69,6 +69,8 @@ You may need to adjust your setup if you:
 - Removed undocumented APIs. They were never meant to be public and were not part of the TypeScript types:
   - The `snowflake.STRING`, `snowflake.BOOLEAN`, `snowflake.NUMBER`, `snowflake.DATE`, `snowflake.OBJECT`, `snowflake.ARRAY`, `snowflake.MAP` and `snowflake.JSON` constants. No public API used them.
   - The `connection.isTokenValid()` method.
+  - The `connection.heartbeat()` and `connection.heartbeatAsync()` methods. To check that a connection still works, use `await connection.isValidAsync()`, which sends the same heartbeat request. To keep a session alive, set the `clientSessionKeepAlive` connection option.
+  - The `getFileMetadata()` method on the statement returned for a `PUT` or `GET` command. It returned the raw response that Snowflake sent for the command. To see what happened to each file, read the result rows, for example in the `complete` callback.
   - The `getCurrentDatabaseProvider()` method on the object returned by `statement.getSessionState()`. It always returned `null`.
   - The `sessionToken`, `masterToken`, `sessionTokenExpirationTime` and `masterTokenExpirationTime` options of `snowflake.createConnection()`. They were not part of `ConnectionOptions`. To reuse a session, use `connection.serialize()` and `snowflake.deserializeConnection()`.
 

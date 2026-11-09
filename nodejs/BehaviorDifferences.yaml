@@ -1191,20 +1191,36 @@ behavior_differences:
       returns false, so code that checks it works the same for every query.
 
   51:
-    name: 'isTokenValid is not implemented'
+    name: 'isTokenValid, heartbeat, heartbeatAsync and getFileMetadata are not implemented'
     status: allowed
     type: api_incompatibility
     reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Connection.isTokenValid() exists at runtime and returns whether both session and
-      master token expiries are still in the future. It is omitted from dist/index.d.ts.
+      These methods exist at runtime but are omitted from dist/index.d.ts:
+      - connection.isTokenValid() returns whether both session and master token expiries are
+        still in the future.
+      - connection.heartbeat(callback) sends POST /session/heartbeat. Without a callback, it
+        only logs the result.
+      - connection.heartbeatAsync() sends the same request and resolves with [{ 1: 1 }], the
+        result of the `select 1` that older versions ran instead.
+      - statement.getFileMetadata(), only on the statement returned for a PUT or GET command,
+        returns the JSON body of Snowflake's answer to that command. While the transfer runs,
+        its data field holds the stage location, temporary cloud credentials and encryption
+        material. After a successful transfer, data holds the result rows instead.
     new_driver_behavior: |
-      Connection has no isTokenValid method.
+      Connection has no isTokenValid, heartbeat or heartbeatAsync method.
+      isValidAsync() still sends the heartbeat request and resolves false when it fails.
+      RowStatement has no getFileMetadata method. The PUT or GET result rows show the outcome
+      for each file.
     status_rationale: |
-      The old driver already omitted the method from the published types. The new driver
-      does not add a runtime-only copy of an unpublished API.
+      The old driver already omitted these methods from the published types. The new driver
+      does not add runtime-only copies of unpublished APIs. The driver sends heartbeats itself
+      when clientSessionKeepAlive is on, so an application has no need to send one.
+      getFileMetadata() returned an internal server response that also exposed temporary cloud
+      credentials and encryption material, and the result rows already carry what a caller
+      needs to know about each file.
 
   52:
     name: 'Zero UTC offset in a TIME or TIMESTAMP format prints Z, not +00:00'
@@ -3858,3 +3874,58 @@ behavior_differences:
       OnceLock<DetachedContext> and does not expose it until the query finishes. The
       bridge's get_query_id reads only the finished result. Matching the old driver needs
       sf_core to share the ID from the "query in progress" answer with the bridge.
+
+  176:
+    name: 'resultPrefetch, includeRetryReason, forceStageBindError, gcsUseDownscopedCredential, oauthChallengeMethod and validateDefaultParameters are removed'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      createConnection accepts these options, and the typed ConnectionOptions declares all of
+      them:
+      - resultPrefetch (positive integer, default 2): the number of result chunks downloaded
+        ahead of the chunk being read.
+      - includeRetryReason (boolean, default true): retried requests carry
+        retryReason=<HTTP status> in the URL. false leaves it out.
+      - forceStageBindError (number): 0 makes the creation of the temporary stage for array
+        binds fail, and 1 makes the upload of binds to that stage fail.
+      - gcsUseDownscopedCredential (boolean): sent at login as the
+        GCS_USE_DOWNSCOPED_CREDENTIAL session parameter.
+      - oauthChallengeMethod (string, default S256): sent as code_challenge_method in the
+        OAUTH_AUTHORIZATION_CODE authorization URL. The code challenge itself is always
+        computed with S256.
+      - validateDefaultParameters (boolean, default false): when true, createConnection logs
+        an error for each unknown connection option, with the closest known name as a
+        suggestion.
+    new_driver_behavior: |
+      ConnectionOptions declares none of these options, so TypeScript code that sets one in an
+      object literal does not compile. At runtime each one is ignored with the warning
+      "Unknown option <key> is ignored", like any other unknown option (BD#102):
+      - resultPrefetch: up to CLIENT_PREFETCH_THREADS chunks are downloaded at once, 4 when
+        Snowflake does not send that session parameter.
+      - includeRetryReason: retried requests always carry retryReason, as with the old
+        default.
+      - forceStageBindError: array binds through a stage never fail on purpose.
+      - gcsUseDownscopedCredential: GCS_USE_DOWNSCOPED_CREDENTIAL is not sent at login.
+        ALTER SESSION SET GCS_USE_DOWNSCOPED_CREDENTIAL = TRUE still sets it.
+      - oauthChallengeMethod: code_challenge_method is always S256.
+      - validateDefaultParameters: the warning for an unknown option is always logged and has
+        no suggestion.
+    description: |
+      Why each option is removed:
+      - resultPrefetch: chunk downloads follow the CLIENT_PREFETCH_THREADS session parameter,
+        the same one other Snowflake drivers use. It can be set with ALTER SESSION or on the
+        account or user, so a Node.js-only option is not needed.
+      - includeRetryReason: the retry reason helps Snowflake understand why a request was
+        retried and holds only the HTTP status code, so there is no reason to turn it off.
+      - forceStageBindError: a fault-injection hook for the old driver's own tests. It has no
+        use in an application.
+      - gcsUseDownscopedCredential: the option only sets a session parameter at login.
+        ALTER SESSION, or the parameter on the account or user, does the same.
+      - oauthChallengeMethod: only S256 works, because the old driver always computes the
+        challenge with S256. Any other value declares a method that does not match the
+        challenge that is sent.
+      - validateDefaultParameters: the new driver always warns about unknown options
+        (BD#102), so the option has nothing left to turn on.
