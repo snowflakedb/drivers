@@ -96,6 +96,12 @@ describe('RowStatement', () => {
       expect(statement.getSessionState()).toBeDefined();
     });
 
+    it('should return undefined from getColumn for an unknown name or index after a successful execute', async () => {
+      const { statement } = await executeAsync(connection, 'SELECT 1 AS n');
+      expect(statement.getColumn('UNKNOWN')).toBeUndefined();
+      expect(statement.getColumn(1)).toBeUndefined();
+    });
+
     it('should return undefined from result-set getters after a failed execute', async () => {
       const { statement, completion } = sendExecute(
         connection,

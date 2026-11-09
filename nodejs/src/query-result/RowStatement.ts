@@ -43,7 +43,8 @@ export class RowStatement {
 
   /**
    * SQL text for the current result, with bind placeholders left as written.
-   * `undefined` when the statement came from `fetchResult()` (no SQL was supplied).
+   * `undefined` when the statement came from `fetchResult()` or `getResultsFromQueryId()`
+   * (no SQL was supplied).
    *
    * - Single statement: the string passed to `execute()`, including a trailing `;`.
    * - Multi-statement: the current `;`-separated segment. Advances with {@link NextResult}.
@@ -57,32 +58,66 @@ export class RowStatement {
     return this.#core.getStatus();
   }
 
+  /**
+   * Number of rows in the current result.
+   * `undefined` while the query is running, after it fails, and for `asyncExec` queries.
+   */
   getNumRows(): number | undefined {
     return this.#core.getNumRows() ?? undefined;
   }
 
+  /**
+   * Number of rows that an `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `COPY INTO <table>`
+   * statement changed or loaded. `-1` for other statements.
+   * `undefined` while the query is running, after it fails, and for `asyncExec` queries.
+   */
   getNumUpdatedRows(): number | undefined {
     return this.#core.getNumUpdatedRows() ?? undefined;
   }
 
+  /**
+   * Query ID that Snowflake gave to this statement.
+   * `undefined` until the `complete` callback is called. After a failure, it is set when
+   * Snowflake returned a query ID, and `undefined` when the request did not reach Snowflake.
+   */
   getQueryId(): string | undefined {
     return this.#core.getQueryId() ?? undefined;
   }
 
+  /**
+   * Request ID sent to Snowflake with this query: the `requestId` option of `execute()`, or a
+   * random UUID. It is set as soon as `execute()` returns.
+   * `undefined` for statements created by `fetchResult()` or `getResultsFromQueryId()`,
+   * because they read the result of an earlier query and send no request ID.
+   */
   getRequestId(): string | undefined {
     return this.#core.getRequestId() ?? undefined;
   }
 
+  /**
+   * Current database, schema, warehouse and role of the session right after this query.
+   * `undefined` while the query is running, after it fails, and for `asyncExec` queries.
+   */
   getSessionState(): SessionState | undefined {
     return this.#core.getSessionState() ?? undefined;
   }
 
+  /**
+   * Columns of the current result.
+   * `undefined` while the query is running, after it fails, and for `asyncExec` queries.
+   */
   getColumns(): Column[] | undefined {
     return (
       this.#core.getColumns(shouldRenameDuplicateColumns(this.#rowOptions.rowMode)) ?? undefined
     );
   }
 
+  /**
+   * Column of the current result with the given name, or at the given 0-based index.
+   * When several columns have the same name, it returns the first one.
+   * `undefined` when no column matches, while the query is running, after it fails, and for
+   * `asyncExec` queries.
+   */
   getColumn(columnIdentifier: string | number): Column | undefined {
     return (
       this.#core.getColumn(

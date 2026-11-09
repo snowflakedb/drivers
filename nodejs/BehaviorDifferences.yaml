@@ -302,36 +302,47 @@ behavior_differences:
       methods needs a one-line update.
 
   13:
-    name: 'RowStatement getColumn/getNumRows/getQueryId/getSqlText are typed as possibly undefined'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: false
-    impact: low
+    name: 'RowStatement getColumn/getNumRows/getQueryId/getRequestId/getSqlText are typed as possibly undefined'
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: true
+    impact: medium
     old_driver_behavior: |
-      The old driver's TypeScript types declare getColumn(): Column, getNumRows(): number,
-      getQueryId(): string, and getSqlText(): string — none include undefined. At runtime all
-      four can still return undefined: getColumn and getNumRows when no result is available yet
-      or after execute fails, getQueryId when the query id is not yet known (its JSDoc even
-      says so), and getSqlText when the statement was created by fetchResult without sqlText.
-      Callers who type-check against the old .d.ts never see undefined, even though calling
-      the functions can return it.
+      index.d.ts types getColumn(): Column, getNumRows(): number, getQueryId(): string,
+      getRequestId(): string, and getSqlText(): string. None include undefined, but all five
+      can return it:
+      - getColumn and getNumRows: before the query finishes and after it fails. getColumn
+        also when no column matches the name or index.
+      - getQueryId: before Snowflake returns a query ID (its JSDoc says so).
+      - getRequestId: for statements created by fetchResult() or getResultsFromQueryId(),
+        even when a requestId option is passed to them.
+      - getSqlText: for statements created by fetchResult() or getResultsFromQueryId()
+        without a sqlText option. Their options are typed as
+        { queryId: string } & Partial<StatementOption>, and a sqlText passed there is
+        returned by getSqlText().
+      The sibling getters getColumns, getNumUpdatedRows, and getSessionState are already
+      typed with | undefined.
     new_driver_behavior: |
-      The new driver types getColumn, getNumRows, getQueryId, and getSqlText as T | undefined.
-      After a successful execute they still return defined values, same as the old driver;
-      after a failed execute they return undefined on both drivers. TypeScript now requires
-      handling undefined. fetchResult still returns undefined from getSqlText at runtime on
-      both drivers.
+      getColumn, getNumRows, getQueryId, getRequestId, and getSqlText are typed as
+      T | undefined, and their JSDoc says when they return undefined. Strict TypeScript code
+      that passes their result where a defined value is expected no longer compiles without
+      a check or a `!`. They return undefined in the same cases as the old driver, except:
+      - getNumRows and getColumn on an asyncExec statement return undefined. The old driver
+        throws a TypeError (BD#49).
+      - getQueryId stays undefined until the complete callback is called (BD#175).
+      - getSqlText after fetchResult() or getResultsFromQueryId() is always undefined,
+        because FetchResultOptions has no sqlText field (BD#174).
+    status_rationale: |
+      The old types were wrong: these methods return undefined at runtime on both drivers.
+      Matching the old types would hide a real undefined. Throwing instead of returning
+      undefined would break callers that check for undefined, and still could not cover
+      getColumn with an unknown name or getSqlText/getRequestId after fetchResult().
     description: |
-      Status is unknown: investigate and decide among (1) keeping the honest T | undefined
-      signatures (a TypeScript-visible API change), (2) matching the old driver's types, which
-      hide a real undefined return, or (3) throwing when no result is available instead of
-      returning undefined, so the signatures can honestly be T. Runtime after a completed query
-      is the same on both drivers for (1) and (2); (3) would change pre-result calls from
-      undefined to an error (a runtime break for callers who currently check for undefined).
-      getColumn/getNumRows/getQueryId map core FFI null to undefined; getSqlText is stored in
-      the TypeScript wrapper and is unset when fetchResult does not receive sqlText. Tests that
-      call getColumn() after execute use getRowStatementColumn (BD#13).
+      After the complete callback of a successful execute, getQueryId and getRequestId are
+      always defined. getNumRows and getColumn are defined too, except for asyncExec queries
+      (BD#49) and, for getColumn, a name or index that matches no column. Tests that call
+      getColumn() after execute use getStatementColumn (BD#13).
 
   14:
     name: "TIME column NULL returns real null, not the old driver's 'NULL' string"
@@ -3787,3 +3798,63 @@ behavior_differences:
       The method was already deprecated in favor of streamRows(), which reads the same rows.
       Callers can switch to a for await loop over streamRows() or to its 'data', 'end' and
       'error' events.
+
+  174:
+    name: 'fetchResult and getResultsFromQueryId accept only the options they use'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      index.d.ts types the options of fetchResult() and getResultsFromQueryId() as
+      { queryId: string } & Partial<StatementOption>, so every execute() option compiles.
+      At runtime:
+      - queryId, complete, streamResult, fetchAsString, and rowMode are used.
+      - sqlText is returned by getSqlText(). For the query ID of a multi-statement query,
+        complete receives a TypeError when sqlText is not passed.
+      - cwd must be a string, otherwise the call throws. It has no other effect.
+      - asyncExec, requestId, excludeGuid, binds, parameters, and describeOnly are ignored.
+    new_driver_behavior: |
+      Both methods take the exported FetchResultOptions type, which has queryId, complete,
+      streamResult, rowMode, and fetchAsString. TypeScript code that passes any other field
+      in an object literal does not compile. JavaScript code that passes sqlText gets
+      undefined from getSqlText() (BD#13). The other fields had no effect before, so
+      ignoring them changes nothing at runtime.
+    status_rationale: |
+      These methods read the result of an earlier query, so the execute() options do not
+      apply to them, and the old types suggested otherwise. sqlText was the only option with
+      an effect, and the caller already has the SQL text, so it can keep it itself.
+    description: |
+      FetchResultOptions lists the fields that fetchResult() reads, instead of reusing
+      StatementOption. The old driver reads sqlText because it builds the statement for each
+      part of a multi-statement result by passing its own statement state back in as the
+      fetchResult() options, and a sqlText passed by the caller takes the same path. The
+      new driver steps through a multi-statement result without sqlText.
+
+  175:
+    name: 'getQueryId is undefined while a long query runs'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      For a query that Snowflake first answers with "query in progress" (code 333333), the
+      old driver saves the query ID from that answer and keeps polling for the result.
+      statement.getQueryId() returns that ID while the query runs, before complete is
+      called. No event says when the ID is set, so a caller that wants it early has to poll
+      getQueryId(). For a query that finishes in the first answer, the ID is set when
+      complete is called, as in the new driver.
+    new_driver_behavior: |
+      statement.getQueryId() returns undefined until the complete callback is called, also
+      for a query that Snowflake reports as still running. Code that reads the query ID of
+      a running query, for example to log it or to pass it to another process, gets
+      undefined. To get the ID right after the query is submitted, use asyncExec: true and
+      read getQueryId() in complete. statement.cancel() works before the ID is known,
+      because it cancels by request ID.
+    description: |
+      sf_core submit_query keeps the query ID of a still-running query in a local
+      OnceLock<DetachedContext> and does not expose it until the query finishes. The
+      bridge's get_query_id reads only the finished result. Matching the old driver needs
+      sf_core to share the ID from the "query in progress" answer with the bridge.
