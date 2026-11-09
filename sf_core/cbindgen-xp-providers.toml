@@ -79,7 +79,8 @@ include = [
 ]
 # sf_core's other c_api modules are out of scope for this header.
 exclude = [
-    "sf_core_init",
+    "sf_core_init_python",
+    "sf_core_init_dotnet",
     "sf_core_api_call_proto",
     "sf_core_api_call_proto_async",
     "sf_core_api_cancel",

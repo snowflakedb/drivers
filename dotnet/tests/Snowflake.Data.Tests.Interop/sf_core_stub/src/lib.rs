@@ -37,9 +37,12 @@ static CURRENTLY_ALLOCATED_RESPONSES_COUNT: AtomicI64 = AtomicI64::new(0);
 /// Inner bool = cancelled flag; condvar wakes the thread.
 type AsyncCallExecutionBlockingGate = (Mutex<bool>, Condvar);
 
-static ASYNC_CALL_EXECUTION_BLOCKING_GATES_HANDLE_MAP: OnceLock<Mutex<HashMap<u64, Arc<AsyncCallExecutionBlockingGate>>>> = OnceLock::new();
+static ASYNC_CALL_EXECUTION_BLOCKING_GATES_HANDLE_MAP: OnceLock<
+    Mutex<HashMap<u64, Arc<AsyncCallExecutionBlockingGate>>>,
+> = OnceLock::new();
 
-fn async_call_execution_blocking_gates_handle_map() -> &'static Mutex<HashMap<u64, Arc<AsyncCallExecutionBlockingGate>>> {
+fn async_call_execution_blocking_gates_handle_map()
+-> &'static Mutex<HashMap<u64, Arc<AsyncCallExecutionBlockingGate>>> {
     ASYNC_CALL_EXECUTION_BLOCKING_GATES_HANDLE_MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -60,9 +63,7 @@ fn parse_action(method: *const c_char) -> Action {
     let s = if method.is_null() {
         return Action::EchoIncrement;
     } else {
-        unsafe { CStr::from_ptr(method) }
-            .to_str()
-            .unwrap_or("echo")
+        unsafe { CStr::from_ptr(method) }.to_str().unwrap_or("echo")
     };
 
     match s {
@@ -105,8 +106,15 @@ fn alloc_response(data: &[u8]) -> (*const u8, usize) {
 /// sf_core: `{ status: u32, troubleshooting_enabled: u32 }` packed as `u64`.
 /// The .NET side reads only the low 32 bits (status = 0 = success).
 #[unsafe(no_mangle)]
-pub extern "C" fn sf_core_init(
-    _callback: unsafe extern "C" fn(u32, *const c_char, *const c_char, u32, *const c_char) -> u32,
+pub extern "C" fn sf_core_init_dotnet(
+    _callback: unsafe extern "C" fn(
+        u32,
+        *const c_char,
+        *const c_char,
+        u32,
+        *const c_char,
+        *const c_char,
+    ) -> u32,
 ) -> u64 {
     0u64
 }
@@ -231,11 +239,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
                 let (lock, cvar) = gate.as_ref();
                 let guard = lock.lock().unwrap_or_else(|p| p.into_inner());
                 let (guard, _) = cvar
-                    .wait_timeout_while(
-                        guard,
-                        Duration::from_millis(*ms),
-                        |cancelled| !*cancelled,
-                    )
+                    .wait_timeout_while(guard, Duration::from_millis(*ms), |cancelled| !*cancelled)
                     .unwrap_or_else(|p| p.into_inner());
                 *guard
             }

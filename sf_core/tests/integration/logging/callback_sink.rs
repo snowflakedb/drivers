@@ -92,7 +92,7 @@ fn sf_core_log_event_delivers_wrapper_events() {
     CAPTURED.lock().unwrap().clear();
 
     let cb: CLogCallback = test_callback;
-    let init = sf_core::logging::c_api::sf_core_init(cb);
+    let init = sf_core::logging::c_api::sf_core_init_dotnet(cb);
     assert_eq!(init.status, 0);
 
     let message = c"wrapper round trip";

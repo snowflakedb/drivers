@@ -36,7 +36,7 @@ pub enum PutGetResultsetFlavor {
 }
 
 /// Immutable behavioural presets declared by each wrapper (Python, ODBC, JDBC,
-/// Node.js) at startup. These are **not** exposed to end users — they capture
+/// Node.js, .NET) at startup. These are **not** exposed to end users — they capture
 /// compile-time / init-time differences between wrappers so that shared Rust
 /// code can branch on them without hard-coding wrapper knowledge everywhere.
 #[derive(Debug, Clone)]
@@ -111,8 +111,8 @@ impl Default for WrapperPresets {
     ///
     /// `configuration_flavor` is `Wrapper::Python`, so a wrapper resolving aliases
     /// under the Python flavor leaves its own scoped aliases in `sf_params_spec`
-    /// inert. That covers .NET (no constructor yet) and [`Self::python`].
-    /// [`Self::nodejs`], [`Self::odbc`] and [`Self::jdbc`] set their own flavors.
+    /// inert. That covers [`Self::python`]. [`Self::dotnet`], [`Self::nodejs`],
+    /// [`Self::odbc`] and [`Self::jdbc`] set their own flavors.
     fn default() -> Self {
         Self {
             configuration_flavor: Wrapper::Python,
@@ -188,6 +188,14 @@ impl WrapperPresets {
             put_compress_level_default: 6,
             validate_session_token: false,
             use_proxy_env_default: true,
+            ..Self::default()
+        }
+    }
+
+    /// Presets for the .NET wrapper.
+    pub fn dotnet() -> Self {
+        Self {
+            configuration_flavor: Wrapper::DotNet,
             ..Self::default()
         }
     }
@@ -714,6 +722,14 @@ mod tests {
         assert_eq!(
             WrapperPresets::nodejs().configuration_flavor,
             Wrapper::NodeJs
+        );
+    }
+
+    #[test]
+    fn dotnet_resolves_options_as_dotnet() {
+        assert_eq!(
+            WrapperPresets::dotnet().configuration_flavor,
+            Wrapper::DotNet
         );
     }
 

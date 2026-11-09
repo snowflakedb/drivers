@@ -7,12 +7,13 @@ use std::sync::OnceLock;
 
 static LOG_DISPATCH: OnceLock<tracing::dispatcher::Dispatch> = OnceLock::new();
 
-/// Configuration returned to the wrapper from [`sf_core_init`].
+/// Configuration returned to the wrapper from [`sf_core_init_python`] and
+/// [`sf_core_init_dotnet`].
 ///
 /// Wrappers use this to seed their own state without calling back into core.
 #[repr(C)]
 pub struct SfCoreInitResult {
-    /// 0 = success, non-zero = failure.
+    /// 0 = success, 1 = logging initialization failed.
     pub status: u32,
     /// 1 if troubleshooting mode is active at init time, 0 otherwise.
     pub troubleshooting_enabled: u32,
@@ -28,12 +29,27 @@ fn cstr_or_empty<'a>(ptr: *const c_char) -> &'a str {
 
 /// Initialise the core state: logging, tokio runtime, and transport.
 ///
-/// Called by the Python connector at import time, before any API call.
+/// Applies [`WrapperPresets::python`].
+///
 /// Returns an [`SfCoreInitResult`] with the status and initial configuration.
 #[unsafe(no_mangle)]
-pub extern "C" fn sf_core_init(callback: logging::CLogCallback) -> SfCoreInitResult {
-    let wrapper_presets = WrapperPresets::python();
+pub extern "C" fn sf_core_init_python(callback: logging::CLogCallback) -> SfCoreInitResult {
+    init_with_presets(callback, WrapperPresets::python())
+}
 
+/// Initialise core the same way as [`sf_core_init_python`], using [`WrapperPresets::dotnet`].
+///
+/// This is the .NET wrapper's entry point. Wrapper identity stays in core;
+/// the caller does not pass a discriminant.
+#[unsafe(no_mangle)]
+pub extern "C" fn sf_core_init_dotnet(callback: logging::CLogCallback) -> SfCoreInitResult {
+    init_with_presets(callback, WrapperPresets::dotnet())
+}
+
+fn init_with_presets(
+    callback: logging::CLogCallback,
+    wrapper_presets: WrapperPresets,
+) -> SfCoreInitResult {
     let layer = logging::CallbackLayer::from_c(callback);
     let sessions = SessionRegistry::default();
 

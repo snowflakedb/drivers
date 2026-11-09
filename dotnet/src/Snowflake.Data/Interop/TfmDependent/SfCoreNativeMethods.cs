@@ -22,8 +22,8 @@ internal unsafe partial class SfCoreNativeMethods : ISfCoreInterop
 
     public void CallFreeBuffer(byte* buffer, UIntPtr responseLen) => sf_core_free_buffer(buffer, responseLen);
 
-    [LibraryImport(LibName, EntryPoint = "sf_core_init")]
-    private static partial SfCoreInitResult sf_core_init(delegate* unmanaged[Cdecl]<uint, byte*, byte*, uint, byte*, byte*, uint> callback);
+    [LibraryImport(LibName, EntryPoint = "sf_core_init_dotnet")]
+    private static partial SfCoreInitResult sf_core_init_dotnet(delegate* unmanaged[Cdecl]<uint, byte*, byte*, uint, byte*, byte*, uint> callback);
 
     [LibraryImport(LibName, EntryPoint = "sf_core_api_call_proto", StringMarshalling = StringMarshalling.Utf8)]
     private static partial nuint sf_core_api_call_proto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen);
@@ -40,10 +40,10 @@ internal unsafe partial class SfCoreNativeMethods : ISfCoreInterop
     private static void Initialize(ISfCoreLibraryLoader loader)
     {
         loader.Register();
-        var result = sf_core_init(&LogCallback);
+        var result = sf_core_init_dotnet(&LogCallback);
 
         if (result.Status != 0)
-            throw new InvalidOperationException($"sf_core_init failed with code {result}. Check stderr for details.");
+            throw new InvalidOperationException($"sf_core_init_dotnet failed with code {result.Status}. Check stderr for details.");
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

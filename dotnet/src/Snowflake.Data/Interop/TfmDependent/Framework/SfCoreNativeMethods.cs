@@ -24,9 +24,9 @@ internal unsafe class SfCoreNativeMethods : ISfCoreInterop
 
     public static ISfCoreInterop Instance { get; } = new SfCoreNativeMethods();
 
-    [DllImport(LibName, EntryPoint = "sf_core_init", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(LibName, EntryPoint = "sf_core_init_dotnet", CallingConvention = CallingConvention.Cdecl)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories | DllImportSearchPath.AssemblyDirectory)]
-    public static extern SfCoreInitResult sf_core_init(IntPtr callback);
+    public static extern SfCoreInitResult sf_core_init_dotnet(IntPtr callback);
 
     [DllImport(LibName, EntryPoint = "sf_core_api_call_proto", CallingConvention = CallingConvention.Cdecl)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories | DllImportSearchPath.AssemblyDirectory)]
@@ -58,10 +58,10 @@ internal unsafe class SfCoreNativeMethods : ISfCoreInterop
 
     public void Initialize()
     {
-        var result = sf_core_init(LogCallbackPtr);
+        var result = sf_core_init_dotnet(LogCallbackPtr);
 
         if (result.Status != 0)
-            throw new InvalidOperationException($"sf_core_init failed with code {result}. Check stderr for details.");
+            throw new InvalidOperationException($"sf_core_init_dotnet failed with code {result.Status}. Check stderr for details.");
     }
 
     public nuint CallProto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen) => sf_core_api_call_proto(api, method, request, requestLen, response, responseLen);

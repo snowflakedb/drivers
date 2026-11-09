@@ -35,7 +35,7 @@ struct CApiState {
 static STATE: OnceLock<CApiState> = OnceLock::new();
 
 /// Eagerly build the entire core state (tokio runtime + transport) using the
-/// given `LogManager`.  Called once from `sf_core_init`.
+/// given `LogManager`. Called once from `sf_core_init_python` or `sf_core_init_dotnet`.
 pub(crate) fn init_core_state(lm: LogManager, wrapper_presets: WrapperPresets) {
     STATE.get_or_init(|| {
         let dispatch = lm.dispatch().clone();
@@ -99,7 +99,9 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
 ) -> usize {
     // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
-        let state = STATE.get().expect("sf_core_init was not called");
+        let state = STATE
+            .get()
+            .expect("sf_core_init_python or sf_core_init_dotnet was not called");
         let _guard = tracing::dispatcher::set_default(&state.dispatch);
         let api = CStr::from_ptr(api).to_string_lossy().to_string();
         let method = CStr::from_ptr(method).to_string_lossy().to_string();
@@ -185,7 +187,9 @@ pub unsafe extern "C" fn sf_core_api_call_proto_async(
     };
     let user_data = UserData(user_data);
 
-    let state = STATE.get().expect("sf_core_init was not called");
+    let state = STATE
+        .get()
+        .expect("sf_core_init_python or sf_core_init_dotnet was not called");
     // The client passes this handle to `sf_core_api_cancel`. Registering it on
     // the transport before we return means it can never be cancelled before it
     // exists. The token stays in the registry — cancel by handle.

@@ -8,7 +8,7 @@ use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 
-/// C ABI log callback used by the legacy FFI (`sf_core_init`) and its tests.
+/// C ABI log callback used by the legacy FFI (`sf_core_init_python`) and its tests.
 pub type CLogCallback = unsafe extern "C" fn(
     level: u32,
     message: *const c_char,
