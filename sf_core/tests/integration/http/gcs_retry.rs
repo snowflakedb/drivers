@@ -2158,11 +2158,16 @@ fn capturing_subscriber() -> (
     tracing::subscriber::DefaultGuard,
     &'static std::sync::Mutex<Vec<u8>>,
 ) {
+    static FORCES_MULTI_DISPATCHER_INTEREST: std::sync::OnceLock<tracing::Dispatch> =
+        std::sync::OnceLock::new();
+    FORCES_MULTI_DISPATCHER_INTEREST
+        .get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default()));
     let buf: &'static std::sync::Mutex<Vec<u8>> =
         Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
     let mock_writer = tracing_test::internal::MockWriter::new(buf);
     let dispatch = tracing_test::internal::get_subscriber(mock_writer, "trace");
     let guard = tracing::dispatcher::set_default(&dispatch);
+    tracing::callsite::rebuild_interest_cache();
     (guard, buf)
 }
 
