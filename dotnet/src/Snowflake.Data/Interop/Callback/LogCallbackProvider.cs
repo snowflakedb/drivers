@@ -1,39 +1,45 @@
+using Microsoft.Extensions.Logging;
+using Snowflake.Data.Interop;
+using Snowflake.Data.Logging;
+
 namespace Snowflake.Data.Interop.Callback;
 
-///  TODO this is PoC, will be subject to refactoring in the future
 internal static unsafe class LogCallbackProvider
 {
-    private static readonly PtrToStringUtf8Delegate PtrToStringUtf8;
-    static LogCallbackProvider()
-    {
-        PtrToStringUtf8 = SfCoreInteropProvider.StringHelper.PtrToStringUtf8;
-    }
-
+    private static readonly PtrToStringUtf8Delegate PtrToStringUtf8 = SfCoreInteropProvider.StringHelper.PtrToStringUtf8;
     private delegate string PtrToStringUtf8Delegate(byte* ptr);
 
     internal static uint LogCallback(uint level, byte* message, byte* filename, uint line, byte* function, byte* loggerName)
     {
         try
         {
+            var logLevel = ToLogLevel(level);
+            var logger = CustomLoggerHolder.Current;
+            if (!logger.IsEnabled(logLevel))
+                return 0;
+
             var msg = PtrToStringUtf8(message);
-            var file = PtrToStringUtf8(filename);
-            Console.Error.WriteLine($"[sf_core:{LevelName(level)}] {file}:{line} {msg}");
+            var loggerNameStr = PtrToStringUtf8(loggerName);
+            var text = loggerNameStr.Length == 0
+                ? $"[{PtrToStringUtf8(filename)}:{line}] {msg}"
+                : msg;
+
+            logger.Log(logLevel, default, text, null, static (s, _) => s);
         }
         catch
         {
-            // Never let exceptions propagate back across FFI boundary
+            // Exceptions must not unwind across the native callback.
         }
 
         return 0;
     }
 
-    private static string LevelName(uint level) => level switch
+    private static LogLevel ToLogLevel(uint level) => level switch
     {
-        0 => "ERROR",
-        1 => "WARN",
-        2 => "INFO",
-        3 => "DEBUG",
-        4 => "TRACE",
-        _ => "UNKNOWN",
+        0 => LogLevel.Error,
+        1 => LogLevel.Warning,
+        2 => LogLevel.Information,
+        3 => LogLevel.Debug,
+        _ => LogLevel.Trace,
     };
 }

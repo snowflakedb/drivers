@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Callback;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
+using Snowflake.Data.Tests.Logging;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
 using Snowflake.Data.Tests.Utilities;
 using AssemblyMetadata = Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata.AssemblyMetadata;
@@ -60,7 +61,11 @@ public sealed class UnsafeCodeTest
                 $"Interop/Callback/{nameof(LogCallbackProvider)}.cs",
                 $"Interop/Callback/{nameof(SfCoreAsyncCallData)}.cs"
             ],
-            [AssembliesMetadata.TestsAssembly] = ["ArchitectureInvariantTests/Dummies/ClassesDummy.cs"],
+            [AssembliesMetadata.TestsAssembly] =
+            [
+                "ArchitectureInvariantTests/Dummies/ClassesDummy.cs",
+                $"Logging/{nameof(CustomLoggerTest)}.cs",
+            ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
         TestUnsafeSyntaxNodes<TypeDeclarationSyntax>(assemblyMetadata, exception ?? []);
