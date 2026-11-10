@@ -760,10 +760,11 @@ fn build_oauth_client(
     BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     OAuthError,
 > {
-    // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for missing
-    // client_id/client_secret (drift B.1). We treat "user did not override
-    // the token URL" as the
-    // Snowflake-as-IdP signal, matching JDBC's `OAuthUtil` heuristic.
+    // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` only when `client_id`
+    // is unset (drift B.1). An empty secret is not itself a reason to
+    // substitute, so a public client keeps its id. "User did not override
+    // the token URL" is the Snowflake-as-IdP signal, matching JDBC's
+    // `OAuthUtil` heuristic.
     let snowflake_idp = config.token_url.is_none();
     let (client_id, client_secret) = resolve_client_credentials(config, snowflake_idp);
     // Use `RedirectUrl::new` (not `from_url`) so the verbatim user-supplied
@@ -773,34 +774,42 @@ fn build_oauth_client(
     // breaking IdPs that do RFC 6749 §3.1.2.3 exact-string `redirect_uri`
     // matching (e.g. Okta).
     let redirect_url = RedirectUrl::new(redirect_uri_advertised).context(RedirectUriParseSnafu)?;
-    Ok(BasicClient::new(ClientId::new(client_id))
-        .set_client_secret(ClientSecret::new(client_secret))
+    let client = BasicClient::new(ClientId::new(client_id));
+    let client = if client_secret.is_empty() {
+        client
+    } else {
+        client.set_client_secret(ClientSecret::new(client_secret))
+    };
+    Ok(client
         .set_auth_uri(AuthUrl::from_url(authorize_url))
         .set_token_uri(TokenUrl::from_url(token_url))
         .set_redirect_uri(redirect_url))
 }
 
-/// Drift B.1: if no client credentials were provided and Snowflake is
-/// the IdP, substitute the literal `LOCAL_APPLICATION` for both
-/// `client_id` and `client_secret` (matches JDBC, ODBC, Python, .NET,
-/// Go and Node). External IdPs require explicit
-/// credentials, so the empty values fall through unchanged.
+/// Drift B.1: when Snowflake is the IdP and `client_id` is unset,
+/// substitute the literal `LOCAL_APPLICATION` for `client_id`. An empty
+/// `client_secret` is substituted only in that case, so a caller-supplied
+/// public client id is kept and does not pick up the default secret.
+/// External IdPs require explicit credentials, so empty values fall
+/// through unchanged.
 fn resolve_client_credentials(
     config: &OAuthAuthorizationCodeConfig,
     snowflake_idp: bool,
 ) -> (String, String) {
     const LOCAL_APPLICATION: &str = "LOCAL_APPLICATION";
-    let client_id = if snowflake_idp && config.client_id.is_empty() {
-        LOCAL_APPLICATION.to_string()
-    } else {
-        config.client_id.clone()
-    };
-    let client_secret = if snowflake_idp && config.client_secret.reveal().is_empty() {
-        LOCAL_APPLICATION.to_string()
-    } else {
-        config.client_secret.reveal().to_string()
-    };
-    (client_id, client_secret)
+    let client_id_unset = config.client_id.is_empty();
+    if snowflake_idp && client_id_unset {
+        let client_secret = if config.client_secret.reveal().is_empty() {
+            LOCAL_APPLICATION.to_string()
+        } else {
+            config.client_secret.reveal().to_string()
+        };
+        return (LOCAL_APPLICATION.to_string(), client_secret);
+    }
+    (
+        config.client_id.clone(),
+        config.client_secret.reveal().to_string(),
+    )
 }
 
 /// Translate the `oauth2` crate's `RequestTokenError` into an
@@ -1235,6 +1244,130 @@ mod tests {
             "external IdPs require explicit credentials - empty values must not be substituted"
         );
         assert_eq!(client_secret, "");
+    }
+
+    fn snowflake_idp_config() -> OAuthAuthorizationCodeConfig {
+        let mut config = cfg_with_token_url(server_url());
+        config.token_url = None;
+        config.token_url_raw = None;
+        config
+    }
+
+    fn basic_authorization(client_id: &str, client_secret: &str) -> String {
+        use base64::engine::general_purpose::STANDARD;
+        let raw = format!("{client_id}:{client_secret}");
+        format!("Basic {}", STANDARD.encode(raw.as_bytes()))
+    }
+
+    async fn capture_code_exchange(config: &OAuthAuthorizationCodeConfig) -> wiremock::Request {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT","token_type":"Bearer","expires_in":3600}"#,
+                "application/json",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let oauth_client = build_oauth_client(
+            config,
+            token_url.clone(),
+            token_url.clone(),
+            "http://127.0.0.1:8730/".to_string(),
+        )
+        .expect("client builds");
+        let http = make_http_client(&reqwest::Client::new(), None, &token_url);
+        oauth_client
+            .exchange_code(AuthorizationCode::new("auth-code".to_string()))
+            .request_async(&http)
+            .await
+            .expect("token endpoint accepts the request");
+        let received = server.received_requests().await.expect("recorded requests");
+        assert_eq!(received.len(), 1);
+        received.into_iter().next().expect("one request")
+    }
+
+    #[tokio::test]
+    async fn snowflake_idp_client_credentials_keeps_public_client_id() {
+        let mut config = snowflake_idp_config();
+        config.client_id = "custom-public-client-id".to_string();
+        config.client_secret = SensitiveString::from(String::new());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, true);
+        assert_eq!(client_id, "custom-public-client-id");
+        assert_eq!(client_secret, "");
+        assert_ne!(client_id, "LOCAL_APPLICATION");
+        assert_ne!(client_secret, "LOCAL_APPLICATION");
+
+        let request = capture_code_exchange(&config).await;
+        assert!(request.headers.get(http::header::AUTHORIZATION).is_none());
+        let body = String::from_utf8(request.body).expect("utf8 body");
+        assert!(body.contains("client_id=custom-public-client-id"));
+        assert!(!body.contains("client_secret"));
+        assert!(!body.contains("LOCAL_APPLICATION"));
+    }
+
+    #[tokio::test]
+    async fn snowflake_idp_client_credentials_defaults_when_client_id_unset() {
+        let mut config = snowflake_idp_config();
+        config.client_id = String::new();
+        config.client_secret = SensitiveString::from(String::new());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, true);
+        assert_eq!(client_id, "LOCAL_APPLICATION");
+        assert_eq!(client_secret, "LOCAL_APPLICATION");
+
+        let request = capture_code_exchange(&config).await;
+        let authorization = request
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .expect("default Snowflake client sends HTTP Basic")
+            .to_str()
+            .expect("authorization is ascii");
+        assert_eq!(
+            authorization,
+            basic_authorization("LOCAL_APPLICATION", "LOCAL_APPLICATION")
+        );
+    }
+
+    #[tokio::test]
+    async fn snowflake_idp_client_credentials_sends_provided_secret() {
+        let mut config = snowflake_idp_config();
+        config.client_id = "custom-public-client-id".to_string();
+        config.client_secret = SensitiveString::from("provided-secret".to_string());
+
+        let (client_id, client_secret) = resolve_client_credentials(&config, true);
+        assert_eq!(client_id, "custom-public-client-id");
+        assert_eq!(client_secret, "provided-secret");
+
+        let request = capture_code_exchange(&config).await;
+        let authorization = request
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .expect("a provided client secret is sent as HTTP Basic")
+            .to_str()
+            .expect("authorization is ascii");
+        assert_eq!(
+            authorization,
+            basic_authorization("custom-public-client-id", "provided-secret")
+        );
+        let body = String::from_utf8(request.body).expect("utf8 body");
+        assert!(!body.contains("provided-secret"));
+        assert!(!body.contains("LOCAL_APPLICATION"));
+    }
+
+    #[tokio::test]
+    async fn external_idp_public_client_sends_client_id_in_body() {
+        let mut config = cfg_with_token_url(server_url());
+        config.client_id = "custom-public-client-id".to_string();
+        config.client_secret = SensitiveString::from(String::new());
+
+        let request = capture_code_exchange(&config).await;
+        assert!(request.headers.get(http::header::AUTHORIZATION).is_none());
+        let body = String::from_utf8(request.body).expect("utf8 body");
+        assert!(body.contains("client_id=custom-public-client-id"));
     }
 
     #[tokio::test]

@@ -1,0 +1,23 @@
+name: "Authorization-code login accepts a client id without a client secret"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Authorization-code login with oauthClientId set and oauthClientSecret null
+  fails while the token provider is created. The error contains "passing
+  oauthClientSecret is required for OAUTH_AUTHORIZATION_CODE authentication."
+  LOCAL_APPLICATION is used only when both the client id and the client secret
+  are null and Snowflake is the identity provider.
+new_driver_behavior: |
+  A set oauthClientId with an empty oauthClientSecret is accepted. The token
+  request includes that client id in the form body and omits the Authorization
+  header and client_secret. When the client id is unset and Snowflake is the
+  identity provider, both values are still LOCAL_APPLICATION and the token
+  request uses HTTP Basic. A provided secret is still sent as HTTP Basic with
+  the supplied client id.
+description: |
+  A public client on a Snowflake custom OAuth integration supplies a client id
+  and no client secret, and authorization-code login with PKCE has to use that
+  id (snowflakedb/snowflake-connector-python#3011).

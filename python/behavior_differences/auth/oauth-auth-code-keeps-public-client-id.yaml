@@ -1,0 +1,24 @@
+name: "Authorization-code login keeps a supplied public client id"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  Authorization-code login with Snowflake as the identity provider, a nonempty
+  client id, and no client secret rewrites both values to LOCAL_APPLICATION.
+  The token request sends HTTP Basic for LOCAL_APPLICATION:LOCAL_APPLICATION.
+  An empty-string secret is not rewritten. Connect fails with ProgrammingError
+  "Oauth code flow requirement 'client_secret' is empty". A nonempty secret is
+  kept and sent as HTTP Basic.
+new_driver_behavior: |
+  A nonempty client id with an empty secret is kept. The token request includes
+  that client id in the form body and omits the Authorization header and
+  client_secret. When the client id is unset and Snowflake is the identity
+  provider, both values are still LOCAL_APPLICATION and the token request uses
+  HTTP Basic. A provided secret is still sent as HTTP Basic with the supplied
+  client id.
+description: |
+  A public client on a Snowflake custom OAuth integration supplies a client id
+  and no client secret, and authorization-code login with PKCE has to use that
+  id (snowflakedb/snowflake-connector-python#3011).

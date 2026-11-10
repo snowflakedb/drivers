@@ -1,0 +1,24 @@
+name: "A custom authorization-code client id is not paired with the default LOCAL_APPLICATION secret"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  A new connection starts with OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET both set
+  to LOCAL_APPLICATION. Setting only OAUTH_CLIENT_ID leaves the secret as
+  LOCAL_APPLICATION. Connect succeeds, and the token request sends HTTP Basic
+  for that client id and the LOCAL_APPLICATION secret. Setting
+  OAUTH_CLIENT_SECRET to an empty string fails connect with "The client_secret
+  parameter is required for OAuth authentication."
+new_driver_behavior: |
+  Setting OAUTH_CLIENT_ID and leaving OAUTH_CLIENT_SECRET empty keeps the client
+  id. The token request includes that client id in the form body and omits the
+  Authorization header and client_secret. When the client id is unset and
+  Snowflake is the identity provider, both values are still LOCAL_APPLICATION
+  and the token request uses HTTP Basic. A provided secret is still sent as
+  HTTP Basic with the supplied client id.
+description: |
+  A public client on a Snowflake custom OAuth integration supplies a client id
+  and no client secret, and authorization-code login with PKCE has to use that
+  id (snowflakedb/snowflake-connector-python#3011).

@@ -3929,3 +3929,32 @@ behavior_differences:
         challenge that is sent.
       - validateDefaultParameters: the new driver always warns about unknown options
         (BD#102), so the option has nothing left to turn on.
+
+  177:
+    name: 'Authorization-code login with a client id and no secret sends a public-client token request'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      For authorization-code login against a Snowflake host, a set oauthClientId
+      and an omitted oauthClientSecret are kept: the client id is not rewritten
+      to LOCAL_APPLICATION, and the secret stays unset. LOCAL_APPLICATION is
+      filled in only when both are empty. The token request then fails with a
+      TypeError, "clientSecret" must be a string. An empty-string secret fails
+      with a TypeError, "clientSecret" must not be empty. Against a
+      non-Snowflake identity provider, createConnection fails first with code
+      404060 and "Invalid oauth client secret. The specified value must not be
+      an empty string".
+    new_driver_behavior: |
+      A set oauthClientId with an empty oauthClientSecret is kept. The token
+      request includes that client id in the form body and omits the
+      Authorization header and client_secret. When the client id is unset and
+      Snowflake is the identity provider, both values are still
+      LOCAL_APPLICATION and the token request uses HTTP Basic. A provided
+      secret is still sent as HTTP Basic with the supplied client id.
+    description: |
+      A public client on a Snowflake custom OAuth integration supplies a client
+      id and no client secret, and authorization-code login with PKCE has to
+      use that id (snowflakedb/snowflake-connector-python#3011).

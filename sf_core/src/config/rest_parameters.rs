@@ -926,10 +926,9 @@ impl OAuthAuthorizationCodeConfig {
         // the principal is encoded in the IdP-issued token and resolved by
         // GS at login time. Empty string ⇒ omit `LOGIN_NAME` on the wire.
         let username = non_empty_string(settings, "user").unwrap_or_default();
-        // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
-        // missing client_id/client_secret at flow time
-        // (analysis_feature_oauth.md §1, §9). Keep them empty here
-        // and let the AC provider apply that default.
+        // For Snowflake-as-IdP, the default secret is applied only when the
+        // client id is unset. Otherwise the secret stays empty, and
+        // `build_oauth_client` omits HTTP Basic.
         let client_id = non_empty_string(settings, "oauth_client_id").unwrap_or_default();
         let client_secret = non_empty_string(settings, "oauth_client_secret").unwrap_or_default();
         let authorization_url = parse_optional_url(settings, "oauth_authorization_url")?;
@@ -1136,9 +1135,9 @@ impl LoginMethod {
                 token: read_required_bearer_token(settings)?,
             }),
             "OAUTH_AUTHORIZATION_CODE" => Ok(Self::OAuthAuthorizationCode(Box::new(
-                // Snowflake-as-IdP substitutes `LOCAL_APPLICATION` for
-                // missing client_id/client_secret at flow time. Keep them
-                // empty here and let the AC provider apply that default.
+                // For Snowflake-as-IdP, the default secret is applied only
+                // when the client id is unset. Otherwise the secret stays
+                // empty, and `build_oauth_client` omits HTTP Basic.
                 OAuthAuthorizationCodeConfig::from_settings(settings)?,
             ))),
             "OAUTH_CLIENT_CREDENTIALS" => Ok(Self::OAuthClientCredentials(
