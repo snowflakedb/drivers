@@ -2299,6 +2299,7 @@ pub struct StatementInner {
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
+    pub(crate) fetch_cache: crate::api::data::FetchConverterCache,
     /// Number of `?` parameter markers reported by the server after
     /// `SQLPrepare`. Used to ignore spurious APD bindings on non-existent
     /// parameters (e.g. DAE detection for "SELECT 1" with a bound param).
@@ -2517,6 +2518,7 @@ impl Statement {
                 max_length: 0,
                 rowset_size: 1,
                 used_extended_fetch: false,
+                fetch_cache: Default::default(),
                 prepared_param_count: None,
                 prepared_array_bind_supported: None,
                 prepared_sql: None,

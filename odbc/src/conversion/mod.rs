@@ -928,11 +928,33 @@ impl SnowflakeFieldType {
 /// The returned `Box<dyn ColumnConverter>` is `'static` and meant to be built
 /// once per column per `RecordBatch` (the `SnowflakeFieldType::from_field`
 /// work here parses field metadata and is too expensive to do per cell).
+#[cfg(any(test, feature = "bench"))]
 pub fn make_converter(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<Box<dyn ColumnConverter>, ConversionError> {
+    converter_for(
+        field,
+        SnowflakeFieldType::from_field(field, numeric_settings)?,
+    )
+}
+
+/// Builds the fetch converter for a column and resolves its `SQL_C_DEFAULT`
+/// target type, parsing the field metadata once for both.
+pub(crate) fn make_fetch_converter(
+    field: &Field,
+    target_type: CDataType,
+    numeric_settings: &NumericSettings,
+) -> Result<(Box<dyn ColumnConverter>, CDataType), ConversionError> {
     let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
+    let target_type = resolve_parsed_c_type(target_type, field, &field_type, numeric_settings)?;
+    Ok((converter_for(field, field_type)?, target_type))
+}
+
+fn converter_for(
+    field: &Field,
+    field_type: SnowflakeFieldType,
+) -> Result<Box<dyn ColumnConverter>, ConversionError> {
     let nullable = field.is_nullable();
     match field_type {
         SnowflakeFieldType::Varchar(snowflake_type) => {
@@ -1183,38 +1205,54 @@ pub fn sql_type_from_field(
     field: &Field,
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    if let Some(code) = sql_type_override(field, numeric_settings) {
+        return Ok(code);
+    }
+    let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
+    Ok(parsed_sql_type(field, &field_type, numeric_settings))
+}
+
+fn sql_type_override(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Option<odbc_sys::SqlDataType> {
     if numeric_settings.use_custom_sql_data_types
         && is_geography_or_geometry(field)
         && !is_binary_column(field)
     {
-        return Ok(SQL_SF_OBJECT);
+        return Some(SQL_SF_OBJECT);
     }
     // Catalog result schemas may override the concise type (e.g. WVARCHAR for
     // string catalog cols, SMALLINT/INTEGER for numeric catalog cols) while
     // keeping a physical Arrow type that is convenient to build. Query-result
     // TEXT fields never set this metadata and keep resolving to SQL_VARCHAR.
-    if let Some(code) = concise_sql_type_override(field) {
-        return Ok(code);
-    }
-    let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
+    concise_sql_type_override(field)
+}
+
+fn parsed_sql_type(
+    field: &Field,
+    field_type: &SnowflakeFieldType,
+    numeric_settings: &NumericSettings,
+) -> odbc_sys::SqlDataType {
     if numeric_settings.use_custom_sql_data_types
         && let Some(vendor) = field_type.vendor_sql_data_type()
     {
-        return Ok(vendor);
+        return vendor;
     }
     if numeric_settings.use_custom_sql_data_types
-        && let SnowflakeFieldType::Varchar(varchar) = &field_type
+        && let SnowflakeFieldType::Varchar(varchar) = field_type
         && !is_file_external_type(field)
         && let Some(type_name) = varchar.semi_structured_type_name
         && let Some(code) = semi_structured_vendor_sql_type(type_name)
     {
-        return Ok(code);
+        return code;
     }
-    Ok(field_type.sql_type())
+    field_type.sql_type()
 }
 
 /// Replaces `SQL_C_DEFAULT` with the C type it resolves to for the column;
 /// any other target type is returned unchanged.
+#[cfg(test)]
 pub(crate) fn resolve_fetch_c_type(
     target_type: CDataType,
     field: &Field,
@@ -1223,10 +1261,24 @@ pub(crate) fn resolve_fetch_c_type(
     if target_type != CDataType::Default {
         return Ok(target_type);
     }
-    let sql_type = match SnowflakeFieldType::from_field(field, numeric_settings)? {
+    let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
+    resolve_parsed_c_type(target_type, field, &field_type, numeric_settings)
+}
+
+fn resolve_parsed_c_type(
+    target_type: CDataType,
+    field: &Field,
+    field_type: &SnowflakeFieldType,
+    numeric_settings: &NumericSettings,
+) -> Result<CDataType, ConversionError> {
+    if target_type != CDataType::Default {
+        return Ok(target_type);
+    }
+    let sql_type = match field_type {
         // ODBC_TREAT_DECIMAL_AS_INT defaults to SQL_C_SBIGINT even though SQLDescribeCol reports DECIMAL.
         SnowflakeFieldType::Number(number) => number.sql_type.default_c_type_key(),
-        _ => sql_type_from_field(field, numeric_settings)?,
+        _ => sql_type_override(field, numeric_settings)
+            .unwrap_or_else(|| parsed_sql_type(field, field_type, numeric_settings)),
     };
     Ok(default_c_type::resolve_default_c_type(
         target_type,

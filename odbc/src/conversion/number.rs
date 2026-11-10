@@ -34,7 +34,7 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 /// `tz_offset_format`) live here too because every `make_converter` call
 /// already accepts an `&NumericSettings` and threading another parameter
 /// through every type-specific converter would be much more invasive.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericSettings {
     /// When true, FIXED columns with scale=0 are reported as SQL_BIGINT
     /// instead of SQL_DECIMAL. Default C type becomes SQL_C_SBIGINT.

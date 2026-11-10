@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::api::CDataType;
 use crate::api::ConnectionState;
@@ -15,38 +16,26 @@ use crate::api::{
 };
 use crate::conversion::warning::Warnings;
 use crate::conversion::{
-    Binding, BindingStrides, ColumnConverter, ConversionError, NumericSettings, make_converter,
-    resolve_fetch_c_type,
+    Binding, BindingStrides, ColumnConverter, ConversionError, NumericSettings,
+    make_fetch_converter,
 };
-use arrow::array::{Array, RecordBatchReader};
-use arrow::datatypes::Field;
+use arrow::array::RecordBatchReader;
+use arrow::datatypes::{Field, SchemaRef};
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
 
-/// One-shot conversion used on the `SQLGetData` path; caching is not
-/// worthwhile because only a single cell is read per call.
-fn read_arrow_value(
-    binding: &Binding,
-    array_ref: &dyn Array,
-    field: &Field,
-    batch_idx: usize,
-    numeric_settings: &NumericSettings,
-    get_data_offset: &mut Option<usize>,
-) -> Result<Warnings, ConversionError> {
-    let converter = make_converter(field, numeric_settings)?;
-    let warnings = converter.convert_arrow_value(array_ref, batch_idx, binding, get_data_offset)?;
-    Ok(warnings)
-}
-
-fn resolve_fetch_binding(
+/// Builds the converter for `field` and returns `binding` with `SQL_C_DEFAULT`
+/// resolved. Rejects a `SQL_C_DEFAULT` interval binding whose buffer is
+/// shorter than the struct.
+fn fetch_converter(
     binding: &Binding,
     field: &Field,
     numeric_settings: &NumericSettings,
-) -> OdbcResult<Binding> {
-    // Converters and the row stride both need a concrete C type.
-    let target_type = resolve_fetch_c_type(binding.target_type, field, numeric_settings)
-        .context(ConversionSnafu)?;
+) -> OdbcResult<(Box<dyn ColumnConverter>, Binding)> {
+    let (converter, target_type) =
+        make_fetch_converter(field, binding.target_type, numeric_settings)
+            .context(ConversionSnafu)?;
     let struct_len = std::mem::size_of::<sql::IntervalStruct>() as sql::Len;
     if binding.target_type == CDataType::Default
         && target_type.is_interval()
@@ -57,20 +46,24 @@ fn resolve_fetch_binding(
         }
         .fail();
     }
-    Ok(Binding {
-        target_type,
-        ..*binding
-    })
+    Ok((
+        converter,
+        Binding {
+            target_type,
+            ..*binding
+        },
+    ))
 }
 
-/// Per-batch cache of converters and `Binding` snapshots for the bound
-/// columns. Built once per `RecordBatch` and reused across the column-major
-/// segments processed by `ColumnConverter::convert_arrow_range`, keeping both the
-/// ARD `HashMap` and the per-cell Arrow downcast out of the inner loop.
-struct FetchConverterCache {
-    /// `Arc::as_ptr(record_batch.column(0))` when the batch has columns,
-    /// otherwise the schema `Arc` pointer. Null means "no cache yet".
-    batch_identity: *const (),
+/// Per-statement cache of converters and `Binding` snapshots for the bound
+/// columns. Kept on the statement across `SQLFetch` calls and batches, and
+/// rebuilt only when the result schema, the ARD bindings or the numeric
+/// settings change.
+#[derive(Default)]
+pub(crate) struct FetchConverterCache {
+    schema: Option<SchemaRef>,
+    bindings: HashMap<u16, Binding>,
+    numeric_settings: Option<NumericSettings>,
     entries: Vec<CachedColumn>,
 }
 
@@ -84,15 +77,8 @@ struct CachedColumn {
 }
 
 impl FetchConverterCache {
-    fn new() -> Self {
-        Self {
-            batch_identity: std::ptr::null(),
-            entries: Vec::new(),
-        }
-    }
-
-    /// Rebuild the cache if the current `RecordBatch` differs from the
-    /// cached one (or if the cache is empty).
+    /// Rebuild the cache if the current `RecordBatch` schema, the active ARD
+    /// bindings or the numeric settings differ from the cached ones.
     fn refresh_if_needed(
         &mut self,
         inner: &StatementInner,
@@ -101,37 +87,32 @@ impl FetchConverterCache {
         let StatementState::Fetching { record_batch, .. } = inner.state.as_ref() else {
             return Ok(());
         };
+        let schema = record_batch.schema_ref();
 
-        let identity: *const () = if record_batch.num_columns() > 0 {
-            std::sync::Arc::as_ptr(record_batch.column(0)) as *const ()
-        } else {
-            std::sync::Arc::as_ptr(&record_batch.schema()) as *const ()
-        };
-
-        // `batch_identity` is null after `new()` and only set to a real
-        // `Arc::as_ptr` after a successful rebuild, so it doubles as the
-        // "have we ever populated this cache?" sentinel — no extra check
-        // needed for the empty-bindings case.
-        if identity == self.batch_identity {
+        let up_to_date = self
+            .schema
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(cached, schema) || cached == schema)
+            && self.numeric_settings.as_ref() == Some(numeric_settings)
+            && inner.with_active_ard(|ard| ard.bindings == self.bindings);
+        if up_to_date {
             return Ok(());
         }
 
-        let schema = record_batch.schema();
+        self.schema = None;
         self.entries.clear();
-
         // Resolve active ARD bindings (they may be from an explicit descriptor).
-        let bindings_snapshot: HashMap<u16, Binding> =
-            inner.with_active_ard(|ard| ard.bindings.clone());
-        self.entries.reserve(bindings_snapshot.len());
+        self.bindings = inner.with_active_ard(|ard| ard.bindings.clone());
+        self.entries.reserve(self.bindings.len());
 
-        for (&column_number, binding) in &bindings_snapshot {
+        for (&column_number, binding) in &self.bindings {
             // ODBC reserves column 0 for bookmarks; `checked_sub` also guards
             // debug-mode panics if `SQLBindCol` accepted a 0.
             let arrow_col = (column_number as usize)
                 .checked_sub(1)
                 .filter(|&idx| idx < schema.fields().len());
             let Some(arrow_col) = arrow_col else {
-                // Log once per batch rebuild, not once per fetched row.
+                // Log once per cache rebuild, not once per fetched row.
                 tracing::error!(
                     "fetch converter cache: column_number {} is out of range \
                      (schema has {} columns)",
@@ -146,15 +127,16 @@ impl FetchConverterCache {
                 continue;
             };
             let field = schema.field(arrow_col);
-            let converter = make_converter(field, numeric_settings).context(ConversionSnafu)?;
+            let (converter, binding) = fetch_converter(binding, field, numeric_settings)?;
             self.entries.push(CachedColumn {
                 arrow_col,
-                binding: resolve_fetch_binding(binding, field, numeric_settings)?,
+                binding,
                 converter: Some(converter),
             });
         }
 
-        self.batch_identity = identity;
+        self.schema = Some(Arc::clone(schema));
+        self.numeric_settings = Some(*numeric_settings);
         Ok(())
     }
 }
@@ -331,6 +313,25 @@ fn fetch_impl(
     rowset_override: Option<sql::ULen>,
 ) -> OdbcResult<()> {
     let mut inner = guard.inner.lock();
+    let mut cache = std::mem::take(&mut inner.fetch_cache);
+    let result = fetch_rows(
+        &mut inner,
+        &mut cache,
+        numeric_settings,
+        warnings,
+        rowset_override,
+    );
+    inner.fetch_cache = cache;
+    result
+}
+
+fn fetch_rows(
+    inner: &mut StatementInner,
+    cache: &mut FetchConverterCache,
+    numeric_settings: &NumericSettings,
+    warnings: &mut Warnings,
+    rowset_override: Option<sql::ULen>,
+) -> OdbcResult<()> {
     inner.get_data_state = None;
 
     let (ard_array_size, bind_type, bind_offset_ptr) =
@@ -356,12 +357,11 @@ fn fetch_impl(
         return NoMoreDataSnafu.fail();
     }
 
-    let mut cache = FetchConverterCache::new();
     // Fast path: a single-row fetch propagates the conversion error to
     // the caller instead of just marking the row as Error.
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut inner.state)?;
-        cache.refresh_if_needed(&inner, numeric_settings)?;
+        cache.refresh_if_needed(inner, numeric_settings)?;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
@@ -375,7 +375,7 @@ fn fetch_impl(
                 .fail();
             }
         };
-        let outputs = execute_bindings_for_segment(&inner, &cache, arrow_start, 1, 0, 0, 0);
+        let outputs = execute_bindings_for_segment(inner, cache, arrow_start, 1, 0, 0, 0);
         match outputs.into_iter().next().unwrap_or_else(|| Ok(Vec::new())) {
             Ok(row_warnings) => {
                 inner.rows_returned += 1;
@@ -431,7 +431,7 @@ fn fetch_impl(
             }
         }
 
-        if let Err(e) = cache.refresh_if_needed(&inner, numeric_settings) {
+        if let Err(e) = cache.refresh_if_needed(inner, numeric_settings) {
             if rows_fetched == 0 {
                 return Err(e);
             }
@@ -488,8 +488,8 @@ fn fetch_impl(
         };
 
         let outputs = execute_bindings_for_segment(
-            &inner,
-            &cache,
+            inner,
+            cache,
             arrow_start,
             segment_len,
             rows_fetched,
@@ -826,7 +826,7 @@ pub fn get_data(
                 ard.bindings.get(&col_or_param_num).copied()
             });
             let settings = guard.conn()?.connection.lock().numeric_settings;
-            let binding = resolve_fetch_binding(
+            let (converter, binding) = fetch_converter(
                 &Binding {
                     target_type,
                     target_value_ptr,
@@ -842,15 +842,9 @@ pub fn get_data(
                 field,
                 &settings,
             )?;
-            let conversion_warnings = read_arrow_value(
-                &binding,
-                array_ref,
-                field,
-                *batch_idx,
-                &settings,
-                &mut offset,
-            )
-            .context(ConversionSnafu)?;
+            let conversion_warnings = converter
+                .convert_arrow_value(array_ref, *batch_idx, &binding, &mut offset)
+                .context(ConversionSnafu)?;
             warnings.extend(conversion_warnings);
 
             // The write method sets offset to Some(n) on truncation, None when complete.
@@ -903,6 +897,8 @@ pub fn get_data(
 mod tests {
     use super::*;
     use crate::api::{Double, Real, SBigInt, UBigInt};
+    use crate::conversion::resolve_fetch_c_type;
+    use arrow::array::Array;
     use arrow::array::{
         Decimal128Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, StringArray,
     };
@@ -916,12 +912,13 @@ mod tests {
         field: &Field,
         batch_idx: usize,
     ) -> Result<Warnings, ConversionError> {
-        let settings = NumericSettings::default();
+        let (converter, target_type) =
+            make_fetch_converter(field, binding.target_type, &NumericSettings::default())?;
         let binding = Binding {
-            target_type: resolve_fetch_c_type(binding.target_type, field, &settings)?,
+            target_type,
             ..*binding
         };
-        read_arrow_value(&binding, array_ref, field, batch_idx, &settings, &mut None)
+        converter.convert_arrow_value(array_ref, batch_idx, &binding, &mut None)
     }
 
     fn resolved_sql_c_default(field: &Field) -> CDataType {
@@ -1894,7 +1891,7 @@ mod tests {
         }
     }
 
-    mod resolve_fetch_binding_buffer_length {
+    mod fetch_converter_buffer_length {
         use super::*;
 
         const STRUCT_LEN: sql::Len = std::mem::size_of::<sql::IntervalStruct>() as sql::Len;
@@ -1915,7 +1912,7 @@ mod tests {
                 buffer_length,
                 ..Default::default()
             };
-            resolve_fetch_binding(&binding, field, &NumericSettings::default())
+            fetch_converter(&binding, field, &NumericSettings::default()).map(|(_, b)| b)
         }
 
         #[test]
@@ -1960,5 +1957,91 @@ mod tests {
             let resolved = resolve(CDataType::Default, 4, &field_with_text_meta()).unwrap();
             assert_eq!(resolved.target_type, CDataType::Char);
         }
+    }
+
+    #[test]
+    fn fetch_converter_cache_rebuilds_only_when_bindings_or_schema_change() {
+        use crate::api::handle_registry::HandleId;
+        use crate::api::{ExecutionOrigin, Statement};
+        use arrow::record_batch::{RecordBatch, RecordBatchIterator};
+        use sf_core::protobuf::generated::database_driver_v1::StatementHandle;
+
+        let field = field_with_fixed_meta(DataType::Int64, 0, 18);
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![field]));
+        let fetching = |schema: SchemaRef| {
+            let batch =
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(vec![1]))])
+                    .unwrap();
+            StatementState::Fetching {
+                reader: Box::new(RecordBatchIterator::new(vec![], schema)),
+                record_batch: batch,
+                batch_idx: 0,
+                rows_affected: None,
+                origin: ExecutionOrigin::Direct,
+            }
+            .into()
+        };
+        let stmt = Statement::new(HandleId::default(), StatementHandle::default(), false);
+        let mut inner = stmt.inner.lock();
+        inner.state = fetching(schema.clone());
+        let bind = |inner: &mut StatementInner, buffer_length| {
+            inner.with_active_ard_mut(|ard| {
+                ard.bindings.insert(
+                    1,
+                    Binding {
+                        target_type: CDataType::Default,
+                        buffer_length,
+                        ..Default::default()
+                    },
+                )
+            });
+        };
+        let converter_ptr = |cache: &FetchConverterCache| {
+            cache.entries[0].converter.as_deref().unwrap() as *const dyn ColumnConverter
+                as *const ()
+        };
+        let settings = NumericSettings::default();
+        let mut cache = FetchConverterCache::default();
+
+        bind(&mut inner, 8);
+        cache.refresh_if_needed(&inner, &settings).unwrap();
+        assert_eq!(
+            cache.entries[0].binding.target_type,
+            resolved_sql_c_default(schema.field(0))
+        );
+        let first = converter_ptr(&cache);
+
+        inner.state = fetching(Arc::new((*schema).clone()));
+        cache.refresh_if_needed(&inner, &settings).unwrap();
+        assert_eq!(converter_ptr(&cache), first);
+
+        bind(&mut inner, 16);
+        cache.refresh_if_needed(&inner, &settings).unwrap();
+        assert_eq!(cache.entries[0].binding.buffer_length, 16);
+
+        let decimal_settings = NumericSettings {
+            treat_decimal_as_int: !settings.treat_decimal_as_int,
+            ..settings
+        };
+        cache.refresh_if_needed(&inner, &decimal_settings).unwrap();
+        assert_eq!(cache.numeric_settings, Some(decimal_settings));
+
+        let text_schema = Arc::new(arrow::datatypes::Schema::new(vec![field_with_text_meta()]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&text_schema),
+            vec![Arc::new(arrow::array::StringArray::from(vec!["a"]))],
+        )
+        .unwrap();
+        inner.state = StatementState::Fetching {
+            reader: Box::new(RecordBatchIterator::new(vec![], Arc::clone(&text_schema))),
+            record_batch: batch,
+            batch_idx: 0,
+            rows_affected: None,
+            origin: ExecutionOrigin::Direct,
+        }
+        .into();
+        cache.refresh_if_needed(&inner, &decimal_settings).unwrap();
+        assert!(Arc::ptr_eq(cache.schema.as_ref().unwrap(), &text_schema));
+        assert_eq!(cache.entries[0].binding.target_type, CDataType::Char);
     }
 }

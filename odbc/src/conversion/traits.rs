@@ -188,7 +188,7 @@ fn advance_ptr<T>(
     Some(unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T })
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,
