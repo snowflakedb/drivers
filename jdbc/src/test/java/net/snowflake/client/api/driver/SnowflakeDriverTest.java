@@ -58,8 +58,8 @@ public class SnowflakeDriverTest {
     if (DriverCompatibility.isOldDriver()) {
       assertTrue(driver.getMajorVersion() > 0, "Legacy driver major version should be gt 0");
     } else {
-      assertEquals("5.0.0-RC1", SnowflakeDriver.getDriverVersion());
-      assertEquals(5, driver.getMajorVersion(), "Driver major version should be 5 (5.0.0-RC1)");
+      assertEquals("5.0.0-RC2", SnowflakeDriver.getDriverVersion());
+      assertEquals(5, driver.getMajorVersion(), "Driver major version should be 5 (5.0.0-RC2)");
     }
     assertTrue(driver.getMinorVersion() >= 0, "Minor version should be gte 0");
     assertFalse(driver.jdbcCompliant(), "Driver should not claim JDBC compliance");

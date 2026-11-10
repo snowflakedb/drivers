@@ -54,8 +54,8 @@ public class SnowflakeDriver implements Driver {
   // validateClientVersion rejects CLIENT_APP_ID="JDBC" below its floors (min 2.3.1, crypto floors
   // up to 2.5.0) as CLIENT_TOO_OLD.
   // sf_core sends this value as CLIENT_APP_VERSION and derives
-  // CLIENT_ENVIRONMENT.RELEASE_TYPE from the suffix ("RC1").
-  public static final String CLIENT_APP_VERSION = "5.0.0.RC1";
+  // CLIENT_ENVIRONMENT.RELEASE_TYPE from the suffix ("RC2").
+  public static final String CLIENT_APP_VERSION = "5.0.0.RC2";
 
   public static final int MAJOR_VERSION = parseVersionComponent(DRIVER_VERSION, 0);
   public static final int MINOR_VERSION = parseVersionComponent(DRIVER_VERSION, 1);
