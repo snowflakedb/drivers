@@ -1,4 +1,5 @@
 using Snowflake.Data.Tests.Compatibility;
+using Xunit.Sdk;
 
 namespace Snowflake.Data.Tests;
 
@@ -38,14 +39,31 @@ public sealed class TestDriverTest : IDisposable
     public void OnOldDriver_DoesNotSkipWhenTheFactoryReportsNew()
     {
         ITFixture.OverriddenFactory = new StubFactory(TestDriver.Kind.New);
-        Skip.OnOldDriver("old driver skip");
+        Skip.OnOldDriver("testdriver-unit", "old driver skip");
     }
 
     [SnowflakeFact]
     public void OnNewDriver_DoesNotSkipWhenTheFactoryReportsOld()
     {
         ITFixture.OverriddenFactory = new StubFactory(TestDriver.Kind.Old);
-        Skip.OnNewDriver("new driver skip");
+        Skip.OnNewDriver("testdriver-unit", "new driver skip");
+    }
+
+    [SnowflakeFact]
+    public void OnOldDriver_SkipsWithTheDifferenceIdWhenTheFactoryReportsOld()
+    {
+        ITFixture.OverriddenFactory = new StubFactory(TestDriver.Kind.Old);
+        string? skipMessage = null;
+        try
+        {
+            Skip.OnOldDriver("testdriver-unit", "old driver skip");
+        }
+        catch (SkipException ex)
+        {
+            skipMessage = ex.Message;
+        }
+
+        Assert.EndsWith("testdriver-unit: old driver skip", skipMessage);
     }
 
     [SnowflakeFact]

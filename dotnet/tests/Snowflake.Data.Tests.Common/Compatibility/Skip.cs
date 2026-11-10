@@ -20,9 +20,9 @@ public static class Skip
             throw SkipException.ForSkip(rationale);
     }
 
-    public static void OnOldDriver(string rationale) =>
-        When(TestDriver.Current == TestDriver.Kind.Old, rationale);
+    public static void OnOldDriver(string differenceId, string rationale) =>
+        When(TestDriver.Current == TestDriver.Kind.Old, $"{differenceId}: {rationale}");
 
-    public static void OnNewDriver(string rationale) =>
-        When(TestDriver.Current == TestDriver.Kind.New, rationale);
+    public static void OnNewDriver(string differenceId, string rationale) =>
+        When(TestDriver.Current == TestDriver.Kind.New, $"{differenceId}: {rationale}");
 }

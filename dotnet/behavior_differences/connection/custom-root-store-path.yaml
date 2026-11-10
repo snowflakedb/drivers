@@ -1,0 +1,17 @@
+name: "A connection can trust a custom root certificate store"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Server certificates are validated against the operating system trust store. No
+  connection-string option adds or replaces a trusted root, so a server whose chain ends in
+  a private CA fails the TLS handshake.
+new_driver_behavior: |
+  `custom_root_store_path` names a PEM file that replaces the native trust store for the
+  connection. A server whose chain ends in a CA from that file passes certificate validation.
+rationale: |
+  The .NET wrapper hands TLS to sf_core, whose connection parameters include a custom root
+  store for every wrapper. The old driver validates through the .NET platform HTTP stack and
+  exposes no connection-string option for a trusted root.

@@ -1,0 +1,19 @@
+name: "A minimum TLS version above the maximum fails with a different message"
+status: unknown
+type: unknown
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `MINTLS=tls13;MAXTLS=tls12` fails with
+  `Connection string is invalid: Parameter MINTLS value cannot be higher than MAXTLS value.`
+new_driver_behavior: |
+  `min_tls_version=tls13;max_tls_version=tls12` fails with
+  `max_tls_version (TLS 1.2) must be at least min_tls_version (TLS 1.3)`.
+description: |
+  Both drivers reject the configuration before connecting. Code that matches on the old
+  sentence has to change.
+rationale: |
+  sf_core validates the TLS window when it builds the connection configuration and reports
+  its own message. The .NET wrapper passes that message through without mapping it to the
+  old driver's text.
