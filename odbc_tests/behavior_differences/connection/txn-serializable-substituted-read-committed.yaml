@@ -1,0 +1,16 @@
+name: "SQLSetConnectAttr SQL_TXN_SERIALIZABLE substitutes READ COMMITTED and returns 01S02"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLSetConnectAttr(SQL_ATTR_TXN_ISOLATION, SQL_TXN_SERIALIZABLE) returns SQL_SUCCESS.
+  SQLGetConnectAttr(SQL_ATTR_TXN_ISOLATION) then returns SQL_TXN_SERIALIZABLE.
+new_driver_behavior: |
+  SQLSetConnectAttr(SQL_ATTR_TXN_ISOLATION, SQL_TXN_SERIALIZABLE) returns
+  SQL_SUCCESS_WITH_INFO with SQLSTATE 01S02 ("Option value changed").
+  SQLGetConnectAttr(SQL_ATTR_TXN_ISOLATION) then returns SQL_TXN_READ_COMMITTED.
+description: |
+  Snowflake runs at READ COMMITTED. Setting any other isolation level is replaced
+  with that value, which the ODBC spec reports as 01S02 rather than silent success.

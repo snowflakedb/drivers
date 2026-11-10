@@ -41,11 +41,30 @@ TEST_CASE("should set and get SQL_ATTR_ACCESS_MODE", "[odbc-api][conn_attr][acce
 
 // ============================================================================
 // SQL_ATTR_TXN_ISOLATION (108)
-// Note: Both the Windows DM and unixODBC manage SQL_ATTR_TXN_ISOLATION
-// internally. The DM caches its own isolation level and may not call the
-// driver for GET or SET. These attributes are therefore not directly testable
-// through the Driver Manager. Snowflake's effective isolation level
-// (READ_COMMITTED) is validated at the SQLGetInfo level instead.
+// ============================================================================
+
+TEST_CASE("should substitute SQL_TXN_SERIALIZABLE with READ COMMITTED and 01S02",
+          "[odbc-api][conn_attr][txn_isolation][warning][connecting]") {
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When SQL_ATTR_TXN_ISOLATION is set to SQL_TXN_SERIALIZABLE
+  SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_TXN_ISOLATION,
+                                    reinterpret_cast<SQLPOINTER>(SQL_TXN_SERIALIZABLE), SQL_IS_UINTEGER);
+
+  // Then The old driver accepts it, and the new driver substitutes READ COMMITTED with 01S02
+  OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") { REQUIRE(ret == SQL_SUCCESS); }
+  NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+    REQUIRE_EXPECTED_WARNING(ret, "01S02", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
+  }
+
+  SQLULEN isolation = 99;
+  ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_TXN_ISOLATION, &isolation, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") { CHECK(isolation == SQL_TXN_SERIALIZABLE); }
+  NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") { CHECK(isolation == SQL_TXN_READ_COMMITTED); }
+}
+
 // ============================================================================
 // SQL_ATTR_CONNECTION_DEAD (1209) — read-only
 // ============================================================================

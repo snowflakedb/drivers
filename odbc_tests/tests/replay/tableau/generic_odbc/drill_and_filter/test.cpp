@@ -15,7 +15,6 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SNOW-4283109 SQLTables returns no catalogs without a current database.
   // SNOW-4283110 SQLPrimaryKeys and SQLForeignKeys SMALLINT display size is 136.
   // SNOW-4283111 SQLTables SQL_C_WCHAR fetch posts 01004 when the values fit.
-  // SNOW-4283112 SQL_TXN_SERIALIZABLE is replaced and returns 01S02.
   // SNOW-4283113 SQL_CONVERT_INTERVAL_DAY_TIME omits the wide-character bits.
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -668,7 +667,13 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc0, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)8, -5);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
+    }
+    NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0),
+                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S02"));
+    }
   }
 
   SQLHENV env3 = SQL_NULL_HENV;
@@ -1268,7 +1273,13 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc1, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)8, -5);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc1), OdbcMatchers::IsSuccess());
+    OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc1), OdbcMatchers::IsSuccess());
+    }
+    NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc1),
+                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S02"));
+    }
   }
 
   SQLHSTMT stmt0 = SQL_NULL_HSTMT;
@@ -2935,7 +2946,13 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc2, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)8, -5);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc2), OdbcMatchers::IsSuccess());
+    OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc2), OdbcMatchers::IsSuccess());
+    }
+    NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc2),
+                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S02"));
+    }
   }
 
   SQLHSTMT stmt10 = SQL_NULL_HSTMT;
@@ -3823,7 +3840,13 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc3, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)8, -5);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc3), OdbcMatchers::IsSuccess());
+    OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc3), OdbcMatchers::IsSuccess());
+    }
+    NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc3),
+                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S02"));
+    }
   }
 
   SQLHSTMT stmt12 = SQL_NULL_HSTMT;
@@ -13060,7 +13083,13 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SQLSetConnectAttr - SQL_ATTR_TXN_ISOLATION
   {
     SQLRETURN ret = SQLSetConnectAttr(dbc4, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)8, -5);
-    CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc4), OdbcMatchers::IsSuccess());
+    OLD_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc4), OdbcMatchers::IsSuccess());
+    }
+    NEW_DRIVER_ONLY("BD#txn-serializable-substituted-read-committed") {
+      CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc4),
+                 OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01S02"));
+    }
   }
 
   SQLHSTMT stmt37 = SQL_NULL_HSTMT;
