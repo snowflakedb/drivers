@@ -15,6 +15,7 @@
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Interop" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
 
   <Import Project="targets/Snowflake.Data.Framework.targets" Condition="'$(TargetFramework)' == 'net472' OR '$(TargetFramework)' == 'net481'" />

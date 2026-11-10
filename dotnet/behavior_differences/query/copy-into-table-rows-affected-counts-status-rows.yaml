@@ -1,0 +1,18 @@
+name: "ExecuteNonQuery and RecordsAffected for COPY INTO <table> count status rows instead of loaded rows"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  For COPY INTO <table>, `ExecuteNonQuery` returns the sum of the `rows_loaded` column of
+  the COPY status result, which is the number of rows loaded across all files.
+  `SnowflakeDbDataReader.RecordsAffected` reports the same sum.
+new_driver_behavior: |
+  For COPY INTO <table>, `ExecuteNonQuery` returns the number of rows in the COPY status
+  result, which has one row per file, and `SnowflakeDbDataReader.RecordsAffected` reports
+  the same number. A copy that loads 1000 rows from one file returns 1.
+rationale: |
+  The new driver takes both values from the rows-affected count sf_core reports for the
+  result. sf_core sums `rows_loaded` only for the JDBC and Node.js wrappers. For the default
+  wrapper behavior, which .NET uses, it reports the row count of the status result.

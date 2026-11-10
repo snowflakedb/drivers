@@ -1,0 +1,18 @@
+name: "ExecuteNonQuery and RecordsAffected for COPY INTO <location> count status rows instead of unloaded rows"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  For COPY INTO <location>, `ExecuteNonQuery` returns the `rows_unloaded` value from the
+  first row of the unload status result, which is the number of rows unloaded.
+  `SnowflakeDbDataReader.RecordsAffected` reports the same value.
+new_driver_behavior: |
+  For COPY INTO <location>, `ExecuteNonQuery` returns the number of rows in the unload
+  status result, and `SnowflakeDbDataReader.RecordsAffected` reports the same number. A
+  plain unload of 1000 rows returns 1.
+rationale: |
+  The new driver takes both values from the rows-affected count sf_core reports for the
+  result. sf_core classifies an unload as returning a result set. For the default wrapper
+  behavior, which .NET uses, it reports the row count of the status result.

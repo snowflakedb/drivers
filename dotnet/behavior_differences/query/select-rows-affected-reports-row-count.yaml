@@ -1,0 +1,17 @@
+name: "ExecuteNonQuery and RecordsAffected report the row count of a SELECT instead of -1"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  For a SELECT, `ExecuteNonQuery` returns -1 and `SnowflakeDbDataReader.RecordsAffected`
+  is -1.
+new_driver_behavior: |
+  For a SELECT, `ExecuteNonQuery` returns the number of rows in the result, and
+  `SnowflakeDbDataReader.RecordsAffected` reports the same number. A count above
+  `int.MaxValue` gives -1.
+rationale: |
+  The new driver takes both values from the rows-affected count sf_core reports for the
+  result. For a statement that returns rows, sf_core reports the total row count of the
+  result instead of leaving the count unset.

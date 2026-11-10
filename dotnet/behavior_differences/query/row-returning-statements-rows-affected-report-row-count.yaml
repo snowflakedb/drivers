@@ -1,0 +1,17 @@
+name: "ExecuteNonQuery and RecordsAffected report the row count of SHOW, DESCRIBE, EXPLAIN, CALL, LIST, PUT, GET and REMOVE instead of 0"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  For SHOW, DESCRIBE, EXPLAIN, CALL, LIST, PUT, GET and REMOVE, `ExecuteNonQuery` returns 0
+  and `SnowflakeDbDataReader.RecordsAffected` is 0.
+new_driver_behavior: |
+  For these statements, `ExecuteNonQuery` returns the number of rows in the result, and
+  `SnowflakeDbDataReader.RecordsAffected` reports the same number. For PUT and GET, the
+  result has one row per transferred file.
+rationale: |
+  The new driver takes both values from the rows-affected count sf_core reports for the
+  result. sf_core classifies these statements as returning a result set and reports its
+  total row count for them.

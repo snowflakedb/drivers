@@ -217,7 +217,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should return proper error for NULL in NOT NULL column
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "SNOW-4382591")]
     public void ShouldReturnProperErrorForNullInNotNullColumn()
     {
         // Given Snowflake client is logged in

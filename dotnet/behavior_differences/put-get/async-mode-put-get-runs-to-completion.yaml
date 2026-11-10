@@ -1,0 +1,16 @@
+name: "ExecuteInAsyncMode runs PUT and GET to completion instead of rejecting them"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `ExecuteInAsyncMode` and `ExecuteAsyncInAsyncMode` throw `NotImplementedException` for a
+  PUT or GET command, before anything is sent to the server.
+new_driver_behavior: |
+  `ExecuteInAsyncMode` and `ExecuteAsyncInAsyncMode` accept a PUT or GET command and run the
+  file transfer as a blocking execution. They return the query id after the transfer has
+  finished, not as soon as the server accepts the command.
+rationale: |
+  sf_core ignores the async execution setting for PUT and GET and runs them as blocking
+  executions. The .NET wrapper does not reject PUT and GET before handing them to sf_core.

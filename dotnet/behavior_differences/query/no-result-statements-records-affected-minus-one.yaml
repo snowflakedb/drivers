@@ -1,0 +1,17 @@
+name: "RecordsAffected is -1 instead of 0 for DDL, transaction and session statements"
+status: unknown
+type: bug
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  For a statement that neither returns rows nor changes rows, such as CREATE, DROP, ALTER,
+  USE, BEGIN, COMMIT or SET, `SnowflakeDbDataReader.RecordsAffected` is 0. `ExecuteNonQuery`
+  returns 0.
+new_driver_behavior: |
+  For these statements, `SnowflakeDbDataReader.RecordsAffected` is -1. `ExecuteNonQuery`
+  still returns 0.
+rationale: |
+  sf_core reports no rows-affected count for statements it classifies as having no result.
+  The new driver maps an absent count to -1 for `RecordsAffected` and to 0 for
+  `ExecuteNonQuery`.

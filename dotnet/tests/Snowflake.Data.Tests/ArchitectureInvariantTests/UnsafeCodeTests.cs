@@ -37,7 +37,9 @@ public sealed class UnsafeCodeTest
     {
         Dictionary<AssemblyMetadata, string[]> exceptionsMap = new()
         {
-            [AssembliesMetadata.RootAssembly] = [$"Interop/{nameof(SfCoreTransport)}.cs"]
+            [AssembliesMetadata.RootAssembly] = [$"Interop/{nameof(SfCoreTransport)}.cs"],
+            [AssembliesMetadata.TestsCommonsAssembly] = [$"Utilities/{nameof(ArrowStreamExporter)}.cs"],
+            [AssembliesMetadata.TestsAssembly] = [$"Core/{nameof(Core.UnitArrowStreamsTest)}.cs"],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
         TestUnsafeSyntaxNodes<MethodDeclarationSyntax>(assemblyMetadata, exception ?? []);

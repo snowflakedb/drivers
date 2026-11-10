@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Security;
 using Microsoft.Extensions.Logging;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Session;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
@@ -67,7 +68,10 @@ public sealed class PublicApiTest
 
     private static readonly HashSet<string> SnowflakeDbCommandPublicApi =
     [
+
         "C:()",
+        $"C:({nameof(SnowflakeDbConnection)})",
+        $"C:({nameof(SnowflakeDbConnection)}, {nameof(String)})",
         $"P:get_{nameof(DbCommand.CommandText)}()",
         $"P:set_{nameof(DbCommand.CommandText)}({nameof(String)})",
         $"P:get_{nameof(DbCommand.CommandTimeout)}()",
@@ -78,7 +82,19 @@ public sealed class PublicApiTest
         $"P:set_{nameof(DbCommand.DesignTimeVisible)}({nameof(Boolean)})",
         $"P:get_{nameof(DbCommand.UpdatedRowSource)}()",
         $"P:set_{nameof(DbCommand.UpdatedRowSource)}({nameof(UpdateRowSource)})",
-        $"M:{nameof(DbCommand.Cancel)}()",
+        $"P:get_{nameof(SnowflakeDbCommand.QueryTag)}()",
+        $"P:set_{nameof(SnowflakeDbCommand.QueryTag)}(String)",
+        $"M:{nameof(SnowflakeDbCommand.ExecuteNonQueryAsync)}(CancellationToken)",
+        $"M:{nameof(SnowflakeDbCommand.ExecuteScalarAsync)}(CancellationToken)",
+        $"M:{nameof(SnowflakeDbCommand.ExecuteDbDataReaderWithMemoryStream)}(MemoryStream)",
+        $"M:{nameof(SnowflakeDbCommand.ExecuteInAsyncMode)}()",
+        $"M:{nameof(SnowflakeDbCommand.ExecuteAsyncInAsyncMode)}(CancellationToken)",
+        $"M:{nameof(SnowflakeDbCommand.GetQueryStatus)}(String)",
+        $"M:{nameof(SnowflakeDbCommand.GetQueryStatusAsync)}(String, CancellationToken)",
+        $"M:{nameof(SnowflakeDbCommand.GetResultsFromQueryId)}(String)",
+        $"M:{nameof(SnowflakeDbCommand.GetResultsFromQueryIdAsync)}(String, CancellationToken)",
+        $"M:{nameof(SnowflakeDbCommand.GetQueryId)}()",
+        $"M:{nameof(SnowflakeDbCommand.Cancel)}()",
         $"M:{nameof(DbCommand.ExecuteNonQuery)}()",
         $"M:{nameof(DbCommand.ExecuteScalar)}()",
         $"M:{nameof(DbCommand.Prepare)}()",
@@ -320,9 +336,10 @@ public sealed class PublicApiTest
             .Where(t => t.IsPublic || t.IsNestedPublic)
             .Select(type => type.FullName ?? type.Name)
             .Where(fullName => !allowedPublicTypes.Contains(fullName))
+            .Where(fullName => !fullName.Contains("+<G>"))
             .ToList();
 
-        violations.ShouldBeEmpty("Public types not in allow-list found");
+        violations.ShouldBeEmpty(m => $"Public types not in allow-list found {m}");
     }
 
     [SnowflakeTheory]
@@ -338,7 +355,7 @@ public sealed class PublicApiTest
             .Where(signature => !allowedMembers.Contains(signature))
             .Select(signature => $"{type.Name}.{signature}").ToList();
 
-        violations.ShouldBeEmpty($"New public members found on {type.Name} not in allow-list");
+        violations.ShouldBeEmpty(m => $"New public members found on {type.Name} not in allow-list: {m}");
     }
 
     [SnowflakeFact]
@@ -364,7 +381,7 @@ public sealed class PublicApiTest
             }
         }
 
-        violations.ShouldBeEmpty("Proto types must not appear in public API signatures");
+        violations.ShouldBeEmpty(m => $"Proto types must not appear in public API signatures: {m}");
     }
 
     private static string? FormatMemberSignature(MemberInfo member)

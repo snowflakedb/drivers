@@ -1,0 +1,22 @@
+name: "Cancel() or a sync CommandTimeout that finds no running query stops the operation with QUERY_CANCELLED"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `Cancel()`, and `CommandTimeout` on the synchronous execute methods, only send a cancel
+  request to the server for the running query. When that query is running, the execution
+  fails with the server's error 604 (SQLSTATE 57014). When the query has not reached the
+  server yet, or has already finished, nothing is cancelled: the execution continues and
+  returns its result.
+new_driver_behavior: |
+  `Cancel()` and the synchronous `CommandTimeout` stop the operation in the driver as well.
+  When the abort reaches a running query, the execution fails with the server's error 604
+  (SQLSTATE 57014), as before. Otherwise, the execution fails with a `SnowflakeDbException`
+  carrying QUERY_CANCELLED, instead of completing.
+rationale: |
+  The new driver cancels the operation through sf_core, which stops the local work and
+  aborts the server query as a side effect. sf_core reports whether that abort reached a
+  running query. The driver gives 604 only when it did, and QUERY_CANCELLED for every
+  other cancelled operation.

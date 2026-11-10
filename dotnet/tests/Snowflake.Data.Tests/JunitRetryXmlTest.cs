@@ -3,6 +3,7 @@ using Snowflake.Data.Tests.Discovery;
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "Unit")]
+[Trait("Category", "TestingInfrastructure")]
 public sealed class JunitRetryXmlTest
 {
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]

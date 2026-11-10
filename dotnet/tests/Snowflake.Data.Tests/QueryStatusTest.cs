@@ -1,3 +1,5 @@
+using Snowflake.Data.Core;
+
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "Unit")]

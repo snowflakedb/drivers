@@ -2,7 +2,7 @@ using System.Data.Common;
 
 namespace Snowflake.Data;
 
-// TODO this is just a PoC to get foot into the door. It will be completely overhauled. It's just to settle contract.
+// TODO SNOW-4382591 this is just a PoC to get foot into the door. It will be completely overhauled. It's just to settle contract.
 public sealed class SnowflakeDbException : DbException
 {
     public SnowflakeDbException(

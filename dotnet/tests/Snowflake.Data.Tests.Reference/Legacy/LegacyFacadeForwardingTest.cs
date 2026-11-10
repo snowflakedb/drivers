@@ -7,6 +7,7 @@ namespace Snowflake.Data.Tests.Reference.Legacy;
 
 [Trait("Category", "Architecture")]
 [Trait("Category", "Unit")]
+[Trait("Category", "TestingInfrastructure")]
 [Trait("Driver", "Reference")]
 public sealed class LegacyFacadeForwardingTest
 {

@@ -1,0 +1,23 @@
+name: "Stopping GetResultsFromQueryId leaves the query on the server, and Cancel() or CommandTimeout can stop it"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  `GetResultsFromQueryId` waits for the query to finish with no limit, and nothing stops the
+  wait: `Cancel()` and `CommandTimeout` have no effect on it. `GetResultsFromQueryIdAsync`
+  stops waiting only when its cancellation token is cancelled. It then sends
+  `SYSTEM$CANCEL_QUERY` for the query id, so the query is aborted on the server.
+new_driver_behavior: |
+  `Cancel()` and a positive `CommandTimeout` stop `GetResultsFromQueryId` and
+  `GetResultsFromQueryIdAsync`, and so does the cancellation token of
+  `GetResultsFromQueryIdAsync`. The timeout covers the wait for the query and the fetch of
+  its results together. Stopping the call in any of these ways sends no abort: a running
+  query keeps running, and the results of a finished query stay on the server.
+rationale: |
+  The call registers as the command's in-flight operation, the same as an execution, so
+  `Cancel()` and `CommandTimeout` stop it the same way they stop an execution, across the
+  whole call. The call reads a query that was submitted earlier, possibly by another command
+  or session, so stopping it ends only the client-side work. The new driver sends no abort
+  request for that query.

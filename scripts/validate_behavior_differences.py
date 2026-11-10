@@ -596,15 +596,46 @@ def check_migration(
     return errors
 
 
-def _read_bd_dir(dir_path: Path) -> list[tuple[str, str]]:
+def _candidate_files(dir_path: Path) -> list[str]:
+    """Files under ``dir_path`` that a commit could contain, relative to it with forward slashes.
+
+    That is tracked files plus untracked files git does not ignore, so ignored files
+    such as ``.DS_Store`` are never validated. Outside a git work tree every file
+    under ``dir_path`` is a candidate.
+    """
+    try:
+        raw = subprocess.check_output(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."],
+            cwd=dir_path,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return sorted(
+            path.relative_to(dir_path).as_posix() for path in dir_path.rglob("*") if path.is_file()
+        )
+    listed = {name for name in raw.decode("utf-8").split("\0") if name}
+    # --cached also lists files deleted from the work tree but not yet staged as deleted.
+    return sorted(rel for rel in listed if (dir_path / rel).is_file())
+
+
+def _read_bd_dir(dir_path: Path, dir_label: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Read the candidate files under ``dir_path``.
+
+    Returns ``(path relative to dir_path, text)`` pairs and an error for each file
+    that is not valid UTF-8.
+    """
     if not dir_path.is_dir():
-        return []
+        return [], []
     files: list[tuple[str, str]] = []
-    for path in sorted(dir_path.rglob("*")):
-        if path.is_file():
-            rel = path.relative_to(dir_path).as_posix()
-            files.append((rel, path.read_text(encoding="utf-8")))
-    return files
+    errors: list[str] = []
+    for rel in _candidate_files(dir_path):
+        try:
+            text = (dir_path / rel).read_bytes().decode("utf-8")
+        except UnicodeDecodeError as exc:
+            errors.append(f"{dir_label}/{rel}: not valid UTF-8 ({exc.reason} at byte {exc.start})")
+            continue
+        files.append((rel, text))
+    return files, errors
 
 
 def validate() -> list[str]:
@@ -634,9 +665,11 @@ def validate() -> list[str]:
             errors.append(f"{gated_file_dir}: expected a directory of <area>/<slug>.yaml files")
             continue
 
+        bd_files, read_errors = _read_bd_dir(dir_path, gated_file_dir)
+        errors.extend(read_errors)
         file_check = check_bd_files(
             gated_file_dir,
-            _read_bd_dir(dir_path),
+            bd_files,
             require_status_rationale=git_relpath in STATUS_RATIONALE_REQUIRED,
             require_rationale=git_relpath in RATIONALE_REQUIRED,
         )

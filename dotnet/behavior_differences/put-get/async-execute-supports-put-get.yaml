@@ -1,0 +1,15 @@
+name: "ExecuteNonQueryAsync, ExecuteReaderAsync and ExecuteScalarAsync run PUT and GET instead of rejecting them"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The async execute methods throw `NotImplementedException` for a PUT or GET command, with
+  the message "Get and Put are not supported in async calls. Use Execute() instead of
+  ExecuteAsync()."
+new_driver_behavior: |
+  The async execute methods run PUT and GET the same way as the synchronous methods.
+rationale: |
+  File transfers run in sf_core, and the .NET wrapper sends PUT and GET through the same
+  sf_core execute call for its synchronous and asynchronous methods.

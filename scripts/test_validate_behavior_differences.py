@@ -10,6 +10,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -356,6 +357,81 @@ class ValidateBehaviorDifferencesTests(unittest.TestCase):
             self.assertEqual(ids, expected)
             self.assertTrue(all(bd_id > 0 for bd_id in ids))
         self.assertIsNone(self.mod._committed_ids(PYTHON_BD, "not-a-rev"))
+
+
+class ReadBdDirTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.mod = _load()
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Path(tmp.name)
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        (self.repo / ".gitignore").write_text(".DS_Store\n", encoding="utf-8")
+        self.bd_dir = self.repo / DOTNET_DIR
+        (self.bd_dir / "query").mkdir(parents=True)
+
+    def _write(self, rel: str, content: bytes) -> None:
+        path = self.bd_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    def _track(self, rel: str) -> None:
+        subprocess.run(["git", "add", "--", f"{DOTNET_DIR}/{rel}"], cwd=self.repo, check=True)
+
+    def test_ignored_non_utf8_file_is_skipped(self) -> None:
+        self._write("query/tracked-entry.yaml", _entry_body().encode("utf-8"))
+        self._track("query/tracked-entry.yaml")
+        self._write(".DS_Store", b"\x00\x00\x00\x01Bud1\x80\xff")
+        self._write("query/.DS_Store", b"\x80\xff")
+
+        files, errors = self.mod._read_bd_dir(self.bd_dir, DOTNET_DIR)
+
+        self.assertEqual(errors, [])
+        self.assertEqual([rel for rel, _ in files], ["query/tracked-entry.yaml"])
+
+    def test_untracked_unignored_file_is_read(self) -> None:
+        self._write("query/new-entry.yaml", _entry_body().encode("utf-8"))
+
+        files, errors = self.mod._read_bd_dir(self.bd_dir, DOTNET_DIR)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(files, [("query/new-entry.yaml", _entry_body())])
+
+    def test_tracked_non_utf8_file_is_an_error_not_a_crash(self) -> None:
+        self._write("query/latin1-entry.yaml", 'name: "caf\xe9"\n'.encode("latin-1"))
+        self._track("query/latin1-entry.yaml")
+
+        files, errors = self.mod._read_bd_dir(self.bd_dir, DOTNET_DIR)
+
+        self.assertEqual(files, [])
+        self.assertEqual(
+            errors,
+            [f"{DOTNET_DIR}/query/latin1-entry.yaml: not valid UTF-8 (invalid continuation byte at byte 10)"],
+        )
+
+    def test_file_deleted_from_work_tree_is_skipped(self) -> None:
+        self._write("query/deleted-entry.yaml", _entry_body().encode("utf-8"))
+        self._track("query/deleted-entry.yaml")
+        (self.bd_dir / "query" / "deleted-entry.yaml").unlink()
+
+        files, errors = self.mod._read_bd_dir(self.bd_dir, DOTNET_DIR)
+
+        self.assertEqual((files, errors), ([], []))
+
+    def test_outside_git_every_file_is_read(self) -> None:
+        self._write("query/entry.yaml", _entry_body().encode("utf-8"))
+        self._write(".DS_Store", b"\x80")
+
+        with unittest.mock.patch.object(
+            self.mod.subprocess, "check_output", side_effect=subprocess.CalledProcessError(128, "git")
+        ):
+            files, errors = self.mod._read_bd_dir(self.bd_dir, DOTNET_DIR)
+
+        self.assertEqual([rel for rel, _ in files], ["query/entry.yaml"])
+        self.assertEqual(errors, [f"{DOTNET_DIR}/.DS_Store: not valid UTF-8 (invalid start byte at byte 0)"])
 
 
 if __name__ == "__main__":

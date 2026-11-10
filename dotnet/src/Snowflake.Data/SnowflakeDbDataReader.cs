@@ -3,32 +3,40 @@ using System.Data.Common;
 using Apache.Arrow;
 using Apache.Arrow.C;
 using Apache.Arrow.Ipc;
+using Snowflake.Data.Core.Handles;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data;
 
-// TODO this implementation is just PoC and will undergo heavy refactoring.
+// TODO SNOW-4382582 this implementation is just PoC and will undergo heavy refactoring.
 public sealed class SnowflakeDbDataReader : DbDataReader
 {
-    private readonly IDatabaseDriverService _driver;
-    private readonly ResultSetHandle _resultSetHandle;
+    private readonly NativeResultSetHandle? _resultSet;
     private readonly ResultSetDescriptor _descriptor;
     private readonly IArrowArrayStream _arrowStream;
+    private readonly int _recordsAffected;
+    private readonly bool _schemaOnly;
 
     private RecordBatch? _currentBatch;
     private int _rowIndexInBatch = -1;
     private bool _closed;
     private bool _exhausted;
 
+    /// <summary>
+    /// Opens a reader over an sf_core Arrow stream and takes ownership of <paramref name="resultSet"/>,
+    /// which is released on close; a describe-only result has none, and reports no rows.
+    /// </summary>
     internal unsafe SnowflakeDbDataReader(
-        IDatabaseDriverService driver,
-        ResultSetHandle resultSetHandle,
+        NativeResultSetHandle? resultSet,
         ArrowArrayStreamPtr arrowStreamPtr,
-        ResultSetDescriptor descriptor)
+        ResultSetDescriptor descriptor,
+        int recordsAffected,
+        bool schemaOnly)
     {
-        _driver = driver;
-        _resultSetHandle = resultSetHandle;
+        _resultSet = resultSet;
         _descriptor = descriptor;
+        _recordsAffected = recordsAffected;
+        _schemaOnly = schemaOnly;
 
         // Import the native Arrow C Data Interface stream pointer.
         var ptrBytes = arrowStreamPtr.Value.ToByteArray();
@@ -39,9 +47,9 @@ public sealed class SnowflakeDbDataReader : DbDataReader
 
     public override int FieldCount => _descriptor.Columns.Count;
 
-    public override int RecordsAffected => _descriptor.HasRowsAffected ? (int)_descriptor.RowsAffected : -1;
+    public override int RecordsAffected => _recordsAffected;
 
-    public override bool HasRows => !_descriptor.HasRowsAffected || _descriptor.RowsAffected > 0;
+    public override bool HasRows => !_schemaOnly && (!_descriptor.HasRowsAffected || _descriptor.RowsAffected > 0);
 
     public override bool IsClosed => _closed;
 
@@ -256,17 +264,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader
             // Best-effort release of Arrow stream.
         }
 
-        try
-        {
-            _driver.ResultSetRelease(new ResultSetReleaseRequest
-            {
-                ResultSetHandle = _resultSetHandle,
-            });
-        }
-        catch
-        {
-            // Best-effort release; swallow exceptions during cleanup.
-        }
+        _resultSet?.Dispose();
     }
 
     // TODO: this implementation is just PoC and will undergo heavy refactoring.

@@ -1,5 +1,8 @@
 namespace Snowflake.Data;
 
+/// <summary>
+/// The status types of the query.
+/// </summary>
 public enum QueryStatus
 {
     NoData,
@@ -12,7 +15,8 @@ public enum QueryStatus
     FailedWithIncident,
     Disconnected,
     ResumingWarehouse,
+    // purposeful typo
     QueuedReparingWarehouse,
     Restarted,
-    Blocked
+    Blocked,
 }

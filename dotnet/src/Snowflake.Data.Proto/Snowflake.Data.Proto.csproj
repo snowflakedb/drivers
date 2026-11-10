@@ -12,8 +12,9 @@
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Interop" />
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>
-  <!-- The C# sources in this project are generated from the protobuf schema and are NOT committed
+  <!-- The C# sources in this project, except Compatibility/ and Errors/, are generated from the protobuf schema and are NOT committed
        to git (see the .NET section of the root .gitignore). Regenerate them with:
          dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
        CI runs this step before building; run it yourself after a fresh clone or a .proto change. -->
@@ -25,7 +26,7 @@
   </Target>
   <Target Name="RegenerateProto">
     <ItemGroup>
-      <GeneratedCsFiles Include="$(MSBuildThisFileDirectory)**/*.cs" Exclude="$(MSBuildThisFileDirectory)Compatibility/**/*.cs" />
+      <GeneratedCsFiles Include="$(MSBuildThisFileDirectory)**/*.cs" Exclude="$(MSBuildThisFileDirectory)Compatibility/**/*.cs;$(MSBuildThisFileDirectory)Errors/**/*.cs" />
     </ItemGroup>
     <Delete Files="@(GeneratedCsFiles)" />
     <RemoveDir Directories="$(MSBuildThisFileDirectory)Exceptions;$(MSBuildThisFileDirectory)DatabaseDriver" />

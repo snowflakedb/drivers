@@ -3,12 +3,15 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Security;
+using Snowflake.Data.Core;
+using Snowflake.Data.Core.Extensions;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data;
 
-public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
+public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection, IConnectionHandleWrapper
 {
     private readonly IDatabaseDriverService _driver;
     private string _connectionString = string.Empty;
@@ -64,10 +67,11 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     public SecureString Token { get; set => throw new NotImplementedException(SecretSetterNotSupported()); } = null!;
 
+    ConnectionHandle? IConnectionHandleWrapper.ConnHandle => _connHandle;
+
     internal IDatabaseDriverService Driver => _driver;
 
     internal DatabaseHandle? DbHandle => _dbHandle;
-    internal ConnectionHandle? ConnHandle => _connHandle;
 
     public override void ChangeDatabase(string databaseName) =>
         throw new NotSupportedException();
@@ -187,26 +191,9 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
         }
     }
 
-    public bool IsStillRunning(QueryStatus status) => status switch
-    {
-        QueryStatus.Running => true,
-        QueryStatus.ResumingWarehouse => true,
-        QueryStatus.Queued => true,
-        QueryStatus.QueuedReparingWarehouse => true,
-        QueryStatus.NoData => true,
-        _ => false,
-    };
+    public bool IsStillRunning(QueryStatus status) => status.IsStillRunning();
 
-    public bool IsAnError(QueryStatus status) => status switch
-    {
-        QueryStatus.Aborting => true,
-        QueryStatus.FailedWithError => true,
-        QueryStatus.Aborted => true,
-        QueryStatus.FailedWithIncident => true,
-        QueryStatus.Disconnected => true,
-        QueryStatus.Blocked => true,
-        _ => false,
-    };
+    public bool IsAnError(QueryStatus status) => status.IsAnError();
 
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
         throw new NotImplementedException();
