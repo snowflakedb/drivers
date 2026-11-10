@@ -31,9 +31,7 @@
     Set SkipCargoBuild=true in CI (cargo is run as a separate job step).
   -->
   <Target Name="BuildRustStub" BeforeTargets="Build" Condition="'$(SkipCargoBuild)' != 'true'">
-    <Exec Command="cargo build"
-          WorkingDirectory="$(MSBuildThisFileDirectory)sf_core_stub"
-          ConsoleToMSBuild="true" />
+    <Exec Command="cargo build" WorkingDirectory="$(MSBuildThisFileDirectory)sf_core_stub" ConsoleToMSBuild="true" />
   </Target>
 
 </Project>

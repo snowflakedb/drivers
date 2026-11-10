@@ -55,6 +55,8 @@ public sealed class WiremockClient : IDisposable
 
     public string WiremockCaPemPath => Path.GetFullPath(Path.Combine(_wiremockDir, "wiremock-ca.pem"));
 
+    public int HttpPort => _httpPort;
+
     public int HttpsPort { get; private set; } = -1;
 
     public async Task<WiremockClient> StartAsync(DataReceivedEventHandler? onDataReceived = null,

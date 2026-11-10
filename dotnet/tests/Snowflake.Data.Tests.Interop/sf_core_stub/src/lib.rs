@@ -15,6 +15,12 @@
 //! | `huge_len`       | Fire callback with valid ptr but len=usize::MAX, status 0 (overflow)      |
 //! | *(anything else)*| Same as `echo_increment`                                                  |
 //!
+//! # Logging
+//!
+//! | export              | behavior                                                                 |
+//! |---------------------|--------------------------------------------------------------------------|
+//! | `sf_stub_emit_log`  | Invoke the `sf_core_init_dotnet` log callback on a worker thread and join it |
+//!
 //! # Leak counter
 //!
 //! Every response buffer allocated by this stub increments `ALLOC_COUNT`.
@@ -27,6 +33,17 @@ use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
+
+type CLogCallback = unsafe extern "C" fn(
+    u32,
+    *const c_char,
+    *const c_char,
+    u32,
+    *const c_char,
+    *const c_char,
+) -> u32;
+
+static LOG_CALLBACK: OnceLock<CLogCallback> = OnceLock::new();
 
 static LAST_GENERATED_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -106,17 +123,46 @@ fn alloc_response(data: &[u8]) -> (*const u8, usize) {
 /// sf_core: `{ status: u32, troubleshooting_enabled: u32 }` packed as `u64`.
 /// The .NET side reads only the low 32 bits (status = 0 = success).
 #[unsafe(no_mangle)]
-pub extern "C" fn sf_core_init_dotnet(
-    _callback: unsafe extern "C" fn(
-        u32,
-        *const c_char,
-        *const c_char,
-        u32,
-        *const c_char,
-        *const c_char,
-    ) -> u32,
-) -> u64 {
+pub extern "C" fn sf_core_init_dotnet(callback: CLogCallback) -> u64 {
+    let _ = LOG_CALLBACK.set(callback);
     0u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sf_stub_emit_log(
+    level: u32,
+    message: *const c_char,
+    file: *const c_char,
+    line: u32,
+    function: *const c_char,
+    logger_name: *const c_char,
+) -> u32 {
+    let Some(callback) = LOG_CALLBACK.get().copied() else {
+        return 1;
+    };
+    let message = message as usize;
+    let file = file as usize;
+    let function = function as usize;
+    let logger_name = logger_name as usize;
+    match std::thread::spawn(move || {
+        // SAFETY: this thread is joined before `sf_stub_emit_log` returns, so
+        // the caller's C strings remain valid for the callback.
+        unsafe {
+            callback(
+                level,
+                message as *const c_char,
+                file as *const c_char,
+                line,
+                function as *const c_char,
+                logger_name as *const c_char,
+            )
+        }
+    })
+    .join()
+    {
+        Ok(status) => status,
+        Err(_) => 2,
+    }
 }
 
 /// Synchronous proto call.  Behavior driven by the `method` string.

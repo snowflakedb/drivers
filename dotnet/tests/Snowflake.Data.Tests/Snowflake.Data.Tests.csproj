@@ -26,7 +26,7 @@
   </ItemGroup>
 
   <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
-    <Copy SourceFiles="parameters.json" DestinationFolder="$(OutDir)" ContinueOnError="true"/>
+    <Copy SourceFiles="parameters.json" DestinationFolder="$(OutDir)" ContinueOnError="true" />
   </Target>
 
 </Project>
