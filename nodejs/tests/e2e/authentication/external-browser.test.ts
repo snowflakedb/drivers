@@ -713,7 +713,7 @@ describe('EXTERNALBROWSER authentication', () => {
     } else {
       await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
         name: 'Error',
-        message: `Error while creating local server on port ${port}: Error: listen EADDRINUSE: address already in use :::${port}`,
+        message: `Error while creating local server on port ${port}: Error: listen EADDRINUSE: address already in use 127.0.0.1:${port}`,
       });
     }
   });

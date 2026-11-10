@@ -2598,16 +2598,17 @@ behavior_differences:
       servers.
 
   115:
-    name: 'A query that loses its session fails with the server error and isFatal, not ClientError 407002'
+    name: 'A query that loses its session fails with isFatal, SQL state 08001 and a different message'
     status: allowed
     type: api_incompatibility
     reviewed: true
-    is_breaking_change: true
-    impact: medium
+    is_breaking_change: false
+    impact: low
     old_driver_behavior: |
       When a query needs a session renewal and Snowflake refuses it with 390114 (master token
-      expired) or 390111 (session gone), the query fails with ClientError 407002, SQL state 08003,
-      isFatal true, "Unable to perform operation using terminated connection."
+      expired) or 390111 (session gone), the query fails with OperationFailedError carrying the
+      server code ('390114' or '390111') and the server message, for example "Session no longer
+      exists.". The error has no sqlState and no isFatal.
     new_driver_behavior: |
       The query fails with OperationFailedError carrying the server code ('390114' or '390111'),
       SQL state 08001, isFatal true, and the core message, for example "Failed to refresh session:
@@ -2615,12 +2616,14 @@ behavior_differences:
       with ClientError 407002 and isFatal true on both drivers. Refusals that leave the
       connection up (BD#20) are not fatal.
     description: |
-      The server code tells the application why the session was lost, which 407002 does not.
-      isFatal keeps the signal the old driver gives to reconnect.
+      isFatal tells the application already on the failed query that it has to reconnect. The
+      old driver gives that signal only on the next query, with 407002. Old driver versions
+      before 3.4.1 failed the query itself with ClientError 407002, SQL state 08003, isFatal true.
     status_rationale: |
-      The server code is more useful than 407002, and isFatal still tells the application to
-      reconnect. SQL state 08001 is the one sf_core uses for every lost session, as the other
-      new drivers do. Listed under breaking changes in the changelog.
+      isFatal on the failed query is a more useful signal to reconnect. SQL state 08001 is the
+      one sf_core uses for every lost session, as the other new drivers do. Not listed in the
+      changelog: the error class and code match the old driver, and the different message is
+      covered by the general note on error messages.
 
   116:
     name: 'statement.cancel() does not report the abort result'
@@ -3876,61 +3879,197 @@ behavior_differences:
       sf_core to share the ID from the "query in progress" answer with the bridge.
 
   176:
-    name: 'resultPrefetch, includeRetryReason, forceStageBindError, gcsUseDownscopedCredential, oauthChallengeMethod and validateDefaultParameters are removed'
+    name: 'forceStageBindError is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      forceStageBindError (number) is declared in the typed ConnectionOptions. It makes array
+      binds through a stage fail on purpose:
+      - 0: creating the temporary stage throws "Failed to create stage".
+      - 1: uploading the binds to that stage throws "Failed to upload file".
+      The old driver's own array-bind integration tests set it to reach these error paths.
+    new_driver_behavior: |
+      ConnectionOptions does not declare forceStageBindError, so TypeScript code that sets it
+      in an object literal does not compile. At runtime it is ignored, like any other unknown
+      option (BD#102). Array binds through a stage fail only on real errors.
+    description: |
+      The option is a test hook of the old driver. It became public only because it was
+      added to index.d.ts, and it has no use in an application.
+    status_rationale: |
+      The option was meant for the old driver's tests, not for applications. Code that
+      binds arrays works the same without it.
+
+  177:
+    name: 'oauthChallengeMethod is removed; code_challenge_method is always S256'
     status: unknown
     type: api_incompatibility
     reviewed: false
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      createConnection accepts these options, and the typed ConnectionOptions declares all of
-      them:
-      - resultPrefetch (positive integer, default 2): the number of result chunks downloaded
-        ahead of the chunk being read.
-      - includeRetryReason (boolean, default true): retried requests carry
-        retryReason=<HTTP status> in the URL. false leaves it out.
-      - forceStageBindError (number): 0 makes the creation of the temporary stage for array
-        binds fail, and 1 makes the upload of binds to that stage fail.
-      - gcsUseDownscopedCredential (boolean): sent at login as the
-        GCS_USE_DOWNSCOPED_CREDENTIAL session parameter.
-      - oauthChallengeMethod (string, default S256): sent as code_challenge_method in the
-        OAUTH_AUTHORIZATION_CODE authorization URL. The code challenge itself is always
-        computed with S256.
-      - validateDefaultParameters (boolean, default false): when true, createConnection logs
-        an error for each unknown connection option, with the closest known name as a
-        suggestion.
+      oauthChallengeMethod (string, default S256) is declared in the typed ConnectionOptions.
+      With OAUTH_AUTHORIZATION_CODE it is sent as code_challenge_method on the authorization
+      URL. The code challenge itself is always computed with S256
+      (oauth.calculatePKCECodeChallenge), whatever the option says. So S256 is the only value
+      that matches the challenge that is sent. With any other value, such as plain, the
+      identity provider checks the verifier against the wrong kind of challenge, and the
+      token request is expected to fail.
     new_driver_behavior: |
-      ConnectionOptions declares none of these options, so TypeScript code that sets one in an
-      object literal does not compile. At runtime each one is ignored with the warning
-      "Unknown option <key> is ignored", like any other unknown option (BD#102):
-      - resultPrefetch: up to CLIENT_PREFETCH_THREADS chunks are downloaded at once, 4 when
-        Snowflake does not send that session parameter.
-      - includeRetryReason: retried requests always carry retryReason, as with the old
-        default.
-      - forceStageBindError: array binds through a stage never fail on purpose.
-      - gcsUseDownscopedCredential: GCS_USE_DOWNSCOPED_CREDENTIAL is not sent at login.
-        ALTER SESSION SET GCS_USE_DOWNSCOPED_CREDENTIAL = TRUE still sets it.
-      - oauthChallengeMethod: code_challenge_method is always S256.
-      - validateDefaultParameters: the warning for an unknown option is always logged and has
-        no suggestion.
+      ConnectionOptions does not declare oauthChallengeMethod, so TypeScript code that sets it
+      in an object literal does not compile. At runtime it is ignored, like any other unknown
+      option (BD#102). sf_core always computes the challenge with S256 and sends
+      code_challenge_method=S256. sf_core has no setting to change the method.
     description: |
-      Why each option is removed:
-      - resultPrefetch: chunk downloads follow the CLIENT_PREFETCH_THREADS session parameter,
-        the same one other Snowflake drivers use. It can be set with ALTER SESSION or on the
-        account or user, so a Node.js-only option is not needed.
-      - includeRetryReason: the retry reason helps Snowflake understand why a request was
-        retried and holds only the HTTP status code, so there is no reason to turn it off.
-      - forceStageBindError: a fault-injection hook for the old driver's own tests. It has no
-        use in an application.
-      - gcsUseDownscopedCredential: the option only sets a session parameter at login.
-        ALTER SESSION, or the parameter on the account or user, does the same.
-      - oauthChallengeMethod: only S256 works, because the old driver always computes the
-        challenge with S256. Any other value declares a method that does not match the
-        challenge that is sent.
-      - validateDefaultParameters: the new driver always warns about unknown options
-        (BD#102), so the option has nothing left to turn on.
+      Setups that work with the old driver use S256, so they keep working. Still to decide:
+      whether an identity provider used with the driver needs a method other than S256, and
+      whether the option should stay as an accepted key that only allows S256.
 
-  177:
+  178:
+    name: 'validateDefaultParameters is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      validateDefaultParameters (boolean, default false) is declared in the typed
+      ConnectionOptions. When it is true, createConnection logs the error
+      "'<key>' is an unknown connection parameter. Did you mean '<name>'?" for each option name
+      it does not know. It does not check option values, and it does not stop the connection.
+    new_driver_behavior: |
+      ConnectionOptions does not declare validateDefaultParameters, so TypeScript code that
+      sets it in an object literal does not compile. At runtime it is ignored, like any other
+      unknown option, and the driver always logs "Unknown option <key> is ignored" for an
+      option it does not know, without a suggestion (BD#102).
+    description: |
+      The option only caught misspelled option names. TypeScript reports a misspelled key in
+      an object literal when the code compiles, and the warning for unknown options is always
+      on.
+      sf_core has a validate_default_parameters setting with a different behavior. It sends
+      CLIENT_VALIDATE_DEFAULT_PARAMETERS at login, and Snowflake then fails the login when the
+      database, schema or warehouse does not exist. The Python and ODBC drivers expose that
+      setting. If Node.js exposed it under the old name, the name would change its meaning.
+    status_rationale: |
+      TypeScript checks the option names in the connection input, and the always-on warning
+      covers options built at runtime, so the option has nothing left to do.
+
+  179:
+    name: 'includeRetryReason is removed; retried requests always carry retryReason'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      includeRetryReason (boolean, default true) is declared in the typed ConnectionOptions.
+      Retried query requests carry retryReason=<HTTP status> next to retryCount in the URL.
+      false leaves retryReason out.
+    new_driver_behavior: |
+      ConnectionOptions does not declare includeRetryReason, so TypeScript code that sets it
+      in an object literal does not compile. At runtime it is ignored, like any other unknown
+      option (BD#102). Retried requests always carry retryReason: the HTTP status code that
+      caused the retry, or 0 for a network error without a response. sf_core has an
+      include_retry_reason setting with the Node.js alias includeRetryReason, but the Node.js
+      wrapper does not pass it to sf_core.
+    description: |
+      The retry reason is diagnostic data of the driver. Snowflake uses it to understand why
+      requests are retried. It holds only an HTTP status code, so there is no reason for an
+      application to turn it off.
+    status_rationale: |
+      The value is internal to the driver and should not be turned off. Code that set the
+      option to true, the default, sees no change.
+
+  180:
+    name: 'resultPrefetch sets the CLIENT_PREFETCH_THREADS session parameter'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      resultPrefetch (positive integer, default 2) is declared in the typed ConnectionOptions.
+      index.d.ts describes it as "Number of threads for clients to use to prefetch large result
+      sets. Valid values: 1-10". createConnection checks the value with isPositiveInteger and
+      throws for anything else; it does not check the upper bound of 10. The old driver uses
+      it as the number of chunks to load ahead of the chunk being read, so up to
+      resultPrefetch + 1 chunks download at once (3 by default). The old driver does not send
+      resultPrefetch to Snowflake and does not read the CLIENT_PREFETCH_THREADS session
+      parameter.
+    new_driver_behavior: |
+      resultPrefetch is only a Node.js name for the CLIENT_PREFETCH_THREADS session parameter.
+      It is sent at login as that parameter, as is, the same way arrayBindingThreshold sets
+      CLIENT_STAGE_ARRAY_BINDING_THRESHOLD. The driver does not check the value and has no
+      default of its own. Snowflake checks the value at login. In the server code today:
+      - an integer from 1 to 10 is accepted.
+      - any other integer, such as 0 or 11, is rejected with 001008 "invalid parameter
+        value". The login path does not catch this error, so connect fails. The old driver
+        accepts 11 and higher.
+      - a value that is not an integer, such as 2.5, is dropped with only a server debug log.
+        Connect succeeds and the session keeps its own value.
+      When it is not set, no CLIENT_PREFETCH_THREADS is sent and the session keeps the value
+      that Snowflake returns (user, account or Snowflake default, 4 today). sf_core downloads up to
+      CLIENT_PREFETCH_THREADS chunks at once, 4 when Snowflake does not send that parameter,
+      within CLIENT_MEMORY_LIMIT (default 1536 MB). ALTER SESSION SET CLIENT_PREFETCH_THREADS
+      replaces the value for the next query.
+    description: |
+      The value counts chunks that download at the same time, which is what the index.d.ts
+      description already says, and what CLIENT_PREFETCH_THREADS means in the other drivers.
+      So the same resultPrefetch downloads one chunk fewer at once than in the old driver, and
+      without resultPrefetch up to 4 chunks download at once instead of 3.
+    status_rationale: |
+      The option keeps its documented meaning and now uses the session parameter that every
+      other Snowflake driver uses, so it can also be set on the user or account, or with ALTER
+      SESSION. The value, its check and its default now come from Snowflake instead of the
+      driver. Results do not change, only how many chunks download at once, so it is listed
+      as a breaking change for apps that tuned resultPrefetch for speed or memory.
+
+  181:
+    name: 'gcsUseDownscopedCredential is removed'
+    status: allowed
+    type: api_incompatibility
+    reviewed: true
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      gcsUseDownscopedCredential (boolean) is declared in the typed ConnectionOptions as
+      "The option to disable GCS_USE_DOWNSCOPED_CREDENTIAL session parameter". At login it is
+      sent as the GCS_USE_DOWNSCOPED_CREDENTIAL session parameter. For PUT and GET on a GCS
+      stage, that parameter selects one of two kinds of credentials that Snowflake returns:
+      - a downscoped access token (stageInfo.creds.GCS_ACCESS_TOKEN). One token covers every
+        file under the stage path.
+      - presigned URLs, one per file. A PUT then runs the PUT command again for each file to
+        get its URL.
+      The old driver supports both.
+    new_driver_behavior: |
+      ConnectionOptions does not declare gcsUseDownscopedCredential, so TypeScript code that
+      sets it in an object literal does not compile. At runtime it is ignored, like any other
+      unknown option (BD#102), and GCS_USE_DOWNSCOPED_CREDENTIAL is not sent at login. sf_core
+      supports both kinds of credentials and uses the one that Snowflake returns. sf_core has
+      a gcs_use_downscoped_credential setting that it sends at login, but the Node.js wrapper
+      does not pass it to sf_core.
+    description: |
+      What the server does today (this may change):
+      - GCS_USE_DOWNSCOPED_CREDENTIAL defaults to TRUE since behavior change bundle 2023_06.
+        With TRUE, Snowflake returns a downscoped token to every client version that supports
+        it. For the JavaScript driver that is version 1.6.21 and later.
+      - The parameter is not public. Snowflake drops a non-public parameter that a customer
+        sends at login, with "Skip session parameter GCS_USE_DOWNSCOPED_CREDENTIAL because the
+        user does not have the privilege". Only accounts and users that Snowflake allows to
+        change internal parameters can set it.
+      - Since bundle 2023_07 (BCR-1345), a PUT to GCS from an old driver version that still
+        uses presigned URLs fails with 091032 "... is using a deprecated pre-signed URL for
+        PUT".
+      So true repeats the server default, false is dropped for customers, and the option has
+      no effect.
+    status_rationale: |
+      The option has no effect for customers, because Snowflake already uses downscoped tokens
+      by default and drops the value that a customer sends. sf_core supports both kinds of GCS
+      credentials, so PUT and GET work with either one.
+
+  182:
     name: 'Authorization-code login with a client id and no secret sends a public-client token request'
     status: unknown
     type: enhancement

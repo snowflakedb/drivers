@@ -276,6 +276,23 @@ export type ConnectionOptions = {
   arrayBindingThreshold?: number;
 
   /**
+   * Maximum number of result chunks that the driver downloads at the same time for a large
+   * result set. A higher value can read a large result faster, but keeps more chunks in memory.
+   * The `CLIENT_MEMORY_LIMIT` session parameter limits that memory.
+   *
+   * This option is another name for the `CLIENT_PREFETCH_THREADS` session parameter. The driver
+   * sends the value to Snowflake as is, and Snowflake checks it when the connection logs in.
+   *
+   * When set, the connection starts with this value as its `CLIENT_PREFETCH_THREADS` session
+   * parameter. A later `ALTER SESSION SET CLIENT_PREFETCH_THREADS` replaces it for the queries
+   * that follow.
+   *
+   * @see https://docs.snowflake.com/en/sql-reference/parameters#client-prefetch-threads
+   * @default User's CLIENT_PREFETCH_THREADS value
+   */
+  resultPrefetch?: number;
+
+  /**
    * Name of the connection profile to use from `connections.toml` or `config.toml`.
    *
    * The driver reads a profile only in these cases:

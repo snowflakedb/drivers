@@ -4,7 +4,7 @@
 #   or when it doesn't belong in the changelog.
 #   A status in original BehaviorDifferences.yaml should be updated to match.
 # - The original BehaviorDifferences.yaml stays until tests run against both the new and the old driver.
-# - The last entry included in this snapshot is 167.
+# - The last entry included in this snapshot is 181.
 behavior_differences:
   30:
     name: 'PUT of a symlinked source reports the target basename'
@@ -311,8 +311,8 @@ behavior_differences:
       `sfRetryMaxLoginRetries` is an accepted connection option (default 7). A value of 0
       disables login retries so the first network/login failure is returned immediately.
     new_driver_behavior: |
-      `sfRetryMaxLoginRetries` is rejected as an unknown connection option. There is no
-      equivalent login-retry count option.
+      `sfRetryMaxLoginRetries` is ignored, like any other unknown connection option (BD#102).
+      There is no equivalent login-retry count option.
     status_rationale: |
       The option is deprecated and is not carried into the new driver. Callers that relied on
       a configurable login-retry count must use the new driver's timeout model instead.
@@ -429,8 +429,7 @@ behavior_differences:
       credentialCacheDir selects the first directory for the JSON credential
       file on every platform. The file is the credential store.
     new_driver_behavior: |
-      credentialCacheDir is not accepted. createConnection throws
-      InvalidParameterError "Unknown connection option: credentialCacheDir".
+      credentialCacheDir is ignored, like any other unknown connection option (BD#102).
       Tokens are stored in the system keyring when that store keeps credentials
       until they are deleted (macOS, Windows, and Linux with a keyring). The
       JSON file is used only when no such keyring is available. Its directory
@@ -880,3 +879,158 @@ behavior_differences:
       forward-only. Python (cursor.get_result_batches()), JDBC
       (getResultSetSerializables()) and Go (arrow batches) let callers fetch whole chunks
       on their own instead.
+
+  168:
+    name: 'The OAuth identity provider error text differs'
+    status: allowed
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      On an OAUTH_AUTHORIZATION_CODE redirect that carries error:
+      - browserResponseRenderer is called with error set to the HTML-escaped "Error while
+        getting oauth authorization code. ErrorCode <error>. Message: <error_description>"
+      - connect rejects with an Error whose message is the same text, not escaped
+    new_driver_behavior: |
+      On the same redirect:
+      - browserResponseRenderer is called with error set to the HTML-escaped "Identity
+        Provider responded with error: <error>: <error_description>"
+      - connect rejects with an Error whose message is "Failed to login: OAuth flow failed:
+        Identity Provider responded with error: <error>: <error_description>", not escaped
+
+  169:
+    name: 'EXTERNALBROWSER does not render an error page for an error callback'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A callback whose request line contains ?error= is answered with the
+      browserResponseRenderer page (or, without a renderer, the HTML-escaped error text) and
+      login fails immediately with that error.
+    new_driver_behavior: |
+      A callback without a token is ignored. browserResponseRenderer is not called, no
+      page is written, and login waits until browserActionTimeout.
+
+  170:
+    name: 'An EXTERNALBROWSER POST with Origin skips browserResponseRenderer'
+    status: allowed
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The callback listener answers every request with an HTML page. It does not answer
+      a token POST with JSON.
+    new_driver_behavior: |
+      A token POST whose Origin matches the Snowflake host is answered with JSON
+      ({"consent":...} or {}), and browserResponseRenderer is not called. A GET without
+      an Origin still uses the renderer.
+    status_rationale: |
+      The POST with Origin is sent by a script on the Snowflake login page (today's server
+      behavior), not by a browser navigation, so the user never sees the reply. The script
+      reads a JSON body behind CORS headers; a rendered HTML page in its place would be
+      useless to it.
+
+  171:
+    name: 'The default browser callback page differs'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      Without browserResponseRenderer set:
+      - OAUTH_AUTHORIZATION_CODE redirect is answered:
+        - for success with the plain text "Your identity was confirmed and propagated to
+          Snowflake Node.js driver. You can close this window now and go back where you
+          started from."
+        - for error with the HTML-escaped error text, e.g. "Error while getting oauth
+          authorization code. ErrorCode invalid_scope. Message: bad scope"
+      - EXTERNALBROWSER redirect is answered:
+        - for success with the same plain text as OAUTH_AUTHORIZATION_CODE
+        - for error: see BD#169
+    new_driver_behavior: |
+      Without browserResponseRenderer set:
+      - OAUTH_AUTHORIZATION_CODE redirect is answered:
+        - for success with an HTML page reading "Authorization completed successfully."
+        - for error with an HTML page reading "Authorization failed.", without the identity
+          provider error
+      - EXTERNALBROWSER redirect is answered:
+        - for success with an HTML page reading "Your identity was confirmed" and "You can
+          close this browser tab."
+        - for error: see BD#169
+    status_rationale: |
+      The default page is informational text for the person in the browser; the driver's
+      result does not depend on it. The pages come from the shared core, so the new driver
+      shows this text. A caller that needs specific content sets
+      browserResponseRenderer.
+
+  172:
+    name: 'A thrown browserResponseRenderer is answered with an empty 500'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      When browserResponseRenderer throws, EXTERNALBROWSER and OAUTH_AUTHORIZATION_CODE
+      both close the browser connection with no HTTP response. Login fails with the
+      renderer error.
+    new_driver_behavior: |
+      EXTERNALBROWSER and OAUTH_AUTHORIZATION_CODE both answer the browser with an
+      empty HTTP 500. Login fails with the renderer error.
+
+  175:
+    name: 'getQueryId is undefined while a long query runs'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      For a query that Snowflake first answers with "query in progress" (code 333333), the
+      old driver saves the query ID from that answer and keeps polling for the result.
+      statement.getQueryId() returns that ID while the query runs, before complete is
+      called. No event says when the ID is set, so a caller that wants it early has to poll
+      getQueryId(). For a query that finishes in the first answer, the ID is set when
+      complete is called, as in the new driver.
+    new_driver_behavior: |
+      statement.getQueryId() returns undefined until the complete callback is called, also
+      for a query that Snowflake reports as still running. Code that reads the query ID of
+      a running query, for example to log it or to pass it to another process, gets
+      undefined. To get the ID right after the query is submitted, use asyncExec: true and
+      read getQueryId() in complete. statement.cancel() works before the ID is known,
+      because it cancels by request ID.
+    description: |
+      sf_core submit_query keeps the query ID of a still-running query in a local
+      OnceLock<DetachedContext> and does not expose it until the query finishes. The
+      bridge's get_query_id reads only the finished result. Matching the old driver needs
+      sf_core to share the ID from the "query in progress" answer with the bridge.
+
+  177:
+    name: 'oauthChallengeMethod is removed; code_challenge_method is always S256'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      oauthChallengeMethod (string, default S256) is declared in the typed ConnectionOptions.
+      With OAUTH_AUTHORIZATION_CODE it is sent as code_challenge_method on the authorization
+      URL. The code challenge itself is always computed with S256
+      (oauth.calculatePKCECodeChallenge), whatever the option says. So S256 is the only value
+      that matches the challenge that is sent. With any other value, such as plain, the
+      identity provider checks the verifier against the wrong kind of challenge, and the
+      token request is expected to fail.
+    new_driver_behavior: |
+      ConnectionOptions does not declare oauthChallengeMethod, so TypeScript code that sets it
+      in an object literal does not compile. At runtime it is ignored, like any other unknown
+      option (BD#102). sf_core always computes the challenge with S256 and sends
+      code_challenge_method=S256. sf_core has no setting to change the method.
+    description: |
+      Setups that work with the old driver use S256, so they keep working. Still to decide:
+      whether an identity provider used with the driver needs a method other than S256, and
+      whether the option should stay as an accepted key that only allows S256.

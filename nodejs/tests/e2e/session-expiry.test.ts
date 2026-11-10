@@ -13,13 +13,6 @@ import {
 const SESSION_TOKEN_EXPIRED = '390112';
 const MASTER_TOKEN_EXPIRED = '390114';
 const SESSION_GONE = '390111';
-const TERMINATED_CONNECTION = {
-  name: 'ClientError',
-  code: 407002,
-  sqlState: '08003',
-  isFatal: true,
-  message: 'Unable to perform operation using terminated connection.',
-};
 
 describe('Session Expiry', () => {
   let wiremock: WiremockServer;
@@ -54,7 +47,11 @@ describe('Session Expiry', () => {
             message:
               'Failed to refresh session: Master token can never be renewed - full re-authentication required (GS code 390114)',
           }
-        : TERMINATED_CONNECTION,
+        : {
+            name: 'OperationFailedError',
+            code: MASTER_TOKEN_EXPIRED,
+            message: 'Authentication token expired.',
+          },
     });
     expect(connection.isUp()).toBe(false);
   });
@@ -77,7 +74,11 @@ describe('Session Expiry', () => {
             message:
               'Failed to refresh session: Session refresh failed: Session no longer exists. (code: 390111)',
           }
-        : TERMINATED_CONNECTION,
+        : {
+            name: 'OperationFailedError',
+            code: SESSION_GONE,
+            message: 'Session no longer exists.',
+          },
     });
     expect(connection.isUp()).toBe(false);
   });

@@ -53,6 +53,22 @@ describe('Login Request Body', () => {
     expect(data.AUTHENTICATOR).toBe('PROGRAMMATIC_ACCESS_TOKEN');
   });
 
+  describe('resultPrefetch', () => {
+    it('should send resultPrefetch as the CLIENT_PREFETCH_THREADS session parameter', async () => {
+      const { SESSION_PARAMETERS } = await connectAndGetLoginRequestData({ resultPrefetch: 7 });
+      if (isRunningNewDriverWithBD('BD#180')) {
+        expect(SESSION_PARAMETERS.CLIENT_PREFETCH_THREADS).toBe('7');
+      } else {
+        expect(SESSION_PARAMETERS).not.toHaveProperty('CLIENT_PREFETCH_THREADS');
+      }
+    });
+
+    it('should not send CLIENT_PREFETCH_THREADS when resultPrefetch is not set', async () => {
+      const { SESSION_PARAMETERS } = await connectAndGetLoginRequestData();
+      expect(SESSION_PARAMETERS?.CLIENT_PREFETCH_THREADS).toBeUndefined();
+    });
+  });
+
   describe('CLIENT_ENVIRONMENT', () => {
     it('should contain APPLICATION if passed in connection config', async () => {
       const { CLIENT_ENVIRONMENT } = await connectAndGetLoginRequestData({

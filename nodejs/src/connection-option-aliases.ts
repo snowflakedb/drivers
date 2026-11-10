@@ -11,6 +11,7 @@ type WrapperOnlyConnectionOption =
   | 'rowStreamHighWaterMark'
   | 'streamResult'
   | 'arrayBindingThreshold'
+  | 'resultPrefetch'
   | 'openExternalBrowserCallback'
   | 'browserResponseRenderer';
 

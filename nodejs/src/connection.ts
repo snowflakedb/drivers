@@ -48,6 +48,7 @@ export class ConnectionImpl implements Connection {
       rowStreamHighWaterMark,
       streamResult,
       arrayBindingThreshold,
+      resultPrefetch,
       openExternalBrowserCallback,
       browserResponseRenderer,
       [TOKEN_INFO]: tokenInfo,
@@ -71,6 +72,9 @@ export class ConnectionImpl implements Connection {
     }
     if (arrayBindingThreshold !== undefined) {
       sessionParameters['CLIENT_STAGE_ARRAY_BINDING_THRESHOLD'] = String(arrayBindingThreshold);
+    }
+    if (resultPrefetch !== undefined) {
+      sessionParameters['CLIENT_PREFETCH_THREADS'] = String(resultPrefetch);
     }
 
     this.#core = new CoreConnection({
