@@ -1,5 +1,6 @@
 use crate::api::CDataType;
 use crate::api::OdbcError;
+use crate::api::ResultReader;
 use crate::api::TimestampSubtype;
 use crate::api::diagnostic::WithDiagnosticInfo;
 use crate::api::encoding::OdbcEncoding;
@@ -39,10 +40,11 @@ use arrow::array::RecordBatch;
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
+use proto_utils::ProtoError;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
-    ConnectionGetResultSetRequest, ConnectionHandle, ExecuteQueryResponse, QueryBindings,
-    ResultSetGetStreamRequest, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
+    ConnectionGetResultSetRequest, ConnectionHandle, DriverException, ExecuteQueryResponse,
+    QueryBindings, ResultSetHandle, ResultSetReleaseRequest, ResultSetResponse,
     StatementExecuteQueryRequest, StatementHandle, StatementPrepareRequest,
     StatementSetOptionsRequest, StatementSetSqlQueryRequest, config_setting,
     execute_query_response, query_bindings,
@@ -835,12 +837,13 @@ pub fn prepare<E: OdbcEncoding>(
     prepare_impl(statement_handle, &query)
 }
 
-fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowArrayStreamReader> {
+fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ResultReader> {
     let stream_ptr: *mut FFI_ArrowArrayStream = stream.into();
-    let stream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
+    // SAFETY: sf_core allocates the stream with `Box::into_raw` and hands ownership to the caller.
+    let stream = *unsafe { Box::from_raw(stream_ptr) };
     let reader =
         ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
-    Ok(reader)
+    Ok(Box::new(reader))
 }
 
 fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
@@ -1245,12 +1248,12 @@ fn apply_execute_response(
                 .result_set_handle
                 .required("ResultSet handle is required")?;
             let query_id = descriptor.query_id.clone();
-            let stream = fetch_stream_and_release(rs_handle)?;
+            let reader = fetch_reader_and_release(rs_handle)?;
             let statement_type_id = descriptor.statement_type_id;
             let rows_affected = descriptor.rows_affected;
             let cursor_row_count = descriptor.row_count;
             let execute_state =
-                create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
+                create_execute_state_from_reader(reader, statement_type_id, rows_affected, origin)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -1302,9 +1305,9 @@ fn apply_execute_response(
             let rs_handle = rs
                 .result_set_handle
                 .required("ResultSet handle is required")?;
-            let stream = fetch_stream_and_release(rs_handle)?;
+            let reader = fetch_reader_and_release(rs_handle)?;
             let execute_state =
-                create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
+                create_execute_state_from_reader(reader, statement_type_id, rows_affected, origin)?;
             stmt.multi_current_idx = 1;
             set_state(stmt, execute_state);
             Ok(())
@@ -1327,22 +1330,17 @@ fn fetch_result_set_by_query_id(
     Ok(response)
 }
 
-/// Fetch the Arrow stream from a ResultSet handle and release the handle.
-///
-/// `result_set_get_stream` takes ownership of the prebuilt stream (one-shot),
-/// so the handle is no longer useful after this call.
-fn fetch_stream_and_release(rs_handle: ResultSetHandle) -> OdbcResult<ArrowArrayStreamPtr> {
-    let stream = {
-        let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            c.result_set_get_stream(ResultSetGetStreamRequest {
-                result_set_handle: Some(rs_handle),
-            })
+/// Fetch the result reader from a ResultSet handle and release the handle.
+fn fetch_reader_and_release(rs_handle: ResultSetHandle) -> OdbcResult<ResultReader> {
+    let reader = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.transport()
+            .database_driver()
+            .result_set_get_stream(rs_handle.into())
             .await
-        })?;
-        response.stream.required("Stream is required")?
-    };
+            .map_err(|e| OdbcError::from(ProtoError::Application(DriverException::from(e))))
+    });
     release_result_set(rs_handle);
-    Ok(stream)
+    reader
 }
 
 fn release_result_set(rs_handle: ResultSetHandle) {
@@ -1410,18 +1408,15 @@ pub(crate) fn execute_show_query_collect_batch(
         }
     };
 
-    let stream = fetch_stream_and_release(rs_handle)?;
-    let reader = reader_from_protobuf_stream(stream)?;
-    collect_nested_batch(Box::new(reader))
+    collect_nested_batch(fetch_reader_and_release(rs_handle)?)
 }
 
-fn create_execute_state_from_stream(
-    stream: ArrowArrayStreamPtr,
+fn create_execute_state_from_reader(
+    reader: ResultReader,
     statement_type_id: Option<i64>,
     rows_affected: Option<i64>,
     origin: ExecutionOrigin,
 ) -> OdbcResult<StatementState> {
-    let reader = reader_from_protobuf_stream(stream)?;
     let schema = reader.schema();
 
     let state = match QueryType::from_raw(statement_type_id).result_kind() {
@@ -3845,9 +3840,9 @@ pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
     let rs_handle = rs
         .result_set_handle
         .required("ResultSet handle is required")?;
-    let stream = fetch_stream_and_release(rs_handle)?;
+    let reader = fetch_reader_and_release(rs_handle)?;
     let execute_state =
-        create_execute_state_from_stream(stream, statement_type_id, rows_affected, origin)?;
+        create_execute_state_from_reader(reader, statement_type_id, rows_affected, origin)?;
     set_state(&mut inner, execute_state);
     Ok(())
 }

@@ -6,7 +6,10 @@ use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
-use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
+use arrow::{
+    array::{RecordBatch, RecordBatchReader},
+    datatypes::SchemaRef,
+};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteQueryResponse,
@@ -2006,6 +2009,9 @@ pub struct DaeContext {
     pub deferred_query: Option<String>,
 }
 
+/// Result rows of an open cursor.
+pub type ResultReader = Box<dyn RecordBatchReader + Send>;
+
 pub enum StatementState {
     Created,
     Prepared {
@@ -2013,7 +2019,7 @@ pub enum StatementState {
     },
     /// ODBC state S5: SELECT/catalog function executed, cursor is open.
     QueryExecuted {
-        reader: ArrowArrayStreamReader,
+        reader: ResultReader,
         rows_affected: Option<i64>,
         origin: ExecutionOrigin,
     },
@@ -2030,7 +2036,7 @@ pub enum StatementState {
         origin: ExecutionOrigin,
     },
     Fetching {
-        reader: ArrowArrayStreamReader,
+        reader: ResultReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,

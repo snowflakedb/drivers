@@ -20,7 +20,6 @@ use crate::conversion::{
 };
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
-use arrow::ffi_stream::ArrowArrayStreamReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
@@ -200,7 +199,7 @@ enum RowStatus {
 /// reader is exhausted.
 #[allow(clippy::result_large_err)]
 fn next_non_empty_batch(
-    mut reader: ArrowArrayStreamReader,
+    mut reader: crate::api::ResultReader,
     rows_affected: Option<i64>,
     origin: crate::api::ExecutionOrigin,
 ) -> Result<(StatementState, ()), (StatementState, crate::api::error::OdbcError)> {

@@ -13,12 +13,12 @@
 //! `SFTypeInfoMetadataSource`. No server round-trip is needed. The
 //! `TIMESTAMP` row's `COLUMN_SIZE` is 29 (ODBC standard display length).
 
+use crate::api::ResultReader;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::environment::{SQL_OV_ODBC2, SQL_OV_ODBC3, SQL_OV_ODBC3_80};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, AsyncInProgressSnafu, CursorAlreadyOpenSnafu,
-    DisconnectedSnafu, InvalidDuringDaeSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
-    ShowKeysColumnMissingSnafu, ShowKeysInvalidKeySeqSnafu,
+    AsyncInProgressSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu, InvalidDuringDaeSnafu,
+    NullPointerSnafu, OdbcRuntimeSnafu, ShowKeysColumnMissingSnafu, ShowKeysInvalidKeySeqSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::statement::{execute_show_query_collect_batch, set_state_for_catalog};
@@ -36,7 +36,6 @@ use crate::conversion::{
 };
 use arrow::array::{Array, ArrayRef, Int16Array, Int32Array, Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionGetInfoRequest, ConnectionGetParameterRequest, StatementHandle,
@@ -3617,20 +3616,12 @@ fn build_flat_columns_batch(
     .context(crate::api::error::RecordBatchBuildSnafu)
 }
 
-/// Wrap a RecordBatch in an ArrowArrayStreamReader.
-fn reader_from_record_batch(
-    batch: RecordBatch,
-    schema: SchemaRef,
-) -> OdbcResult<ArrowArrayStreamReader> {
+fn reader_from_record_batch(batch: RecordBatch, schema: SchemaRef) -> OdbcResult<ResultReader> {
     use arrow::record_batch::RecordBatchIterator;
-    let iter = RecordBatchIterator::new(vec![Ok(batch)].into_iter(), schema);
-    let ffi_stream = FFI_ArrowArrayStream::new(
-        Box::new(iter) as Box<dyn arrow::array::RecordBatchReader + Send>
-    );
-    // `try_new` takes the stream by value; pass it directly. A
-    // `Box::into_raw` + `from_raw` round-trip would leak the heap box, since
-    // `from_raw` moves the struct out without reclaiming the allocation.
-    ArrowArrayStreamReader::try_new(ffi_stream).context(ArrowArrayStreamReaderCreationSnafu)
+    Ok(Box::new(RecordBatchIterator::new(
+        vec![Ok(batch)].into_iter(),
+        schema,
+    )))
 }
 
 fn build_flat_batch(

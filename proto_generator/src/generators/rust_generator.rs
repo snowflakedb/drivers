@@ -323,6 +323,9 @@ impl<T: Transport> {service_name}Client<T> {{
 	pub fn new(transport: T) -> Self {{
 		Self {{ transport }}
 	}}
+	pub fn transport(&self) -> &T {{
+		&self.transport
+	}}
 "#
         );
 

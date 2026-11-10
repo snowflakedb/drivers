@@ -47,10 +47,10 @@ static GLOBALS_TEARDOWN_LOCK: Mutex<()> = Mutex::new(());
 /// every interaction with sf_core through the protobuf client -
 /// foreground SQL, connection lifecycle, **and** in-band telemetry
 /// (see [`crate::api::telemetry`]). The wrapper holds **no** typed
-/// sf_core handles: the only sf_core symbols reachable from here are
-/// the prost-generated `DatabaseDriverClient` + request/response
-/// messages, exactly mirroring the surface area that
-/// `snowflake.connector` (Python) consumes over its C ABI.
+/// sf_core handles: it talks to sf_core through the prost-generated
+/// `DatabaseDriverClient` + request/response messages. The one exception
+/// is result fetching, which takes the core `RecordBatchReader` from the
+/// client's in-process transport to skip the Arrow C stream round trip.
 ///
 /// At `env_freed` time all user-facing SQL handles have already been
 /// freed, so the runtime is quiescent and `Runtime::drop` does not block

@@ -91,7 +91,8 @@ impl AsyncArrowBatchFetcher {
         if let Some(done) = self.terminal_result() {
             return done;
         }
-        match self.source.next().await {
+        let next = self.source.next().await;
+        match next.map(|batch| batch.and_then(|batch| batch.with_schema(self.schema.clone()))) {
             Some(Ok(batch)) => Ok(Some(batch)),
             Some(Err(e)) => {
                 self.state = ConsumeState::Failed;
@@ -197,6 +198,26 @@ mod tests {
         let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int64, false)]));
         RecordBatch::try_new(schema, vec![Arc::new(Int64Array::from(values)) as ArrayRef])
             .expect("RecordBatch should build")
+    }
+
+    #[tokio::test]
+    async fn next_batch_applies_overridden_schema() {
+        let batch = int64_batch(vec![1]);
+        let field = batch
+            .schema()
+            .field(0)
+            .clone()
+            .with_metadata(HashMap::from([(
+                "extTypeName".to_string(),
+                "GEOGRAPHY".to_string(),
+            )]));
+        let override_schema = Arc::new(Schema::new(vec![field]));
+        let mut fetcher = AsyncArrowBatchFetcher::from_batches(batch.schema(), vec![batch]);
+        fetcher.override_schema(override_schema.clone());
+
+        let fetched = fetcher.next_batch().await.unwrap().unwrap();
+
+        assert_eq!(fetched.schema(), override_schema);
     }
 
     fn int64_arrow_ipc(values: Vec<i64>) -> Vec<u8> {

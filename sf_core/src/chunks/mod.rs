@@ -299,7 +299,8 @@ pub fn empty_reader() -> Box<dyn RecordBatchReader + Send> {
     ))
 }
 
-/// Overrides the schema returned by a reader without touching the underlying batches.
+/// Overrides a reader's schema, re-stamping each batch with it so consumers that read
+/// `batch.schema()` see the same field metadata as `reader.schema()`.
 struct SchemaOverrideReader {
     inner: Box<dyn RecordBatchReader + Send>,
     schema: SchemaRef,
@@ -314,7 +315,8 @@ impl RecordBatchReader for SchemaOverrideReader {
 impl Iterator for SchemaOverrideReader {
     type Item = Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        let batch = self.inner.next()?;
+        Some(batch.and_then(|batch| batch.with_schema(self.schema.clone())))
     }
 }
 
@@ -765,6 +767,25 @@ mod tests {
     use crate::query_types::RowType;
 
     use super::*;
+
+    #[test]
+    fn override_reader_schema_applies_schema_to_batches() {
+        let field = Field::new("c", DataType::Int64, true);
+        let batch = RecordBatch::try_new(
+            Arc::new(Schema::new(vec![field.clone()])),
+            vec![Arc::new(Int64Array::from(vec![1])) as ArrayRef],
+        )
+        .unwrap();
+        let override_schema = Arc::new(Schema::new(vec![field.with_metadata(HashMap::from([(
+            "extTypeName".to_string(),
+            "FILE".to_string(),
+        )]))]));
+        let inner = RecordBatchIterator::new(vec![Ok(batch.clone())], batch.schema());
+
+        let mut reader = override_reader_schema(Box::new(inner), override_schema.clone());
+
+        assert_eq!(reader.next().unwrap().unwrap().schema(), override_schema);
+    }
 
     fn encode_arrow_ipc_base64(schema: SchemaRef, batches: &[RecordBatch]) -> String {
         let mut buf = Vec::new();
