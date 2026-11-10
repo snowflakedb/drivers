@@ -15,7 +15,6 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
   // SNOW-4283109 SQLTables returns no catalogs without a current database.
   // SNOW-4283110 SQLPrimaryKeys and SQLForeignKeys SMALLINT display size is 136.
   // SNOW-4283111 SQLTables SQL_C_WCHAR fetch posts 01004 when the values fit.
-  // SNOW-4283113 SQL_CONVERT_INTERVAL_DAY_TIME omits the wide-character bits.
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   auto base = DataSourceConfig::Snowflake();
@@ -595,7 +594,8 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc0), OdbcMatchers::IsSuccess());
     SQLUINTEGER numericValue = 0;
     std::memcpy(&numericValue, buf, sizeof(numericValue));
-    CHECK(numericValue == 0xF06F1Fu);
+    OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0xF06F1Fu); }
+    NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0x106F1Fu); }
   }
 
   // SQLGetInfo - SQL_SQL92_NUMERIC_VALUE_FUNCTIONS
@@ -1201,7 +1201,8 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc1), OdbcMatchers::IsSuccess());
     SQLUINTEGER numericValue = 0;
     std::memcpy(&numericValue, buf, sizeof(numericValue));
-    CHECK(numericValue == 0xF06F1Fu);
+    OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0xF06F1Fu); }
+    NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0x106F1Fu); }
   }
 
   // SQLGetInfo - SQL_SQL92_NUMERIC_VALUE_FUNCTIONS
@@ -2874,7 +2875,8 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc2), OdbcMatchers::IsSuccess());
     SQLUINTEGER numericValue = 0;
     std::memcpy(&numericValue, buf, sizeof(numericValue));
-    CHECK(numericValue == 0xF06F1Fu);
+    OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0xF06F1Fu); }
+    NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0x106F1Fu); }
   }
 
   // SQLGetInfo - SQL_SQL92_NUMERIC_VALUE_FUNCTIONS
@@ -3768,7 +3770,8 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc3), OdbcMatchers::IsSuccess());
     SQLUINTEGER numericValue = 0;
     std::memcpy(&numericValue, buf, sizeof(numericValue));
-    CHECK(numericValue == 0xF06F1Fu);
+    OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0xF06F1Fu); }
+    NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0x106F1Fu); }
   }
 
   // SQLGetInfo - SQL_SQL92_NUMERIC_VALUE_FUNCTIONS
@@ -13011,7 +13014,8 @@ TEST_CASE("Replay: tableau generic_odbc drill_and_filter", "[tableau][generic_od
     CHECK_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc4), OdbcMatchers::IsSuccess());
     SQLUINTEGER numericValue = 0;
     std::memcpy(&numericValue, buf, sizeof(numericValue));
-    CHECK(numericValue == 0xF06F1Fu);
+    OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0xF06F1Fu); }
+    NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") { CHECK(numericValue == 0x106F1Fu); }
   }
 
   // SQLGetInfo - SQL_SQL92_NUMERIC_VALUE_FUNCTIONS

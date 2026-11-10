@@ -3088,6 +3088,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_CONVERT_INTERVAL_DAY_TIM
           SQL_CVT_VARBINARY);  // Reference driver supports INTERVAL_DAY_TIME to VARBINARY conversion
   REQUIRE((convert & SQL_CVT_VARCHAR) ==
           SQL_CVT_VARCHAR);  // Reference driver supports INTERVAL_DAY_TIME to VARCHAR conversion
+  OLD_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") {
+    REQUIRE((convert & SQL_CVT_WCHAR) == SQL_CVT_WCHAR);
+    REQUIRE((convert & SQL_CVT_WVARCHAR) == SQL_CVT_WVARCHAR);
+    REQUIRE((convert & SQL_CVT_WLONGVARCHAR) == SQL_CVT_WLONGVARCHAR);
+  }
+  NEW_DRIVER_ONLY("BD#convert-interval-day-time-omits-wide-char") {
+    REQUIRE((convert & SQL_CVT_WCHAR) == 0);
+    REQUIRE((convert & SQL_CVT_WVARCHAR) == 0);
+    REQUIRE((convert & SQL_CVT_WLONGVARCHAR) == 0);
+  }
 
   SQLDisconnect(dbc_handle());
 }

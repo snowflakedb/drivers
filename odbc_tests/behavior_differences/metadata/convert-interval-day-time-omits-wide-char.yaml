@@ -1,0 +1,17 @@
+name: "SQLGetInfo SQL_CONVERT_INTERVAL_DAY_TIME omits wide-character conversion bits"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  SQLGetInfo(SQL_CONVERT_INTERVAL_DAY_TIME) returns 0xF06F1F. That mask includes
+  SQL_CVT_WCHAR (0x200000), SQL_CVT_WVARCHAR (0x800000), and SQL_CVT_WLONGVARCHAR
+  (0x400000).
+new_driver_behavior: |
+  SQLGetInfo(SQL_CONVERT_INTERVAL_DAY_TIME) returns 0x106F1F. The three
+  wide-character bits are clear. The rest of the mask matches the old driver.
+description: |
+  Applications that inspect SQL_CONVERT_INTERVAL_DAY_TIME for WCHAR, WVARCHAR, or
+  WLONGVARCHAR conversion support see those bits set on the old driver and clear
+  on the new driver.
