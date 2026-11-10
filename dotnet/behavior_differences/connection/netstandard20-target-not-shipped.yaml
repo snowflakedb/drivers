@@ -1,0 +1,21 @@
+name: "The package no longer targets netstandard2.0, and ships net472 instead of relying on it for .NET Framework 4.7.2"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: high
+old_driver_behavior: |
+  The Snowflake.Data package v6.X.Y ships `netstandard2.0`, `net481`, `net8.0`, `net9.0`
+  and `net10.0` assets, plus Windows-specific `net8.0-windows7.0`, `net9.0-windows7.0`
+  and `net10.0-windows7.0` assets. Projects on a runtime that implements netstandard2.0
+  but has no matching framework asset, for example .NET Framework 4.6.1 to 4.8, .NET Core
+  2.0 to 3.1 and .NET 5 to 7, restore the package through the `netstandard2.0` asset.
+new_driver_behavior: |
+  The package ships `net472`, `net481`, `net8.0`, `net9.0` and `net10.0` assets and no
+  `netstandard2.0` or `-windows7.0` assets. A project on .NET Framework 4.6.1 to 4.7.1,
+  .NET Core, or .NET 5 to 7 cannot reference the package, and NuGet reports an
+  incompatible target framework at restore time.
+rationale: |
+  The wrapper loads the native sf_core library through P/Invoke and targets the
+  framework and runtime versions that are still supported. A netstandard2.0 asset would
+  have to run on runtimes that the native library packaging does not cover.
