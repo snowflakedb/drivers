@@ -16,7 +16,7 @@ use crate::config::param_registry::{JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SEC
 use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
-use crate::logging::LogManager;
+use crate::logging::{LogManager, TraceEncoding};
 use crate::rest::snowflake::prompt_lock::PromptLockMap;
 use crate::telemetry::platform_detection::{DetectionConfig, PlatformDetector};
 use crate::telemetry::session_telemetry::SessionTelemetry;
@@ -122,6 +122,10 @@ pub struct WrapperPresets {
     /// inactivity timer and `retry_timeout` does not apply to them. Only JDBC
     /// sets it.
     pub chunk_download_read_timeout_default: Option<Duration>,
+    /// TRACE encoding for the log callback installed at init.
+    /// [`Self::dotnet`] uses [`TraceEncoding::Distinct`]; the other constructors
+    /// fold TRACE into DEBUG.
+    pub trace_encoding: TraceEncoding,
 }
 
 impl Default for WrapperPresets {
@@ -150,6 +154,7 @@ impl Default for WrapperPresets {
             validate_session_token: true,
             use_proxy_env_default: false,
             chunk_download_read_timeout_default: None,
+            trace_encoding: TraceEncoding::FoldIntoDebug,
         }
     }
 }
@@ -182,6 +187,7 @@ impl WrapperPresets {
             validate_session_token: true,
             use_proxy_env_default: false,
             chunk_download_read_timeout_default: None,
+            trace_encoding: TraceEncoding::FoldIntoDebug,
         }
     }
 
@@ -217,6 +223,7 @@ impl WrapperPresets {
     pub fn dotnet() -> Self {
         Self {
             configuration_flavor: Wrapper::DotNet,
+            trace_encoding: TraceEncoding::Distinct,
             ..Self::default()
         }
     }
@@ -778,6 +785,23 @@ mod tests {
             WrapperPresets::dotnet().configuration_flavor,
             Wrapper::DotNet
         );
+    }
+
+    #[test]
+    fn only_dotnet_reports_trace_separately() {
+        assert_eq!(
+            WrapperPresets::dotnet().trace_encoding,
+            TraceEncoding::Distinct
+        );
+        for presets in [
+            WrapperPresets::python(),
+            WrapperPresets::jdbc(),
+            WrapperPresets::odbc(),
+            WrapperPresets::nodejs(),
+            WrapperPresets::default(),
+        ] {
+            assert_eq!(presets.trace_encoding, TraceEncoding::FoldIntoDebug);
+        }
     }
 
     #[test]

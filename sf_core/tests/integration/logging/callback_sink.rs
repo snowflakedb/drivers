@@ -63,6 +63,7 @@ fn callback_layer_delivers_events() {
 
     tracing::info!("callback_info_msg");
     tracing::warn!("callback_warn_msg");
+    tracing::trace!("callback_trace_msg");
 
     let events = CAPTURED.lock().unwrap();
     let info_event = events
@@ -82,6 +83,15 @@ fn callback_layer_delivers_events() {
         "callback should have received WARN event"
     );
     assert_eq!(warn_event.unwrap().level, 1, "WARN level should map to 1");
+
+    let trace_event = events
+        .iter()
+        .find(|e| e.message.contains("callback_trace_msg"));
+    assert!(
+        trace_event.is_some(),
+        "callback should have received TRACE event"
+    );
+    assert_eq!(trace_event.unwrap().level, 3, "TRACE level should map to 3");
 }
 
 /// Verify that wrapper logs submitted via `sf_core_log_event` round-trip through

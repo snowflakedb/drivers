@@ -50,7 +50,8 @@ fn init_with_presets(
     callback: logging::CLogCallback,
     wrapper_presets: WrapperPresets,
 ) -> SfCoreInitResult {
-    let layer = logging::CallbackLayer::from_c(callback);
+    let layer = logging::CallbackLayer::from_c(callback)
+        .with_trace_encoding(wrapper_presets.trace_encoding);
     let sessions = SessionRegistry::default();
 
     match LogManager::with_app_sink(LoggingConfig::default(), layer, sessions) {
@@ -78,8 +79,10 @@ fn init_with_presets(
 
 /// Emit a wrapper-originated log event through the tracing pipeline.
 ///
-/// Uses the same level encoding as the inbound [`logging::CLogCallback`]:
-/// 0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
+/// Uses the inbound wrapper-event encoding: 0=ERROR, 1=WARN, 2=INFO,
+/// 3 or higher=DEBUG. Outbound [`logging::CLogCallback`] events use that
+/// encoding too. TRACE follows the [`WrapperPresets::trace_encoding`] applied
+/// at init: wire level 4 for .NET, wire level 3 for the other presets.
 ///
 /// Returns `0` on success, `1` when the pipeline is uninitialised, and `2` if the body panics.
 ///

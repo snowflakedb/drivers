@@ -292,7 +292,8 @@ macro_rules! wrapper_event {
 /// Flattened tracing event fields for wrapper log sinks (FFI/JNI callback layers).
 ///
 /// `logger_name` is empty for core-originated events; set for wrapper round-trip events.
-/// `level` uses the shared FFI/JNI encoding: 0=ERROR, 1=WARN, 2=INFO, 3 or higher=DEBUG.
+/// `level` uses the shared FFI encoding: 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG.
+/// TRACE is 3 under [`TraceEncoding::FoldIntoDebug`] and 4 under [`TraceEncoding::Distinct`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NormalizedEvent {
     pub level: u32,
@@ -355,18 +356,46 @@ impl Visit for EventVisitor {
     }
 }
 
+const DEBUG_WIRE_LEVEL: u32 = 3;
+const DISTINCT_TRACE_WIRE_LEVEL: u32 = 4;
+
+/// How `tracing::Level::TRACE` is encoded in [`NormalizedEvent::level`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TraceEncoding {
+    /// TRACE shares wire level 3 with DEBUG.
+    #[default]
+    FoldIntoDebug,
+    /// TRACE has its own wire level 4.
+    Distinct,
+}
+
+impl TraceEncoding {
+    fn wire_level(self) -> u32 {
+        match self {
+            Self::FoldIntoDebug => DEBUG_WIRE_LEVEL,
+            Self::Distinct => DISTINCT_TRACE_WIRE_LEVEL,
+        }
+    }
+}
+
 /// Flatten a tracing [`Event`] into [`NormalizedEvent`] for a wrapper log sink.
 ///
-/// For wrapper round-trip events ([`WRAPPER_TARGET`]) the real source location
-/// and originating logger name live in event fields; for core-originated events
-/// they come from the event metadata and `logger_name` is left empty.
-pub fn normalize_event(event: &tracing::Event<'_>) -> NormalizedEvent {
+/// ERROR, WARN, INFO and DEBUG are wire levels 0 to 3. TRACE follows
+/// `trace_encoding`. For wrapper round-trip events ([`WRAPPER_TARGET`]) the real
+/// source location and originating logger name live in event fields; for
+/// core-originated events they come from the event metadata and `logger_name`
+/// is left empty.
+pub fn normalize_event_with_trace_encoding(
+    event: &tracing::Event<'_>,
+    trace_encoding: TraceEncoding,
+) -> NormalizedEvent {
     let meta = event.metadata();
     let level = match *meta.level() {
         tracing::Level::ERROR => 0,
         tracing::Level::WARN => 1,
         tracing::Level::INFO => 2,
-        _ => 3,
+        tracing::Level::DEBUG => DEBUG_WIRE_LEVEL,
+        tracing::Level::TRACE => trace_encoding.wire_level(),
     };
 
     let mut visitor = EventVisitor::default();
@@ -396,6 +425,11 @@ pub fn normalize_event(event: &tracing::Event<'_>) -> NormalizedEvent {
             logger_name: String::new(),
         }
     }
+}
+
+/// [`normalize_event_with_trace_encoding`] with [`TraceEncoding::FoldIntoDebug`].
+pub fn normalize_event(event: &tracing::Event<'_>) -> NormalizedEvent {
+    normalize_event_with_trace_encoding(event, TraceEncoding::FoldIntoDebug)
 }
 
 #[cfg(test)]
@@ -636,7 +670,7 @@ mod tests {
     fn should_map_core_trace_event_to_debug_wire_level() {
         let events = capture_events(|| tracing::trace!(target: "sf_core", "trace detail"));
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].level, 3);
+        assert_eq!(events[0].level, DEBUG_WIRE_LEVEL);
         assert_eq!(events[0].message, "trace detail");
         assert!(events[0].logger_name.is_empty());
     }
