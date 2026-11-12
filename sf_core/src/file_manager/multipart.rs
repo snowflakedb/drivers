@@ -170,6 +170,24 @@ pub fn compute_part_size(file_size: u64, cfg: &MultipartConfig) -> Result<u64, F
     Ok(chosen)
 }
 
+/// Target upload part size. Smaller parts pay a request round-trip each;
+/// larger ones made both S3 and Azure uploads slower in measurement.
+/// A file holds about `concurrency + 2` parts resident while uploading.
+// TODO(SNOW-4464545): bound resident parts across every file in a PUT with a
+// per-command `MemoryBudget` instead of relying on a fixed part size.
+pub(super) const UPLOAD_PART_SIZE: u64 = 64 * MIB;
+
+/// `target` capped at the cloud's `max_part` and never below
+/// [`compute_part_size`], so the part-count limits still hold.
+pub(super) fn upload_part_size(
+    body_len: u64,
+    target: u64,
+    cfg: &MultipartConfig,
+) -> Result<u64, FileTooLargeError> {
+    let floor = compute_part_size(body_len, cfg)?;
+    Ok(target.min(cfg.max_part).max(floor))
+}
+
 /// File-size threshold at or above which a transfer switches from a single
 /// PUT/GET to multipart. Resolved from the server's `data.threshold`,
 /// defaulting to 200 MiB (the JDBC `bigFileThreshold` / libsnowflakeclient
@@ -228,6 +246,8 @@ pub struct MultipartParams {
     /// The command's cloud-request budget and, for a batch, how many files
     /// transfer at once. Resolved from `data.parallel` without the part clamp.
     pub command_parallel: usize,
+    /// Target S3/Azure upload part size; [`UPLOAD_PART_SIZE`] unless overridden.
+    pub upload_part_size: u64,
 }
 
 impl MultipartParams {
@@ -238,6 +258,7 @@ impl MultipartParams {
             threshold: MultipartThreshold::from_server(threshold),
             concurrency: resolve_part_concurrency(parallel),
             command_parallel: resolve_command_parallel(parallel),
+            upload_part_size: UPLOAD_PART_SIZE,
         }
     }
 
@@ -313,17 +334,16 @@ pub(super) struct UploadPart {
 ///
 /// Reads are **sequential and in order**: the CSE body is an AES-CBC stream
 /// whose part N only exists once parts `0..N` have been produced, so the
-/// splitter cannot seek. Concurrency happens on the consumer (upload) side;
-/// the channel bound (`concurrency`) caps read-ahead, keeping resident memory
-/// at roughly `concurrency * chunk_size`. This mirrors libsnowflakeclient's
-/// `StreamSplitter` (serial reads, parallel part uploads).
+/// splitter cannot seek. Concurrency happens on the consumer (upload) side.
+/// Read-ahead is one queued part plus the one being filled, so resident memory
+/// is the in-flight parts plus two `chunk_size` buffers. This mirrors
+/// libsnowflakeclient's `StreamSplitter` (serial reads, parallel part uploads).
 pub(super) fn spawn_part_reader(
     source: ByteSource,
     encryptor: Option<Encryptor>,
     chunk_size: usize,
-    concurrency: usize,
 ) -> mpsc::Receiver<std::io::Result<UploadPart>> {
-    let (tx, rx) = mpsc::channel(concurrency.max(1));
+    let (tx, rx) = mpsc::channel(1);
     tokio::task::spawn_blocking(move || {
         // Open (and, for CSE, wrap) the source inside the task so the reader
         // stays thread-local. A failure here surfaces as the first item.
@@ -473,6 +493,24 @@ impl Read for SpilledReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upload_part_size_uses_target_within_cloud_limits() {
+        for cfg in [&MultipartConfig::S3, &MultipartConfig::AZURE] {
+            assert_eq!(
+                upload_part_size(1200 * MIB, 64 * MIB, cfg).unwrap(),
+                64 * MIB
+            );
+        }
+        assert_eq!(MultipartParams::default().upload_part_size, 64 * MIB);
+        let az = &MultipartConfig::AZURE;
+        assert_eq!(upload_part_size(1200 * MIB, GIB, az).unwrap(), az.max_part);
+        // Huge body: the max-parts floor wins over the target.
+        let huge = 4 * TIB;
+        let part = upload_part_size(huge, 64 * MIB, &MultipartConfig::S3).unwrap();
+        assert_eq!(part, compute_part_size(huge, &MultipartConfig::S3).unwrap());
+        assert!(huge.div_ceil(part) <= 10_000);
+    }
     use std::io::{Seek, SeekFrom};
 
     #[test]
@@ -624,7 +662,7 @@ mod tests {
     /// the concatenated bodies reproduce the source byte-for-byte.
     async fn collect_parts(data: Vec<u8>, chunk_size: usize) -> Vec<UploadPart> {
         let source = ByteSource::Bytes(Bytes::from(data));
-        let mut rx = spawn_part_reader(source, None, chunk_size, 4);
+        let mut rx = spawn_part_reader(source, None, chunk_size);
         let mut parts = Vec::new();
         while let Some(part) = rx.recv().await {
             parts.push(part.expect("part read must not error"));

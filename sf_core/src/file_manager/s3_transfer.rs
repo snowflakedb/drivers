@@ -893,10 +893,12 @@ async fn s3_multipart_upload(
     body_len: u64,
     scheduler: &TransferScheduler,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
-    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::S3)
-        .context(upload_file_error::FileTooLargeSnafu)
-        .map_err(S3AttemptError::Other)?;
-    let concurrency = scheduler.multipart().concurrency;
+    let params = scheduler.multipart();
+    let chunk_size =
+        multipart::upload_part_size(body_len, params.upload_part_size, &MultipartConfig::S3)
+            .context(upload_file_error::FileTooLargeSnafu)
+            .map_err(S3AttemptError::Other)?;
+    let concurrency = params.concurrency;
 
     let upload_id = s3_create_multipart_upload(
         &prepared,
@@ -916,8 +918,7 @@ async fn s3_multipart_upload(
     // into the part-reader's `ByteSource`, so the lazily-read body stays valid.
     let source = prepared.source.byte_source();
     let encryptor = prepared.cse.map(|c| c.encryptor);
-    let parts_rx =
-        multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
+    let parts_rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize);
 
     // Built here, not before `CreateMultipartUpload`: until it returns there is no
     // `upload_id` to abort. Re-signs from the credential cache so a leftover
@@ -3803,7 +3804,10 @@ mod tests {
     /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
     /// the multipart path, at the resolved concurrency.
     fn always_multipart() -> MultipartParams {
-        MultipartParams::from_server(Some(1), Some(4))
+        MultipartParams {
+            upload_part_size: MultipartConfig::S3.default_part,
+            ..MultipartParams::from_server(Some(1), Some(4))
+        }
     }
 
     fn mp_prepared(body: Bytes) -> PreparedUpload {

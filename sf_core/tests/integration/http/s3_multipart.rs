@@ -168,7 +168,10 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         .await;
 
     // Inject a low threshold directly — no connection parameter, no global state.
-    let multipart = MultipartParams::from_server(Some(THRESHOLD_BYTES), Some(4));
+    let multipart = MultipartParams {
+        upload_part_size: PART_SIZE as u64,
+        ..MultipartParams::from_server(Some(THRESHOLD_BYTES), Some(4))
+    };
 
     // ---- Upload (multipart) ----
     let upload = SingleUploadData {

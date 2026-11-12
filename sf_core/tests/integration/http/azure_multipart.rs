@@ -26,7 +26,7 @@ use md5::{Digest as _, Md5};
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::file_manager::internal::{MultipartConfig, compute_sha256_digest};
+use sf_core::file_manager::internal::{MultipartConfig, compute_part_size, compute_sha256_digest};
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptionMaterial, LocationType, SingleDownloadData,
     SingleUploadData, StageInfo,
@@ -176,7 +176,11 @@ async fn should_upload_and_download_via_azure_multipart_roundtrip() {
         .await;
 
     // Inject a low threshold directly — no connection parameter, no global state.
-    let multipart = MultipartParams::from_server(Some(THRESHOLD_BYTES), Some(4));
+    let multipart = MultipartParams {
+        upload_part_size: compute_part_size(PAYLOAD_LEN as u64, &MultipartConfig::AZURE)
+            .expect("payload fits Azure limits"),
+        ..MultipartParams::from_server(Some(THRESHOLD_BYTES), Some(4))
+    };
 
     // ---- Upload (multipart) ----
     let upload = SingleUploadData {

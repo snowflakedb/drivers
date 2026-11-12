@@ -859,9 +859,11 @@ async fn azure_multipart_upload(
         prepared,
         blob_content_md5,
     } = upload;
-    let chunk_size = multipart::compute_part_size(body_len, &MultipartConfig::AZURE)
-        .context(azure_upload_error::FileTooLargeSnafu)?;
-    let concurrency = scheduler.multipart().concurrency;
+    let params = scheduler.multipart();
+    let chunk_size =
+        multipart::upload_part_size(body_len, params.upload_part_size, &MultipartConfig::AZURE)
+            .context(azure_upload_error::FileTooLargeSnafu)?;
+    let concurrency = params.concurrency;
     // CSE params (cloud metadata + encryptor) are both present or both absent;
     // the metadata + digest ride on the `Put Block List` commit, the encryptor
     // lazily encrypts each block as the part-reader cuts it.
@@ -878,8 +880,7 @@ async fn azure_multipart_upload(
     // concurrently. Each block signs `url` with the current SAS per attempt and
     // self-heals an expired-SAS 403 (per-block resume) rather than restarting
     // the whole upload.
-    let parts_rx =
-        multipart::spawn_part_reader(source, encryptor, chunk_size as usize, concurrency);
+    let parts_rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize);
 
     let mut block_numbers: Vec<i32> = ReceiverStream::new(parts_rx)
         .map(|part| async move {
@@ -3461,7 +3462,10 @@ mod tests {
     /// `MultipartParams` with a 1-byte threshold so any non-empty body takes
     /// the block-blob path.
     fn always_multipart() -> MultipartParams {
-        MultipartParams::from_server(Some(1), Some(4))
+        MultipartParams {
+            upload_part_size: MultipartConfig::AZURE.default_part,
+            ..MultipartParams::from_server(Some(1), Some(4))
+        }
     }
 
     /// A 9 MiB SSE body splits into two Azure blocks (8 + 1 MiB) at the
