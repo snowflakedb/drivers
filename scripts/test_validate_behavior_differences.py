@@ -63,6 +63,11 @@ def _monolith(*ids: int) -> str:
             blocks.append(f"    {line}")
     return "\n".join(blocks) + "\n"
 
+def _isolated_git_env() -> dict[str, str]:
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    return env
+
 
 class ValidateBehaviorDifferencesTests(unittest.TestCase):
     @classmethod
@@ -368,6 +373,9 @@ class ReadBdDirTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.repo = Path(tmp.name)
+        env_patch = unittest.mock.patch.dict(os.environ, _isolated_git_env(), clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
         (self.repo / ".gitignore").write_text(".DS_Store\n", encoding="utf-8")
         self.bd_dir = self.repo / DOTNET_DIR
