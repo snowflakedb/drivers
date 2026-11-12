@@ -2,13 +2,16 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -170,6 +173,66 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: SQLNumResultCols available 
   ret = SQLNumResultCols(stmt_handle(), &num_cols);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(num_cols == 3);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: ALTER SESSION SET QUERY_TAG with dollar-quoted JSON",
+                 "[odbc-api][prepare][preparing]") {
+  // GS rejects describeOnly ALTER SESSION with 000007. SQLPrepare must still
+  // succeed so SQLExecute can set the tag; Tableau sends the JSON form below.
+  auto require_succeeded = [this](SQLRETURN ret) {
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  };
+
+  auto prepare_and_execute = [&](const std::string& sql) {
+    SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(sql.data()), SQL_NTS);
+    require_succeeded(ret);
+
+    SQLSMALLINT num_cols = -1;
+    ret = SQLNumResultCols(stmt_handle(), &num_cols);
+    require_succeeded(ret);
+    REQUIRE(num_cols == 0);
+
+    SQLSMALLINT num_params = -1;
+    ret = SQLNumParams(stmt_handle(), &num_params);
+    require_succeeded(ret);
+    REQUIRE(num_params == 0);
+
+    ret = SQLExecute(stmt_handle());
+    require_succeeded(ret);
+    ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+    require_succeeded(ret);
+  };
+
+  auto current_query_tag = [&]() -> std::string {
+    SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT CURRENT_QUERY_TAG()"), SQL_NTS);
+    require_succeeded(ret);
+    ret = SQLFetch(stmt_handle());
+    require_succeeded(ret);
+
+    SQLCHAR tag_buf[512];
+    std::memset(tag_buf, 0xFF, sizeof(tag_buf));
+    SQLLEN indicator = 0;
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_CHAR, tag_buf, sizeof(tag_buf), &indicator);
+    require_succeeded(ret);
+
+    ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+    require_succeeded(ret);
+
+    if (indicator == SQL_NULL_DATA) {
+      return {};
+    }
+    REQUIRE(indicator >= 0);
+    REQUIRE(static_cast<size_t>(indicator) < sizeof(tag_buf));
+    return std::string(reinterpret_cast<char*>(tag_buf), static_cast<size_t>(indicator));
+  };
+
+  prepare_and_execute("ALTER SESSION SET QUERY_TAG = $$$$");
+  REQUIRE(current_query_tag().empty());
+
+  const std::string tag = R"({ "tableau-query-origins": { "user-luid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", )"
+                          R"("site-luid": "11111111-2222-3333-4444-555555555555" } })";
+  prepare_and_execute("ALTER SESSION SET QUERY_TAG = $$" + tag + "$$");
+  REQUIRE(current_query_tag() == tag);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Prepares and executes statement with parameter markers",
