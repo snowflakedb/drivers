@@ -7,7 +7,7 @@
 //! `futures_core::Stream` and needs its own drain loop.
 
 use super::encryption::Encryptor;
-use super::types::{ByteSource, EncryptedFileMetadata, LocationType, StageInfo};
+use super::types::{ByteSource, EncryptedFileMetadata, LocationType, StageInfo, StageTransport};
 use crate::apis::operation_ctx::{CleanupScope, with_cleanup_scope_opt};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::log_foreign_error;
@@ -47,15 +47,18 @@ pub(super) fn next_delay_ms(current: f64, backoff: &BackoffConfig) -> f64 {
     next.min(backoff.cap.as_millis() as f64)
 }
 
-pub(super) async fn build_azure_client(
-    stage_info: &StageInfo,
+/// The Azure/GCS client: a client-level request timeout, HTTP/1.1 only.
+pub(super) async fn build_azure_gcs_client(
+    transport: &StageTransport,
 ) -> Result<reqwest::Client, TlsError> {
     crate::tls::client::configure_storage_client_builder_prepared(
-        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
-        &stage_info.tls_config,
-        Some(&stage_info.proxy_config),
-        stage_info.crl_manager.clone(),
-        stage_info.root_store_provider.clone(),
+        crate::tls::client::apply_http_pool_settings(
+            reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+        ),
+        &transport.tls_config,
+        Some(&transport.proxy_config),
+        transport.crl_manager.clone(),
+        transport.root_store_provider.clone(),
     )
     .await?
     .http1_only()
@@ -63,37 +66,33 @@ pub(super) async fn build_azure_client(
     .context(ClientBuildSnafu)
 }
 
-pub(super) async fn build_gcs_client(stage_info: &StageInfo) -> Result<reqwest::Client, TlsError> {
-    crate::tls::client::configure_storage_client_builder_prepared(
-        reqwest::Client::builder().timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
-        &stage_info.tls_config,
-        Some(&stage_info.proxy_config),
-        stage_info.crl_manager.clone(),
-        stage_info.root_store_provider.clone(),
-    )
-    .await?
-    .http1_only()
-    .build()
-    .context(ClientBuildSnafu)
-}
-
-pub(crate) enum StorageHttp {
+/// The S3 client leaves request timeouts to the AWS SDK, so it cannot share a
+/// client with Azure/GCS.
+#[derive(Clone)]
+pub(crate) enum StorageHttpClient {
     S3(crate::tls::aws_http_client::AwsSdkReqwestClient),
-    Gcs(reqwest::Client),
-    Azure(reqwest::Client),
+    Reqwest(reqwest::Client),
 }
 
-impl StorageHttp {
+impl StorageHttpClient {
     pub(crate) async fn for_stage(stage_info: &StageInfo) -> Result<Self, TlsError> {
-        Ok(match stage_info.location_type {
-            LocationType::Azure => Self::Azure(build_azure_client(stage_info).await?),
-            LocationType::Gcs => Self::Gcs(build_gcs_client(stage_info).await?),
+        Self::build(stage_info.location_type, &stage_info.transport).await
+    }
+
+    async fn build(
+        location_type: LocationType,
+        transport: &StageTransport,
+    ) -> Result<Self, TlsError> {
+        Ok(match location_type {
+            LocationType::Azure | LocationType::Gcs => {
+                Self::Reqwest(build_azure_gcs_client(transport).await?)
+            }
             LocationType::S3 => Self::S3(
                 crate::tls::aws_http_client::AwsSdkReqwestClient::build_prepared(
-                    &stage_info.tls_config,
-                    Some(&stage_info.proxy_config),
-                    stage_info.crl_manager.clone(),
-                    stage_info.root_store_provider.clone(),
+                    &transport.tls_config,
+                    Some(&transport.proxy_config),
+                    transport.crl_manager.clone(),
+                    transport.root_store_provider.clone(),
                 )
                 .await?,
             ),
@@ -103,14 +102,64 @@ impl StorageHttp {
     pub(crate) fn s3(&self) -> Option<&crate::tls::aws_http_client::AwsSdkReqwestClient> {
         match self {
             Self::S3(client) => Some(client),
-            Self::Gcs(_) | Self::Azure(_) => None,
+            Self::Reqwest(_) => None,
         }
     }
 
     pub(crate) fn reqwest(&self) -> Option<&reqwest::Client> {
         match self {
-            Self::Gcs(client) | Self::Azure(client) => Some(client),
+            Self::Reqwest(client) => Some(client),
             Self::S3(_) => None,
+        }
+    }
+}
+
+/// The storage HTTP client a connection reuses across its PUT/GET commands, so
+/// every command after the first rides pooled TCP/TLS connections to the stage
+/// instead of handshaking again. Cloning shares the cache.
+///
+/// Clients are built from the `StageTransport` captured when the cache is
+/// created (at login); a transport change needs a new cache. A connection's
+/// internal stages live in one cloud, so one slot suffices; a stage in another
+/// cloud gets an uncached client.
+#[derive(Clone)]
+pub(crate) struct StorageHttpClientCache(Arc<CacheInner>);
+
+struct CacheInner {
+    transport: StageTransport,
+    client: tokio::sync::OnceCell<(LocationType, StorageHttpClient)>,
+}
+
+impl StorageHttpClientCache {
+    pub(crate) fn new(transport: StageTransport) -> Self {
+        Self(Arc::new(CacheInner {
+            transport,
+            client: tokio::sync::OnceCell::new(),
+        }))
+    }
+
+    pub(crate) fn transport(&self) -> &StageTransport {
+        &self.0.transport
+    }
+
+    pub(crate) async fn get(
+        &self,
+        location_type: LocationType,
+    ) -> Result<StorageHttpClient, TlsError> {
+        let (cached_type, cached) = self
+            .0
+            .client
+            .get_or_try_init(|| async {
+                Ok::<_, TlsError>((
+                    location_type,
+                    StorageHttpClient::build(location_type, &self.0.transport).await?,
+                ))
+            })
+            .await?;
+        if *cached_type == location_type {
+            Ok(cached.clone())
+        } else {
+            StorageHttpClient::build(location_type, &self.0.transport).await
         }
     }
 }
@@ -844,6 +893,96 @@ mod tests {
     use super::*;
     use crate::file_manager::internal::test_scheduler;
     use crate::file_manager::{MultipartParams, TransferScheduler};
+
+    fn cache_with(tls_config: crate::tls::config::TlsConfig) -> StorageHttpClientCache {
+        StorageHttpClientCache::new(StageTransport {
+            tls_config,
+            ..StageTransport::for_test()
+        })
+    }
+
+    /// Answers every HTTP/1.1 request with a keep-alive `200 ok` and counts the
+    /// TCP connections it accepts.
+    async fn keep_alive_listener() -> (std::net::SocketAddr, Arc<AtomicU64>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("local addr");
+        let accepted = Arc::new(AtomicU64::new(0));
+        let counter = Arc::clone(&accepted);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while let Ok(1) = socket.read(&mut byte).await {
+                        head.push(byte[0]);
+                        if head.ends_with(b"\r\n\r\n") {
+                            head.clear();
+                            let reply = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                            if socket.write_all(reply).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (addr, accepted)
+    }
+
+    async fn get_ok(client: &StorageHttpClient, addr: std::net::SocketAddr) {
+        let body = client
+            .reqwest()
+            .expect("reqwest client")
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("request succeeds")
+            .text()
+            .await
+            .expect("body");
+        assert_eq!(body, "ok");
+    }
+
+    #[tokio::test]
+    async fn storage_http_client_cache_reuses_the_connection_across_commands() {
+        let (addr, accepted) = keep_alive_listener().await;
+        let cache = cache_with(Default::default());
+        let shared = cache.clone();
+
+        get_ok(&cache.get(LocationType::Azure).await.unwrap(), addr).await;
+        get_ok(&shared.get(LocationType::Azure).await.unwrap(), addr).await;
+
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn storage_http_client_cache_builds_an_uncached_client_for_another_cloud() {
+        let (addr, accepted) = keep_alive_listener().await;
+        let cache = cache_with(Default::default());
+
+        get_ok(&cache.get(LocationType::Gcs).await.unwrap(), addr).await;
+        assert!(cache.get(LocationType::S3).await.unwrap().s3().is_some());
+        get_ok(&cache.get(LocationType::Gcs).await.unwrap(), addr).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+        get_ok(&cache.get(LocationType::Azure).await.unwrap(), addr).await;
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn storage_http_client_cache_does_not_cache_a_failed_build() {
+        let cache = cache_with(crate::tls::config::TlsConfig {
+            custom_root_store_path: Some("/nonexistent/root-store.pem".into()),
+            ..Default::default()
+        });
+
+        assert!(cache.get(LocationType::Azure).await.is_err());
+        assert!(!cache.0.client.initialized());
+    }
 
     /// `TransferScheduler` whose command budget is `parallel`.
     fn scheduler(parallel: i64) -> TransferScheduler {

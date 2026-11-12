@@ -308,21 +308,10 @@ pub struct StageInfo {
     pub use_s3_regional_url: bool,
     /// Azure storage account name (required for Azure Blob Storage).
     pub storage_account: Option<String>,
-    /// TLS configuration for storage HTTP clients (S3/GCS/Azure). Carried on
-    /// `StageInfo` so every `create_*_client` site can honour CRL, custom root
-    /// store, and the protocol-version window without threading them through
-    /// the transfer call chain. Always set by `StageTransport` — see that
-    /// type's doc comment for how the wire-decode converters enforce this.
-    pub tls_config: TlsConfig,
-    /// Driver-owned CRL manager for storage TLS clients. Always set by
-    /// `StageTransport` alongside `tls_config`.
-    pub crl_manager: crate::crl::ConnectionCrl,
-    /// Driver-owned system root certificates for storage TLS clients. Always
-    /// set by `StageTransport` alongside `tls_config`.
-    pub root_store_provider: RootStoreProvider,
-    /// Explicit proxy config for the storage HTTP clients (S3/GCS/Azure).
-    /// Always set by `StageTransport` alongside `tls_config`.
-    pub proxy_config: crate::tls::config::ProxyConfig,
+    /// TLS, proxy, CRL and root-store settings for the storage HTTP clients,
+    /// carried here so every `create_*_client` site can build a client without
+    /// threading them through the transfer call chain.
+    pub transport: StageTransport,
 }
 
 impl StageInfo {
@@ -342,7 +331,7 @@ impl StageInfo {
 
 /// Bundles the storage-transport settings that a GS PUT/GET response knows
 /// nothing about: TLS configuration, proxy configuration, the CRL manager, and
-/// the driver's root-store provider. `StageInfo` needs all four, but the
+/// the driver's root-store provider. Every `StageInfo` carries one, but the
 /// wire-decoded response (parsed in `rest::snowflake::query_response`) only
 /// ever carries bucket/creds/region — the transport settings live on the
 /// connection, one layer up.
@@ -843,11 +832,14 @@ pub struct TransferCtx<'a> {
     pub(crate) scheduler: Option<&'a TransferScheduler>,
     /// The batch HTTP client when this transfer joined a `BatchTransport`.
     /// `None` means a single-file caller or test; the callee builds its own.
-    pub(crate) http: Option<&'a super::cloud_http::StorageHttp>,
+    pub(crate) http_client: Option<&'a super::cloud_http::StorageHttpClient>,
     /// Shared `S3Client` for the command when this transfer joined a
     /// `BatchTransport` on an S3 stage. `None` for single-file callers, tests,
     /// and non-S3 clouds.
     pub(crate) s3_client_cache: Option<&'a super::s3_transfer::BatchS3ClientCache>,
+    /// The connection's storage HTTP client cache. `None` (internal callers,
+    /// tests) builds a fresh client per command.
+    pub(crate) http_client_cache: Option<&'a super::cloud_http::StorageHttpClientCache>,
 }
 
 impl<'a> TransferCtx<'a> {
@@ -861,8 +853,8 @@ impl<'a> TransferCtx<'a> {
     }
 
     /// Refresh + cleanup, from the optional handles the callers hold. Leaves
-    /// `scheduler`/`http` unset; chain [`Self::with_scheduler`] to join a
-    /// batch budget.
+    /// `scheduler`/`http_client`/`http_client_cache` unset; chain
+    /// [`Self::with_scheduler`] to join a batch budget.
     pub fn new(
         refresher: Option<&'a dyn StageInfoRefresher>,
         cleanup: Option<&'a CleanupScope>,
@@ -871,8 +863,9 @@ impl<'a> TransferCtx<'a> {
             refresher,
             cleanup,
             scheduler: None,
-            http: None,
+            http_client: None,
             s3_client_cache: None,
+            http_client_cache: None,
         }
     }
 
@@ -884,6 +877,16 @@ impl<'a> TransferCtx<'a> {
     pub(crate) fn with_scheduler(self, scheduler: &'a TransferScheduler) -> Self {
         Self {
             scheduler: Some(scheduler),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_http_client_cache(
+        self,
+        cache: &'a super::cloud_http::StorageHttpClientCache,
+    ) -> Self {
+        Self {
+            http_client_cache: Some(cache),
             ..self
         }
     }

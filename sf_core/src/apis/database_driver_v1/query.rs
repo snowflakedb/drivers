@@ -17,7 +17,6 @@ use crate::file_manager::{
 };
 use crate::query_types::RowType;
 use crate::rest;
-use crate::tls::RootStoreProvider;
 use crate::utils::sync::MutexRecoverExt;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::DataType;
@@ -87,10 +86,7 @@ pub(super) async fn perform_put_get_transfer(
     get_fastfail: bool,
     cwd: Option<std::path::PathBuf>,
     unsafe_file_write: bool,
-    tls_config: crate::tls::config::TlsConfig,
-    proxy_config: crate::tls::config::ProxyConfig,
-    crl_manager: crate::crl::ConnectionCrl,
-    root_store_provider: RootStoreProvider,
+    http_client_cache: &file_manager::StorageHttpClientCache,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
     let initial_snapshot = data
@@ -108,15 +104,9 @@ pub(super) async fn perform_put_get_transfer(
     let transfer_ctx = file_manager::TransferCtx::new(
         refresher_handle,
         operation_ctx.map(OperationCtx::cleanup_scope),
-    );
-    // Bundled once and threaded into whichever converter the running arm
-    // calls below — see `file_manager::StageTransport`.
-    let transport = file_manager::StageTransport {
-        tls_config,
-        proxy_config,
-        crl_manager,
-        root_store_provider,
-    };
+    )
+    .with_http_client_cache(http_client_cache);
+    let transport = http_client_cache.transport();
 
     match command {
         "UPLOAD" => {
@@ -130,7 +120,7 @@ pub(super) async fn perform_put_get_transfer(
                     put_compress_level,
                     put_tempdir,
                     cwd,
-                    &transport,
+                    transport,
                 )
                 .context(FileTransferPreparationSnafu)?;
             let upload_results = upload_files(&file_upload_data, retry_policy, transfer_ctx)
@@ -144,7 +134,7 @@ pub(super) async fn perform_put_get_transfer(
             unsafe_file_write,
             get_fastfail,
             cwd,
-            &transport,
+            transport,
         ) {
             Ok(file_download_data) => {
                 let download_results =

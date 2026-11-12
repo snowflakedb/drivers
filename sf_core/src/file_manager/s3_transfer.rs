@@ -301,7 +301,7 @@ pub(super) async fn upload_to_s3_or_skip(
                 &stage_info,
                 SNOWFLAKE_UPLOAD_PROVIDER,
                 &policy,
-                tx.http.and_then(cloud_http::StorageHttp::s3),
+                tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
             )
             .await
             .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
@@ -348,7 +348,7 @@ pub(super) async fn upload_to_s3_or_skip(
                 protocol,
                 refresher: tx.refresher,
                 policy: &policy,
-                http_client: tx.http.and_then(cloud_http::StorageHttp::s3),
+                http_client: tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
             }
             .execute_with_conflict_retry(transfer_started)
             .await
@@ -1457,7 +1457,7 @@ pub(super) async fn download_from_s3(
                 &stage_info,
                 SNOWFLAKE_DOWNLOAD_PROVIDER,
                 &policy,
-                tx.http.and_then(cloud_http::StorageHttp::s3),
+                tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
             )
             .await
             .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
@@ -1995,10 +1995,10 @@ async fn create_s3_client(
     let http_client = match shared {
         Some(client) => client.clone(),
         None => AwsSdkReqwestClient::build_prepared(
-            &stage_info.tls_config,
-            Some(&stage_info.proxy_config),
-            stage_info.crl_manager.clone(),
-            stage_info.root_store_provider.clone(),
+            &stage_info.transport.tls_config,
+            Some(&stage_info.transport.proxy_config),
+            stage_info.transport.crl_manager.clone(),
+            stage_info.transport.root_store_provider.clone(),
         )
         .await
         .map_err(CreateS3ClientError::HttpClient)?,
@@ -2492,10 +2492,12 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url,
             storage_account: None,
-            tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new().connection_crl(),
-            root_store_provider: crate::tls::RootStoreProvider::new(),
-            proxy_config: crate::tls::config::ProxyConfig::default(),
+            transport: crate::file_manager::StageTransport {
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_manager: crate::crl::CrlManager::new().connection_crl(),
+                root_store_provider: crate::tls::RootStoreProvider::new(),
+                proxy_config: crate::tls::config::ProxyConfig::default(),
+            },
         }
     }
 
@@ -3789,10 +3791,12 @@ mod tests {
             use_regional_url: false,
             use_s3_regional_url: false,
             storage_account: None,
-            tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new().connection_crl(),
-            root_store_provider: crate::tls::RootStoreProvider::new(),
-            proxy_config: crate::tls::config::ProxyConfig::default(),
+            transport: crate::file_manager::StageTransport {
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_manager: crate::crl::CrlManager::new().connection_crl(),
+                root_store_provider: crate::tls::RootStoreProvider::new(),
+                proxy_config: crate::tls::config::ProxyConfig::default(),
+            },
         }
     }
 

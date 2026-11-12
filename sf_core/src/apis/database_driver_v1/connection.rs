@@ -727,6 +727,10 @@ impl DatabaseDriverV1 {
                     let telemetry_id = conn_handle.id;
                     conn.telemetry_id = Some(telemetry_id);
                     conn.connection_crl = Some(connection_crl.clone());
+                    conn.storage_http_client_cache =
+                        Some(crate::file_manager::StorageHttpClientCache::new(
+                            conn.stage_transport(&self.crl_manager, &self.root_store_provider),
+                        ));
 
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
@@ -1344,6 +1348,10 @@ pub struct Connection {
     /// Shared CRL caches plus this connection's `client_crl_stats` buffer.
     /// Set at the start of login, before the TLS client is built.
     pub(crate) connection_crl: Option<crate::crl::ConnectionCrl>,
+    /// Storage (S3/GCS/Azure) HTTP client reused across this connection's
+    /// PUT/GET commands. Set at login from the TLS/proxy/CRL settings it
+    /// builds clients with; cleared on close.
+    pub(crate) storage_http_client_cache: Option<crate::file_manager::StorageHttpClientCache>,
 }
 
 impl Default for Connection {
@@ -1390,6 +1398,7 @@ impl Connection {
             session_mutex: Arc::new(Mutex::new(())),
             browser_hooks: BrowserHooks::default(),
             connection_crl: None,
+            storage_http_client_cache: None,
         }
     }
 
@@ -1562,6 +1571,19 @@ impl Connection {
             .as_ref()
             .map(|ci| ci.proxy_config.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) fn stage_transport(
+        &self,
+        crl_manager: &crate::crl::CrlManager,
+        root_store_provider: &crate::tls::RootStoreProvider,
+    ) -> crate::file_manager::StageTransport {
+        crate::file_manager::StageTransport {
+            tls_config: self.tls_config(),
+            proxy_config: self.proxy_config(),
+            crl_manager: self.connection_crl_or(crl_manager),
+            root_store_provider: root_store_provider.clone(),
+        }
     }
 
     async fn resolve_service_name(&self) -> Option<String> {
@@ -3528,6 +3550,7 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     }
     *conn.tokens.write().await = None;
     conn.http_client = None;
+    conn.storage_http_client_cache = None;
     tracing::debug!("Cleared session tokens and HTTP client");
 
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).

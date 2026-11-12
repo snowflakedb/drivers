@@ -40,10 +40,12 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
         storage_account: None,
     }
 }
@@ -63,10 +65,12 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
         storage_account: None,
     }
 }
@@ -776,10 +780,12 @@ fn gcs_stage_presigned_only_no_stage_url() -> StageInfo {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
         storage_account: None,
     }
 }

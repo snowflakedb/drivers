@@ -606,7 +606,8 @@ pub(super) async fn upload_to_azure_or_skip(
     // `stage_info.creds` rotates on refresh — and clone it into each attempt.
     let client = create_azure_client(
         stage_info,
-        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+        tx.http_client
+            .and_then(cloud_http::StorageHttpClient::reqwest),
     )
     .await?;
     // On-cloud byte count (ciphertext length under CSE) decides single-PUT vs
@@ -1285,7 +1286,7 @@ async fn create_azure_client(
 ) -> Result<reqwest::Client, AzureRequestError> {
     match shared {
         Some(client) => Ok(client.clone()),
-        None => cloud_http::build_azure_client(stage_info)
+        None => cloud_http::build_azure_gcs_client(&stage_info.transport)
             .await
             .map_err(|e| {
                 HttpSnafu {
@@ -1521,7 +1522,8 @@ pub async fn download_from_azure_streaming(
     // `stage_info.creds` rotates on refresh.
     let client = create_azure_client(
         stage_info,
-        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+        tx.http_client
+            .and_then(cloud_http::StorageHttpClient::reqwest),
     )
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -1986,10 +1988,12 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
-            tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new().connection_crl(),
-            root_store_provider: crate::tls::RootStoreProvider::new(),
-            proxy_config: crate::tls::config::ProxyConfig::default(),
+            transport: crate::file_manager::StageTransport {
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_manager: crate::crl::CrlManager::new().connection_crl(),
+                root_store_provider: crate::tls::RootStoreProvider::new(),
+                proxy_config: crate::tls::config::ProxyConfig::default(),
+            },
             storage_account: overrides
                 .storage_account
                 .or(Some("mystorageaccount".to_string())),
@@ -2307,10 +2311,12 @@ mod tests {
             use_virtual_url: false,
             use_regional_url: false,
             use_s3_regional_url: false,
-            tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new().connection_crl(),
-            root_store_provider: crate::tls::RootStoreProvider::new(),
-            proxy_config: crate::tls::config::ProxyConfig::default(),
+            transport: crate::file_manager::StageTransport {
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_manager: crate::crl::CrlManager::new().connection_crl(),
+                root_store_provider: crate::tls::RootStoreProvider::new(),
+                proxy_config: crate::tls::config::ProxyConfig::default(),
+            },
             storage_account: Some("test".to_string()),
         }
     }

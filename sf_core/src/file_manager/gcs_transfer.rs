@@ -133,7 +133,8 @@ pub async fn upload_to_gcs_or_skip(
     let scheduler = &super::scheduler_for(tx, multipart);
     let client = create_gcs_client(
         stage_info,
-        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+        tx.http_client
+            .and_then(cloud_http::StorageHttpClient::reqwest),
     )
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -348,7 +349,8 @@ async fn gcs_get_with_refresh(
 ) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client(
         stage_info,
-        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+        tx.http_client
+            .and_then(cloud_http::StorageHttpClient::reqwest),
     )
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -964,12 +966,14 @@ async fn create_gcs_client(
 ) -> Result<reqwest::Client, GcsRequestError> {
     match shared {
         Some(client) => Ok(client.clone()),
-        None => cloud_http::build_gcs_client(stage_info).await.map_err(|e| {
-            ClientSetupSnafu {
-                detail: e.to_string(),
-            }
-            .build()
-        }),
+        None => cloud_http::build_azure_gcs_client(&stage_info.transport)
+            .await
+            .map_err(|e| {
+                ClientSetupSnafu {
+                    detail: e.to_string(),
+                }
+                .build()
+            }),
     }
 }
 
@@ -1293,7 +1297,8 @@ async fn gcs_try_ranged_download(
 ) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
     let client = create_gcs_client(
         stage_info,
-        tx.http.and_then(cloud_http::StorageHttp::reqwest),
+        tx.http_client
+            .and_then(cloud_http::StorageHttpClient::reqwest),
     )
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
@@ -1988,10 +1993,12 @@ mod tests {
             use_virtual_url: overrides.use_virtual_url,
             use_regional_url: overrides.use_regional_url,
             use_s3_regional_url: false,
-            tls_config: crate::tls::config::TlsConfig::default(),
-            crl_manager: crate::crl::CrlManager::new().connection_crl(),
-            root_store_provider: crate::tls::RootStoreProvider::new(),
-            proxy_config: crate::tls::config::ProxyConfig::default(),
+            transport: crate::file_manager::StageTransport {
+                tls_config: crate::tls::config::TlsConfig::default(),
+                crl_manager: crate::crl::CrlManager::new().connection_crl(),
+                root_store_provider: crate::tls::RootStoreProvider::new(),
+                proxy_config: crate::tls::config::ProxyConfig::default(),
+            },
             storage_account: None,
         }
     }

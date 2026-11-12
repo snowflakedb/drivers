@@ -1352,10 +1352,7 @@ impl StageInfo {
             use_regional_url,
             use_s3_regional_url,
             storage_account,
-            tls_config: transport.tls_config.clone(),
-            crl_manager: transport.crl_manager.clone(),
-            root_store_provider: transport.root_store_provider.clone(),
-            proxy_config: transport.proxy_config.clone(),
+            transport: transport.clone(),
         })
     }
 }

@@ -51,10 +51,12 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         use_virtual_url: false,
         use_regional_url: false,
         use_s3_regional_url: false,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
         storage_account: None,
     }
 }
@@ -76,10 +78,12 @@ fn s3_stage_with_creds(endpoint: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         storage_account: None,
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
     }
 }
 
@@ -98,10 +102,12 @@ fn azure_stage_with_sas(endpoint: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
-        tls_config: sf_core::tls::config::TlsConfig::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: sf_core::tls::config::TlsConfig::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: sf_core::tls::config::ProxyConfig::default(),
+        },
     }
 }
 
@@ -429,7 +435,8 @@ impl Respond for S3GetThenRefreshed {
 #[tokio::test(flavor = "multi_thread")]
 async fn download_files_fails_the_batch_when_the_http_client_cannot_build() {
     let mut stage = gcs_stage_with_token("http://127.0.0.1:1");
-    stage.tls_config.custom_root_store_path = Some(std::path::PathBuf::from("/no/such/roots.pem"));
+    stage.transport.tls_config.custom_root_store_path =
+        Some(std::path::PathBuf::from("/no/such/roots.pem"));
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let err = download_files(

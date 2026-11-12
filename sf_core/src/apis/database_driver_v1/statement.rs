@@ -582,13 +582,11 @@ impl DatabaseDriverV1 {
                     retry_policy,
                     use_s3_regional_url_session_param,
                     unsafe_file_write,
-                    tls_config,
-                    proxy_config,
                     put_fastfail,
                     put_compress_level,
                     put_tempdir,
                     get_fastfail,
-                    connection_crl,
+                    http_client_cache,
                 ) = {
                     let conn = conn.lock().await;
                     let effective_settings = conn.effective_settings();
@@ -596,8 +594,6 @@ impl DatabaseDriverV1 {
                         crate::config::retry::RetryPolicy::put_get(&effective_settings),
                         conn.use_s3_regional_url_session_param().await,
                         conn.unsafe_file_write(),
-                        conn.tls_config(),
-                        conn.proxy_config(),
                         // precedence: statement setting > session override > connection seed > wrapper preset
                         put_fastfail_override
                             .or_else(|| conn.put_fastfail())
@@ -607,7 +603,12 @@ impl DatabaseDriverV1 {
                         get_fastfail_override
                             .or_else(|| conn.get_fastfail())
                             .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
-                        conn.connection_crl_or(&self.crl_manager),
+                        conn.storage_http_client_cache.clone().unwrap_or_else(|| {
+                            debug_assert!(false, "PUT/GET on a connection that never logged in");
+                            crate::file_manager::StorageHttpClientCache::new(
+                                conn.stage_transport(&self.crl_manager, &self.root_store_provider),
+                            )
+                        }),
                     )
                 };
                 perform_put_get_transfer(
@@ -625,10 +626,7 @@ impl DatabaseDriverV1 {
                     get_fastfail,
                     cwd,
                     unsafe_file_write,
-                    tls_config,
-                    proxy_config,
-                    connection_crl,
-                    self.root_store_provider.clone(),
+                    &http_client_cache,
                 )
                 .await
                 .context(QueryResponseProcessSnafu)

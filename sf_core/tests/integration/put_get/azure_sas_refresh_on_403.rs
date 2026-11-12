@@ -47,10 +47,12 @@ fn azure_stage(mock_uri: &str, sas: &str) -> StageInfo {
         use_regional_url: false,
         use_s3_regional_url: false,
         storage_account: Some("test".to_string()),
-        tls_config: Default::default(),
-        crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
-        root_store_provider: sf_core::tls::RootStoreProvider::new(),
-        proxy_config: Default::default(),
+        transport: sf_core::file_manager::StageTransport {
+            tls_config: Default::default(),
+            crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
+            root_store_provider: sf_core::tls::RootStoreProvider::new(),
+            proxy_config: Default::default(),
+        },
     }
 }
 

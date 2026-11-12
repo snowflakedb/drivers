@@ -48,7 +48,7 @@ use snafu::ResultExt;
 
 use crate::crl::ConnectionCrl;
 use crate::tls::RootStoreProvider;
-use crate::tls::client::configure_http1_tls_builder;
+use crate::tls::client::{apply_http_pool_settings, configure_http1_tls_builder};
 use crate::tls::config::{ProxyConfig, TlsConfig};
 use crate::tls::error::{ClientBuildSnafu, TlsError};
 
@@ -72,10 +72,9 @@ impl AwsSdkReqwestClient {
     /// (`operation_attempt_timeout`/`operation_timeout`) governs request
     /// timing.
     ///
-    /// Connection-pool tuning is deliberately left at `reqwest`'s defaults (no
-    /// `pool_idle_timeout`/`pool_max_idle_per_host`/`tcp_keepalive`), matching
-    /// Azure/GCS on this shared entry point; only the GS/REST client tunes the
-    /// pool (via `configure_http_client`).
+    /// The pool uses [`apply_http_pool_settings`], like the GS/REST and
+    /// Azure/GCS clients: a connection reuses this client across commands, so
+    /// idle sockets would otherwise outlive the command at reqwest's defaults.
     pub(crate) fn build(
         tls_config: &TlsConfig,
         proxy: Option<&ProxyConfig>,
@@ -83,7 +82,7 @@ impl AwsSdkReqwestClient {
         roots: RootStoreProvider,
     ) -> Result<Self, TlsError> {
         Self::finish(configure_http1_tls_builder(
-            reqwest::Client::builder(),
+            apply_http_pool_settings(reqwest::Client::builder()),
             tls_config,
             proxy,
             crl_manager,
@@ -101,7 +100,7 @@ impl AwsSdkReqwestClient {
             .prepare_native_if_needed(tls_config, crl_manager.has_cache())
             .await?;
         Self::finish(configure_http1_tls_builder(
-            reqwest::Client::builder(),
+            apply_http_pool_settings(reqwest::Client::builder()),
             tls_config,
             proxy,
             crl_manager,
