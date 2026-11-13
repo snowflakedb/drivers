@@ -2,7 +2,8 @@ import BigInteger from 'big-integer';
 import { expect, onTestFinished } from 'vitest';
 import type { Connection } from '../../types/sdk-types.js';
 import { createConnection, createLiveConnection } from '../utils/fixtures.js';
-import { isRunningNewDriverWithBD } from '../utils/index.js';
+import { IS_RUNNING_FOR_OLD_DRIVER, isRunningNewDriverWithBD } from '../utils/index.js';
+import { getSessionParameterFromServer } from '../utils/query.js';
 
 /**
  * The old driver wraps BigInt-mode values in a `big-integer` instance; the new driver returns a
@@ -43,4 +44,17 @@ export async function createLiveNullPreservingConnection(): Promise<Connection> 
     }
   });
   return connection;
+}
+
+/**
+ * Returns true when query results on this connection come back as Arrow.
+ *
+ * The server sends Arrow only to drivers that support it, and the old (3.x) driver does not.
+ * When the session is set to ARROW, the server reports ARROW but returns JSON to that driver.
+ */
+export async function isArrowResultFormat(connection: Connection): Promise<boolean> {
+  if (IS_RUNNING_FOR_OLD_DRIVER) {
+    return false;
+  }
+  return (await getSessionParameterFromServer(connection, 'JS_QUERY_RESULT_FORMAT')) === 'ARROW';
 }

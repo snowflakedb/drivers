@@ -8,13 +8,15 @@ import {
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { createLiveNullPreservingConnection } from '../utils.js';
+import { createLiveNullPreservingConnection, isArrowResultFormat } from '../utils.js';
 
 describe('FLOAT data type', () => {
   let connection: Connection;
+  let isArrowResult: boolean;
 
   beforeAll(async () => {
     connection = await createLiveConnection({}, false);
+    isArrowResult = await isArrowResultFormat(connection);
   });
 
   afterAll(async () => {
@@ -90,14 +92,17 @@ describe('FLOAT data type', () => {
       // Given Snowflake client is logged in
       void connection;
 
-      // A max-double literal overflows to Infinity and the smallest-normal literal is rounded server-side
       const queryValues = [
         '1.7976931348623157e308::FLOAT',
         '-1.7976931348623157e308::FLOAT',
         '2.2250738585072014e-308::FLOAT',
         '5e-324::FLOAT',
       ];
-      const expectedValues = [Infinity, -Infinity, 2.225073859e-308, 5e-324];
+      const expectedValues = isArrowResult
+        ? [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324]
+        : // JSON sends rounded decimal text. The max-double text rounds up past the largest
+          // double and parses as Infinity, and the smallest-normal value loses digits.
+          [Infinity, -Infinity, 2.225073859e-308, 5e-324];
 
       // When Query "SELECT <query_values>" is executed
       const { rows } = await executeAsync(connection, `SELECT ${queryValues.join(', ')}`);
@@ -127,13 +132,16 @@ describe('FLOAT data type', () => {
       // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
       const { rows } = await executeAsync(
         connection,
-        // The 16-digit literal exceeds f64's ~15 significant digits, so 1234567890123456.0 rounds
-        // to 1234567890123460.
         `SELECT 123456789012345.0::FLOAT, 1234567890123456.0::FLOAT`,
       );
 
       // Then Result should verify precision around 15 decimal digits
-      expect(Object.values(rows[0])).toEqual([123456789012345.0, 1234567890123460]);
+      expect(Object.values(rows[0])).toEqual(
+        isArrowResult
+          ? [123456789012345.0, 1234567890123456]
+          : // JSON sends FLOAT with 15 significant digits, so the 16-digit value is rounded.
+            [123456789012345.0, 1234567890123460],
+      );
     });
 
     it('should handle NULL values from literals for float and synonyms', async () => {
@@ -204,7 +212,6 @@ describe('FLOAT data type', () => {
       const tableName = await createTemporaryTable(connection, 'ID NUMBER, COL FLOAT');
       await executeAsync(
         connection,
-        // A max-double literal overflows to Infinity and the smallest-normal literal is rounded server-side
         `INSERT INTO ${tableName} (ID, COL) VALUES
            (1, 1.7976931348623157e308),
            (2, -1.7976931348623157e308),
@@ -217,13 +224,16 @@ describe('FLOAT data type', () => {
       const { rows } = await executeAsync(connection, `SELECT COL FROM ${tableName} ORDER BY ID`);
 
       // Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
-      expect(rows.map((row) => row.COL)).toEqual([
-        Infinity,
-        -Infinity,
-        2.225073859e-308,
-        5e-324,
-        123456789012345.0,
-      ]);
+      expect(rows.map((row) => row.COL)).toEqual(
+        isArrowResult
+          ? [
+              1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324,
+              123456789012345.0,
+            ]
+          : // JSON sends rounded decimal text. The max-double text rounds up past the largest
+            // double and parses as Infinity, and the smallest-normal value loses digits.
+            [Infinity, -Infinity, 2.225073859e-308, 5e-324, 123456789012345.0],
+      );
     });
 
     it('should handle NULL values from table for float and synonyms', async () => {

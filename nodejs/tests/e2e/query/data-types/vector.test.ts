@@ -8,13 +8,15 @@ import {
   isRunningNewDriverWithBD,
   NOT_IMPLEMENTED_IN_NEW_DRIVER,
 } from '../../utils/index.js';
-import { createLiveNullPreservingConnection } from '../utils.js';
+import { createLiveNullPreservingConnection, isArrowResultFormat } from '../utils.js';
 
 describe('VECTOR data type', () => {
   let connection: Connection;
+  let isArrowResult: boolean;
 
   beforeAll(async () => {
     connection = await createLiveConnection({}, false);
+    isArrowResult = await isArrowResultFormat(connection);
   });
 
   afterAll(async () => {
@@ -122,8 +124,7 @@ describe('VECTOR data type', () => {
       },
     );
 
-    // This should work once the server returns Arrow instead of JSON for the JavaScript client.
-    it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)('should preserve FLOAT smallest-normal', async () => {
+    it('should preserve FLOAT smallest-normal', async () => {
       // Given Snowflake client is logged in
       void connection;
 
@@ -132,7 +133,12 @@ describe('VECTOR data type', () => {
 
       // Then the smallest-normal value must not underflow to zero
       const result = Object.values(rows[0])[0];
-      expect(result).toEqual(isRunningNewDriverWithBD('BD#29') ? [1.1754944e-38] : '[0.000000]');
+      // JSON writes VECTOR(FLOAT) elements with six decimal places, so this value arrives as 0.
+      if (isRunningNewDriverWithBD('BD#29')) {
+        expect(result).toEqual(isArrowResult ? [1.1754944e-38] : [0]);
+      } else {
+        expect(result).toEqual('[0.000000]');
+      }
     });
 
     it('should select max-dimension vector', async () => {
