@@ -1617,6 +1617,19 @@ impl IpdDescriptor {
 /// Result type for ODBC operations
 pub type OdbcResult<T> = Result<T, OdbcError>;
 
+impl OdbcError {
+    /// Variants that map to a non-error return code (`SQL_NO_DATA`,
+    /// `SQL_NEED_DATA`, `SQL_STILL_EXECUTING`) in [`ToSqlReturn::to_sql_return`].
+    pub fn is_return_code(&self) -> bool {
+        matches!(
+            self,
+            OdbcError::NoMoreData { .. }
+                | OdbcError::DaeRequired { .. }
+                | OdbcError::StillExecuting { .. }
+        )
+    }
+}
+
 pub trait ToSqlReturn {
     fn to_sql_return(self, warnings: &Warnings) -> sql::SqlReturn;
     fn to_sql_code(self) -> i16;

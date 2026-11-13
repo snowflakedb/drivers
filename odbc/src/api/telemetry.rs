@@ -45,6 +45,9 @@ pub fn record_api_usage(
 /// `(exception_type, error_source)` `&'static str`s returned by
 /// [`OdbcError::telemetry_classification`].
 pub fn record_wrapper_error(handle_type: sql::HandleType, handle: sql::Handle, err: &OdbcError) {
+    if err.is_return_code() {
+        return;
+    }
     let Some(conn_handle) = resolve_conn_handle(handle_type, handle) else {
         return;
     };
@@ -154,6 +157,14 @@ mod tests {
         // A disconnect transition clears it again.
         dbc.mark_disconnected(&mut dbc.connection.lock());
         assert!(connected_conn_handle(&dbc).is_none());
+    }
+
+    #[test]
+    fn is_return_code_matches_non_error_return_codes_only() {
+        assert!(OdbcError::NoMoreData { location: loc() }.is_return_code());
+        assert!(OdbcError::DaeRequired { location: loc() }.is_return_code());
+        assert!(OdbcError::StillExecuting { location: loc() }.is_return_code());
+        assert!(!OdbcError::InvalidHandle { location: loc() }.is_return_code());
     }
 
     #[test]
