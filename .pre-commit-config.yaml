@@ -176,7 +176,14 @@ repos:
         description: Validate changelog fragments and reject edits to shipped CHANGELOG sections
         entry: python3 scripts/check_changelog.py --base origin/main
         pass_filenames: false
-        files: (^[^/]+/CHANGELOG\.md$|^[^/]+/changelog/|^scripts/check_changelog\.py$)
+        files: (^[^/]+/CHANGELOG\.md$|^[^/]+/changelog/|^dotnet/behavior_differences/|^scripts/check_changelog\.py$)
+        language: system
+    -   id: changelog-fragments-test
+        name: Changelog fragment check tests
+        description: Unit tests for scripts/check_changelog.py
+        entry: python3 -m unittest scripts/test_check_changelog.py
+        pass_filenames: false
+        files: ^scripts/(check_changelog\.py|test_check_changelog\.py)$
         language: system
     -   id: mirror-config-consistency
         name: Mirror config generation consistency

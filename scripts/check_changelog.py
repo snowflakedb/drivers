@@ -5,7 +5,9 @@ In-progress notes are one fragment per pull request under
 ``<component>/changelog/unreleased/``. The file name is ``<slug>.md`` and
 the slug does not start with a number, so two pull requests do not have to
 claim the next id. The file starts with ``category:`` metadata: breaking,
-feature, change, bugfix, dependency, or internal.
+feature, change, bugfix, dependency, or internal. A fragment in a component
+listed in ``BD_REGISTRIES`` may also carry ``behavior_differences:``, the
+registry entries the note describes; each ``allowed`` entry needs one.
 
 Notes that already shipped stay in ``<component>/CHANGELOG.md`` under their
 ``## <version>`` heading until a release is cut. A pull request must not
@@ -70,6 +72,16 @@ _UPCOMING_POINTER = "In-progress notes are files under `changelog/unreleased/`."
 # The Node.js changelog is still a hand-written draft without fragment files.
 _SKIPPED_COMPONENTS: frozenset[str] = frozenset({"nodejs"})
 
+# Components with a one-file-per-entry behavior-difference registry, keyed by
+# component directory. A fragment in one of these components may list registry
+# entries in ``behavior_differences:``, and every entry whose status is
+# ``allowed`` has to be listed by at least one of the component's fragments.
+BD_REGISTRIES: dict[str, str] = {"dotnet": "dotnet/behavior_differences"}
+_BD_FIELD = "behavior_differences:"
+_BD_ID_RE = re.compile(r"^BD#(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$")
+_BD_STATUS_RE = re.compile(r"""^status:\s*(?P<q>["']?)(?P<status>[A-Za-z_]+)(?P=q)\s*(?:#.*)?$""", re.M)
+_BD_STATUS_NEEDING_FRAGMENT = "allowed"
+
 
 @dataclass(frozen=True)
 class DiffEntry:
@@ -132,25 +144,61 @@ def fragment_text(category: str, body: str) -> str:
     return f"---\ncategory: {category}\n---\n\n{body}"
 
 
-def split_fragment(text: str) -> tuple[str | None, str, list[str]]:
-    """Return ``(category, bullet body, errors)`` for one fragment file."""
+@dataclass(frozen=True)
+class FragmentMetadata:
+    category: str | None
+    behavior_differences: tuple[str, ...]
+    body: str
+    errors: list[str]
+
+
+def parse_bd_list(value: str) -> tuple[tuple[str, ...], list[str]]:
+    """Parse ``[BD#slug, BD#other]`` into ids, with an error per malformed item."""
+    if not (value.startswith("[") and value.endswith("]")):
+        return (), ["behavior_differences must be a list such as [BD#some-slug]"]
+    items = [item.strip() for item in value[1:-1].split(",")]
+    if items == [""]:
+        return (), ["behavior_differences is empty"]
+    ids: list[str] = []
+    errors: list[str] = []
+    for item in items:
+        if _BD_ID_RE.match(item) is None:
+            errors.append(f"behavior_differences item {item!r} is not BD#<kebab-case-slug>")
+        elif item in ids:
+            errors.append(f"behavior_differences lists {item} more than once")
+        else:
+            ids.append(item)
+    return tuple(ids), errors
+
+
+def parse_fragment(text: str) -> FragmentMetadata:
     if not text.startswith("---\n"):
-        return None, text, ["fragment must start with category metadata"]
+        return FragmentMetadata(None, (), text, ["fragment must start with category metadata"])
     rest = text[len("---\n") :]
     end = rest.find("\n---\n")
     if end < 0:
-        return None, text, ["fragment metadata is missing its closing fence"]
+        return FragmentMetadata(
+            None, (), text, ["fragment metadata is missing its closing fence"]
+        )
     header = rest[:end]
     body = rest[end + len("\n---\n") :]
     if body.startswith("\n"):
         body = body[1:]
     errors: list[str] = []
     category: str | None = None
+    bd_ids: tuple[str, ...] | None = None
     for line in header.splitlines():
         if not line.strip():
             continue
+        if line.startswith(_BD_FIELD):
+            if bd_ids is not None:
+                errors.append("behavior_differences is set more than once")
+                continue
+            bd_ids, bd_errors = parse_bd_list(line[len(_BD_FIELD) :].strip())
+            errors.extend(bd_errors)
+            continue
         if not line.startswith("category:"):
-            errors.append("only a category field is allowed in fragment metadata")
+            errors.append("only category and behavior_differences fields are allowed in fragment metadata")
             continue
         value = line[len("category:") :].strip()
         if category is not None:
@@ -161,7 +209,13 @@ def split_fragment(text: str) -> tuple[str | None, str, list[str]]:
             category = value
     if category is None and not errors:
         errors.append("fragment metadata needs a category")
-    return category, body, errors
+    return FragmentMetadata(category, bd_ids or (), body, errors)
+
+
+def split_fragment(text: str) -> tuple[str | None, str, list[str]]:
+    """Return ``(category, bullet body, errors)`` for one fragment file."""
+    parsed = parse_fragment(text)
+    return parsed.category, parsed.body, parsed.errors
 
 
 def bullet_lines(text: str) -> list[str]:
@@ -493,6 +547,83 @@ def validate_tree(root: Path) -> list[str]:
     return errors
 
 
+def _fragment_citations(changelog: Path) -> list[tuple[Path, tuple[str, ...]]]:
+    """Fragments under ``unreleased/`` and version folders that list behavior differences."""
+    cited: list[tuple[Path, tuple[str, ...]]] = []
+    if not changelog.is_dir():
+        return cited
+    for folder in sorted(changelog.iterdir()):
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        if folder.name != "unreleased" and _VERSION_RE.match(folder.name) is None:
+            continue
+        for path in sorted(folder.iterdir()):
+            if path.is_symlink() or not path.is_file() or parse_fragment_slug(path.name) is None:
+                continue
+            ids = parse_fragment(path.read_text(encoding="utf-8")).behavior_differences
+            if ids:
+                cited.append((path, ids))
+    return cited
+
+
+def read_bd_statuses(
+    root: Path, registry: str
+) -> tuple[dict[str, tuple[Path, str | None]], list[str]]:
+    """Map ``BD#<slug>`` to its registry file and top-level ``status`` value.
+
+    The id is the file stem, so two areas holding the same slug would name one
+    entry; each later file is reported as a duplicate instead of replacing it.
+    """
+    entries: dict[str, tuple[Path, str | None]] = {}
+    errors: list[str] = []
+    folder = root / registry
+    if not folder.is_dir():
+        return entries, errors
+    for path in sorted(folder.glob("*/*.yaml")):
+        bd_id = f"BD#{path.stem}"
+        if bd_id in entries:
+            errors.append(
+                f"{path.relative_to(root)}: {bd_id} is also defined by "
+                f"{entries[bd_id][0].relative_to(root)}; slugs are unique across areas"
+            )
+            continue
+        match = _BD_STATUS_RE.search(path.read_text(encoding="utf-8", errors="replace"))
+        entries[bd_id] = (path, match.group("status") if match else None)
+    return entries, errors
+
+
+def validate_bd_citations(root: Path) -> list[str]:
+    errors: list[str] = []
+    supported = ", ".join(sorted(BD_REGISTRIES))
+    for component in discover_components(root):
+        if component.name in BD_REGISTRIES:
+            continue
+        for path, _ids in _fragment_citations(component / "changelog"):
+            errors.append(
+                f"{path.relative_to(root)}: behavior_differences is only supported "
+                f"in {supported} fragments"
+            )
+    for component, registry in sorted(BD_REGISTRIES.items()):
+        entries, duplicate_errors = read_bd_statuses(root, registry)
+        errors.extend(duplicate_errors)
+        cited: set[str] = set()
+        for path, ids in _fragment_citations(root / component / "changelog"):
+            for bd_id in ids:
+                cited.add(bd_id)
+                if bd_id not in entries:
+                    errors.append(
+                        f"{path.relative_to(root)}: {bd_id} has no entry under {registry}/"
+                    )
+        for bd_id, (path, status) in entries.items():
+            if status == _BD_STATUS_NEEDING_FRAGMENT and bd_id not in cited:
+                errors.append(
+                    f"{path.relative_to(root)}: status {_BD_STATUS_NEEDING_FRAGMENT} needs a "
+                    f"changelog fragment under {component}/changelog/ whose "
+                    f"behavior_differences lists {bd_id}"
+                )
+    return errors
+
+
 def _validate_changelog_dir(root: Path, changelog: Path) -> list[str]:
     errors: list[str] = []
     rel = changelog.relative_to(root)
@@ -810,6 +941,7 @@ def _upcoming_notes_preserved(
 
 def validate(root: Path, base: str | None = None) -> list[str]:
     errors = validate_tree(root)
+    errors.extend(validate_bd_citations(root))
     if base is not None:
         errors.extend(validate_against_base(root, base))
     return errors

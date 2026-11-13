@@ -46,6 +46,35 @@ folders. It also rejects `internal-improvements`, `test-improvements`, and
 in a version folder that already shipped them. CI passes the pull request's
 base commit instead of `origin/main`.
 
+## Cite a .NET behavior difference
+
+A .NET behavior difference that ships as is has `status: allowed` in
+`dotnet/behavior_differences/<area>/<slug>.yaml`. Every such entry is listed
+by at least one .NET fragment, so the difference reaches customers in the
+release notes. The pull request that sets `allowed` adds the fragment unless
+one already lists the entry:
+
+```markdown
+---
+category: breaking
+behavior_differences: [BD#select-rows-affected-reports-row-count]
+---
+
+- Changed `ExecuteNonQuery` and `RecordsAffected` to return the row count of a SELECT instead of -1. (snowflakedb/drivers#42)
+```
+
+The bullet describes the difference in public API terms, without the
+registry's internal `rationale`. One fragment may list several entries, and
+an entry may appear in more than one fragment.
+
+`check_changelog.py` fails when a `dotnet/behavior_differences/` entry has
+`status: allowed` and no fragment under `dotnet/changelog/unreleased/` or a
+.NET version folder lists it, and when a fragment lists an id with no
+registry entry. Any fragment that lists the entry counts, including one an
+earlier pull request added; the check does not require the fragment to be
+new in the pull request that sets `allowed`. Other components do not accept
+`behavior_differences:` yet.
+
 ## Cut a release
 
 For a release such as ODBC `v4.2.0`:
