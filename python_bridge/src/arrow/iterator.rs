@@ -48,7 +48,7 @@ impl ArrowStreamIterator {
     ) -> PyResult<Self> {
         Self::from_stream(
             py,
-            RowStream::from_result_set_for_rows(py, handle_id, handle_magic)?,
+            RowStream::from_result_set(py, handle_id, handle_magic)?,
             session_timezone,
             use_dict_result,
             use_numpy,

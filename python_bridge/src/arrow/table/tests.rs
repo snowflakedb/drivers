@@ -1149,17 +1149,17 @@ fn convert_batch_fixed_rejects_non_integer_physical_type() {
 
 #[test]
 fn convert_batch_fixed_leaves_boolean_column_and_its_metadata() {
-    let schema = Schema::new_with_metadata(
+    let schema = Arc::new(Schema::new_with_metadata(
         vec![
             field("b", DataType::Boolean, "BOOLEAN"),
             fixed_field("n", DataType::Int64, "2"),
         ],
         metadata(&[("queryId", "q")]),
-    );
+    ));
     let converted = converter()
         .convert_batch(
             RecordBatch::try_new(
-                Arc::new(schema),
+                Arc::clone(&schema),
                 vec![
                     Arc::new(BooleanArray::from(vec![Some(true)])),
                     Arc::new(Int64Array::from(vec![Some(123)])),
@@ -1168,6 +1168,10 @@ fn convert_batch_fixed_leaves_boolean_column_and_its_metadata() {
             .unwrap(),
         )
         .unwrap();
+    assert!(Arc::ptr_eq(
+        &converted.schema().fields()[0],
+        &schema.fields()[0]
+    ));
     assert_eq!(converted.schema().field(0).data_type(), &DataType::Boolean);
     assert_eq!(
         converted.schema().field(0).metadata(),

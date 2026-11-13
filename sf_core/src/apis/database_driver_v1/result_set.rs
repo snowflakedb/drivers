@@ -621,9 +621,8 @@ impl DatabaseDriverV1 {
     /// `"nullable"` describes a column ("may this column contain NULL at all?",
     /// taken from the result descriptor). It is needed by consumers that report
     /// column descriptions to their caller, e.g. ODBC `SQL_DESC_NULLABLE` /
-    /// `SQLDescribeCol`, or the
-    /// pyarrow schema returned by `fetch_arrow_all`. Building it clones every
-    /// field's metadata map on each call.
+    /// `SQLDescribeCol`. Building it clones every field's metadata map on each
+    /// call.
     ///
     /// Consumers that only convert values do not need it: whether a given value
     /// is NULL comes from the Arrow validity bitmap, which is always in the data.

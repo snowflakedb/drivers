@@ -210,11 +210,11 @@ fn field_needs_conversion(field: &Field, data_type: &DataType) -> Result<bool, P
 // Passthrough keeps the wire Field (and its metadata). A type change builds a
 // new Field with only name and nullability — Cython drops logicalType/scale
 // on rewritten columns.
-fn converted_field(field: FieldRef, data_type: DataType) -> Field {
+fn converted_field(field: FieldRef, data_type: DataType) -> FieldRef {
     if data_type == *field.data_type() {
-        Arc::unwrap_or_clone(field)
+        field
     } else {
-        Field::new(field.name(), data_type, field.is_nullable())
+        Arc::new(Field::new(field.name(), data_type, field.is_nullable()))
     }
 }
 
