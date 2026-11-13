@@ -538,6 +538,21 @@ def _validate_bucket(root: Path, folder: Path, *, released: bool) -> list[str]:
     return errors
 
 
+def _resolve_base(root: Path, base: str) -> str:
+    parts = base.rsplit("/", 1)
+
+    if len(parts) != 2:
+        return base
+
+    requested_remote, branch = parts
+    result = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{u}}")
+    if result.returncode == 0:
+        return result.stdout.strip()
+
+    print("Can't find remote. Falling back to origin")
+    return f"origin/{branch}"
+
+
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -933,6 +948,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = args.root.resolve()
+    base = _resolve_base(root, args.base)
+    if base is None:
+        printf(f"unknown git revision {args.base!r}")
+        return
     if args.materialize and args.render:
         print("pass only one of --materialize and --render", file=sys.stderr)
         return 2
@@ -942,7 +961,7 @@ def main(argv: list[str] | None = None) -> int:
         render_changelogs(root)
         errors = []
     else:
-        errors = validate(root, base=args.base)
+        errors = validate(root, base=base)
     for error in errors:
         print(error, file=sys.stderr)
     return 1 if errors else 0
