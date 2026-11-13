@@ -95,3 +95,11 @@ dotnet_diagnostic.SA0001.severity = none
 dotnet_diagnostic.SA1201.severity = error
 dotnet_diagnostic.SA1202.severity = error
 dotnet_diagnostic.SA1203.severity = error
+
+# Logging message templates: constant (CA2254), named placeholders (CA2253) in PascalCase (CA1727),
+# and an argument per placeholder (CA2017). The NET analyzers run only on the net5.0+ targets.
+# ArchitectureInvariantTests/LoggingInvariantsTest rejects exceptions flattened into log arguments.
+dotnet_diagnostic.CA2254.severity = error
+dotnet_diagnostic.CA2253.severity = error
+dotnet_diagnostic.CA1727.severity = error
+dotnet_diagnostic.CA2017.severity = error
