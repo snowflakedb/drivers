@@ -92,6 +92,25 @@ public class ArrowResultUtilTest {
   }
 
   @Test
+  public void shouldShiftByCachedCalendarAcrossDstAndBack() {
+    TimeZone losAngeles = TimeZone.getTimeZone("America/Los_Angeles");
+    Timestamp winter = new Timestamp(1579096800000L);
+    winter.setNanos(123_456_789);
+    Timestamp summer = new Timestamp(1594814400000L);
+    summer.setNanos(123_456_789);
+
+    Timestamp winterMoved = ArrowResultUtil.moveToTimeZone(winter, UTC, losAngeles);
+    Timestamp summerMoved = ArrowResultUtil.moveToTimeZone(summer, UTC, losAngeles);
+    Timestamp winterAgain = ArrowResultUtil.moveToTimeZone(winter, UTC, losAngeles);
+
+    assertEquals(1579125600123L, winterMoved.getTime());
+    assertEquals(1579125600123L, winterAgain.getTime());
+    assertEquals(1594839600123L, summerMoved.getTime());
+    assertEquals(123_456_789, winterMoved.getNanos());
+    assertEquals(123_456_789, summerMoved.getNanos());
+  }
+
+  @Test
   public void shouldDetectTimestampOverflow() {
     assertFalse(ArrowResultUtil.isTimestampOverflow(0L));
     assertFalse(ArrowResultUtil.isTimestampOverflow(1546391837L));

@@ -5,6 +5,7 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.Calendar;
+import java.util.GregorianCalendar;
 import java.util.TimeZone;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -16,6 +17,9 @@ public class ArrowDateUtil {
 
   /** Milliseconds-since-epoch of 1582-10-05; dates before this need the Julian→Gregorian shift. */
   private static final long GREGORIAN_CUTOVER_MILLIS = -12220156800000L;
+
+  private static final ThreadLocal<Calendar> OFFSET_CALENDAR =
+      ThreadLocal.withInitial(GregorianCalendar::new);
 
   /**
    * Convert an epoch-day count to a {@link Date} with no timezone adjustment. Mirrors
@@ -135,18 +139,19 @@ public class ArrowDateUtil {
 
   /**
    * Offset (in millis) to move {@code milliSecsSinceEpoch} from {@code oldTZ} to {@code newTZ}.
-   * Mirrors snowflake-jdbc's {@code ArrowResultUtil.moveToTimeZoneOffset}; uses {@code
-   * Calendar.getInstance(oldTZ)} in place of the reference's {@code CalendarCache} (a perf-only
-   * optimization absent from this module).
+   * Mirrors snowflake-jdbc's {@code ArrowResultUtil.moveToTimeZoneOffset}, including its reuse of
+   * one calendar per thread ({@code CalendarCache}).
    */
   static long moveToTimeZoneOffset(long milliSecsSinceEpoch, TimeZone oldTZ, TimeZone newTZ) {
     if (oldTZ.hasSameRules(newTZ)) {
-      // same time zone
       return 0;
     }
     int offsetMillisInOldTZ = oldTZ.getOffset(milliSecsSinceEpoch);
 
-    Calendar calendar = Calendar.getInstance(oldTZ);
+    Calendar calendar = OFFSET_CALENDAR.get();
+    if (!calendar.getTimeZone().hasSameRules(oldTZ)) {
+      calendar.setTimeZone(oldTZ);
+    }
     calendar.setTimeInMillis(milliSecsSinceEpoch);
 
     int millisecondWithinDay =
