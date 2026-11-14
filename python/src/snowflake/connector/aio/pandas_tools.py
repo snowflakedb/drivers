@@ -18,8 +18,10 @@ from .._internal.decorators import api_telemetry
 from .._internal.errorhandler import route_exception
 from .._internal.logging import get_logger
 from .._internal.write_pandas_operation import (
+    WriteDataFrameConfig,
+    WriteDataFrameMixin,
+    WriteDataFrameResult,
     WritePandasConfig,
-    WritePandasMixin,
     WritePandasResult,
     generate_temp_name,
 )
@@ -36,18 +38,18 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# _AsyncWritePandasOperation
+# _AsyncWriteDataFrameOperation
 # ---------------------------------------------------------------------------
 
 
-class _AsyncWritePandasOperation(WritePandasMixin):
-    """Async-native write_pandas pipeline from a validated WritePandasConfig.
+class _AsyncWriteDataFrameOperation(WriteDataFrameMixin):
+    """Async-native write pipeline from a validated WriteDataFrameConfig.
 
     execute() runs the full pipeline without mutating self — all intermediate
     state is threaded through local variables and return values.
     """
 
-    def __init__(self, cfg: WritePandasConfig) -> None:
+    def __init__(self, cfg: WriteDataFrameConfig) -> None:
         self._cfg = cfg
 
     # -- Object lifetime -----------------------------------------------------
@@ -72,7 +74,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
 
     # -- Main pipeline -------------------------------------------------------
 
-    async def execute(self) -> WritePandasResult:
+    async def execute(self) -> WriteDataFrameResult:
         cfg = self._cfg
         cfg.emit_warnings()
 
@@ -107,7 +109,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
                     await self._drop_object(cur, target_location, "TABLE")
                 except Exception:
                     logger.warning(
-                        "aio.write_pandas failed and could not drop temporary "
+                        "async dataframe write failed and could not drop temporary "
                         "staging table %s created for overwrite swap — "
                         "it may need to be dropped manually",
                         target_location,
@@ -117,7 +119,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
             cur.close()
 
         success = all(row[1] == "LOADED" for row in copy_results)
-        return WritePandasResult(success, nchunks, nrows, copy_results)
+        return WriteDataFrameResult(success, nchunks, nrows, copy_results)
 
     # -- Stage & upload ------------------------------------------------------
 
@@ -132,15 +134,16 @@ class _AsyncWritePandasOperation(WritePandasMixin):
         nchunks = 0
         nrows = 0
         with TemporaryDirectory() as tmp_dir:
-            for idx, chunk in self._iter_chunks():
-                chunk_path = Path(tmp_dir) / f"file{idx}.txt"
-                chunk.to_parquet(path=chunk_path, compression=cfg.compression, **cfg.parquet_kwargs)
+            files = cfg.df_provider.write_parquet_files(
+                Path(tmp_dir), cfg.chunk_size, cfg.compression, **cfg.parquet_kwargs
+            )
+            for parquet_file in files:
                 nchunks += 1
-                nrows += len(chunk)
+                nrows += parquet_file.nrows
 
                 if not cfg.bulk_upload:
-                    await self._put_file(cur, stage_location, chunk_path)
-                    chunk_path.unlink()
+                    await self._put_file(cur, stage_location, parquet_file.path)
+                    parquet_file.path.unlink()
 
             if cfg.bulk_upload:
                 await self._put_directory(cur, stage_location, tmp_dir)
@@ -274,6 +277,6 @@ async def write_pandas(
             use_vectorized_scanner=use_vectorized_scanner,
             **kwargs,
         )
-        return await _AsyncWritePandasOperation(cfg).execute()
+        return await _AsyncWriteDataFrameOperation(cfg).execute()
     except Error as exc:
         route_exception(conn, None, exc)
