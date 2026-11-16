@@ -1,9 +1,17 @@
 use std::path::PathBuf;
 
 use crate::generator::*;
-use crate::generators::helpers::{camel_to_snake_case, run_protoc, snake_to_pascal_case};
+use crate::generators::helpers::{
+    camel_to_snake_case, has_limited_cancellation, run_protoc, snake_to_pascal_case,
+};
 use log::*;
 use snafu::{Whatever, prelude::*};
+
+const LIMITED_CANCELLATION_REMARKS: &str = r#"    /// <remarks>
+    /// <paramref name="cancellationToken"/> is checked only before the call is dispatched; a
+    /// dispatched call is not cancelled and runs to completion.
+    /// </remarks>
+"#;
 
 /// Generator for dotnet code using protoc for protobuf compilation
 pub struct CSharpGenerator {}
@@ -324,7 +332,9 @@ internal interface I{service_name}Service
             // Sync method
             content += &format!("    {output_type} {method_name}({input_type} request);\n\n");
 
-            // Async method
+            if has_limited_cancellation(method) {
+                content += LIMITED_CANCELLATION_REMARKS;
+            }
             content += &format!(
                 "    Task<{output_type}> {method_name}Async(\n        {input_type} request,\n        CancellationToken cancellationToken);\n\n"
             );
@@ -417,14 +427,21 @@ internal sealed class {service_name}ServiceClient : I{service_name}Service
 "#
             );
 
-            // Async method
+            let (pre_dispatch_check, transport_token) = if has_limited_cancellation(method) {
+                (
+                    "        cancellationToken.ThrowIfCancellationRequested();\n",
+                    "CancellationToken.None",
+                )
+            } else {
+                ("", "cancellationToken")
+            };
             content += &format!(
                 r#"    /// <inheritdoc />
     public async Task<{output_type}> {method_name}Async(
         {input_type} request,
         CancellationToken cancellationToken = default)
     {{
-        using var response = await _transport.HandleMessageAsync("{service_name}", "{proto_method_name}", request.ToByteArray(), cancellationToken).ConfigureAwait(false);
+{pre_dispatch_check}        using var response = await _transport.HandleMessageAsync("{service_name}", "{proto_method_name}", request.ToByteArray(), {transport_token}).ConfigureAwait(false);
         return response.Code switch
         {{
             TransportResponse.CodeSuccess =>
@@ -494,5 +511,87 @@ impl CodeGenerator for CSharpGenerator {
 
     fn supported_options(&self) -> Vec<GeneratorOption> {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protobuf::{MethodDescriptorProto, MethodOptions, ServiceDescriptorProto};
+
+    fn method(name: &str, options: MethodOptions) -> MethodDescriptorProto {
+        MethodDescriptorProto {
+            name: Some(name.to_string()),
+            input_type: Some(format!(".database_driver_v1.{name}Request")),
+            output_type: Some(format!(".database_driver_v1.{name}Response")),
+            options: Some(options),
+            ..Default::default()
+        }
+    }
+
+    fn service() -> ServiceDescriptorProto {
+        ServiceDescriptorProto {
+            name: Some("DatabaseDriver".to_string()),
+            method: vec![
+                method(
+                    "ResultSetExportStream",
+                    MethodOptions {
+                        async_first: Some(true),
+                        ..Default::default()
+                    },
+                ),
+                method(
+                    "ArrowStreamGetNextBatch",
+                    MethodOptions {
+                        async_first: Some(true),
+                        limited_cancellation: Some(true),
+                        ..Default::default()
+                    },
+                ),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_limited_cancellation_client_method_checks_the_token_and_does_not_forward_it() {
+        let client = CSharpGenerator::new().generate_client_class(
+            &service(),
+            "database_driver_v1",
+            "DatabaseDriverV1",
+        );
+
+        assert!(client.contains(
+            r#"    public async Task<ArrowStreamGetNextBatchResponse> ArrowStreamGetNextBatchAsync(
+        ArrowStreamGetNextBatchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var response = await _transport.HandleMessageAsync("DatabaseDriver", "arrow_stream_get_next_batch", request.ToByteArray(), CancellationToken.None).ConfigureAwait(false);
+"#
+        ));
+        assert!(client.contains(
+            r#"    public async Task<ResultSetExportStreamResponse> ResultSetExportStreamAsync(
+        ResultSetExportStreamRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _transport.HandleMessageAsync("DatabaseDriver", "result_set_export_stream", request.ToByteArray(), cancellationToken).ConfigureAwait(false);
+"#
+        ));
+        assert_eq!(client.matches("ThrowIfCancellationRequested").count(), 1);
+    }
+
+    #[test]
+    fn only_the_limited_cancellation_interface_method_carries_the_remarks() {
+        let interface = CSharpGenerator::new().generate_service_interface(
+            &service(),
+            "database_driver_v1",
+            "DatabaseDriverV1",
+        );
+
+        assert!(interface.contains(&format!(
+            "{LIMITED_CANCELLATION_REMARKS}    Task<ArrowStreamGetNextBatchResponse> ArrowStreamGetNextBatchAsync("
+        )));
+        assert_eq!(interface.matches("<remarks>").count(), 1);
     }
 }

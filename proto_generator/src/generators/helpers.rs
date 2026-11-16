@@ -1,7 +1,7 @@
 use prost::Message;
 use snafu::{Whatever, prelude::*};
 
-use crate::protobuf::FileDescriptorSet;
+use crate::protobuf::{FileDescriptorSet, MethodDescriptorProto};
 
 pub(super) fn to_rust_message_name(package: &String, name: &str) -> String {
     let segments = name.split('.').collect::<Vec<&str>>();
@@ -89,6 +89,93 @@ pub(super) fn run_protoc(context: &crate::GeneratorContext) -> Result<FileDescri
 
     let descriptor_set = FileDescriptorSet::decode(&*proto_bytes)
         .whatever_context("Failed to parse FileDescriptorSet")?;
+    validate_method_options(&descriptor_set)?;
 
     Ok(descriptor_set)
+}
+
+pub(super) fn has_limited_cancellation(method: &MethodDescriptorProto) -> bool {
+    method
+        .options
+        .as_ref()
+        .and_then(|o| o.limited_cancellation)
+        .unwrap_or(false)
+}
+
+fn validate_method_options(descriptor_set: &FileDescriptorSet) -> Result<(), Whatever> {
+    for file in &descriptor_set.file {
+        for service in &file.service {
+            for method in &service.method {
+                let async_first = method
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.async_first)
+                    .unwrap_or(false);
+                if has_limited_cancellation(method) && !async_first {
+                    snafu::whatever!(
+                        "{}.{} is marked `limited_cancellation` but not `async_first`",
+                        service.name.as_deref().unwrap_or_default(),
+                        method.name.as_deref().unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protobuf::{FileDescriptorProto, MethodOptions, ServiceDescriptorProto};
+
+    fn descriptor_set(options: MethodOptions) -> FileDescriptorSet {
+        FileDescriptorSet {
+            file: vec![FileDescriptorProto {
+                service: vec![ServiceDescriptorProto {
+                    name: Some("DatabaseDriver".to_string()),
+                    method: vec![MethodDescriptorProto {
+                        name: Some("ArrowStreamGetNextBatch".to_string()),
+                        options: Some(options),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+        }
+    }
+
+    #[test]
+    fn limited_cancellation_without_async_first_is_rejected() {
+        let error = validate_method_options(&descriptor_set(MethodOptions {
+            limited_cancellation: Some(true),
+            ..Default::default()
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "DatabaseDriver.ArrowStreamGetNextBatch is marked `limited_cancellation` but not `async_first`"
+        );
+    }
+
+    #[test]
+    fn limited_cancellation_on_an_async_first_rpc_is_accepted() {
+        validate_method_options(&descriptor_set(MethodOptions {
+            async_first: Some(true),
+            limited_cancellation: Some(true),
+            ..Default::default()
+        }))
+        .unwrap();
+    }
+
+    #[test]
+    fn an_explicitly_unlimited_rpc_without_async_first_is_accepted() {
+        validate_method_options(&descriptor_set(MethodOptions {
+            limited_cancellation: Some(false),
+            ..Default::default()
+        }))
+        .unwrap();
+    }
 }

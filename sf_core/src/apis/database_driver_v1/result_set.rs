@@ -773,10 +773,18 @@ impl DatabaseDriverV1 {
 
         let chunk_base64 = BASE64.encode(&buf);
         let data = RowsetData::ArrowSingleChunk { chunk_base64 };
+        Ok(self.register_rowset(data, Vec::new(), http_client))
+    }
 
+    pub(crate) fn register_rowset(
+        &self,
+        data: RowsetData,
+        columns: Vec<ColumnMetadata>,
+        http_client: reqwest::Client,
+    ) -> ResultSetInfo {
         let descriptor = ResultSetDescriptor {
             query_id: String::new(),
-            columns: Vec::new(),
+            columns,
             rows_affected: Some(-1),
             row_count: None,
             statement_type_id: None,
@@ -796,7 +804,7 @@ impl DatabaseDriverV1 {
         };
 
         let handle = self.create_result_set(descriptor.clone(), data, reader_ctx);
-        Ok(ResultSetInfo { handle, descriptor })
+        ResultSetInfo { handle, descriptor }
     }
 
     /// Creates a ResultSet by fetching data from Snowflake by query_id.

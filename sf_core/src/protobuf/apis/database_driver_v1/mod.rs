@@ -1,5 +1,7 @@
 mod converter;
+mod exported_arrow_stream;
 
+use crate::apis::database_driver_v1::ApiError;
 use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
@@ -7,7 +9,7 @@ use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::{
     ConfigurationSnafu, InvalidWifProviderSnafu, WorkloadIdentityAttestationSnafu,
 };
-use crate::apis::operation_ctx::OperationCtx;
+use crate::apis::operation_ctx::{OperationCtx, run_opt};
 use crate::chunks::ChunkFormatKind;
 use crate::config::config_manager;
 use crate::config::path_resolver;
@@ -29,11 +31,7 @@ use tracing::instrument;
 
 #[allow(clippy::result_large_err)]
 fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
-    value.ok_or_else(|| DriverException {
-        message: message.to_string(),
-        kind: ErrorKind::InvalidArgument as i32,
-        ..Default::default()
-    })
+    value.ok_or_else(|| invalid_argument(message))
 }
 
 #[allow(clippy::result_large_err)]
@@ -44,16 +42,28 @@ fn binding_type_from_proto(
         .and_then(|b| b.binding_type)
         .map(BindingType::try_from)
         .transpose()
-        .map_err(|e| DriverException {
-            message: e,
-            kind: ErrorKind::InvalidArgument as i32,
-            ..Default::default()
-        })
+        .map_err(invalid_argument)
 }
 
-fn not_implemented(message: &str) -> DriverException {
+fn invalid_argument(message: impl Into<String>) -> DriverException {
     DriverException {
-        message: message.to_string(),
+        message: message.into(),
+        kind: ErrorKind::InvalidArgument as i32,
+        ..Default::default()
+    }
+}
+
+fn internal_error(message: impl Into<String>) -> DriverException {
+    DriverException {
+        message: message.into(),
+        kind: ErrorKind::InternalError as i32,
+        ..Default::default()
+    }
+}
+
+fn not_implemented(message: impl Into<String>) -> DriverException {
+    DriverException {
+        message: message.into(),
         kind: ErrorKind::NotImplemented as i32,
         ..Default::default()
     }
@@ -913,11 +923,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             Ok(TokenRequestType::Issue) => "ISSUE",
             Ok(TokenRequestType::Renew) => "RENEW",
             _ => {
-                return Err(DriverException {
-                    message: "request_type must be ISSUE or RENEW".to_string(),
-                    kind: ErrorKind::InvalidArgument as i32,
-                    ..Default::default()
-                });
+                return Err(invalid_argument("request_type must be ISSUE or RENEW"));
             }
         };
 
@@ -1175,6 +1181,31 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
+    #[instrument(
+        name = "DatabaseDriverV1::result_set_export_stream",
+        skip(self, operation_ctx, input)
+    )]
+    async fn result_set_export_stream(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        input: ResultSetExportStreamRequest,
+    ) -> Result<ResultSetExportStreamResponse, DriverException> {
+        let handle = required(input.result_set_handle, "ResultSet handle is required")?;
+
+        exported_arrow_stream::export_stream(input.out_stream, async {
+            run_opt(
+                operation_ctx,
+                "result_set_export_stream",
+                self.driver.result_set_get_stream(handle.into()),
+            )
+            .await
+            .to_protobuf()
+        })
+        .await?;
+
+        Ok(ResultSetExportStreamResponse {})
+    }
+
     #[instrument(name = "DatabaseDriverV1::result_set_get_chunks", skip(self, input))]
     async fn result_set_get_chunks(
         &self,
@@ -1203,6 +1234,24 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ResultSetReleaseResponse {})
     }
 
+    #[instrument(
+        name = "DatabaseDriverV1::arrow_stream_get_next_batch",
+        skip(self, operation_ctx, input)
+    )]
+    async fn arrow_stream_get_next_batch(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        input: ArrowStreamGetNextBatchRequest,
+    ) -> Result<ArrowStreamGetNextBatchResponse, DriverException> {
+        run_opt(operation_ctx, "arrow_stream_get_next_batch", async {
+            Ok::<_, ApiError>(())
+        })
+        .await
+        .to_protobuf()?;
+        let ArrowStreamGetNextBatchRequest { stream, out_array } = input;
+        exported_arrow_stream::get_next_batch(stream, out_array).await
+    }
+
     #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(self, input))]
     async fn config_load_all_sections(
         &self,
@@ -1229,11 +1278,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .to_protobuf()?;
 
         let nested_json = toml_value_to_json(&merged_toml);
-        let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
-            message: format!("Failed to serialize config to JSON: {e}"),
-            kind: ErrorKind::InternalError as i32,
-            ..Default::default()
-        })?;
+        let config_json = serde_json::to_string(&nested_json)
+            .map_err(|e| internal_error(format!("Failed to serialize config to JSON: {e}")))?;
 
         Ok(ConfigLoadAllSectionsResponse { config_json })
     }
@@ -1247,16 +1293,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .context(ConfigurationSnafu)
             .to_protobuf()?;
 
-        let config_file = paths.config_file.ok_or_else(|| DriverException {
-            message: "Configuration path for config file is unavailable".to_string(),
-            kind: ErrorKind::InternalError as i32,
-            ..Default::default()
-        })?;
+        let config_file = paths
+            .config_file
+            .ok_or_else(|| internal_error("Configuration path for config file is unavailable"))?;
 
-        let connections_file = paths.connections_file.ok_or_else(|| DriverException {
-            message: "Configuration path for connections file is unavailable".to_string(),
-            kind: ErrorKind::InternalError as i32,
-            ..Default::default()
+        let connections_file = paths.connections_file.ok_or_else(|| {
+            internal_error("Configuration path for connections file is unavailable")
         })?;
 
         Ok(ConfigGetPathsResponse {
@@ -1321,10 +1363,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .await
                 .context(WorkloadIdentityAttestationSnafu)
         };
-        let attestation =
-            crate::apis::operation_ctx::run_opt(operation_ctx, "wif_create_attestation", create)
-                .await
-                .to_protobuf()?;
+        let attestation = run_opt(operation_ctx, "wif_create_attestation", create)
+            .await
+            .to_protobuf()?;
 
         Ok(WifCreateAttestationResponse {
             provider: attestation.provider.to_string(),

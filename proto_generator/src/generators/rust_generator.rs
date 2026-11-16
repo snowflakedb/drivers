@@ -236,7 +236,8 @@ use crate::apis::operation_ctx::OperationCtx;
 /// True if `method` is an `async_first` RPC, i.e. it takes an [`OperationCtx`]
 /// and observes cancellation inside the operation. Callers must NOT wrap such a
 /// method in a cancellation race of their own — that would drop it before it
-/// could finish cleaning up.
+/// could finish cleaning up. An RPC also marked `limited_cancellation` in the
+/// proto observes cancellation only as its rpc comment describes.
 pub fn observes_cancellation(method: &str) -> bool {{
 	matches!(method{arms})
 }}

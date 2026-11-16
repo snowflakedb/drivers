@@ -218,6 +218,8 @@ impl CancellableTransport for RustTransport {
     ///   observes the token itself, where it still has the state to unwind
     ///   cleanly. Deliberately *not* raced here as well: this layer would resolve
     ///   in nanoseconds and drop the operation before any cleanup could finish.
+    ///   An RPC also marked `limited_cancellation` observes the token only as its
+    ///   proto comment describes, and is not raced either.
     /// * **Unmarked** — no operation to observe the token, so this layer keeps the
     ///   pre-existing race: the work is dropped and the call reports cancelled.
     ///   This is what preserves today's behaviour for every RPC not yet marked.
@@ -464,6 +466,14 @@ mod tests {
         assert!(
             observes_cancellation("connection_get_objects"),
             "connection_get_objects is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("result_set_export_stream"),
+            "result_set_export_stream is marked async_first in the proto"
+        );
+        assert!(
+            observes_cancellation("arrow_stream_get_next_batch"),
+            "arrow_stream_get_next_batch is marked async_first (with limited_cancellation) in the proto, so it is not raced"
         );
         assert!(
             observes_cancellation("database_fetch_chunk"),

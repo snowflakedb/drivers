@@ -42,7 +42,9 @@ The gate is **not** held for:
 
 ## Cancel
 
-Cancel applies to non-blocking API operations (those marked `async_first` in the proto).
+Cancel applies to non-blocking API operations (those marked `async_first` in the proto), unless the
+operation is also marked `limited_cancellation`. For those, the operation's comment in the proto states
+what cancel does; consult it case by case.
 
 - Cancel is non-blocking: the caller returns immediately after signaling.
 - Cancel is safe to call from any thread (e.g. cross-thread statement execution cancel).

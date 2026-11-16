@@ -866,6 +866,8 @@ pub struct MethodOptions {
     pub method_error: ::core::option::Option<String>,
     #[prost(bool, optional, tag = "412313")]
     pub async_first: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "412314")]
+    pub limited_cancellation: ::core::option::Option<bool>,
 }
 /// Nested message and enum types in `MethodOptions`.
 pub mod method_options {

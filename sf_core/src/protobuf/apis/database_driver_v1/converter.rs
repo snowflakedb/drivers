@@ -1,3 +1,4 @@
+use super::invalid_argument;
 use crate::apis::database_driver_v1::ChunkDataWithDescriptor;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
@@ -267,11 +268,10 @@ impl TryFrom<&ResultChunk> for FetchChunkInput {
     type Error = DriverException;
 
     fn try_from(chunk: &ResultChunk) -> Result<Self, Self::Error> {
-        let data = chunk.data.clone().ok_or_else(|| DriverException {
-            message: "Chunk data is required".to_string(),
-            kind: ErrorKind::InvalidArgument as i32,
-            ..Default::default()
-        })?;
+        let data = chunk
+            .data
+            .clone()
+            .ok_or_else(|| invalid_argument("Chunk data is required"))?;
 
         Ok(match data {
             Data::Inline(inline) => FetchChunkInput::Inline(inline),

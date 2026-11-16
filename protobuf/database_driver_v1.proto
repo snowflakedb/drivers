@@ -13,8 +13,15 @@ extend google.protobuf.ServiceOptions {
 extend google.protobuf.MethodOptions {
   optional string method_error = 412312;
   // Marks a slow, cancellable RPC as async-first: language generators emit a
-  // Future/awaitable-returning client method instead of a blocking one.
+  // Future/awaitable-returning client method instead of a blocking one, the RPC
+  // receives an `OperationCtx`, and the transport does not race it against
+  // cancellation. Cancelling a marked RPC is supported unless it is also marked
+  // `limited_cancellation`.
   optional bool async_first = 412313;
+  // Cancelling this `async_first` RPC does not behave as it does for other marked
+  // RPCs; the RPC's own comment states what cancellation does. This proto_generator
+  // rejects the marker on an RPC that is not `async_first`.
+  optional bool limited_cancellation = 412314;
 }
 
 // classifies a DriverException, wrappers dispatch on `DriverException.kind`.
@@ -236,6 +243,11 @@ message ArrowArrayStreamPtr {
 // Arrow schema pointer
 message ArrowSchemaPtr {
   bytes value = 1;
+}
+
+// Arrow array pointer (C Data Interface `struct ArrowArray`)
+message ArrowArrayPtr {
+  bytes value = 1;  // 8-byte pointer (encoded as little-endian)
 }
 
 // =============================================================================
@@ -882,6 +894,24 @@ message ResultSetGetStreamResponse {
   ArrowArrayStreamPtr stream = 1;
 }
 
+// The caller allocates the `ArrowArrayStream` that `out_stream` points to, initialized in the
+// released state (`release` is NULL), and neither reads nor frees it until the call completes.
+// On success the core fills it. Once the call completes, whatever it reports, the caller owns
+// the slot and releases it.
+//
+// Cancelling the operation is observed while the result is being opened: the call then
+// reports CANCELLED and leaves the slot unwritten.
+//
+// The stream's `get_next` waits while remote chunks download, so it runs on a thread that may
+// block.
+message ResultSetExportStreamRequest {
+  ResultSetHandle result_set_handle = 1;
+  ArrowArrayStreamPtr out_stream = 2;
+}
+
+message ResultSetExportStreamResponse {
+}
+
 message ResultSetGetChunksRequest {
   ResultSetHandle result_set_handle = 1;
 }
@@ -897,6 +927,31 @@ message ResultSetReleaseRequest {
 }
 
 message ResultSetReleaseResponse {
+}
+
+// Calls `get_next` on the Arrow C stream at `stream`, which writes the next batch into the
+// caller-allocated `ArrowArray` at `out_array`. `stream` must be a stream the core exported.
+// The core reads it with its own Arrow C stream functions.
+// The core cannot detect dangling pointer or a bitwise copy of a stream that has since been moved
+// or released; passing either is undefined behaviour. The core keeps no state between calls.
+//
+// `out_array` is initialized in the released state (`release` is NULL); a live array is rejected
+// with INVALID_ARGUMENT and left as it is. The end of the stream is `status` 0 with `out_array`
+// released. When `status` is not 0, `out_array` is released and holds no batch.
+//
+// Arrow C streams are not thread-safe. The caller makes at most one call on a stream at a time
+// and, until the call completes, does not call the stream's functions, release the stream, or
+// read or free `out_array`. Overlapping calls on one stream are undefined behaviour.
+message ArrowStreamGetNextBatchRequest {
+  ArrowArrayStreamPtr stream = 1;
+  ArrowArrayPtr out_array = 2;
+}
+
+message ArrowStreamGetNextBatchResponse {
+  // The `errno`-compatible value `get_next` returned; 0 on success.
+  int32 status = 1;
+  // The stream's `get_last_error` text when `status` is not 0, if it gave one.
+  optional string error_message = 2;
 }
 
 // Validation issue reported during set or validate operations.
@@ -1227,8 +1282,20 @@ service DatabaseDriver {
 
   // ResultSet operations
   rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);
+  rpc ResultSetExportStream(ResultSetExportStreamRequest) returns (ResultSetExportStreamResponse) {
+    option (async_first) = true;
+  }
   rpc ResultSetGetChunks(ResultSetGetChunksRequest) returns (ResultSetGetChunksResponse);
   rpc ResultSetRelease(ResultSetReleaseRequest) returns (ResultSetReleaseResponse);
+  // Limited cancellation: an operation already cancelled when the call starts reports CANCELLED
+  // without touching `stream` or `out_array`. Otherwise `get_next` runs on a blocking thread
+  // that cannot be interrupted, and `stream` and `out_array` are in use until it returns, so the
+  // call completes only after `get_next` has returned, with the batch it produced, even when the
+  // operation is cancelled meanwhile.
+  rpc ArrowStreamGetNextBatch(ArrowStreamGetNextBatchRequest) returns (ArrowStreamGetNextBatchResponse) {
+    option (async_first) = true;
+    option (limited_cancellation) = true;
+  }
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
