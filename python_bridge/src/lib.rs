@@ -1,7 +1,7 @@
 #[cfg(feature = "native-arrow")]
 mod arrow;
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use futures::FutureExt;
 use proto_utils::{CancellableTransport, ProtoError, Transport};
@@ -9,6 +9,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes};
 use pyo3_async_runtimes::tokio::future_into_py;
 use sf_core::apis::database_driver_v1::{DriverProviders, WrapperPresets};
+use sf_core::config::rest_parameters::BrowserOpenFn;
+use sf_core::handle_manager::Handle;
 use sf_core::logging::{CallbackLayer, LogManager, LoggingConfig, NormalizedEvent};
 use sf_core::perf_timing;
 use sf_core::protobuf::apis::RustTransport;
@@ -233,6 +235,51 @@ fn call_proto_async<'py>(
     })
 }
 
+/// Register `opener` as the connection's browser opener for EXTERNALBROWSER and
+/// OAUTH_AUTHORIZATION_CODE logins, replacing the system browser launch.
+///
+/// Core calls `opener(url)` from a worker thread, never the thread that called
+/// `connection_init`. The return value is ignored; a raised exception fails the
+/// login with the exception text.
+///
+/// Returns `0` on success, `1` for an unknown connection handle, and `2` when
+/// `init` was not called.
+#[pyfunction]
+fn connection_set_browser_opener(
+    py: Python,
+    conn_id: i64,
+    conn_magic: i64,
+    opener: Py<PyAny>,
+) -> u32 {
+    let Some(bridge) = BRIDGE.get() else {
+        return 2;
+    };
+    let opener: BrowserOpenFn = Arc::new(move |url: &str| {
+        Python::attach(|py| {
+            opener
+                .call1(py, (url,))
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+    });
+    let handle = Handle {
+        id: conn_id as u64,
+        magic: conn_magic as u64,
+    };
+    py.detach(|| {
+        let _logging_guard = tracing::dispatcher::set_default(&bridge.dispatch);
+        match bridge.runtime.block_on(
+            bridge
+                .transport
+                .database_driver()
+                .connection_set_browser_opener(handle, opener),
+        ) {
+            Ok(()) => 0,
+            Err(_) => 1,
+        }
+    })
+}
+
 /// Returns True if perf_timing feature is compiled in.
 #[pyfunction]
 fn perf_enabled() -> bool {
@@ -296,6 +343,7 @@ fn sf_core_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(log_event, m)?)?;
     m.add_function(wrap_pyfunction!(call_proto, m)?)?;
     m.add_function(wrap_pyfunction!(call_proto_async, m)?)?;
+    m.add_function(wrap_pyfunction!(connection_set_browser_opener, m)?)?;
     m.add_function(wrap_pyfunction!(perf_enabled, m)?)?;
     m.add_function(wrap_pyfunction!(get_perf_data, m)?)?;
     m.add_function(wrap_pyfunction!(reset_perf_metrics, m)?)?;

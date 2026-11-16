@@ -13,6 +13,7 @@ from typing import Any, TypeVar, overload
 
 from ..._common.telemetry import AsyncTelemetryClient
 from ..._internal.api_client.client_api import async_core_driver, core_driver
+from ..._internal.browser_opener import EventLoopBrowserOpener, register_browser_opener
 from ..._internal.config_utils import create_config_settings_from_dict
 from ..._internal.connection import (
     APPLICATION_NAME,
@@ -154,7 +155,11 @@ class Connection(ConnectionMixin):
             )
 
         try:
-            if self.config.mfa_callback is None:
+            if self.config.open_external_browser_callback is not None:
+                await self._initialize_core_connection_with_browser_callback(
+                    conn_handle, db_handle, self.config.open_external_browser_callback
+                )
+            elif self.config.mfa_callback is None:
                 await self._initialize_core_connection(conn_handle, db_handle)
             else:
                 await self._initialize_core_connection_with_mfa_callback(
@@ -193,6 +198,15 @@ class Connection(ConnectionMixin):
                 application_path=get_application_path(),
             ),
         )
+
+    async def _initialize_core_connection_with_browser_callback(
+        self,
+        conn_handle: ConnectionHandle,
+        db_handle: DatabaseHandle,
+        browser_callback: Callable[[str], object],
+    ) -> None:
+        register_browser_opener(conn_handle, EventLoopBrowserOpener(browser_callback, asyncio.get_running_loop()))
+        await self._initialize_core_connection(conn_handle, db_handle)
 
     async def _initialize_core_connection_with_mfa_callback(
         self,

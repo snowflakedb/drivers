@@ -45,6 +45,19 @@ async def call_proto_async(api: str, method: str, request: bytes) -> object:
     """
     ...
 
+def connection_set_browser_opener(conn_id: int, conn_magic: int, opener: object) -> int:
+    """Register `opener` as the connection's browser opener for EXTERNALBROWSER and
+    OAUTH_AUTHORIZATION_CODE logins, replacing the system browser launch.
+
+    Core calls `opener(url)` from a worker thread, never the thread that called
+    `connection_init`. The return value is ignored; a raised exception fails the
+    login with the exception text.
+
+    Returns `0` on success, `1` for an unknown connection handle, and `2` when
+    `init` was not called.
+    """
+    ...
+
 def perf_enabled() -> bool:
     """Returns True if perf_timing feature is compiled in.
     """

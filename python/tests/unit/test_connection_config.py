@@ -507,6 +507,26 @@ class TestFromConnectionArgs:
         with pytest.raises(ProgrammingError, match="Invalid mfa_callback parameter"):
             ConnectionConfig.from_connection_args(user="u", mfa_callback="not callable")
 
+    def test_open_external_browser_callback_is_retained(self):
+        def callback(url):
+            return None
+
+        config = ConnectionConfig.from_connection_args(user="u", open_external_browser_callback=callback)
+        assert config.open_external_browser_callback is callback
+        assert "open_external_browser_callback" not in config.to_options()
+
+    def test_open_external_browser_callback_non_callable_raises(self):
+        with pytest.raises(ProgrammingError, match="Invalid open_external_browser_callback parameter"):
+            ConnectionConfig.from_connection_args(user="u", open_external_browser_callback="not callable")
+
+    def test_open_external_browser_callback_with_mfa_callback_raises(self):
+        with pytest.raises(
+            ProgrammingError, match="mfa_callback and open_external_browser_callback cannot be combined"
+        ):
+            ConnectionConfig.from_connection_args(
+                user="u", mfa_callback=lambda: iter(()), open_external_browser_callback=lambda url: None
+            )
+
     def test_timezone_injects_session_parameter(self):
         config = ConnectionConfig.from_connection_args(user="u", timezone="America/Los_Angeles")
         assert config.timezone == "America/Los_Angeles"
@@ -810,6 +830,7 @@ class TestClassVariables:
         assert "session_parameters" in ConnectionConfig._PYTHON_ONLY
         assert "autocommit" in ConnectionConfig._PYTHON_ONLY
         assert "mfa_callback" in ConnectionConfig._PYTHON_ONLY
+        assert "open_external_browser_callback" in ConnectionConfig._PYTHON_ONLY
         assert "timezone" in ConnectionConfig._PYTHON_ONLY
         assert "interpolate_empty_sequences" in ConnectionConfig._PYTHON_ONLY
         assert "reuse_results" in ConnectionConfig._PYTHON_ONLY

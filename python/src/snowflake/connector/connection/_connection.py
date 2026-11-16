@@ -16,6 +16,7 @@ from typing import Any, TypeVar, cast, overload
 
 from .._common.telemetry import TelemetryClient as _InternalTelemetryClient
 from .._internal.api_client.client_api import core_driver
+from .._internal.browser_opener import CallerThreadBrowserOpener, register_browser_opener
 from .._internal.config_utils import create_config_settings_from_dict
 from .._internal.connection import (
     APPLICATION_NAME,
@@ -173,7 +174,9 @@ class Connection(ConnectionMixin):
     def _connect(self) -> None:
         """Establish the connection to Snowflake via the Rust core."""
         try:
-            if self.config.mfa_callback is None:
+            if self.config.open_external_browser_callback is not None:
+                self._initialize_core_connection_with_browser_callback(self.config.open_external_browser_callback)
+            elif self.config.mfa_callback is None:
                 self._initialize_core_connection()
             else:
                 self._initialize_core_connection_with_mfa_callback(self.config.mfa_callback)
@@ -209,6 +212,11 @@ class Connection(ConnectionMixin):
                 application_path=get_application_path(),
             ),
         )
+
+    def _initialize_core_connection_with_browser_callback(self, browser_callback: Callable[[str], object]) -> None:
+        opener = CallerThreadBrowserOpener(browser_callback)
+        register_browser_opener(cast(ConnectionHandle, self.conn_handle), opener)
+        opener.run_init(self._initialize_core_connection)
 
     def _initialize_core_connection_with_mfa_callback(self, mfa_callback: Callable[[], Iterator[None]]) -> None:
         callback = mfa_callback()
