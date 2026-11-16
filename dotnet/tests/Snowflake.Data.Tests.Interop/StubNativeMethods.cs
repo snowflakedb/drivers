@@ -8,15 +8,14 @@ namespace Snowflake.Data.Tests.Interop;
 /// </summary>
 internal static class StubNativeMethods
 {
-    private const string LibName = StubLibraryNames.Stub;
-
     /// <summary>
     /// Returns the current live allocation count.
     /// A value of 0 means every buffer allocated by <c>sf_core_api_call_proto</c>
     /// was freed by <c>sf_core_free_buffer</c> exactly once.
     /// Positive = leak; negative = double-free.
     /// </summary>
-    [DllImport(LibName, EntryPoint = "sf_stub_leaked_alloc_count", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport(StubLibraryNames.Stub, EntryPoint = "sf_stub_leaked_alloc_count", CallingConvention = CallingConvention.Cdecl)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories | DllImportSearchPath.AssemblyDirectory)]
     public static extern long sf_stub_leaked_alloc_count();
 
     /// <summary>

@@ -4,7 +4,7 @@ using Snowflake.Data.Logging;
 namespace Snowflake.Data.Tests.Logging;
 
 [CollectionDefinition("CustomLogger", DisableParallelization = true)]
-public sealed class CustomLoggerCollection : ICollectionFixture<CustomLoggerCollection.Fixture>
+public sealed class CustomLoggerCollection : ICollectionFixture<CustomLoggerCollection.Fixture>, ICollectionFixture<MockedLoginServer>
 {
     public sealed class Fixture : IDisposable
     {

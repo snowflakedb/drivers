@@ -7,6 +7,7 @@ namespace Snowflake.Data.Tests.Logging;
 
 [Collection("CustomLogger")]
 [Trait("Category", "Unit")]
+[Trait("Category", "Logging")]
 public sealed unsafe class CustomLoggerTest : IDisposable
 {
     private readonly ILogger _previous;

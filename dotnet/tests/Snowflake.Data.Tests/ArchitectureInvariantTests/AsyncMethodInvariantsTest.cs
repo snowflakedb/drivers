@@ -172,7 +172,8 @@ public sealed class AsyncMethodInvariantsTest
                 "Discovery/SnowflakeTestCaseRunner.cs", // cover old xunit and the new one
                 "Discovery/SnowflakeTestCaseDiscoverer", // cover old xunit and the new one
                 $"Discovery/{nameof(SnowflakeTestCase)}.cs",
-                $"Compatibility/{nameof(FileShims)}"
+                $"Compatibility/{nameof(FileShims)}",
+                "Logging/ZLoggerSession.cs",
             ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exceptions);
