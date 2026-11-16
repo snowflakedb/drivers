@@ -1,0 +1,22 @@
+name: "SnowflakeDbConnectionPool.GetPool and SnowflakeDbSessionPool are removed"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  SnowflakeDbConnectionPool is the single entry point for pooling. A pool is
+  addressed by its connection string, so the per-pool settings do not need a
+  separate pool type. See docs/design/dotnet-connection-pool.md.
+old_driver_behavior: |
+  SnowflakeDbConnectionPool.GetPool(connectionString) and
+  GetPool(connectionString, password, oauthClientSecret, token) return a
+  SnowflakeDbSessionPool. Its instance methods GetPooling, GetMinPoolSize,
+  GetMaxPoolSize, GetCurrentPoolSize, GetExpirationTimeout,
+  GetConnectionTimeout, GetWaitForIdleSessionTimeout, GetChangedSession, and
+  ClearPool report on and clear that pool.
+new_driver_behavior: |
+  GetPool and SnowflakeDbSessionPool are absent. The same members are static
+  methods on SnowflakeDbConnectionPool that take the connection string and
+  optional password, oauthClientSecret, and token, for example
+  SnowflakeDbConnectionPool.GetMaxPoolSize(connectionString).

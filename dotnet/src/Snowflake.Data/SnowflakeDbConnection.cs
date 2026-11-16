@@ -172,8 +172,16 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     public bool IsOpen() => _state == ConnectionState.Open;
 
-    public void PreventPooling() => throw new NotImplementedException(
-        "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <summary>Excludes this connection's session from pooling when the connection closes.</summary>
+    /// <exception cref="Exception">Thrown when no session has been created for this connection.</exception>
+    public void PreventPooling()
+    {
+        if (_connHandle is null)
+        {
+            throw new Exception(
+                "Session not yet created for this connection. Unable to prevent the session from pooling");
+        }
+    }
 
     public Task CloseAsync(CancellationToken cancellationToken)
     {

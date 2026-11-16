@@ -15,6 +15,9 @@ namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 [Trait("Category", "Unit")]
 public sealed class PublicApiTest
 {
+    private const string PoolKeyParams =
+        $"{nameof(String)}, {nameof(SecureString)}, {nameof(SecureString)}, {nameof(SecureString)}";
+
     private static readonly HashSet<string> SnowflakeDbConnectionPublicApi =
     [
         "C:()",
@@ -240,18 +243,26 @@ public sealed class PublicApiTest
         $"M:{nameof(SnowflakeDbLoggerConfig.SetCustomLogger)}({nameof(ILogger)})",
     ];
 
-    private static readonly HashSet<string> SnowflakeDbSessionPoolPublicApi =
+    private static readonly HashSet<string> SnowflakeDbConnectionPoolPublicApi =
     [
         "C:()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetPooling)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetMinPoolSize)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetMaxPoolSize)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetCurrentPoolSize)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetExpirationTimeout)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetConnectionTimeout)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetWaitForIdleSessionTimeout)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.ClearPool)}()",
-        $"M:{nameof(SnowflakeDbSessionPool.GetChangedSession)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.ClearAllPools)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.SetMaxPoolSize)}({nameof(Int32)})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetMaxPoolSize)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.SetTimeout)}({nameof(Int64)})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetTimeout)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetCurrentPoolSize)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.SetPooling)}({nameof(Boolean)})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPooling)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPooling)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetMinPoolSize)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetMaxPoolSize)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetCurrentPoolSize)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetExpirationTimeout)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetConnectionTimeout)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetWaitForIdleSessionTimeout)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.ClearPool)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetChangedSession)}({PoolKeyParams})",
     ];
 
     private static readonly HashSet<string> SnowflakeDbDriverPublicApi =
@@ -292,7 +303,7 @@ public sealed class PublicApiTest
         [typeof(SnowflakeDbLoggerConfig)] = SnowflakeDbLoggerConfigPublicApi,
         [typeof(SnowflakeDbParameter)] = SnowflakeDbParameterPublicApi,
         [typeof(SnowflakeDbParameterCollection)] = SnowflakeDbParameterCollectionPublicApi,
-        [typeof(SnowflakeDbSessionPool)] = SnowflakeDbSessionPoolPublicApi,
+        [typeof(SnowflakeDbConnectionPool)] = SnowflakeDbConnectionPoolPublicApi,
         [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi,
         [typeof(SnowflakeActivityStarter)] = SnowflakeActivityStarterPublicApi,
         [typeof(ChangedSessionBehavior)] = ChangedSessionBehaviorPublicApi,
@@ -318,7 +329,7 @@ public sealed class PublicApiTest
             typeof(SnowflakeDbLoggerConfig).FullName!,
             typeof(SnowflakeDbParameter).FullName!,
             typeof(SnowflakeDbParameterCollection).FullName!,
-            typeof(SnowflakeDbSessionPool).FullName!,
+            typeof(SnowflakeDbConnectionPool).FullName!,
             typeof(SnowflakeDbTransaction).FullName!,
             typeof(SnowflakeActivityStarter).FullName!,
             typeof(ChangedSessionBehavior).FullName!,
@@ -340,6 +351,34 @@ public sealed class PublicApiTest
             .ToList();
 
         violations.ShouldBeEmpty(m => $"Public types not in allow-list found {m}");
+    }
+
+    [SnowflakeFact]
+    public void TestSnowflakeDbConnectionPool_SingleConnectionCacheSwitchIsNotPublic()
+    {
+        string[] cacheSwitchMethods =
+        [
+            "SetOldConnectionPoolVersion",
+            "ForceConnectionPoolVersion",
+            "GetConnectionPoolVersion",
+        ];
+
+        var violations = typeof(SnowflakeDbConnectionPool)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+            .Select(method => method.Name)
+            .Where(cacheSwitchMethods.Contains)
+            .ToList();
+
+        violations.ShouldBeEmpty("The single-connection cache pool switch is not ported");
+    }
+
+    [SnowflakeFact]
+    public void TestSnowflakeDbConnectionPool_IsNonStaticClassWithPublicParameterlessConstructor()
+    {
+        var type = typeof(SnowflakeDbConnectionPool);
+
+        Assert.False(type.IsAbstract && type.IsSealed, $"{type.Name} must not be a static class");
+        Assert.NotNull(type.GetConstructor(Type.EmptyTypes));
     }
 
     [SnowflakeTheory]

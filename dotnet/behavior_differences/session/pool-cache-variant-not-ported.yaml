@@ -1,0 +1,15 @@
+name: "Single-connection cache pool switch is not ported"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  The single-connection cache is an old-driver API the new driver does not
+  carry over. Callers select it with SetOldConnectionPoolVersion.
+old_driver_behavior: |
+  `SnowflakeDbConnectionPool.SetOldConnectionPoolVersion()` switches every
+  connection to one shared cache pool.
+new_driver_behavior: |
+  `SetOldConnectionPoolVersion` is absent. Only the per-connection-string pools
+  exist.
