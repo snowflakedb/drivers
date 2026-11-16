@@ -207,6 +207,13 @@ jobs:
             jdbc/build/reports/jacoco/test/**
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
 
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() && matrix.java-version == '21' && matrix.cloud == 'aws' && matrix.result_format == 'default' }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: jdbc-java21-aws
+          path: jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+
       - name: Print NEW driver overall coverage
         if: always() && matrix.java-version == '21' && matrix.cloud == 'aws' && matrix.result_format == 'default'
         run: |

@@ -783,6 +783,13 @@ jobs:
           name: results-universal-${{ env.MATRIX_KEY }}
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: python-${{ env.MATRIX_KEY }}
+          path: python/reports/coverage-${{ env.MATRIX_KEY }}.xml
+
       # Prune unreachable entries (stale wheels, orphan metadata, old builds) before the cache
       # save. Typically trims 30-50% of the cache, which directly reduces the post-job save time
       # — particularly noticeable on Windows where tar/compression of many small files is slow.

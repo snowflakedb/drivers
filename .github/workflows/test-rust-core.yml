@@ -743,10 +743,7 @@ jobs:
       # below — `Run tests with coverage` builds AND runs. Compile errors vs.
       # test failures are still readable in cargo's own output.
       #
-      # The generated lcov.info is intentionally not uploaded from GHA; coverage
-      # reporting is owned by the dedicated internal Jenkins coverage pipeline,
-      # which surfaces results as Jenkins build status + archived artifacts —
-      # no external upload.
+      # lcov.info is stashed as a coverage-* artifact for the internal coverage pipeline.
       - name: Run tests with coverage
         id: run_rust_tests
         # Expose `cloud_provider` so test code can gate on it (e.g.,
@@ -848,6 +845,13 @@ jobs:
             echo "No *.profraw files in target/llvm-cov-target — skipping report"
             echo "(this is expected if the build failed before any test executed)"
           fi
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: rust-${{ matrix.name }}-${{ matrix.cloud_provider }}
+          path: lcov.info
 
       # NOTE: profraw/profdata cleanup and llvm-cov-target/ removal happen inside
       # the cargo-cache action's slim step (with slim-mode: aggressive below).
