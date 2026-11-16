@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
@@ -13,6 +14,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import net.snowflake.client.api.resultset.SnowflakeType;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.unicore.NativeBuffer;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
@@ -167,5 +169,35 @@ public class PreparedStatementBindingSerializerTest {
           bindings.getJson().getLength(),
           "Timestamp array-bind JSON byte length should match the verbatim epoch-nanos payload");
     }
+  }
+
+  @Test
+  public void shouldRejectNonStringScalarAndListElementBindingValues() {
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> badScalar = new HashMap<>();
+    badScalar.put(
+        1, new PreparedStatementBindingSerializer.ParameterValue(SnowflakeType.FIXED, 123));
+
+    SFSQLException scalarEx =
+        assertThrows(
+            SFSQLException.class, () -> PreparedStatementBindingSerializer.serialize(badScalar));
+    assertEquals(
+        "Internal error: binding for parameter 1 has an unsupported value type (java.lang.Integer)",
+        scalarEx.getMessage());
+
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> badListElement =
+        new HashMap<>();
+    badListElement.put(
+        2,
+        new PreparedStatementBindingSerializer.ParameterValue(
+            SnowflakeType.FIXED, Arrays.asList("ok", 456)));
+
+    SFSQLException listEx =
+        assertThrows(
+            SFSQLException.class,
+            () -> PreparedStatementBindingSerializer.serialize(badListElement));
+    assertEquals(
+        "Internal error: list-valued binding for parameter 2 has an unsupported value type"
+            + " (java.lang.Integer)",
+        listEx.getMessage());
   }
 }

@@ -1,13 +1,18 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -39,8 +44,9 @@ class PreparedBatchTest {
     SFSQLException carrier =
         assertThrows(SFSQLException.class, () -> batch.addRow(row(1, SnowflakeType.TEXT, "boom")));
     SnowflakeSQLException ex = (SnowflakeSQLException) carrier.toSQLException();
-    assertEquals(200023, ex.getErrorCode());
-    assertEquals("0A000", ex.getSQLState());
+    assertEquals(
+        ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED.getMessageCode(), ex.getErrorCode());
+    assertEquals(ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED.getSqlState(), ex.getSQLState());
   }
 
   @Test
@@ -102,5 +108,36 @@ class PreparedBatchTest {
 
     assertEquals(0, batch.size());
     assertTrue(batch.isEmpty());
+  }
+
+  @Test
+  void shouldPromoteTypedNullColumnWhenLaterRowProvidesDifferentNonNullType() {
+    PreparedBatch batch = new PreparedBatch();
+    assertDoesNotThrow(
+        () -> {
+          batch.addRow(row(1, SnowflakeType.FIXED, null));
+          batch.addRow(row(1, SnowflakeType.TEXT, "promoted"));
+          batch.addRow(row(1, SnowflakeType.TEXT, "consistent"));
+        });
+    assertEquals(3, batch.size());
+    assertFalse(batch.isEmpty());
+
+    SFSQLException mismatch =
+        assertThrows(SFSQLException.class, () -> batch.addRow(row(1, SnowflakeType.FIXED, "99")));
+    SnowflakeSQLException mismatchEx = (SnowflakeSQLException) mismatch.toSQLException();
+    assertEquals(
+        ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED.getMessageCode(), mismatchEx.getErrorCode());
+    assertEquals(
+        ErrorCode.ARRAY_BIND_MIXED_TYPES_NOT_SUPPORTED.getSqlState(), mismatchEx.getSQLState());
+  }
+
+  @Test
+  void shouldReturnEmptyArrayAndFinalizeBatchWhenExecutingEmptyBatch() {
+    PreparedBatch emptyBatch = new PreparedBatch();
+    SnowflakePreparedStatementImpl stmt = mock(SnowflakePreparedStatementImpl.class);
+
+    assertArrayEquals(new long[0], emptyBatch.executeAll(stmt, "INSERT INTO t VALUES (?)"));
+    verify(stmt).clearBatchQueryIds();
+    verify(stmt).finalizeBatch(null);
   }
 }

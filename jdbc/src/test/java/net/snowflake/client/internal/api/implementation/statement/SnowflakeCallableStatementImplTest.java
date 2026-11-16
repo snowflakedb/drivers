@@ -113,6 +113,19 @@ class SnowflakeCallableStatementImplTest {
         SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("  {CALL square_it(5)}  "));
   }
 
+  @Test
+  void shouldHandleUnbalancedOrEmptyCurlyBracketsInEscapeSyntax() throws Exception {
+    assertEquals("", SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("{}"));
+    assertEquals("{", SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("{"));
+    assertEquals("}", SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("}"));
+    assertEquals(
+        "{CALL square_it(5)",
+        SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("{CALL square_it(5)"));
+    assertEquals(
+        "CALL square_it(5)}",
+        SnowflakeCallableStatementImpl.parseSqlEscapeSyntax("CALL square_it(5)}"));
+  }
+
   // ── registerOutParameter ─────────────────────────────────────────────────
 
   @Test
@@ -297,6 +310,14 @@ class SnowflakeCallableStatementImplTest {
   void shouldThrowFeatureNotSupportedWhenGettingBigDecimalByIndex() throws Exception {
     try (CallableStatement cs = createCallableStatement("CALL proc(?)")) {
       assertThrows(SQLFeatureNotSupportedException.class, () -> cs.getBigDecimal(1));
+    }
+  }
+
+  @Test
+  @SuppressWarnings("deprecation")
+  void shouldThrowFeatureNotSupportedWhenGettingBigDecimalByIndexWithScale() throws Exception {
+    try (CallableStatement cs = createCallableStatement("CALL proc(?)")) {
+      assertThrows(SQLFeatureNotSupportedException.class, () -> cs.getBigDecimal(1, 2));
     }
   }
 
