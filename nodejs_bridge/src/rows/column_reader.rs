@@ -8,7 +8,7 @@ use chrono::NaiveTime;
 use super::column_source::{ColumnId, ColumnSource};
 use super::decfloat::format_decfloat;
 use super::js_cell::JsCell;
-use super::numeric::{FloatColumn, IntColumn, decimal_string, real_string};
+use super::numeric::{FloatColumn, IntColumn, decimal_string, fixed_to_f64, real_string};
 use super::row_options::{ColumnOutput, FetchAsStringType, RowOptions};
 use super::temporal::{SnowflakeDateFormat, TimeColumn, TimeFormat, TimestampColumn};
 use super::vector::{vector_json, vector_numbers};
@@ -56,6 +56,7 @@ enum ColumnDecoder {
     Date(Date32Array, SnowflakeDateFormat),
     Decfloat(StructArray, usize),
     Fixed(IntColumn, u32),
+    FixedBigInt(IntColumn),
     Interval(IntColumn),
     Real(FloatColumn),
     Structured(StringArray),
@@ -117,6 +118,16 @@ impl ColumnReader {
                 source,
             })
     }
+
+    pub(super) fn loses_precision(&self, cell: &JsCell) -> bool {
+        matches!(self.decoder, ColumnDecoder::Fixed(..))
+            && matches!(cell, JsCell::Number(value) if is_unsafe_integer(*value))
+    }
+}
+
+fn is_unsafe_integer(value: f64) -> bool {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    value.fract() == 0.0 && value.abs() > MAX_SAFE_INTEGER
 }
 
 impl ColumnDecoder {
@@ -138,7 +149,10 @@ impl ColumnDecoder {
                 },
             ),
             "DECFLOAT" => Self::Decfloat(src.array()?, src.metadata("precision")?),
-            "FIXED" => Self::Fixed(src.int_column()?, src.metadata("scale")?),
+            "FIXED" => match src.metadata("scale")? {
+                0 if params.js_treat_integer_as_big_int => Self::FixedBigInt(src.int_column()?),
+                scale => Self::Fixed(src.int_column()?, scale),
+            },
             "INTERVAL_YEAR_MONTH" | "INTERVAL_DAY_TIME" => Self::Interval(src.int_column()?),
             "REAL" => Self::Real(src.float_column()?),
             "TEXT" if column_type.eq_ignore_ascii_case("object") => Self::Structured(src.array()?),
@@ -191,7 +205,9 @@ impl ColumnDecoder {
             Self::Decfloat(..) | Self::Interval(_) | Self::Text(_) | Self::Time(..) => {
                 Some(FetchAsStringType::String)
             }
-            Self::Fixed(..) | Self::Real(_) | Self::Vector(_) => Some(FetchAsStringType::Number),
+            Self::Fixed(..) | Self::FixedBigInt(_) | Self::Real(_) | Self::Vector(_) => {
+                Some(FetchAsStringType::Number)
+            }
             Self::Structured(_) | Self::Variant(_) => Some(FetchAsStringType::Json),
         }
     }
@@ -225,7 +241,20 @@ impl ColumnDecoder {
                 JsCell::Str(Cow::Owned(format_decfloat(sig, exp, *precision)))
             }
             Self::Fixed(values, scale) => {
-                JsCell::Str(Cow::Owned(decimal_string(values.get(row)?, *scale)))
+                let value = values.get(row)?;
+                match output {
+                    ColumnOutput::String { .. } => {
+                        JsCell::Str(Cow::Owned(decimal_string(value, *scale)))
+                    }
+                    ColumnOutput::Native => JsCell::Number(fixed_to_f64(value, *scale)),
+                }
+            }
+            Self::FixedBigInt(values) => {
+                let value = values.get(row)?;
+                match output {
+                    ColumnOutput::String { .. } => JsCell::Str(Cow::Owned(value.to_string())),
+                    ColumnOutput::Native => JsCell::BigInt(value),
+                }
             }
             Self::Interval(values) => JsCell::Str(Cow::Owned(values.get(row)?.to_string())),
             Self::Real(values) => {
@@ -782,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_int_reads_decimal_strings_and_null() {
+    fn fixed_int_reads_numbers_and_null() {
         let field = field("FIXED", DataType::Int64, &[("scale", "0")]);
         let array = Int64Array::from(vec![Some(42), Some(-1), None]);
         let reader = reader(&field, &array);
@@ -790,8 +819,8 @@ mod tests {
             matches!(reader.decoder, ColumnDecoder::Fixed(IntColumn::I64(_), _)),
             "Int64 FIXED should route to the Fixed arm on an I64 IntColumn"
         );
-        assert_eq!(reader.read(0).unwrap(), str_cell("42"));
-        assert_eq!(reader.read(1).unwrap(), str_cell("-1"));
+        assert_eq!(reader.read(0).unwrap(), JsCell::Number(42.0));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Number(-1.0));
         assert_eq!(reader.read(2).unwrap(), JsCell::Null);
     }
 
@@ -799,18 +828,21 @@ mod tests {
     fn fixed_int_reads_scaled_and_leading_zero_fraction() {
         let scaled = field("FIXED", DataType::Int64, &[("scale", "2")]);
         let array = Int64Array::from(vec![Some(123)]);
-        assert_eq!(reader(&scaled, &array).read(0).unwrap(), str_cell("1.23"));
+        assert_eq!(
+            reader(&scaled, &array).read(0).unwrap(),
+            JsCell::Number(1.23)
+        );
 
         let leading_zeros = field("FIXED", DataType::Int64, &[("scale", "5")]);
         let array = Int64Array::from(vec![Some(12)]);
         assert_eq!(
             reader(&leading_zeros, &array).read(0).unwrap(),
-            str_cell("0.00012")
+            JsCell::Number(0.00012)
         );
     }
 
     #[test]
-    fn fixed_narrow_integers_keep_physical_type_and_read_string() {
+    fn fixed_narrow_integers_keep_physical_type_and_read_number() {
         let i8_field = field("FIXED", DataType::Int8, &[("scale", "0")]);
         let i8 = Int8Array::from(vec![Some(42i8), None]);
         let i8_reader = reader(&i8_field, &i8);
@@ -818,7 +850,7 @@ mod tests {
             matches!(i8_reader.decoder, ColumnDecoder::Fixed(IntColumn::I8(_), _)),
             "Int8 FIXED should keep an I8 IntColumn, not widen to Int64"
         );
-        assert_eq!(i8_reader.read(0).unwrap(), str_cell("42"));
+        assert_eq!(i8_reader.read(0).unwrap(), JsCell::Number(42.0));
         assert_eq!(i8_reader.read(1).unwrap(), JsCell::Null);
 
         let i16_field = field("FIXED", DataType::Int16, &[("scale", "2")]);
@@ -831,7 +863,7 @@ mod tests {
             ),
             "Int16 FIXED should keep an I16 IntColumn, not widen to Int64"
         );
-        assert_eq!(i16_reader.read(0).unwrap(), str_cell("1.23"));
+        assert_eq!(i16_reader.read(0).unwrap(), JsCell::Number(1.23));
 
         let i32_field = field("FIXED", DataType::Int32, &[("scale", "0")]);
         let i32 = Int32Array::from(vec![Some(-1)]);
@@ -843,11 +875,11 @@ mod tests {
             ),
             "Int32 FIXED should keep an I32 IntColumn, not widen to Int64"
         );
-        assert_eq!(i32_reader.read(0).unwrap(), str_cell("-1"));
+        assert_eq!(i32_reader.read(0).unwrap(), JsCell::Number(-1.0));
     }
 
     #[test]
-    fn fixed_decimal128_reads_scaled_string_and_null() {
+    fn fixed_decimal128_reads_scaled_number_and_null() {
         let field = field("FIXED", DataType::Decimal128(38, 2), &[("scale", "2")]);
         let array = Decimal128Array::from(vec![Some(12345i128), None])
             .with_precision_and_scale(38, 2)
@@ -860,8 +892,110 @@ mod tests {
             ),
             "Decimal128 FIXED should route to the Fixed arm on a Decimal IntColumn"
         );
-        assert_eq!(reader.read(0).unwrap(), str_cell("123.45"));
+        assert_eq!(reader.read(0).unwrap(), JsCell::Number(123.45));
         assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+    }
+
+    fn big_int_params() -> Arc<KnownSessionParameters> {
+        Arc::new(KnownSessionParameters {
+            js_treat_integer_as_big_int: true,
+            ..KnownSessionParameters::defaults()
+        })
+    }
+
+    #[test]
+    fn fixed_scale_zero_reads_big_int_when_js_treat_integer_as_big_int() {
+        let field = field("FIXED", DataType::Decimal128(38, 0), &[("scale", "0")]);
+        let array = Decimal128Array::from(vec![Some(i128::MAX / 2), None])
+            .with_precision_and_scale(38, 0)
+            .unwrap();
+        let reader = ColumnReader::for_field(
+            0,
+            &field,
+            "",
+            &array,
+            &big_int_params(),
+            &RowOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::BigInt(i128::MAX / 2));
+        assert_eq!(reader.read(1).unwrap(), JsCell::Null);
+
+        let reader = ColumnReader::for_field(
+            0,
+            &field,
+            "",
+            &array,
+            &big_int_params(),
+            &as_string(FetchAsStringType::Number, true),
+        )
+        .unwrap();
+        assert_eq!(
+            reader.read(0).unwrap(),
+            str_cell("85070591730234615865843651857942052863")
+        );
+        assert_eq!(reader.read(1).unwrap(), str_cell("NULL"));
+    }
+
+    #[test]
+    fn fixed_with_scale_reads_number_when_js_treat_integer_as_big_int() {
+        let field = field("FIXED", DataType::Int64, &[("scale", "2")]);
+        let array = Int64Array::from(vec![Some(150)]);
+        let reader = ColumnReader::for_field(
+            0,
+            &field,
+            "",
+            &array,
+            &big_int_params(),
+            &RowOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(reader.read(0).unwrap(), JsCell::Number(1.5));
+    }
+
+    #[test]
+    fn fixed_as_string_keeps_every_digit() {
+        let field = field("FIXED", DataType::Decimal128(38, 2), &[("scale", "2")]);
+        let array = Decimal128Array::from(vec![Some(12345678901234567890123i128)])
+            .with_precision_and_scale(38, 2)
+            .unwrap();
+        let reader =
+            try_reader_with_options(&field, &array, &as_string(FetchAsStringType::Number, false))
+                .unwrap();
+        assert_eq!(
+            reader.read(0).unwrap(),
+            str_cell("123456789012345678901.23")
+        );
+    }
+
+    #[test]
+    fn fixed_reports_precision_loss_only_for_unsafe_integers() {
+        let integer = field("FIXED", DataType::Decimal128(38, 0), &[("scale", "0")]);
+        let array = Decimal128Array::from(vec![
+            Some(9_007_199_254_740_991),
+            Some(9_007_199_254_740_993),
+            Some(-9_007_199_254_740_993),
+        ])
+        .with_precision_and_scale(38, 0)
+        .unwrap();
+        let integer_reader = reader(&integer, &array);
+        let losses: Vec<bool> = (0..3)
+            .map(|row| integer_reader.loses_precision(&integer_reader.read(row).unwrap()))
+            .collect();
+        assert_eq!(losses, [false, true, true]);
+
+        let scaled = field("FIXED", DataType::Decimal128(38, 2), &[("scale", "2")]);
+        let array = Decimal128Array::from(vec![Some(900_719_925_474_099_312), Some(12_345)])
+            .with_precision_and_scale(38, 2)
+            .unwrap();
+        let scaled_reader = reader(&scaled, &array);
+        assert!(scaled_reader.loses_precision(&scaled_reader.read(0).unwrap()));
+        assert!(!scaled_reader.loses_precision(&scaled_reader.read(1).unwrap()));
+
+        let real = field("REAL", DataType::Float64, &[]);
+        let array = Float64Array::from(vec![Some(1e20)]);
+        let real_reader = reader(&real, &array);
+        assert!(!real_reader.loses_precision(&real_reader.read(0).unwrap()));
     }
 
     #[test]

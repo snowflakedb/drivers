@@ -1,27 +1,5 @@
-import type { CellConverter, ConverterFactory } from './types.js';
+import type { CellConverter } from './types.js';
 import { GlobalConfig } from '../global-config.js';
-
-const toBigInt = (value: unknown) => (value === null ? null : BigInt(value as string));
-
-export const createFixedConverter: ConverterFactory = (
-  column,
-  { sessionParameters, onPrecisionLoss },
-) => {
-  if (sessionParameters.jsTreatIntegerAsBigInt && column.getScale() === 0) {
-    return toBigInt;
-  }
-  return (value) => {
-    if (value === null) {
-      return null;
-    }
-    const converted = Number(value);
-    // runs the check for every cell (that might be expensive) as in the old driver: any row can hold an unsafe integer
-    if (Number.isInteger(converted) && !Number.isSafeInteger(converted)) {
-      onPrecisionLoss(column.getIndex());
-    }
-    return converted;
-  };
-};
 
 export const variantConverter: CellConverter = (value) => {
   if (value === null || value === undefined) {

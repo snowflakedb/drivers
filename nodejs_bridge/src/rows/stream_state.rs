@@ -4,7 +4,7 @@ use crate::error::{BridgeError, ToJsError};
 use crate::session::Session;
 use crate::session_params::KnownSessionParameters;
 use arrow::array::RecordBatch;
-use napi::bindgen_prelude::{Array as JsArray, Env};
+use napi::bindgen_prelude::{Array as JsArray, Env, Function};
 use sf_core::apis::database_driver_v1::{AsyncArrowBatchFetcher, ColumnMetadata};
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
@@ -72,9 +72,10 @@ impl StreamState {
         &self,
         env: &'env Env,
         session: &Session,
+        on_precision_loss: Option<Function<'env, u32, ()>>,
     ) -> napi::Result<Option<JsArray<'env>>> {
         match self.batch.lock().unwrap().as_mut() {
-            Some(batch) => batch.next_row(env, session),
+            Some(batch) => batch.next_row(env, session, on_precision_loss),
             None => Ok(None),
         }
     }
@@ -131,6 +132,7 @@ impl CurrentBatch {
         &mut self,
         env: &'env Env,
         session: &Session,
+        on_precision_loss: Option<Function<'env, u32, ()>>,
     ) -> napi::Result<Option<JsArray<'env>>> {
         if self.row_index >= self.num_rows {
             return Ok(None);
@@ -140,6 +142,11 @@ impl CurrentBatch {
             let cell = reader
                 .read(self.row_index)
                 .map_err(|e| BridgeError::from(e).to_js_error(*env, Some(session)))?;
+            if let Some(callback) = &on_precision_loss
+                && reader.loses_precision(&cell)
+            {
+                callback.call(index as u32)?;
+            }
             row.set(index as u32, cell)?;
         }
         self.row_index += 1;

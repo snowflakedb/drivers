@@ -1,8 +1,4 @@
-import type {
-  CoreColumnInstance,
-  CoreKnownSessionParameters,
-  CoreSessionStateInstance,
-} from '../core/index.js';
+import type { CoreSessionStateInstance } from '../core/index.js';
 import type { SnowflakeError } from '../error.js';
 import type { RowStatement } from '../public-types/index.js';
 
@@ -18,17 +14,6 @@ export function shouldRenameDuplicateColumns(rowMode: RowMode): boolean {
 }
 
 export type DataType = 'String' | 'Boolean' | 'Number' | 'Date' | 'JSON' | 'Buffer';
-
-export interface ConverterContext {
-  sessionParameters: CoreKnownSessionParameters;
-  options: { representNullAsStringNull: boolean };
-  onPrecisionLoss: (columnIndex: number) => void;
-}
-
-export type ConverterFactory = (
-  column: CoreColumnInstance,
-  context: ConverterContext,
-) => CellConverter;
 
 export type CellConverter = (value: unknown) => unknown;
 

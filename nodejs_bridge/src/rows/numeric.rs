@@ -49,12 +49,21 @@ pub(super) fn real_string(value: f64) -> String {
     ryu_js::Buffer::new().format(value).to_owned()
 }
 
+/// Returns the `f64` that JS `Number()` gives for [`decimal_string`], which is what the
+/// old driver applied to the server's decimal text.
+pub(super) fn fixed_to_f64(unscaled: i128, scale: u32) -> f64 {
+    const MAX_EXACT_INTEGER: i128 = 1 << 53;
+    const MAX_EXACT_POWER_OF_TEN: u32 = 22;
+    if unscaled.abs() <= MAX_EXACT_INTEGER && scale <= MAX_EXACT_POWER_OF_TEN {
+        return unscaled as f64 / 10f64.powi(scale as i32);
+    }
+    decimal_string(unscaled, scale)
+        .parse()
+        .unwrap_or_else(|_| unreachable!("decimal_string always parses as f64"))
+}
+
 /// Renders `unscaled x 10^-scale` as an exact decimal string — every digit the
 /// server sent, no rounding.
-///
-/// FIXED type is handed to JS in this form rather than as an `f64` so the numeric
-/// policy lives on the JS side: `Number()` there reproduces the old driver
-/// exactly (it applied `Number()` to the server's decimal text)
 ///
 /// Same three-case shape as ODBC's `format_decimal_into`
 /// (`odbc/src/conversion/number.rs`), which writes into a fixed-size buffer for
@@ -72,5 +81,36 @@ pub(super) fn decimal_string(unscaled: i128, scale: u32) -> String {
         format!("{sign}{int_part}.{frac_part}")
     } else {
         format!("{sign}0.{digits:0>scale$}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_to_f64_matches_parsing_the_decimal_string() {
+        let cases: [(i128, u32); 12] = [
+            (0, 0),
+            (-1, 0),
+            (123, 2),
+            (12, 5),
+            (1 << 53, 0),
+            ((1 << 53) + 1, 0),
+            (-(1 << 53) - 1, 0),
+            (123_456_789, 22),
+            (1, 23),
+            (9_999_999_999_999_999, 4),
+            (i128::MAX / 3, 0),
+            (-12_345_678_901_234_567_890_123, 37),
+        ];
+        for (unscaled, scale) in cases {
+            let expected: f64 = decimal_string(unscaled, scale).parse().unwrap();
+            assert_eq!(
+                fixed_to_f64(unscaled, scale),
+                expected,
+                "{unscaled} e-{scale}"
+            );
+        }
     }
 }

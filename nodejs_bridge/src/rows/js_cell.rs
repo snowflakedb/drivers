@@ -14,6 +14,7 @@ pub(super) enum JsCell<'a> {
     Bool(bool),
     Str(Cow<'a, str>),
     Number(f64),
+    BigInt(i128),
     NumberArray(Vec<f64>),
     Buffer(&'a [u8]),
     SnowflakeDate {
@@ -32,6 +33,7 @@ impl<'a> ToNapiValue for JsCell<'a> {
             JsCell::Bool(val) => unsafe { bool::to_napi_value(env, val) },
             JsCell::Str(val) => unsafe { ToNapiValue::to_napi_value(env, val.as_ref()) },
             JsCell::Number(val) => unsafe { f64::to_napi_value(env, val) },
+            JsCell::BigInt(val) => unsafe { i128::to_napi_value(env, val) },
             JsCell::NumberArray(vals) => unsafe { Vec::<f64>::to_napi_value(env, vals) },
             JsCell::Buffer(bytes) => unsafe {
                 ToNapiValue::to_napi_value(

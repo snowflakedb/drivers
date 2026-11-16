@@ -72,7 +72,7 @@ export declare class Statement {
    * is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
    * another.
    */
-  getNextRow(): unknown[] | null
+  getNextRow(onPrecisionLoss?: ((arg: number) => void) | undefined | null): unknown[] | null
   getRequestId(): string | null
   getStatus(): StatementStatus
   getQueryId(): string | null

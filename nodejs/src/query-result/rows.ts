@@ -16,11 +16,11 @@ https://docs.snowflake.com/en/developer-guide/node-js/nodejs-driver-consume#fetc
 This will throw an error in future driver versions.
 `.trim();
 
-function createStatementRowFormatter(
+function createStatementRowReader(
   connection: CoreConnectionInstance,
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
-) {
+): () => unknown {
   const queryId = coreStatement.getQueryId();
   // each handler fires per affected value, but its telemetry event is sent once per query
   const reportedEventTypes = new Set<string>();
@@ -35,17 +35,21 @@ function createStatementRowFormatter(
       .catch((err: Error) => logger.debug(`Failed to send ${eventType} telemetry: ${err}`));
   };
 
+  const onPrecisionLoss = (columnIndex: number) => {
+    logger.warn(precisionLossWarning(queryId, columnIndex));
+    sendTelemetryEventOnce('selecting_with_precision_loss');
+  };
   const formatRow = createRowFormatter({
     columns: coreStatement.getColumns(shouldRenameDuplicateColumns(rowOptions.rowMode))!,
-    sessionParameters: coreStatement.getSessionParametersSnapshot(),
     rowOptions,
-    onPrecisionLoss: (columnIndex) => {
-      logger.warn(precisionLossWarning(queryId, columnIndex));
-      sendTelemetryEventOnce('selecting_with_precision_loss');
-    },
   });
-  return (row: unknown[]) =>
-    tryWithErrorReporter(connection, 'data_conversion', () => formatRow(row));
+
+  return () => {
+    const row = coreStatement.getNextRow(onPrecisionLoss);
+    return row === null
+      ? null
+      : tryWithErrorReporter(connection, 'data_conversion', () => formatRow(row));
+  };
 }
 
 export async function collectRows(
@@ -54,13 +58,13 @@ export async function collectRows(
   rowOptions: RowOptions,
 ): Promise<unknown[]> {
   try {
-    const formatRow = createStatementRowFormatter(connection, coreStatement, rowOptions);
+    const readRow = createStatementRowReader(connection, coreStatement, rowOptions);
 
     const rows: unknown[] = [];
     while (await coreStatement.fetchNextBatch(rowOptions)) {
-      let row: unknown[] | null = null;
-      while ((row = coreStatement.getNextRow()) !== null) {
-        rows.push(formatRow(row));
+      let row: unknown = null;
+      while ((row = readRow()) !== null) {
+        rows.push(row);
       }
     }
 
@@ -75,14 +79,14 @@ export function createRowStream(
   coreStatement: CoreStatementInstance,
   rowOptions: RowOptions,
 ): Readable {
-  const formatRow = createStatementRowFormatter(connection, coreStatement, rowOptions);
+  const readRow = createStatementRowReader(connection, coreStatement, rowOptions);
 
   const pushNextRow = (stream: Readable): boolean => {
-    const row = coreStatement.getNextRow();
+    const row = readRow();
     if (row === null) {
       return false;
     }
-    stream.push(formatRow(row));
+    stream.push(row);
     return true;
   };
 

@@ -158,12 +158,20 @@ impl Statement {
     /// is drained. Call [`fetch_next_batch`](Self::fetch_next_batch) to load
     /// another.
     #[napi]
-    pub fn get_next_row<'env>(&self, env: &'env Env) -> Result<Option<Array<'env>>> {
+    pub fn get_next_row<'env>(
+        &self,
+        env: &'env Env,
+        on_precision_loss: Option<Function<'env, u32, ()>>,
+    ) -> Result<Option<Array<'env>>> {
         match self.result.get() {
             None => Ok(None),
             Some(Err(error)) => Err(error.to_js_error(*env, Some(&self.session))),
             Some(Ok(value)) => match value.lock_query_result() {
-                Some(query_result) => query_result.stream_state.next_row(env, &self.session),
+                Some(query_result) => {
+                    query_result
+                        .stream_state
+                        .next_row(env, &self.session, on_precision_loss)
+                }
                 None => Ok(None),
             },
         }
