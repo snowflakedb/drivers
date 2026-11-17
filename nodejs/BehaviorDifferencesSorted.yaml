@@ -26,31 +26,6 @@ behavior_differences:
       `PUT file:///data/link.csv @stage` the stage has `real.csv`, and
       `GET @stage/link.csv file:///out/` fails because the file does not exist.
 
-  # Not ready for the changelog. On main the new driver has no precision-loss warning or
-  # selecting_with_precision_loss telemetry at all, for any fetch mode. The BD#40 check in
-  # numeric-precision-loss.test.ts passes only because nothing can emit the warning yet.
-  # snowflakedb/drivers#2575 (open) adds the warning and telemetry on the Number path only,
-  # so fetchAsString cells stay silent. After it merges, this entry describes real behavior.
-  # https://github.com/snowflakedb/drivers/pull/2575
-  40:
-    name: 'fetchAsString Number does not emit a precision-loss warning or telemetry'
-    status: allowed
-    type: bugfix
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      A fixed numeric cell whose JS Number is an integer outside MAX_SAFE_INTEGER still logs a
-      precision-loss warning and posts selecting_with_precision_loss telemetry when the cell
-      is returned as a string via fetchAsString: ['Number'].
-    new_driver_behavior: |
-      The same cell is an exact digit string and produces neither the warning nor the
-      telemetry event.
-    description: |
-      The warning tells the caller to fetch as a string or BigInt. The old driver still
-      converts the cell to Number first, so the warning fires even when fetchAsString
-      already returned the exact digits.
-
   46:
     name: 'RequestFailedError is not implemented'
     status: unknown

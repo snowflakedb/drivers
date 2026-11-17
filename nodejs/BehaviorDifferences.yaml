@@ -914,7 +914,7 @@ behavior_differences:
     name: 'fetchAsString Number does not emit a precision-loss warning or telemetry'
     status: allowed
     type: bugfix
-    reviewed: false
+    reviewed: true
     is_breaking_change: false
     impact: low
     old_driver_behavior: |
@@ -928,6 +928,10 @@ behavior_differences:
       The warning tells the caller to fetch as a string or BigInt. The old driver still
       converts the cell to Number first, so the warning fires even when fetchAsString
       already returned the exact digits.
+    status_rationale: |
+      The warning asks the caller to fetch as a string, so it is wrong when the caller already
+      did. The new driver checks only cells it converts to Number, so the warning and telemetry
+      fire only when precision is really lost.
 
   41:
     name: 'BLOCKED query status is still-running, not an error'

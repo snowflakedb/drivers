@@ -1,5 +1,15 @@
 # Changelog
 
+## Upcoming 4.0.0-beta.1
+
+### Changes compared to 3.x
+
+> Differences from 3.x that are new in this release or were missing from earlier beta notes. Read them together with the notes of earlier 4.0.0 beta releases.
+
+#### Bugfixes
+
+- Fixed the `Query result precision loss detected` warning being logged for large `NUMBER` values when `fetchAsString` includes `'Number'`. These values are returned as exact strings, so no precision is lost. The warning is still logged when such a value is returned as a JavaScript `Number`.
+
 ## 4.0.0-beta.0
 
 ### New Architecture
