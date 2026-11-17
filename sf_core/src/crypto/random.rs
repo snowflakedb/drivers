@@ -1,4 +1,4 @@
-//! URL-safe random tokens for the OAuth flows, drawn from the crypto module.
+//! URL-safe random tokens (PKCE verifier, CSRF state, DPoP `jti`), drawn from AWS-LC.
 //!
 //! `oauth2`'s own generators -- `CsrfToken::new_random_len` and
 //! `PkceCodeChallenge::new_random_sha256` -- draw from `rand`'s thread RNG.
@@ -14,10 +14,27 @@
 
 use aws_lc_rs::rand::fill;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use snafu::ResultExt as _;
+use snafu::{Location, ResultExt as _, Snafu};
 use zeroize::Zeroize as _;
 
-use super::error::{OAuthError, RandomGenerationSnafu};
+/// A security-relevant random value could not be drawn from AWS-LC's DRBG.
+///
+/// Callers fail rather than fall back to another source: under `fips`, that
+/// would draw security randomness outside AWS-LC and break the build's module
+/// boundary. `Unspecified` carries no detail: AWS-LC does not report why a
+/// primitive failed.
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
+#[snafu(visibility(pub(crate)))]
+pub enum RandomError {
+    #[snafu(display("Failed to generate random value ({purpose})"))]
+    RandomGeneration {
+        /// Names the value, never carries it -- these must not reach a log.
+        purpose: &'static str,
+        source: aws_lc_rs::error::Unspecified,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
 
 /// `num_bytes` of DRBG output, base64url-encoded without padding.
 ///
@@ -27,7 +44,7 @@ use super::error::{OAuthError, RandomGenerationSnafu};
 /// The raw buffer is zeroized before returning. The encoded string is the only
 /// copy that leaves, and its owner decides how to protect it -- the PKCE
 /// verifier goes straight into a `SensitiveString`.
-pub(crate) fn token_b64url(num_bytes: usize, purpose: &'static str) -> Result<String, OAuthError> {
+pub(crate) fn token_b64url(num_bytes: usize, purpose: &'static str) -> Result<String, RandomError> {
     let mut bytes = vec![0u8; num_bytes];
     fill(&mut bytes).context(RandomGenerationSnafu { purpose })?;
     let encoded = URL_SAFE_NO_PAD.encode(&bytes);

@@ -1,9 +1,8 @@
-//! DPoP (RFC 9449) proof-of-possession helpers.
+//! DPoP (RFC 9449) proof-of-possession primitives.
 //!
-//! ES256 P-256 keypair, proof JWT with `jti`/`htm`/`htu`/`iat` (and
-//! optional `nonce` on `use_dpop_nonce` retry), `dpop_jkt` thumbprint on
-//! the `/authorize` request, and a bundled access-token cache row. Only
-//! JDBC has DPoP parity today among Snowflake drivers.
+//! ES256 P-256 keypair, proof JWT with `jti`/`htm`/`htu`/`iat` (and an
+//! optional `nonce`), and the RFC 7638 JWK thumbprint. The OAuth flows use
+//! them for the IdP token request and the Snowflake login proof.
 //!
 //! Implementation notes:
 //! - JWS signature is hand-built so we can attach the `jwk` header parameter
@@ -26,15 +25,11 @@ use aws_lc_rs::rand::SystemRandom;
 use aws_lc_rs::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use reqwest::header::HeaderMap;
-use snafu::{OptionExt, ResultExt};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use url::Url;
 
-use super::error::{DPoPJwkParseSnafu, DPoPProofGenerationSnafu, OAuthError};
-use super::random;
 use crate::sensitive::SensitiveString;
 
-const DPOP_NONCE_HEADER: &str = "DPoP-Nonce";
 /// Fixed width of a P-256 scalar or affine coordinate, in bytes. JWK requires
 /// these octet strings be exactly the curve's field size (RFC 7518 §6.2.1.2),
 /// and AWS-LC's SEC1 parsers expect the same.
@@ -55,18 +50,17 @@ pub(crate) struct DPoPKey {
 
 impl DPoPKey {
     /// Generate a fresh ES256 P-256 keypair.
-    pub(crate) fn generate() -> Result<Self, OAuthError> {
+    pub(crate) fn generate() -> Result<Self, DPoPError> {
         let key = EcdsaKeyPair::generate(&ECDSA_P256_SHA256_FIXED_SIGNING)
-            .context(DPoPProofGenerationSnafu)?;
+            .context(ProofGenerationSnafu)?;
         Ok(Self { key: Arc::new(key) })
     }
 
-    /// Recover a key previously serialized by [`DPoPKey::to_jwk_json`].
-    /// Wired into the DPoP-bundled cache rehydration path (B.11) and the
-    /// Snowflake-login DPoP signing path (C.5).
-    pub(crate) fn from_jwk_json(json: &str) -> Result<Self, OAuthError> {
+    /// Recover a key previously serialized by [`DPoPKey::to_jwk_json`], such as
+    /// an OAuth DPoP key cached with its access token.
+    pub(crate) fn from_jwk_json(json: &str) -> Result<Self, DPoPError> {
         let jwk: serde_json::Value = serde_json::from_str(json).map_err(|e| {
-            DPoPJwkParseSnafu {
+            JwkParseSnafu {
                 reason: format!("invalid DPoP JWK JSON: {e}"),
             }
             .build()
@@ -74,7 +68,7 @@ impl DPoPKey {
         let kty = jwk.get("kty").and_then(|v| v.as_str()).unwrap_or("");
         let crv = jwk.get("crv").and_then(|v| v.as_str()).unwrap_or("");
         if kty != "EC" || crv != "P-256" {
-            return DPoPJwkParseSnafu {
+            return JwkParseSnafu {
                 reason: format!("unsupported DPoP JWK: kty={kty} crv={crv}"),
             }
             .fail();
@@ -82,19 +76,19 @@ impl DPoPKey {
         let d_b64 = jwk
             .get("d")
             .and_then(|v| v.as_str())
-            .with_context(|| DPoPJwkParseSnafu {
+            .with_context(|| JwkParseSnafu {
                 reason: "DPoP JWK is missing the private component (`d`)".to_string(),
             })?;
         let x_b64 = jwk
             .get("x")
             .and_then(|v| v.as_str())
-            .with_context(|| DPoPJwkParseSnafu {
+            .with_context(|| JwkParseSnafu {
                 reason: "DPoP JWK is missing `x`".to_string(),
             })?;
         let y_b64 = jwk
             .get("y")
             .and_then(|v| v.as_str())
-            .with_context(|| DPoPJwkParseSnafu {
+            .with_context(|| JwkParseSnafu {
                 reason: "DPoP JWK is missing `y`".to_string(),
             })?;
         let d = decode_b64url_coord(d_b64, "d")?;
@@ -116,7 +110,7 @@ impl DPoPKey {
             &point,
         )
         .map_err(|e| {
-            DPoPJwkParseSnafu {
+            JwkParseSnafu {
                 reason: format!("DPoP JWK components did not form a valid P-256 key: {e}"),
             }
             .build()
@@ -134,13 +128,13 @@ impl DPoPKey {
     /// `String` puts a usable signing key one `tracing` field or `{:?}` away
     /// from a log. `SensitiveString` renders as `****` and zeroizes on drop;
     /// callers `reveal()` only at the point of use.
-    pub(crate) fn to_jwk_json(&self) -> Result<SensitiveString, OAuthError> {
+    pub(crate) fn to_jwk_json(&self) -> Result<SensitiveString, DPoPError> {
         let (x_b64, y_b64) = self.public_xy_b64()?;
         let d = self
             .key
             .private_key()
             .as_be_bytes()
-            .context(DPoPProofGenerationSnafu)?;
+            .context(ProofGenerationSnafu)?;
         let d_b64 = URL_SAFE_NO_PAD.encode(d.as_ref());
         Ok(SensitiveString::from(format!(
             r#"{{"crv":"P-256","d":"{d_b64}","kty":"EC","x":"{x_b64}","y":"{y_b64}"}}"#
@@ -150,14 +144,14 @@ impl DPoPKey {
     /// Affine coordinates, sliced out of the uncompressed SEC1 point.
     ///
     /// AWS-LC hands back `0x04 || X || Y` with both halves already at the
-    /// curve's fixed width, which is exactly what JWK wants -- so unlike the
-    /// OpenSSL path there is no BigNum round-trip and no re-padding.
-    fn public_xy_b64(&self) -> Result<(String, String), OAuthError> {
+    /// curve's fixed width, which is exactly what JWK wants, so no re-padding
+    /// is needed.
+    fn public_xy_b64(&self) -> Result<(String, String), DPoPError> {
         let point = self.key.public_key().as_ref();
         if point.len() != UNCOMPRESSED_POINT_BYTES || point[0] != 0x04 {
             // Unreachable for a P-256 key from AWS-LC; asserted rather than
             // assumed because everything below is a fixed-offset slice.
-            return DPoPJwkParseSnafu {
+            return JwkParseSnafu {
                 reason: format!(
                     "expected a {UNCOMPRESSED_POINT_BYTES}-byte uncompressed P-256 point, \
                      got {} bytes",
@@ -176,18 +170,17 @@ impl DPoPKey {
 /// Left-pads short inputs. RFC 7518 §6.2.1.2 requires full-width octet
 /// strings, but an implementation that encodes the value as a minimal integer
 /// drops leading zero bytes -- which happens for roughly 1 in 256 keys per
-/// component. The OpenSSL path absorbed this silently via `BigNum`; AWS-LC's
-/// SEC1 parsers want exact width, so the padding has to be explicit or those
-/// keys would fail to rehydrate from cache.
-fn decode_b64url_coord(s: &str, field: &str) -> Result<[u8; COORD_BYTES], OAuthError> {
+/// component. AWS-LC's SEC1 parsers want exact width, so the padding has to be
+/// explicit or those keys would fail to rehydrate from cache.
+fn decode_b64url_coord(s: &str, field: &str) -> Result<[u8; COORD_BYTES], DPoPError> {
     let bytes = URL_SAFE_NO_PAD.decode(s.as_bytes()).map_err(|e| {
-        DPoPJwkParseSnafu {
+        JwkParseSnafu {
             reason: format!("invalid base64url in DPoP JWK component `{field}`: {e}"),
         }
         .build()
     })?;
     if bytes.len() > COORD_BYTES {
-        return DPoPJwkParseSnafu {
+        return JwkParseSnafu {
             reason: format!(
                 "DPoP JWK component `{field}` is {} bytes, more than the {COORD_BYTES} a P-256 \
                  value can hold",
@@ -203,7 +196,7 @@ fn decode_b64url_coord(s: &str, field: &str) -> Result<[u8; COORD_BYTES], OAuthE
 
 /// Compute the canonical RFC 7638 JWK SHA-256 thumbprint for the public
 /// portion of `key`. Output is base64url no-padding.
-pub(crate) fn jwk_thumbprint(key: &DPoPKey) -> Result<String, OAuthError> {
+pub(crate) fn jwk_thumbprint(key: &DPoPKey) -> Result<String, DPoPError> {
     let (x, y) = key.public_xy_b64()?;
     let canonical = format!(r#"{{"crv":"P-256","kty":"EC","x":"{x}","y":"{y}"}}"#);
     let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, canonical.as_bytes());
@@ -220,7 +213,7 @@ pub(crate) fn proof_jwt(
     method: &str,
     url: &Url,
     nonce: Option<&str>,
-) -> Result<SensitiveString, OAuthError> {
+) -> Result<SensitiveString, DPoPError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -239,7 +232,7 @@ pub(crate) fn proof_jwt(
     // would have put off-module randomness in every proof, next to a signature
     // the same function takes from `SystemRandom`. 16 bytes matches a UUIDv4's
     // 122 bits of entropy. Fails the proof the way the other module draws do.
-    let jti = random::token_b64url(16, "DPoP proof jti")?;
+    let jti = super::random::token_b64url(16, "DPoP proof jti")?;
     let claims = match nonce {
         Some(n) => {
             let n_escaped = json_escape(n);
@@ -260,7 +253,7 @@ pub(crate) fn proof_jwt(
     let sig = key
         .key
         .sign(&SystemRandom::new(), signing_input.as_bytes())
-        .context(DPoPProofGenerationSnafu)?;
+        .context(ProofGenerationSnafu)?;
     // `ECDSA_P256_SHA256_FIXED_SIGNING` already emits R||S at 32 bytes each.
     let sig_b64 = URL_SAFE_NO_PAD.encode(sig.as_ref());
 
@@ -297,22 +290,35 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// If the IdP responded with an `error == "use_dpop_nonce"` body and a
-/// `DPoP-Nonce` header, return the nonce so the caller can retry once
-/// with the nonce embedded in the proof (mirrors JDBC
-/// `RestRequest.checkForDPoPNonceError`).
-pub(crate) fn check_use_dpop_nonce(headers: &HeaderMap, body: &str) -> Option<String> {
-    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
-    let error = parsed.get("error").and_then(|v| v.as_str())?;
-    if error != "use_dpop_nonce" {
-        return None;
-    }
-    let nonce = headers
-        .get(DPOP_NONCE_HEADER)
-        .or_else(|| headers.get("dpop-nonce"))?
-        .to_str()
-        .ok()?;
-    Some(nonce.to_string())
+/// Errors from DPoP key handling and proof construction.
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
+#[snafu(visibility(pub(crate)))]
+pub enum DPoPError {
+    /// An AWS-LC primitive failed (key generation, signing, coordinate
+    /// export). `Unspecified` carries no detail by design.
+    #[snafu(display("Failed to generate DPoP proof JWT"))]
+    ProofGeneration {
+        source: aws_lc_rs::error::Unspecified,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// A JWK could not be parsed (unsupported `kty`/`crv`, a missing
+    /// component, or components that don't form a P-256 key).
+    #[snafu(display("DPoP JWK could not be parsed: {reason}"))]
+    JwkParse {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The proof `jti` could not be drawn from AWS-LC's DRBG.
+    #[snafu(transparent)]
+    RandomGeneration {
+        source: super::random::RandomError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[cfg(test)]
@@ -448,30 +454,6 @@ mod tests {
         assert_eq!(claims["nonce"], "abc123");
     }
 
-    #[test]
-    fn check_use_dpop_nonce_extracts_nonce_when_signaled() {
-        let body = r#"{"error":"use_dpop_nonce","error_description":"DPoP nonce required"}"#;
-        let mut headers = HeaderMap::new();
-        headers.insert("DPoP-Nonce", "server-nonce-123".parse().unwrap());
-        let n = check_use_dpop_nonce(&headers, body).expect("nonce found");
-        assert_eq!(n, "server-nonce-123");
-    }
-
-    #[test]
-    fn check_use_dpop_nonce_is_none_for_unrelated_errors() {
-        let body = r#"{"error":"invalid_request"}"#;
-        let mut headers = HeaderMap::new();
-        headers.insert("DPoP-Nonce", "x".parse().unwrap());
-        assert!(check_use_dpop_nonce(&headers, body).is_none());
-    }
-
-    #[test]
-    fn check_use_dpop_nonce_is_none_when_header_missing() {
-        let body = r#"{"error":"use_dpop_nonce"}"#;
-        let headers = HeaderMap::new();
-        assert!(check_use_dpop_nonce(&headers, body).is_none());
-    }
-
     /// Sign with AWS-LC, verify with OpenSSL, using only the public JWK the
     /// proof itself carries.
     ///
@@ -531,8 +513,8 @@ mod tests {
 
     /// A JWK component whose leading byte is zero may be encoded at less than
     /// the curve's full width by implementations that treat it as a minimal
-    /// integer. The OpenSSL path absorbed that via `BigNum`; AWS-LC's SEC1
-    /// parsers need exact width, so `decode_b64url_coord` left-pads.
+    /// integer. AWS-LC's SEC1 parsers need exact width, so `decode_b64url_coord`
+    /// left-pads.
     ///
     /// Without the padding, roughly 1 in 256 cached DPoP keys per component
     /// would fail to rehydrate.
@@ -576,7 +558,7 @@ mod tests {
 
     /// A JWK whose public half does not match its private scalar must be
     /// rejected rather than producing a key that signs unverifiably. AWS-LC
-    /// cross-checks the components; OpenSSL's `check_key` did the same.
+    /// cross-checks the components.
     #[test]
     fn jwk_with_mismatched_public_half_is_rejected() {
         let a = DPoPKey::generate().unwrap();

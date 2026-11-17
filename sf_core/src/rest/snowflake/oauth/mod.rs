@@ -14,12 +14,10 @@
 
 mod authorization_code;
 mod client_credentials;
-pub(crate) mod dpop;
 mod error;
 mod http_client;
 mod loopback_server;
 mod pkce;
-mod random;
 mod token;
 
 /// Browser-launcher closure type used by [`OAuthAuthorizationCodeConfig`]

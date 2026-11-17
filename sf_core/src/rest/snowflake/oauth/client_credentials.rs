@@ -22,10 +22,10 @@ use oauth2::basic::BasicClient;
 use oauth2::{AuthType, ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
 
 use super::authorization_code::{AcquiredOAuthToken, map_request_token_error};
-use super::dpop::DPoPKey;
 use super::error::{AuthenticationTimeoutSnafu, MissingAccessTokenSnafu, OAuthError};
 use super::http_client::make_http_client;
 use crate::config::rest_parameters::OAuthClientCredentialsConfig;
+use crate::crypto::dpop::DPoPKey;
 use crate::sensitive::SensitiveString;
 
 #[tracing::instrument(

@@ -6,7 +6,7 @@
 //! within the 43..=128 character window required by the RFC.
 //!
 //! Both halves run on the crypto module rather than on `oauth2`'s defaults:
-//! the verifier comes from the DRBG via [`super::random`], and the challenge
+//! the verifier comes from the DRBG via [`crate::crypto::random`], and the challenge
 //! digest is computed by AWS-LC rather than RustCrypto (F8). `oauth2` exposes
 //! no way to build a `PkceCodeChallenge` around a digest it did not compute
 //! itself, so the caller puts `code_challenge`/`code_challenge_method` on the
@@ -16,7 +16,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use super::error::OAuthError;
-use super::random;
+use crate::crypto::random;
 use crate::sensitive::SensitiveString;
 
 /// PKCE material for the authorization code flow.

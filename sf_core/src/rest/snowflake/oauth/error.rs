@@ -136,41 +136,18 @@ pub enum OAuthError {
         location: Location,
     },
 
-    /// A security-relevant OAuth value -- the PKCE verifier, CSRF `state`, or
-    /// DPoP `jti` -- could not be drawn from AWS-LC's DRBG.
-    ///
-    /// Fails the login or proof rather than falling back to another source.
-    /// Under `fips`, that would draw security randomness outside AWS-LC
-    /// and undermine the build's module boundary. As with
-    /// `DPoPProofGeneration`, `Unspecified` carries no detail: AWS-LC does not
-    /// report why a primitive failed.
-    #[snafu(display("Failed to generate OAuth random value ({purpose})"))]
+    /// The PKCE verifier or CSRF `state` could not be drawn from AWS-LC's DRBG.
+    #[snafu(transparent)]
     RandomGeneration {
-        /// Names the value, never carries it -- these must not reach a log.
-        purpose: &'static str,
-        source: aws_lc_rs::error::Unspecified,
+        source: crate::crypto::random::RandomError,
         #[snafu(implicit)]
         location: Location,
     },
 
-    /// DPoP proof JWT could not be constructed because of an underlying
-    /// AWS-LC primitive (key generation, signing, coordinate export).
-    ///
-    /// `Unspecified` carries no detail by design -- AWS-LC does not report
-    /// why a primitive failed, so there is nothing to propagate beyond the
-    /// operation that failed.
-    #[snafu(display("Failed to generate DPoP proof JWT"))]
-    DPoPProofGeneration {
-        source: aws_lc_rs::error::Unspecified,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    /// DPoP JWK could not be parsed (e.g. unsupported `kty`/`crv` or
-    /// a missing required field on a cached bundled JWK).
-    #[snafu(display("DPoP JWK could not be parsed: {reason}"))]
-    DPoPJwkParse {
-        reason: String,
+    /// DPoP key handling or proof construction failed.
+    #[snafu(transparent)]
+    DPoP {
+        source: crate::crypto::dpop::DPoPError,
         #[snafu(implicit)]
         location: Location,
     },

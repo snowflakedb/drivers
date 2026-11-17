@@ -34,7 +34,6 @@ use oauth2::{
 use snafu::{IntoError, OptionExt, ResultExt};
 use url::Url;
 
-use super::dpop::{self, DPoPKey};
 use super::error::{
     AuthenticationTimeoutSnafu, BrowserCallbackSnafu, EndpointUrlParseSnafu, IdpSnafu,
     MissingAccessTokenSnafu, OAuthError, RedirectUriParseSnafu, RefreshTokenExchangeSnafu,
@@ -43,9 +42,10 @@ use super::error::{
 use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
 use super::pkce;
-use super::random;
 use super::token;
 use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
+use crate::crypto::dpop::{self, DPoPKey};
+use crate::crypto::random;
 use crate::sensitive::SensitiveString;
 use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
 

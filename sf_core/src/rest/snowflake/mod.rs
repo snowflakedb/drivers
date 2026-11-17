@@ -1153,7 +1153,9 @@ async fn send_login_request(
         .as_ref()
         .map(SensitiveString::reveal)
     {
-        let key = oauth::dpop::DPoPKey::from_jwk_json(jwk_json).context(OAuthFlowSnafu)?;
+        let key = crate::crypto::dpop::DPoPKey::from_jwk_json(jwk_json)
+            .map_err(oauth::OAuthError::from)
+            .context(OAuthFlowSnafu)?;
         let url = Url::parse(&login_url).context(UrlJoinSnafu {
             path: "/session/v1/login-request",
         })?;
@@ -1213,7 +1215,7 @@ async fn send_login_request(
             // Signing is infallible once `from_jwk_json` succeeded above
             // (only openssl primitive failures could surface here, which
             // would have already failed the validation step).
-            let proof = oauth::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
+            let proof = crate::crypto::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
                 .expect("DPoP proof generation must succeed for a pre-validated key");
             builder = builder.header("DPoP", proof.reveal());
         }
@@ -1353,7 +1355,7 @@ async fn complete_duo_challenge(
 /// closure (called once per retry attempt) can stamp a fresh proof JWT
 /// without moving values out of the surrounding scope.
 struct DPoPSigner {
-    key: std::sync::Arc<oauth::dpop::DPoPKey>,
+    key: std::sync::Arc<crate::crypto::dpop::DPoPKey>,
     url: std::sync::Arc<Url>,
 }
 

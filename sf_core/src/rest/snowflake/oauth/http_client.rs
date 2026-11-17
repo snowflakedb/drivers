@@ -22,9 +22,9 @@ use oauth2::AsyncHttpClient;
 use snafu::{IntoError, ResultExt};
 use url::Url;
 
+use crate::crypto::dpop::{self, DPoPKey};
 use crate::http::retry::{CappedBodyError, read_body_capped};
 
-use super::dpop::{self, DPoPKey};
 use super::error::{OAuthError, ResponseBodyTooLargeSnafu, TransportSnafu};
 
 /// Adapter that lets the `oauth2` crate drive token-endpoint requests
@@ -153,7 +153,7 @@ impl<'c> AsyncHttpClient<'c> for OAuthHttpClient {
             // DPoP nonce-retry per RFC 9449 §8.
             if let Some(dpop) = self.dpop.as_ref()
                 && let Ok(body) = std::str::from_utf8(response.body())
-                && let Some(server_nonce) = dpop::check_use_dpop_nonce(response.headers(), body)
+                && let Some(server_nonce) = check_use_dpop_nonce(response.headers(), body)
             {
                 tracing::debug!("retrying OAuth token request with DPoP nonce");
                 if let Ok(mut guard) = dpop.last_nonce.lock() {
@@ -200,10 +200,54 @@ fn clone_request(request: &Request<Vec<u8>>) -> Request<Vec<u8>> {
         .expect("cloning a well-formed http::Request must succeed")
 }
 
+const DPOP_NONCE_HEADER: &str = "DPoP-Nonce";
+
+/// If the IdP responded with an `error == "use_dpop_nonce"` body and a
+/// `DPoP-Nonce` header, return the nonce so the caller can retry once
+/// with the nonce embedded in the proof (mirrors JDBC
+/// `RestRequest.checkForDPoPNonceError`).
+fn check_use_dpop_nonce(headers: &http::HeaderMap, body: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = parsed.get("error").and_then(|v| v.as_str())?;
+    if error != "use_dpop_nonce" {
+        return None;
+    }
+    let nonce = headers
+        .get(DPOP_NONCE_HEADER)
+        .or_else(|| headers.get("dpop-nonce"))?
+        .to_str()
+        .ok()?;
+    Some(nonce.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn check_use_dpop_nonce_extracts_nonce_when_signaled() {
+        let body = r#"{"error":"use_dpop_nonce","error_description":"DPoP nonce required"}"#;
+        let mut headers = http::HeaderMap::new();
+        headers.insert("DPoP-Nonce", "server-nonce-123".parse().unwrap());
+        let n = check_use_dpop_nonce(&headers, body).expect("nonce found");
+        assert_eq!(n, "server-nonce-123");
+    }
+
+    #[test]
+    fn check_use_dpop_nonce_is_none_for_unrelated_errors() {
+        let body = r#"{"error":"invalid_request"}"#;
+        let mut headers = http::HeaderMap::new();
+        headers.insert("DPoP-Nonce", "x".parse().unwrap());
+        assert!(check_use_dpop_nonce(&headers, body).is_none());
+    }
+
+    #[test]
+    fn check_use_dpop_nonce_is_none_when_header_missing() {
+        let body = r#"{"error":"use_dpop_nonce"}"#;
+        let headers = http::HeaderMap::new();
+        assert!(check_use_dpop_nonce(&headers, body).is_none());
+    }
 
     /// Serve one HTTP/1.1 response of `body_len` bytes via chunked
     /// transfer-encoding with **no** `Content-Length`, then close, so the test
