@@ -121,6 +121,7 @@ pub fn callbacks_for(state: &'static HostState) -> XpBackendCallbacks {
         upload_stream: None,
         download_stream: None,
         list_stage_files: None,
+        download_query_chunk: None,
     }
 }
 

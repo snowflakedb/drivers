@@ -164,6 +164,18 @@ pub type ListStageFilesFn = unsafe extern "C" fn(
     error_out: *mut SfCoreFfiError,
 ) -> i32;
 
+/// `headers_json` is a JSON object of header name to value. On success
+/// `data_out` receives a host-allocated buffer of `data_len_out` bytes, freed
+/// by the driver with `libc::free`.
+pub type DownloadQueryChunkFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    url: *const c_char,
+    headers_json: *const c_char,
+    data_out: *mut *mut u8,
+    data_len_out: *mut usize,
+    error_out: *mut SfCoreFfiError,
+) -> i32;
+
 /// One struct so registration is atomic: there is no way to install a query
 /// executor without also providing authentication.
 ///
@@ -259,6 +271,16 @@ pub struct XpBackendCallbacks {
             stage_location: *const c_char,
             is_exact_match: i32,
             result_out: *mut *mut c_char,
+            error_out: *mut SfCoreFfiError,
+        ) -> i32,
+    >,
+    pub download_query_chunk: Option<
+        unsafe extern "C" fn(
+            ctx: *mut c_void,
+            url: *const c_char,
+            headers_json: *const c_char,
+            data_out: *mut *mut u8,
+            data_len_out: *mut usize,
             error_out: *mut SfCoreFfiError,
         ) -> i32,
     >,
@@ -392,6 +414,46 @@ impl From<XpSessionInfo> for LoginResult {
 // Entry points
 // ---------------------------------------------------------------------------
 
+/// Validates the host's version and size header and builds the adapter.
+///
+/// # Safety
+///
+/// Same contract as [`sf_core_register_xp_backend`].
+unsafe fn adapter_from_host(
+    callbacks: *const XpBackendCallbacks,
+) -> BackendResult<CBackendAdapter> {
+    if callbacks.is_null() {
+        return Err(BackendError::invalid_argument(
+            "callbacks pointer is null".to_string(),
+        ));
+    }
+    let header = callbacks.cast::<XpBackendCallbacksHeader>();
+    // SAFETY: the caller guarantees a readable header.
+    let abi_version = unsafe { std::ptr::addr_of!((*header).abi_version).read_unaligned() };
+
+    if abi_version != XP_BACKEND_ABI_VERSION {
+        return Err(BackendError::abi_mismatch(
+            XP_BACKEND_ABI_VERSION,
+            abi_version,
+        ));
+    }
+    // SAFETY: the caller guarantees a readable header.
+    let struct_size = unsafe { std::ptr::addr_of!((*header).struct_size).read_unaligned() };
+    let expected_size = std::mem::size_of::<XpBackendCallbacks>();
+    if struct_size != expected_size {
+        return Err(BackendError::new(
+            error_codes::ABI_MISMATCH,
+            format!(
+                "backend callbacks struct size mismatch: driver expects {expected_size} \
+                 bytes, host sent {struct_size}"
+            ),
+        ));
+    }
+
+    // SAFETY: the validated size and the caller's contract guarantee the full layout.
+    CBackendAdapter::new(unsafe { &*callbacks })
+}
+
 /// Returns `0`, or a negative [`error_codes`] value.
 ///
 /// # Safety
@@ -403,37 +465,8 @@ impl From<XpSessionInfo> for LoginResult {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sf_core_register_xp_backend(callbacks: *const XpBackendCallbacks) -> i32 {
     let outcome = panic::catch_unwind(|| {
-        if callbacks.is_null() {
-            return Err(BackendError::invalid_argument(
-                "callbacks pointer is null".to_string(),
-            ));
-        }
-        let header = callbacks.cast::<XpBackendCallbacksHeader>();
-        // SAFETY: the caller guarantees a readable header.
-        let abi_version = unsafe { std::ptr::addr_of!((*header).abi_version).read_unaligned() };
-
-        if abi_version != XP_BACKEND_ABI_VERSION {
-            return Err(BackendError::abi_mismatch(
-                XP_BACKEND_ABI_VERSION,
-                abi_version,
-            ));
-        }
-        // SAFETY: the caller guarantees a readable header.
-        let struct_size = unsafe { std::ptr::addr_of!((*header).struct_size).read_unaligned() };
-        let expected_size = std::mem::size_of::<XpBackendCallbacks>();
-        if struct_size != expected_size {
-            return Err(BackendError::new(
-                error_codes::ABI_MISMATCH,
-                format!(
-                    "backend callbacks struct size mismatch: driver expects {expected_size} \
-                     bytes, host sent {struct_size}"
-                ),
-            ));
-        }
-
-        // SAFETY: the validated size and the caller's contract guarantee the full layout.
-        let cb = unsafe { &*callbacks };
-        let adapter = CBackendAdapter::new(cb)?;
+        // SAFETY: forwarded from this function's contract.
+        let adapter = unsafe { adapter_from_host(callbacks) }?;
         registry::register_backend(Arc::new(adapter))
     });
 
@@ -522,6 +555,7 @@ struct CBackendAdapter {
     upload_stream: Option<UploadStreamFn>,
     download_stream: Option<DownloadStreamFn>,
     list_stage_files: Option<ListStageFilesFn>,
+    download_query_chunk: Option<DownloadQueryChunkFn>,
 }
 
 // SAFETY: the host contract requires `context` to be safe for concurrent use, and
@@ -563,6 +597,7 @@ impl CBackendAdapter {
             upload_stream: cb.upload_stream,
             download_stream: cb.download_stream,
             list_stage_files: cb.list_stage_files,
+            download_query_chunk: cb.download_query_chunk,
         })
     }
 }
@@ -1011,6 +1046,48 @@ impl SnowflakeBackend for CBackendAdapter {
         .await?;
         guard(OP, || require_payload(payload, OP))
     }
+
+    async fn download_query_chunk(
+        &self,
+        url: &str,
+        headers: &HashMap<String, String>,
+    ) -> BackendResult<Vec<u8>> {
+        const OP: &str = "download_query_chunk";
+        let Some(callback) = self.download_query_chunk else {
+            return Err(BackendError::unsupported(OP));
+        };
+        let url = url.to_string();
+        let headers = headers.clone();
+        let context = self.context;
+        run_callback(OP, move || {
+            let url_c = to_c_string(&url, "chunk url")?;
+            let headers_c = to_c_string(&to_json(&headers, OP)?, "chunk headers")?;
+            let mut data: *mut u8 = std::ptr::null_mut();
+            let mut data_len: usize = 0;
+            let mut error = SfCoreFfiError::empty();
+            let ret = unsafe {
+                callback(
+                    context.as_ptr(),
+                    url_c.as_ptr(),
+                    headers_c.as_ptr(),
+                    &mut data,
+                    &mut data_len,
+                    &mut error,
+                )
+            };
+
+            unsafe {
+                take_result(
+                    ret,
+                    error,
+                    OP,
+                    || take_host_buffer(data, data_len, OP),
+                    || free_host_buffer(data),
+                )
+            }
+        })
+        .await
+    }
 }
 
 unsafe fn take_host_buffer(ptr: *mut u8, len: usize, operation: &str) -> BackendResult<Vec<u8>> {
@@ -1239,13 +1316,26 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     fn callbacks_layout_is_pinned_to_the_declared_abi_version() {
         assert_eq!(XP_BACKEND_ABI_VERSION, 1);
-        // u32 + 4 padding + struct_size + context + 9 function pointers.
+        // u32 + 4 padding + struct_size + context + 10 function pointers.
         assert_eq!(
             std::mem::size_of::<XpBackendCallbacks>(),
-            4 + 4 + 8 + 8 + 9 * 8,
-            "layout changed: bump XP_BACKEND_ABI_VERSION and regenerate \
+            4 + 4 + 8 + 8 + 10 * 8,
+            "layout changed: update this size and regenerate \
              include/sf_core_providers.h"
         );
+    }
+
+    #[test]
+    fn an_unknown_abi_version_is_rejected() {
+        let header = XpBackendCallbacksHeader {
+            abi_version: XP_BACKEND_ABI_VERSION + 1,
+            struct_size: std::mem::size_of::<XpBackendCallbacks>(),
+        };
+
+        let code = unsafe {
+            sf_core_register_xp_backend((&raw const header).cast::<XpBackendCallbacks>())
+        };
+        assert_eq!(code, error_codes::ABI_MISMATCH);
     }
 
     #[test]
@@ -1390,6 +1480,7 @@ mod tests {
             upload_stream: None,
             download_stream: None,
             list_stage_files: None,
+            download_query_chunk: None,
         }
     }
 
@@ -1462,5 +1553,60 @@ mod tests {
             Ok(_) => panic!("pending C adapter should be consumed once"),
         };
         assert_eq!(err.code, error_codes::NOT_REGISTERED);
+    }
+
+    /// Echoes `url` and `headers_json` back in the response body so the test
+    /// can confirm both crossed the FFI boundary intact.
+    unsafe extern "C" fn echo_chunk(
+        _ctx: *mut c_void,
+        url: *const c_char,
+        headers_json: *const c_char,
+        data_out: *mut *mut u8,
+        data_len_out: *mut usize,
+        _error_out: *mut SfCoreFfiError,
+    ) -> i32 {
+        // SAFETY: the driver guarantees both strings are valid for the call.
+        unsafe {
+            let url = CStr::from_ptr(url).to_str().unwrap();
+            let headers = CStr::from_ptr(headers_json).to_str().unwrap();
+            let body = format!("{url}|{headers}").into_bytes();
+            let ptr = libc::malloc(body.len()).cast::<u8>();
+            assert!(!ptr.is_null(), "test allocation failed");
+            std::ptr::copy_nonoverlapping(body.as_ptr(), ptr, body.len());
+            *data_out = ptr;
+            *data_len_out = body.len();
+        }
+        0
+    }
+
+    #[tokio::test]
+    async fn download_query_chunk_round_trips_the_url_and_headers() {
+        let mut callbacks = minimal_callbacks();
+        callbacks.download_query_chunk = Some(echo_chunk);
+        let adapter = CBackendAdapter::new(&callbacks).expect("callbacks should be valid");
+
+        let headers = HashMap::from([("x-chunk-token".to_string(), "secret".to_string())]);
+        let bytes = adapter
+            .download_query_chunk("https://chunk.test/c1", &headers)
+            .await
+            .expect("the callback should serve the chunk");
+        let body = String::from_utf8(bytes).expect("echoed body should be UTF-8");
+
+        assert!(body.starts_with("https://chunk.test/c1|"));
+        assert!(body.contains(r#""x-chunk-token":"secret""#));
+    }
+
+    #[tokio::test]
+    async fn download_query_chunk_is_unsupported_when_the_callback_is_null() {
+        let callbacks = minimal_callbacks();
+        let adapter = CBackendAdapter::new(&callbacks).expect("callbacks should be valid");
+
+        let err = adapter
+            .download_query_chunk("https://chunk.test/c1", &HashMap::new())
+            .await
+            .expect_err("a null callback must not be treated as success");
+
+        assert_eq!(err.code, error_codes::UNSUPPORTED);
+        assert!(err.message.contains("download_query_chunk"));
     }
 }
