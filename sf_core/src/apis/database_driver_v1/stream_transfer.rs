@@ -87,6 +87,7 @@ const DOWNLOAD_STREAM_MAX_CHUNK_LEN: usize = 8 * 1024 * 1024;
 pub(super) struct UploadStreamSession {
     pub conn_handle: Handle,
     pub sql: String,
+    pub query_tag: Option<String>,
     pub buffer: Mutex<SpooledBuffer>,
     /// Mem-to-file spill threshold for `buffer`. Always `SPOOL_MEM_THRESHOLD`
     /// in production; tests inject a smaller value to exercise the mem→file
@@ -146,6 +147,25 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         sql: String,
     ) -> Result<Handle, ApiError> {
+        self.connection_upload_stream_begin_with_query_tag(conn_handle, sql, None)
+            .await
+    }
+
+    /// Begins a chunked upload with a per-upload query tag. The tag applies to
+    /// the PUT and any stage-info refresh it triggers (expired credentials or
+    /// a per-file presigned URL) without changing session state.
+    ///
+    /// `None` sends no `QUERY_TAG` request parameter, so a session `QUERY_TAG`
+    /// (if any) stays in effect, exactly as with
+    /// `connection_upload_stream_begin`. `Some(tag)` sends `tag` as the
+    /// request's `QUERY_TAG`, overriding the session value for these requests
+    /// only; `Some(String::new())` therefore sends an explicitly empty tag.
+    pub async fn connection_upload_stream_begin_with_query_tag(
+        &self,
+        conn_handle: Handle,
+        sql: String,
+        query_tag: Option<String>,
+    ) -> Result<Handle, ApiError> {
         self.connections
             .get_obj(conn_handle)
             .context(InvalidArgumentSnafu {
@@ -162,6 +182,7 @@ impl DatabaseDriverV1 {
         let session = UploadStreamSession {
             conn_handle,
             sql,
+            query_tag,
             buffer: Mutex::new(SpooledBuffer::default()),
             spill_threshold: SPOOL_MEM_THRESHOLD,
         };
@@ -169,7 +190,8 @@ impl DatabaseDriverV1 {
     }
 
     /// Appends one chunk to a pending upload started by
-    /// `connection_upload_stream_begin`.
+    /// `connection_upload_stream_begin` or
+    /// `connection_upload_stream_begin_with_query_tag`.
     pub async fn connection_upload_stream_chunk(
         &self,
         upload_handle: Handle,
@@ -224,7 +246,12 @@ impl DatabaseDriverV1 {
         // Must outlive the upload below: it unlinks the spooled temp file on
         // drop, and the upload streams the PUT body from its path.
         let result = self
-            .run_put_stream_via_gs(session.conn_handle, session.sql.clone(), source)
+            .run_put_stream_via_gs(
+                session.conn_handle,
+                session.sql.clone(),
+                source,
+                session.query_tag.clone(),
+            )
             .await;
         drop(temp_path_guard);
         result
@@ -248,14 +275,16 @@ impl DatabaseDriverV1 {
 
     /// Shared core: runs `sql` (a PUT) through GS for stage credentials +
     /// encryption material, then uploads `source` via the normal
-    /// file-transfer path. Returns a `ResultSetInfo` shaped like a normal
-    /// PUT's. Used by
+    /// file-transfer path. `query_tag`, when set, is sent as the `QUERY_TAG`
+    /// request parameter on the PUT and on any stage-info refresh. Returns a
+    /// `ResultSetInfo` shaped like a normal PUT's. Used by
     /// `connection_upload_stream_finish`.
     pub(super) async fn run_put_stream_via_gs(
         &self,
         conn_handle: Handle,
         sql: String,
         source: ByteSource,
+        query_tag: Option<String>,
     ) -> Result<ResultSetInfo, ApiError> {
         let telemetry_id = self.telemetry_id_for_conn(conn_handle).await;
         async {
@@ -277,15 +306,18 @@ impl DatabaseDriverV1 {
 
             let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(&conn_ptr, &query_transport, sql.clone()).await?;
-            update_caches(&conn_ptr, &sql, &response).await;
-
-            let gs_data = response.data;
             let refresh_ctx = StageInfoRefreshContext {
                 sql: sql.clone(),
                 query_parameters: query_transport.query_parameters.clone(),
                 conn: conn_ptr.clone(),
+                query_tag,
             };
+            let response =
+                run_sql_against_gs(&conn_ptr, &query_transport, refresh_ctx.query_input(&sql))
+                    .await?;
+            update_caches(&conn_ptr, &sql, &response).await;
+
+            let gs_data = response.data;
             let use_s3_regional_url = conn_ptr
                 .lock()
                 .await
@@ -387,7 +419,12 @@ impl DatabaseDriverV1 {
 
             let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(&conn_ptr, &query_transport, get_sql.clone()).await?;
+            let response = run_sql_against_gs(
+                &conn_ptr,
+                &query_transport,
+                QueryInput::new(get_sql.clone()),
+            )
+            .await?;
             update_caches(&conn_ptr, &get_sql, &response).await;
 
             let (use_s3_regional_url, unsafe_file_write, transport) = {
@@ -418,6 +455,7 @@ impl DatabaseDriverV1 {
                 sql: get_sql,
                 query_parameters: query_transport.query_parameters,
                 conn: conn_ptr.clone(),
+                query_tag: None,
             };
             let refresher = stream_stage_info_refresher(refresh_ctx, resolved.initial_snapshot);
 
@@ -590,18 +628,18 @@ impl DatabaseDriverV1 {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Submit `sql` with no cancellation and no client-side deadline: the stream
+/// Submit `query_input` with no cancellation and no client-side deadline: the stream
 /// APIs reach core without an operation handle.
 async fn run_sql_against_gs(
     conn_ptr: &Arc<Mutex<Connection>>,
     transport: &QueryTransport,
-    sql: String,
+    query_input: QueryInput<'_>,
 ) -> Result<query_response::Response, ApiError> {
     submit_query(
         None,
         conn_ptr,
         transport,
-        QueryInput::new(sql),
+        query_input,
         QueryExecutionMode::Blocking,
         uuid::Uuid::new_v4(),
         None,
@@ -1012,6 +1050,210 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upload_stream_begin_with_query_tag_stores_tag() {
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = register_bare_connection(&driver);
+        for query_tag in [None, Some(String::new()), Some("ingest-tag".to_string())] {
+            let upload_handle = driver
+                .connection_upload_stream_begin_with_query_tag(
+                    conn_handle,
+                    "PUT file://x @s".into(),
+                    query_tag.clone(),
+                )
+                .await
+                .unwrap();
+            let session = driver.upload_streams.get_obj(upload_handle).unwrap();
+            assert_eq!(session.query_tag, query_tag);
+            driver
+                .connection_upload_stream_abort(upload_handle)
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn assert_upload_stream_query_tag_on_refresh(query_tag: Option<&str>, refresh_url: bool) {
+        use crate::rest::snowflake::SessionTokens;
+        use serde_json::json;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gs = MockServer::start().await;
+        let storage = MockServer::start().await;
+        let sql = "PUT file:///source/data.csv @stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE";
+        let rewritten_sql = "PUT file://data.csv @stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE";
+        let payload = b"streamed,upload\n1,2\n";
+
+        let stage_info = |fresh: bool| {
+            if refresh_url {
+                json!({
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "region": "us-central1",
+                    "creds": {},
+                    "presignedUrl": format!(
+                        "{}/{}",
+                        storage.uri(),
+                        if fresh { "fresh-url" } else { "expired-url" }
+                    )
+                })
+            } else {
+                json!({
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "region": "us-central1",
+                    "endPoint": storage.uri(),
+                    "creds": {
+                        "GCS_ACCESS_TOKEN": if fresh { "fresh-token" } else { "expired-token" }
+                    }
+                })
+            }
+        };
+        let response = |fresh| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "data": {
+                    "command": "UPLOAD",
+                    "src_locations": ["/source/data.csv"],
+                    "stageInfo": stage_info(fresh),
+                    "autoCompress": false,
+                    "sourceCompression": "NONE",
+                    "overwrite": true
+                }
+            }))
+        };
+        // Match independently of the tag, then assert the captured JSON. A
+        // dropped tag must fail an assertion, not turn into a mock 404/retry.
+        Mock::given(method("POST"))
+            .and(path("/queries/v1/query-request"))
+            .respond_with(response(false))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .expect(1)
+            .mount(&gs)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/queries/v1/query-request"))
+            .respond_with(response(true))
+            .with_priority(2)
+            .expect(1)
+            .mount(&gs)
+            .await;
+
+        let (expired, fresh) = if refresh_url {
+            (
+                Mock::given(method("PUT")).and(path("/expired-url")),
+                Mock::given(method("PUT")).and(path("/fresh-url")),
+            )
+        } else {
+            (
+                Mock::given(method("PUT"))
+                    .and(path("/bucket/prefix/data.csv"))
+                    .and(header("Authorization", "Bearer expired-token")),
+                Mock::given(method("PUT"))
+                    .and(path("/bucket/prefix/data.csv"))
+                    .and(header("Authorization", "Bearer fresh-token")),
+            )
+        };
+        expired
+            .respond_with(ResponseTemplate::new(if refresh_url { 400 } else { 401 }))
+            .expect(1)
+            .mount(&storage)
+            .await;
+        fresh
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&storage)
+            .await;
+
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = driver.connection_new();
+        {
+            let conn_ptr = driver.connections.get_obj(conn_handle).unwrap();
+            let mut conn = conn_ptr.lock().await;
+            conn.http_client = Some(reqwest::Client::new());
+            conn.server_url = Some(gs.uri());
+            conn.client_info =
+                Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+            *conn.tokens.write().await = Some(SessionTokens {
+                session_token: "test-session-token".into(),
+                master_token: "test-master-token".into(),
+                session_id: Some(1),
+                session_expires_at: None,
+                master_expires_at: None,
+                master_validity: None,
+            });
+        }
+        let upload_handle = match query_tag {
+            Some(tag) => {
+                driver
+                    .connection_upload_stream_begin_with_query_tag(
+                        conn_handle,
+                        sql.into(),
+                        Some(tag.into()),
+                    )
+                    .await
+            }
+            // Exercise the original API's untagged behavior end to end too.
+            None => {
+                driver
+                    .connection_upload_stream_begin(conn_handle, sql.into())
+                    .await
+            }
+        }
+        .unwrap();
+        driver
+            .connection_upload_stream_chunk(upload_handle, payload.to_vec())
+            .await
+            .unwrap();
+        let result = driver
+            .connection_upload_stream_finish(upload_handle)
+            .await
+            .expect("stream upload must finish after refreshing stage info");
+
+        let requests = gs.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2, "initial PUT and one forced refresh");
+        for (index, request) in requests.iter().enumerate() {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(
+                body["sqlText"],
+                if index == 1 && refresh_url {
+                    rewritten_sql
+                } else {
+                    sql
+                },
+                "refresh must target the correct file"
+            );
+            assert_eq!(
+                body["parameters"].get("QUERY_TAG"),
+                query_tag.map(|tag| json!(tag)).as_ref(),
+                "QUERY_TAG on {} request (tag={query_tag:?}, refresh_url={refresh_url})",
+                if index == 0 { "initial PUT" } else { "refresh" }
+            );
+        }
+        let uploads = storage.received_requests().await.unwrap();
+        assert_eq!(uploads.len(), 2, "expired upload and successful retry");
+        for upload in uploads {
+            assert_eq!(upload.body, payload, "retry must upload the stream bytes");
+        }
+        driver.result_set_release(result.handle).unwrap();
+        driver.connection_release(conn_handle).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_stream_query_tag_reaches_initial_put_and_credential_refresh() {
+        for tag in [Some("ingest-tag"), Some(""), None] {
+            assert_upload_stream_query_tag_on_refresh(tag, false).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_stream_query_tag_reaches_rewritten_per_file_url_refresh() {
+        for tag in [Some("ingest-tag"), Some(""), None] {
+            assert_upload_stream_query_tag_on_refresh(tag, true).await;
+        }
+    }
+
+    #[tokio::test]
     async fn upload_stream_chunk_rejects_unknown_handle() {
         let driver = DatabaseDriverV1::new();
         let result = driver
@@ -1054,6 +1296,7 @@ mod tests {
         let upload_handle = driver.upload_streams.add_handle(UploadStreamSession {
             conn_handle,
             sql: "PUT file://x @s".into(),
+            query_tag: None,
             buffer: Mutex::new(SpooledBuffer::default()),
             spill_threshold: 16,
         });
