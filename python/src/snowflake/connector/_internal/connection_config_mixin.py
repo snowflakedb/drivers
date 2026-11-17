@@ -23,10 +23,15 @@ from dataclasses import dataclass, field, fields, replace
 from typing import Any, ClassVar, TypeVar
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
+from snowflake.connector._internal.arrow_context import ArrowConverterContext
+from snowflake.connector._internal.logging import get_logger
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ConfigSetting
 from snowflake.connector.constants import ENV_VAR_PARTNER
 from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.version import __version__ as _DRIVER_VERSION
+
+
+logger = get_logger(__name__)
 
 
 _Self = TypeVar("_Self", bound="ConnectionConfigMixin")
@@ -72,6 +77,13 @@ class ConnectionConfigMixin:
 
     Those methods use this value when the call omits ``force_microsecond_precision``.
     A per-call argument overrides it. An unset value is false.
+    """
+
+    converter_class: type[ArrowConverterContext] | None = None
+    """Subclass of ``ArrowConverterContext`` that converts fetched values.
+
+    On the row fetch path, ``deserialize(value, column)`` is called for each non-NULL value of the
+    columns whose type code is in ``deserialized_types``. Default: no extra conversion.
     """
 
     paramstyle: str | None = None
@@ -172,6 +184,7 @@ class ConnectionConfigMixin:
         {
             "session_parameters",
             "numpy",
+            "converter_class",
             "arrow_number_to_decimal",
             "force_microsecond_precision",
             "paramstyle",
@@ -557,6 +570,7 @@ class ConnectionConfigMixin:
         * ``mfa_callback`` - type-checked (must be callable).
         * ``open_external_browser_callback`` - type-checked (must be callable),
           and rejected together with ``mfa_callback``.
+        * ``converter_class`` - type-checked (must be an ``ArrowConverterContext`` subclass).
         * ``timezone`` - type-checked (must be ``str``), then merged into
           ``session_parameters["TIMEZONE"]``, overwriting any TIMEZONE already
           present in ``session_parameters``.
@@ -610,6 +624,16 @@ class ConnectionConfigMixin:
                     "mfa_callback and open_external_browser_callback cannot be combined: they apply to different "
                     "authenticators. Pass only the one matching your authenticator."
                 )
+
+        if config.converter_class is not None:
+            if not (
+                isinstance(config.converter_class, type) and issubclass(config.converter_class, ArrowConverterContext)
+            ):
+                raise ProgrammingError(
+                    f"Invalid converter_class parameter: {config.converter_class!r}. "
+                    "Pass a subclass of snowflake.connector.converter.ArrowConverterContext or None."
+                )
+            logger.debug("using converter_class %s", config.converter_class.__qualname__)
 
         if config.timezone is not None:
             if not isinstance(config.timezone, str):

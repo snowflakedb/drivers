@@ -1,7 +1,7 @@
-name: "Removes converter_class parameter from SnowflakeConnection"
+name: "converter_class takes an ArrowConverterContext subclass"
 status: allowed
 type: api_incompatibility
-reviewed: true
+reviewed: false
 is_breaking_change: true
 impact: medium
 legacy_id: 103
@@ -10,10 +10,15 @@ old_driver_behavior: |
   selected by `DefaultConverterClass()` (e.g. `SnowflakeNoConverterToPython` to skip
   native type conversion).
 new_driver_behavior: |
-  Passing `converter_class` with a class object raises `ProgrammingError`
-  (`Unsupported connection option type for 'converter_class'`).
+  `converter_class` accepts a subclass of `snowflake.connector.converter.ArrowConverterContext`;
+  any other value raises `ProgrammingError` (`Invalid converter_class parameter`). The class
+  must be an `ArrowConverterContext` subclass, not a `SnowflakeConverter` subclass. Its
+  `deserialize(value, column)` runs on non-NULL values of columns whose type code is in
+  `deserialized_types`, on the row fetch path only (sync and async cursors, result batches).
+  Arrow fetches (`fetch_arrow_*`, `fetch_pandas_*`) are not affected.
   `DefaultConverterClass` does not exist (`AttributeError`).
 description: |
-  Result conversion moved into the new driver Arrow path and is no longer a
-  Python-pluggable hook. The Windows-specific `SnowflakeConverterIssue23517` workaround
+  Result conversion moved into the new driver Arrow path. The per-type `_<TYPE>_to_python`
+  hooks of `SnowflakeConverter` are replaced by a single `deserialize` hook for the type codes
+  listed in `deserialized_types`. The Windows-specific `SnowflakeConverterIssue23517` workaround
   and null-converter opt-out are not applicable under that architecture.

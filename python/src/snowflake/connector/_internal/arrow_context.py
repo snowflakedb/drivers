@@ -8,24 +8,31 @@ from __future__ import annotations
 
 import decimal
 
-from datetime import datetime, timedelta, timezone, tzinfo
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, tzinfo
+from functools import partial
 from sys import byteorder
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytz
 
-from .logging import get_logger
+from .._common.extras import MissingOptionalDependency, tzlocal
 from .._common.extras import numpy as np
-from .._common.extras import tzlocal, MissingOptionalDependency
+from ..errors import DataError, Error
+from .logging import get_logger
+
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy import datetime64, float64, int64, timedelta64
 
     from ..aio.connection import Connection as AsyncConnection
     from ..connection import Connection
+    from .cursor.result_metadata import ResultMetadata
 
 
-ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
+ZERO_EPOCH = datetime.fromtimestamp(0, UTC).replace(tzinfo=None)
 PARAMETER_TIMEZONE = "TIMEZONE"
 logger = get_logger(__name__)
 
@@ -86,6 +93,12 @@ class ArrowConverterContext:
             timezone_supplier=lambda: connection._session_parameters._get_string(PARAMETER_TIMEZONE),
         )
 
+    @classmethod
+    def _for_connection(cls, connection: Connection | AsyncConnection) -> ArrowConverterContext:
+        """Create the context for ``connection``, honouring its ``converter_class`` option."""
+        converter_class = connection.config.converter_class
+        return (converter_class or cls).create(connection)
+
     @property
     def _timezone(self) -> str | None:
         """Resolved session timezone, invoking the supplier once on first read.
@@ -116,6 +129,35 @@ class ArrowConverterContext:
         self._tz_value = state.get("timezone")
         self._tz_supplier = None
 
+    deserialized_types: ClassVar[frozenset[int]] = frozenset()
+    """Type codes of the columns whose fetched values pass through :meth:`deserialize`."""
+
+    def deserialize(self, value: Any, column: ResultMetadata) -> Any:
+        """Convert a fetched, non-NULL ``value`` of ``column`` whose type is in ``deserialized_types``.
+
+        ``value`` is what the Arrow iterator produced for the column. NULLs bypass this method.
+        """
+        return value
+
+    def _deserialize_or_error(self, value: Any, column: ResultMetadata) -> Any:
+        try:
+            return self.deserialize(value, column)
+        except Error:
+            raise
+        except Exception as err:
+            raise DataError(
+                f"{type(self).__name__}.deserialize raised {type(err).__name__}. "
+                "Fix the converter or handle the error in deserialize."
+            ) from err
+
+    def _column_converters(self, description: Sequence[ResultMetadata]) -> list[Callable[[Any], Any] | None] | None:
+        """Return one converter per column of ``description``, or ``None`` when no column is deserialized."""
+        converters: list[Callable[[Any], Any] | None] = [
+            partial(self._deserialize_or_error, column=c) if c.type_code in self.deserialized_types else None
+            for c in description
+        ]
+        return converters if any(c is not None for c in converters) else None
+
     def _get_session_tz(self) -> tzinfo:
         """Get the session timezone or use the local computer's timezone."""
         try:
@@ -126,7 +168,7 @@ class ArrowConverterContext:
             if not isinstance(tzlocal, MissingOptionalDependency):
                 return tzlocal.get_localzone()  # type: ignore[no-any-return]
             else:
-                return timezone.utc
+                return UTC
 
     def TIMESTAMP_TZ_to_python(self, epoch: int, microseconds: int, tz: int) -> datetime:
         tzinfo = _generate_tzinfo_from_tzoffset(tz - 1440)
@@ -142,7 +184,7 @@ class ArrowConverterContext:
         return t.replace(tzinfo=tzinfo)
 
     def TIMESTAMP_NTZ_to_python(self, epoch: int, microseconds: int) -> datetime:
-        return datetime.fromtimestamp(epoch, timezone.utc).replace(tzinfo=None) + timedelta(microseconds=microseconds)
+        return datetime.fromtimestamp(epoch, UTC).replace(tzinfo=None) + timedelta(microseconds=microseconds)
 
     def TIMESTAMP_NTZ_to_python_windows(self, epoch: int, microseconds: int) -> datetime:
         return ZERO_EPOCH + timedelta(seconds=epoch, microseconds=microseconds)

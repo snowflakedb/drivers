@@ -15,6 +15,7 @@ from .._internal.arrow_stream_async import (
 from .._internal.arrow_stream_utils import (
     create_table_iterator,
 )
+from .._internal.converting_iterator import wrap_async_row_iterator
 from .._internal.protobuf_gen.database_driver_v1_pb2 import ColumnMetadata, ResultChunk
 from .._internal.result_batch import IterTableStructure, IterUnit, ResultBatchMixin
 from .._internal.statement_utils import get_stream_ptr
@@ -124,6 +125,7 @@ class ResultBatch(ResultBatchMixin):
             use_numpy=self._numpy,
             use_core_arrow=self._use_core_arrow,
         )
+        iterator = wrap_async_row_iterator(iterator, self._arrow_context, self._description)
         async for row in iterator:
             yield row
 

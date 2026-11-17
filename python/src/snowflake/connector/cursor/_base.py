@@ -20,6 +20,7 @@ from .._internal.arrow_stream_utils import (
     create_table_iterator_from_result_set,
 )
 from .._internal.binding_converters import ParamStyle
+from .._internal.converting_iterator import wrap_row_iterator
 from .._internal.cursor import (
     Args,
     CursorBaseMixin,
@@ -776,25 +777,26 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     def _create_row_iterator(self) -> ArrowRowIterator:
-        context = ArrowConverterContext.create(self._connection)
+        context = ArrowConverterContext._for_connection(self._connection)
         if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
-            return create_row_iterator_from_result_set(
+            iterator = create_row_iterator_from_result_set(
                 self._result_set._require_handle(),
                 context=context,
                 use_dict_result=self._use_dict_result,
                 use_numpy=bool(self._connection.config.numpy),
             )
-        stream_ptr = self._result_set.get_arrow_stream_ptr()
-        return create_row_iterator(
-            stream_ptr=stream_ptr,
-            context=context,
-            use_dict_result=self._use_dict_result,
-            use_numpy=bool(self._connection.config.numpy),
-            use_core_arrow=bool(self._connection.config.use_core_arrow),
-        )
+        else:
+            iterator = create_row_iterator(
+                stream_ptr=self._result_set.get_arrow_stream_ptr(),
+                context=context,
+                use_dict_result=self._use_dict_result,
+                use_numpy=bool(self._connection.config.numpy),
+                use_core_arrow=bool(self._connection.config.use_core_arrow),
+            )
+        return wrap_row_iterator(iterator, context, self._query_result.description)
 
     def _create_table_iterator(self, force_microsecond_precision: bool) -> ArrowTableIterator:
-        context = ArrowConverterContext.create(self._connection)
+        context = ArrowConverterContext._for_connection(self._connection)
         number_to_decimal = self._connection.arrow_number_to_decimal
         if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
             return create_table_iterator_from_result_set(

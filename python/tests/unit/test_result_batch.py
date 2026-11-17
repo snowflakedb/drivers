@@ -25,7 +25,7 @@ from snowflake.connector.result_batch import (
 
 def _make_description(*names: str) -> list:
     """Build a minimal pickleable description list with .name attributes."""
-    return [SimpleNamespace(name=n) for n in names]
+    return [SimpleNamespace(name=n, type_code=0) for n in names]
 
 
 def _make_batch(connection=None, description=None) -> ResultBatch:
@@ -39,6 +39,7 @@ def _make_batch(connection=None, description=None) -> ResultBatch:
         connection._session_parameters = session_parameters
         connection.config.numpy = False
         connection.config.use_core_arrow = False
+        connection.config.converter_class = None
     return ResultBatch(
         chunk=ResultChunk(),
         description=description or _make_description("ID"),

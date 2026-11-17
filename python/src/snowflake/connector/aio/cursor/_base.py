@@ -25,6 +25,7 @@ from ..._internal.arrow_stream_async import (
 )
 from ..._internal.arrow_stream_utils import create_table_iterator
 from ..._internal.binding_converters import ParamStyle
+from ..._internal.converting_iterator import wrap_async_row_iterator
 from ..._internal.cursor import (
     AsyncQueryResultWaiter,
     CursorBaseMixin,
@@ -630,21 +631,23 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
 
     async def _create_row_iterator(self) -> AsyncArrowRowIterator:
-        context = ArrowConverterContext.create(self._connection)
+        context = ArrowConverterContext._for_connection(self._connection)
         use_numpy = bool(self._connection.config.numpy)
         if bool(self._connection.config.use_core_arrow) and sf_core_python.native_arrow_enabled():
-            return await create_async_row_iterator_from_result_set(
+            iterator = await create_async_row_iterator_from_result_set(
                 self._result_set._require_handle(),
                 context=context,
                 use_dict_result=self._use_dict_result,
                 use_numpy=use_numpy,
             )
-        return create_async_row_iterator_from_stream_ptr(
-            await self._result_set.get_arrow_stream_ptr(),
-            context=context,
-            use_dict_result=self._use_dict_result,
-            use_numpy=use_numpy,
-        )
+        else:
+            iterator = create_async_row_iterator_from_stream_ptr(
+                await self._result_set.get_arrow_stream_ptr(),
+                context=context,
+                use_dict_result=self._use_dict_result,
+                use_numpy=use_numpy,
+            )
+        return wrap_async_row_iterator(iterator, context, self._query_result.description)
 
     @pep249
     def __aiter__(self) -> Self:
@@ -791,7 +794,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         iterator = AsyncArrowStreamIterator(
             create_table_iterator(
                 stream_ptr=stream_ptr,
-                context=ArrowConverterContext.create(self._connection),
+                context=ArrowConverterContext._for_connection(self._connection),
                 number_to_decimal=self._connection.arrow_number_to_decimal,
                 force_microsecond_precision=force_microsecond_precision,
                 use_core_arrow=bool(self._connection.config.use_core_arrow),
@@ -819,7 +822,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         stream_ptr = await self._result_set.get_arrow_stream_ptr()
         iterator = create_table_iterator(
             stream_ptr=stream_ptr,
-            context=ArrowConverterContext.create(self._connection),
+            context=ArrowConverterContext._for_connection(self._connection),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
             use_core_arrow=bool(self._connection.config.use_core_arrow),

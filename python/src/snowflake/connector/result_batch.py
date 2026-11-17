@@ -22,6 +22,7 @@ from ._internal.arrow_stream_utils import (
     create_table_iterator,
 )
 from ._internal.backward_compatibility import install_backward_compatibility_getattr
+from ._internal.converting_iterator import wrap_row_iterator
 from ._internal.decorators import backward_compatibility
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ColumnMetadata,
@@ -157,12 +158,16 @@ class ResultBatch(ResultBatchMixin):
             )
 
         stream_ptr = self._take_arrow_stream_ptr(conn)
-        return create_row_iterator(
-            stream_ptr,
-            context=self._arrow_context,
-            use_dict_result=use_dict_result,
-            use_numpy=self._numpy,
-            use_core_arrow=self._use_core_arrow,
+        return wrap_row_iterator(
+            create_row_iterator(
+                stream_ptr,
+                context=self._arrow_context,
+                use_dict_result=use_dict_result,
+                use_numpy=self._numpy,
+                use_core_arrow=self._use_core_arrow,
+            ),
+            self._arrow_context,
+            self._description,
         )
 
     @requires_dependency(pyarrow)

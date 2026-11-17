@@ -71,7 +71,7 @@ class ResultBatchMixin(ErrorHandlerMixin):
         self._connection = connection
         self._columns = list(columns) if columns else []
         self._arrow_context = (
-            ArrowConverterContext.create(connection) if connection is not None else ArrowConverterContext()
+            ArrowConverterContext._for_connection(connection) if connection is not None else ArrowConverterContext()
         )
         self._numpy = bool(connection.config.numpy) if connection is not None else False
         self._use_core_arrow = bool(connection.config.use_core_arrow) if connection is not None else False
