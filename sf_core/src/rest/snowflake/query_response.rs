@@ -181,7 +181,7 @@ pub struct QueryContextEntry {
 pub struct Chunk {
     #[serde(rename = "url")]
     pub url: String,
-    //unused fields
+    // Used to validate the decoded row count of downloaded JSON chunks.
     #[serde(rename = "rowCount")]
     pub row_count: i32,
     #[serde(rename = "uncompressedSize")]

@@ -869,6 +869,8 @@ message ResultChunk {
     string inline = 2;
     RemoteChunk remote = 3;
   }
+  // DatabaseFetchChunk rejects JSON remote chunks whose decoded row count differs.
+  // Forward unchanged from ResultSetGetChunksResponse.
   int32 row_count = 4;
 }
 

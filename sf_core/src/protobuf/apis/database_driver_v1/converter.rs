@@ -277,7 +277,7 @@ impl TryFrom<&ResultChunk> for FetchChunkInput {
             Data::Inline(inline) => FetchChunkInput::Inline(inline),
             Data::Remote(remote_chunk) => FetchChunkInput::Remote(ChunkDownloadData {
                 url: remote_chunk.url,
-                row_count: 0, // row count is not needed for fetching
+                row_count: chunk.row_count,
                 uncompressed_size: remote_chunk.uncompressed_size,
                 compressed_size: remote_chunk.compressed_size,
                 headers: remote_chunk.headers,
@@ -800,6 +800,28 @@ mod tests {
         SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
     };
     use snafu::Location;
+
+    #[test]
+    fn remote_chunk_conversion_preserves_advertised_row_count() {
+        let chunk = ResultChunk {
+            format: ChunkFormat::Json as i32,
+            data: Some(Data::Remote(RemoteChunk {
+                url: "https://example.com/chunk".to_owned(),
+                uncompressed_size: 123,
+                compressed_size: 45,
+                headers: [("x-chunk-header".to_owned(), "value".to_owned())].into(),
+            })),
+            row_count: 2,
+        };
+        let FetchChunkInput::Remote(remote) = FetchChunkInput::try_from(&chunk).unwrap() else {
+            panic!("expected a remote chunk");
+        };
+        assert_eq!(remote.row_count, 2);
+        assert_eq!(remote.url, "https://example.com/chunk");
+        assert_eq!(remote.uncompressed_size, 123);
+        assert_eq!(remote.compressed_size, 45);
+        assert_eq!(remote.headers.get("x-chunk-header").unwrap(), "value");
+    }
 
     fn loc() -> Location {
         Location::new("test", 0, 0)
