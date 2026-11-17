@@ -65,11 +65,23 @@ sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
 
     IDbCommand IDbConnection.CreateCommand() => _inner.CreateCommand();
 
-    public void Open() => _inner.Open();
+    public void Open()
+    {
+        _inner.Open();
+        using var command = CreateCommand();
+        command.CommandText = "ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = ARROW";
+        command.ExecuteNonQuery();
+    }
 
     public void Dispose() => _inner.Dispose();
 
-    public Task OpenAsync(CancellationToken cancellationToken = default) => _inner.OpenAsync(cancellationToken);
+    public async Task OpenAsync(CancellationToken cancellationToken = default)
+    {
+        await _inner.OpenAsync(cancellationToken).ConfigureAwait(false);
+        using var command = CreateCommand();
+        command.CommandText = "ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = ARROW";
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     public bool IsOpen() => _inner.IsOpen();
 

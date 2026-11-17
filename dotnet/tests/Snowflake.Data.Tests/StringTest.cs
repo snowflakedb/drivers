@@ -46,15 +46,13 @@ public class StringTest : IClassFixture<ITFixture>
     [InlineData("NCHAR VARYING")]
     public void ShouldCastStringValuesToAppropriateTypeForStringAndSynonyms(string stringType)
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
 
         // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"SELECT 'hello'::{stringType}, 'Hello World'::{stringType}, '日本語テスト'::{stringType}";
+        cmd.CommandText = $"SELECT 'hello'::{stringType}(32), 'Hello World'::{stringType}(32), '日本語テスト'::{stringType}(32)";
         using var reader = cmd.ExecuteReader();
 
         // Then All values should be returned as appropriate type

@@ -119,7 +119,8 @@ public class TimeTest : IClassFixture<ITFixture>
 
         // Then Result should contain [10:30:00.123456789]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal("10:30:00.123456789", reader.GetDateTime(0).TimeOfDay.ToString());
+        // .NET time values have 100 ns resolution, so the last two digits are dropped.
+        Assert.Equal("10:30:00.1234567", reader.GetDateTime(0).TimeOfDay.ToString());
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 

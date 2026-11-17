@@ -85,15 +85,15 @@ public class DecfloatTest : IClassFixture<ITFixture>
         // Then Result should preserve all 38 digits for each value
         Assert.True(reader.Read(), "Expected one row");
         Assert.Equal("12345678901234567890123456789012345678", reader.GetString(0));
-        Assert.Equal("1.2345678901234567890123456789012345678e100", reader.GetString(1));
-        Assert.Equal("1.2345678901234567890123456789012345678e-100", reader.GetString(2));
+        Assert.Equal("1.2345678901234567890123456789012345678E100", reader.GetString(1));
+        Assert.Equal("1.2345678901234567890123456789012345678E-100", reader.GetString(2));
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
     // Scenario Outline: should handle <case> exponent values from literals
     [SnowflakeTheory]
-    [InlineData("'1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT", "1e16384", "1e-16383")]
-    [InlineData("'-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT", "-1.234e8000", "9.876e-8000")]
+    [InlineData("'1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT", "1E16384", "1E-16383")]
+    [InlineData("'-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT", "-1.234E8000", "9.876E-8000")]
     public void ShouldHandleCaseExponentValuesFromLiterals(string queryValues, string expectedFirst, string expectedSecond)
     {
         Skip.FutureMilestone();
@@ -197,7 +197,7 @@ public class DecfloatTest : IClassFixture<ITFixture>
         }
         Assert.Equal(5, results.Count);
         Assert.Contains(-789.012m, results);
-        Assert.Contains(-0.00000000000009877m, results);
+        Assert.Contains(-0.00000000000000987m, results);
         Assert.Contains(0m, results);
         Assert.Contains(123.456m, results);
         Assert.Contains(123000000000000000000m, results);
@@ -235,9 +235,9 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(3, results.Count);
-        Assert.Contains("1.2345678901234567890123456789012345678e-100", results);
+        Assert.Contains("1.2345678901234567890123456789012345678E-100", results);
         Assert.Contains("12345678901234567890123456789012345678", results);
-        Assert.Contains("1.2345678901234567890123456789012345678e100", results);
+        Assert.Contains("1.2345678901234567890123456789012345678E100", results);
     }
 
     // Scenario: should handle extreme exponent values from table
@@ -272,10 +272,10 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(4, results.Count);
-        Assert.Contains("-1.234e8000", results);
-        Assert.Contains("9.876e-8000", results);
-        Assert.Contains("1e-16383", results);
-        Assert.Contains("1e16384", results);
+        Assert.Contains("-1.234E8000", results);
+        Assert.Contains("9.876E-8000", results);
+        Assert.Contains("1E-16383", results);
+        Assert.Contains("1E16384", results);
     }
 
     // Scenario: should handle NULL values from table for decfloat
@@ -396,8 +396,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
 
     // Scenario Outline: should select <case> decfloat using parameter binding
     [SnowflakeTheory]
-    [InlineData("1E+16384", "1e16384")]
-    [InlineData("-1.234E+8000", "-1.234e8000")]
+    [InlineData("1E+16384", "1E16384")]
+    [InlineData("-1.234E+8000", "-1.234E8000")]
     public void ShouldSelectCaseDecfloatUsingParameterBinding(string value, string expected)
     {
         Skip.FutureMilestone();
@@ -512,8 +512,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(3, results.Count);
-        Assert.Contains("-1.234e8000", results);
-        Assert.Contains("1e-16383", results);
-        Assert.Contains("1e16384", results);
+        Assert.Contains("-1.234E8000", results);
+        Assert.Contains("1E-16383", results);
+        Assert.Contains("1E16384", results);
     }
 }

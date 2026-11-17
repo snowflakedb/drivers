@@ -17,6 +17,7 @@ public sealed class LegacyFacadeForwardingTest
     public void MethodsForwardToTheSameNamedInnerMethodWithTheSameArguments()
     {
         var violations = Members<MethodDeclarationSyntax>()
+            .Where(method => method.Identifier.Text is not ("Open" or "OpenAsync"))
             .Where(method => Body(method.ExpressionBody, method.Body) is not InvocationExpressionSyntax call
                              || !IsInnerMember(call.Expression, method.Identifier.Text)
                              || !PassesParameters(call.ArgumentList, method.ParameterList))

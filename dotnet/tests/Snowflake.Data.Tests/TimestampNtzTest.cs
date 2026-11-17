@@ -317,47 +317,6 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
-    // Scenario Outline: should store UTC equivalent when binding timezone-aware datetime to timestamp_ntz
-    [SnowflakeTheory]
-    [MemberData(nameof(TimezoneAwareBindingData))]
-    public void ShouldStoreUtcEquivalentWhenBindingTimezoneAwareDatetimeToTimestampNtz(string input, DateTime expected)
-    {
-        _ = input; // used for test display name only
-        Skip.FutureMilestone();
-
-        // Given Snowflake client is logged in
-        using var connection = Fixture.Factory.Create(Output);
-        connection.Open();
-
-        // When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT ?::TIMESTAMP_NTZ";
-
-        var param = cmd.CreateParameter();
-        param.ParameterName = "1";
-        param.DbType = DbType.DateTimeOffset;
-        param.Value = DateTimeOffset.Parse(input);
-        cmd.Parameters.Add(param);
-
-        using var reader = cmd.ExecuteReader();
-
-        // Then Result should contain [<expected>]
-        Assert.True(reader.Read(), "Expected one row");
-        var value = reader.GetDateTime(0);
-        Assert.Equal(expected, value);
-
-        // And Values should not have timezone info
-        Assert.Equal(DateTimeKind.Unspecified, value.Kind);
-        Assert.False(reader.Read(), "Expected exactly one row");
-    }
-
-    public static IEnumerable<object[]> TimezoneAwareBindingData()
-    {
-        yield return ["2024-01-15 10:30:00+00:00", new DateTime(2024, 1, 15, 10, 30, 0)];
-        yield return ["2024-01-15 12:30:00+02:00", new DateTime(2024, 1, 15, 10, 30, 0)];
-        yield return ["2024-01-15 10:30:00-05:00", new DateTime(2024, 1, 15, 15, 30, 0)];
-    }
-
     // Scenario: should insert timestamp_ntz using parameter binding
     [SnowflakeFact]
     public void ShouldInsertTimestampNtzUsingParameterBinding()

@@ -279,14 +279,11 @@ public class FloatTest : IClassFixture<ITFixture>
         // Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
         Assert.True(reader.Read());
         var negMax = reader.GetDouble(0);
-        Assert.Equal(double.NegativeInfinity, negMax);
+        Skip.FutureMilestone("The most negative double is read as negative infinity");
+        Assert.Equal(-1.7976931348623157e308, negMax);
         Assert.True(reader.Read());
-        var negMin = reader.GetDouble(0);
-
-        // works till this point
-        Skip.FutureMilestone();
-
-        Assert.True(negMin < 0 && negMin > -1.0, $"Expected small negative subnormal, got {negMin}");
+        var minSubnormal = reader.GetDouble(0);
+        Assert.Equal(5e-324, minSubnormal);
         Assert.True(reader.Read());
         var minNormal = reader.GetDouble(0);
         Assert.Equal(2.2250738585072014e-308, minNormal);
@@ -510,7 +507,7 @@ public class FloatTest : IClassFixture<ITFixture>
         createCmd.ExecuteNonQuery();
 
         using var insertCmd = connection.CreateCommand();
-        insertCmd.CommandText = $"INSERT INTO {tableName} (id, col) VALUES (1, 'NaN'), (2, 'inf'), (3, '-inf'), (4, 42.0), (5, -42.0)";
+        insertCmd.CommandText = $"INSERT INTO {tableName} (id, col) VALUES (1, 'NaN'::FLOAT), (2, 'inf'::FLOAT), (3, '-inf'::FLOAT), (4, 42.0), (5, -42.0)";
         insertCmd.ExecuteNonQuery();
 
         // When Query "SELECT * FROM <table>" is executed

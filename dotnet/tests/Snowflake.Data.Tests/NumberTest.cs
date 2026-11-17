@@ -295,8 +295,6 @@ public class NumberTest : IClassFixture<ITFixture>
     [InlineData("DEC")]
     public void ShouldHandleNullValuesFromTableWithMultipleScalesForNumberAndSynonyms(string numberType)
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -318,7 +316,7 @@ public class NumberTest : IClassFixture<ITFixture>
         insertSql += "(3, NULL, NULL, NULL), ";
 
         // And Row (-456, -67.89, -789.012) is inserted
-        insertSql += "(-456, -456, -67.89, -789.012)";
+        insertSql += "(4, -456, -67.89, -789.012)";
         using var insertCmd = connection.CreateCommand();
         insertCmd.CommandText = insertSql;
         insertCmd.ExecuteNonQuery();
@@ -330,24 +328,24 @@ public class NumberTest : IClassFixture<ITFixture>
 
         // Then Result should contain 4 rows with 2 NULL rows and 2 non-NULL rows with expected values
         Assert.True(reader.Read(), "Expected row 0 (NULL row)");
-        Assert.True(reader.IsDBNull(1), "Expected NULL col1");
-        Assert.True(reader.IsDBNull(2), "Expected NULL col2");
-        Assert.True(reader.IsDBNull(3), "Expected NULL col3");
+        Assert.True(reader.IsDBNull(0), "Expected NULL col1");
+        Assert.True(reader.IsDBNull(1), "Expected NULL col2");
+        Assert.True(reader.IsDBNull(2), "Expected NULL col3");
 
         Assert.True(reader.Read(), "Expected row 1 (non-NULL)");
-        Assert.Equal(123L, reader.GetInt64(1));
-        Assert.Equal(123.45m, reader.GetDecimal(2));
-        Assert.Equal(123.456m, reader.GetDecimal(3));
+        Assert.Equal(123L, reader.GetInt64(0));
+        Assert.Equal(123.45m, reader.GetDecimal(1));
+        Assert.Equal(123.456m, reader.GetDecimal(2));
 
         Assert.True(reader.Read(), "Expected row 2 (NULL row)");
-        Assert.True(reader.IsDBNull(1), "Expected NULL col1");
-        Assert.True(reader.IsDBNull(2), "Expected NULL col2");
-        Assert.True(reader.IsDBNull(3), "Expected NULL col3");
+        Assert.True(reader.IsDBNull(0), "Expected NULL col1");
+        Assert.True(reader.IsDBNull(1), "Expected NULL col2");
+        Assert.True(reader.IsDBNull(2), "Expected NULL col3");
 
         Assert.True(reader.Read(), "Expected row 3 (non-NULL)");
-        Assert.Equal(-456L, reader.GetInt64(1));
-        Assert.Equal(-67.89m, reader.GetDecimal(2));
-        Assert.Equal(-789.012m, reader.GetDecimal(3));
+        Assert.Equal(-456L, reader.GetInt64(0));
+        Assert.Equal(-67.89m, reader.GetDecimal(1));
+        Assert.Equal(-789.012m, reader.GetDecimal(2));
 
         Assert.False(reader.Read(), "Expected exactly 4 rows");
     }

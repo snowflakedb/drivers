@@ -1,0 +1,17 @@
+name: "A connection string can read the programmatic access token from token_file_path"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  With `authenticator=programmatic_access_token`, the token must be passed as `token` in
+  the connection string. `token_file_path` in a connection string is ignored, so opening the
+  connection fails with "Required property TOKEN is not provided". The old driver reads
+  `token_file_path` only from a TOML connection file, and only for OAuth.
+new_driver_behavior: |
+  `token_file_path` in the connection string names a file that holds the programmatic access
+  token. The connection reads the token from that file and logs in.
+rationale: |
+  The .NET wrapper passes connection-string options to sf_core, which accepts `token` or
+  `token_file_path` for programmatic access token authentication in every wrapper.
