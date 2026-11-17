@@ -60,6 +60,24 @@ pub struct StageInfoRefreshContext {
     pub sql: String,
     pub query_parameters: crate::config::rest_parameters::QueryParameters,
     pub conn: Arc<Mutex<Connection>>,
+    /// Per-upload `QUERY_TAG` sent with each refresh request; `None` sends no
+    /// tag, so the session's `QUERY_TAG` (if any) applies.
+    pub query_tag: Option<String>,
+}
+
+impl StageInfoRefreshContext {
+    /// Builds the GS request for re-issuing `sql` (the original or a per-file
+    /// rewritten PUT/GET), attaching `query_tag` when set.
+    pub(super) fn query_input(&self, sql: &str) -> rest::snowflake::QueryInput<'static> {
+        let mut input = rest::snowflake::QueryInput::new(sql);
+        if let Some(tag) = &self.query_tag {
+            input.query_parameters = Some(std::collections::HashMap::from([(
+                "QUERY_TAG".to_string(),
+                serde_json::Value::String(tag.clone()),
+            )]));
+        }
+        input
+    }
 }
 
 /// Executes a PUT/GET file transfer, returning the results as a `RowsetData`.
@@ -594,7 +612,7 @@ async fn fetch_fresh_stage_info_with_sql(
         )
     };
 
-    let query_input = rest::snowflake::QueryInput::new(sql.to_string());
+    let query_input = stage_refresh_ctx.query_input(sql);
     let response = refresh_ctx
         .execute_with_refresh(|session_token| {
             let http_client = http_client.clone();
@@ -1243,8 +1261,8 @@ pub enum ReadBatchesError {
 
 /// Test-only building block for the coordinator tests (in this module) and for
 /// other modules' tests that drive the REAL single-flight coordinator. Only the
-/// injected `fetch_fn` runs, so `sql`/`query_parameters` are never consumed —
-/// stub them with minimal valid values.
+/// injected `fetch_fn` runs, so the coordinator never sends `sql` or
+/// `query_parameters` — stub them with minimal valid values.
 #[cfg(test)]
 fn stub_ctx() -> StageInfoRefreshContext {
     use crate::config::rest_parameters::{ClientInfo, QueryParameters, UNKNOWN_APPLICATION_PATH};
@@ -1279,6 +1297,7 @@ fn stub_ctx() -> StageInfoRefreshContext {
             dpop_key: None,
         },
         conn: Arc::new(Mutex::new(Connection::new())),
+        query_tag: None,
     }
 }
 
@@ -1323,6 +1342,23 @@ pub(crate) fn test_counting_coordinator(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_refresh_query_input_attaches_query_tag() {
+        let mut ctx = stub_ctx();
+        assert!(ctx.query_input(&ctx.sql).query_parameters.is_none());
+        for tag in ["ingest-tag", ""] {
+            ctx.query_tag = Some(tag.to_string());
+            for sql in [ctx.sql.as_str(), "PUT file://single-file @stage"] {
+                let input = ctx.query_input(sql);
+                assert_eq!(input.sql, sql);
+                assert_eq!(
+                    input.query_parameters.unwrap().get("QUERY_TAG"),
+                    Some(&serde_json::Value::String(tag.to_string())),
+                );
+            }
+        }
+    }
 
     #[test]
     fn upload_column_metadata_has_correct_structure_python() {

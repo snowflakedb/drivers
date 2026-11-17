@@ -15,3 +15,4 @@ mod put_get_skip_upload_on_content_match;
 mod put_get_source_compression;
 mod put_get_sse_stage;
 mod put_get_wildcards;
+mod stream_query_tag;
