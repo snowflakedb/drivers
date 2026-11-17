@@ -53,6 +53,8 @@ use aws_lc_rs::signature::{
     RSA_PKCS1_SHA256, RsaKeyPair,
 };
 use const_oid::ObjectIdentifier;
+use der::Decode;
+use der::asn1::SequenceRef;
 use pkcs8::pkcs5::{self, pbes2};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 
@@ -320,6 +322,17 @@ fn unwrap_encrypted(der: &[u8], passphrase: Option<&str>) -> Result<SigningKey, 
     from_pkcs8(plaintext.reveal(), "decrypted PKCS#8")
 }
 
+/// A wrong passphrase does not always make decryption fail. These key formats
+/// have no integrity check: CBC with a wrong key returns random bytes, and the
+/// only check is the PKCS#7 padding, which random bytes pass about 1 time in 256.
+/// Every private key is a DER SEQUENCE, so bytes that do not parse as one are
+/// reported as a wrong passphrase instead of a rejected key.
+fn ensure_decrypted_der(plaintext: &[u8]) -> Result<(), PrivateKeyError> {
+    SequenceRef::from_der(plaintext)
+        .map(|_| ())
+        .map_err(|_| WrongPassphraseSnafu.build())
+}
+
 /// Decrypt a PBES2-encrypted `EncryptedPrivateKeyInfo` into PKCS#8 DER.
 fn decrypt_pkcs8(der: &[u8], passphrase: &str) -> Result<Sensitive<Vec<u8>>, PrivateKeyError> {
     let info = pkcs8::EncryptedPrivateKeyInfo::try_from(der).map_err(|e| {
@@ -339,7 +352,9 @@ fn decrypt_pkcs8(der: &[u8], passphrase: &str) -> Result<Sensitive<Vec<u8>>, Pri
     };
 
     let key = derive_key(&params.kdf, passphrase, params.encryption.key_size())?;
-    decrypt_payload(&params.encryption, key.reveal(), info.encrypted_data)
+    let plaintext = decrypt_payload(&params.encryption, key.reveal(), info.encrypted_data)?;
+    ensure_decrypted_der(plaintext.reveal())?;
+    Ok(plaintext)
 }
 
 /// PBKDF2 via AWS-LC. scrypt is rejected rather than farmed out.
@@ -434,9 +449,7 @@ fn aes_cbc_decrypt(
     // material, so leaving them in spare capacity discloses nothing.
     let plaintext_len = decrypting
         .decrypt(&mut buf, DecryptionContext::Iv128(FixedLength::from(*iv)))
-        .context(CryptoSnafu {
-            operation: "decrypting the private key (wrong passphrase?)",
-        })?
+        .map_err(|_| WrongPassphraseSnafu.build())?
         .len();
     buf.truncate(plaintext_len);
     Ok(buf.into())
@@ -466,12 +479,7 @@ fn des_ede3_cbc_decrypt(
     // un-zeroized.
     let plaintext_len = decryptor
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
-        .map_err(|_| {
-            CryptoBackendSnafu {
-                operation: "decrypting the private key with 3DES-CBC (wrong passphrase?)",
-            }
-            .build()
-        })?
+        .map_err(|_| WrongPassphraseSnafu.build())?
         .len();
     buf.truncate(plaintext_len);
     Ok(buf.into())
@@ -646,7 +654,7 @@ fn decode_b64(text: &str) -> Result<Vec<u8>, PrivateKeyError> {
 mod legacy_pem {
     use super::{
         AES_128, AES_192, AES_256, MalformedPemSnafu, PrivateKeyError, Sensitive,
-        UnsupportedCipherSnafu, aes_cbc_decrypt, des_ede3_cbc_decrypt,
+        UnsupportedCipherSnafu, aes_cbc_decrypt, des_ede3_cbc_decrypt, ensure_decrypted_der,
     };
     use snafu::OptionExt;
 
@@ -676,7 +684,7 @@ mod legacy_pem {
             detail: "`DEK-Info` IV is shorter than the 8 bytes used as KDF salt",
         })?;
 
-        match algorithm.trim().to_ascii_uppercase().as_str() {
+        let plaintext = match algorithm.trim().to_ascii_uppercase().as_str() {
             "AES-128-CBC" => {
                 let key = evp_bytes_to_key(passphrase, salt, 16);
                 aes_cbc_decrypt(&AES_128, key.reveal(), &iv_128(&iv)?, ciphertext)
@@ -707,7 +715,9 @@ mod legacy_pem {
                 cipher: format!("{other} (traditional encrypted PEM)"),
             }
             .fail(),
-        }
+        }?;
+        ensure_decrypted_der(plaintext.reveal())?;
+        Ok(plaintext)
     }
 
     fn iv_128(iv: &[u8]) -> Result<[u8; 16], PrivateKeyError> {
@@ -770,6 +780,12 @@ pub enum PrivateKeyError {
         "Private key is encrypted but no passphrase was provided; set `private_key_password`"
     ))]
     PassphraseRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("The passphrase is wrong, or the key is damaged"))]
+    WrongPassphrase {
         #[snafu(implicit)]
         location: Location,
     },
@@ -1103,7 +1119,56 @@ mod tests {
         let pem = key
             .private_key_to_pem_pkcs8_passphrase(Cipher::aes_256_cbc(), PASSPHRASE.as_bytes())
             .expect("encrypted pkcs8 pem");
-        assert!(load_signing_key(&pem, Some("not the passphrase")).is_err());
+        let err = load_signing_key(&pem, Some("not the passphrase")).expect_err("must be refused");
+        assert!(
+            matches!(err, PrivateKeyError::WrongPassphrase { .. }),
+            "got: {err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "The passphrase is wrong, or the key is damaged"
+        );
+    }
+
+    #[test]
+    fn decrypted_bytes_that_are_not_der_are_a_wrong_passphrase() {
+        use der::Encode as _;
+
+        let salt = [7u8; 16];
+        let iv = [9u8; 16];
+        let iterations = 2048;
+        let mut key = [0u8; 32];
+        openssl::pkcs5::pbkdf2_hmac(
+            PASSPHRASE.as_bytes(),
+            &salt,
+            iterations as usize,
+            openssl::hash::MessageDigest::sha256(),
+            &mut key,
+        )
+        .expect("pbkdf2");
+        let ciphertext = openssl::symm::encrypt(
+            Cipher::aes_256_cbc(),
+            &key,
+            Some(&iv),
+            b"correctly padded, but not DER",
+        )
+        .expect("aes-256-cbc encrypt");
+        let envelope = pkcs8::EncryptedPrivateKeyInfo {
+            encryption_algorithm: pbes2::Parameters::pbkdf2_sha256_aes256cbc(
+                iterations, &salt, &iv,
+            )
+            .expect("pbes2 parameters")
+            .into(),
+            encrypted_data: &ciphertext,
+        }
+        .to_der()
+        .expect("encode envelope");
+
+        let err = load_signing_key(&envelope, Some(PASSPHRASE)).expect_err("must be refused");
+        assert!(
+            matches!(err, PrivateKeyError::WrongPassphrase { .. }),
+            "got: {err}"
+        );
     }
 
     /// An encrypted key with no passphrase must say *that*, rather than
@@ -1179,7 +1244,10 @@ mod tests {
         let pem = rsa
             .private_key_to_pem_passphrase(Cipher::aes_256_cbc(), PASSPHRASE.as_bytes())
             .expect("legacy encrypted pem");
-        assert!(load_signing_key(&pem, Some("not-the-passphrase")).is_err());
+        assert!(matches!(
+            load_signing_key(&pem, Some("not-the-passphrase")),
+            Err(PrivateKeyError::WrongPassphrase { .. })
+        ));
         assert!(matches!(
             load_signing_key(&pem, None),
             Err(PrivateKeyError::PassphraseRequired { .. })

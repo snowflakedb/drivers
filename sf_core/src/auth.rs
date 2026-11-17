@@ -250,7 +250,7 @@ pub enum AuthError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Invalid private key format"))]
+    #[snafu(display("Could not load the private key: {source}"))]
     InvalidPrivateKeyFormat {
         source: crate::crypto::private_key::PrivateKeyError,
         #[snafu(implicit)]

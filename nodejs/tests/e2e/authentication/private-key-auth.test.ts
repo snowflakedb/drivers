@@ -132,7 +132,7 @@ describe('SNOWFLAKE_JWT authentication', () => {
         await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
           name: 'Error',
           message: isRunningNewDriverWithBD('BD#74')
-            ? 'Failed to login: Authentication failed'
+            ? 'Failed to login: Authentication failed: Could not load the private key: The passphrase is wrong, or the key is damaged'
             : expect.stringMatching(
                 /^error:1C800064:Provider routines::bad decrypt$|^error:1E08010C:DECODER routines::unsupported$/,
               ),

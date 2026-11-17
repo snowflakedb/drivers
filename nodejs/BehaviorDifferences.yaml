@@ -1727,23 +1727,22 @@ behavior_differences:
 
   74:
     name: 'wrong private-key passphrase error message'
-    status: unknown
-    type: bugfix
-    reviewed: false
-    is_breaking_change: true
+    status: allowed
+    type: enhancement
+    reviewed: true
+    is_breaking_change: false
     impact: low
     old_driver_behavior: |
       createPrivateKey throws the OpenSSL wrong-passphrase error.
       OpenSSL 3.0 reports `error:1C800064:Provider routines::bad decrypt`.
       OpenSSL 3.5 reports `error:1E08010C:DECODER routines::unsupported`.
     new_driver_behavior: |
-      connect rejects with `Failed to login: Authentication failed`. The
-      passphrase detail stays on an intermediate error the Node binding does
-      not put on Error.message.
-    description: |
-      The error needs to be improved in core. The core knows the key could not be
-      decrypted, but its `Authentication failed` error does not include that cause
-      in its message. So the user gets no hint that the passphrase is wrong.
+      connect rejects as Error with message "Failed to login: Authentication failed:
+      Could not load the private key: The passphrase is wrong, or the key is damaged".
+    status_rationale: |
+      Only the message text changes. Both drivers fail connect with an Error, and the new
+      message says that the passphrase is wrong. No changelog entry: the changelog already
+      says that error messages differ in the new driver.
 
   75:
     name: 'JWT login rejection message includes the GS code'

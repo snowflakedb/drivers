@@ -3271,7 +3271,7 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Authentication failed"))]
+    #[snafu(display("Authentication failed: {source}"))]
     Authentication {
         source: AuthError,
         #[snafu(implicit)]
@@ -5280,6 +5280,11 @@ mod tests {
                     }
                 ),
                 "expected InvalidPrivateKeyFormat, got {err:?}"
+            );
+            assert_eq!(
+                err.to_string(),
+                "Authentication failed: Could not load the private key: \
+                 Private key was rejected as DER (tried PKCS#8, PKCS#1 and SEC1)"
             );
         }
 
