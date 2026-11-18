@@ -25,7 +25,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
-use sf_core::apis::database_driver_v1::{DatabaseDriverV1, ExecuteQueryResult};
+use sf_core::apis::database_driver_v1::{
+    AsyncArrowBatchFetcher, DatabaseDriverV1, ExecuteQueryResult,
+};
 #[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
 #[cfg(target_os = "linux")]
@@ -442,6 +444,92 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         Some("select 1".to_string())
     );
     driver.statement_release(stmt).expect("release statement");
+    // Multi-chunk result set: the initial inline row comes back with the
+    // query response, and the remaining row is fetched from a URL the host
+    // never actually serves as a reachable location — only
+    // `download_query_chunk` resolves it.
+    host.set_query_response(
+        r#"{
+        "data": {
+            "rowtype": [
+                {"name": "N", "type": "fixed", "length": null, "scale": 0,
+                 "precision": 1, "nullable": false}
+            ],
+            "rowset": [["1"]],
+            "total": 2,
+            "queryId": "01b2c3d4-0000-0000-0000-000000000099",
+            "queryResultFormat": "json",
+            "chunks": [
+                {"url": "https://backend-chunk/0", "rowCount": 1,
+                 "uncompressedSize": 8, "compressedSize": 8}
+            ],
+            "chunkHeaders": {"X-Chunk-Auth": "token-abc"}
+        },
+        "code": null,
+        "message": null,
+        "success": true
+    }"#,
+    );
+    // A JSON chunk body is a sequence of row arrays with NO outer wrapping
+    // array, e.g. `["2"]` for the single row `[ "2" ]` — not `[["2"]]"`.
+    host.set_chunk_body("https://backend-chunk/0", br#"["2"]"#.to_vec());
+    let chunk_stmt = driver.statement_new(conn).expect("statement handle");
+    driver
+        .statement_set_sql_query(chunk_stmt, "select n from two_rows".to_string())
+        .await
+        .expect("set sql");
+    let chunk_result = driver
+        .statement_execute_query(None, chunk_stmt, None, None, None, None)
+        .await
+        .expect("statement_execute_query should go through the host");
+    let ExecuteQueryResult::Single { info, .. } = chunk_result else {
+        panic!("expected a single result set");
+    };
+    let mut fetcher: AsyncArrowBatchFetcher = driver
+        .result_set_get_async_stream(info.handle)
+        .await
+        .expect("building the async fetcher must not itself download anything yet");
+    let mut batches = Vec::new();
+    while let Some(batch) = fetcher
+        .next_batch()
+        .await
+        .expect("the remote chunk must be fetched through the backend, not GS")
+    {
+        batches.push(batch);
+    }
+    driver
+        .statement_release(chunk_stmt)
+        .expect("release statement");
+
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(
+        total_rows, 2,
+        "both the inline row and the backend-fetched chunk row must be present"
+    );
+    let rendered = batches
+        .iter()
+        .map(|b| format!("{:?}", b.column(0)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains('1') && rendered.contains('2'),
+        "expected both rows' values in the rendered batches, got: {rendered}"
+    );
+    let chunk_call = host
+        .last_call("download_query_chunk")
+        .expect("the remote chunk must be fetched via download_query_chunk");
+    assert_eq!(
+        chunk_call.subject.as_deref(),
+        Some("https://backend-chunk/0")
+    );
+    let headers = host
+        .chunk_headers("https://backend-chunk/0")
+        .expect("headers_json must be forwarded");
+    assert!(
+        headers.contains("X-Chunk-Auth") && headers.contains("token-abc"),
+        "got: {headers}"
+    );
+
     driver.connection_release(conn).expect("release connection");
     driver.database_release(db).expect("release database");
 

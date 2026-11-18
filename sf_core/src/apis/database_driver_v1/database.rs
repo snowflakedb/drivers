@@ -138,16 +138,6 @@ impl DatabaseDriverV1 {
                 (client, PrefetchConfig::default(), None)
             }
         };
-        if xp_backend.is_some()
-            && chunks
-                .iter()
-                .any(|chunk| matches!(chunk, FetchChunkInput::Remote(_)))
-        {
-            return Err(crate::rest::snowflake::RestError::from(
-                crate::xp_backend::BackendError::unsupported("download_query_chunk"),
-            ))
-            .context(QuerySnafu);
-        }
         let reader = fetch_chunks_reader(
             chunks,
             chunk_format,
@@ -155,6 +145,7 @@ impl DatabaseDriverV1 {
             nullable_flags,
             client,
             &prefetch_config,
+            xp_backend,
         )
         .await
         .context(ChunkFetchSnafu)?;

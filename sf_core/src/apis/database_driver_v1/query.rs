@@ -739,9 +739,6 @@ async fn read_query_rowset(
     nullable_flags: Option<&[bool]>,
     xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<OpenedBatches, ReadBatchesError> {
-    if xp_backend.is_some() && rowset_has_remote_chunks(&data) {
-        return Err(crate::xp_backend::BackendError::unsupported("download_query_chunk").into());
-    }
     match data {
         RowsetData::Upload(_) | RowsetData::Download(_) => UnexpectedPutGetRowsetSnafu.fail(),
         RowsetData::ArrowSingleChunk { chunk_base64 } => Ok(OpenedBatches::Reader(
@@ -758,6 +755,7 @@ async fn read_query_rowset(
                 chunk_download_data.into(),
                 http_client,
                 prefetch_config,
+                xp_backend,
             )
             .await
             .context(ChunkReadSnafu)?;
@@ -770,7 +768,15 @@ async fn read_query_rowset(
             ))
         }
         RowsetData::JsonRowset { rowset, rowtype } => {
-            open_json_batches(&rowset, &rowtype, Vec::new(), http_client, prefetch_config).await
+            open_json_batches(
+                &rowset,
+                &rowtype,
+                Vec::new(),
+                http_client,
+                prefetch_config,
+                xp_backend,
+            )
+            .await
         }
         RowsetData::JsonMultiChunk {
             rowset,
@@ -783,6 +789,7 @@ async fn read_query_rowset(
                 chunk_download_data,
                 http_client,
                 prefetch_config,
+                xp_backend,
             )
             .await
         }
@@ -841,6 +848,7 @@ async fn open_json_batches(
     chunk_download_data: Vec<ChunkDownloadData>,
     http_client: Client,
     prefetch_config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn crate::xp_backend::SnowflakeBackend>>,
 ) -> Result<OpenedBatches, ReadBatchesError> {
     let row_types = parsed_json_rowset(rowset, rowtype)?;
     let (reader, abort_handle) = json_prefetch(
@@ -849,6 +857,7 @@ async fn open_json_batches(
         chunk_download_data,
         http_client,
         prefetch_config,
+        xp_backend,
     )
     .await
     .context(ChunkReadSnafu)?;
@@ -864,19 +873,6 @@ fn parsed_json_rowset(
     Ok(row_types)
 }
 
-fn rowset_has_remote_chunks(data: &RowsetData) -> bool {
-    match data {
-        RowsetData::ArrowMultiChunk {
-            chunk_download_data,
-            ..
-        }
-        | RowsetData::JsonMultiChunk {
-            chunk_download_data,
-            ..
-        } => !chunk_download_data.is_empty(),
-        _ => false,
-    }
-}
 fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
     rowtype
         .iter()
@@ -1939,7 +1935,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_chunks_fail_closed_in_xp_instead_of_http() {
+    async fn remote_chunks_route_through_the_registered_backend_in_xp() {
+        // XP mode never falls back to HTTP for remote chunks: the chunk is
+        // handed to `SnowflakeBackend::download_query_chunk` instead. A
+        // backend that doesn't implement the callback (like `TestBackend`,
+        // which uses the trait's default) surfaces that as an error that
+        // still names the unsupported operation, proving the attempt went
+        // through the backend and not an outbound HTTP request to
+        // `127.0.0.1:1`, which nothing is listening on.
         let data = RowsetData::ArrowMultiChunk {
             initial_base64_opt: None,
             chunk_download_data: vec![crate::chunks::ChunkDownloadData {
@@ -1961,15 +1964,20 @@ mod tests {
         )
         .await;
         let Err(err) = result else {
-            panic!("XP mode must not download result chunks over HTTP");
+            panic!("a backend without download_query_chunk support must surface an error");
         };
         assert!(
-            matches!(
-                err,
-                ReadBatchesError::Backend { ref source, .. }
-                    if source.code == crate::xp_backend::error_codes::UNSUPPORTED
-            ),
+            matches!(err, ReadBatchesError::ChunkRead { .. }),
             "got {err:?}"
+        );
+        let message = err.to_string();
+        let full_chain = std::iter::successors(std::error::Error::source(&err), |e| {
+            std::error::Error::source(*e)
+        })
+        .fold(message, |acc, source| format!("{acc}: {source}"));
+        assert!(
+            full_chain.contains("download_query_chunk") && full_chain.contains("not supported"),
+            "expected the backend's unsupported-operation error to surface, got {full_chain:?}"
         );
     }
 }

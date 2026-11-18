@@ -1,5 +1,6 @@
 mod arrow_parser;
 mod async_arrow_batch_fetcher;
+mod backend_downloader;
 mod error;
 mod http_downloader;
 mod json_parser;
@@ -13,12 +14,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use backend_downloader::ChunkTransport;
+
 use crate::apis::database_driver_v1::Setting;
 use crate::config::retry::RetryPolicy;
 use crate::config::settings::Settings;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry, next_delay_ms};
 use crate::query_types::RowType;
 use crate::rest::snowflake::query_response::Chunk;
+use crate::xp_backend::SnowflakeBackend;
 use arrow::array::{RecordBatch, RecordBatchIterator, RecordBatchReader};
 use arrow::datatypes::{Field, Fields, Schema, SchemaRef};
 use arrow_ipc::reader::StreamReader;
@@ -31,7 +35,7 @@ pub(crate) use error::ChunkReadSnafu;
 use error::*;
 pub use json_parser::convert_string_rowset_to_arrow_reader;
 pub(crate) use prefetch::PrefetchChunkReader;
-use prefetch::{ArrowChunkParser, HttpChunkDownloader, JsonChunkParser, ParseChunk};
+use prefetch::{ArrowChunkParser, DownloadChunk, JsonChunkParser, ParseChunk};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method};
 use snafu::{IntoError, OptionExt, ResultExt, ensure};
@@ -49,7 +53,8 @@ pub struct PrefetchConfig {
     pub memory_limit_mb: u32,
     /// How long a chunk GET may receive no data, while waiting for the response
     /// or between body frames, before the whole GET is retried. `None` means no
-    /// inactivity timer.
+    /// inactivity timer. Applies only to HTTP downloads; chunks fetched through
+    /// an XP backend are not timed by sf_core.
     pub chunk_read_timeout: Option<Duration>,
 }
 
@@ -89,6 +94,7 @@ pub async fn json_prefetch_reader(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let (reader, _abort) = json_prefetch(
         initial_rowset,
@@ -96,6 +102,7 @@ pub async fn json_prefetch_reader(
         chunk_download_data,
         client,
         config,
+        xp_backend,
     )
     .await?;
     Ok(Box::new(reader))
@@ -107,6 +114,7 @@ pub(crate) async fn json_prefetch(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
     let initial_reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)?;
     open_json_prefetch(
@@ -115,6 +123,7 @@ pub(crate) async fn json_prefetch(
         chunk_download_data,
         client,
         config,
+        xp_backend,
     )
     .await
 }
@@ -125,6 +134,7 @@ async fn json_chunks_reader(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let (reader, _abort) = open_json_prefetch(
         initial_reader,
@@ -132,6 +142,7 @@ async fn json_chunks_reader(
         chunk_download_data,
         client,
         config,
+        xp_backend,
     )
     .await?;
     Ok(Box::new(reader))
@@ -143,16 +154,14 @@ async fn open_json_prefetch(
     chunk_download_data: Vec<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
     let initial_future =
         tokio::task::spawn_blocking(move || drain_reader_to_batches(initial_reader));
     PrefetchChunkReader::open(
         Some(initial_future),
         chunk_download_data.into(),
-        HttpChunkDownloader {
-            client,
-            read_timeout: config.chunk_read_timeout,
-        },
+        ChunkTransport::new(client, config.chunk_read_timeout, xp_backend),
         JsonChunkParser { row_types },
         config,
     )
@@ -192,9 +201,16 @@ pub async fn arrow_prefetch_reader(
     client: Client,
     config: &PrefetchConfig,
     nullable_flags: Option<&[bool]>,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
-    let (reader, _abort) =
-        arrow_prefetch(initial_base64_opt, chunk_download_data, client, config).await?;
+    let (reader, _abort) = arrow_prefetch(
+        initial_base64_opt,
+        chunk_download_data,
+        client,
+        config,
+        xp_backend,
+    )
+    .await?;
     Ok(maybe_inject_nullable(Box::new(reader), nullable_flags))
 }
 
@@ -203,14 +219,12 @@ pub(crate) async fn arrow_prefetch(
     chunk_download_data: VecDeque<ChunkDownloadData>,
     client: Client,
     config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<(PrefetchChunkReader, AbortHandle), ChunkError> {
     PrefetchChunkReader::open(
         initial_base64_opt.map(spawn_initial_arrow_decode),
         chunk_download_data,
-        HttpChunkDownloader {
-            client,
-            read_timeout: config.chunk_read_timeout,
-        },
+        ChunkTransport::new(client, config.chunk_read_timeout, xp_backend),
         ArrowChunkParser,
         config,
     )
@@ -228,6 +242,7 @@ async fn get_initial_chunk_reader(
     read_timeout: Option<Duration>,
     remote_format: ChunkFormatKind,
     row_types: &[RowType],
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     if let Some(initial_base64) = initial_base64_opt {
         let bytes = BASE64.decode(initial_base64).context(Base64DecodeSnafu)?;
@@ -239,7 +254,11 @@ async fn get_initial_chunk_reader(
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
-        let bytes = get_chunk_data(client.clone(), first, read_timeout).await?;
+        let transport = ChunkTransport::new(client.clone(), read_timeout, xp_backend);
+        let bytes = transport
+            .download_chunk(first)
+            .await
+            .context(ChunkReadSnafu)?;
         match remote_format {
             ChunkFormatKind::ArrowIpc => {
                 let cursor = io::Cursor::new(bytes);
@@ -400,6 +419,7 @@ pub async fn fetch_chunks_reader(
     nullable_flags: &[bool],
     client: Client,
     prefetch_config: &PrefetchConfig,
+    xp_backend: Option<Arc<dyn SnowflakeBackend>>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ChunkError> {
     let mut initial_base64_opt = None;
     let mut remote_chunks = VecDeque::new();
@@ -425,6 +445,7 @@ pub async fn fetch_chunks_reader(
                 client,
                 prefetch_config,
                 Some(nullable_flags),
+                xp_backend,
             )
             .await
         }
@@ -436,6 +457,7 @@ pub async fn fetch_chunks_reader(
                 prefetch_config.chunk_read_timeout,
                 ChunkFormatKind::Json,
                 &row_types,
+                xp_backend.clone(),
             )
             .await?;
             json_chunks_reader(
@@ -444,6 +466,7 @@ pub async fn fetch_chunks_reader(
                 Vec::from(remote_chunks),
                 client,
                 prefetch_config,
+                xp_backend,
             )
             .await
         }
@@ -667,6 +690,20 @@ where
         };
         append_chunk_bytes(&mut bytes, &frame).map_err(Fatal)?;
     }
+}
+
+/// The size limit and gzip handling [`get_chunk_data`] applies to an HTTP
+/// body, for a chunk body an XP host returned. Result files are stored
+/// gzipped, so a host that reads them raw hands back gzip bytes.
+pub(crate) async fn finish_backend_chunk_body(
+    bytes: Vec<u8>,
+    chunk: &ChunkDownloadData,
+) -> Result<Vec<u8>, ChunkError> {
+    ensure_chunk_content_length(bytes.len() as u64)?;
+    let uncompressed_size = usize::try_from(chunk.uncompressed_size).unwrap_or(0);
+    tokio::task::spawn_blocking(move || maybe_decompress_gzip(bytes, uncompressed_size))
+        .await
+        .context(SpawnBlockingSnafu)?
 }
 
 /// First allocation taken from an advertised length. Larger bodies grow from
@@ -1086,6 +1123,7 @@ mod tests {
             vec![],
             Client::new(),
             &PrefetchConfig::default(),
+            None,
         )
         .await
         .expect("initial JSON rowset should convert");
@@ -1114,6 +1152,7 @@ mod tests {
             &[false],
             Client::new(),
             &PrefetchConfig::default(),
+            None,
         )
         .await
         .expect("inline Arrow chunk should decode");
@@ -1173,6 +1212,7 @@ mod tests {
             &[false],
             Client::new(),
             &PrefetchConfig::default(),
+            None,
         )
         .await
         .expect("remote-only Arrow fetch should succeed");
@@ -1259,6 +1299,7 @@ mod tests {
             &[false],
             Client::new(),
             &PrefetchConfig::default(),
+            None,
         )
         .await
         .expect("remote-only JSON fetch should succeed");
@@ -1300,6 +1341,7 @@ mod tests {
             &[],
             Client::new(),
             &PrefetchConfig::default(),
+            None,
         )
         .await;
 

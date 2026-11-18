@@ -63,7 +63,7 @@
  *   - download_query_chunk: fetches a query result chunk that is not inline.
  *     headers_json is a JSON object of header name to value. The result is a
  *     host-allocated byte buffer holding the chunk exactly as the server
- *     serves it.
+ *     serves it; the driver detects gzip and inflates it.
  *
  * Ownership follows the rules above: a byte buffer written to data_out is
  * host-allocated with malloc and freed by the driver, and a non-zero return

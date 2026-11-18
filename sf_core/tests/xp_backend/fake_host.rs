@@ -4,6 +4,7 @@
 
 #![allow(dead_code)] // each binary uses a different subset
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
 
@@ -31,6 +32,11 @@ pub struct HostState {
     cancel_response: Mutex<Option<String>>,
     /// Consumed by the next call, which then fails instead of succeeding.
     scripted_failure: Mutex<Option<(i32, Option<String>)>>,
+    /// Bytes `download_query_chunk` reports, keyed by chunk URL.
+    chunk_bodies: Mutex<HashMap<String, Vec<u8>>>,
+    /// `headers_json` observed by the most recent `download_query_chunk` call
+    /// for a given URL.
+    chunk_headers: Mutex<HashMap<String, String>>,
 }
 
 impl HostState {
@@ -62,6 +68,20 @@ impl HostState {
     /// success; the adapter then substitutes its PROTOCOL code.
     pub fn fail_next(&self, code: i32, message: Option<&str>) {
         *self.scripted_failure.lock().unwrap() = Some((code, message.map(str::to_string)));
+    }
+
+    /// Body `download_query_chunk` returns for `url`.
+    pub fn set_chunk_body(&self, url: impl Into<String>, bytes: impl Into<Vec<u8>>) {
+        self.chunk_bodies
+            .lock()
+            .unwrap()
+            .insert(url.into(), bytes.into());
+    }
+
+    /// `headers_json` observed by the most recent `download_query_chunk` call
+    /// for `url`.
+    pub fn chunk_headers(&self, url: &str) -> Option<String> {
+        self.chunk_headers.lock().unwrap().get(url).cloned()
     }
 
     pub fn calls(&self) -> Vec<Call> {
@@ -121,7 +141,7 @@ pub fn callbacks_for(state: &'static HostState) -> XpBackendCallbacks {
         upload_stream: None,
         download_stream: None,
         list_stage_files: None,
-        download_query_chunk: None,
+        download_query_chunk: Some(download_query_chunk),
     }
 }
 
@@ -130,6 +150,22 @@ unsafe fn host_strdup(value: &str) -> *mut c_char {
     let owned = CString::new(value).expect("fixture strings contain no interior NUL");
     // SAFETY: `owned` is a valid NUL-terminated string for the call's duration.
     unsafe { libc::strdup(owned.as_ptr()) }
+}
+
+/// Allocated the way a C host would, so the driver's `libc::free` is correct.
+/// Returns `(null, 0)` for an empty buffer, matching the ABI's "no bytes"
+/// contract (see `take_host_buffer` in `ffi.rs`).
+unsafe fn host_buffer(bytes: &[u8]) -> (*mut u8, usize) {
+    if bytes.is_empty() {
+        return (std::ptr::null_mut(), 0);
+    }
+    // SAFETY: `len` is non-zero and the copy stays within the fresh allocation.
+    unsafe {
+        let ptr = libc::malloc(bytes.len()).cast::<u8>();
+        assert!(!ptr.is_null(), "test host allocation failed");
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+        (ptr, bytes.len())
+    }
 }
 
 /// SAFETY: `ptr` must be null or a valid NUL-terminated string.
@@ -288,5 +324,48 @@ unsafe extern "C" fn get_session_parameters(
         }
         let body = host.json_payload.lock().unwrap().clone();
         serve(body, "session parameters", result_out, error_out)
+    }
+}
+
+unsafe extern "C" fn download_query_chunk(
+    host_state: *mut c_void,
+    url: *const c_char,
+    headers_json: *const c_char,
+    data_out: *mut *mut u8,
+    data_len_out: *mut usize,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        let url_str = borrow_str(url).unwrap_or_default();
+        let headers = borrow_str(headers_json);
+        host.record(
+            "download_query_chunk",
+            Some(url_str.clone()),
+            headers.clone(),
+        );
+        if let Some(headers) = headers {
+            host.chunk_headers
+                .lock()
+                .unwrap()
+                .insert(url_str.clone(), headers);
+        }
+        if let Some(code) = maybe_fail(host, error_out) {
+            return code;
+        }
+        match host.chunk_bodies.lock().unwrap().get(&url_str).cloned() {
+            Some(bytes) => {
+                let (ptr, len) = host_buffer(&bytes);
+                *data_out = ptr;
+                *data_len_out = len;
+                0
+            }
+            None => {
+                (*error_out).code = 999;
+                (*error_out).message =
+                    host_strdup(&format!("test did not script a chunk body for {url_str}"));
+                999
+            }
+        }
     }
 }
