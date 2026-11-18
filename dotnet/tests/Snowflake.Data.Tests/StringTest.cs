@@ -117,8 +117,6 @@ public class StringTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectHardcodedStringValuesFromTable()
     {
-        Skip.FutureMilestone();
-
         string[] hardcodedValues = ["hello", "Hello World", "Snowflake Driver Test"];
 
         // Given Snowflake client is logged in
@@ -195,7 +193,7 @@ public class StringTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldInsertAndSelectBackHardcodedStringValuesUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
 
         const string bindValue = "Test binding value 日本語";
 
@@ -234,7 +232,7 @@ public class StringTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectStringLiteralsUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
 
         string[] bindValues = ["hello", "Hello World", "日本語テスト"];
 
@@ -270,7 +268,7 @@ public class StringTest : IClassFixture<ITFixture>
     [MemberData(nameof(CornerCaseBindingData))]
     public void ShouldSelectCornerCaseStringValuesUsingParameterBinding(string? expected)
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
