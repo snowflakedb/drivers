@@ -1,10 +1,6 @@
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.TfmDependent;
 
-#if NETFRAMEWORK
-using Snowflake.Data.Interop.TfmDependent.Framework;
-#endif
-
 namespace Snowflake.Data.Tests.Interop;
 
 /// <summary>
@@ -38,7 +34,7 @@ public sealed class StubFixture : IDisposable
         // SfCoreLibraryLoader) that maps "sf_core" to the same file via
         // SF_CORE_LIB_PATH; this resolver covers the test-only P/Invokes.
         NativeLibrary.SetDllImportResolver(typeof(StubFixture).Assembly,
-            (libraryName, _, _) => libraryName == StubLibName ? NativeLibrary.Load(stubPath) : IntPtr.Zero);
+            (libraryName, _, _) => libraryName == StubLibName ? NativeLibrary.Load(stubPath) : nint.Zero);
 #endif
 
         // Initialize once per process.  SfCoreTransport's Lazy will pick up the

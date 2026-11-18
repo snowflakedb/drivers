@@ -1,8 +1,4 @@
-#if NETFRAMEWORK
-using Snowflake.Data.Interop.TfmDependent.Framework;
-#else
 using Snowflake.Data.Interop.TfmDependent;
-#endif
 
 namespace Snowflake.Data.Interop;
 

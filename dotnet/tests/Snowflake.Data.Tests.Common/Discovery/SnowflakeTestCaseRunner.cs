@@ -1,9 +1,13 @@
+using Microsoft.Extensions.Logging;
+using Snowflake.Data.Core;
 using Xunit.Sdk;
 
 namespace Snowflake.Data.Tests.Discovery;
 
 public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunnerContext, IXunitTestCase, IXunitTest>
 {
+    private static readonly ILogger Logger = LoggerAndTelemetryStubs.GetLogger<SnowflakeTestCaseRunner>();
+
     public static SnowflakeTestCaseRunner Instance { get; } = new();
 
     public async ValueTask<RunSummary> Run(
@@ -67,6 +71,7 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
 
             var delayedMessageBus = new SnowflakeDelayedMessageBus(ctxt.MessageBus);
             var aggregator = ctxt.Aggregator.Clone();
+            Logger.LogDebug("Starting test {TestName}, attempt {Attempt}", test.TestDisplayName, runCount + 1);
             var result = await XunitTestRunner.Instance.Run(
                 test,
                 delayedMessageBus,
@@ -79,6 +84,9 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
                 ctxt.BeforeAfterTestAttributes,
                 ctxt.FixtureMappingManager
             ).ConfigureAwait(false);
+            Logger.LogDebug(
+                "Finished test {TestName}, attempt {Attempt}: {Outcome} in {ElapsedSeconds}s",
+                test.TestDisplayName, runCount + 1, Outcome(aggregator, result), result.Time);
 
             if (!(aggregator.HasExceptions || result.Failed != 0) || ++runCount > maxRetries)
             {
@@ -96,6 +104,14 @@ public class SnowflakeTestCaseRunner : XunitTestCaseRunnerBase<SnowflakeCaseRunn
                 test.TestDisplayName, runCount);
             ctxt.Aggregator.Clear();
         }
+    }
+
+    private static string Outcome(ExceptionAggregator aggregator, RunSummary result)
+    {
+        if (aggregator.HasExceptions || result.Failed != 0)
+            return "failed";
+
+        return result.Skipped != 0 ? "skipped" : "passed";
     }
 
     private static void RecordJunit(

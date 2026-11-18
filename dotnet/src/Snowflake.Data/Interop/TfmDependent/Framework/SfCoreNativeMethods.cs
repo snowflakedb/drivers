@@ -2,7 +2,7 @@
 using System.Runtime.InteropServices;
 using Snowflake.Data.Interop.Callback;
 
-namespace Snowflake.Data.Interop.TfmDependent.Framework;
+namespace Snowflake.Data.Interop.TfmDependent;
 
 internal unsafe class SfCoreNativeMethods : ISfCoreInterop
 {

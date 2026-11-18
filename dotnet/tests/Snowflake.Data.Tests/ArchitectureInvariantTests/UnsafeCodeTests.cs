@@ -3,21 +3,15 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Callback;
+using Snowflake.Data.Interop.Extensions;
+using Snowflake.Data.Interop.Handles;
+using Snowflake.Data.Interop.TfmDependent;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
-using Snowflake.Data.Tests.Logging;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
+using Snowflake.Data.Tests.Core;
+using Snowflake.Data.Tests.Logging;
 using Snowflake.Data.Tests.Utilities;
 using AssemblyMetadata = Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata.AssemblyMetadata;
-using SfCoreNativeMethods =
-#if NETFRAMEWORK
-    Snowflake.Data.Interop.TfmDependent.Framework.SfCoreNativeMethods;
-#else
-    Snowflake.Data.Interop.TfmDependent.SfCoreNativeMethods;
-#endif
-
-#if NETFRAMEWORK
-using Snowflake.Data.Interop.TfmDependent.Framework;
-#endif
 
 namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 
@@ -39,7 +33,11 @@ public sealed class UnsafeCodeTest
         {
             [AssembliesMetadata.RootAssembly] = [$"Interop/{nameof(SfCoreTransport)}.cs"],
             [AssembliesMetadata.TestsCommonsAssembly] = [$"Utilities/{nameof(ArrowStreamExporter)}.cs"],
-            [AssembliesMetadata.TestsAssembly] = [$"Core/{nameof(Core.UnitArrowStreamsTest)}.cs"],
+            [AssembliesMetadata.TestsAssembly] =
+            [
+                $"Core/{nameof(Core.UnitArrowStreamsTest)}.cs",
+                $"Core/{nameof(Core.UnitStreamRpcs)}.cs",
+            ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
         TestUnsafeSyntaxNodes<MethodDeclarationSyntax>(assemblyMetadata, exception ?? []);
@@ -53,11 +51,11 @@ public sealed class UnsafeCodeTest
         {
             [AssembliesMetadata.RootAssembly] =
             [
-#if NETFRAMEWORK
-                $"Interop/TfmDependent/{nameof(InteropStringHelper)}.cs",
-                $"Interop/TfmDependent/{nameof(SfCoreNativeMethods)}.cs",
-#endif
                 $"Interop/{nameof(ISfCoreInterop)}.cs",
+                $"Interop/{nameof(NativeArrowStream)}.cs",
+                $"Interop/{nameof(ArrowStreamCalls)}.cs",
+                $"Interop/Handles/{nameof(ArrowArrayHandle)}.cs",
+                $"Interop/Handles/{nameof(ArrowSchemaHandle)}.cs",
                 $"Interop/{nameof(IInteropStringHelper)}.cs",
                 $"Interop/Callback/{nameof(ProtoAsyncCallbackProvider)}.cs",
                 $"Interop/Callback/{nameof(LogCallbackProvider)}.cs",
@@ -67,6 +65,9 @@ public sealed class UnsafeCodeTest
             [
                 "ArchitectureInvariantTests/Dummies/ClassesDummy.cs",
                 $"Logging/{nameof(CustomLoggerTest)}.cs",
+                $"Core/{nameof(InteropStringHelperTest)}.cs",
+                $"Core/{nameof(CountingArrowCallbacks)}.cs",
+                $"Compatibility/{nameof(Compatibility.ArrowReleaseDelegateTypes)}.cs",
             ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
@@ -84,7 +85,8 @@ public sealed class UnsafeCodeTest
     {
         Dictionary<AssemblyMetadata, string[]> exceptionsMap = new()
         {
-            [AssembliesMetadata.RootAssembly] = ["SnowflakeDbDataReader.cs"] // TODO this shouldn't be unsafe
+            // TODO(SNOW-4382582) the reader rewrite removes the PoC reader's unsafe constructor.
+            [AssembliesMetadata.RootAssembly] = [$"{nameof(SnowflakeDbDataReader)}.cs"],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
         TestUnsafeSyntaxNodes<ConstructorDeclarationSyntax>(assemblyMetadata, exception ?? []);
