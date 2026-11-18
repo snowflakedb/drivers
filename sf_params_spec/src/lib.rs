@@ -95,6 +95,7 @@ pub mod param_names {
     pub const PRIVATE_KEY_FILE: ParamKey = ParamKey("private_key_file");
     pub const PRIVATE_KEY_PASSWORD: ParamKey = ParamKey("private_key_password");
     pub const JWT_TIMEOUT: ParamKey = ParamKey("jwt_timeout");
+    pub const ENABLE_DPOP_BOUND_SESSION: ParamKey = ParamKey("enable_dpop_bound_session");
     pub const TOKEN: ParamKey = ParamKey("token");
     pub const TOKEN_FILE_PATH: ParamKey = ParamKey("token_file_path");
     pub const EXTERNAL_SESSION_ID: ParamKey = ParamKey("external_session_id");
@@ -1281,6 +1282,18 @@ static PARAM_DEFS: &[ParamDef] = &[
         .auth(false)
         .description(
             "Lifetime in seconds for each key-pair authentication JWT (0 uses the default; must not be negative)",
+        )
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::ENABLE_DPOP_BOUND_SESSION.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(true)
+        .description(
+            "Bind the session to a DPoP key (RFC 9449) generated at login, so every request carries a proof from that key (SNOWFLAKE_JWT and WORKLOAD_IDENTITY only)",
         )
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)

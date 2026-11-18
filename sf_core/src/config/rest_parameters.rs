@@ -337,8 +337,8 @@ impl LoginParameters {
             spcs_token: None,
             disable_parallel_user_prompt: settings
                 .get_bool_or(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(), true),
-            // TODO(SNOW-4443131): set from enable_dpop_bound_session once the server binds sessions.
-            enable_dpop_bound_session: false,
+            enable_dpop_bound_session: settings
+                .get_bool_or(param_names::ENABLE_DPOP_BOUND_SESSION.as_str(), false),
             validate_session_token: true,
             browser_hooks: BrowserHooks::default(),
         })

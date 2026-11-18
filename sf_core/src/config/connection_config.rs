@@ -37,6 +37,7 @@ pub struct ConnectionConfig {
     pub tls: TlsConfig,
     pub proxy: ProxyConfig,
     pub disable_parallel_user_prompt: bool,
+    pub enable_dpop_bound_session: bool,
     pub diagnostic: DiagnosticConfig,
     /// Secondary-roles activation mode sent at login (e.g. `ALL` or `NONE`).
     pub secondary_roles: Option<String>,
@@ -479,6 +480,9 @@ impl ConnectionConfig {
         let disable_parallel_user_prompt = settings
             .get_bool(DISABLE_PARALLEL_USER_PROMPT)
             .unwrap_or(true);
+        let enable_dpop_bound_session = settings
+            .get_bool(ENABLE_DPOP_BOUND_SESSION)
+            .unwrap_or(false);
 
         Ok(Self {
             server: ServerConfig {
@@ -490,6 +494,7 @@ impl ConnectionConfig {
             tls,
             proxy,
             disable_parallel_user_prompt,
+            enable_dpop_bound_session,
             diagnostic: if settings.get_bool(ENABLE_CONNECTION_DIAG).unwrap_or(false) {
                 DiagnosticConfig::enabled_from_settings(
                     settings,
@@ -649,8 +654,7 @@ impl LoginParameters {
             session_parameters,
             spcs_token,
             disable_parallel_user_prompt: config.disable_parallel_user_prompt,
-            // TODO(SNOW-4443131): set from enable_dpop_bound_session once the server binds sessions.
-            enable_dpop_bound_session: false,
+            enable_dpop_bound_session: config.enable_dpop_bound_session,
             validate_session_token,
             browser_hooks,
         }
@@ -1097,6 +1101,28 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 code: ValidationCode::InvalidValue,
             });
         }
+    }
+
+    // --- ConflictingParameters: enable_dpop_bound_session + authenticator ---
+    let binds_to_dpop_key = !has_session_token
+        && match auth_upper.as_str() {
+            "SNOWFLAKE_JWT" | "WORKLOAD_IDENTITY" => true,
+            "" => has_private_key_params(settings),
+            _ => false,
+        };
+    if settings
+        .get_bool(ENABLE_DPOP_BOUND_SESSION)
+        .unwrap_or(false)
+        && !binds_to_dpop_key
+    {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            parameter: ENABLE_DPOP_BOUND_SESSION.into(),
+            message: "'enable_dpop_bound_session' requires the SNOWFLAKE_JWT (key-pair) or \
+                      WORKLOAD_IDENTITY authenticator"
+                .into(),
+            code: ValidationCode::ConflictingParameters,
+        });
     }
 
     // --- MissingRequired: host (when server_url is absent) ---
@@ -4035,5 +4061,97 @@ mod tests {
                     .contains(&i.parameter.as_str())),
             "WIF params with WORKLOAD_IDENTITY auth should not emit ConflictingWifParameters, got: {issues:?}"
         );
+    }
+
+    fn dpop_bound_session_issues(settings: &ParamStore) -> Vec<ValidationIssue> {
+        validate_settings(settings)
+            .into_iter()
+            .filter(|issue| issue.parameter == ENABLE_DPOP_BOUND_SESSION.as_str())
+            .collect()
+    }
+
+    fn wif_settings() -> ParamStore {
+        settings_from(&[
+            ("account", Setting::String("myaccount".into())),
+            ("authenticator", Setting::String("WORKLOAD_IDENTITY".into())),
+            ("workload_identity_provider", Setting::String("AWS".into())),
+            (
+                "host",
+                Setting::String("myaccount.snowflakecomputing.com".into()),
+            ),
+        ])
+    }
+
+    #[test]
+    fn dpop_bound_session_conflicts_with_logins_that_cannot_bind() {
+        let mut password = minimal_password_settings();
+        password.insert(
+            ENABLE_DPOP_BOUND_SESSION.as_str().into(),
+            Setting::Bool(true),
+        );
+        let mut session_token = wif_settings();
+        session_token.insert(
+            ENABLE_DPOP_BOUND_SESSION.as_str().into(),
+            Setting::Bool(true),
+        );
+        session_token.insert(SESSION_TOKEN.as_str().into(), Setting::String("s".into()));
+        session_token.insert(MASTER_TOKEN.as_str().into(), Setting::String("m".into()));
+
+        for settings in [password, session_token] {
+            let issues = dpop_bound_session_issues(&settings);
+            assert_eq!(issues.len(), 1, "got {issues:?}");
+            assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
+        }
+    }
+
+    #[test]
+    fn dpop_bound_session_is_accepted_for_key_pair_and_workload_identity() {
+        let key_pair = |authenticator: Option<&str>| {
+            let mut settings = settings_from(&[
+                ("account", Setting::String("myaccount".into())),
+                ("user", Setting::String("myuser".into())),
+                ("private_key", Setting::String("pem".into())),
+                ("enable_dpop_bound_session", Setting::Bool(true)),
+            ]);
+            if let Some(authenticator) = authenticator {
+                settings.insert(
+                    AUTHENTICATOR.as_str().into(),
+                    Setting::String(authenticator.into()),
+                );
+            }
+            settings
+        };
+        let mut wif = wif_settings();
+        wif.insert(
+            ENABLE_DPOP_BOUND_SESSION.as_str().into(),
+            Setting::Bool(true),
+        );
+
+        for settings in [key_pair(Some("SNOWFLAKE_JWT")), key_pair(None), wif] {
+            let issues = dpop_bound_session_issues(&settings);
+            assert!(issues.is_empty(), "got {issues:?}");
+        }
+    }
+
+    #[test]
+    fn dpop_bound_session_reaches_the_login_parameters() {
+        let login_parameters = |settings: &ParamStore| {
+            LoginParameters::from_connection_config(
+                &ConnectionConfig::build(settings).unwrap(),
+                crate::config::rest_parameters::test_fixtures::test_client_info(),
+                None,
+                None,
+                true,
+                BrowserHooks::default(),
+            )
+        };
+        let mut bound = wif_settings();
+        bound.insert(
+            ENABLE_DPOP_BOUND_SESSION.as_str().into(),
+            Setting::Bool(true),
+        );
+
+        assert!(login_parameters(&bound).enable_dpop_bound_session);
+        assert!(!login_parameters(&wif_settings()).enable_dpop_bound_session);
     }
 }

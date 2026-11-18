@@ -140,6 +140,13 @@ class ConnectionConfig(ConnectionConfigMixin):
     enable_connection_diag: bool | None = None
     """Run connectivity diagnostics during connect and write a report"""
 
+    enable_dpop_bound_session: bool | None = False
+    """Bind the session to a DPoP key (RFC 9449) generated at login, so every request carries a proof from that key
+    (SNOWFLAKE_JWT and WORKLOAD_IDENTITY only).
+
+    Default: False
+    """
+
     enable_server_session_keep_alive_auto_detection: bool | None = None
     """Enable auto-detection of async queries before logout (SNOW-2314152)"""
 
