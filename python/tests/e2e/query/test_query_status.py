@@ -5,6 +5,7 @@ This module tests query status retrieval functionality including:
 - Retrieving error status for failed queries
 - Checking still-running status for in-progress queries
 - Returning NO_DATA for a well-formed query ID that does not exist
+- Retrieving execution metadata via get_query_status_info
 """
 
 from __future__ import annotations
@@ -37,6 +38,37 @@ class TestQueryStatus:
 
         # And the query should not be indicated as an error
         assert not connection.is_an_error(status)
+
+    @pytest.mark.skip_reference(reason="Reference driver has no get_query_status_info method")
+    def test_should_return_metadata_for_completed_query(self, connection, cursor):
+        """Test that get_query_status_info returns timings and warehouse fields."""
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT 1" is executed
+        cursor.execute("SELECT 1")
+
+        # And Query status info is retrieved by query ID
+        info = connection.get_query_status_info(cursor.sfqid)
+
+        # Then the query status info should indicate success
+        assert info.status == QueryStatus.SUCCESS
+        assert info.is_success()
+
+        # And the query status info should include the query ID
+        assert info.query_id == cursor.sfqid
+
+        # And the query status info should include a non-negative total duration
+        assert info.total_duration >= 0
+        if info.start_time and info.end_time:
+            assert info.end_time >= info.start_time
+        assert info.warehouse_name is None or info.warehouse_name != ""
+
+        # And the query should not be indicated as still running
+        assert not info.is_still_running()
+
+        # And the query should not be indicated as an error
+        assert not info.is_an_error()
 
     def test_should_return_error_status_for_failed_query(self, connection, cursor):
         """Test that a failed query returns error status."""

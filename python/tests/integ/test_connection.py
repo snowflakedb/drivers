@@ -213,6 +213,19 @@ class TestClosedConnection:
         status = conn.get_query_status(sfqid)
         assert status == QueryStatus.DISCONNECTED
 
+    @pytest.mark.skip_reference(reason="Reference driver has no get_query_status_info method")
+    def test_get_query_status_info_on_closed_connection(self, connection_factory):
+        conn = connection_factory()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        sfqid = cur.sfqid
+        cur.close()
+        conn.close()
+        info = conn.get_query_status_info(sfqid)
+        assert info.status == QueryStatus.DISCONNECTED
+        assert info.query_id == sfqid
+        assert info.is_an_error()
+
     def test_get_query_status_throw_if_error_on_closed_connection(self, connection_factory):
         conn = connection_factory()
         cur = conn.cursor()

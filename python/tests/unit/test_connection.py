@@ -28,6 +28,7 @@ from snowflake.connector.connection import Connection
 from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
+from snowflake.connector.query_status import QueryStatusInfo
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 from tests.helpers.fixtures import make_all_parameters_response, make_parameter_response
 
@@ -1769,6 +1770,109 @@ class TestGetQueryStatus:
     def test_rejects_malformed_query_id_without_request(self, connection, mock_db_api):
         with pytest.raises(ValueError, match="Invalid UUID: 'not-a-uuid'"):
             connection.get_query_status("not-a-uuid")
+        mock_db_api.connection_get_query_status.assert_not_called()
+
+
+class TestGetQueryStatusInfo:
+    """Unit tests for Connection.get_query_status_info."""
+
+    def test_maps_all_fields(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+            state="done",
+            end_time=1_700_000_000_000,
+            start_time=1_699_999_990_000,
+            total_duration=10_000,
+            query_id="01abc-query-id",
+            session_id=42,
+            sql_text="SELECT 1",
+            warehouse_id=100,
+            warehouse_name="COMPUTE_WH",
+            warehouse_external_size="X-Small",
+            warehouse_server_type="STANDARD",
+        )
+
+        info = connection.get_query_status_info("11111111-1111-1111-1111-111111111111")
+
+        assert isinstance(info, QueryStatusInfo)
+        assert info.status == QueryStatus.SUCCESS
+        assert info.is_success()
+        assert not info.is_still_running()
+        assert not info.is_an_error()
+        assert info.query_id == "01abc-query-id"
+        assert info.session_id == 42
+        assert info.sql_text == "SELECT 1"
+        assert info.state == "done"
+        assert info.start_time == 1_699_999_990_000
+        assert info.end_time == 1_700_000_000_000
+        assert info.total_duration == 10_000
+        assert info.error_code is None
+        assert info.error_message is None
+        assert info.warehouse_id == 100
+        assert info.warehouse_name == "COMPUTE_WH"
+        assert info.warehouse_external_size == "X-Small"
+        assert info.warehouse_server_type == "STANDARD"
+
+    def test_optional_error_and_warehouse_fields_absent_are_none(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="RUNNING",
+            query_id="22222222-2222-2222-2222-222222222222",
+        )
+
+        info = connection.get_query_status_info("22222222-2222-2222-2222-222222222222")
+
+        assert info.status == QueryStatus.RUNNING
+        assert info.is_still_running()
+        assert info.error_code is None
+        assert info.error_message is None
+        assert info.warehouse_name is None
+        assert info.warehouse_external_size is None
+        assert info.warehouse_server_type is None
+
+    def test_maps_error_fields_when_present(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="FAILED_WITH_ERROR",
+            error_code=1003,
+            error_message="SQL compilation error",
+            query_id="33333333-3333-3333-3333-333333333333",
+        )
+
+        info = connection.get_query_status_info("33333333-3333-3333-3333-333333333333")
+
+        assert info.status == QueryStatus.FAILED_WITH_ERROR
+        assert info.is_an_error()
+        assert info.error_code == 1003
+        assert info.error_message == "SQL compilation error"
+
+    def test_unknown_status_returns_no_data(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SOME_FUTURE_STATUS",
+            query_id="44444444-4444-4444-4444-444444444444",
+        )
+
+        info = connection.get_query_status_info("44444444-4444-4444-4444-444444444444")
+
+        assert info.status == QueryStatus.NO_DATA
+        assert info.is_still_running()
+        assert info.query_id == "44444444-4444-4444-4444-444444444444"
+
+    def test_rejects_malformed_query_id_without_request(self, connection, mock_db_api):
+        with pytest.raises(ValueError, match="Invalid UUID: 'not-a-uuid'"):
+            connection.get_query_status_info("not-a-uuid")
+        mock_db_api.connection_get_query_status.assert_not_called()
+
+    def test_closed_connection_returns_disconnected_with_query_id(self, connection, mock_db_api):
+        connection.close()
+        mock_db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=True)
+        mock_db_api.connection_get_query_status.reset_mock()
+
+        info = connection.get_query_status_info("55555555-5555-5555-5555-555555555555")
+
+        assert info.status == QueryStatus.DISCONNECTED
+        assert info.is_an_error()
+        assert info.query_id == "55555555-5555-5555-5555-555555555555"
+        assert info.error_code is None
+        assert info.warehouse_name is None
         mock_db_api.connection_get_query_status.assert_not_called()
 
 

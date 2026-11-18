@@ -234,7 +234,11 @@ are not populated before it. This is the submit-and-poll shape from
 exposed as an explicit API. For a **non-blocking** status check, call
 `connection.get_query_status(qid)` (returns a `QueryStatus`, importable from
 `snowflake.connector`); `connection.get_query_status_throw_if_error(qid)` raises if
-the query failed instead of returning a status.
+the query failed instead of returning a status. For timings and warehouse metadata
+from the same monitoring call, use `connection.get_query_status_info(qid)`, which
+returns a `QueryStatusInfo` (also importable from `snowflake.connector`) with
+`total_duration`, `start_time`, and `end_time` in milliseconds while leaving
+`get_query_status` as the enum-only API.
 
 ---
 

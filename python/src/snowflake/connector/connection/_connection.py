@@ -47,6 +47,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
 from .._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetQueryStatusResponse,
 )
+from .._internal.query_status import parse_query_status, query_status_info_from_response
 from .._internal.snowflake_restful import SnowflakeRestful
 from .._internal.text_utils import split_statements
 from .._internal.utils import get_application_path
@@ -54,6 +55,7 @@ from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor, SnowflakeCursorBase
 from ..errors import Error, ProgrammingError
+from ..query_status import QueryStatusInfo
 from ..version import __version__
 
 
@@ -622,6 +624,16 @@ class Connection(ConnectionMixin):
         return status
 
     @api_telemetry
+    def get_query_status_info(self, sf_qid: str) -> QueryStatusInfo:
+        """Retrieve status and execution metadata for the query with ``sf_qid``.
+
+        Unlike :meth:`get_query_status`, this returns timings (epoch ms start/end
+        and duration in ms), warehouse details, and error fields when present.
+        """
+        status, response = self._get_query_status_with_response(sf_qid)
+        return query_status_info_from_response(response, status, query_id_fallback=sf_qid)
+
+    @api_telemetry
     def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
         status, response = self._get_query_status_with_response(sf_qid)
@@ -637,12 +649,7 @@ class Connection(ConnectionMixin):
         if self.is_closed():
             return QueryStatus.DISCONNECTED, ConnectionGetQueryStatusResponse()
         response = core_driver.connection_get_query_status(conn_handle=self.conn_handle, query_id=sf_qid)  # type: ignore[arg-type]
-        try:
-            status = QueryStatus[response.status_name]
-        except KeyError:
-            logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
-            status = QueryStatus.NO_DATA
-        return status, response
+        return parse_query_status(response.status_name), response
 
 
 # Backward compatibility alias

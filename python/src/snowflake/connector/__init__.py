@@ -28,6 +28,7 @@ from .errors import (
     ProgrammingError,
     Warning,
 )
+from .query_status import QueryStatusInfo
 from .types import (
     BINARY,
     DATETIME,
@@ -105,6 +106,7 @@ __all__ = [
     "Connection",
     "SnowflakeConnection",
     "QueryStatus",
+    "QueryStatusInfo",
     "StatementParameterName",
     "DictCursor",
     "SnowflakeCursor",

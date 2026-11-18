@@ -48,11 +48,13 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     DatabaseHandle,
     WrapperIdentity,
 )
+from ..._internal.query_status import parse_query_status, query_status_info_from_response
 from ..._internal.text_utils import split_statements
 from ..._internal.utils import get_application_path
 from ...connection_config import ConnectionConfig
 from ...constants import QueryStatus
 from ...errors import Error, ProgrammingError
+from ...query_status import QueryStatusInfo
 from ...version import __version__
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor, SnowflakeCursorBase
 
@@ -491,6 +493,16 @@ class Connection(ConnectionMixin):
         return status
 
     @api_telemetry
+    async def get_query_status_info(self, sf_qid: str) -> QueryStatusInfo:
+        """Retrieve status and execution metadata for the query with ``sf_qid``.
+
+        Unlike :meth:`get_query_status`, this returns timings (epoch ms start/end
+        and duration in ms), warehouse details, and error fields when present.
+        """
+        status, response = await self._get_query_status_with_response(sf_qid)
+        return query_status_info_from_response(response, status, query_id_fallback=sf_qid)
+
+    @api_telemetry
     async def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         status, response = await self._get_query_status_with_response(sf_qid)
         if self.is_an_error(status):
@@ -509,12 +521,7 @@ class Connection(ConnectionMixin):
             conn_handle=self.conn_handle,
             query_id=sf_qid,
         )
-        try:
-            status = QueryStatus[response.status_name]
-        except KeyError:
-            logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
-            status = QueryStatus.NO_DATA
-        return status, response
+        return parse_query_status(response.status_name), response
 
 
 SnowflakeConnection = Connection

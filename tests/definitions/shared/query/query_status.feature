@@ -13,6 +13,18 @@ Feature: Query status
     And the query should not be indicated as still running
     And the query should not be indicated as an error
 
+  # get_query_status_info is the Python metadata API; Node.js uses a different shape.
+  @python_e2e
+  Scenario: should return metadata for completed query
+    Given Snowflake client is logged in
+    When Query "SELECT 1" is executed
+    And Query status info is retrieved by query ID
+    Then the query status info should indicate success
+    And the query status info should include the query ID
+    And the query status info should include a non-negative total duration
+    And the query should not be indicated as still running
+    And the query should not be indicated as an error
+
   @python_e2e @nodejs_e2e
   Scenario: should return error status for failed query
     Given Snowflake client is logged in

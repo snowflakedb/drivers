@@ -11,6 +11,7 @@ import pytest
 
 from snowflake.connector._internal.decorators import _TRACKING, api_telemetry
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionGetQueryStatusResponse,
     ConnectionHandle,
     ConnectionIsClosedResponse,
     ConnectionIsExpiredResponse,
@@ -246,6 +247,16 @@ class TestConnectionApiTelemetry:
 
         methods = _get_api_methods(mock_db_api)
         assert "Connection.get_autocommit" in methods
+
+    def test_get_query_status_info_sends_telemetry(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+        )
+        mock_db_api.telemetry_send_api_usage.reset_mock()
+        connection.get_query_status_info("11111111-1111-1111-1111-111111111111")
+
+        methods = _get_api_methods(mock_db_api)
+        assert "Connection.get_query_status_info" in methods
 
     def test_commit_suppresses_inner_calls(self, connection, mock_db_api):
         """commit() calls cursor(), execute(), close() internally — only commit should be tracked."""
@@ -788,6 +799,16 @@ class TestAsyncConnectionApiTelemetry:
 
         req = mock_async_db_api.telemetry_send_api_usage.call_args[0][0]
         assert req.api_method == "async Connection.close"
+
+    def test_get_query_status_info_sends_telemetry(self, async_connection, mock_async_db_api):
+        mock_async_db_api.connection_get_query_status = AsyncMock(
+            return_value=ConnectionGetQueryStatusResponse(status_name="SUCCESS")
+        )
+        mock_async_db_api.telemetry_send_api_usage.reset_mock()
+        _run_async(async_connection.get_query_status_info("11111111-1111-1111-1111-111111111111"))
+
+        methods = _get_api_methods(mock_async_db_api)
+        assert "async Connection.get_query_status_info" in methods
 
 
 class TestAsyncCursorApiTelemetry:
