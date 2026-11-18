@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -11,12 +10,6 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("Replay: tableau generic_odbc navigate_and_load", "[tableau][generic_odbc][navigate_and_load]") {
-  // The new driver skips this replay while these are open:
-  // SNOW-4283109 SQLTables returns no catalogs without a current database.
-  // SNOW-4283110 SQLPrimaryKeys and SQLForeignKeys SMALLINT display size is 136.
-  // SNOW-4283111 SQLTables SQL_C_WCHAR fetch posts 01004 when the values fit.
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   auto base = DataSourceConfig::Snowflake();
   auto config = base.install();
   // no_db and fixture_db copy base, so they use the driver install() registered.
