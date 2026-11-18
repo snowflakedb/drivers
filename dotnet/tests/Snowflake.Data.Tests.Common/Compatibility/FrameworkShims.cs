@@ -42,6 +42,45 @@ public static class FrameworkShims
         return Task.CompletedTask;
     }
 
+    public static Task<DbTransaction> BeginTransactionAsync(this DbConnection connection, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return connection.BeginTransactionAsync();
+    }
+
+    public static Task<DbTransaction> BeginTransactionAsync(
+        this DbConnection connection,
+        IsolationLevel isolationLevel,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return connection.BeginTransactionAsync(isolationLevel);
+    }
+
+    public static Task CloseAsync(this DbDataReader reader, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return reader.CloseAsync();
+    }
+
+    public static Task DisposeAsync(this DbDataReader reader)
+    {
+        reader.Dispose();
+        return Task.CompletedTask;
+    }
+
+    public static Task CommitAsync(this DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return transaction.CommitAsync();
+    }
+
+    public static Task RollbackAsync(this DbTransaction transaction, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return transaction.RollbackAsync();
+    }
+
     public static bool TryDequeue<T>(this Queue<T> queue, out T element)
     {
         element = default!;
@@ -50,6 +89,12 @@ public static class FrameworkShims
 
         element = queue.Dequeue();
         return true;
+    }
+
+    public static Task CancelAsync(this CancellationTokenSource source)
+    {
+        source.Cancel();
+        return Task.CompletedTask;
     }
 }
 #endif
