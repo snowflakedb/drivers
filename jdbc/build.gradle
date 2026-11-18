@@ -186,6 +186,12 @@ sourceSets.main.java.srcDir(generatedVersionDir)
 tasks.named('compileJava') {
     dependsOn('generateProtobuf')
     dependsOn('generateDriverVersion')
+    // Bind to the Java 8 API: on a JDK 9+ compiler, source/target 1.8 alone still resolves
+    // Buffer subclass methods such as ByteBuffer.clear() to their covariant JDK 9+ signatures.
+    // javac 8 has no --release flag, so the option is set only when the compiler is JDK 9+.
+    if (JavaVersion.current().isJava9Compatible()) {
+        options.release = 8
+    }
 }
 
 // ====================
