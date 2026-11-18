@@ -84,6 +84,31 @@ _BD_STATUS_NEEDING_FRAGMENT = "allowed"
 
 
 @dataclass(frozen=True)
+class SectionRules:
+    """Per-component changes to how release sections are rendered.
+
+    ``fold`` renders a category under another category's heading, listed first.
+    ``hide`` keeps a category out of the component's unreleased notes and out of
+    its rendered sections. Rendering rules apply to version folders newer than
+    ``after``; older sections in ``CHANGELOG.md`` are frozen and must keep matching
+    their folders.
+    """
+
+    fold: dict[str, str]
+    hide: frozenset[str]
+    after: str
+
+
+_SECTION_RULES: dict[str, SectionRules] = {
+    "odbc": SectionRules(
+        fold={"breaking": "change"},
+        hide=frozenset({"internal", "internal-improvements"}),
+        after="v4.3.0",
+    ),
+}
+
+
+@dataclass(frozen=True)
 class DiffEntry:
     status: str
     path: str
@@ -423,10 +448,42 @@ def _fragments_by_category(folder: Path) -> dict[str, list[Path]]:
     return grouped
 
 
+def _is_newer_than(folder_name: str, after: str) -> bool:
+    return _VERSION_RE.match(folder_name) is not None and (
+        version_sort_key(folder_name) > version_sort_key(after)
+    )
+
+
+def _hidden_categories(component: str, folder_name: str) -> frozenset[str]:
+    rules = _SECTION_RULES.get(component)
+    if rules is None:
+        return frozenset()
+    if folder_name == "unreleased" or _is_newer_than(folder_name, rules.after):
+        return rules.hide
+    return frozenset()
+
+
+def _folded_categories(component: str, folder_name: str) -> dict[str, str]:
+    rules = _SECTION_RULES.get(component)
+    if rules is None or not _is_newer_than(folder_name, rules.after):
+        return {}
+    return rules.fold
+
+
 def _render_version_body(folder: Path) -> list[str]:
-    """Group a release by section. Filenames do not carry a sequence number."""
+    """Group a release by section, applying the component's fold and hide rules.
+
+    Filenames do not carry a sequence number.
+    """
+    component = folder.parent.parent.name
+    grouped = _fragments_by_category(folder)
+    for source, target in _folded_categories(component, folder.name).items():
+        grouped[target] = grouped[source] + grouped[target]
+        grouped[source] = []
+    for category in _hidden_categories(component, folder.name):
+        grouped[category] = []
     lines: list[str] = []
-    for category, paths in _fragments_by_category(folder).items():
+    for category, paths in grouped.items():
         if not paths:
             continue
         lines.append(f"{CATEGORIES[category]}:")
@@ -654,6 +711,8 @@ def _validate_changelog_dir(root: Path, changelog: Path) -> list[str]:
 
 def _validate_bucket(root: Path, folder: Path, *, released: bool) -> list[str]:
     errors: list[str] = []
+    component = folder.parent.parent.name
+    hidden = _hidden_categories(component, folder.name)
     for path in sorted(folder.iterdir()):
         rel = path.relative_to(root)
         if path.is_symlink() or not path.is_file():
@@ -666,6 +725,11 @@ def _validate_bucket(root: Path, folder: Path, *, released: bool) -> list[str]:
             errors.extend(release_errors)
             continue
         errors.extend(validate_fragment(path, released=released))
+        if not hidden:
+            continue
+        category, _body, meta_errors = split_fragment(path.read_text(encoding="utf-8"))
+        if category in hidden and not meta_errors:
+            errors.append(f"{rel}: {component} does not record {category} changes.")
     return errors
 
 

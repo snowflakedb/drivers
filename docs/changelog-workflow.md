@@ -13,6 +13,7 @@ Classify the pull request before adding a fragment:
 - Driver implementation changes that customers cannot observe use `internal`.
 - Tests, CI, documentation, and AI configuration do not need a fragment.
 - JDBC uses these same categories. A user-facing or internal JDBC change gets a fragment under `jdbc/changelog/unreleased/`.
+- ODBC does not record `internal` notes. Do not add a fragment with `category: internal` under `odbc/changelog/`, and leave an ODBC-only internal change out of the PR `## Changelog` section. The validator rejects `internal` in `unreleased/` and in version folders newer than `v4.3.0`. Keep `category: breaking` for a breaking change; for versions newer than `v4.3.0` the renderer lists it first under `Changes:`, not `Breaking changes:`. `.claude/rules/odbc-changelog.md` states these overrides.
 
 Create `<component>/changelog/unreleased/<slug>.md`. The slug uses lowercase
 words separated by hyphens and does not start with a number. The category
@@ -110,7 +111,9 @@ For a release such as ODBC `v4.2.0`:
    ```
 
 The renderer adds `## v4.2.0` to `odbc/CHANGELOG.md`, groups bullets by
-category, and omits fragment metadata. It preserves older release sections and
+category, and omits fragment metadata. For ODBC versions newer than `v4.3.0`,
+it lists `breaking` fragments under `Changes:` (before the other changes) and
+omits `internal` fragments. It preserves older release sections and
 leaves fragments not selected for the release under `unreleased/`.
 
 After the release lands, both the version folder and its matching
@@ -126,5 +129,7 @@ fragment rather than rewriting shipped history.
 - `.claude/rules/changelog-format.md` and
   `.cursor/rules/changelog-format.mdc` give coding agents the same format,
   classification, and release rules.
+- `.claude/rules/odbc-changelog.md` and `.cursor/rules/odbc-changelog.mdc`
+  state the ODBC heading and `internal` overrides.
 - `.ai/review/universal-driver-changelog.yaml` applies those expectations
   during pull request review.
