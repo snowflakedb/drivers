@@ -1,0 +1,27 @@
+{
+  "name": "ROLLBACK query fails",
+  "priority": 10,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matches": "(?s)(?i).*rollback.*"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": false,
+      "code": "000606",
+      "message": "SQL execution canceled",
+      "data": {
+        "queryId": "rollback-fails"
+      }
+    }
+  }
+}

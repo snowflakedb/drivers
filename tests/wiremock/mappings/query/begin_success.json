@@ -1,0 +1,31 @@
+{
+  "name": "BEGIN query succeeds",
+  "priority": 10,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matches": "(?s)(?i).*\\bbegin\\b.*"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "begin-success",
+        "statementTypeId": 4096,
+        "rowtype": [],
+        "rowset": [],
+        "total": 0,
+        "returned": 0,
+        "queryResultFormat": "json"
+      }
+    }
+  }
+}

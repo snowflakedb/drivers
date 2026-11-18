@@ -1,0 +1,31 @@
+{
+  "name": "ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT succeeds",
+  "priority": 1,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matches": "(?s).*ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT.*"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "alter-session-dotnet-query-result-format",
+        "statementTypeId": 20480,
+        "rowtype": [],
+        "rowset": [],
+        "total": 0,
+        "returned": 0,
+        "queryResultFormat": "json"
+      }
+    }
+  }
+}
