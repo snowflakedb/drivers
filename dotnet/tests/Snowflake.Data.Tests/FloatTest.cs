@@ -51,6 +51,7 @@ public class FloatTest : IClassFixture<ITFixture>
         _ = caseLabel; // used for test display name only
         _ = queryValues; // used for test display name only
         Skip.FutureMilestone();
+        Skip.ForJsonResultSet("JSON format loses precision for Double.MAX_VALUE boundary values");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -139,6 +140,8 @@ public class FloatTest : IClassFixture<ITFixture>
     [InlineData("REAL")]
     public void ShouldHandleFloatPrecisionBoundaryValuesFromLiteralsForFloatAndSynonyms(string floatType)
     {
+        Skip.ForJsonResultSet("JSON format loses precision around 16 decimal digits");
+
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -256,6 +259,7 @@ public class FloatTest : IClassFixture<ITFixture>
     [InlineData("REAL")]
     public void ShouldHandleFloatBoundaryValuesFromTableForFloatAndSynonyms(string floatType)
     {
+        Skip.ForJsonResultSet("JSON format loses precision for Double.MAX_VALUE boundary values");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -470,6 +474,7 @@ public class FloatTest : IClassFixture<ITFixture>
     public void ShouldHandleSpecialFloatValuesAsDoublesFromLiteralsForFloatAndSynonyms()
     {
         Skip.FutureMilestone();
+        Skip.ForJsonResultSet("JSON format returns inf as text, not a double");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -495,6 +500,7 @@ public class FloatTest : IClassFixture<ITFixture>
     public void ShouldHandleSpecialFloatValuesAsDoublesFromTableForFloatAndSynonyms()
     {
         Skip.FutureMilestone();
+        Skip.ForJsonResultSet("JSON format returns inf as text, not a double");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);

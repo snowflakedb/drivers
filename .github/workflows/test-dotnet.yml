@@ -268,7 +268,7 @@ jobs:
     if: inputs.run_dotnet_reference
     name: dotnet Reference Tests (old driver)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -338,7 +338,40 @@ jobs:
           path: dotnet-junit.xml
           if-no-files-found: warn
 
+      - name: Run reference tests (old driver, JSON)
+        if: ${{ !cancelled() }}
+        # Blacklist of non-conversion tests. A new conversion class is included
+        # automatically; a new non-conversion class is also included until it
+        # is listed here. Running a test twice is better than omitting one.
+        run: >
+          dotnet run --no-build --framework net10.0 --
+          -class- Snowflake.Data.Tests.Reference.BasicExecuteQueryTest
+          -class- Snowflake.Data.Tests.Reference.CertificateRevocationTest
+          -class- Snowflake.Data.Tests.Reference.ConnectionLifecycleTest
+          -class- Snowflake.Data.Tests.Reference.ConnectionTest
+          -class- Snowflake.Data.Tests.Reference.IcebergTableTest
+          -class- Snowflake.Data.Tests.Reference.Legacy.LegacyFacadeForwardingTest
+          -class- Snowflake.Data.Tests.Reference.PatTest
+          -class- Snowflake.Data.Tests.Reference.PutGetAsyncExecuteTest
+          -class- Snowflake.Data.Tests.Reference.QueryTagTest
+          -class- Snowflake.Data.Tests.Reference.TlsVersionTest
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-json.xml
+          QUERY_RESULT_FORMAT: JSON
+
+      - name: Upload reference JSON test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-reference-json
+          path: dotnet-junit-json.xml
+          if-no-files-found: warn
+
       - name: Check formatting
+        if: ${{ !cancelled() }}
         run: dotnet format Snowflake.Data.sln --verify-no-changes
         working-directory: dotnet
 
@@ -347,7 +380,7 @@ jobs:
     continue-on-error: true
     name: dotnet Reference Tests (new driver)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -443,6 +476,38 @@ jobs:
         with:
           name: dotnet-tests-reference-new
           path: dotnet-junit.xml
+          if-no-files-found: warn
+
+      - name: Run reference tests (new driver, JSON)
+        if: ${{ !cancelled() }}
+        # Blacklist of non-conversion tests. A new conversion class is included
+        # automatically; a new non-conversion class is also included until it
+        # is listed here. Running a test twice is better than omitting one.
+        run: >
+          dotnet run --no-build --framework net10.0 --
+          -class- Snowflake.Data.Tests.Reference.BasicExecuteQueryTest
+          -class- Snowflake.Data.Tests.Reference.CertificateRevocationTest
+          -class- Snowflake.Data.Tests.Reference.ConnectionLifecycleTest
+          -class- Snowflake.Data.Tests.Reference.ConnectionTest
+          -class- Snowflake.Data.Tests.Reference.IcebergTableTest
+          -class- Snowflake.Data.Tests.Reference.Legacy.LegacyFacadeForwardingTest
+          -class- Snowflake.Data.Tests.Reference.PatTest
+          -class- Snowflake.Data.Tests.Reference.PutGetAsyncExecuteTest
+          -class- Snowflake.Data.Tests.Reference.QueryTagTest
+          -class- Snowflake.Data.Tests.Reference.TlsVersionTest
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-json.xml
+          QUERY_RESULT_FORMAT: JSON
+
+      - name: Upload reference (new driver) JSON test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-tests-reference-new-json
+          path: dotnet-junit-json.xml
           if-no-files-found: warn
 
   dotnet-status:

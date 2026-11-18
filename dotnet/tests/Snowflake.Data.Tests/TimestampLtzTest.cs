@@ -121,6 +121,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     public async Task ShouldSelectSubSecondTimestampLtzValuesBeforeEpochAsync()
     {
         Skip.FutureMilestone();
+        Skip.ForJsonResultSet("JSON format rounds TIMESTAMP_LTZ values before the epoch");
         // TODO future milestone - reference driver doesn't support this scenario well.
 
         // Given Snowflake client is logged in

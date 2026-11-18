@@ -69,7 +69,7 @@ sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
     {
         _inner.Open();
         using var command = CreateCommand();
-        command.CommandText = "ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = ARROW";
+        command.CommandText = $"ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = {Environment.GetEnvironmentVariable("QUERY_RESULT_FORMAT") ?? "ARROW"}";
         command.ExecuteNonQuery();
     }
 
@@ -79,7 +79,7 @@ sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
     {
         await _inner.OpenAsync(cancellationToken).ConfigureAwait(false);
         using var command = CreateCommand();
-        command.CommandText = "ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = ARROW";
+        command.CommandText = $"ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = {Environment.GetEnvironmentVariable("QUERY_RESULT_FORMAT") ?? "ARROW"}";
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

@@ -85,8 +85,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
         // Then Result should preserve all 38 digits for each value
         Assert.True(reader.Read(), "Expected one row");
         Assert.Equal("12345678901234567890123456789012345678", reader.GetString(0));
-        Assert.Equal("1.2345678901234567890123456789012345678E100", reader.GetString(1));
-        Assert.Equal("1.2345678901234567890123456789012345678E-100", reader.GetString(2));
+        Assert.Equal("1.2345678901234567890123456789012345678E100", reader.GetString(1), ignoreCase: true);
+        Assert.Equal("1.2345678901234567890123456789012345678E-100", reader.GetString(2), ignoreCase: true);
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -109,8 +109,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
 
         // Then Result should contain [<expected_values>]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal(expectedFirst, reader.GetString(0));
-        Assert.Equal(expectedSecond, reader.GetString(1));
+        Assert.Equal(expectedFirst, reader.GetString(0), ignoreCase: true);
+        Assert.Equal(expectedSecond, reader.GetString(1), ignoreCase: true);
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -235,9 +235,9 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(3, results.Count);
-        Assert.Contains("1.2345678901234567890123456789012345678E-100", results);
+        Assert.Contains("1.2345678901234567890123456789012345678E-100", results, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("12345678901234567890123456789012345678", results);
-        Assert.Contains("1.2345678901234567890123456789012345678E100", results);
+        Assert.Contains("1.2345678901234567890123456789012345678E100", results, StringComparer.OrdinalIgnoreCase);
     }
 
     // Scenario: should handle extreme exponent values from table
@@ -272,10 +272,10 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(4, results.Count);
-        Assert.Contains("-1.234E8000", results);
-        Assert.Contains("9.876E-8000", results);
-        Assert.Contains("1E-16383", results);
-        Assert.Contains("1E16384", results);
+        Assert.Contains("-1.234E8000", results, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("9.876E-8000", results, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("1E-16383", results, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("1E16384", results, StringComparer.OrdinalIgnoreCase);
     }
 
     // Scenario: should handle NULL values from table for decfloat
@@ -420,7 +420,7 @@ public class DecfloatTest : IClassFixture<ITFixture>
 
         // Then Result should contain [<expected>]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal(expected, reader.GetString(0));
+        Assert.Equal(expected, reader.GetString(0), ignoreCase: true);
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -512,8 +512,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
             results.Add(reader.GetString(0));
         }
         Assert.Equal(3, results.Count);
-        Assert.Contains("-1.234E8000", results);
-        Assert.Contains("1E-16383", results);
-        Assert.Contains("1E16384", results);
+        Assert.Contains("-1.234E8000", results, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("1E-16383", results, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("1E16384", results, StringComparer.OrdinalIgnoreCase);
     }
 }

@@ -26,4 +26,7 @@ public static class Skip
 
     public static void OnNewDriver(string differenceId, string rationale) =>
         When(TestDriver.Current == TestDriver.Kind.New, $"{differenceId}: {rationale}");
+
+    public static void ForJsonResultSet(string rationale) =>
+        When(string.Equals(Environment.GetEnvironmentVariable("QUERY_RESULT_FORMAT"), "JSON", StringComparison.OrdinalIgnoreCase), rationale);
 }
