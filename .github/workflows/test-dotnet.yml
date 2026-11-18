@@ -160,12 +160,35 @@ jobs:
              "dotnet/tests/Snowflake.Data.Tests/bin/Debug/${{ matrix.dotnet_version }}/"
 
       - name: Run tests (new driver)
+        if: ${{ !(matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu')) }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests
         env:
            PARAMETER_PATH: ${{ github.workspace }}/parameters.json
            SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
            SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+
+      # Custom Exe runner (not VSTest), so coverlet.collector / dotnet test
+      # cannot hook in. Wrap the same `dotnet run` with coverlet.console on
+      # the primary Linux PR cell (ubuntu / net10.0 / regression).
+      - name: Run tests with coverage (Linux net10.0)
+        if: ${{ matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu') }}
+        working-directory: dotnet/tests/Snowflake.Data.Tests
+        env:
+           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
+           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+        run: |
+          set -euo pipefail
+          tool="${RUNNER_TEMP}/coverlet"
+          dotnet tool install coverlet.console --tool-path "$tool" --version 6.0.4
+          dll="bin/Debug/${{ matrix.dotnet_version }}/Snowflake.Data.Tests.dll"
+          "$tool/coverlet" "$dll" \
+            --target dotnet \
+            --targetargs "run --no-build --framework ${{ matrix.dotnet_version }}" \
+            --include '[Snowflake.Data]*' \
+            --format cobertura \
+            --output "${{ github.workspace }}/coverage.cobertura.xml"
 
       - name: Upload test results
         if: always()
@@ -174,6 +197,13 @@ jobs:
           name: dotnet-tests-${{ matrix.name }}
           path: dotnet-junit.xml
           if-no-files-found: warn
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() && matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu') }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: dotnet-net10-linux
+          path: coverage.cobertura.xml
 
   dotnet_tests_interop:
     needs: load-dotnet-matrix

@@ -36,7 +36,7 @@ jobs:
   odbc_unit_tests:
     if: inputs.run_odbc
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -67,13 +67,33 @@ jobs:
           curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$dest"
           cargo nextest --version
 
-      - name: Run ODBC unit tests
+      - name: Capture rustc version for coverage tool cache key
+        id: rustc-version
+        run: echo "version=$(rustc --version | awk '{print $2}')" >> $GITHUB_OUTPUT
+
+      - name: Cache cargo-llvm-cov binary
+        id: llvm-cov-cache
+        continue-on-error: true
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: cargo-llvm-cov-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
+
+      - name: Install cargo-llvm-cov
+        if: steps.llvm-cov-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Run ODBC unit tests with coverage
         # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292):
         # Rust passes --no-undefined-version to GNU ld with a version script that omits
         # allocator shim symbols, causing sf_core dylib builds to fail.
         # nextest --profile ci applies retries = 2 from .config/nextest.toml.
+        # llvm-cov instruments the odbc package the same way rust-core does so
+        # Jenkins can stash lcov.info as coverage-*.
         id: run_odbc_unit_tests
-        run: cargo nextest run --locked --profile ci --package odbc --no-fail-fast
+        run: |
+          cargo llvm-cov --locked --no-report --package odbc \
+            nextest --profile ci --no-fail-fast
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
@@ -86,6 +106,24 @@ jobs:
           name: odbc-rust-unit-junit
           path: target/nextest/ci/junit.xml
           if-no-files-found: warn
+
+      - name: Generate lcov coverage report
+        if: always()
+        continue-on-error: true
+        run: |
+          if find target/llvm-cov-target -name '*.profraw' 2>/dev/null | grep -q .; then
+            cargo llvm-cov report --locked --package odbc --lcov --output-path lcov.info
+            echo "lcov report written to lcov.info (scoped to odbc)"
+          else
+            echo "No *.profraw files in target/llvm-cov-target — skipping report"
+          fi
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: odbc-unit
+          path: lcov.info
 
       - name: Save Rust cache
         if: always()

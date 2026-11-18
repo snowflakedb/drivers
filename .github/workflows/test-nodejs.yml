@@ -88,7 +88,7 @@ jobs:
         working-directory: nodejs
 
       - name: Run unit tests
-        run: npm run test:unit -- --reporter=default --reporter=junit --outputFile=reports/nodejs-unit.xml
+        run: npm run test:unit -- --coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.include='src/**/*.ts' --reporter=default --reporter=junit --outputFile=reports/nodejs-unit.xml
         working-directory: nodejs
 
       # at this point core is already built and napi declaration are regenerated, fail if different
@@ -121,6 +121,13 @@ jobs:
           name: nodejs-tests
           path: nodejs/reports/*
           retention-days: 14
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: nodejs-unit
+          path: nodejs/coverage/lcov.info
 
       - name: Save Rust cache
         if: always()

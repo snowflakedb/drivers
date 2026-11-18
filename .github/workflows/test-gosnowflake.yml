@@ -41,4 +41,11 @@ jobs:
 
       - name: Test
         working-directory: gosnowflake
-        run: go test ./...
+        run: go test ./... -coverprofile=coverage.txt -covermode=count
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: gosnowflake
+          path: gosnowflake/coverage.txt

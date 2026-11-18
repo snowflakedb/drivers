@@ -17,6 +17,15 @@ flags:
   odbc:
     paths: ["odbc/**"]
     carryforward: false
+  nodejs:
+    paths: ["nodejs/**"]
+    carryforward: false
+  dotnet:
+    paths: ["dotnet/**"]
+    carryforward: false
+  gosnowflake:
+    paths: ["gosnowflake/**"]
+    carryforward: false
 
 
 
@@ -30,7 +39,7 @@ coverage:
       default:
         target: auto
         threshold: 1%
-        flags: [rust-core, python, jdbc, odbc]
+        flags: [rust-core, python, jdbc, odbc, nodejs, dotnet, gosnowflake]
         flag_coverage_not_uploaded_behavior: exclude
     patch: off
 
@@ -67,6 +76,18 @@ component_management:
       name: "ODBC Driver"
       paths:
         - "odbc/**"
+    - component_id: nodejs
+      name: "Node.js Driver"
+      paths:
+        - "nodejs/**"
+    - component_id: dotnet
+      name: ".NET Driver"
+      paths:
+        - "dotnet/**"
+    - component_id: gosnowflake
+      name: "Go Driver"
+      paths:
+        - "gosnowflake/**"
 
 fixes:
   - "com/snowflake/::jdbc/src/java/com/snowflake/"
