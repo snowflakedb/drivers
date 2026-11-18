@@ -232,6 +232,18 @@ class UploadDownloadStreamTest {
     assertEquals("PUT 'file:///data.csv' @my_stage/subdir OVERWRITE = TRUE", sql);
   }
 
+  @Test
+  void shouldAddAtPrefixToStageNameWithoutOne() {
+    String sql = SnowflakeConnectionImpl.buildPutSql("MYSTAGE", "data.csv", null, true);
+    assertEquals("PUT 'file:///data.csv' @MYSTAGE OVERWRITE = TRUE", sql);
+  }
+
+  @Test
+  void shouldAddAtPrefixToUserStageWithPrefix() {
+    String sql = SnowflakeConnectionImpl.buildPutSql("~", "data.csv", "subdir", true);
+    assertEquals("PUT 'file:///data.csv' @~/subdir OVERWRITE = TRUE", sql);
+  }
+
   // ---------------------------------------------------------------------------
   // uploadStream — wiring: Begin -> Chunk* -> Finish (or Abort on read failure)
   // ---------------------------------------------------------------------------
@@ -423,6 +435,24 @@ class UploadDownloadStreamTest {
         .connectionDownloadStreamBegin(
             eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(false));
     verify(mockCoreApi).connectionDownloadStreamClose(DOWNLOAD_HANDLE);
+  }
+
+  @Test
+  void shouldAddAtPrefixToStageNameWithoutOneBeforeCallingCore() throws Exception {
+    when(mockCoreApi.connectionDownloadStreamChunk(eq(DOWNLOAD_HANDLE), anyLong()))
+        .thenReturn(
+            ConnectionDownloadStreamChunkResponse.newBuilder()
+                .setData(ByteString.copyFrom("x".getBytes()))
+                .setEof(true)
+                .build());
+
+    try (InputStream result = connection.downloadStream("my_stage", "data.csv.gz")) {
+      readAllBytes(result);
+    }
+
+    verify(mockCoreApi)
+        .connectionDownloadStreamBegin(
+            eq(CONN_HANDLE), eq("@my_stage"), eq("data.csv.gz"), eq(false));
   }
 
   @Test

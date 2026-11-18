@@ -20,6 +20,29 @@ public class StageRefQuoting {
   }
 
   /**
+   * Prefixes {@code @} to a stage reference that lacks one, keeping any outer single-quote or
+   * dollar-quote wrapper in place. A reference that already starts with {@code @} is returned
+   * unchanged, and {@code null} stays {@code null}.
+   */
+  public static String withAtPrefix(String stageRef) {
+    if (stageRef == null) {
+      return null;
+    }
+    String inner = unwrapOuterQuotes(stageRef);
+    if (inner.startsWith("@")) {
+      return stageRef;
+    }
+    String prefixed = "@" + inner;
+    if (isDollarQuoted(stageRef)) {
+      return "$$" + prefixed + "$$";
+    }
+    if (isSingleQuoted(stageRef)) {
+      return "'" + prefixed.replace("'", "''") + "'";
+    }
+    return prefixed;
+  }
+
+  /**
    * Removes an outer single-quote or dollar-quote wrapper so a path suffix can be appended inside
    * the reference. Doubled single quotes inside a single-quoted wrapper become one quote. A
    * reference that is not wrapped, including a malformed quote such as {@code 'a'b'c'}, is returned

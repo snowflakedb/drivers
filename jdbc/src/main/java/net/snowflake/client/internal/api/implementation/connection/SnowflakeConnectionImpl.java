@@ -868,7 +868,8 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
    * reference JDBC contract that uploadStream always overwrites. The assembled stage reference is
    * single-quoted when {@link StageRefQuoting#quoteIfNeeded(String)} requires it. When {@code
    * destPrefix} is set, {@link StageRefQuoting#unwrapOuterQuotes(String)} removes an outer
-   * single-quote or dollar-quote wrapper before the prefix is appended.
+   * single-quote or dollar-quote wrapper before the prefix is appended. A stage name without a
+   * leading {@code @} gets one from {@link StageRefQuoting#withAtPrefix(String)}.
    *
    * <p>{@code compressData} maps to the server-side {@code AUTO_COMPRESS} clause rather than JDBC's
    * historical client-side gzip: when true (default) the clause is omitted so GS auto-compresses
@@ -877,9 +878,9 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
    */
   static String buildPutSql(
       String stageName, String destFileName, String destPrefix, boolean compressData) {
-    String stagePath = stageName;
+    String stagePath = StageRefQuoting.withAtPrefix(stageName);
     if (destPrefix != null && !destPrefix.isEmpty()) {
-      String stage = StageRefQuoting.unwrapOuterQuotes(stageName);
+      String stage = StageRefQuoting.unwrapOuterQuotes(stagePath);
       String trimmed = stage.endsWith("/") ? stage : stage + "/";
       stagePath = trimmed + destPrefix;
     }
@@ -916,7 +917,10 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
         downloadHandle =
             coreDriverApi
                 .connectionDownloadStreamBegin(
-                    connectionHandle, stageName, sourceFileName, decompress)
+                    connectionHandle,
+                    StageRefQuoting.withAtPrefix(stageName),
+                    sourceFileName,
+                    decompress)
                 .getDownloadHandle();
       } catch (CoreException e) {
         throw remapMissingRemoteFile(e, sourceFileName);
