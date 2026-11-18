@@ -224,7 +224,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectBooleanUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -266,7 +266,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectNullBooleanUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -294,7 +294,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldInsertBooleanUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("Bound parameters, including array binding, are not implemented (SNOW-4382583, SNOW-4382600)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -307,18 +307,14 @@ public class BooleanTest : IClassFixture<ITFixture>
         createCmd.ExecuteNonQuery();
 
         // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
-        bool?[] values = [true, false, null];
-        foreach (var value in values)
-        {
-            using var insertCmd = connection.CreateCommand();
-            insertCmd.CommandText = $"INSERT INTO {tableName} (col) VALUES (?)";
-            var param = insertCmd.CreateParameter();
-            param.ParameterName = "1";
-            param.DbType = DbType.Boolean;
-            param.Value = value.HasValue ? value.Value : DBNull.Value;
-            insertCmd.Parameters.Add(param);
-            insertCmd.ExecuteNonQuery();
-        }
+        using var insertCmd = connection.CreateCommand();
+        insertCmd.CommandText = $"INSERT INTO {tableName} (col) VALUES (?)";
+        var param = insertCmd.CreateParameter();
+        param.ParameterName = "1";
+        param.DbType = DbType.Boolean;
+        param.Value = new object?[] { true, false, null };
+        insertCmd.Parameters.Add(param);
+        Assert.Equal(3, insertCmd.ExecuteNonQuery());
 
         // Then SELECT should return the same values in any order
         using var selectCmd = connection.CreateCommand();
