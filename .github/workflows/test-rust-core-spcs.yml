@@ -78,6 +78,27 @@ jobs:
       - name: Free runner disk space
         uses: ./.github/actions/free-disk-space-linux
 
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/workflows/test-rust-core-spcs.yml
+
+      - name: Install Snowflake CLI
+        run: |
+          set -euo pipefail
+          pip install --upgrade pip
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          cat > "$tmpdir/snowflake-cli.txt" <<'EOF'
+          snowflake-cli==3.33.0 \
+              --hash=sha256:59a7c036a9b31402a55e6564ea278a1c57b0cf94affb3e84128efb4c35f18b8a
+          EOF
+          pip download --quiet --no-deps --require-hashes --only-binary=:all: \
+            -r "$tmpdir/snowflake-cli.txt" -d "$tmpdir"
+          pip install --quiet "$tmpdir"/snowflake_cli-3.33.0-py3-none-any.whl
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh aws
         env:
@@ -85,16 +106,6 @@ jobs:
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-
-      - name: Install Snowflake CLI
-        run: |
-          pip install --upgrade pip
-          pip install --quiet snowflake-cli
 
       # Build a connections.toml for `snow` from the decoded parameters.json.
       # Supports key-pair (preferred) or password auth. The connection is named

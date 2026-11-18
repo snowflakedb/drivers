@@ -51,6 +51,11 @@ ci/
 jobs/
 .github/
 Jenkinsfile
+parameters*.json
+**/parameters*.json
+**/rsa_key.p8
+tests/performance/parameters/
+tests/auth/wif/parameters/
 
 # IDE files
 .idea/
