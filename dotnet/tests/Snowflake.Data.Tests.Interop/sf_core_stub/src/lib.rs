@@ -197,7 +197,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
                 *response = std::ptr::null();
                 *response_len = 0;
             }
-            0
+            return 0;
         }
         Action::HugeLen => {
             // Allocate a tiny buffer but report an absurdly large length.
@@ -206,7 +206,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
                 *response = ptr;
                 *response_len = usize::MAX;
             }
-            0
+            return 0;
         }
     };
 

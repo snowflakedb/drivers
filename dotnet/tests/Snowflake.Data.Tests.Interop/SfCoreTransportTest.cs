@@ -8,7 +8,6 @@ namespace Snowflake.Data.Tests.Interop;
 /// </summary>
 [Collection("Interop")]
 [Trait("Category", "Interop")]
-[Trait("Category", "Unit")]
 public sealed class SfCoreTransportTest
 {
     private static readonly SfCoreTransport Transport = SfCoreTransport.Instance;
@@ -41,6 +40,12 @@ public sealed class SfCoreTransportTest
 
         Assert.Equal(42, resp.Code);
         Assert.Equal(HelloBytes, resp.ResponseBytes.ToArray());
+    }
+
+    [SnowflakeFact]
+    public void SyncCall_ResponseLengthAboveIntMaxValue_ThrowsNotSupported()
+    {
+        Assert.Throws<NotSupportedException>(() => Transport.HandleMessage("svc", "huge_len", HelloBytes));
     }
 
     [SnowflakeTheory]

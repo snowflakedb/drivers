@@ -44,4 +44,28 @@ public sealed unsafe class InteropStringHelperTest
             Marshal.FreeHGlobal((nint)memory);
         }
     }
+
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData("")]
+    [InlineData("a")]
+    [InlineData("outbound HTTP call")]
+    [InlineData("café 日本語")]
+    public void ANulTerminatedUtf8StringReadsBackUnchanged(string text)
+    {
+        Assert.Equal(text, Read([.. Encoding.UTF8.GetBytes(text), 0]));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ReadingStopsAtTheFirstNul()
+    {
+        Assert.Equal("head", Read([.. "head"u8, 0, .. "tail"u8, 0]));
+    }
+
+    private static string Read(byte[]? nulTerminated)
+    {
+        fixed (byte* text = nulTerminated)
+        {
+            return SfCoreInteropProvider.StringHelper.PtrToStringUtf8(text);
+        }
+    }
 }

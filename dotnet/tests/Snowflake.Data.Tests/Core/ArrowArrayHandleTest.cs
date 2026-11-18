@@ -122,4 +122,22 @@ public sealed class ArrowArrayHandleTest
         Assert.Throws<InvalidOperationException>(handle.ToProto);
         Assert.Throws<InvalidOperationException>(() => handle.Import(_batch.Schema));
     }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void DisposingHandleThatHoldsBatchCallsTheProducersReleaseOnce()
+    {
+        var release = CountingArrowCallbacks.ForArray();
+        var handle = new ArrowArrayHandle();
+        Marshal.WriteIntPtr(
+            handle.DangerousGetHandle(),
+            Marshal.OffsetOf<ArrowArrayAbi>(nameof(ArrowArrayAbi.Release)).ToInt32(),
+            release.Pointer);
+
+        Parallel.For(0, 10, _ =>
+        {
+            handle.Dispose();
+        });
+
+        Assert.Equal(1, release.Calls);
+    }
 }

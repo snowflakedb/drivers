@@ -37,6 +37,8 @@ public sealed class UnsafeCodeTest
             [
                 $"Core/{nameof(Core.UnitArrowStreamsTest)}.cs",
                 $"Core/{nameof(Core.UnitStreamRpcs)}.cs",
+                $"Core/{nameof(Core.SfCoreAsyncCallDataTest)}.cs",
+                $"Core/{nameof(Core.ProtoAsyncCallbackProviderTest)}.cs",
             ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);

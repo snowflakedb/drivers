@@ -51,6 +51,22 @@ public sealed class SfCoreTransportAsyncTest
     }
 
     [SnowflakeFact]
+    public async Task AsyncCall_NullResponsePointer_FaultsTheCallAsync()
+    {
+        var task = Transport.HandleMessageAsync("svc", "null_ptr", HelloBytes, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ConfigureAwait(false);
+    }
+
+    [SnowflakeFact]
+    public async Task AsyncCall_ResponseLengthAboveIntMaxValue_FaultsTheCallAsync()
+    {
+        var task = Transport.HandleMessageAsync("svc", "huge_len", HelloBytes, CancellationToken.None);
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)).ConfigureAwait(false);
+    }
+
+    [SnowflakeFact]
     public async Task AsyncCall_CancelBeforeDispatched_ThrowsImmediatelyAsync()
     {
         using var cts = new CancellationTokenSource();

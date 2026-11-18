@@ -26,7 +26,11 @@ internal class SfCoreLibraryLoader : ISfCoreLibraryLoader
         NativeLibrary.SetDllImportResolver(typeof(SfCoreLibraryLoader).Assembly, ResolveLibrary);
     }
 
-    private static nint ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    /// <summary>
+    /// The <see cref="DllImportResolver"/> <see cref="Register"/> installs: loads sf_core in the resolution order above.
+    /// </summary>
+    /// <returns>The loaded library's handle; zero for any other library, or when sf_core is not found, so the runtime falls back to its default search.</returns>
+    internal static nint ResolveLibrary(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (libraryName != SFCore)
             return nint.Zero;

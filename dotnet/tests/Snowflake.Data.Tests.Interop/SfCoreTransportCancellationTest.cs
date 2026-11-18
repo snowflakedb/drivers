@@ -17,6 +17,7 @@ public sealed class SfCoreTransportCancellationTest
     private static readonly byte[] HelloBytes = "hello, stub!"u8.ToArray();
 
     [SnowflakeFact]
+    [Trait("Category", "Unit")]
     public async Task AsyncCall_Cancellation_ReturnsWithCancellationStatusCodeAsync()
     {
         using var cts = new CancellationTokenSource();

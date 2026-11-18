@@ -14,7 +14,10 @@ internal sealed unsafe class ProtoAsyncCallbackProvider
 
             if (ptr == 0 || len > int.MaxValue)
             {
-                tcsWrapper.TaskCompletionSource.SetException(new Exception("TODO"));
+                Exception failure = ptr == 0
+                    ? new InvalidOperationException("sf_core passed a null response pointer.")
+                    : new NotSupportedException($"sf_core passed a response of {len} bytes, which exceeds {int.MaxValue}.");
+                tcsWrapper.TaskCompletionSource.TrySetException(failure);
                 tcsWrapper.Dispose();
                 return;
             }

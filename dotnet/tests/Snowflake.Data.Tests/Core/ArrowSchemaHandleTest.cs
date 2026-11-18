@@ -112,4 +112,22 @@ public sealed class ArrowSchemaHandleTest
 
         Assert.Throws<ObjectDisposedException>(handle.Import);
     }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ConcurrentDisposeInvokesReleaseCallbackOnce()
+    {
+        var release = CountingArrowCallbacks.ForSchema();
+        var handle = new ArrowSchemaHandle();
+        Marshal.WriteIntPtr(
+            handle.DangerousGetHandle(),
+            Marshal.OffsetOf<CArrowSchema>("release").ToInt32(),
+            release.Pointer);
+
+        Parallel.For(0, 10, _ =>
+        {
+            handle.Dispose();
+        });
+
+        Assert.Equal(1, release.Calls);
+    }
 }

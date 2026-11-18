@@ -59,4 +59,16 @@ public sealed class NativeStatementHandleTest
 
         _logger.Received(1).Log(LogLevel.Critical, Arg.Any<EventId>(), Arg.Any<Arg.AnyType>(), Arg.Any<TransportException>(), Arg.Any<Func<Arg.AnyType, Exception?, string>>());
     }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void FailureOtherThanCoreErrorDuringReleasePropagatesWithoutLogging()
+    {
+        var failure = new InvalidOperationException("unexpected");
+        _driver.StatementRelease(Arg.Any<StatementReleaseRequest>()).Throws(failure);
+
+        var thrown = Assert.Throws<InvalidOperationException>(_statement.Dispose);
+
+        Assert.Same(failure, thrown);
+        Assert.Empty(_logger.ReceivedCalls());
+    }
 }
