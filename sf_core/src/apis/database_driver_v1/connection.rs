@@ -1867,9 +1867,18 @@ where
     loop {
         let session_token = refresh_ctx.refresh_token(last_error).await?;
         match submit(session_token).await {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                refresh_ctx.reset_refresh_budget();
+                return Ok(value);
+            }
             Err(error) => last_error = Some(error),
         }
+    }
+}
+
+fn warn_session_expired_not_refreshed(error: &RestError) {
+    if matches!(error, RestError::SessionExpired { .. }) {
+        tracing::warn!("Session expired again right after a refresh, not refreshing");
     }
 }
 
@@ -1893,16 +1902,18 @@ where
 /// On first call (`last_error = None`), reads the session token (concurrent readers allowed).
 /// On subsequent calls with a `SessionExpired` error, acquires write lock and refreshes.
 /// On non-SessionExpired errors, propagates the error immediately.
-/// Only one refresh attempt is allowed; a second SessionExpired error is propagated.
-/// Tracks the state of the refresh lifecycle.
+/// One refresh is allowed per failure streak: a `SessionExpired` that follows a
+/// refresh is propagated until a call succeeds with the refreshed token
+/// ([`RefreshContext::reset_refresh_budget`]). Tracks the state of the refresh lifecycle.
 enum RefreshState {
-    /// No token has been issued yet (initial call).
+    /// No token has been read yet.
     Initial,
-    /// A token was issued but hasn't been refreshed yet. Holds the token
-    /// so we can detect if another request already refreshed while we waited.
-    FirstToken(SensitiveString),
-    /// A refresh has already been performed. A second SessionExpired will be propagated.
-    Refreshed,
+    /// The token last handed out. `can_refresh` is whether this streak still
+    /// has a refresh left.
+    CurrentToken {
+        token: SensitiveString,
+        can_refresh: bool,
+    },
 }
 
 pub struct RefreshContext {
@@ -2090,14 +2101,23 @@ impl RefreshContext {
         Ok(())
     }
 
+    /// Ends the refresh streak after a call succeeded with the current token, so
+    /// a later `SessionExpired` is refreshed again. Does nothing when no refresh
+    /// has happened.
+    pub(super) fn reset_refresh_budget(&mut self) {
+        if let RefreshState::CurrentToken { can_refresh, .. } = &mut self.state {
+            *can_refresh = true;
+        }
+    }
+
     /// Get a valid session token, optionally refreshing if the previous call failed.
     ///
-    /// - `last_error = None`: reads the current session token (first call).
+    /// - `last_error = None`: reads the current session token.
     /// - `last_error = Some(SessionExpired)`: refreshes the session and returns a new token.
     /// - `last_error = Some(other)`: propagates the error immediately.
     ///
-    /// Only one refresh is allowed. If the refreshed token also triggers SessionExpired,
-    /// the error is propagated on the next call.
+    /// One refresh is allowed per failure streak. If the refreshed token also triggers
+    /// SessionExpired before any call succeeded with it, the error is propagated.
     pub async fn refresh_token(
         &mut self,
         last_error: Option<RestError>,
@@ -2113,12 +2133,17 @@ impl RefreshContext {
                     .as_ref()
                     .map(|t| t.session_token.clone())
                     .context(ConnectionNotInitializedSnafu)?;
-                self.state = RefreshState::FirstToken(token.clone());
+                self.state = RefreshState::CurrentToken {
+                    token: token.clone(),
+                    can_refresh: true,
+                };
                 Ok(token)
             }
 
-            // First token was issued - check if it failed with SessionExpired
-            RefreshState::FirstToken(failed_token) => match last_error {
+            RefreshState::CurrentToken {
+                token: failed_token,
+                can_refresh: true,
+            } => match last_error {
                 // Server returned GS 390113/390114/390115 — master token can
                 // never be renewed; mark expired immediately so the connection's
                 // `is_master_token_expired` flag is visible to external observers
@@ -2143,7 +2168,6 @@ impl RefreshContext {
                     }
                     tracing::info!("Session expired, attempting refresh");
                     let failed_token = failed_token.clone();
-                    self.state = RefreshState::Refreshed;
 
                     // Acquire write lock - blocks other readers/writers during refresh
                     let mut tokens_guard = self.tokens_lock.write().await;
@@ -2156,6 +2180,10 @@ impl RefreshContext {
                     // If another request already refreshed while we waited, use the new token.
                     if tokens.session_token.reveal() != failed_token.reveal() {
                         tracing::debug!("Session already refreshed by another request");
+                        self.state = RefreshState::CurrentToken {
+                            token: tokens.session_token.clone(),
+                            can_refresh: false,
+                        };
                         return Ok(tokens.session_token.clone());
                     }
 
@@ -2185,6 +2213,10 @@ impl RefreshContext {
                     };
 
                     let new_session_token = new_tokens.session_token.clone();
+                    self.state = RefreshState::CurrentToken {
+                        token: new_session_token.clone(),
+                        can_refresh: false,
+                    };
 
                     // Update tokens
                     *tokens_guard = Some(new_tokens);
@@ -2195,17 +2227,30 @@ impl RefreshContext {
                     Ok(new_session_token)
                 }
                 Some(other) => Err(other).context(QuerySnafu),
-                None => InvalidRefreshStateSnafu {
-                    message: "refresh_token called with None after FirstToken".to_string(),
+                None => {
+                    let tokens_guard = self.tokens_lock.read().await;
+                    let token = tokens_guard
+                        .as_ref()
+                        .map(|t| t.session_token.clone())
+                        .context(ConnectionNotInitializedSnafu)?;
+                    self.state = RefreshState::CurrentToken {
+                        token: token.clone(),
+                        can_refresh: true,
+                    };
+                    Ok(token)
                 }
-                .fail(),
             },
 
-            // Already refreshed once - propagate any error
-            RefreshState::Refreshed => match last_error {
-                Some(err) => Err(err).context(QuerySnafu),
+            RefreshState::CurrentToken {
+                can_refresh: false, ..
+            } => match last_error {
+                Some(err) => {
+                    warn_session_expired_not_refreshed(&err);
+                    Err(err).context(QuerySnafu)
+                }
                 None => InvalidRefreshStateSnafu {
-                    message: "refresh_token called with None after Refreshed".to_string(),
+                    message: "refresh_token called with None after this streak's refresh was spent"
+                        .to_string(),
                 }
                 .fail(),
             },
@@ -2215,7 +2260,8 @@ impl RefreshContext {
     /// Execute an async operation with automatic token refresh on session expiry.
     ///
     /// On `SessionExpired`, refreshes the session token via master token and
-    /// retries exactly once. Implemented on top of the generic
+    /// retries. A successful call starts a new refresh streak, so a later
+    /// expiry is refreshed again. Implemented on top of the generic
     /// [`refresh::execute_with_refresh`](crate::refresh::execute_with_refresh)
     /// helper. Named to parallel
     /// [`execute_with_retry`](crate::http::retry::execute_with_retry).
@@ -2240,12 +2286,21 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
                 .as_ref()
                 .map(|t| t.session_token.clone())
                 .context(ConnectionNotInitializedSnafu)?;
-            // Stamp the token into the state machine on first read so
-            // that `refresh()` can detect — by comparing this token
-            // against the cache after acquiring the write lock — whether
-            // another request already rotated while we were waiting.
-            if matches!(self.state, RefreshState::Initial) {
-                self.state = RefreshState::FirstToken(token.clone());
+            // Stamp the token into the state machine on every read outside a
+            // refresh streak so that `refresh()` can detect — by comparing
+            // this token against the cache after acquiring the write lock —
+            // whether another request already rotated while we were waiting.
+            if !matches!(
+                self.state,
+                RefreshState::CurrentToken {
+                    can_refresh: false,
+                    ..
+                }
+            ) {
+                self.state = RefreshState::CurrentToken {
+                    token: token.clone(),
+                    can_refresh: true,
+                };
             }
             Ok(token)
         })
@@ -2280,16 +2335,25 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
 
     fn refresh(&mut self) -> crate::refresh::RefreshFuture<'_, Result<bool, ApiError>> {
         Box::pin(async move {
-            // One-shot state machine: the first refresh call does the
-            // work, subsequent calls return Ok(false) so the generic
-            // helper propagates the original error. `Initial` is
+            // One refresh per failure streak: the first refresh call does
+            // the work, later calls return Ok(false) so the generic helper
+            // propagates the original error until `note_success` starts a
+            // new streak. `Initial` is
             // unreachable in practice — `execute_with_refresh` always
             // calls `current()` first, which transitions Initial →
-            // FirstToken — but we keep a safe fallback rather than
+            // CurrentToken { can_refresh: true } — but we keep a safe fallback rather than
             // panicking on a misuse from a future caller.
             let failed_token = match &self.state {
-                RefreshState::FirstToken(t) => t.clone(),
-                RefreshState::Refreshed => return Ok(false),
+                RefreshState::CurrentToken {
+                    token,
+                    can_refresh: true,
+                } => token.clone(),
+                RefreshState::CurrentToken {
+                    can_refresh: false, ..
+                } => {
+                    tracing::warn!("Session expired again right after a refresh, not refreshing");
+                    return Ok(false);
+                }
                 RefreshState::Initial => {
                     debug_assert!(
                         false,
@@ -2299,7 +2363,6 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
                     return Ok(false);
                 }
             };
-            self.state = RefreshState::Refreshed;
 
             // Acquire the write lock — blocks other readers/writers during
             // refresh.
@@ -2314,6 +2377,10 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
             // without hitting GS.
             if tokens.session_token.reveal() != failed_token.reveal() {
                 tracing::debug!("Session already refreshed by another request");
+                self.state = RefreshState::CurrentToken {
+                    token: tokens.session_token.clone(),
+                    can_refresh: false,
+                };
                 return Ok(true);
             }
 
@@ -2342,12 +2409,20 @@ impl crate::refresh::Refresher<SensitiveString, ApiError> for RefreshContext {
                 }
             };
 
+            self.state = RefreshState::CurrentToken {
+                token: new_tokens.session_token.clone(),
+                can_refresh: false,
+            };
             *tokens_guard = Some(new_tokens);
             drop(tokens_guard);
 
             tracing::info!("Session refreshed, retrying operation");
             Ok(true)
         })
+    }
+
+    fn note_success(&mut self) {
+        self.reset_refresh_budget();
     }
 }
 
@@ -5795,6 +5870,189 @@ mod tests {
             .iter()
             .filter(|request| request.url.path() == "/session/token-request")
             .count()
+    }
+
+    async fn mount_counting_renewal(server: &wiremock::MockServer) {
+        let renewals = std::sync::atomic::AtomicUsize::new(0);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session/token-request"))
+            .respond_with(move |_: &wiremock::Request| {
+                let n = renewals.fetch_add(1, Ordering::SeqCst) + 1;
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "sessionToken": format!("renewed-session-{n}"),
+                        "masterToken": format!("renewed-master-{n}"),
+                        "sessionId": 1
+                    }
+                }))
+            })
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn should_renew_again_once_a_call_succeeded_with_the_renewed_token() {
+        let server = wiremock::MockServer::start().await;
+        mount_counting_renewal(&server).await;
+
+        let (mut ctx, _) = two_contexts(&server.uri());
+        ctx.refresh_token(None).await.unwrap();
+        ctx.refresh_token(Some(session_expired())).await.unwrap();
+        ctx.reset_refresh_budget();
+        ctx.refresh_token(None).await.unwrap();
+        ctx.refresh_token(Some(session_expired()))
+            .await
+            .expect("an accepted token that expires is renewed again");
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(token_request_count(&requests), 2);
+    }
+
+    #[tokio::test]
+    async fn should_not_renew_again_until_a_call_succeeded_with_the_renewed_token() {
+        let server = wiremock::MockServer::start().await;
+        mount_counting_renewal(&server).await;
+
+        let (mut ctx, _) = two_contexts(&server.uri());
+        ctx.refresh_token(None).await.unwrap();
+        ctx.refresh_token(Some(session_expired())).await.unwrap();
+        ctx.refresh_token(Some(session_expired()))
+            .await
+            .expect_err("a renewed token rejected before it succeeded is not renewed again");
+        ctx.refresh_token(Some(session_expired()))
+            .await
+            .expect_err("the refusal persists until a call succeeds");
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(token_request_count(&requests), 1);
+    }
+
+    #[tokio::test]
+    async fn should_still_refresh_after_a_cancelled_renewal() {
+        use crate::refresh::Refresher;
+        use std::time::Duration;
+
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session/token-request"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(60))
+                    .set_body_json(serde_json::json!({
+                        "success": true,
+                        "data": {
+                            "sessionToken": "too-late",
+                            "masterToken": "too-late",
+                            "sessionId": 1
+                        }
+                    })),
+            )
+            .mount(&server)
+            .await;
+
+        let (mut ctx, _) = two_contexts(&server.uri());
+        Refresher::<SensitiveString, ApiError>::current(&mut ctx)
+            .await
+            .unwrap();
+
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(50),
+            Refresher::<SensitiveString, ApiError>::refresh(&mut ctx),
+        )
+        .await;
+        assert!(
+            cancelled.is_err(),
+            "the hung renewal must be cancelled before it stores a token"
+        );
+
+        server.reset().await;
+        mount_counting_renewal(&server).await;
+
+        let rotated = Refresher::<SensitiveString, ApiError>::refresh(&mut ctx)
+            .await
+            .expect("cancelling before the new token is stored must not spend the streak budget");
+        assert!(rotated, "the retry after cancel must rotate");
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(token_request_count(&requests), 1);
+    }
+
+    #[tokio::test]
+    async fn should_renew_at_every_expiry_across_calls_through_execute_with_refresh() {
+        let server = wiremock::MockServer::start().await;
+        mount_counting_renewal(&server).await;
+
+        let (mut ctx, _) = two_contexts(&server.uri());
+        for _ in 0..3 {
+            let attempts = std::sync::atomic::AtomicUsize::new(0);
+            ctx.execute_with_refresh(|_| {
+                let first_attempt = attempts.fetch_add(1, Ordering::SeqCst) == 0;
+                async move {
+                    if first_attempt {
+                        Err(session_expired())
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .await
+            .expect("each expiry is renewed");
+        }
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(token_request_count(&requests), 3);
+    }
+
+    #[tokio::test]
+    async fn should_stop_after_one_renewal_when_no_call_succeeds_through_execute_with_refresh() {
+        let server = wiremock::MockServer::start().await;
+        mount_counting_renewal(&server).await;
+
+        let (mut ctx, _) = two_contexts(&server.uri());
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        ctx.execute_with_refresh(|_| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async { Err::<(), _>(session_expired()) }
+        })
+        .await
+        .expect_err("a renewed token that is rejected again ends the call");
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(token_request_count(&requests), 1);
+    }
+
+    #[tokio::test]
+    async fn should_renew_for_real_when_another_request_rotated_the_token_after_a_success() {
+        let server = wiremock::MockServer::start().await;
+        mount_counting_renewal(&server).await;
+
+        let (mut first, mut second) = two_contexts(&server.uri());
+        let fail_once = || {
+            let attempts = std::sync::atomic::AtomicUsize::new(0);
+            move |_token: SensitiveString| {
+                let first_attempt = attempts.fetch_add(1, Ordering::SeqCst) == 0;
+                async move {
+                    if first_attempt {
+                        Err(session_expired())
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
+        };
+
+        first.execute_with_refresh(fail_once()).await.unwrap();
+        second.execute_with_refresh(fail_once()).await.unwrap();
+        first.execute_with_refresh(fail_once()).await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            token_request_count(&requests),
+            3,
+            "the token the second context installed must not be mistaken for a refresh the first context already did"
+        );
     }
 
     #[tokio::test]

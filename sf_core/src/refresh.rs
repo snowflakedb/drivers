@@ -19,6 +19,10 @@
 //! `Ok(false)` from `refresh`, and the helper then propagates the original
 //! error. Callers that want a stricter cap can encode it inside `refresh`.
 //!
+//! A refresher that caps rotations per failure streak (rather than for its
+//! whole lifetime) learns that a streak ended from `note_success`, which the
+//! helper calls after every successful operation.
+//!
 //! # Object safety
 //!
 //! The trait carries `Resource` and `Err` as type parameters (rather than
@@ -58,11 +62,18 @@ where
     ///   exhausted); the helper propagates the original error.
     /// - `Err(e)` — the refresh itself failed; this is terminal.
     fn refresh(&mut self) -> RefreshFuture<'_, Result<bool, Err>>;
+
+    /// Called after `operation` succeeded with the current resource. A refresher
+    /// that caps refreshes per failure streak starts a new streak here, so a
+    /// resource that expires later can be rotated again. The default does
+    /// nothing.
+    fn note_success(&mut self) {}
 }
 
-/// Run `operation` against `refresher`'s resource, refreshing once on
-/// recoverable errors. Loops until either `operation` succeeds, the error
-/// is non-recoverable, or the refresher declines to rotate again.
+/// Run `operation` against `refresher`'s resource, refreshing on recoverable
+/// errors. Loops until either `operation` succeeds, the error is
+/// non-recoverable, or the refresher declines to rotate again. Every success
+/// is reported through [`Refresher::note_success`].
 pub async fn execute_with_refresh<R, Resource, Err, Op, Fut, T>(
     refresher: &mut R,
     operation: Op,
@@ -77,7 +88,10 @@ where
     loop {
         let resource = refresher.current().await?;
         let err = match operation(resource).await {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                refresher.note_success();
+                return Ok(value);
+            }
             Err(e) => e,
         };
         if !refresher.should_refresh(&err) {
@@ -196,6 +210,101 @@ mod tests {
         // returns Ok(false) → propagate.
         assert_eq!(*calls.lock().unwrap(), 2);
         assert_eq!(r.refresh_calls, 1);
+    }
+
+    struct StreakRefresher {
+        refreshes_in_streak: i32,
+        total_refreshes: i32,
+        successes: i32,
+    }
+
+    impl Refresher<i32, TestErr> for StreakRefresher {
+        fn current(&mut self) -> RefreshFuture<'_, Result<i32, TestErr>> {
+            Box::pin(async { Ok(0) })
+        }
+
+        fn should_refresh(&self, err: &TestErr) -> bool {
+            matches!(err, TestErr::Recoverable)
+        }
+
+        fn refresh(&mut self) -> RefreshFuture<'_, Result<bool, TestErr>> {
+            Box::pin(async move {
+                if self.refreshes_in_streak >= 1 {
+                    return Ok(false);
+                }
+                self.refreshes_in_streak += 1;
+                self.total_refreshes += 1;
+                Ok(true)
+            })
+        }
+
+        fn note_success(&mut self) {
+            self.successes += 1;
+            self.refreshes_in_streak = 0;
+        }
+    }
+
+    fn streak_refresher() -> StreakRefresher {
+        StreakRefresher {
+            refreshes_in_streak: 0,
+            total_refreshes: 0,
+            successes: 0,
+        }
+    }
+
+    async fn fail_once_then_succeed(r: &mut StreakRefresher) -> Result<i32, TestErr> {
+        let calls = Mutex::new(0);
+        execute_with_refresh(r, |v| {
+            let n = {
+                let mut g = calls.lock().unwrap();
+                *g += 1;
+                *g
+            };
+            async move {
+                if n == 1 {
+                    Err(TestErr::Recoverable)
+                } else {
+                    Ok(v)
+                }
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn reports_every_success_to_the_refresher() {
+        let mut r = streak_refresher();
+        execute_with_refresh(&mut r, |v| async move { Ok::<_, TestErr>(v) })
+            .await
+            .unwrap();
+        fail_once_then_succeed(&mut r).await.unwrap();
+        assert_eq!(r.successes, 2);
+    }
+
+    #[tokio::test]
+    async fn refreshes_again_in_a_later_call_after_a_success() {
+        let mut r = streak_refresher();
+        fail_once_then_succeed(&mut r).await.unwrap();
+        fail_once_then_succeed(&mut r).await.unwrap();
+        assert_eq!(r.total_refreshes, 2);
+    }
+
+    #[tokio::test]
+    async fn declines_a_second_rotation_within_one_streak() {
+        let mut r = streak_refresher();
+        let result: Result<i32, TestErr> =
+            execute_with_refresh(&mut r, |_v| async { Err(TestErr::Recoverable) }).await;
+        assert_eq!(result.unwrap_err(), TestErr::Recoverable);
+        assert_eq!(r.total_refreshes, 1);
+        assert_eq!(r.successes, 0);
+    }
+
+    #[tokio::test]
+    async fn does_not_report_a_failure_as_a_success() {
+        let mut r = streak_refresher();
+        let _: Result<i32, TestErr> =
+            execute_with_refresh(&mut r, |_v| async { Err(TestErr::Fatal) }).await;
+        assert_eq!(r.successes, 0);
     }
 
     #[tokio::test]
