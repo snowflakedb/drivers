@@ -471,7 +471,7 @@ class TestWrapperErrorTelemetry:
         assert ("ProgrammingError", "SnowflakeCursor.execute") in self._get_wrapper_errors(mock_db_api)
 
     def test_fetchone_closed_sends_wrapper_error(self, cursor, mock_db_api):
-        """fetchone uses @simplified_error_handling but still reports wrapper_error on failure."""
+        """fetchone uses @routes_own_errors but still reports wrapper_error on failure."""
         mock_db_api.telemetry_send_wrapper_error.reset_mock()
         cursor.close()
 
@@ -480,8 +480,20 @@ class TestWrapperErrorTelemetry:
 
         assert ("InterfaceError", "SnowflakeCursor.fetchone") in self._get_wrapper_errors(mock_db_api)
 
+    def test_dict_cursor_fetchone_closed_reports_concrete_class(self, connection, mock_db_api):
+        from snowflake.connector.cursor import DictCursor
+
+        cur = connection.cursor(DictCursor)
+        mock_db_api.telemetry_send_wrapper_error.reset_mock()
+        cur.close()
+
+        with pytest.raises(InterfaceError):
+            cur.fetchone()
+
+        assert self._get_wrapper_errors(mock_db_api) == [("InterfaceError", "DictCursor.fetchone")]
+
     def test_fetchmany_closed_sends_wrapper_error(self, cursor, mock_db_api):
-        """fetchmany uses @simplified_error_handling but still reports wrapper_error on failure."""
+        """fetchmany uses @routes_own_errors but still reports wrapper_error on failure."""
         mock_db_api.telemetry_send_wrapper_error.reset_mock()
         cursor.close()
 
@@ -598,6 +610,18 @@ class TestAsyncWrapperErrorTelemetry:
             _run_async(async_cursor.fetchone())
 
         assert ("InterfaceError", "SnowflakeCursor.fetchone") in self._get_wrapper_errors(mock_async_db_api)
+
+    def test_async_dict_cursor_fetchone_closed_reports_concrete_class(self, async_connection, mock_async_db_api):
+        from snowflake.connector.aio import DictCursor
+
+        cur = async_connection.cursor(DictCursor)
+        mock_async_db_api.telemetry_send_wrapper_error.reset_mock()
+        cur.close()
+
+        with pytest.raises(InterfaceError):
+            _run_async(cur.fetchone())
+
+        assert self._get_wrapper_errors(mock_async_db_api) == [("InterfaceError", "DictCursor.fetchone")]
 
     def test_async_connection_commit_error_reports_inner_source(self, async_connection, mock_async_db_api):
         mock_async_db_api.telemetry_send_wrapper_error.reset_mock()

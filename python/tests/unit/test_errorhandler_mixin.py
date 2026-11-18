@@ -12,7 +12,7 @@ from snowflake.connector._internal.errorhandler import (
     ErrorHandlerMixin,
     _errorhandler_active,
     route_exception,
-    simplified_error_handling,
+    routes_own_errors,
 )
 from snowflake.connector.errors import (
     Error,
@@ -320,22 +320,25 @@ class _SkipHotPath(ErrorHandlerMixin):
     def _errorhandler_cursor(self):
         return None
 
-    @simplified_error_handling
+    @routes_own_errors
     def hot_path(self):
-        raise ProgrammingError(msg="from skipped", errno=1)
+        try:
+            raise ProgrammingError(msg="from skipped", errno=1)
+        except Exception as exc:
+            self._reraise_via_errorhandler(_SkipHotPath.hot_path, exc)
 
     def wrapped(self):
         raise ProgrammingError(msg="from wrapped", errno=2)
 
 
-class TestSimplifiedErrorHandling:
-    def test_simplified_method_is_not_mixin_wrapped(self):
-        assert getattr(_SkipHotPath.hot_path, "_simplified_error_handling", False)
+class TestRoutesOwnErrors:
+    def test_routes_own_errors_method_is_not_mixin_wrapped(self):
+        assert getattr(_SkipHotPath.hot_path, "_routes_own_errors", False)
         assert "_errorhandler_active" not in _SkipHotPath.hot_path.__code__.co_names
         assert hasattr(_SkipHotPath.wrapped, "__wrapped__")
         assert "_errorhandler_active" in _SkipHotPath.wrapped.__code__.co_names
 
-    def test_simplified_method_still_routes(self):
+    def test_routes_own_errors_method_still_routes(self):
         obj = _SkipHotPath()
         with pytest.raises(ProgrammingError, match="from skipped"):
             obj.hot_path()

@@ -210,7 +210,7 @@ class TestFetchone:
 
 
 class TestFetchoneErrorhandlerWrapping:
-    """fetchone uses simplified error handling but still PEP 249-routes."""
+    """fetchone routes its own errors but still PEP 249-routes."""
 
     @pytest.fixture
     def mock_connection(self):
@@ -223,11 +223,11 @@ class TestFetchoneErrorhandlerWrapping:
         return SnowflakeCursor(mock_connection)
 
     def test_fetchone_is_not_errorhandler_wrapped(self):
-        """fetchone uses @simplified_error_handling, not the mixin ContextVar wrap."""
+        """fetchone uses @routes_own_errors, not the mixin ContextVar wrap."""
         from snowflake.connector.cursor import DictCursor
 
-        assert getattr(SnowflakeCursor.fetchone, "_simplified_error_handling", False)
-        assert getattr(DictCursor.fetchone, "_simplified_error_handling", False)
+        assert getattr(SnowflakeCursor.fetchone, "_routes_own_errors", False)
+        assert getattr(DictCursor.fetchone, "_routes_own_errors", False)
         assert "_errorhandler_active" not in SnowflakeCursor.fetchone.__code__.co_names
         assert "_errorhandler_active" in SnowflakeCursor.fetchall.__code__.co_names
 
@@ -313,6 +313,50 @@ class TestFetchoneErrorhandlerWrapping:
 
         assert len(cursor.messages) == 1
         assert cursor.messages[0][0] is DatabaseError
+
+
+class TestAsyncFetchone:
+    @pytest.fixture
+    def async_cursor(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        mock_connection.messages = []
+        return AsyncSnowflakeCursor(mock_connection)
+
+    def test_fetchone_on_closed_cursor_routes_error(self, async_cursor):
+        async_cursor._closed = True
+
+        with pytest.raises(InterfaceError, match="Cursor is closed"):
+            asyncio.run(async_cursor.fetchone())
+
+        assert len(async_cursor.messages) == 1
+        assert async_cursor.messages[0][0] is InterfaceError
+
+    def test_fetchone_awaits_prefetch_hook_before_reading(self, async_cursor):
+        calls: list[str] = []
+
+        async def hook() -> None:
+            calls.append("hook")
+            async_cursor._prefetch_hook = None
+
+        async_cursor._prefetch_hook = hook
+        async_cursor._iterator = MagicMock()
+        async_cursor._iterator.fetch_next = AsyncMock(side_effect=lambda default: calls.append("fetch") or (1,))
+
+        assert asyncio.run(async_cursor.fetchone()) == (1,)
+        assert calls == ["hook", "fetch"]
+
+    def test_fetchone_prefetch_unrouted_error_is_routed(self, async_cursor):
+        async def hook() -> None:
+            raise DatabaseError("Cannot retrieve data on the status of this query")
+
+        async_cursor._prefetch_hook = hook
+
+        with pytest.raises(DatabaseError):
+            asyncio.run(async_cursor.fetchone())
+
+        assert len(async_cursor.messages) == 1
+        assert async_cursor.messages[0][0] is DatabaseError
 
 
 class TestFetchall:
@@ -629,7 +673,7 @@ class TestFetchmany:
 
 
 class TestFetchmanyErrorhandlerWrapping:
-    """fetchmany uses simplified error handling but still PEP 249-routes."""
+    """fetchmany routes its own errors but still PEP 249-routes."""
 
     @pytest.fixture
     def mock_connection(self):
@@ -644,8 +688,8 @@ class TestFetchmanyErrorhandlerWrapping:
     def test_fetchmany_is_not_errorhandler_wrapped(self):
         from snowflake.connector.cursor import DictCursor
 
-        assert getattr(SnowflakeCursor.fetchmany, "_simplified_error_handling", False)
-        assert getattr(DictCursor.fetchmany, "_simplified_error_handling", False)
+        assert getattr(SnowflakeCursor.fetchmany, "_routes_own_errors", False)
+        assert getattr(DictCursor.fetchmany, "_routes_own_errors", False)
         assert "_errorhandler_active" not in SnowflakeCursor.fetchmany.__code__.co_names
         assert "_errorhandler_active" in SnowflakeCursor.fetchall.__code__.co_names
 

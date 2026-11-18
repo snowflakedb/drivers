@@ -232,7 +232,7 @@ class Error(Exception):
 
         new_exc = Error.errorhandler_make_exception(error_class, error_value)
         # The reconstructed exception must carry the routed flag so a
-        # @simplified_error_handling caller does not PEP route twice
+        # @routes_own_errors caller does not PEP route twice
         _mark_errorhandler_routed(new_exc)
         raise new_exc
 

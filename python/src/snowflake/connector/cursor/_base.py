@@ -44,7 +44,7 @@ from .._internal.decorators import (
     snowpark_compat,
 )
 from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
-from .._internal.errorhandler import simplified_error_handling
+from .._internal.errorhandler import routes_own_errors
 from .._internal.logging import get_logger
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     ABORT_QUERY_OUTCOME_ABORTED,
@@ -79,7 +79,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
     This is the abstract base for all cursor types, equivalent to
     ``SnowflakeCursorBase`` in the old connector. Concrete subclasses
-    must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
+    must override :pyattr:`_use_dict_result`.
     """
 
     _connection: Connection
@@ -690,42 +690,47 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # Intentionally no @api_telemetry on fetch methods - they are hot paths.
-    # fetchone / fetchmany use @simplified_error_handling so the success path
-    # avoids a ContextVar round-trip per call.
+    # fetchone / fetchmany route their own errors so the success path avoids
+    # a ContextVar round-trip per call.
     # ------------------------------------------------------------------
 
     def _prepare_fetch(self) -> None:
         # Consciously skip @requires_open_cursor_not_connection and
         # @with_prefetch_hook on fetch hot paths - both checks live here.
+        # fetchone carries an inline copy of these checks.
         if self._closed:
             raise InterfaceError(msg="Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
         if self._prefetch_hook is not None:
             self._prefetch_hook()
 
-    def _fetchone(self) -> Row | DictRow | None:
-        """Fetch the next row internally.
-
-        Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
-        Concrete subclasses expose this through a type-safe ``fetchone``.
-        """
-        try:
-            self._prepare_fetch()
-            if not self._iterator:
-                self._iterator = self._create_row_iterator()
-            row: Row | DictRow = next(self._iterator)
-            self._rownumber += 1
-            return row
-        except StopIteration:
-            return None
-
     @pep249
-    @simplified_error_handling
-    @abc.abstractmethod
+    @routes_own_errors
     def fetchone(self) -> Row | DictRow | None:
-        """Fetch the next row of a query result set."""
+        """
+        Fetch the next row of a query result set.
+
+        Returns:
+            Next row (a dict for ``DictCursor``, otherwise a tuple), or None
+            when no more data is available
+        """
+        # Per-row hot path: keeps _prepare_fetch inline.
+        try:
+            if self._closed:
+                raise InterfaceError(msg="Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+            if self._prefetch_hook is not None:
+                self._prefetch_hook()
+            iterator = self._iterator
+            if iterator is None:
+                iterator = self._iterator = self._create_row_iterator()
+            row: Row | DictRow | None = next(iterator, None)
+            if row is not None:
+                self._rownumber += 1
+            return row
+        except Exception as exc:
+            self._reraise_via_errorhandler(SnowflakeCursorBase.fetchone, exc)
 
     @pep249
-    @simplified_error_handling
+    @routes_own_errors
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -739,23 +744,26 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         Raises:
             ProgrammingError: If the number of rows is not zero or positive number
         """
-        self._prepare_fetch()
-        if size is None:
-            size = self.arraysize
+        try:
+            self._prepare_fetch()
+            if size is None:
+                size = self.arraysize
 
-        if size < 0:
-            raise ProgrammingError(
-                msg=f"The number of rows is not zero or positive number: {size}", errno=ER_INVALID_VALUE
-            )
+            if size < 0:
+                raise ProgrammingError(
+                    msg=f"The number of rows is not zero or positive number: {size}", errno=ER_INVALID_VALUE
+                )
 
-        if size == 0:
-            return []
+            if size == 0:
+                return []
 
-        if not self._iterator:
-            self._iterator = self._create_row_iterator()
-        rows = self._iterator.fetch_many(size)
-        self._rownumber += len(rows)
-        return rows
+            if self._iterator is None:
+                self._iterator = self._create_row_iterator()
+            rows = self._iterator.fetch_many(size)
+            self._rownumber += len(rows)
+            return rows
+        except Exception as exc:
+            self._reraise_via_errorhandler(SnowflakeCursorBase.fetchmany, exc)
 
     @pep249
     def fetchall(self) -> list[Any]:
@@ -766,7 +774,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             sequence: List of all remaining rows
         """
         self._prepare_fetch()
-        if not self._iterator:
+        if self._iterator is None:
             self._iterator = self._create_row_iterator()
         rows = self._iterator.fetch_all()
         self._rownumber += len(rows)

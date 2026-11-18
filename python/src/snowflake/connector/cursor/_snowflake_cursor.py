@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING
 
-from .._internal.cursor import Row
-from .._internal.errorhandler import simplified_error_handling
 from ._base import SnowflakeCursorBase
+
+
+if TYPE_CHECKING:
+    from .._internal.cursor import Row
 
 
 class SnowflakeCursor(SnowflakeCursorBase):
@@ -19,54 +21,49 @@ class SnowflakeCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return False
 
-    @simplified_error_handling
-    def fetchone(self) -> Row | None:
-        """
-        Fetch the next row of a query result set.
+    if TYPE_CHECKING:
 
-        Returns:
-            tuple: Next row, or None when no more data is available
-        """
-        return cast(Row | None, self._fetchone())
+        def fetchone(self) -> Row | None:
+            """
+            Fetch the next row of a query result set.
 
-    @simplified_error_handling
-    def fetchmany(self, size: int | None = None) -> list[Row]:
-        """
-        Fetch the next set of rows of a query result.
+            Returns:
+                tuple: Next row, or None when no more data is available
+            """
 
-        Args:
-            size (int): Number of rows to fetch (defaults to arraysize)
+        def fetchmany(self, size: int | None = None) -> list[Row]:
+            """
+            Fetch the next set of rows of a query result.
 
-        Returns:
-            list[tuple]: List of rows as tuples
-        """
-        return super().fetchmany(size)
+            Args:
+                size (int): Number of rows to fetch (defaults to arraysize)
 
-    def fetchall(self) -> list[Row]:
-        """
-        Fetch all (remaining) rows of a query result.
+            Returns:
+                list[tuple]: List of rows as tuples
+            """
 
-        Returns:
-            list[tuple]: List of all remaining rows as tuples
-        """
-        return super().fetchall()
+        def fetchall(self) -> list[Row]:
+            """
+            Fetch all (remaining) rows of a query result.
 
-    def __next__(self) -> Row:
-        """
-        Fetch the next row from the currently executed statement.
+            Returns:
+                list[tuple]: List of all remaining rows as tuples
+            """
 
-        Returns:
-            tuple: Next row
+        def __next__(self) -> Row:
+            """
+            Fetch the next row from the currently executed statement.
 
-        Raises:
-            StopIteration: When no more rows are available
-        """
-        return cast(Row, super().__next__())
+            Returns:
+                tuple: Next row
 
-    def next(self) -> Row:
-        """Python 2 compatibility alias for ``__next__``. Returns a tuple row.
+            Raises:
+                StopIteration: When no more rows are available
+            """
 
-        Raises:
-            StopIteration: When no more rows are available
-        """
-        return self.__next__()
+        def next(self) -> Row:
+            """Python 2 compatibility alias for ``__next__``. Returns a tuple row.
+
+            Raises:
+                StopIteration: When no more rows are available
+            """

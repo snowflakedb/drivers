@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING
 
-from ..._internal.cursor import Row
-from ..._internal.errorhandler import simplified_error_handling
 from ._base import SnowflakeCursorBase
+
+
+if TYPE_CHECKING:
+    from ..._internal.cursor import Row
 
 
 class SnowflakeCursor(SnowflakeCursorBase):
@@ -19,54 +21,49 @@ class SnowflakeCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return False
 
-    @simplified_error_handling
-    async def fetchone(self) -> Row | None:
-        """
-        Fetch the next row of a query result set.
+    if TYPE_CHECKING:
 
-        Returns:
-            tuple: Next row, or None when no more data is available
-        """
-        return cast(Row | None, await self._fetchone())
+        async def fetchone(self) -> Row | None:
+            """
+            Fetch the next row of a query result set.
 
-    @simplified_error_handling
-    async def fetchmany(self, size: int | None = None) -> list[Row]:
-        """
-        Fetch the next set of rows of a query result.
+            Returns:
+                tuple: Next row, or None when no more data is available
+            """
 
-        Args:
-            size (int): Number of rows to fetch (defaults to arraysize)
+        async def fetchmany(self, size: int | None = None) -> list[Row]:
+            """
+            Fetch the next set of rows of a query result.
 
-        Returns:
-            list[tuple]: List of rows as tuples
-        """
-        return await super().fetchmany(size)
+            Args:
+                size (int): Number of rows to fetch (defaults to arraysize)
 
-    async def fetchall(self) -> list[Row]:
-        """
-        Fetch all (remaining) rows of a query result.
+            Returns:
+                list[tuple]: List of rows as tuples
+            """
 
-        Returns:
-            list[tuple]: List of all remaining rows as tuples
-        """
-        return await super().fetchall()
+        async def fetchall(self) -> list[Row]:
+            """
+            Fetch all (remaining) rows of a query result.
 
-    async def __anext__(self) -> Row:
-        """
-        Fetch the next row from the currently executed statement.
+            Returns:
+                list[tuple]: List of all remaining rows as tuples
+            """
 
-        Returns:
-            tuple: Next row
+        async def __anext__(self) -> Row:
+            """
+            Fetch the next row from the currently executed statement.
 
-        Raises:
-            StopAsyncIteration: When no more rows are available
-        """
-        return cast(Row, await super().__anext__())
+            Returns:
+                tuple: Next row
 
-    async def next(self) -> Row:
-        """Python 2 compatibility alias for ``__anext__``. Returns a tuple row.
+            Raises:
+                StopAsyncIteration: When no more rows are available
+            """
 
-        Raises:
-            StopAsyncIteration: When no more rows are available
-        """
-        return await self.__anext__()
+        async def next(self) -> Row:
+            """Python 2 compatibility alias for ``__anext__``. Returns a tuple row.
+
+            Raises:
+                StopAsyncIteration: When no more rows are available
+            """

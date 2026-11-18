@@ -13,9 +13,10 @@ call that catches an exception reports it, tagged with its own method name,
 but only the outermost frame in a call chain hands the error to the PEP 249
 errorhandler, so PEP 249 routing still fires exactly once.
 
-Hot-path methods may use ``@simplified_error_handling`` instead of the mixin wrap:
-failures still go through ``_reraise_via_errorhandler``, but the success path
-skips the ContextVar round-trip.
+Hot-path methods may use ``@routes_own_errors`` instead of the mixin wrap and
+catch ``Exception`` in their own body: failures still go through
+``_reraise_via_errorhandler``, but the success path skips the ContextVar
+round-trip.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import inspect
 
 from collections.abc import Callable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
 from ..errors import Error, ErrorDetails
 from .decorators import _schedule_async_telemetry, _telemetry_client_if_enabled
@@ -43,41 +44,20 @@ logger = get_logger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Set on an Error that has already been through ``route_exception`` / the
-# default handler, so a @simplified_error_handling hot path does not PEP 249-route
+# default handler, so a @routes_own_errors hot path does not PEP 249-route
 # twice when an inner wrapped method already did.
 _ROUTED_ATTR = "_sf_errorhandler_routed"
-_SIMPLIFIED_ERROR_HANDLING_ATTR = "_simplified_error_handling"
+_ROUTES_OWN_ERRORS_ATTR = "_routes_own_errors"
 
 
-def simplified_error_handling(func: F) -> F:
-    """Route failures without the mixin ContextVar round-trip on the success path.
+def routes_own_errors(func: F) -> F:
+    """Exempt *func* from ``ErrorHandlerMixin`` wrapping without adding a call frame.
 
-    Skips ``ErrorHandlerMixin`` auto-wrapping and installs a cheap ``try/except``
-    that calls ``_reraise_via_errorhandler`` (PEP 249 routing + ``wrapper_error`` telemetry).
+    For hot paths whose body catches ``Exception`` and calls
+    ``_reraise_via_errorhandler`` (or ``_reraise_via_errorhandler_async``) itself.
     """
-    if inspect.iscoroutinefunction(func):
-
-        @functools.wraps(func)
-        async def async_wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:
-            try:
-                return await func(self, *args, **kwargs)
-            except Exception as exc:
-                await self._reraise_via_errorhandler_async(func, exc)
-
-        wrapper: Callable[..., Any] = async_wrapper
-    else:
-
-        @functools.wraps(func)
-        def sync_wrapper(self: ErrorHandlerMixin, *args: Any, **kwargs: Any) -> Any:
-            try:
-                return func(self, *args, **kwargs)
-            except Exception as exc:
-                self._reraise_via_errorhandler(func, exc)
-
-        wrapper = sync_wrapper
-
-    setattr(wrapper, _SIMPLIFIED_ERROR_HANDLING_ATTR, True)
-    return cast(F, wrapper)
+    setattr(func, _ROUTES_OWN_ERRORS_ATTR, True)
+    return func
 
 
 def _mark_errorhandler_routed(exc: BaseException) -> None:
@@ -123,7 +103,7 @@ class ErrorHandlerMixin:
     def _reraise_via_errorhandler(self, method: Callable[..., Any], exc: BaseException) -> NoReturn:
         """Report ``wrapper_error`` telemetry and PEP 249-route *exc* unless already routed.
 
-        Used by ``@simplified_error_handling`` instead of paying a ContextVar
+        Used by ``@routes_own_errors`` methods instead of paying a ContextVar
         round-trip on every successful call.
         """
         _report_wrapper_error(self, method, exc)
@@ -146,7 +126,7 @@ def _apply_errorhandler(cls: type) -> None:
         if name.startswith("_"):
             continue
         attr = vars(cls)[name]
-        if getattr(attr, _SIMPLIFIED_ERROR_HANDLING_ATTR, False):
+        if getattr(attr, _ROUTES_OWN_ERRORS_ATTR, False):
             continue
         # descriptors — not regular instance methods
         if isinstance(attr, (property, classmethod, staticmethod)):
