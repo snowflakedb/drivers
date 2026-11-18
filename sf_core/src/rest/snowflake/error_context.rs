@@ -140,6 +140,9 @@ impl RestError {
             | RestError::NativeOkta { .. }
             | RestError::ExternalBrowser { .. }
             | RestError::OAuthFlow { .. }
+            | RestError::DPoPBinding { .. }
+            | RestError::DPoPBindingUnsupported { .. }
+            | RestError::DPoPSessionNotBound { .. }
             | RestError::WorkloadIdentityAttestation { .. }
             | RestError::InvalidSnowflakeResponse { .. }
             | RestError::Communication { .. }

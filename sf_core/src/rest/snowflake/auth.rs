@@ -115,13 +115,11 @@ pub struct AuthRequestData {
     pub provider: Option<String>,
     #[serde(rename = "SPCS_TOKEN", skip_serializing_if = "Option::is_none")]
     pub spcs_token: Option<SensitiveString>,
-    /// Transient DPoP JWK JSON carried from the OAuth flow to
-    /// `send_login_request` when DPoP is enabled. Never serialized into
-    /// the login-request body — it is consumed by `send_login_request`
-    /// to sign the RFC 9449 DPoP proof JWT attached as an HTTP header
-    /// (matching JDBC's `DPoPUtil` pattern).
+    /// The key that signs the login request's DPoP proof (RFC 9449): a
+    /// DPoP-bound session's key, or the OAuth flow's key. Never serialized
+    /// into the login-request body; the proof goes in an HTTP header.
     #[serde(skip)]
-    pub dpop_jwk_json: Option<SensitiveString>,
+    pub dpop_key: Option<crate::crypto::dpop::DPoPKey>,
     /// Whether this request uses a cached token (ID token or MFA token).
     /// Guards the evict-and-retry path so we don't retry pointlessly when
     /// the original login didn't use a cached token.
@@ -205,6 +203,10 @@ pub struct AuthResponseMain {
     /// Session ID for the current session
     #[serde(rename = "sessionId")]
     pub session_id: Option<i64>,
+    /// True when the server bound the session to the login's DPoP key.
+    /// Absent on servers or accounts without DPoP-bound sessions.
+    #[serde(rename = "dpopBound")]
+    pub dpop_bound: Option<bool>,
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]

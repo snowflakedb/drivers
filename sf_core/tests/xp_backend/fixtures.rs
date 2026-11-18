@@ -60,6 +60,7 @@ pub fn login_parameters() -> LoginParameters {
         session_parameters: None,
         spcs_token: None,
         disable_parallel_user_prompt: true,
+        enable_dpop_bound_session: false,
         validate_session_token: true,
         browser_hooks: Default::default(),
     }

@@ -2,7 +2,9 @@
 //!
 //! ES256 P-256 keypair, proof JWT with `jti`/`htm`/`htu`/`iat` (and an
 //! optional `nonce`), and the RFC 7638 JWK thumbprint. The OAuth flows use
-//! them for the IdP token request and the Snowflake login proof.
+//! them for the IdP token request and the Snowflake login proof; DPoP-bound
+//! key-pair and workload identity logins use them for the login proof and the
+//! key-pair JWT's `cnf.jkt`.
 //!
 //! Implementation notes:
 //! - JWS signature is hand-built so we can attach the `jwk` header parameter
@@ -46,6 +48,12 @@ const UNCOMPRESSED_POINT_BYTES: usize = 1 + 2 * COORD_BYTES;
 #[derive(Clone)]
 pub(crate) struct DPoPKey {
     key: Arc<EcdsaKeyPair>,
+}
+
+impl std::fmt::Debug for DPoPKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DPoPKey").finish_non_exhaustive()
+    }
 }
 
 impl DPoPKey {
@@ -322,6 +330,33 @@ pub enum DPoPError {
 }
 
 #[cfg(test)]
+pub(crate) mod test_fixtures {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use serde_json::Value;
+
+    /// The header and claims of a JWT, such as a DPoP proof or a key-pair JWT.
+    pub(crate) fn decode_jwt(jwt: &str) -> (Value, Value) {
+        let segment = |index: usize| -> Value {
+            let part = jwt.split('.').nth(index).expect("JWT segment");
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(part).expect("base64url"))
+                .expect("JSON segment")
+        };
+        (segment(0), segment(1))
+    }
+
+    /// The RFC 7638 thumbprint of the key in a proof header's `jwk`.
+    pub(crate) fn header_jkt(header: &Value) -> String {
+        let canonical = format!(
+            r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
+            header["jwk"]["x"].as_str().expect("jwk x"),
+            header["jwk"]["y"].as_str().expect("jwk y")
+        );
+        URL_SAFE_NO_PAD.encode(openssl::sha::sha256(canonical.as_bytes()))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::Value;
@@ -351,6 +386,14 @@ mod tests {
     /// `AcquiredOAuthToken` and `AuthRequestData`, both of which derive
     /// `Debug`, so the wrapper is what keeps a `{:?}` or a `tracing` field
     /// from printing a usable signing key.
+    #[test]
+    fn key_is_redacted_when_formatted() {
+        assert_eq!(
+            format!("{:?}", DPoPKey::generate().unwrap()),
+            "DPoPKey { .. }"
+        );
+    }
+
     #[test]
     fn private_jwk_is_redacted_when_formatted() {
         let key = DPoPKey::generate().expect("generate");

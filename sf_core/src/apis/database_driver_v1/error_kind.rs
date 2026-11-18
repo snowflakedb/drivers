@@ -141,10 +141,13 @@ fn kind_from_query_rest_error(err: &RestError) -> ErrorKind {
         RestError::OperationTimeout { .. } => ErrorKind::Timeout,
         RestError::Communication { .. } | RestError::HttpRetry { .. } => ErrorKind::Io,
         RestError::InvalidHeaderValue { .. } => ErrorKind::InvalidArgument,
+        RestError::DPoPBindingUnsupported { .. } => ErrorKind::InvalidArgument,
         RestError::Authentication { .. }
         | RestError::NativeOkta { .. }
         | RestError::ExternalBrowser { .. }
         | RestError::OAuthFlow { .. }
+        | RestError::DPoPBinding { .. }
+        | RestError::DPoPSessionNotBound { .. }
         | RestError::WorkloadIdentityAttestation { .. }
         | RestError::WifSdkHttpClient { .. }
         | RestError::LoginError { .. }

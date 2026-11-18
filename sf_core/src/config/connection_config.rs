@@ -649,6 +649,8 @@ impl LoginParameters {
             session_parameters,
             spcs_token,
             disable_parallel_user_prompt: config.disable_parallel_user_prompt,
+            // TODO(SNOW-4443131): set from enable_dpop_bound_session once the server binds sessions.
+            enable_dpop_bound_session: false,
             validate_session_token,
             browser_hooks,
         }

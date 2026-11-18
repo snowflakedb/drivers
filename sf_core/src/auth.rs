@@ -61,6 +61,15 @@ struct Claim<'a> {
     iss: &'a str,
     iat: i64,
     exp: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cnf: Option<Confirmation<'a>>,
+}
+
+/// RFC 7800 confirmation claim, binding the JWT to a DPoP key by its RFC 7638
+/// thumbprint.
+#[derive(Debug, Serialize)]
+struct Confirmation<'a> {
+    jkt: &'a str,
 }
 
 pub(crate) struct KeyPairJwt {
@@ -68,6 +77,7 @@ pub(crate) struct KeyPairJwt {
     sub: String,
     iss: String,
     jwt_timeout_secs: i64,
+    dpop_jkt: Option<String>,
 }
 
 impl KeyPairJwt {
@@ -95,7 +105,14 @@ impl KeyPairJwt {
             sub,
             iss,
             jwt_timeout_secs,
+            dpop_jkt: None,
         })
+    }
+
+    /// Adds `cnf.jkt` to every JWT signed from now on, so the server binds the
+    /// session to the DPoP key with this thumbprint.
+    pub(crate) fn bind_to_dpop_key(&mut self, jkt: String) {
+        self.dpop_jkt = Some(jkt);
     }
 
     pub(crate) fn sign(&self) -> Result<SensitiveString, AuthError> {
@@ -110,6 +127,7 @@ impl KeyPairJwt {
             exp: now_secs
                 .checked_add(self.jwt_timeout_secs)
                 .context(JWTExpirationOverflowSnafu)?,
+            cnf: self.dpop_jkt.as_deref().map(|jkt| Confirmation { jkt }),
         };
 
         let header = URL_SAFE_NO_PAD.encode(format!(
@@ -377,6 +395,7 @@ mod tests {
             session_parameters: None,
             spcs_token: None,
             disable_parallel_user_prompt: false,
+            enable_dpop_bound_session: false,
             validate_session_token: true,
             browser_hooks: Default::default(),
         };

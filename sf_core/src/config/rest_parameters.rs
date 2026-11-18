@@ -287,6 +287,9 @@ pub struct LoginParameters {
     pub session_parameters: Option<HashMap<String, String>>,
     pub spcs_token: Option<SensitiveString>,
     pub disable_parallel_user_prompt: bool,
+    /// Bind the session to a per-connection DPoP key. Only valid with
+    /// [`LoginMethod::PrivateKey`] and [`LoginMethod::WorkloadIdentity`].
+    pub enable_dpop_bound_session: bool,
     /// Set from `WrapperPresets::validate_session_token`, which documents the
     /// tradeoff. Inert for every login method but [`LoginMethod::SessionToken`].
     pub validate_session_token: bool,
@@ -322,6 +325,8 @@ impl LoginParameters {
             spcs_token: None,
             disable_parallel_user_prompt: settings
                 .get_bool_or(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str(), true),
+            // TODO(SNOW-4443131): set from enable_dpop_bound_session once the server binds sessions.
+            enable_dpop_bound_session: false,
             validate_session_token: true,
             browser_hooks: BrowserHooks::default(),
         })

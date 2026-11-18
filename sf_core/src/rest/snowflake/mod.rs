@@ -967,14 +967,10 @@ pub(crate) async fn auth_request_data(
             data.token = Some(acquired.access_token);
             data.authenticator = Some(authenticator::OAUTH.to_string());
             data.oauth_type = Some("OAUTH_AUTHORIZATION_CODE".to_string());
-            // `dpop_jwk_json` is `Option<String>`: `Some` when DPoP was
-            // enabled, `None` otherwise, so the assignment is implicitly
-            // conditional. The JWK is carried through login data so the
-            // driver can build a DPoP proof header on the Snowflake login
-            // request; the server validates it statelessly against the
-            // thumbprint (`jkt`) already embedded in the access token
+            // With DPoP, the OAuth key also signs the Snowflake login proof;
+            // the server checks it against the `jkt` in the access token
             // (RFC 9449).
-            data.dpop_jwk_json = acquired.dpop_jwk_json;
+            data.dpop_key = oauth_dpop_key(acquired.dpop_jwk_json)?;
         }
         // Client Credentials is external-IdP only and tokens are
         // intentionally not cached. On Snowflake error codes
@@ -989,8 +985,8 @@ pub(crate) async fn auth_request_data(
             data.token = Some(acquired.access_token);
             data.authenticator = Some(authenticator::OAUTH.to_string());
             data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
-            // See AC branch above for why dpop_jwk_json is carried here.
-            data.dpop_jwk_json = acquired.dpop_jwk_json;
+            // See the authorization code branch above.
+            data.dpop_key = oauth_dpop_key(acquired.dpop_jwk_json)?;
         }
         LoginMethod::WorkloadIdentity(cfg) => {
             // Verify the host is a recognized Snowflake endpoint before
@@ -1139,37 +1135,28 @@ async fn send_login_request(
 
     let user_agent = user_agent(&login_parameters.client_info);
 
-    // Drift C.5: when the OAuth flow handed us a DPoP JWK alongside the
-    // access token, sign a DPoP proof JWT for the Snowflake login URL on
-    // every send (including retries — `proof_jwt` includes a fresh `jti`
-    // and `iat` per RFC 9449 §4.2). The key is parsed once up front so a
-    // malformed JWK fails the login fast instead of inside the retry
-    // closure. Snowflake's GS does not issue `use_dpop_nonce` for login,
-    // so we don't replicate the OAuth-token-endpoint nonce retry here
-    // (matches JDBC `SessionUtil.java:746-750`).
-    let dpop_signer: Option<DPoPSigner> = if let Some(jwk_json) = login_request
-        .data
-        .dpop_jwk_json
-        .as_ref()
-        .map(SensitiveString::reveal)
-    {
-        let key = crate::crypto::dpop::DPoPKey::from_jwk_json(jwk_json)
-            .map_err(oauth::OAuthError::from)
-            .context(OAuthFlowSnafu)?;
-        let url = Url::parse(&login_url).context(UrlJoinSnafu {
-            path: "/session/v1/login-request",
-        })?;
-        Some(DPoPSigner {
-            key: std::sync::Arc::new(key),
-            url: std::sync::Arc::new(url),
-        })
-    } else {
-        None
+    // The login's DPoP key signs a proof for the login URL on every send
+    // (including retries; each proof has a fresh `jti` and `iat`, RFC 9449
+    // §4.2). Snowflake does not issue `use_dpop_nonce` for login, so there is
+    // no nonce retry here (matches JDBC `SessionUtil.java:746-750`).
+    let dpop_signer = match &login_request.data.dpop_key {
+        Some(key) => Some(DPoPSigner {
+            key: key.clone(),
+            url: Url::parse(&login_url).context(UrlJoinSnafu {
+                path: "/session/v1/login-request",
+            })?,
+        }),
+        None => None,
     };
 
-    let key_pair_jwt = load_key_pair_jwt(login_parameters)
+    let mut key_pair_jwt = load_key_pair_jwt(login_parameters)
         .await
         .context(AuthenticationSnafu)?;
+    if let (Some(jwt), Some(signer)) = (key_pair_jwt.as_mut(), dpop_signer.as_ref()) {
+        jwt.bind_to_dpop_key(
+            crate::crypto::dpop::jwk_thumbprint(&signer.key).context(DPoPBindingSnafu)?,
+        );
+    }
 
     let build_request = || {
         let mut request = login_request.clone();
@@ -1212,12 +1199,13 @@ async fn send_login_request(
             builder = builder.timeout(timeout);
         }
         if let Some(signer) = dpop_signer.as_ref() {
-            // Signing is infallible once `from_jwk_json` succeeded above
-            // (only openssl primitive failures could surface here, which
-            // would have already failed the validation step).
-            let proof = crate::crypto::dpop::proof_jwt(&signer.key, "POST", &signer.url, None)
-                .expect("DPoP proof generation must succeed for a pre-validated key");
-            builder = builder.header("DPoP", proof.reveal());
+            match crate::crypto::dpop::proof_jwt(&signer.key, "POST", &signer.url, None) {
+                Ok(proof) => builder = builder.header("DPoP", proof.reveal()),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    "Failed to sign the DPoP login proof; sending the login request without one"
+                ),
+            }
         }
         builder
     };
@@ -1350,13 +1338,23 @@ async fn complete_duo_challenge(
     duo_continuation_failed(push_response)
 }
 
-/// Drift C.5: per-request DPoP signing context for `send_login_request`.
-/// Holds an `Arc`-shared key and login URL so the `build_request`
-/// closure (called once per retry attempt) can stamp a fresh proof JWT
-/// without moving values out of the surrounding scope.
+/// The key and login URL that sign a fresh DPoP proof on each login attempt.
 struct DPoPSigner {
-    key: std::sync::Arc<crate::crypto::dpop::DPoPKey>,
-    url: std::sync::Arc<Url>,
+    key: crate::crypto::dpop::DPoPKey,
+    url: Url,
+}
+
+/// The OAuth flow's DPoP key, parsed once from the JWK it hands over.
+fn oauth_dpop_key(
+    jwk_json: Option<SensitiveString>,
+) -> Result<Option<crate::crypto::dpop::DPoPKey>, RestError> {
+    jwk_json
+        .map(|json| {
+            crate::crypto::dpop::DPoPKey::from_jwk_json(json.reveal())
+                .map_err(oauth::OAuthError::from)
+        })
+        .transpose()
+        .context(OAuthFlowSnafu)
 }
 
 #[tracing::instrument(
@@ -1418,6 +1416,24 @@ pub async fn snowflake_login_with_client(
 
     // Record key fields in the span
     tracing::Span::current().record("account_name", &login_parameters.account_name);
+
+    if login_parameters.enable_dpop_bound_session {
+        if !matches!(
+            login_parameters.login_method,
+            LoginMethod::PrivateKey { .. } | LoginMethod::WorkloadIdentity(_)
+        ) {
+            return DPoPBindingUnsupportedSnafu {
+                reason: "requires the SNOWFLAKE_JWT (key-pair) or WORKLOAD_IDENTITY authenticator",
+            }
+            .fail();
+        }
+        if xp_backend.is_some() {
+            return DPoPBindingUnsupportedSnafu {
+                reason: "isn't supported when a host backend handles login",
+            }
+            .fail();
+        }
+    }
 
     if let Some(backend) = xp_backend {
         tracing::info!("Delegating login to the registered host backend");
@@ -1562,7 +1578,7 @@ pub async fn snowflake_login_with_client(
     // Build the login request data (handles all auth methods including Okta SAML exchange).
     // For prompt-locked callers the existing cache lookups inside this function
     // (lines for ID token / MFA token) serve as the post-lock double-check.
-    let login_request_data = auth_request_data(
+    let mut login_request_data = auth_request_data(
         clients,
         login_parameters,
         session_parameters,
@@ -1571,6 +1587,10 @@ pub async fn snowflake_login_with_client(
         retry_policy,
     )
     .await?;
+    if login_parameters.enable_dpop_bound_session {
+        login_request_data.dpop_key =
+            Some(crate::crypto::dpop::DPoPKey::generate().context(DPoPBindingSnafu)?);
+    }
     tracing::Span::current().record("login_name", &login_request_data.login_name);
     let login_request = AuthRequest {
         data: login_request_data,
@@ -1877,12 +1897,17 @@ pub async fn snowflake_login_with_client(
 
     let server_version = auth_response.data.server_version.clone();
 
+    if login_parameters.enable_dpop_bound_session && auth_response.data.dpop_bound != Some(true) {
+        return DPoPSessionNotBoundSnafu.fail();
+    }
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
         master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
         session_params_count = session_params.as_ref().map(|p| p.len()),
         server_version = server_version.as_deref(),
+        dpop_bound = login_parameters.enable_dpop_bound_session,
         "Snowflake login completed successfully"
     );
     Ok(LoginResult {
@@ -3295,6 +3320,26 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("DPoP session binding failed: {source}"))]
+    DPoPBinding {
+        source: crate::crypto::dpop::DPoPError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("'enable_dpop_bound_session' {reason}"))]
+    DPoPBindingUnsupported {
+        reason: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "The server did not bind the session to the DPoP key; DPoP-bound sessions are \
+         not enabled for this account"
+    ))]
+    DPoPSessionNotBound {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Workload Identity Federation attestation failed: {source}"))]
     WorkloadIdentityAttestation {
         source: workload_identity::AttestationError,
@@ -3939,6 +3984,7 @@ mod tests {
             session_parameters: None,
             spcs_token: None,
             disable_parallel_user_prompt: false,
+            enable_dpop_bound_session: false,
             validate_session_token: true,
             browser_hooks: Default::default(),
         }
@@ -5876,6 +5922,229 @@ mod tests {
             assert_eq!(
                 result.tokens.session_token.reveal().as_str(),
                 "session-token"
+            );
+        }
+    }
+
+    mod dpop_bound_session_tests {
+        use super::*;
+        use crate::crypto::dpop::test_fixtures::{decode_jwt, header_jkt};
+        use std::sync::{Arc, Mutex};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        fn member_names(value: &serde_json::Value) -> Vec<String> {
+            match value {
+                serde_json::Value::Object(map) => map
+                    .iter()
+                    .flat_map(|(name, member)| {
+                        std::iter::once(name.clone()).chain(member_names(member))
+                    })
+                    .collect(),
+                serde_json::Value::Array(items) => items.iter().flat_map(member_names).collect(),
+                _ => Vec::new(),
+            }
+        }
+
+        fn key_pair_params(server_url: String, enable_dpop_bound_session: bool) -> LoginParameters {
+            let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+            let pem = String::from_utf8(rsa.private_key_to_pem().unwrap()).unwrap();
+            LoginParameters {
+                server_url,
+                login_method: LoginMethod::PrivateKey {
+                    username: "testuser".to_string(),
+                    private_key: pem.into(),
+                    passphrase: None,
+                    jwt_timeout_secs: 60,
+                },
+                enable_dpop_bound_session,
+                ..test_login_params()
+            }
+        }
+
+        async fn login(params: &LoginParameters) -> Result<LoginResult, RestError> {
+            snowflake_login_with_client(
+                &LoginClients::new(&reqwest::Client::new()),
+                params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                None,
+            )
+            .await
+        }
+
+        fn login_response(dpop_bound: Option<bool>) -> ResponseTemplate {
+            let mut data = serde_json::json!({
+                "token": "session",
+                "masterToken": "master",
+                "sessionId": 1
+            });
+            if let Some(bound) = dpop_bound {
+                data["dpopBound"] = bound.into();
+            }
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "success": true, "data": data }))
+        }
+
+        /// Records the `DPoP` header and the key-pair JWT of the last login request.
+        async fn mount_login(
+            server: &MockServer,
+            dpop_bound: Option<bool>,
+        ) -> Arc<Mutex<Option<(Option<String>, String)>>> {
+            let seen = Arc::new(Mutex::new(None));
+            let seen_by_mock = seen.clone();
+            Mock::given(method("POST"))
+                .and(path("/session/v1/login-request"))
+                .respond_with(move |req: &Request| {
+                    let proof = req
+                        .headers
+                        .get("DPoP")
+                        .map(|v| v.to_str().unwrap().to_string());
+                    let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                    let jwt = body["data"]["TOKEN"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    *seen_by_mock.lock().unwrap() = Some((proof, jwt));
+                    login_response(dpop_bound)
+                })
+                .mount(server)
+                .await;
+            seen
+        }
+
+        #[tokio::test]
+        async fn key_pair_login_sends_a_proof_and_binds_the_jwt_to_its_key() {
+            let server = MockServer::start().await;
+            let seen = mount_login(&server, Some(true)).await;
+
+            login(&key_pair_params(server.uri(), true))
+                .await
+                .expect("bound login");
+
+            let (proof, jwt) = seen.lock().unwrap().clone().expect("login request");
+            let proof = proof.expect("DPoP header on the login request");
+            let (header, claims) = decode_jwt(&proof);
+            assert_eq!(header["typ"], "dpop+jwt");
+            assert_eq!(claims["htm"], "POST");
+            assert_eq!(
+                claims["htu"],
+                format!("{}/session/v1/login-request", server.uri())
+            );
+            let jkt = header_jkt(&header);
+            assert_eq!(
+                decode_jwt(&jwt).1["cnf"]["jkt"],
+                jkt,
+                "the key-pair JWT must carry the proof key's thumbprint"
+            );
+        }
+
+        #[tokio::test]
+        async fn the_login_body_never_carries_the_dpop_key() {
+            let server = MockServer::start().await;
+            mount_login(&server, Some(true)).await;
+
+            login(&key_pair_params(server.uri(), true))
+                .await
+                .expect("bound login");
+
+            let requests = server.received_requests().await.expect("request recording");
+            let body: serde_json::Value =
+                serde_json::from_slice(&requests[0].body).expect("JSON login body");
+            let names = member_names(&body);
+            assert!(
+                !names
+                    .iter()
+                    .any(|name| matches!(name.as_str(), "jwk" | "d" | "dpop_key")),
+                "the login body must not carry the DPoP JWK, got members {names:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn login_fails_when_the_server_does_not_bind_the_session() {
+            for dpop_bound in [None, Some(false)] {
+                let server = MockServer::start().await;
+                mount_login(&server, dpop_bound).await;
+
+                let result = login(&key_pair_params(server.uri(), true)).await;
+
+                assert!(
+                    matches!(result, Err(RestError::DPoPSessionNotBound { .. })),
+                    "dpopBound={dpop_bound:?} must fail the connection, got {result:?}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn unsupported_login_methods_fail_before_any_request() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(login_response(Some(true)))
+                .expect(0)
+                .mount(&server)
+                .await;
+            let session_token = LoginMethod::SessionToken {
+                session_token: "handed-over-session".into(),
+                master_token: "handed-over-master".into(),
+                master_validity_in_seconds: None,
+            };
+            for login_method in [test_login_params().login_method, session_token] {
+                let params = LoginParameters {
+                    server_url: server.uri(),
+                    login_method,
+                    enable_dpop_bound_session: true,
+                    ..test_login_params()
+                };
+
+                let result = login(&params).await;
+
+                assert!(
+                    matches!(result, Err(RestError::DPoPBindingUnsupported { .. })),
+                    "got {result:?}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn a_host_backend_login_is_refused_rather_than_left_unbound() {
+            let backend = RecordingBackend::default();
+
+            let result = snowflake_login_with_client(
+                &LoginClients::new(&reqwest::Client::new()),
+                &key_pair_params("http://127.0.0.1:1".to_string(), true),
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                Some(&backend),
+                None,
+            )
+            .await;
+
+            assert!(
+                matches!(result, Err(RestError::DPoPBindingUnsupported { .. })),
+                "got {result:?}"
+            );
+            assert_eq!(backend.authenticate_calls.load(Ordering::Relaxed), 0);
+        }
+
+        #[tokio::test]
+        async fn key_pair_login_without_the_option_is_unchanged() {
+            let server = MockServer::start().await;
+            let seen = mount_login(&server, None).await;
+
+            login(&key_pair_params(server.uri(), false))
+                .await
+                .expect("unbound login");
+
+            let (proof, jwt) = seen.lock().unwrap().clone().expect("login request");
+            assert!(proof.is_none(), "no DPoP header without the option");
+            assert!(
+                decode_jwt(&jwt).1.get("cnf").is_none(),
+                "no cnf without the option"
             );
         }
     }
