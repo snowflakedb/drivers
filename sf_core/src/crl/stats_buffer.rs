@@ -193,6 +193,7 @@ pub(crate) fn disconnected_session_telemetry(telemetry_id: u64) -> SessionTeleme
             include_retry_reason: false,
             external_session_id: None,
             service_name: None,
+            dpop_key: None,
         },
         session_token: Arc::new(AsyncRwLock::new(Some(tokens))),
     });

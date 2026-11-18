@@ -325,6 +325,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
         include_retry_reason: true,
         external_session_id: None,
         service_name: None,
+        dpop_key: None,
     }
 }
 

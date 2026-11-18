@@ -40,6 +40,7 @@ async fn heartbeat_sends_periodic_requests() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(SessionRenewal::new()),
+        None,
     );
 
     // When enough time passes for multiple heartbeat intervals
@@ -96,6 +97,7 @@ async fn heartbeat_refreshes_on_401_then_retries() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(SessionRenewal::new()),
+        None,
     );
 
     // When the heartbeat task runs and encounters the 401
@@ -149,6 +151,7 @@ async fn heartbeat_stops_on_cancellation() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(SessionRenewal::new()),
+        None,
     );
     // Win32 CI can miss the first tick in 100ms (interval 50ms + HTTP). Wait
     // until the mock has seen at least one request, with a hard deadline.
@@ -200,6 +203,7 @@ async fn heartbeat_exits_when_tokens_cleared() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(SessionRenewal::new()),
+        None,
     );
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -246,6 +250,7 @@ async fn heartbeat_exits_when_the_session_is_gone() {
         test_client_info(),
         Duration::from_millis(50),
         Arc::new(SessionRenewal::new()),
+        None,
     );
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
@@ -330,6 +335,7 @@ async fn heartbeat_fires_repeatedly_at_configured_interval() {
         test_client_info(),
         Duration::from_millis(100),
         Arc::new(SessionRenewal::new()),
+        None,
     );
 
     // When 550ms elapse (enough for ~4-5 heartbeats at 100ms)
@@ -371,6 +377,7 @@ async fn heartbeat_drop_cancels_task() {
             test_client_info(),
             Duration::from_millis(50),
             Arc::new(SessionRenewal::new()),
+            None,
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
 

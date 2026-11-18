@@ -38,6 +38,7 @@ pub fn query_parameters() -> QueryParameters {
         include_retry_reason: false,
         external_session_id: None,
         service_name: None,
+        dpop_key: None,
     }
 }
 

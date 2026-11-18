@@ -35,8 +35,10 @@ use crate::config::{
     retry::{RetryPolicy, read_optional_duration_secs},
     settings::Settings,
 };
+use crate::crypto::dpop::DPoPKey;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
+use crate::http::dpop::DPoPBinding;
 use crate::rest::snowflake::query_context_cache::QueryContextCacheAdapter;
 use crate::rest::snowflake::{
     self, QueryExecutionMode, QueryInput, RestError, SessionTokens, heartbeat,
@@ -717,6 +719,7 @@ impl DatabaseDriverV1 {
                         timeout_config,
                         self.wrapper_presets.clone(),
                         external_session_id,
+                        login_result.dpop_key,
                     )
                     .await;
 
@@ -1324,6 +1327,9 @@ pub struct Connection {
     /// `connection_heartbeat` send Bearer plus this id. Session refresh,
     /// background keep-alive, and HTTP logout are skipped.
     pub(crate) external_session_id: Option<SensitiveString>,
+    /// Key the server bound the session to. Every request of the session
+    /// carries a DPoP proof from it.
+    pub(crate) dpop_key: Option<DPoPKey>,
 
     /// Lifecycle state of the per-session `SYSTEM$BIND` stage.
     ///
@@ -1392,6 +1398,7 @@ impl Connection {
             heartbeat_handle: None,
             start_heartbeat_from_query_response: false,
             external_session_id: None,
+            dpop_key: None,
             stage_state: Arc::new(AtomicStageState::new(StageState::Unknown)),
             xp_slot: Arc::new(XpSlot::new(false, None)),
             optimistic_alter_session_param_cache: false,
@@ -1611,6 +1618,7 @@ impl Connection {
             include_retry_reason: resolve_include_retry_reason(settings),
             external_session_id: self.external_session_id.clone(),
             service_name: self.resolve_service_name().await,
+            dpop_key: self.dpop_key.clone(),
         })
     }
 
@@ -1683,8 +1691,10 @@ impl Connection {
         timeout_config: crate::config::retry::TimeoutConfig,
         wrapper_presets: WrapperPresets,
         external_session_id: Option<SensitiveString>,
+        dpop_key: Option<DPoPKey>,
     ) {
         self.external_session_id = external_session_id;
+        self.dpop_key = dpop_key;
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.database_seed = database_seed;
@@ -1824,6 +1834,7 @@ impl Connection {
                 .context(ConnectionNotInitializedSnafu)?,
             interval,
             self.renewal.clone(),
+            self.dpop_key.clone(),
         );
         self.heartbeat_handle = Some(handle);
         Ok(())
@@ -1926,6 +1937,7 @@ pub struct RefreshContext {
     xp_backend: Option<Arc<dyn SnowflakeBackend>>,
     skip_session_refresh: bool,
     external_session_id: Option<SensitiveString>,
+    dpop_key: Option<DPoPKey>,
 }
 
 impl RefreshContext {
@@ -1969,7 +1981,14 @@ impl RefreshContext {
             xp_backend,
             skip_session_refresh: false,
             external_session_id: None,
+            dpop_key: None,
         }
+    }
+
+    /// Sign the session's requests with the DPoP key it is bound to.
+    pub(crate) fn with_dpop_key(mut self, dpop_key: Option<DPoPKey>) -> Self {
+        self.dpop_key = dpop_key;
+        self
     }
 
     /// Create a new `RefreshContext` by extracting connection info.
@@ -1997,6 +2016,7 @@ impl RefreshContext {
             xp_backend: conn.xp_backend_arc().context(QuerySnafu)?,
             skip_session_refresh: conn.external_session_id.is_some(),
             external_session_id: conn.external_session_id.clone(),
+            dpop_key: conn.dpop_key.clone(),
         })
     }
 
@@ -2013,12 +2033,18 @@ impl RefreshContext {
             &self.server_url,
             &self.client_info,
             tokens,
+            self.dpop_key.as_ref(),
         )
         .await
     }
 
     pub(crate) fn host_backend_active(&self) -> bool {
         self.xp_backend.is_some()
+    }
+
+    /// Key the session is bound to.
+    pub(crate) fn dpop_key(&self) -> Option<&DPoPKey> {
+        self.dpop_key.as_ref()
     }
 
     /// Records a server answer that takes the session away, and reports whether it did.
@@ -2922,7 +2948,7 @@ impl DatabaseDriverV1 {
                 })?;
 
             // Extract needed fields under the lock, then release before network I/O
-            let (http_client, server_url, token, external_session_id) = {
+            let (http_client, server_url, token, external_session_id, dpop_key) = {
                 let conn = conn_ptr.lock().await;
 
                 let http_client = conn
@@ -2941,8 +2967,15 @@ impl DatabaseDriverV1 {
                     .context(ConnectionNotInitializedSnafu)?;
                 let token = tokens.session_token.reveal().to_string();
                 let external_session_id = conn.external_session_id.clone();
+                let dpop_key = conn.dpop_key.clone();
 
-                (http_client, server_url, token, external_session_id)
+                (
+                    http_client,
+                    server_url,
+                    token,
+                    external_session_id,
+                    dpop_key,
+                )
             };
 
             let full_url = reqwest::Url::parse(&server_url)
@@ -3019,9 +3052,18 @@ impl DatabaseDriverV1 {
                 builder = builder.body(body_bytes);
             }
 
-            let response = builder.send().await.context(HttpRequestSnafu {
-                context: format!("Failed to send {method} {full_url}"),
+            let mut request = builder.build().context(HttpRequestSnafu {
+                context: format!("Failed to build {method} {full_url}"),
             })?;
+            if let Some(key) = &dpop_key {
+                DPoPBinding::new(key, &token).sign(&mut request);
+            }
+            let response = http_client
+                .execute(request)
+                .await
+                .context(HttpRequestSnafu {
+                    context: format!("Failed to send {method} {full_url}"),
+                })?;
 
             let status_code = response.status().as_u16() as i32;
             let response_headers: HashMap<String, String> = response
@@ -3114,6 +3156,7 @@ impl DatabaseDriverV1 {
                         .external_session_id
                         .as_ref()
                         .map(|id| id.reveal().as_str()),
+                    refresh_ctx.dpop_key(),
                 )
                 .await
                 {
@@ -3164,7 +3207,7 @@ impl DatabaseDriverV1 {
                 })?;
 
             // Extract needed fields under the lock, then release before network I/O
-            let (http_client, server_url, client_info, tokens, xp_backend) = {
+            let (http_client, server_url, client_info, tokens, xp_backend, dpop_key) = {
                 let conn = conn_ptr.lock().await;
 
                 let http_client = conn
@@ -3189,7 +3232,14 @@ impl DatabaseDriverV1 {
                     .clone();
                 let xp_backend = conn.xp_backend_arc().context(TokenRequestSnafu)?;
 
-                (http_client, server_url, client_info, tokens, xp_backend)
+                (
+                    http_client,
+                    server_url,
+                    client_info,
+                    tokens,
+                    xp_backend,
+                    conn.dpop_key.clone(),
+                )
             };
 
             if xp_backend.is_some() {
@@ -3206,6 +3256,7 @@ impl DatabaseDriverV1 {
                 &client_info,
                 &tokens,
                 &request_type,
+                dpop_key.as_ref(),
             )
             .await
             .context(TokenRequestSnafu)
@@ -3617,16 +3668,17 @@ impl Drop for CloseAttempt {
     }
 }
 
-/// Clear tokens, HTTP client, and stop background tasks.
+/// Clear tokens, the DPoP key, HTTP client, and stop background tasks.
 async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
     let mut conn = conn_ptr.lock().await;
     if let Some(mut hb) = conn.heartbeat_handle.take() {
         hb.cancel_and_wait().await;
     }
     *conn.tokens.write().await = None;
+    conn.dpop_key = None;
     conn.http_client = None;
     conn.storage_http_client_cache = None;
-    tracing::debug!("Cleared session tokens and HTTP client");
+    tracing::debug!("Cleared session tokens, DPoP key and HTTP client");
 
     // Telemetry is flushed before logout in connection_close (flush_connection_telemetry).
     // TODO: Implement QCC (query result cache) clearing
@@ -3647,6 +3699,7 @@ mod tests {
     use crate::apis::database_driver_v1::validation::collect_unknown_settings;
     use crate::config::ParamStore;
     use crate::config::param_registry::param_names;
+    use crate::crypto::dpop::jwk_thumbprint;
     use crate::rest::snowflake::TokenExpiry;
 
     fn make_connection_with_settings(settings: Vec<(&str, Setting)>) -> Connection {
@@ -5171,6 +5224,90 @@ mod tests {
             "Authorization header should be silently stripped, not cause an error: {err}"
         );
         ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_on_a_bound_session_replaces_any_caller_proof_with_its_own() {
+        use crate::crypto::dpop::test_fixtures::{decode_jwt, token_hash};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/token-request"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        {
+            let conn = ds.connections.get_obj(handle).unwrap();
+            let mut conn = conn.lock().await;
+            conn.server_url = Some(server.uri());
+            conn.dpop_key = Some(DPoPKey::generate().unwrap());
+        }
+        let headers = HashMap::from([("DPoP".to_owned(), "caller-proof".to_owned())]);
+
+        ds.connection_send_http_request(
+            None,
+            handle,
+            "POST".into(),
+            "/session/token-request".into(),
+            headers,
+            None,
+        )
+        .await
+        .expect("request");
+
+        let requests = server.received_requests().await.unwrap();
+        let proofs: Vec<_> = requests[0].headers.get_all("DPoP").iter().collect();
+        assert_eq!(proofs.len(), 1);
+        let (_, claims) = decode_jwt(proofs[0].to_str().unwrap());
+        assert_eq!(claims["ath"], token_hash("test-session-token"));
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_session_dpop_key_reaches_queries_and_refresh() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let conn = ds.connections.get_obj(handle).unwrap();
+        let mut conn = conn.lock().await;
+        conn.client_info = Some(crate::config::rest_parameters::test_fixtures::test_client_info());
+        assert!(
+            conn.query_transport_parameters()
+                .await
+                .unwrap()
+                .dpop_key
+                .is_none()
+        );
+
+        assert!(RefreshContext::new(&conn).unwrap().dpop_key().is_none());
+
+        let key = DPoPKey::generate().unwrap();
+        let jkt = jwk_thumbprint(&key).unwrap();
+        conn.dpop_key = Some(key);
+
+        let params = conn.query_transport_parameters().await.unwrap();
+        assert_eq!(
+            jwk_thumbprint(params.dpop_key.as_ref().expect("query key")).unwrap(),
+            jkt
+        );
+        let refresh = RefreshContext::new(&conn).unwrap();
+        assert_eq!(
+            jwk_thumbprint(refresh.dpop_key().expect("refresh key")).unwrap(),
+            jkt
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_a_connection_drops_its_dpop_key() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        conn.lock().await.dpop_key = Some(DPoPKey::generate().unwrap());
+
+        cleanup_connection(&conn).await.unwrap();
+
+        assert!(conn.lock().await.dpop_key.is_none());
     }
 
     #[tokio::test]

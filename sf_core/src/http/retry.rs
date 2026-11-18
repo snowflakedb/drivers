@@ -1,4 +1,5 @@
 use crate::config::retry::{BackoffConfig, HttpPolicy, Jitter, RetryPolicy};
+use crate::http::dpop::DPoPBinding;
 use rand::{Rng, rng};
 use reqwest::{Method, Response, StatusCode};
 use snafu::{IntoError, Location, ResultExt, Snafu};
@@ -17,6 +18,7 @@ pub struct HttpContext {
     /// waits longer is retried like a transport error. Backoff sleeps between
     /// attempts do not count. `None` means no such timer.
     pub response_timeout: Option<Duration>,
+    dpop: Option<DPoPBinding>,
 }
 
 impl HttpContext {
@@ -27,6 +29,7 @@ impl HttpContext {
             idempotent: matches!(method_clone, Method::PUT | Method::DELETE),
             allow_post_retry: false,
             response_timeout: None,
+            dpop: None,
             method,
             path: path.into(),
         }
@@ -48,6 +51,25 @@ impl HttpContext {
         self.allow_post_retry = true;
         self
     }
+
+    /// Sign every attempt with a fresh DPoP proof when the request's token is bound.
+    pub(crate) fn with_dpop(mut self, dpop: Option<DPoPBinding>) -> Self {
+        self.dpop = dpop;
+        self
+    }
+}
+
+async fn send_attempt(
+    req_builder: reqwest::RequestBuilder,
+    dpop: Option<&DPoPBinding>,
+) -> reqwest::Result<Response> {
+    let Some(dpop) = dpop else {
+        return req_builder.send().await;
+    };
+    let (client, request) = req_builder.build_split();
+    let mut request = request?;
+    dpop.sign(&mut request);
+    client.execute(request).await
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
@@ -248,7 +270,12 @@ where
 
         let result = match http_ctx.response_timeout {
             Some(response_timeout) => {
-                match tokio::time::timeout(response_timeout, req_builder.send()).await {
+                match tokio::time::timeout(
+                    response_timeout,
+                    send_attempt(req_builder, http_ctx.dpop.as_ref()),
+                )
+                .await
+                {
                     Ok(result) => result,
                     Err(_) => {
                         if !allow_retry(http_ctx, &policy.http)
@@ -274,7 +301,7 @@ where
                     }
                 }
             }
-            None => req_builder.send().await,
+            None => send_attempt(req_builder, http_ctx.dpop.as_ref()).await,
         };
 
         match result {

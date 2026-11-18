@@ -6,6 +6,8 @@
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
+use crate::crypto::dpop::DPoPKey;
+use crate::http::dpop::DPoPBinding;
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::{
     HttpRetrySnafu, LogoutSnafu, QueryIds, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
@@ -38,13 +40,14 @@ struct LogoutResponse {
 /// - Other Snowflake codes → `Err(RestError::Logout { code, message })`
 /// - Non-2xx with non-JSON body → `Err(RestError::InvalidSnowflakeResponse { ResponseStatus })`
 /// - HTTP transport/retry errors → `Err(RestError::HttpRetry)`
-#[tracing::instrument(skip(client, session_token))]
+#[tracing::instrument(skip(client, session_token, dpop_key))]
 pub async fn logout_session(
     client: &reqwest::Client,
     server_url: &str,
     session_token: &SensitiveString,
     client_info: &ClientInfo,
     retry_policy: &RetryPolicy,
+    dpop_key: Option<&DPoPKey>,
 ) -> Result<(), RestError> {
     tracing::info!("Initiating session logout");
 
@@ -67,7 +70,8 @@ pub async fn logout_session(
     // Logout is POST but idempotent server-side (safe to retry)
     let http_ctx = HttpContext::new(Method::POST, "/session")
         .with_idempotent(true)
-        .allow_post_retry();
+        .allow_post_retry()
+        .with_dpop(dpop_key.map(|key| DPoPBinding::new(key, session_token.reveal())));
 
     let build_request = || {
         // request_guid is regenerated on each retry, requestId stays the same
@@ -245,5 +249,39 @@ mod tests {
             "Expected Logout with code 400, got: {:?}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn logout_on_a_bound_session_carries_a_proof_for_the_session_token() {
+        use crate::config::rest_parameters::test_fixtures::test_client_info;
+        use crate::crypto::dpop::test_fixtures::{decode_jwt, token_hash};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "success": true })),
+            )
+            .mount(&server)
+            .await;
+        let key = DPoPKey::generate().unwrap();
+
+        logout_session(
+            &reqwest::Client::new(),
+            &server.uri(),
+            &SensitiveString::from("session-token".to_owned()),
+            &test_client_info(),
+            &RetryPolicy::default(),
+            Some(&key),
+        )
+        .await
+        .expect("logout");
+
+        let requests = server.received_requests().await.unwrap();
+        let (_, claims) = decode_jwt(requests[0].headers["DPoP"].to_str().unwrap());
+        assert_eq!(claims["htu"], format!("{}/session", server.uri()));
+        assert_eq!(claims["ath"], token_hash("session-token"));
     }
 }

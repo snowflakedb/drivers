@@ -237,6 +237,7 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
     }
 
     let mut refresh_ctx = data.refresh_ctx;
+    let dpop_key = refresh_ctx.dpop_key().cloned();
 
     let result = refresh_ctx
         .execute_with_refresh(|token| {
@@ -244,7 +245,8 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
             let url = &data.url;
             let info = &data.info;
             let retry_policy = &data.retry_policy;
-            async move { logout_session(client, url, &token, info, retry_policy).await }
+            let dpop_key = dpop_key.as_ref();
+            async move { logout_session(client, url, &token, info, retry_policy, dpop_key).await }
         })
         .await;
 

@@ -58,7 +58,7 @@ pub async fn send_telemetry(
         .build()
     })?;
 
-    let request = apply_json_content_type(apply_query_auth(
+    let mut request = apply_json_content_type(apply_query_auth(
         client.post(url),
         query_parameters,
         session_token,
@@ -72,6 +72,9 @@ pub async fn send_telemetry(
     .context(RequestConstructionSnafu {
         request: "telemetry",
     })?;
+    if let Some(dpop) = query_parameters.dpop_binding(session_token) {
+        dpop.sign(&mut request);
+    }
 
     let response = client.execute(request).await.context(CommunicationSnafu {
         context: "Failed to execute telemetry request",
@@ -108,6 +111,7 @@ mod tests {
             include_retry_reason: false,
             external_session_id: None,
             service_name: None,
+            dpop_key: None,
         }
     }
 

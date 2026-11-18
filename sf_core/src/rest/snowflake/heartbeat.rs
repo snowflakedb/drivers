@@ -4,6 +4,8 @@ use snafu::ResultExt;
 use url::Url;
 
 use crate::config::rest_parameters::ClientInfo;
+use crate::crypto::dpop::DPoPKey;
+use crate::http::dpop::DPoPBinding;
 use crate::rest::snowflake::{
     HeartbeatSnafu, RestError, UrlJoinSnafu, apply_query_headers, parse_external_session_header,
     parse_gs_code_or_unavailable, read_response_json,
@@ -23,14 +25,24 @@ pub async fn send_heartbeat(
     server_url: &Url,
     client_info: &ClientInfo,
     session_token: &str,
+    dpop_key: Option<&DPoPKey>,
 ) -> Result<(), RestError> {
-    send_heartbeat_with_timeout(client, server_url, client_info, session_token, None, None).await
+    send_heartbeat_with_timeout(
+        client,
+        server_url,
+        client_info,
+        session_token,
+        None,
+        None,
+        dpop_key,
+    )
+    .await
 }
 
 /// Like [`send_heartbeat`] but with an optional timeout override.
 ///
 /// When `timeout` is `None`, the default 300 s HTTP request timeout is used.
-#[tracing::instrument(skip(client, client_info, session_token, external_session_id))]
+#[tracing::instrument(skip(client, client_info, session_token, external_session_id, dpop_key))]
 pub async fn send_heartbeat_with_timeout(
     client: &reqwest::Client,
     server_url: &Url,
@@ -38,13 +50,14 @@ pub async fn send_heartbeat_with_timeout(
     session_token: &str,
     timeout: Option<Duration>,
     external_session_id: Option<&str>,
+    dpop_key: Option<&DPoPKey>,
 ) -> Result<(), RestError> {
     let url = server_url.join(HEARTBEAT_PATH).context(UrlJoinSnafu {
         path: HEARTBEAT_PATH,
     })?;
 
     let external_session_header = parse_external_session_header(external_session_id)?;
-    let request = apply_query_headers(
+    let mut request = apply_query_headers(
         client.post(url),
         client_info,
         session_token,
@@ -56,6 +69,9 @@ pub async fn send_heartbeat_with_timeout(
     .context(crate::rest::snowflake::RequestConstructionSnafu {
         request: "heartbeat",
     })?;
+    if let Some(key) = dpop_key {
+        DPoPBinding::new(key, session_token).sign(&mut request);
+    }
 
     let response =
         client
@@ -110,6 +126,7 @@ mod tests {
             &server_url,
             &test_client_info(),
             "test_session_token",
+            None,
         )
         .await;
 
@@ -137,6 +154,7 @@ mod tests {
             &server_url,
             &test_client_info(),
             "test_session_token",
+            None,
         )
         .await;
 
@@ -160,6 +178,7 @@ mod tests {
             &server_url,
             &test_client_info(),
             "test_session_token",
+            None,
         )
         .await;
 
@@ -192,6 +211,7 @@ mod tests {
             &server_url,
             &test_client_info(),
             "test_session_token",
+            None,
         )
         .await;
 
@@ -200,5 +220,33 @@ mod tests {
             matches!(result.unwrap_err(), RestError::Heartbeat { .. }),
             "Expected Heartbeat variant"
         );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_on_a_bound_session_carries_a_proof_for_the_session_token() {
+        use crate::crypto::dpop::test_fixtures::{decode_jwt, token_hash};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/heartbeat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "success": true })))
+            .mount(&server)
+            .await;
+        let key = DPoPKey::generate().unwrap();
+
+        send_heartbeat(
+            &reqwest::Client::new(),
+            &Url::parse(&server.uri()).unwrap(),
+            &test_client_info(),
+            "session-token",
+            Some(&key),
+        )
+        .await
+        .expect("heartbeat");
+
+        let requests = server.received_requests().await.unwrap();
+        let (_, claims) = decode_jwt(requests[0].headers["DPoP"].to_str().unwrap());
+        assert_eq!(claims["htu"], format!("{}/session/heartbeat", server.uri()));
+        assert_eq!(claims["ath"], token_hash("session-token"));
     }
 }

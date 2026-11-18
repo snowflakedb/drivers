@@ -13,6 +13,7 @@ use url::Url;
 use super::connection::{RefreshContext, SessionRenewal};
 use super::error::ApiError;
 use crate::config::rest_parameters::ClientInfo;
+use crate::crypto::dpop::DPoPKey;
 use crate::rest::snowflake::{RestError, SessionTokens, heartbeat::send_heartbeat};
 
 const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3600);
@@ -88,6 +89,7 @@ pub fn spawn_heartbeat_task(
     client_info: ClientInfo,
     heartbeat_interval: Duration,
     renewal: Arc<SessionRenewal>,
+    dpop_key: Option<DPoPKey>,
 ) -> HeartbeatHandle {
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
@@ -101,6 +103,7 @@ pub fn spawn_heartbeat_task(
             heartbeat_interval,
             task_token,
             renewal,
+            dpop_key,
         )
         .with_current_subscriber(),
     );
@@ -111,6 +114,7 @@ pub fn spawn_heartbeat_task(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn heartbeat_loop(
     tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     http_client: reqwest::Client,
@@ -119,6 +123,7 @@ async fn heartbeat_loop(
     interval: Duration,
     cancel_token: CancellationToken,
     renewal: Arc<SessionRenewal>,
+    dpop_key: Option<DPoPKey>,
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 
@@ -146,7 +151,8 @@ async fn heartbeat_loop(
             client_info.clone(),
             renewal.clone(),
             None,
-        );
+        )
+        .with_dpop_key(dpop_key.clone());
         let mut last_error: Option<RestError> = None;
         loop {
             let token = tokio::select! {
@@ -176,7 +182,13 @@ async fn heartbeat_loop(
             };
 
             let result = tokio::select! {
-                res = send_heartbeat(&http_client, &server_url, &client_info, token.reveal()) => res,
+                res = send_heartbeat(
+                    &http_client,
+                    &server_url,
+                    &client_info,
+                    token.reveal(),
+                    refresh_ctx.dpop_key(),
+                ) => res,
                 () = cancel_token.cancelled() => {
                     tracing::info!("Heartbeat task cancelled during heartbeat request");
                     return;
@@ -279,6 +291,7 @@ mod tests {
             test_client_info(),
             Duration::from_secs(3600),
             Arc::new(SessionRenewal::new()),
+            None,
         );
 
         handle.cancel_and_wait().await;
@@ -299,6 +312,7 @@ mod tests {
             Duration::from_millis(10),
             task_token,
             Arc::new(SessionRenewal::new()),
+            None,
         ));
 
         tokio::time::timeout(Duration::from_secs(2), task)
@@ -328,6 +342,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(50),
             Arc::new(SessionRenewal::new()),
+            None,
         );
 
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -374,6 +389,7 @@ mod tests {
             Duration::from_millis(50),
             task_token,
             Arc::new(SessionRenewal::new()),
+            None,
         ));
 
         // Wait for at least one heartbeat, then clear tokens.
@@ -421,6 +437,7 @@ mod tests {
             test_client_info(),
             Duration::from_millis(20),
             renewal.clone(),
+            None,
         );
 
         let flagged = tokio::time::timeout(Duration::from_secs(2), async {

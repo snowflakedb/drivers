@@ -16,6 +16,8 @@ use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
 };
 use crate::crl::config::CrlConfig;
+use crate::crypto::dpop::DPoPKey;
+use crate::http::dpop::DPoPBinding;
 use crate::rest::snowflake::BrowserLaunchFn;
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig};
@@ -90,6 +92,8 @@ pub struct QueryParameters {
     /// `SERVICE_NAME` session parameter echoed back as the `X-Snowflake-Service`
     /// request header so the proxy routes to the correct HTAP cluster.
     pub service_name: Option<String>,
+    /// Key the session is bound to. Requests carry a DPoP proof from it.
+    pub dpop_key: Option<DPoPKey>,
 }
 
 impl QueryParameters {
@@ -107,6 +111,7 @@ impl QueryParameters {
             include_retry_reason: resolve_include_retry_reason(settings),
             external_session_id: None,
             service_name: None,
+            dpop_key: None,
         })
     }
 
@@ -114,6 +119,13 @@ impl QueryParameters {
         self.external_session_id
             .as_ref()
             .map(|id| id.reveal().as_str())
+    }
+
+    /// The DPoP binding for a request that presents `session_token`, when the session is bound.
+    pub(crate) fn dpop_binding(&self, session_token: &str) -> Option<DPoPBinding> {
+        self.dpop_key
+            .as_ref()
+            .map(|key| DPoPBinding::new(key, session_token))
     }
 }
 

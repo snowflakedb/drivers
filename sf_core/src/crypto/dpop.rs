@@ -1,10 +1,10 @@
 //! DPoP (RFC 9449) proof-of-possession primitives.
 //!
 //! ES256 P-256 keypair, proof JWT with `jti`/`htm`/`htu`/`iat` (and an
-//! optional `nonce`), and the RFC 7638 JWK thumbprint. The OAuth flows use
-//! them for the IdP token request and the Snowflake login proof; DPoP-bound
-//! key-pair and workload identity logins use them for the login proof and the
-//! key-pair JWT's `cnf.jkt`.
+//! optional `nonce` or `ath`), and the RFC 7638 JWK thumbprint. The OAuth flows
+//! use them for the IdP token request and the Snowflake login proof; DPoP-bound
+//! key-pair and workload identity sessions use them for the login proof, the
+//! key-pair JWT's `cnf.jkt`, and a proof on every later request of the session.
 //!
 //! Implementation notes:
 //! - JWS signature is hand-built so we can attach the `jwk` header parameter
@@ -44,9 +44,9 @@ const UNCOMPRESSED_POINT_BYTES: usize = 1 + 2 * COORD_BYTES;
 /// The keypair lives behind an `Arc` because `EcdsaKeyPair` is not `Clone`
 /// (AWS-LC key objects are deliberately not copyable) while `DPoPContext`
 /// needs an owned handle. Cloning a `DPoPKey` is therefore a refcount bump,
-/// not a key copy.
+/// not a key copy. Outside the crate it is an opaque handle.
 #[derive(Clone)]
-pub(crate) struct DPoPKey {
+pub struct DPoPKey {
     key: Arc<EcdsaKeyPair>,
 }
 
@@ -222,6 +222,29 @@ pub(crate) fn proof_jwt(
     url: &Url,
     nonce: Option<&str>,
 ) -> Result<SensitiveString, DPoPError> {
+    sign_proof(key, method, url, nonce, None)
+}
+
+/// Build a DPoP proof JWT for a request that presents `access_token`.
+///
+/// The `ath` claim (RFC 9449 §4.2) is the base64url SHA-256 of the token, so
+/// the proof is valid only together with that exact token.
+pub(crate) fn access_token_proof_jwt(
+    key: &DPoPKey,
+    method: &str,
+    url: &Url,
+    access_token: &str,
+) -> Result<SensitiveString, DPoPError> {
+    sign_proof(key, method, url, None, Some(access_token))
+}
+
+fn sign_proof(
+    key: &DPoPKey,
+    method: &str,
+    url: &Url,
+    nonce: Option<&str>,
+    access_token: Option<&str>,
+) -> Result<SensitiveString, DPoPError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -241,15 +264,18 @@ pub(crate) fn proof_jwt(
     // the same function takes from `SystemRandom`. 16 bytes matches a UUIDv4's
     // 122 bits of entropy. Fails the proof the way the other module draws do.
     let jti = super::random::token_b64url(16, "DPoP proof jti")?;
-    let claims = match nonce {
-        Some(n) => {
-            let n_escaped = json_escape(n);
-            format!(
-                r#"{{"htm":"{method}","htu":"{htu}","iat":{now},"jti":"{jti}","nonce":"{n_escaped}"}}"#
-            )
-        }
-        None => format!(r#"{{"htm":"{method}","htu":"{htu}","iat":{now},"jti":"{jti}"}}"#),
-    };
+    let mut claims = format!(r#"{{"htm":"{method}","htu":"{htu}","iat":{now},"jti":"{jti}""#);
+    if let Some(n) = nonce {
+        claims.push_str(&format!(r#","nonce":"{}""#, json_escape(n)));
+    }
+    if let Some(token) = access_token {
+        let ath = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, token.as_bytes());
+        claims.push_str(&format!(
+            r#","ath":"{}""#,
+            URL_SAFE_NO_PAD.encode(ath.as_ref())
+        ));
+    }
+    claims.push('}');
 
     let header_b64 = URL_SAFE_NO_PAD.encode(header.as_bytes());
     let claims_b64 = URL_SAFE_NO_PAD.encode(claims.as_bytes());
@@ -343,6 +369,11 @@ pub(crate) mod test_fixtures {
                 .expect("JSON segment")
         };
         (segment(0), segment(1))
+    }
+
+    /// The `ath` claim a proof for `token` carries.
+    pub(crate) fn token_hash(token: &str) -> String {
+        URL_SAFE_NO_PAD.encode(openssl::sha::sha256(token.as_bytes()))
     }
 
     /// The RFC 7638 thumbprint of the key in a proof header's `jwk`.
@@ -486,6 +517,28 @@ mod tests {
         let jwt = proof_jwt(&key, "POST", &url, None).unwrap();
         let (_h, claims, _) = split_jwt(jwt.reveal());
         assert_eq!(claims["htu"], "https://x.com/path");
+    }
+
+    #[test]
+    fn access_token_proof_jwt_carries_the_token_hash() {
+        let key = DPoPKey::generate().unwrap();
+        let url = Url::parse("https://account.snowflakecomputing.com/session/heartbeat").unwrap();
+        let jwt = access_token_proof_jwt(&key, "POST", &url, "session-token").unwrap();
+        let (_h, claims, _) = split_jwt(jwt.reveal());
+        assert_eq!(
+            claims["ath"],
+            URL_SAFE_NO_PAD.encode(openssl::sha::sha256(b"session-token"))
+        );
+        assert!(claims.get("nonce").is_none());
+    }
+
+    #[test]
+    fn proof_jwt_has_no_token_hash() {
+        let key = DPoPKey::generate().unwrap();
+        let url = Url::parse("https://idp.example.com/oauth/token-request").unwrap();
+        let jwt = proof_jwt(&key, "POST", &url, None).unwrap();
+        let (_h, claims, _) = split_jwt(jwt.reveal());
+        assert!(claims.get("ath").is_none());
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub fn test_query_parameters(server_url: &str) -> QueryParameters {
         include_retry_reason: false,
         external_session_id: None,
         service_name: None,
+        dpop_key: None,
     }
 }
 

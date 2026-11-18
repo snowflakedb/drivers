@@ -9,6 +9,6 @@
 //! runs against the same AWS-LC build that carries TLS, so one compiled choice
 //! answers "which module performed this operation" for the whole driver.
 
-pub(crate) mod dpop;
+pub mod dpop;
 pub(crate) mod private_key;
 pub(crate) mod random;

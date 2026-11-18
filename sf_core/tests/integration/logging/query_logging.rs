@@ -50,6 +50,7 @@ fn query_params(
         include_retry_reason,
         external_session_id: None,
         service_name: None,
+        dpop_key: None,
     }
 }
 

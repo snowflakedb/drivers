@@ -132,6 +132,7 @@ fn should_refresh_session_proactively() {
             &server_url,
             &client_info,
             &login_result.tokens,
+            None,
         )
         .await
         .expect("Proactive refresh should succeed");

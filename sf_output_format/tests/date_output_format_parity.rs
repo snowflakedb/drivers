@@ -806,6 +806,7 @@ async fn should_match_session_output_formats_for_date_time_and_timestamps() {
         include_retry_reason: false,
         external_session_id: None,
         service_name: None,
+        dpop_key: login_result.dpop_key.clone(),
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 

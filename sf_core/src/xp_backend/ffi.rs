@@ -406,6 +406,7 @@ impl From<XpSessionInfo> for LoginResult {
             warehouse_name: info.warehouse_name,
             role_name: info.role_name,
             server_version: info.server_version,
+            dpop_key: None,
         }
     }
 }

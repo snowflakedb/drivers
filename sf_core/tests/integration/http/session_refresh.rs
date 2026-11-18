@@ -40,7 +40,14 @@ async fn should_refresh_session_successfully() {
     let server_url = format!("http://{}", addr);
 
     // When we refresh the session
-    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+    let result = refresh_session(
+        &client,
+        &server_url,
+        &test_client_info(),
+        &test_tokens(),
+        None,
+    )
+    .await;
 
     // Then we should get new tokens
     let new_tokens = result.expect("refresh should succeed");
@@ -62,7 +69,14 @@ async fn should_fail_when_master_token_expired() {
     let server_url = format!("http://{}", addr);
 
     // When we try to refresh the session
-    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+    let result = refresh_session(
+        &client,
+        &server_url,
+        &test_client_info(),
+        &test_tokens(),
+        None,
+    )
+    .await;
 
     // Then it should fail with session refresh error
     assert!(result.is_err());
@@ -89,7 +103,14 @@ async fn should_fail_when_refresh_returns_error() {
     let server_url = format!("http://{}", addr);
 
     // When we try to refresh the session
-    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+    let result = refresh_session(
+        &client,
+        &server_url,
+        &test_client_info(),
+        &test_tokens(),
+        None,
+    )
+    .await;
 
     // Then it should fail with the generic session-refresh error
     assert!(result.is_err());
@@ -135,8 +156,14 @@ async fn should_map_master_token_terminal_gs_codes_on_refresh() {
         let server_url = format!("http://{addr}");
 
         // When we refresh the session
-        let result =
-            refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+        let result = refresh_session(
+            &client,
+            &server_url,
+            &test_client_info(),
+            &test_tokens(),
+            None,
+        )
+        .await;
 
         // Then the error is MasterTokenTerminal carrying the real GS code
         let err = result.expect_err("master-token-terminal refresh must fail");

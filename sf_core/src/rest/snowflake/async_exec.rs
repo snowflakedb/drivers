@@ -209,7 +209,9 @@ pub async fn submit_statement_async<'a>(
         .json(&request_body)
     };
 
-    let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+    let http_ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH)
+        .allow_post_retry()
+        .with_dpop(params.dpop_binding(session_token));
     let response =
         execute_with_retry_state(submit_request, &http_ctx, policy, |r| async move { Ok(r) })
             .await
@@ -245,7 +247,8 @@ pub(super) async fn poll_query_status(
             service_name_header.as_ref(),
         )
     };
-    let http_ctx = HttpContext::new(Method::GET, get_result_url.to_string());
+    let http_ctx = HttpContext::new(Method::GET, get_result_url.to_string())
+        .with_dpop(query_parameters.dpop_binding(session_token));
     let response = execute_with_retry(poll_request, &http_ctx, policy, |r| async move { Ok(r) })
         .await
         .with_context(|_| HttpRetrySnafu {
