@@ -74,7 +74,7 @@ pub struct TestMethod {
     pub line: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BehaviorDifferenceLocation {
     pub new_behaviour_file: Option<String>,
     pub new_behaviour_line: Option<usize>,

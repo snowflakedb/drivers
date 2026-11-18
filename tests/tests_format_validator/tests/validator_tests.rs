@@ -1483,6 +1483,256 @@ public class SkipAnnotationsJdbcTest {
     Ok(())
 }
 
+// ===== .NET BD marker Tests =====
+
+#[test]
+fn should_detect_skip_markers_in_dotnet_reference_overrides() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_bd_yaml("dotnet", "behavior_differences: {}\n")?;
+    let area = workspace
+        .workspace_root
+        .join("dotnet/behavior_differences/connection");
+    fs::create_dir_all(&area)?;
+    fs::write(
+        area.join("untrusted-root-rejected.yaml"),
+        "name: \"Untrusted root certificate is rejected\"\ntype: change\nrationale: \"sf_core verifies the chain\"\n",
+    )?;
+
+    workspace.create_feature_file(
+        "connection",
+        "untrusted_root",
+        r#"@dotnet
+Feature: Untrusted root
+
+  @dotnet_e2e
+  Scenario: should reject an untrusted root certificate
+    Given a server with a self-signed certificate
+    When I connect
+    Then the connection is rejected
+"#,
+    )?;
+
+    workspace.create_dotnet_test(
+        "Snowflake.Data.Tests",
+        "UntrustedRoot",
+        r#"
+namespace Snowflake.Data.Tests;
+
+public class UntrustedRootTest
+{
+    [SnowflakeFact]
+    public virtual async Task ShouldRejectAnUntrustedRootCertificateAsync()
+    {
+        // Given a server with a self-signed certificate
+        var server = StartServer();
+
+        // When I connect
+        var error = await ConnectAsync(server);
+
+        // Then the connection is rejected
+        Assert.NotNull(error);
+    }
+}
+"#,
+    )?;
+
+    workspace.create_dotnet_test(
+        "Snowflake.Data.Tests.Reference",
+        "UntrustedRoot",
+        r#"
+namespace Snowflake.Data.Tests.Reference;
+
+public class UntrustedRootTest : Snowflake.Data.Tests.UntrustedRootTest
+{
+    public override Task ShouldRejectAnUntrustedRootCertificateAsync()
+    {
+        Skip.OnOldDriver("BD#untrusted-root-rejected", "Old driver has no bypass for WireMock's CA");
+        return base.ShouldRejectAnUntrustedRootCertificateAsync();
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let dotnet_bds = report
+        .behavior_differences_by_language
+        .get("dotnet")
+        .expect("Should find .NET behavior differences");
+
+    let bd = dotnet_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#untrusted-root-rejected")
+        .expect("Should detect Skip.OnOldDriver BD");
+    assert!(bd
+        .description
+        .contains("Untrusted root certificate is rejected"));
+    assert_eq!(bd.implementations.len(), 1);
+    let implementation = &bd.implementations[0];
+    assert_eq!(
+        implementation.test_file,
+        "dotnet/tests/Snowflake.Data.Tests.Reference/UntrustedRootTest.cs"
+    );
+    assert_eq!(
+        implementation.new_behaviour_line,
+        Some(implementation.test_line)
+    );
+    assert!(implementation.old_driver_skipped);
+    assert!(!implementation.new_driver_skipped);
+
+    Ok(())
+}
+
+#[test]
+fn should_detect_wrapped_and_only_markers_in_dotnet_and_ignore_commented_ones() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_bd_yaml(
+        "dotnet",
+        r#"behavior_differences:
+  server-version-patch:
+    name: "ServerVersion includes the patch digit"
+  untrusted-root-rejected:
+    name: "Untrusted root certificate is rejected"
+  commented-out:
+    name: "Only referenced from a comment"
+"#,
+    )?;
+
+    workspace.create_feature_file(
+        "connection",
+        "server_version",
+        r#"@dotnet
+Feature: Server version
+
+  @dotnet_e2e
+  Scenario: should report the server version
+    Given an open connection
+    When I read the server version
+    Then it matches the driver's format
+
+  @dotnet_e2e
+  Scenario: should reject an untrusted root certificate
+    Given a server with a self-signed certificate
+    When I connect
+    Then the connection is rejected
+"#,
+    )?;
+
+    workspace.create_dotnet_test(
+        "Snowflake.Data.Tests",
+        "ServerVersion",
+        r#"
+namespace Snowflake.Data.Tests;
+
+public class ServerVersionTest
+{
+    [SnowflakeFact]
+    public void ShouldReportTheServerVersion()
+    {
+        // Given an open connection
+        var connection = OpenConnection();
+
+        // When I read the server version
+        var version = connection.ServerVersion;
+
+        // Then it matches the driver's format
+        // Skip.OnOldDriver("BD#commented-out", "disabled");
+        if (BehaviorDifference.NewDriverOnly(
+                "BD#server-version-patch"))
+        {
+            Assert.Equal("9.1.0", version);
+        }
+        if (BehaviorDifference.OldDriverOnly("BD#server-version-patch")) // BehaviorDifference.NewDriverOnly("BD#commented-out")
+        {
+            Assert.Equal("9.1", version);
+        }
+    }
+
+    [SnowflakeFact]
+    public virtual async Task ShouldRejectAnUntrustedRootCertificateAsync()
+    {
+        // Given a server with a self-signed certificate
+        var server = StartServer();
+
+        // When I connect
+        var error = await ConnectAsync(server);
+
+        // Then the connection is rejected
+        Assert.NotNull(error);
+    }
+}
+"#,
+    )?;
+
+    workspace.create_dotnet_test(
+        "Snowflake.Data.Tests.Reference",
+        "ServerVersion",
+        r#"
+namespace Snowflake.Data.Tests.Reference;
+
+public class ServerVersionTest : Snowflake.Data.Tests.ServerVersionTest
+{
+    public override Task ShouldRejectAnUntrustedRootCertificateAsync()
+    {
+        Skip.OnNewDriver(
+            "BD#untrusted-root-rejected",
+            "Covered by the new-driver run");
+        return base.ShouldRejectAnUntrustedRootCertificateAsync();
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let dotnet_bds = report
+        .behavior_differences_by_language
+        .get("dotnet")
+        .expect("Should find .NET behavior differences");
+
+    let find_bd = |id: &str| dotnet_bds.iter().find(|b| b.behavior_difference_id == id);
+
+    let version = find_bd("BD#server-version-patch").expect("Should detect Only markers");
+    assert_eq!(version.implementations.len(), 1);
+    let implementation = &version.implementations[0];
+    assert_eq!(
+        implementation.test_file,
+        "dotnet/tests/Snowflake.Data.Tests/ServerVersionTest.cs"
+    );
+    assert_eq!(implementation.new_behaviour_line, Some(17));
+    assert_eq!(implementation.old_behaviour_line, Some(22));
+    assert!(!implementation.old_driver_skipped);
+    assert!(!implementation.new_driver_skipped);
+
+    let untrusted =
+        find_bd("BD#untrusted-root-rejected").expect("Should detect wrapped Skip.OnNewDriver");
+    assert_eq!(untrusted.implementations.len(), 1);
+    let implementation = &untrusted.implementations[0];
+    assert_eq!(
+        implementation.test_file,
+        "dotnet/tests/Snowflake.Data.Tests.Reference/ServerVersionTest.cs"
+    );
+    assert_eq!(
+        implementation.old_behaviour_line,
+        Some(implementation.test_line)
+    );
+    assert!(implementation.new_driver_skipped);
+    assert!(!implementation.old_driver_skipped);
+
+    assert!(
+        find_bd("BD#commented-out").is_none_or(|bd| bd.implementations.is_empty()),
+        "Commented-out markers must not be reported"
+    );
+
+    Ok(())
+}
+
 // ===== JDBC assumeTrue BD Tests =====
 
 #[test]
@@ -3208,6 +3458,17 @@ impl TestWorkspace {
             .join("python/tests/e2e")
             .join(subdir)
             .join(format!("test_{name}.py"));
+        fs::create_dir_all(test_path.parent().unwrap())?;
+        fs::write(test_path, content)?;
+        Ok(())
+    }
+
+    fn create_dotnet_test(&self, project: &str, name: &str, content: &str) -> Result<()> {
+        let test_path = self
+            .workspace_root
+            .join("dotnet/tests")
+            .join(project)
+            .join(format!("{name}Test.cs"));
         fs::create_dir_all(test_path.parent().unwrap())?;
         fs::write(test_path, content)?;
         Ok(())

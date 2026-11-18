@@ -2,13 +2,13 @@ use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMet
 use crate::behavior_differences_utils::compile_bd_regex;
 use crate::behavior_differences_utils::load_behavior_difference_files;
 use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
+use crate::utils::read_source_files;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 static JAVA_TEST_METHOD_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"public\s+void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap());
@@ -236,15 +236,6 @@ impl JdbcHandler {
         let assume_new_re = &ASSUME_NEW_DRIVER_REGEX;
         let assume_old_re = &ASSUME_OLD_DRIVER_REGEX;
 
-        let default_loc = || BehaviorDifferenceLocation {
-            new_behaviour_file: None,
-            new_behaviour_line: None,
-            old_behaviour_file: None,
-            old_behaviour_line: None,
-            old_driver_skipped: false,
-            new_driver_skipped: false,
-        };
-
         for (line_num, line) in lines.iter().enumerate() {
             let line = line.trim();
 
@@ -286,7 +277,7 @@ impl JdbcHandler {
                     if let Some(captures) = re.captures(line) {
                         if let Some(id_match) = captures.get(1) {
                             let bd_id = self.extract_breaking_change_id(id_match.as_str());
-                            let loc = breaking_changes.entry(bd_id).or_insert_with(default_loc);
+                            let loc = breaking_changes.entry(bd_id).or_default();
                             let line_no = if use_method_start {
                                 method_start_line
                             } else {
@@ -325,22 +316,13 @@ impl JdbcHandler {
             return Ok(());
         }
 
-        // Search all Java files in common directory
-        for entry in WalkDir::new(&common_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "java"))
-        {
-            let helper_file_path = entry.path();
-            if let Ok(helper_content) = fs::read_to_string(helper_file_path) {
-                // Search for Behavior Differences in the helper method
-                self.find_direct_breaking_changes_in_method(
-                    &helper_content,
-                    helper_method,
-                    helper_file_path,
-                    breaking_changes,
-                )?;
-            }
+        for (helper_file_path, helper_content) in read_source_files(&common_dir, "java") {
+            self.find_direct_breaking_changes_in_method(
+                &helper_content,
+                helper_method,
+                &helper_file_path,
+                breaking_changes,
+            )?;
         }
 
         Ok(())

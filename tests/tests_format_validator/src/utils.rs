@@ -1,4 +1,7 @@
 use convert_case::{Case, Casing};
+use std::fs;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 /// Convert string to snake_case
 pub fn to_snake_case(s: &str) -> String {
@@ -71,6 +74,19 @@ fn strip_trailing_paren_group(title: &str) -> Option<&str> {
 
 pub fn line_index_at_offset(content: &str, offset: usize) -> usize {
     content[..offset].bytes().filter(|&b| b == b'\n').count()
+}
+
+pub fn read_source_files(dir: &Path, extension: &str) -> Vec<(PathBuf, String)> {
+    WalkDir::new(dir)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == extension))
+        .filter_map(|e| {
+            let content = fs::read_to_string(e.path()).ok()?;
+            Some((e.into_path(), content))
+        })
+        .collect()
 }
 
 #[cfg(test)]
