@@ -44,8 +44,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDateLiterals()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -57,9 +55,9 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain dates [2024-01-15, 1970-01-01, 1999-12-31]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal("2024-01-15", reader.GetString(0));
-        Assert.Equal("1970-01-01", reader.GetString(1));
-        Assert.Equal("1999-12-31", reader.GetString(2));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(0));
+        Assert.Equal(new DateTime(1970, 1, 1), reader.GetDateTime(1));
+        Assert.Equal(new DateTime(1999, 12, 31), reader.GetDateTime(2));
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -67,8 +65,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectEpochAndPreEpochDates()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -80,9 +76,9 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain dates [1970-01-01, 1969-12-31, 1900-01-01]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal("1970-01-01", reader.GetString(0));
-        Assert.Equal("1969-12-31", reader.GetString(1));
-        Assert.Equal("1900-01-01", reader.GetString(2));
+        Assert.Equal(new DateTime(1970, 1, 1), reader.GetDateTime(0));
+        Assert.Equal(new DateTime(1969, 12, 31), reader.GetDateTime(1));
+        Assert.Equal(new DateTime(1900, 1, 1), reader.GetDateTime(2));
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -90,8 +86,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectHistoricalAndBoundaryDates()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -103,9 +97,9 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain dates [0001-01-01, 1582-10-15, 9999-12-31]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal("0001-01-01", reader.GetString(0));
-        Assert.Equal("1582-10-15", reader.GetString(1));
-        Assert.Equal("9999-12-31", reader.GetString(2));
+        Assert.Equal(new DateTime(1, 1, 1), reader.GetDateTime(0));
+        Assert.Equal(new DateTime(1582, 10, 15), reader.GetDateTime(1));
+        Assert.Equal(new DateTime(9999, 12, 31), reader.GetDateTime(2));
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -113,8 +107,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldHandleNullValuesForDate()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -127,7 +119,7 @@ public class DateTest : IClassFixture<ITFixture>
         // Then Result should contain [NULL, 2024-01-15, NULL]
         Assert.True(reader.Read(), "Expected one row");
         Assert.True(reader.IsDBNull(0), "Expected NULL for column 0");
-        Assert.Equal("2024-01-15", reader.GetString(1));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(1));
         Assert.True(reader.IsDBNull(2), "Expected NULL for column 2");
         Assert.False(reader.Read(), "Expected exactly one row");
     }
@@ -136,8 +128,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldDownloadLargeResultSetForDate()
     {
-        Skip.FutureMilestone();
-
         const int rowCount = 100000;
 
         // Given Snowflake client is logged in
@@ -154,7 +144,7 @@ public class DateTest : IClassFixture<ITFixture>
         var baseDate = new DateTime(1970, 1, 1);
         while (reader.Read())
         {
-            Assert.Equal(baseDate.AddDays(count).ToString("yyyy-MM-dd"), reader.GetString(0));
+            Assert.Equal(baseDate.AddDays(count), reader.GetDateTime(0));
             count++;
         }
         Assert.Equal(rowCount, count);
@@ -164,8 +154,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDatesFromTable()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -187,11 +175,11 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain dates [1970-01-01, 1999-12-31, 2024-01-15]
         Assert.True(reader.Read());
-        Assert.Equal("1970-01-01", reader.GetString(0));
+        Assert.Equal(new DateTime(1970, 1, 1), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("1999-12-31", reader.GetString(0));
+        Assert.Equal(new DateTime(1999, 12, 31), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("2024-01-15", reader.GetString(0));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(0));
         Assert.False(reader.Read(), "Expected exactly 3 rows");
     }
 
@@ -199,8 +187,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDatesWithNullFromTable()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -222,9 +208,9 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain [1999-12-31, 2024-01-15, NULL]
         Assert.True(reader.Read());
-        Assert.Equal("1999-12-31", reader.GetString(0));
+        Assert.Equal(new DateTime(1999, 12, 31), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("2024-01-15", reader.GetString(0));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(0));
         Assert.True(reader.Read());
         Assert.True(reader.IsDBNull(0), "Expected NULL for last row");
         Assert.False(reader.Read(), "Expected exactly 3 rows");
@@ -234,8 +220,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectHistoricalAndBoundaryDatesFromTable()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -257,13 +241,13 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain dates [0001-01-01, 0100-03-01, 1582-10-15, 9999-12-31]
         Assert.True(reader.Read());
-        Assert.Equal("0001-01-01", reader.GetString(0));
+        Assert.Equal(new DateTime(1, 1, 1), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("0100-03-01", reader.GetString(0));
+        Assert.Equal(new DateTime(100, 3, 1), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("1582-10-15", reader.GetString(0));
+        Assert.Equal(new DateTime(1582, 10, 15), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("9999-12-31", reader.GetString(0));
+        Assert.Equal(new DateTime(9999, 12, 31), reader.GetDateTime(0));
         Assert.False(reader.Read(), "Expected exactly 4 rows");
     }
 
@@ -271,8 +255,6 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldDownloadLargeResultSetForDateFromTable()
     {
-        Skip.FutureMilestone();
-
         const int rowCount = 100000;
 
         // Given Snowflake client is logged in
@@ -299,7 +281,7 @@ public class DateTest : IClassFixture<ITFixture>
         var baseDate = new DateTime(1970, 1, 1);
         while (reader.Read())
         {
-            Assert.Equal(baseDate.AddDays(count).ToString("yyyy-MM-dd"), reader.GetString(0));
+            Assert.Equal(baseDate.AddDays(count), reader.GetDateTime(0));
             count++;
         }
         Assert.Equal(rowCount, count);
@@ -309,7 +291,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDateUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -337,9 +319,9 @@ public class DateTest : IClassFixture<ITFixture>
 
         // Then Result should contain [2024-01-15, 1970-01-01, 1999-12-31]
         Assert.True(reader.Read(), "Expected one row");
-        Assert.Equal("2024-01-15", reader.GetString(0));
-        Assert.Equal("1970-01-01", reader.GetString(1));
-        Assert.Equal("1999-12-31", reader.GetString(2));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(0));
+        Assert.Equal(new DateTime(1970, 1, 1), reader.GetDateTime(1));
+        Assert.Equal(new DateTime(1999, 12, 31), reader.GetDateTime(2));
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
@@ -347,7 +329,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectNullDateUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -373,7 +355,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldInsertDateUsingParameterBinding()
     {
-        Skip.FutureMilestone();
+        Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");
 
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
@@ -401,16 +383,16 @@ public class DateTest : IClassFixture<ITFixture>
 
         // And Query "SELECT * FROM <table> ORDER BY col" is executed
         using var selectCmd = connection.CreateCommand();
-        selectCmd.CommandText = $"SELECT col FROM {tableName} ORDER BY col";
+        selectCmd.CommandText = $"SELECT * FROM {tableName} ORDER BY col";
         using var reader = selectCmd.ExecuteReader();
 
         // Then Result should contain dates [1970-01-01, 1999-12-31, 2024-01-15]
         Assert.True(reader.Read());
-        Assert.Equal("1970-01-01", reader.GetString(0));
+        Assert.Equal(new DateTime(1970, 1, 1), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("1999-12-31", reader.GetString(0));
+        Assert.Equal(new DateTime(1999, 12, 31), reader.GetDateTime(0));
         Assert.True(reader.Read());
-        Assert.Equal("2024-01-15", reader.GetString(0));
+        Assert.Equal(new DateTime(2024, 1, 15), reader.GetDateTime(0));
         Assert.False(reader.Read(), "Expected exactly 3 rows");
     }
 }
