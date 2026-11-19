@@ -2977,15 +2977,23 @@ impl DatabaseDriverV1 {
                 )
             };
 
-            let full_url = reqwest::Url::parse(&server_url)
-                .and_then(|base| base.join(&url))
-                .map(|u| u.to_string())
+            let (base, joined) = reqwest::Url::parse(&server_url)
+                .and_then(|base| base.join(&url).map(|joined| (base, joined)))
                 .map_err(|_| {
                     InvalidArgumentSnafu {
                         argument: format!("Failed to resolve URL '{url}' against '{server_url}'"),
                     }
                     .build()
                 })?;
+            // `join` can resolve some paths that pass the checks above to another origin; only the
+            // server's own origin is allowed.
+            if joined.origin() != base.origin() {
+                return InvalidArgumentSnafu {
+                    argument: "URL resolves to a different host than the connection's server",
+                }
+                .fail();
+            }
+            let full_url = joined.to_string();
 
             let method = method.to_uppercase();
             let reqwest_method = match method.as_str() {
@@ -5161,6 +5169,34 @@ mod tests {
             err.to_string().contains("Absolute URLs are not allowed"),
             "unexpected error: {err}"
         );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_paths_that_resolve_to_another_host() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        for url in [
+            r"\\evil.com/steal",
+            r"/\evil.com/steal",
+            r"\/evil.com/steal",
+        ] {
+            let err = ds
+                .connection_send_http_request(
+                    None,
+                    handle,
+                    "GET".into(),
+                    url.into(),
+                    HashMap::new(),
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("resolves to a different host"),
+                "{url}: unexpected error: {err}"
+            );
+        }
         ds.connection_release(handle).unwrap();
     }
 
