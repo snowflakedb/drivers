@@ -8,6 +8,8 @@ public static class TestDriver
         Old,
     }
 
+    public static ITestConnectionFactory? OverriddenFactory { get; set; }
+
     public static Kind Current =>
-        ITFixture.OverriddenFactory?.Driver ?? Kind.New;
+        OverriddenFactory?.Driver ?? Kind.New;
 }

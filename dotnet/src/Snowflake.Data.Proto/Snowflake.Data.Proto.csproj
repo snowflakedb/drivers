@@ -8,9 +8,10 @@
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.36.2" />
     <InternalsVisibleTo Include="Snowflake.Data.UD" />
-    <InternalsVisibleTo Include="Snowflake.Data.Tests" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Unit" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
-    <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.E2E" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Wiremock" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Interop" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>

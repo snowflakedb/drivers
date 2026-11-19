@@ -11,7 +11,7 @@ Feature: Basic execute query
     When Query "SELECT 1 AS value" is executed
     Then the result should contain value 1
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute SELECT returning multiple columns
     Given Snowflake client is logged in
     When Query "SELECT 1 AS col1, 'hello' AS col2, '3.14' AS col3" is executed
@@ -19,19 +19,19 @@ Feature: Basic execute query
       | col1 | col2  | col3 |
       | 1    | hello | 3.14 |
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute SELECT returning multiple rows
     Given Snowflake client is logged in
     When Query "SELECT seq8() AS id FROM TABLE(GENERATOR(ROWCOUNT => 5)) v ORDER BY id" is executed
     Then there are 5 numbered sequentially rows returned
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute SELECT returning empty result set
     Given Snowflake client is logged in
     When Query "SELECT 1 WHERE 1=0" is executed
     Then the result set should be empty
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute SELECT returning NULL values
     Given Snowflake client is logged in
     When Query "SELECT NULL AS col1, 42 AS col2, NULL AS col3" is executed
@@ -41,7 +41,7 @@ Feature: Basic execute query
   # DDL STATEMENTS
   # ============================================================================
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute CREATE and DROP TABLE statements
     Given Snowflake client is logged in
     When CREATE TABLE statement is executed
@@ -52,7 +52,7 @@ Feature: Basic execute query
   # DML STATEMENTS
   # ============================================================================
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute INSERT and retrieve inserted data
     Given Snowflake client is logged in
     And A temporary table is created
@@ -64,13 +64,13 @@ Feature: Basic execute query
   # ERROR HANDLING
   # ============================================================================
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should return error for invalid SQL syntax
     Given Snowflake client is logged in
     When Invalid SQL "SELCT INVALID SYNTAX" is executed
     Then An error should be returned
 
-  @python_e2e
+  @python_e2e @dotnet_e2e
   Scenario: should return proper error for NULL in NOT NULL column
     Given Snowflake client is logged in
     And A temporary table with a NOT NULL column is created
@@ -81,7 +81,7 @@ Feature: Basic execute query
   # SEQUENTIAL EXECUTION
   # ============================================================================
 
-  @odbc_e2e @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e @dotnet_e2e
   Scenario: should execute multiple queries sequentially on same connection
     Given Snowflake client is logged in
     When Multiple queries are executed sequentially

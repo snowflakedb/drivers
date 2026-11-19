@@ -19,7 +19,7 @@ Feature: TIMESTAMP_LTZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario Outline: should select timestamp_ltz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -42,19 +42,19 @@ Feature: TIMESTAMP_LTZ type support
       | 0     | 2024-01-15 10:30:00 UTC     |
       | 3     | 2024-01-15 10:30:00.123 UTC |
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario: should select sub-second timestamp_ltz values before epoch
     Given Snowflake client is logged in
     When Sub-second timestamp_ltz values before the epoch are selected
     Then Result should contain the expected sub-second values before the epoch
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario: should handle NULL values for timestamp_ltz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ" is executed
     Then Result should contain [2024-01-15 10:30:00 UTC, NULL]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should download large result set with multiple chunks for timestamp_ltz
     Given Snowflake client is logged in
     When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1, '2024-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ) as ts FROM TABLE(GENERATOR(ROWCOUNT => 50000)) ORDER BY ts" is executed
@@ -64,7 +64,7 @@ Feature: TIMESTAMP_LTZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario Outline: should select <values> from table for timestamp_ltz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists with values <insert_values>
@@ -77,7 +77,7 @@ Feature: TIMESTAMP_LTZ type support
       | epoch  | '1970-01-01 00:00:00 +00:00', '2024-01-15 10:30:00 +00:00'           | 1970-01-01 00:00:00 UTC, 2024-01-15 10:30:00 UTC |
       | null   | NULL, '2024-01-15 10:30:00 +00:00'                                    | 2024-01-15 10:30:00 UTC, NULL                     |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should download large result set with multiple chunks from table for timestamp_ltz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists with 50000 sequential timestamp values
@@ -88,13 +88,13 @@ Feature: TIMESTAMP_LTZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario: should select timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
     Then Result should contain the bound timestamps
 
-  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @nodejs_e2e @odbc_e2e @dotnet_e2e
   Scenario: should select null timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
@@ -115,3 +115,29 @@ Feature: TIMESTAMP_LTZ type support
     When A nanosecond timestamp is inserted into every column using binding
     And Query "SELECT * FROM <table>" is executed
     Then Each column should contain the timestamp truncated to its precision
+
+  @dotnet_e2e
+  Scenario: should select timestamp_ltz epoch
+    Given Snowflake client is logged in
+    When Query "SELECT '1970-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ" is executed
+    Then Result should contain timestamps 1970-01-01 00:00:00 UTC
+
+  @dotnet_e2e
+  Scenario: should select timestamp_ltz microseconds
+    Given Snowflake client is logged in
+    When Query "SELECT '2024-01-15 10:30:00.123456 +00:00'::TIMESTAMP_LTZ" is executed
+    Then Result should contain timestamps 2024-01-15 10:30:00.123456 UTC
+
+  @dotnet_e2e
+  Scenario: should select epoch from table for timestamp_ltz
+    Given Snowflake client is logged in
+    And Table with TIMESTAMP_LTZ column exists with values '1970-01-01 00:00:00 +00:00', '2024-01-15 10:30:00 +00:00'
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain timestamps 1970-01-01 00:00:00 UTC, 2024-01-15 10:30:00 UTC
+
+  @dotnet_e2e
+  Scenario: should select null from table for timestamp_ltz
+    Given Snowflake client is logged in
+    And Table with TIMESTAMP_LTZ column exists with values NULL, '2024-01-15 10:30:00 +00:00'
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain timestamps 2024-01-15 10:30:00 UTC, NULL

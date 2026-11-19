@@ -402,10 +402,14 @@ impl TestDiscovery {
                     base_path.join(format!("{}.py", snake_name)),
                 ]
             }
-            Language::Dotnet => vec![self
-                .workspace_root
-                .join("dotnet/tests/Snowflake.Data.Tests")
-                .join(format!("{}Test.cs", pascal_name))],
+            Language::Dotnet => vec![
+                self.workspace_root
+                    .join("dotnet/tests/Snowflake.Data.Tests.E2E")
+                    .join(format!("{}Test.cs", pascal_name)),
+                self.workspace_root
+                    .join("dotnet/tests/Snowflake.Data.Tests.Wiremock")
+                    .join(format!("{}Test.cs", pascal_name)),
+            ],
             Language::JavaScript => {
                 // The special cases below share a test file rather than owning one; each mapping
                 // was verified scenario-by-scenario, since an unchecked entry reports false

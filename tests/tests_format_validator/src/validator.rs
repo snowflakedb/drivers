@@ -395,11 +395,18 @@ impl GherkinValidator {
                 (self._workspace_root.join("python/tests/e2e"), false),
                 (self._workspace_root.join("python/tests/integ"), true),
             ],
-            Language::Dotnet => vec![(
-                self._workspace_root
-                    .join("dotnet/tests/Snowflake.Data.Tests.Reference"),
-                false,
-            )],
+            Language::Dotnet => vec![
+                (
+                    self._workspace_root
+                        .join("dotnet/tests/Snowflake.Data.Tests.E2E"),
+                    false,
+                ),
+                (
+                    self._workspace_root
+                        .join("dotnet/tests/Snowflake.Data.Tests.Wiremock"),
+                    false,
+                ),
+            ],
             Language::JavaScript => vec![
                 (self._workspace_root.join("nodejs/tests/e2e"), false),
                 (self._workspace_root.join("nodejs/tests/integ"), true),

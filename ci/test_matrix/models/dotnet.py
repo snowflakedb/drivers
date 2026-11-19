@@ -20,7 +20,7 @@ _CLOUD_FOR_DOTNET = {
 # Interop tests only support these TFMs (must match the test project's TargetFrameworks).
 _INTEROP_TFMS = {"net472", "net9.0", "net10.0"}
 
-# Regression tests only support these TFMs (must match Snowflake.Data.Tests TargetFrameworks).
+# Unit tests only support these TFMs (must match Snowflake.Data.Tests.Unit TargetFrameworks).
 _REGRESSION_TFMS = {"net481", "net8.0", "net9.0", "net10.0"}
 
 

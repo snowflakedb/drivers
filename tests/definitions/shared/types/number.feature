@@ -99,7 +99,7 @@ Feature: NUMBER type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain 3 rows with expected high precision boundary values
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle NULL values from table with multiple scales for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
@@ -121,7 +121,7 @@ Feature: NUMBER type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should select number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>(10,0), ?::<type>(10,0), ?::<type>(10,2), ?::<type>(10,2), ?::<type>(10,0)" is executed with bound values [123, -456, 12.34, -56.78, NULL]
@@ -133,7 +133,7 @@ Feature: NUMBER type support
     When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
     Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should insert number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2)) exists
@@ -146,3 +146,29 @@ Feature: NUMBER type support
     And Table with columns (<type>(38,0), <type>(38,2)) exists
     When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78), (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01) are inserted using binding
     Then Result should contain 3 rows with expected values keeping the precision
+
+  @dotnet_e2e
+  Scenario: should handle high precision values from literals as strings for number and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT 12345678901234567890123456789012345678::NUMBER(38,0), 123456789012345678901234567890123456.78::NUMBER(38,2)" is executed
+    Then Result should contain string values ["12345678901234567890123456789012345678", "123456789012345678901234567890123456.78"]
+
+  @dotnet_e2e
+  Scenario: should handle high precision boundaries from literals as strings for number and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT 99999999999999999999999999999999999999::NUMBER(38,0), -99999999999999999999999999999999999999::NUMBER(38,0)" is executed
+    Then Result should contain string values ["99999999999999999999999999999999999999", "-99999999999999999999999999999999999999"]
+
+  @dotnet_e2e
+  Scenario: should handle high precision values from table as strings for number and synonyms
+    Given Snowflake client is logged in
+    And Table with NUMBER(38,0) column exists with value 12345678901234567890123456789012345678
+    When Query "SELECT * FROM <table>" is executed
+    Then Result should contain string value "12345678901234567890123456789012345678"
+
+  @dotnet_e2e
+  Scenario: should handle high precision boundaries from table as strings for number and synonyms
+    Given Snowflake client is logged in
+    And Table with NUMBER(38,0) column exists with values [99999999999999999999999999999999999999, -99999999999999999999999999999999999999]
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain string values ["-99999999999999999999999999999999999999", "99999999999999999999999999999999999999"]

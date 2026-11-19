@@ -9,13 +9,15 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data", "src\Snowf
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests", "tests\Snowflake.Data.Tests\Snowflake.Data.Tests.csproj", "{ED4A5D71-499C-4CC6-992F-8862A4C4DD76}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Unit", "tests\Snowflake.Data.Tests.Unit\Snowflake.Data.Tests.Unit.csproj", "{ED4A5D71-499C-4CC6-992F-8862A4C4DD76}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Proto", "src\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj", "{EF751EA0-BE4D-412F-B02E-D3893C499AC9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Common", "tests\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj", "{F1E73F67-0A6F-4472-B976-D7E9BA92FD9B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Reference", "tests\Snowflake.Data.Tests.Reference\Snowflake.Data.Tests.Reference.csproj", "{226607A3-8B54-4953-8578-0078AC1199AC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.E2E", "tests\Snowflake.Data.Tests.E2E\Snowflake.Data.Tests.E2E.csproj", "{226607A3-8B54-4953-8578-0078AC1199AC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Wiremock", "tests\Snowflake.Data.Tests.Wiremock\Snowflake.Data.Tests.Wiremock.csproj", "{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Interop", "tests\Snowflake.Data.Tests.Interop\Snowflake.Data.Tests.Interop.csproj", "{B7EE50B8-A3BB-4752-850C-71A295745D01}"
 EndProject
@@ -89,6 +91,18 @@ Global
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x64.Build.0 = Release|Any CPU
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x86.ActiveCfg = Release|Any CPU
 		{226607A3-8B54-4953-8578-0078AC1199AC}.Release|x86.Build.0 = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|x64.Build.0 = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Debug|x86.Build.0 = Debug|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|x64.ActiveCfg = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|x64.Build.0 = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|x86.ActiveCfg = Release|Any CPU
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03}.Release|x86.Build.0 = Release|Any CPU
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Debug|x64.ActiveCfg = Debug|Any CPU
@@ -111,6 +125,7 @@ Global
 		{EF751EA0-BE4D-412F-B02E-D3893C499AC9} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{F1E73F67-0A6F-4472-B976-D7E9BA92FD9B} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{226607A3-8B54-4953-8578-0078AC1199AC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{B7EE50B8-A3BB-4752-850C-71A295745D01} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

@@ -11,9 +11,10 @@
     <PackageReference Include="Apache.Arrow" Version="23.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
     <ProjectReference Include="..\Snowflake.Data.Proto\Snowflake.Data.Proto.csproj" />
-    <InternalsVisibleTo Include="Snowflake.Data.Tests" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Unit" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Common" />
-    <InternalsVisibleTo Include="Snowflake.Data.Tests.Reference" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.E2E" />
+    <InternalsVisibleTo Include="Snowflake.Data.Tests.Wiremock" />
     <InternalsVisibleTo Include="Snowflake.Data.Tests.Interop" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
   </ItemGroup>

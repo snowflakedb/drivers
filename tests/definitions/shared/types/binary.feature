@@ -107,7 +107,7 @@ Feature: BINARY type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should select binary literals using parameter binding
     # SELECT binding test: Uses SELECT ?::BINARY to bind binary values
     Given Snowflake client is logged in
@@ -116,7 +116,7 @@ Feature: BINARY type support
       | col1           | col2           | col3               |
       | 0x48656C6C6F   | 0x576F726C64   | 0x0123456789ABCDEF |
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should insert binary using parameter binding
     Given Snowflake client is logged in
     And Table with BINARY column exists
@@ -124,7 +124,7 @@ Feature: BINARY type support
     And Query "SELECT * FROM {table}" is executed
     Then Result should contain binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x]
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should bind corner case binary values
     Given Snowflake client is logged in
     When Query "SELECT ?::BINARY" is executed with each corner case binary value bound

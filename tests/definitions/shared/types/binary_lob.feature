@@ -16,7 +16,7 @@ Feature: Binary LOB (Large Object) handling
     Then the retrieved value size should be 8MB (8,388,608 bytes)
     And data integrity should be maintained
 
-  @python_e2e @jdbc_e2e @odbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e @dotnet_e2e
   Scenario: should handle extended maximum binary size
     # Extended maximum binary size is 64MB (67,108,864 bytes)
     Given Snowflake client is logged in

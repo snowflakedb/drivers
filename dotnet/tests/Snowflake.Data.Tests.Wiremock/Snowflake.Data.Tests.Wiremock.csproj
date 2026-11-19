@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net481</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <!-- Old Snowflake.Data NuGet has transitive vuln deps (log4net) we can't control -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj" />
+    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Snowflake.Data" Version="*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Snowflake.Data.Tests.E2E\TestConnectionFactory.cs" Link="Shared\TestConnectionFactory.cs" />
+    <Compile Include="..\Snowflake.Data.Tests.E2E\E2ETestBase.cs" Link="Shared\E2ETestBase.cs" />
+    <Compile Include="..\Snowflake.Data.Tests.E2E\Config\GlobalState.cs" Link="Shared\Config\GlobalState.cs" />
+    <Compile Include="..\Snowflake.Data.Tests.E2E\Fixtures\E2EITFixture.cs" Link="Shared\Fixtures\E2EITFixture.cs" />
+    <Compile Include="..\Snowflake.Data.Tests.E2E\Legacy\LegacySnowflakeConnection.cs" Link="Shared\Legacy\LegacySnowflakeConnection.cs" />
+    <Compile Include="..\Snowflake.Data.Tests.E2E\Compatibility\GlobalUsings.cs" Link="Shared\Compatibility\GlobalUsings.cs" />
+  </ItemGroup>
+
+  <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
+    <Copy SourceFiles="parameters.json" DestinationFolder="$(OutDir)" ContinueOnError="true"/>
+  </Target>
+
+</Project>

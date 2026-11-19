@@ -35,7 +35,7 @@ Feature: FLOAT type support
     When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
     Then Result should contain [NaN, positive_infinity, negative_infinity]
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario Outline: should handle float <case> boundary values from literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -46,7 +46,7 @@ Feature: FLOAT type support
       | max  | 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type> | 1.7976931348623157e308, -1.7976931348623157e308  |
       | min  | 2.2250738585072014e-308::<type>, 5e-324::<type>                | 2.2250738585072014e-308, approximately 5e-324    |
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario Outline: should handle realistic large float <case> boundary values from literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -56,7 +56,7 @@ Feature: FLOAT type support
       | case | query_values                                                    | expected_values                                 |
       | max  | 1.79769313486231e+308::<type>, -1.79769313486231e+308::<type>  | 1.79769313486231e+308, -1.79769313486231e+308  |
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle float precision boundary values from literals for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
@@ -92,7 +92,7 @@ Feature: FLOAT type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should handle float boundary values from table for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
@@ -117,7 +117,7 @@ Feature: FLOAT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should select float using parameter binding for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
@@ -129,7 +129,7 @@ Feature: FLOAT type support
     When Query "SELECT ?::<type>" is executed with bound NULL value
     Then Result should contain NULL
 
-  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e @nodejs_e2e @dotnet_e2e
   Scenario: should insert float using parameter binding for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists
@@ -142,3 +142,16 @@ Feature: FLOAT type support
     And Table with <type> column exists
     When Float values [0.0, 123.456, -789.012, NULL, NaN, inf, -inf] are bulk-inserted using multirow binding
     Then Result should contain the same values including NULL and the special values
+
+  @dotnet_e2e
+  Scenario: should handle special float values as doubles from literals for float and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT 'NaN'::FLOAT, 'inf'::FLOAT, '-inf'::FLOAT" is executed
+    Then Result should contain [NaN, positive_infinity, negative_infinity] read as .NET double via GetValue
+
+  @dotnet_e2e
+  Scenario: should handle special float values as doubles from table for float and synonyms
+    Given Snowflake client is logged in
+    And Table with FLOAT column exists with values [NaN, inf, -inf, 42.0, -42.0]
+    When Query "SELECT * FROM <table>" is executed
+    Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0] read as .NET double via GetValue

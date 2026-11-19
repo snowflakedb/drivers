@@ -108,3 +108,9 @@ Feature: INT type support
     When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
     And Query "SELECT * FROM <table>" is executed
     Then Result should contain integers [0, 42, -2147483648, 2147483647, 9223372036854775807]
+
+  @dotnet_e2e
+  Scenario: should handle large integer values as string for int and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT -99999999999999999999999999999999999999::<type>, 99999999999999999999999999999999999999::<type>" is executed
+    Then Result should contain string values ["-99999999999999999999999999999999999999", "99999999999999999999999999999999999999"]

@@ -1514,16 +1514,18 @@ Feature: Untrusted root
     )?;
 
     workspace.create_dotnet_test(
-        "Snowflake.Data.Tests",
+        "Snowflake.Data.Tests.E2E",
         "UntrustedRoot",
         r#"
-namespace Snowflake.Data.Tests;
+namespace Snowflake.Data.Tests.E2E;
 
 public class UntrustedRootTest
 {
     [SnowflakeFact]
-    public virtual async Task ShouldRejectAnUntrustedRootCertificateAsync()
+    public async Task ShouldRejectAnUntrustedRootCertificateAsync()
     {
+        Skip.OnOldDriver("BD#untrusted-root-rejected", "Old driver has no bypass for WireMock's CA");
+
         // Given a server with a self-signed certificate
         var server = StartServer();
 
@@ -1532,23 +1534,6 @@ public class UntrustedRootTest
 
         // Then the connection is rejected
         Assert.NotNull(error);
-    }
-}
-"#,
-    )?;
-
-    workspace.create_dotnet_test(
-        "Snowflake.Data.Tests.Reference",
-        "UntrustedRoot",
-        r#"
-namespace Snowflake.Data.Tests.Reference;
-
-public class UntrustedRootTest : Snowflake.Data.Tests.UntrustedRootTest
-{
-    public override Task ShouldRejectAnUntrustedRootCertificateAsync()
-    {
-        Skip.OnOldDriver("BD#untrusted-root-rejected", "Old driver has no bypass for WireMock's CA");
-        return base.ShouldRejectAnUntrustedRootCertificateAsync();
     }
 }
 "#,
@@ -1574,7 +1559,7 @@ public class UntrustedRootTest : Snowflake.Data.Tests.UntrustedRootTest
     let implementation = &bd.implementations[0];
     assert_eq!(
         implementation.test_file,
-        "dotnet/tests/Snowflake.Data.Tests.Reference/UntrustedRootTest.cs"
+        "dotnet/tests/Snowflake.Data.Tests.E2E/UntrustedRootTest.cs"
     );
     assert_eq!(
         implementation.new_behaviour_line,
@@ -1623,10 +1608,10 @@ Feature: Server version
     )?;
 
     workspace.create_dotnet_test(
-        "Snowflake.Data.Tests",
+        "Snowflake.Data.Tests.E2E",
         "ServerVersion",
         r#"
-namespace Snowflake.Data.Tests;
+namespace Snowflake.Data.Tests.E2E;
 
 public class ServerVersionTest
 {
@@ -1653,8 +1638,12 @@ public class ServerVersionTest
     }
 
     [SnowflakeFact]
-    public virtual async Task ShouldRejectAnUntrustedRootCertificateAsync()
+    public async Task ShouldRejectAnUntrustedRootCertificateAsync()
     {
+        Skip.OnNewDriver(
+            "BD#untrusted-root-rejected",
+            "Covered by the new-driver run");
+
         // Given a server with a self-signed certificate
         var server = StartServer();
 
@@ -1663,25 +1652,6 @@ public class ServerVersionTest
 
         // Then the connection is rejected
         Assert.NotNull(error);
-    }
-}
-"#,
-    )?;
-
-    workspace.create_dotnet_test(
-        "Snowflake.Data.Tests.Reference",
-        "ServerVersion",
-        r#"
-namespace Snowflake.Data.Tests.Reference;
-
-public class ServerVersionTest : Snowflake.Data.Tests.ServerVersionTest
-{
-    public override Task ShouldRejectAnUntrustedRootCertificateAsync()
-    {
-        Skip.OnNewDriver(
-            "BD#untrusted-root-rejected",
-            "Covered by the new-driver run");
-        return base.ShouldRejectAnUntrustedRootCertificateAsync();
     }
 }
 "#,
@@ -1703,7 +1673,7 @@ public class ServerVersionTest : Snowflake.Data.Tests.ServerVersionTest
     let implementation = &version.implementations[0];
     assert_eq!(
         implementation.test_file,
-        "dotnet/tests/Snowflake.Data.Tests/ServerVersionTest.cs"
+        "dotnet/tests/Snowflake.Data.Tests.E2E/ServerVersionTest.cs"
     );
     assert_eq!(implementation.new_behaviour_line, Some(17));
     assert_eq!(implementation.old_behaviour_line, Some(22));
@@ -1716,7 +1686,7 @@ public class ServerVersionTest : Snowflake.Data.Tests.ServerVersionTest
     let implementation = &untrusted.implementations[0];
     assert_eq!(
         implementation.test_file,
-        "dotnet/tests/Snowflake.Data.Tests.Reference/ServerVersionTest.cs"
+        "dotnet/tests/Snowflake.Data.Tests.E2E/ServerVersionTest.cs"
     );
     assert_eq!(
         implementation.old_behaviour_line,

@@ -6,12 +6,12 @@ on:
   workflow_call:
     inputs:
       run_dotnet:
-        description: "Run .NET tests."
+        description: "Run .NET unit and interop tests (new driver)."
         type: boolean
         required: false
         default: false
       run_dotnet_reference:
-        description: "Run .NET reference tests."
+        description: "Run .NET E2E and Wiremock tests (old and new driver)."
         type: boolean
         required: false
         default: false
@@ -37,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.split.outputs.matrix }}
-      matrix_interop: ${{ steps.split.outputs.matrix_interop }}
     steps:
       - uses: actions/checkout@v7
       - id: matrix
@@ -56,8 +55,7 @@ jobs:
       - id: split
         run: |
           FULL='${{ steps.matrix.outputs.matrix }}'
-          echo "matrix=$(echo "$FULL" | jq -c '[.[] | select(.mode == "regression")]')" >> "$GITHUB_OUTPUT"
-          echo "matrix_interop=$(echo "$FULL" | jq -c '[.[] | select(.mode == "interop")]')" >> "$GITHUB_OUTPUT"
+          echo "matrix=$(echo "$FULL" | jq -c '[.[] | select(.mode == "regression" or .mode == "interop")]')" >> "$GITHUB_OUTPUT"
 
   dotnet_tests:
     needs: load-dotnet-matrix
@@ -67,7 +65,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.load-dotnet-matrix.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    name: dotnet tests (${{ matrix.name }})
+    name: dotnet unit + interop (${{ matrix.name }})
     timeout-minutes: 60
     steps:
       - name: Checkout repository
@@ -118,19 +116,11 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build --no-restore ${{ matrix.mode == 'interop' && '-p:SkipCargoBuild=true' || '' }}
         working-directory: dotnet
 
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
-        shell: bash
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
-          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
-          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
-
       - name: Restore Cargo cache (sf_core)
+        if: matrix.mode == 'regression'
         id: sf-core-cache
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
@@ -139,10 +129,11 @@ jobs:
           shared-key: "sf-core"
 
       - name: Build Rust components
+        if: matrix.mode == 'regression'
         run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }}
 
       - name: Save Cargo cache (sf_core)
-        if: always()
+        if: always() && matrix.mode == 'regression'
         continue-on-error: true
         uses: ./.github/actions/cargo-cache
         with:
@@ -153,42 +144,61 @@ jobs:
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
 
       - name: Copy native lib to test output directory
-        if: matrix.copy_native_lib
+        if: matrix.mode == 'regression' && matrix.copy_native_lib
         shell: bash
         run: |
           cp "${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}" \
-             "dotnet/tests/Snowflake.Data.Tests/bin/Debug/${{ matrix.dotnet_version }}/"
+             "dotnet/tests/Snowflake.Data.Tests.Unit/bin/Debug/${{ matrix.dotnet_version }}/"
 
-      - name: Run tests (new driver)
-        if: ${{ !(matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu')) }}
+      - name: Build sf_core_stub
+        if: matrix.mode == 'interop'
+        run: cargo build
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub
+
+      - name: Copy stub DLLs for Framework DllImport
+        if: matrix.mode == 'interop' && runner.os == 'Windows' && matrix.dotnet_version == 'net472'
+        shell: pwsh
+        run: |
+          $stubDll = "dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub/target/debug/sf_core_stub.dll"
+          $outDir = "dotnet/tests/Snowflake.Data.Tests.Interop/bin/Debug/net472"
+          Copy-Item $stubDll "$outDir/sf_core.dll"
+          Copy-Item $stubDll "$outDir/sf_core_stub.dll"
+
+      - name: Run unit tests (new driver)
+        if: ${{ matrix.mode == 'regression' && !(matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu')) }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
-        working-directory: dotnet/tests/Snowflake.Data.Tests
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Unit
         env:
-           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
            SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
            SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
 
       # Custom Exe runner (not VSTest), so coverlet.collector / dotnet test
       # cannot hook in. Wrap the same `dotnet run` with coverlet.console on
       # the primary Linux PR cell (ubuntu / net10.0 / regression).
-      - name: Run tests with coverage (Linux net10.0)
+      - name: Run unit tests with coverage (Linux net10.0)
         if: ${{ matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu') }}
-        working-directory: dotnet/tests/Snowflake.Data.Tests
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Unit
         env:
-           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
            SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
            SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
         run: |
           set -euo pipefail
           tool="${RUNNER_TEMP}/coverlet"
           dotnet tool install coverlet.console --tool-path "$tool" --version 6.0.4
-          dll="bin/Debug/${{ matrix.dotnet_version }}/Snowflake.Data.Tests.dll"
+          dll="bin/Debug/${{ matrix.dotnet_version }}/Snowflake.Data.Tests.Unit.dll"
           "$tool/coverlet" "$dll" \
             --target dotnet \
             --targetargs "run --no-build --framework ${{ matrix.dotnet_version }}" \
             --include '[Snowflake.Data]*' \
             --format cobertura \
             --output "${{ github.workspace }}/coverage.cobertura.xml"
+
+      - name: Run interop tests (new driver)
+        if: matrix.mode == 'interop'
+        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
+        env:
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
 
       - name: Upload test results
         if: always()
@@ -205,98 +215,9 @@ jobs:
           name: dotnet-net10-linux
           path: coverage.cobertura.xml
 
-  dotnet_tests_interop:
-    needs: load-dotnet-matrix
-    if: needs.load-dotnet-matrix.outputs.matrix_interop != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.load-dotnet-matrix.outputs.matrix_interop) }}
-    runs-on: ${{ matrix.os }}
-    name: dotnet Interop (${{ matrix.name }})
-    timeout-minutes: 20
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up dotnet
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-          dotnet-quality: 'ga'
-
-      - name: Restore dependencies
-        shell: bash
-        run: ../scripts/retry_on_network_error.sh nuget -- dotnet restore
-        working-directory: dotnet
-
-      - name: Restore Cargo cache
-        id: rust-cache
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: restore
-          shared-key: "proto-generator"
-
-      - name: Shrink MSVC debug info
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_TEST_DEBUG=line-tables-only" >> "$GITHUB_ENV"
-
-      - name: Regenerate proto files
-        run: dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
-        working-directory: dotnet
-
-      - name: Save Cargo cache
-        if: always()
-        continue-on-error: true
-        uses: ./.github/actions/cargo-cache
-        with:
-          mode: save
-          slim-mode: aggressive
-          shared-key: "proto-generator"
-          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
-          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
-
-      - name: Build
-        run: dotnet build --no-restore -p:SkipCargoBuild=true
-        working-directory: dotnet
-
-      - name: Build sf_core_stub
-        run: cargo build
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub
-
-      - name: Copy stub DLLs for Framework DllImport
-        if: runner.os == 'Windows' && matrix.dotnet_version == 'net472'
-        shell: pwsh
-        run: |
-          $stubDll = "dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub/target/debug/sf_core_stub.dll"
-          $outDir = "dotnet/tests/Snowflake.Data.Tests.Interop/bin/Debug/net472"
-          Copy-Item $stubDll "$outDir/sf_core.dll"
-          Copy-Item $stubDll "$outDir/sf_core_stub.dll"
-
-      - name: Run interop tests
-        run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop
-        env:
-          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
-
-      - name: Upload interop test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: dotnet-tests-interop-${{ matrix.name }}
-          path: dotnet-junit.xml
-          if-no-files-found: warn
-
-  dotnet_tests_reference:
+  dotnet_tests_e2e:
     if: inputs.run_dotnet_reference
-    name: dotnet Reference Tests (old driver)
+    name: dotnet E2E + Wiremock (old driver)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -352,51 +273,61 @@ jobs:
           PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
-      - name: Run reference tests (old driver)
+      - name: Run E2E tests (old driver)
         run: dotnet run --no-build --framework net10.0
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+        working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
-          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-e2e.xml
 
-      - name: Upload reference test results
+      - name: Run Wiremock tests (old driver)
+        if: ${{ !cancelled() }}
+        run: dotnet run --no-build --framework net10.0
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Wiremock
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-wiremock.xml
+
+      - name: Upload E2E + Wiremock test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dotnet-tests-reference
-          path: dotnet-junit.xml
+          name: dotnet-tests-e2e-old
+          path: |
+            dotnet-junit-e2e.xml
+            dotnet-junit-wiremock.xml
           if-no-files-found: warn
 
-      - name: Run reference tests (old driver, JSON)
+      - name: Run E2E tests (old driver, JSON)
         if: ${{ !cancelled() }}
         # Blacklist of non-conversion tests. A new conversion class is included
         # automatically; a new non-conversion class is also included until it
         # is listed here. Running a test twice is better than omitting one.
         run: >
           dotnet run --no-build --framework net10.0 --
-          -class- Snowflake.Data.Tests.Reference.BasicExecuteQueryTest
-          -class- Snowflake.Data.Tests.Reference.CertificateRevocationTest
-          -class- Snowflake.Data.Tests.Reference.ConnectionLifecycleTest
-          -class- Snowflake.Data.Tests.Reference.ConnectionTest
-          -class- Snowflake.Data.Tests.Reference.IcebergTableTest
-          -class- Snowflake.Data.Tests.Reference.Legacy.LegacyFacadeForwardingTest
-          -class- Snowflake.Data.Tests.Reference.PatTest
-          -class- Snowflake.Data.Tests.Reference.PutGetAsyncExecuteTest
-          -class- Snowflake.Data.Tests.Reference.QueryTagTest
-          -class- Snowflake.Data.Tests.Reference.TlsVersionTest
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+          -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
+          -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
+          -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
+          -class- Snowflake.Data.Tests.E2E.ConnectionTest
+          -class- Snowflake.Data.Tests.E2E.IcebergTableTest
+          -class- Snowflake.Data.Tests.E2E.Legacy.LegacyFacadeForwardingTest
+          -class- Snowflake.Data.Tests.E2E.PatTest
+          -class- Snowflake.Data.Tests.E2E.PutGetAsyncExecuteTest
+          -class- Snowflake.Data.Tests.E2E.QueryTagTest
+        working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SNOWFLAKE_DOTNET_USE_OLD_DRIVER: "1"
           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-json.xml
           QUERY_RESULT_FORMAT: JSON
 
-      - name: Upload reference JSON test results
+      - name: Upload E2E JSON test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dotnet-tests-reference-json
+          name: dotnet-tests-e2e-old-json
           path: dotnet-junit-json.xml
           if-no-files-found: warn
 
@@ -405,10 +336,9 @@ jobs:
         run: dotnet format Snowflake.Data.sln --verify-no-changes
         working-directory: dotnet
 
-  dotnet_tests_reference_new_driver:
+  dotnet_tests_e2e_new_driver:
     if: inputs.run_dotnet_reference
-    continue-on-error: true
-    name: dotnet Reference Tests (new driver)
+    name: dotnet E2E + Wiremock (new driver)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -485,63 +415,75 @@ jobs:
           shared-key: "sf-core"
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
-          
-      - name: Copy native lib to test output directory
+
+      - name: Copy native lib to test output directories
         shell: bash
         run: |
           cp "${{ github.workspace }}/target/debug/libsf_core.so" \
-          "dotnet/tests/Snowflake.Data.Tests.Reference/bin/Debug/net10.0/"
+            "dotnet/tests/Snowflake.Data.Tests.E2E/bin/Debug/net10.0/"
+          cp "${{ github.workspace }}/target/debug/libsf_core.so" \
+            "dotnet/tests/Snowflake.Data.Tests.Wiremock/bin/Debug/net10.0/"
 
-      - name: Run reference tests (new driver)
+      - name: Run E2E tests (new driver)
         run: dotnet run --no-build --framework net10.0
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+        working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
-          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit.xml
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-e2e.xml
 
-      - name: Upload reference (new driver) test results
+      - name: Run Wiremock tests (new driver)
+        if: ${{ !cancelled() }}
+        run: dotnet run --no-build --framework net10.0
+        working-directory: dotnet/tests/Snowflake.Data.Tests.Wiremock
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-wiremock.xml
+
+      - name: Upload E2E + Wiremock (new driver) test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dotnet-tests-reference-new
-          path: dotnet-junit.xml
+          name: dotnet-tests-e2e-new
+          path: |
+            dotnet-junit-e2e.xml
+            dotnet-junit-wiremock.xml
           if-no-files-found: warn
 
-      - name: Run reference tests (new driver, JSON)
+      - name: Run E2E tests (new driver, JSON)
         if: ${{ !cancelled() }}
         # Blacklist of non-conversion tests. A new conversion class is included
         # automatically; a new non-conversion class is also included until it
         # is listed here. Running a test twice is better than omitting one.
         run: >
           dotnet run --no-build --framework net10.0 --
-          -class- Snowflake.Data.Tests.Reference.BasicExecuteQueryTest
-          -class- Snowflake.Data.Tests.Reference.CertificateRevocationTest
-          -class- Snowflake.Data.Tests.Reference.ConnectionLifecycleTest
-          -class- Snowflake.Data.Tests.Reference.ConnectionTest
-          -class- Snowflake.Data.Tests.Reference.IcebergTableTest
-          -class- Snowflake.Data.Tests.Reference.Legacy.LegacyFacadeForwardingTest
-          -class- Snowflake.Data.Tests.Reference.PatTest
-          -class- Snowflake.Data.Tests.Reference.PutGetAsyncExecuteTest
-          -class- Snowflake.Data.Tests.Reference.QueryTagTest
-          -class- Snowflake.Data.Tests.Reference.TlsVersionTest
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Reference
+          -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
+          -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
+          -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
+          -class- Snowflake.Data.Tests.E2E.ConnectionTest
+          -class- Snowflake.Data.Tests.E2E.IcebergTableTest
+          -class- Snowflake.Data.Tests.E2E.Legacy.LegacyFacadeForwardingTest
+          -class- Snowflake.Data.Tests.E2E.PatTest
+          -class- Snowflake.Data.Tests.E2E.PutGetAsyncExecuteTest
+          -class- Snowflake.Data.Tests.E2E.QueryTagTest
+        working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-json.xml
           QUERY_RESULT_FORMAT: JSON
 
-      - name: Upload reference (new driver) JSON test results
+      - name: Upload E2E (new driver) JSON test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dotnet-tests-reference-new-json
+          name: dotnet-tests-e2e-new-json
           path: dotnet-junit-json.xml
           if-no-files-found: warn
 
   dotnet-status:
-    needs: [load-dotnet-matrix, dotnet_tests, dotnet_tests_reference, dotnet_tests_interop]
+    needs: [load-dotnet-matrix, dotnet_tests, dotnet_tests_e2e, dotnet_tests_e2e_new_driver]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -550,25 +492,26 @@ jobs:
           echo "=== dotnet CI Status ==="
 
           MATRIX_RESULT="${{ needs.dotnet_tests.result }}"
-          REFERENCE_RESULT="${{ needs.dotnet_tests_reference.result }}"
-          INTEROP_RESULT="${{ needs.dotnet_tests_interop.result }}"
+          E2E_OLD_RESULT="${{ needs.dotnet_tests_e2e.result }}"
+          E2E_NEW_RESULT="${{ needs.dotnet_tests_e2e_new_driver.result }}"
 
           # Check if any job failed or was cancelled. This must run before the
           # "tests skipped" check below: a failure in an upstream job can cause
           # a downstream job to be auto-skipped, which would otherwise be
           # misread as "no relevant changes detected" and pass.
-          if [[ "$MATRIX_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "$MATRIX_RESULT" =~ ^(failure|cancelled)$ || "$E2E_OLD_RESULT" =~ ^(failure|cancelled)$ || "$E2E_NEW_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ dotnet CI FAILED or CANCELLED"
-            echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
-            echo "  - dotnet_tests_reference (old driver): $REFERENCE_RESULT"
+            echo "  - dotnet_tests (unit + interop): $MATRIX_RESULT"
+            echo "  - dotnet_tests_e2e (old driver): $E2E_OLD_RESULT"
+            echo "  - dotnet_tests_e2e_new_driver: $E2E_NEW_RESULT"
             exit 1
           fi
 
           # Check if tests were skipped (only reachable once nothing above failed/cancelled)
-          if [[ "$MATRIX_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
+          if [[ "$MATRIX_RESULT" == "skipped" && "$E2E_OLD_RESULT" == "skipped" && "$E2E_NEW_RESULT" == "skipped" ]]; then
             # Driver CI only invokes this workflow for drivers it selected, so a
             # skip here means the gating is broken rather than "nothing to do".
-            if [[ "${{ inputs.run_dotnet }}" == "true" ]]; then
+            if [[ "${{ inputs.run_dotnet }}" == "true" || "${{ inputs.run_dotnet_reference }}" == "true" ]]; then
               echo "✗ Driver CI requested dotnet tests but every dotnet job was SKIPPED — check the job-level if: conditions."
               exit 1
             fi
@@ -578,7 +521,7 @@ jobs:
 
           # Tests ran and passed
           echo "✓ dotnet jobs were RUN and PASSED"
-          echo "  - dotnet_tests (matrix): $MATRIX_RESULT"
-          echo "  - dotnet_tests_reference (old driver): $REFERENCE_RESULT"
-          echo "  - dotnet_tests_interop: $INTEROP_RESULT"
+          echo "  - dotnet_tests (unit + interop): $MATRIX_RESULT"
+          echo "  - dotnet_tests_e2e (old driver): $E2E_OLD_RESULT"
+          echo "  - dotnet_tests_e2e_new_driver: $E2E_NEW_RESULT"
           exit 0

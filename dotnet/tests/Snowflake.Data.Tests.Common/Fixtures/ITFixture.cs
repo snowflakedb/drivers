@@ -39,11 +39,9 @@ public class ITFixture
     }
 #endif
 
-    public static ITestConnectionFactory? OverriddenFactory { get; set; }
-
     public virtual ITestConnectionFactory Factory
     {
-        get => OverriddenFactory ?? field;
+        get => TestDriver.OverriddenFactory ?? field;
     } = new DefaultTestConnectionFactory();
 
     private static ITestOutputHelper? TestOutputHelper => TestContext.Current.TestOutputHelper;

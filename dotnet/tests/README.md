@@ -1,46 +1,41 @@
 # .NET Tests
 
-Three test projects, one shared infrastructure library:
+Four test projects, one shared infrastructure library:
 
-| Project | Purpose | CI Blocking? |
-|---------|---------|--------------|
-| `Snowflake.Data.Tests` | New wrapper integration tests (new driver only) | Yes |
-| `Snowflake.Data.Tests.Reference` | Migrated old-driver test suite (runs against both old and new driver) | Old driver: Yes. New driver: No |
-| `Snowflake.Data.Tests.Common` | Shared test infrastructure (not a test project itself) | N/A |
-
-## Architecture
-
-```
-Snowflake.Data.Tests.Common        (class library)
-
-Snowflake.Data.Tests               (test project)
-    References Common. Contains new wrapper tests.
-    Trait: Category=E2E
-
-Snowflake.Data.Tests.Reference     (test project)
-    References Common. Contains tests migrated from the old driver repo.
-    Traits: Category=E2E, Driver=Reference
-    Base class: ReferenceTestBase
-```
+| Project | Purpose | CI |
+|---------|---------|----|
+| `Snowflake.Data.Tests.Unit` | New-driver unit and architecture tests | `dotnet_tests` (new driver only) |
+| `Snowflake.Data.Tests.Interop` | Native interop unit tests against `sf_core_stub` | `dotnet_tests` (new driver only) |
+| `Snowflake.Data.Tests.E2E` | Live Snowflake E2E tests | `dotnet_tests_e2e` (old + new driver) |
+| `Snowflake.Data.Tests.Wiremock` | HTTP/TLS tests against WireMock | `dotnet_tests_e2e` (old + new driver) |
+| `Snowflake.Data.Tests.Common` | Shared test infrastructure (not a test project) | N/A |
 
 ## Running locally
 
 ```bash
-# New wrapper tests (requires sf_core native lib)
-dotnet test tests/Snowflake.Data.Tests --framework net10.0
+# Unit tests (requires sf_core for native handle tests; no Snowflake credentials)
+dotnet run --project tests/Snowflake.Data.Tests.Unit --framework net10.0
 
-# Reference tests against old driver (no native lib needed)
-SNOWFLAKE_DOTNET_USE_OLD_DRIVER=1 dotnet test tests/Snowflake.Data.Tests.Reference --framework net10.0
+# Interop tests (builds sf_core_stub; no credentials)
+dotnet run --project tests/Snowflake.Data.Tests.Interop --framework net10.0
 
-# Reference tests against new driver (requires sf_core native lib)
-dotnet test tests/Snowflake.Data.Tests.Reference --framework net10.0
+# E2E against the old driver (no native lib)
+SNOWFLAKE_DOTNET_USE_OLD_DRIVER=1 dotnet run --project tests/Snowflake.Data.Tests.E2E --framework net10.0
+
+# E2E against the new driver (requires sf_core)
+dotnet run --project tests/Snowflake.Data.Tests.E2E --framework net10.0
+
+# Wiremock against the old / new driver (same env vars as E2E)
+SNOWFLAKE_DOTNET_USE_OLD_DRIVER=1 dotnet run --project tests/Snowflake.Data.Tests.Wiremock --framework net10.0
+dotnet run --project tests/Snowflake.Data.Tests.Wiremock --framework net10.0
 ```
+
+Use `dotnet run`, not `dotnet test`. See `.claude/skills/run-dotnet-ud-tests/SKILL.md`.
 
 ## CI Jobs (test-dotnet.yml)
 
-- `dotnet_tests` - matrix of TFMs/platforms, runs `Snowflake.Data.Tests`
-- `dotnet_tests_reference` - old driver run of `Snowflake.Data.Tests.Reference` (blocking)
-- `dotnet_tests_reference_new_driver` - new driver run of `Snowflake.Data.Tests.Reference` (non-blocking, `continue-on-error: true`)
+- `dotnet_tests` — matrix of TFMs/platforms. Unit cells run `Snowflake.Data.Tests.Unit`. Interop cells run `Snowflake.Data.Tests.Interop`. New driver only. Blocking.
+- `dotnet_tests_e2e` — old-driver run of E2E + Wiremock. Blocking.
+- `dotnet_tests_e2e_new_driver` — new-driver run of E2E + Wiremock. Blocking.
 
-The `dotnet-status` gate only checks `dotnet_tests` + `dotnet_tests_reference` (old driver).
-The new-driver reference job is informational — it tracks migration progress without blocking PRs.
+The `dotnet-status` gate checks `dotnet_tests` + both E2E jobs.
