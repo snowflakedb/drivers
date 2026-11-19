@@ -32,6 +32,13 @@ pub fn convert_string_rowset_to_arrow_reader(
 
     for row in rowset {
         for (col_idx, cell) in row.iter().enumerate() {
+            if col_idx >= builders.len() {
+                return Err(ArrowError::InvalidArgumentError(format!(
+                    "Row has more columns than expected ({})",
+                    builders.len(),
+                )))
+                .context(ChunkReadSnafu);
+            }
             match cell {
                 None => builders[col_idx].push_null(),
                 Some(val) => builders[col_idx]
@@ -64,10 +71,18 @@ impl ParseChunk for JsonChunkParser {
     )]
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError> {
         let expected_cols = self.row_types.len();
-        if expected_cols == 0 || data.is_empty() {
+        if data.is_empty() {
             return Ok(empty_batch_from_row_types(&self.row_types)?
                 .into_iter()
                 .collect());
+        }
+        // Snowflake results always have at least one column, so bytes without
+        // column metadata cannot be validated or decoded (for example a
+        // DatabaseFetchChunk request that omitted `columns`).
+        if expected_cols == 0 {
+            return Err(ArrowError::InvalidArgumentError(
+                "Malformed JSON chunk: chunk has data but no column metadata".to_string(),
+            ));
         }
 
         let capacity_hint = data.len() / (expected_cols * 8);
@@ -89,6 +104,21 @@ impl ParseChunk for JsonChunkParser {
 
         builders_to_batches(builders, &self.row_types)
     }
+
+    fn parse_chunk_with_row_count(
+        &self,
+        data: Vec<u8>,
+        expected_rows: i32,
+    ) -> Result<Vec<RecordBatch>, ArrowError> {
+        let batches = self.parse_chunk(data)?;
+        let actual_rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        if usize::try_from(expected_rows).ok() != Some(actual_rows) {
+            return Err(ArrowError::InvalidArgumentError(format!(
+                "Malformed JSON chunk: expected {expected_rows} rows but got {actual_rows}",
+            )));
+        }
+        Ok(batches)
+    }
 }
 
 /// Scans JSON chunk bytes, dispatching each cell directly to column builders.
@@ -99,14 +129,27 @@ impl ParseChunk for JsonChunkParser {
 /// `[ "v1", "v2", null ], [ "v3", "v4", null ], ...`. We therefore delimit
 /// rows by scanning for top-level `[...]` arrays (tracking bracket depth and
 /// skipping brackets that appear inside JSON strings) rather than splitting on
-/// `\n`. This also tolerates the legacy newline-delimited shape.
+/// `\n`. This also tolerates the legacy newline-delimited shape and a single
+/// trailing comma, but requires a comma or newline between rows and rejects
+/// leading or repeated commas.
 fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize, ArrowError> {
+    enum DelimiterState {
+        RowOnly,
+        CommaOnly,
+        RowOrComma,
+    }
+
+    // Validate once per chunk; the normal UTF-8 path borrows without allocating.
+    // Both row scanners then see the same replacement behavior for invalid input.
+    let text = String::from_utf8_lossy(data);
+    let data = text.as_bytes();
     let mut row_count: usize = 0;
 
     let mut depth: i32 = 0;
     let mut row_start: Option<usize> = None;
     let mut in_string = false;
     let mut escaped = false;
+    let mut delimiter = DelimiterState::RowOnly;
 
     for (i, &b) in data.iter().enumerate() {
         if in_string {
@@ -120,6 +163,28 @@ fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize,
             continue;
         }
 
+        if depth == 0 {
+            match b {
+                b',' if !matches!(delimiter, DelimiterState::RowOnly) => {
+                    delimiter = DelimiterState::RowOnly;
+                    continue;
+                }
+                b'\n' => {
+                    if matches!(delimiter, DelimiterState::CommaOnly) {
+                        delimiter = DelimiterState::RowOrComma;
+                    }
+                    continue;
+                }
+                b'[' if !matches!(delimiter, DelimiterState::CommaOnly) => {}
+                b' ' | b'\t' | b'\r' => continue,
+                _ => {
+                    return Err(ArrowError::InvalidArgumentError(format!(
+                        "Malformed JSON chunk: unexpected byte at offset {i}",
+                    )));
+                }
+            }
+        }
+
         match b {
             b'"' => in_string = true,
             b'[' => {
@@ -130,27 +195,30 @@ fn parse_json_rows(data: &[u8], builders: &mut [ColumnBuilder]) -> Result<usize,
             }
             b']' => {
                 depth -= 1;
-                if depth == 0 {
-                    if let Some(start) = row_start.take() {
-                        scan_json_row(&data[start..=i], builders)?;
-                        row_count += 1;
-                    }
-                } else if depth < 0 {
-                    return Err(ArrowError::InvalidArgumentError(
-                        "Malformed JSON chunk: unbalanced ']'".to_string(),
-                    ));
+                if depth == 0
+                    && let Some(start) = row_start.take()
+                {
+                    scan_json_row(&text[start..=i], builders)?;
+                    row_count += 1;
+                    delimiter = DelimiterState::CommaOnly;
                 }
             }
             _ => {}
         }
     }
 
+    if depth != 0 {
+        return Err(ArrowError::InvalidArgumentError(
+            "Malformed JSON chunk: truncated row".to_string(),
+        ));
+    }
+
     Ok(row_count)
 }
 
-/// Parses a single JSON row `["v1","v2",null]` from raw bytes.
+/// Parses a single JSON row `["v1","v2",null]` from validated UTF-8.
 /// Uses sonic-rs SIMD-accelerated parsing when available, falls back to serde_json.
-fn scan_json_row(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
+fn scan_json_row(line: &str, builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
     #[cfg(feature = "sonic-json")]
     {
         scan_json_row_sonic(line, builders)
@@ -162,7 +230,7 @@ fn scan_json_row(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), Arro
 }
 
 #[cfg(feature = "sonic-json")]
-fn scan_json_row_sonic(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
+fn scan_json_row_sonic(line: &str, builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
     use sonic_rs::JsonValueTrait;
 
     let expected_cols = builders.len();
@@ -196,9 +264,9 @@ fn scan_json_row_sonic(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<()
 }
 
 #[cfg(not(feature = "sonic-json"))]
-fn scan_json_row_serde(line: &[u8], builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
+fn scan_json_row_serde(line: &str, builders: &mut [ColumnBuilder]) -> Result<(), ArrowError> {
     let arr: Vec<serde_json::Value> =
-        serde_json::from_slice(line).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+        serde_json::from_str(line).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
 
     let expected_cols = builders.len();
     if arr.len() > expected_cols {
@@ -1299,6 +1367,243 @@ mod tests {
         parser
             .parse_chunk(data.to_vec())
             .expect("parse_chunk failed")
+    }
+
+    #[test]
+    fn parse_chunk_with_row_count_rejects_mismatch() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for expected_rows in [0, 1, 3] {
+            let err = parser
+                .parse_chunk_with_row_count(br#"["1"],["2"]"#.to_vec(), expected_rows)
+                .unwrap_err();
+            assert!(err.to_string().contains("rows but got 2"));
+        }
+        let batches = parser
+            .parse_chunk_with_row_count(br#"["1"],["2"]"#.to_vec(), 2)
+            .unwrap();
+        assert_eq!(batches[0].num_rows(), 2);
+        let batches = parser.parse_chunk_with_row_count(vec![], 0).unwrap();
+        assert_eq!(batches[0].num_rows(), 0);
+    }
+
+    #[test]
+    fn chunk_data_without_column_metadata_is_rejected() {
+        let parser = JsonChunkParser { row_types: vec![] };
+        for data in [&b"garbage"[..], br#"["1"]"#] {
+            let err = parser.parse_chunk(data.to_vec()).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Invalid argument error: Malformed JSON chunk: chunk has data but no column metadata",
+            );
+        }
+        let batches = parser.parse_chunk_with_row_count(vec![], 0).unwrap();
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+    }
+
+    #[test]
+    fn truncated_final_row_returns_error() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        let err = parser.parse_chunk(br#"["1"],["2""#.to_vec()).unwrap_err();
+        assert!(err.to_string().contains("truncated row"));
+    }
+
+    #[test]
+    fn unterminated_string_returns_error() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for data in [br#"["1"],["2"#.as_slice(), br#"["ends with \"#.as_slice()] {
+            let err = parser.parse_chunk(data.to_vec()).unwrap_err();
+            assert!(err.to_string().contains("truncated row"));
+        }
+    }
+
+    #[test]
+    fn garbage_outside_rows_returns_error() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for (data, offset) in [
+            (br#"["1"] xyz ["2"]"#.as_slice(), 6),
+            (br#""ignored",["1"]"#.as_slice(), 0),
+            (br#"["1"] null"#.as_slice(), 6),
+            (br#"["1"]]"#.as_slice(), 5),
+        ] {
+            assert_eq!(
+                parser.parse_chunk(data.to_vec()).unwrap_err().to_string(),
+                format!(
+                    "Invalid argument error: Malformed JSON chunk: unexpected byte at offset {offset}"
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_top_level_commas_return_error() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for (data, expected_rows, offset) in [
+            (r#",["1"],["2"]"#, 2, 0),
+            (r#",["1"],,["2"]"#, 2, 0),
+            (r#"["1"],,["2"]"#, 2, 6),
+            ("[\"1\"], \n , [\"2\"]", 2, 9),
+            (r#"["1"],,"#, 1, 6),
+            (",", 0, 0),
+            (" \n , \t ", 0, 3),
+        ] {
+            assert_eq!(
+                parser
+                    .parse_chunk_with_row_count(data.as_bytes().to_vec(), expected_rows)
+                    .unwrap_err()
+                    .to_string(),
+                format!(
+                    "Invalid argument error: Malformed JSON chunk: unexpected byte at offset {offset}"
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn rows_without_comma_or_newline_return_error() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for (data, offset) in [
+            (r#"["1"]["2"]"#, 5),
+            (r#"["1"] ["2"]"#, 6),
+            ("[\"1\"]\t [\"2\"]", 7),
+            ("\n[\"1\"][\"2\"]", 6),
+            ("[\n\"1\"][\"2\"]", 6),
+            ("[\"1\"]\r[\"2\"]", 6),
+        ] {
+            assert_eq!(
+                parser
+                    .parse_chunk_with_row_count(data.as_bytes().to_vec(), 2)
+                    .unwrap_err()
+                    .to_string(),
+                format!(
+                    "Invalid argument error: Malformed JSON chunk: unexpected byte at offset {offset}"
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn supported_row_delimiters_preserve_values() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for data in [
+            r#"["1"],["2"]"#,
+            "[\"1\"]\n[\"2\"]",
+            "[\"1\"]\r\n[\"2\"],\r\n",
+            " \n [\"1\"] \n , \t [\"2\"] \n , \t ",
+        ] {
+            let batches = parser
+                .parse_chunk_with_row_count(data.as_bytes().to_vec(), 2)
+                .unwrap();
+            let col = batches[0]
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(col.len(), 2);
+            assert_eq!(col.value(0), "1");
+            assert_eq!(col.value(1), "2");
+        }
+        for data in ["", " \t\r\n"] {
+            let batches = parser
+                .parse_chunk_with_row_count(data.as_bytes().to_vec(), 0)
+                .unwrap();
+            assert_eq!(batches[0].num_rows(), 0);
+        }
+    }
+
+    #[test]
+    fn form_feed_and_bom_are_rejected() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        for (data, offset) in [
+            (b"[\"1\"]\x0c,[\"2\"]".as_slice(), 5),
+            (b"\xef\xbb\xbf[\"1\"]".as_slice(), 0),
+        ] {
+            assert_eq!(
+                parser.parse_chunk(data.to_vec()).unwrap_err().to_string(),
+                format!(
+                    "Invalid argument error: Malformed JSON chunk: unexpected byte at offset {offset}"
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn escaped_quote_and_delimiters_inside_string_preserve_value() {
+        let batches = parse(
+            vec![RowType::text("t", true, 64, 256)],
+            br#"["a\"],b"],["next"]"#,
+        );
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(col.len(), 2);
+        assert_eq!(col.value(0), "a\"],b");
+        assert_eq!(col.value(1), "next");
+    }
+
+    #[test]
+    fn nested_array_value_is_rejected() {
+        let parser = JsonChunkParser {
+            row_types: vec![RowType::text("t", true, 64, 256)],
+        };
+        assert_eq!(
+            parser
+                .parse_chunk(br#"[["nested"]]"#.to_vec())
+                .unwrap_err()
+                .to_string(),
+            "Invalid argument error: Expected string or null at column 0",
+        );
+    }
+
+    #[test]
+    fn string_rowset_extra_columns_return_error() {
+        let row_types = vec![RowType::text("t", true, 64, 256)];
+        for extra_cell in [None, Some("extra".to_string())] {
+            let rowset = vec![vec![Some("first".to_string()), extra_cell]];
+            let Err(ChunkError::ChunkRead { source, .. }) =
+                convert_string_rowset_to_arrow_reader(&rowset, &row_types)
+            else {
+                panic!("expected a column-count error");
+            };
+            assert_eq!(
+                source.to_string(),
+                "Invalid argument error: Row has more columns than expected (1)",
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_utf8_is_replaced() {
+        let batches = parse(
+            vec![RowType::text("t", true, 64, 256)],
+            b"[\"a\xffb\"],[\"\xc3\"],[\"valid\"]",
+        );
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(col.len(), 3);
+        assert_eq!(col.value(0), "a\u{fffd}b");
+        assert_eq!(col.value(1), "\u{fffd}");
+        assert_eq!(col.value(2), "valid");
     }
 
     #[test]
