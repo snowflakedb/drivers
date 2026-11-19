@@ -1,0 +1,15 @@
+name: "SnowflakeDbParameterCollection.CopyTo copies parameters instead of throwing NotImplementedException"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The new driver's parameter collection is backed by a list and implements every
+  `DbParameterCollection` member, including `CopyTo`, by delegating to that list.
+old_driver_behavior: |
+  `SnowflakeDbParameterCollection.CopyTo(Array, int)` throws `NotImplementedException`
+  for any arguments.
+new_driver_behavior: |
+  `SnowflakeDbParameterCollection.CopyTo(Array, int)` copies the parameters into the
+  array. It throws `ArgumentException` when the array is too short for the given index.
