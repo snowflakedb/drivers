@@ -1,0 +1,19 @@
+name: "A malformed query id passed to GetQueryStatus or GetResultsFromQueryId throws SnowflakeDbException"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  The new driver validates the query id format in the public SnowflakeDbCommand
+  methods and reports the failure as SFError.INVALID_QUERY_ID_FORMAT, the same
+  carrier-to-SnowflakeDbException mapping every other driver error uses.
+old_driver_behavior: |
+  `GetQueryStatus`, `GetQueryStatusAsync` and `GetResultsFromQueryIdAsync` throw a plain
+  `System.Exception` with the message "Invalid query id format. Expected a UUID.".
+  `GetResultsFromQueryId` throws an `AggregateException` whose inner exception carries that
+  message.
+new_driver_behavior: |
+  All four methods throw `SnowflakeDbException` with error code 270070 and the message
+  "Invalid query id format. Expected a UUID.", synchronously and without wrapping it in an
+  `AggregateException`.
