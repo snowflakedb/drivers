@@ -1,0 +1,20 @@
+name: "Easy Logging is not supported"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  The new driver does not implement Easy Logging. Logging is configured through
+  the logging providers wired into the application instead of a client config
+  file.
+old_driver_behavior: |
+  The `CLIENT_CONFIG_FILE` connection parameter (or the default
+  `sf_client_config.json` lookup) enables Easy Logging: the driver reads
+  `common.log_level` and `common.log_path`, creates the log directory and file
+  with restricted Unix permissions, and fails to open the connection when the
+  config file or log directory is invalid or too broadly accessible.
+new_driver_behavior: |
+  The driver has no Easy Logging: `CLIENT_CONFIG_FILE` and
+  `sf_client_config.json` configure no log level, log path, or log file, and
+  the Easy Logging permission checks do not exist.
