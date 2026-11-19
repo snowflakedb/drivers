@@ -11,7 +11,7 @@ old_driver_behavior: |
   but has no matching framework asset, for example .NET Framework 4.6.1 to 4.8, .NET Core
   2.0 to 3.1 and .NET 5 to 7, restore the package through the `netstandard2.0` asset.
 new_driver_behavior: |
-  The package ships `net472`, `net481`, `net8.0`, `net9.0` and `net10.0` assets and no
+  The package ships `net472`, `net481`, `net8.0`, `net9.0`, `net10.0` and `net11.0` assets and no
   `netstandard2.0` or `-windows7.0` assets. A project on .NET Framework 4.6.1 to 4.7.1,
   .NET Core, or .NET 5 to 7 cannot reference the package, and NuGet reports an
   incompatible target framework at restore time.

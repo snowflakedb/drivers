@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using Google.Protobuf;
+using Snowflake.Data.Compatibility;
 
 namespace Snowflake.Data.Interop;
 
@@ -16,6 +17,17 @@ internal static class ArrowPtrCodec
     {
         Span<byte> bytes = stackalloc byte[sizeof(ulong)];
         BinaryPrimitives.WriteUInt64LittleEndian(bytes, unchecked((ulong)(nuint)address));
+        return ByteString.CopyFrom(bytes);
+    }
+
+    /// <summary>Encodes <paramref name="address"/> in the native pointer size form.</summary>
+    internal static ByteString Encode(nint address)
+    {
+        if (IntPtr.Size == sizeof(ulong))
+            return Encode64(address);
+
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        MemoryMarshallHelper.Write(bytes, address);
         return ByteString.CopyFrom(bytes);
     }
 

@@ -78,7 +78,21 @@ jobs:
             8.0.x
             9.0.x
             10.0.x
+            11.0.x
           dotnet-quality: 'ga'
+          architecture: ${{ matrix.dotnet_arch }}
+
+      - name: Verify .NET SDK architecture
+        if: matrix.dotnet_arch
+        shell: bash
+        run: |
+          dotnet --info
+          dotnet --info | grep -Eq '^\s*RID:\s*win-${{ matrix.dotnet_arch }}\s*$' \
+            || { echo "::error::expected a win-${{ matrix.dotnet_arch }} .NET SDK on PATH"; exit 1; }
+
+      - name: Add Rust target
+        if: matrix.cargo_target
+        run: rustup target add ${{ matrix.cargo_target }}
 
       - name: Restore dependencies
         shell: bash
@@ -116,7 +130,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Build
-        run: dotnet build --no-restore ${{ matrix.mode == 'interop' && '-p:SkipCargoBuild=true' || '' }}
+        run: dotnet build --no-restore ${{ matrix.dotnet_build_flags }}
         working-directory: dotnet
 
       - name: Restore Cargo cache (sf_core)
@@ -126,11 +140,12 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "sf-core"
+          shared-key: ${{ matrix.cargo_target && format('sf-core-{0}', matrix.cargo_target) || 'sf-core' }}
 
       - name: Build Rust components
-        if: matrix.mode == 'regression'
-        run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }}
+        run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
+        env:
+          RUSTFLAGS: ${{ matrix.cargo_target && '-C linker=rust-lld' || '' }}
 
       - name: Save Cargo cache (sf_core)
         if: always() && matrix.mode == 'regression'
@@ -139,9 +154,18 @@ jobs:
         with:
           mode: save
           slim-mode: aggressive
-          shared-key: "sf-core"
+          shared-key: ${{ matrix.cargo_target && format('sf-core-{0}', matrix.cargo_target) || 'sf-core' }}
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
+
+      # The test fixture loads sf_core from target/debug; cargo writes a cross-compiled
+      # library under target/<triple>/debug.
+      - name: Stage cross-compiled sf_core in target/debug
+        if: matrix.cargo_target
+        shell: bash
+        run: |
+          mkdir -p target/debug
+          cp "target/${{ matrix.cargo_target }}/debug/${{ matrix.sf_core_lib }}" target/debug/
 
       - name: Copy native lib to test output directory
         if: matrix.mode == 'regression' && matrix.copy_native_lib
@@ -165,7 +189,7 @@ jobs:
           Copy-Item $stubDll "$outDir/sf_core_stub.dll"
 
       - name: Run unit tests (new driver)
-        if: ${{ matrix.mode == 'regression' && !(matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu')) }}
+        if: ${{ matrix.mode == 'regression' && !(matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu')) }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests.Unit
         env:
@@ -174,9 +198,9 @@ jobs:
 
       # Custom Exe runner (not VSTest), so coverlet.collector / dotnet test
       # cannot hook in. Wrap the same `dotnet run` with coverlet.console on
-      # the primary Linux PR cell (ubuntu / net10.0 / regression).
-      - name: Run unit tests with coverage (Linux net10.0)
-        if: ${{ matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu') }}
+      # the primary Linux PR cell (ubuntu / net11.0 / regression).
+      - name: Run unit tests with coverage (Linux net11.0)
+        if: ${{ matrix.mode == 'regression' && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu') }}
         working-directory: dotnet/tests/Snowflake.Data.Tests.Unit
         env:
            SF_CORE_LIB_PATH: ${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}
@@ -209,10 +233,10 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload coverage artifact
-        if: ${{ !cancelled() && matrix.mode == 'regression' && matrix.dotnet_version == 'net10.0' && startsWith(matrix.os, 'ubuntu') }}
+        if: ${{ !cancelled() && matrix.mode == 'regression' && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu') }}
         uses: ./.github/actions/upload-coverage-artifact
         with:
-          name: dotnet-net10-linux
+          name: dotnet-net11-linux
           path: coverage.cobertura.xml
 
   dotnet_tests_e2e:
@@ -231,6 +255,7 @@ jobs:
             8.0.x
             9.0.x
             10.0.x
+            11.0.x
 
       - name: Restore dependencies
         shell: bash
@@ -274,7 +299,7 @@ jobs:
           PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Run E2E tests (old driver)
-        run: dotnet run --no-build --framework net10.0
+        run: dotnet run --no-build --framework net11.0
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -283,7 +308,7 @@ jobs:
 
       - name: Run Wiremock tests (old driver)
         if: ${{ !cancelled() }}
-        run: dotnet run --no-build --framework net10.0
+        run: dotnet run --no-build --framework net11.0
         working-directory: dotnet/tests/Snowflake.Data.Tests.Wiremock
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -306,7 +331,7 @@ jobs:
         # automatically; a new non-conversion class is also included until it
         # is listed here. Running a test twice is better than omitting one.
         run: >
-          dotnet run --no-build --framework net10.0 --
+          dotnet run --no-build --framework net11.0 --
           -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
           -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
           -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
@@ -352,6 +377,7 @@ jobs:
             8.0.x
             9.0.x
             10.0.x
+            11.0.x
 
       - name: Restore dependencies
         shell: bash
@@ -420,12 +446,12 @@ jobs:
         shell: bash
         run: |
           cp "${{ github.workspace }}/target/debug/libsf_core.so" \
-            "dotnet/tests/Snowflake.Data.Tests.E2E/bin/Debug/net10.0/"
+            "dotnet/tests/Snowflake.Data.Tests.E2E/bin/Debug/net11.0/"
           cp "${{ github.workspace }}/target/debug/libsf_core.so" \
-            "dotnet/tests/Snowflake.Data.Tests.Wiremock/bin/Debug/net10.0/"
+            "dotnet/tests/Snowflake.Data.Tests.Wiremock/bin/Debug/net11.0/"
 
       - name: Run E2E tests (new driver)
-        run: dotnet run --no-build --framework net10.0
+        run: dotnet run --no-build --framework net11.0
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -434,7 +460,7 @@ jobs:
 
       - name: Run Wiremock tests (new driver)
         if: ${{ !cancelled() }}
-        run: dotnet run --no-build --framework net10.0
+        run: dotnet run --no-build --framework net11.0
         working-directory: dotnet/tests/Snowflake.Data.Tests.Wiremock
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -457,7 +483,7 @@ jobs:
         # automatically; a new non-conversion class is also included until it
         # is listed here. Running a test twice is better than omitting one.
         run: >
-          dotnet run --no-build --framework net10.0 --
+          dotnet run --no-build --framework net11.0 --
           -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
           -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
           -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
