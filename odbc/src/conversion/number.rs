@@ -50,8 +50,8 @@ pub struct NumericSettings {
     /// Default false keeps the spec-compliant concise type.
     pub use_custom_sql_data_types: bool,
     /// Server-reported maximum VARCHAR size (from session parameter
-    /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
-    /// `column_size` in auto-populated IPD records for untyped `?` markers.
+    /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Result-set COLUMN_SIZE
+    /// for unbounded TEXT uses this as the "at max" rewrite threshold.
     pub max_varchar_size: u64,
     /// Cached `TIMESTAMP_TZ_OUTPUT_FORMAT` for the current session. See
     /// [`TzOffsetFormatCache`] -- the enum keeps the "not yet loaded",
@@ -79,8 +79,8 @@ pub struct NumericSettings {
 /// Encoded as an enum (rather than `Option<TzOffsetFormat>` plus a
 /// separate `loaded` flag) so the illegal "we have a format but it's
 /// marked not loaded" state is unrepresentable:
-/// - `Unloaded` -- never read from the server on this connection; the
-///   next execute must refresh.
+/// - `Unloaded` -- never read from the server on this connection;
+///   connect-time load failed and a later refresh retries.
 /// - `Loaded(None)` -- read, and the parameter is unset / carries no
 ///   recognised TZ token, so TZ -> CHAR/WCHAR rendering falls through to
 ///   bare UTC.

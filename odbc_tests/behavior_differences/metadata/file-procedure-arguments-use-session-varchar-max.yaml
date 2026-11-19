@@ -11,7 +11,8 @@ old_driver_behavior: |
 new_driver_behavior: |
   SQLProcedureColumns COLUMN_SIZE and BUFFER_LENGTH for a FILE argument
   match a VARIANT argument: the session VARCHAR maximum
-  (VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT, 16777216 by default).
+  (VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT, 16777216 by default today),
+  including before the first statement on the connection runs.
   DEFAULT_VARCHAR_SIZE does not shrink FILE. An unbounded VARCHAR
   argument in the same signature still reports DEFAULT_VARCHAR_SIZE
   when that parameter is set. TYPE_NAME is FILE.

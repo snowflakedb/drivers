@@ -14,9 +14,11 @@ old_driver_behavior: |
   VARCHAR maximum.
 new_driver_behavior: |
   SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
-  GEOGRAPHY and GEOMETRY equal VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT.
-  The default is 16777216, and changing the session parameter changes
-  all three reported sizes.
+  GEOGRAPHY and GEOMETRY equal VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT,
+  including before the first statement on the connection runs. The
+  parameter defaults to 16777216 today; on accounts that log in with
+  134217728 the reported sizes match the old driver. Changing the
+  session parameter changes all three reported sizes.
 description: |
   GEOGRAPHY and GEOMETRY report SQL_VARCHAR as DATA_TYPE, so their
   character and buffer sizes use the same session maximum as other

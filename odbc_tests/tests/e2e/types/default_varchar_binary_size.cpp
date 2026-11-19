@@ -13,6 +13,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
+#include "ScopedTable.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -109,14 +110,14 @@ std::vector<ColType> describe_size_columns(Connection& conn) {
   return {describe_column(stmt, 1), describe_column(stmt, 2), describe_column(stmt, 3), describe_column(stmt, 4)};
 }
 
-ColumnsMeta sqlcolumns_row(Connection& conn, const std::string& column) {
+ColumnsMeta sqlcolumns_row(Connection& conn, const std::string& column, const std::string& table = kTable) {
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_METADATA_ID, sqlptr_value(SQL_TRUE), 0);
   REQUIRE_ODBC(ret, stmt);
 
   const std::string catalog = current_database(conn);
   ret = SQLColumns(stmt.getHandle(), sqlchar(catalog.c_str()), SQL_NTS, sqlchar(Schema::name().c_str()), SQL_NTS,
-                   sqlchar(kTable), SQL_NTS, sqlchar(column.c_str()), SQL_NTS);
+                   sqlchar(table.c_str()), SQL_NTS, sqlchar(column.c_str()), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -255,6 +256,29 @@ TEST_CASE("should report the same DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE o
   CHECK(c3.buffer_length == 1000);
   CHECK(c3.char_octet_length == 1000);
   CHECK(static_cast<SQLULEN>(c3.column_size) == cols[2].column_size);
+}
+
+TEST_CASE("should apply DEFAULT_VARCHAR_SIZE on SQLColumns of a fresh connection with no prior statement",
+          "[e2e][types][datatype][string][binary][default_varchar_binary_size][SQLColumns]") {
+  // Given connection A created a permanent 128 MiB VARCHAR / 64 MiB BINARY table in the shared test schema
+  Connection creator;
+  Schema::use_temp_session_schema(creator);
+  const ScopedTable table(creator, "DEFSIZEFRESH", "C1 VARCHAR(134217728), C2 BINARY(67108864)");
+
+  // When connection B, with the default-size keys and no prior statement, calls SQLColumns
+  Connection reader(get_connection_string() + "DEFAULT_VARCHAR_SIZE=4000;DEFAULT_BINARY_SIZE=2000;");
+  const auto c1 = sqlcolumns_row(reader, "C1", table.name());
+  const auto c2 = sqlcolumns_row(reader, "C2", table.name());
+
+  // Then the max-size VARCHAR and BINARY use the DSN defaults
+  REQUIRE(c1.name == "C1");
+  CHECK(c1.column_size == 4000);
+  CHECK(c1.buffer_length == 4000);
+  CHECK(c1.char_octet_length == 4000);
+  REQUIRE(c2.name == "C2");
+  CHECK(c2.column_size == 2000);
+  CHECK(c2.buffer_length == 2000);
+  CHECK(c2.char_octet_length == 2000);
 }
 
 TEST_CASE("should accept DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE and report only unrecognized keys as 01S00",

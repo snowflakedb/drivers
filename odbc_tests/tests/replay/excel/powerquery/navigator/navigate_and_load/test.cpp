@@ -9464,7 +9464,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -9479,7 +9479,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -9562,7 +9562,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -9745,7 +9745,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -9760,7 +9760,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -9843,7 +9843,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10026,7 +10026,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10041,7 +10041,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10124,7 +10124,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#130") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10307,7 +10307,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#146") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10322,7 +10322,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#146") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 
@@ -10405,7 +10405,7 @@ TEST_CASE("Replay: excel powerquery navigator navigate_and_load", "[replay][exce
       CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
     NEW_DRIVER_ONLY("BD#146") {
-      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(16777216));
+      CHECK((*reinterpret_cast<SQLINTEGER*>(buf.data())) == static_cast<SQLINTEGER>(134217728));
     }
   }
 

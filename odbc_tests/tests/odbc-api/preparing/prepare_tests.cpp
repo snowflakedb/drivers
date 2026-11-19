@@ -387,3 +387,79 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY010 during SQL_NEED_DATA"
   // And the statement is cancelled to release any pending state
   SQLCancel(stmt_handle());
 }
+
+namespace {
+
+class StmtDefaultVarcharSizeFixture : public StmtFixture {
+ public:
+  StmtDefaultVarcharSizeFixture()
+      : StmtFixture(
+            DataSourceConfig::Snowflake().set("DEFAULT_VARCHAR_SIZE", "4000").set("DEFAULT_BINARY_SIZE", "2000")) {}
+};
+
+struct DescribedCol {
+  std::string name;
+  SQLSMALLINT data_type = -999;
+  SQLULEN column_size = static_cast<SQLULEN>(-1);
+  SQLLEN length = static_cast<SQLLEN>(0x7FFFFFFFFFFFFFFF);
+};
+
+DescribedCol describe_result_col(SQLHSTMT stmt, SQLUSMALLINT col) {
+  DescribedCol out;
+  SQLCHAR name[64];
+  std::memset(name, 0xFF, sizeof(name));
+  SQLSMALLINT name_len = 0;
+  SQLSMALLINT decimal_digits = 0;
+  SQLSMALLINT nullable = 0;
+  const SQLRETURN describe_ret = SQLDescribeCol(stmt, col, name, sizeof(name), &name_len, &out.data_type,
+                                                &out.column_size, &decimal_digits, &nullable);
+  REQUIRE_THAT(OdbcResult(describe_ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  REQUIRE(name_len >= 0);
+  REQUIRE(static_cast<size_t>(name_len) < sizeof(name));
+  out.name.assign(reinterpret_cast<char*>(name), static_cast<size_t>(name_len));
+  const SQLRETURN length_ret = SQLColAttribute(stmt, col, SQL_DESC_LENGTH, nullptr, 0, nullptr, &out.length);
+  REQUIRE_THAT(OdbcResult(length_ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
+  return out;
+}
+
+void require_described_col(const DescribedCol& col, const char* name, SQLSMALLINT data_type, SQLULEN size) {
+  CHECK(col.name == name);
+  CHECK(col.data_type == data_type);
+  CHECK(col.column_size == size);
+  CHECK(col.length == static_cast<SQLLEN>(size));
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(StmtDefaultVarcharSizeFixture,
+                 "SQLPrepare: DEFAULT_VARCHAR_SIZE and DEFAULT_BINARY_SIZE apply to max-size columns before the first "
+                 "SQLExecute",
+                 "[odbc-api][prepare][preparing][describecol]") {
+  // Given a connection with DEFAULT_VARCHAR_SIZE=4000 and DEFAULT_BINARY_SIZE=2000, when a 128 MiB VARCHAR and a
+  // 64 MiB BINARY are prepared
+  char sql[] =
+      "SELECT CAST('x' AS VARCHAR(30)) AS C_CAST, CAST('y' AS VARCHAR(134217728)) AS C_MAX, "
+      "TO_BINARY('00', 'HEX')::BINARY(16) AS B_CAST, TO_BINARY('00', 'HEX')::BINARY(67108864) AS B_MAX";
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(sql), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  const DescribedCol prepare_cast = describe_result_col(stmt_handle(), 1);
+  const DescribedCol prepare_max = describe_result_col(stmt_handle(), 2);
+  const DescribedCol prepare_bin_cast = describe_result_col(stmt_handle(), 3);
+  const DescribedCol prepare_bin_max = describe_result_col(stmt_handle(), 4);
+
+  // Then SQLDescribeCol at prepare reports the default sizes, matching SQLExecute
+  require_described_col(prepare_cast, "C_CAST", SQL_VARCHAR, 30);
+  require_described_col(prepare_max, "C_MAX", SQL_VARCHAR, 4000);
+  require_described_col(prepare_bin_cast, "B_CAST", SQL_BINARY, 16);
+  require_described_col(prepare_bin_max, "B_MAX", SQL_BINARY, 2000);
+
+  // And SQLExecute reports the same sizes
+  ret = SQLExecute(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  require_described_col(describe_result_col(stmt_handle(), 1), "C_CAST", SQL_VARCHAR, 30);
+  require_described_col(describe_result_col(stmt_handle(), 2), "C_MAX", SQL_VARCHAR, 4000);
+  require_described_col(describe_result_col(stmt_handle(), 3), "B_CAST", SQL_BINARY, 16);
+  require_described_col(describe_result_col(stmt_handle(), 4), "B_MAX", SQL_BINARY, 2000);
+}

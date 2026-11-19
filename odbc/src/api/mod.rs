@@ -17,6 +17,7 @@ pub mod oauth;
 pub mod odbc_installer;
 pub mod query_type;
 pub mod runtime;
+pub(crate) mod session_settings;
 pub mod sql_state;
 pub mod statement;
 pub mod telemetry;

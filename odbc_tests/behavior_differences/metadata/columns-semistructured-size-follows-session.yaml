@@ -16,11 +16,14 @@ new_driver_behavior: |
   SQLColumns COLUMN_SIZE, BUFFER_LENGTH, and CHAR_OCTET_LENGTH for
   VARIANT / OBJECT / ARRAY follow the session
   VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT (the same max unbounded TEXT
-  reports). CHAR_OCTET_LENGTH equals BUFFER_LENGTH and is not NULL.
+  reports), including before the first statement on the connection
+  runs. CHAR_OCTET_LENGTH equals BUFFER_LENGTH and is not NULL.
   SHOW COLUMNS' 128 MB charLength is ignored so the catalog size tracks
-  the session parameter, not the historical TEXT constant. The default
-  is 16777216. Raising the session parameter raises the catalog size.
-  Query-result SQLColAttribute for these types is unchanged.
+  the session parameter, not the historical TEXT constant. The
+  parameter defaults to 16777216 today; on accounts that log in with
+  134217728 the catalog size matches the old driver. Raising the
+  session parameter raises the catalog size. Query-result
+  SQLColAttribute for these types is unchanged.
 description: |
   For non-standard ODBC SQL types advertising the session VARCHAR
   max is more accurate. CHAR_OCTET_LENGTH is specified as NULL only for

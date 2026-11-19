@@ -39,6 +39,7 @@ use crate::api::handle_registry::{HandleGuard, HandleId};
 use crate::api::oauth;
 use crate::api::odbc_installer::resolve_driver_name;
 use crate::api::runtime::global;
+use crate::api::session_settings::refresh_server_session_settings;
 use crate::api::utils::{
     config_setting_bool, config_setting_i64, get_session_parameter, zero_padded_driver_version,
 };
@@ -46,6 +47,7 @@ use crate::api::{
     ConnectionState, GetDataExtensions, OdbcError, OdbcResult, conn_from_handle, env_from_handle,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, Dbc, StatementState},
 };
+use crate::conversion::NumericSettings;
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::config::param_registry::{Deprecation, Wrapper, param_names};
@@ -822,6 +824,14 @@ fn connect_with_params(
 
     tracing::info!("connect_with_params: connection_init completed");
 
+    let mut numeric_settings = NumericSettings {
+        map_to_long_varchar,
+        default_varchar_size,
+        default_binary_size,
+        ..NumericSettings::default()
+    };
+    refresh_server_session_settings(&conn_handle, &mut numeric_settings);
+
     // Set `state` and the lock-free telemetry cache together within one
     // critical section so they stay ordered with each other. The cache lets
     // telemetry resolve the session without ever locking `connection` (which a
@@ -834,9 +844,7 @@ fn connect_with_params(
         // any stale flag left on a reused handle from a prior connection.
         c.open_transaction = false;
         c.use_current_catalog = use_current_catalog;
-        c.numeric_settings.map_to_long_varchar = map_to_long_varchar;
-        c.numeric_settings.default_varchar_size = default_varchar_size;
-        c.numeric_settings.default_binary_size = default_binary_size;
+        c.numeric_settings = numeric_settings;
     }
 
     // Fetch the initial catalog value. Failure here is non-fatal: the connection is
