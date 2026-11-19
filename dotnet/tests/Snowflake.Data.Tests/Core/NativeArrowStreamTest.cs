@@ -6,7 +6,6 @@ using Apache.Arrow.Types;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
-using Snowflake.Data.Compatibility;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Extensions;
 using Snowflake.Data.Interop.Handles;
@@ -486,7 +485,7 @@ public sealed class NativeArrowStreamTest
     }
 
     internal static void ClearCallback(NativeArrowStream stream, string field) =>
-        Marshal.WriteIntPtr(stream.DangerousGetHandle(), Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32(), PtrHelper.Zero);
+        Marshal.WriteIntPtr(stream.DangerousGetHandle(), Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32(), IntPtr.Zero);
 
     internal static NativeArrowStream Filled(FakeArrowArrayStream producer) => Filled(producer, NullLogger.Instance);
 

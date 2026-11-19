@@ -32,7 +32,7 @@ public class StringTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast string values to appropriate type for string and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory]
     [InlineData("VARCHAR")]
     [InlineData("CHAR")]
     [InlineData("CHARACTER")]
@@ -64,7 +64,7 @@ public class StringTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select hardcoded string literals
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldSelectHardcodedStringLiterals()
     {
         // Given Snowflake client is logged in
@@ -87,7 +87,7 @@ public class StringTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select string literals with corner case values
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldSelectStringLiteralsWithCornerCaseValues()
     {
         // Given Snowflake client is logged in
@@ -114,7 +114,7 @@ public class StringTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select hardcoded string values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldSelectHardcodedStringValuesFromTable()
     {
         string[] hardcodedValues = ["hello", "Hello World", "Snowflake Driver Test"];
@@ -150,7 +150,7 @@ public class StringTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select corner case string values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldSelectCornerCaseStringValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -297,7 +297,7 @@ public class StringTest : IClassFixture<ITFixture>
         CornerCaseValues.Select(v => new object?[] { v.Expected });
 
     // Scenario: should download string data in multiple chunks
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldDownloadStringDataInMultipleChunks()
     {
         const int rowCount = 10000;

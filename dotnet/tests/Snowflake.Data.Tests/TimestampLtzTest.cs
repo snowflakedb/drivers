@@ -16,7 +16,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast timestamp_ltz values to appropriate type
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldCastTimestampLtzValuesToAppropriateTypeAsync()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select timestamp_ltz <values>
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectTimestampLtzValuesAsync()
     {
         Skip.FutureMilestone();
@@ -66,7 +66,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select timestamp_ltz epoch
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectTimestampLtzEpochAsync()
     {
         Skip.FutureMilestone();
@@ -89,7 +89,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select timestamp_ltz microseconds
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectTimestampLtzMicrosecondsAsync()
     {
         Skip.FutureMilestone();
@@ -117,7 +117,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select sub-second timestamp_ltz values before epoch
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectSubSecondTimestampLtzValuesBeforeEpochAsync()
     {
         Skip.FutureMilestone();
@@ -159,7 +159,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldHandleNullValuesForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -183,7 +183,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldDownloadLargeResultSetWithMultipleChunksForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -213,7 +213,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <values> from table for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectValuesFromTableForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -247,7 +247,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select epoch from table for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectEpochFromTableForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -281,7 +281,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select null from table for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectNullFromTableForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -315,7 +315,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for timestamp_ltz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldDownloadLargeResultSetWithMultipleChunksFromTableForTimestampLtzAsync()
     {
         Skip.FutureMilestone();
@@ -355,7 +355,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select timestamp_ltz using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectTimestampLtzUsingParameterBindingAsync()
     {
         Skip.FutureMilestone();
@@ -394,7 +394,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select null timestamp_ltz using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldSelectNullTimestampLtzUsingParameterBindingAsync()
     {
         Skip.FutureMilestone();
@@ -421,8 +421,6 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
         Assert.True(reader.IsDBNull(0), "Expected NULL for column 0");
         Assert.False(await reader.ReadAsync().ConfigureAwait(false), "Expected exactly one row");
     }
-
-
 
     private static async Task SetTimezoneToNonUtcAsync(ISnowflakeDbConnection connection, CancellationToken cancelToken)
     {

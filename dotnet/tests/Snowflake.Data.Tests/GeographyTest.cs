@@ -16,7 +16,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <shape> geography literal
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("Point", "TO_GEOGRAPHY('POINT(-122.35 37.55)')", "[-122.35,37.55]")]
     [InlineData("LineString", "TO_GEOGRAPHY('LINESTRING(0 0, 1 1, 2 2)')", "[[0,0],[1,1],[2,2]]")]
     [InlineData("Polygon", "TO_GEOGRAPHY('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')", "[[[0,0],[10,0],[10,10],[0,10],[0,0]]]")]
@@ -42,7 +42,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select geography from GeoJSON input
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectGeographyFromGeoJsonInput()
     {
         // Given Snowflake client is logged in
@@ -65,7 +65,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should cast geography to <expected_type> for <format> output format
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("GeoJSON", "str")]
     [InlineData("WKT", "str")]
     [InlineData("WKB", "bytearray")]
@@ -98,7 +98,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select geography values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectGeographyValuesFromTable()
     {
         Skip.FutureMilestone();
@@ -141,7 +141,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL geography values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullGeographyValuesFromTable()
     {
         Skip.FutureMilestone();
@@ -184,7 +184,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download geography data in multiple chunks
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadGeographyDataInMultipleChunks()
     {
         const int rowCount = 20000;
@@ -227,7 +227,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select geography using parameter binding with <input_type> value
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("WKT string", "POINT(-122.35 37.55)", false)]
     [InlineData("NULL", null, true)]
     public void ShouldSelectGeographyUsingParameterBindingWithInputTypeValue(string inputType, string? boundValue, bool expectNull)
@@ -267,7 +267,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert geography using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertGeographyUsingParameterBinding()
     {
         Skip.FutureMilestone();

@@ -16,7 +16,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Output = output;
     }
 
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory]
     [InlineData("ARROW")]
     [InlineData("JSON")]
     public async Task ReadsIntegerAndTextColumnsWithTheirMetadataAsync(string resultFormat)
@@ -45,7 +45,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.False(await reader.ReadAsync().ConfigureAwait(false));
     }
 
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory]
     [InlineData("ARROW")]
     [InlineData("JSON")]
     public void ReadsEveryRowOfAResultSpanningManyChunks(string resultFormat)
@@ -69,7 +69,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal((long)rowCount * (rowCount - 1) / 2, sum);
     }
 
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory]
     [InlineData("ARROW")]
     [InlineData("JSON")]
     public async Task ReadAsyncReadsEveryRowOfAResultSpanningManyChunksAsync(string resultFormat)
@@ -90,7 +90,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal(rowCount, rows);
     }
 
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ClosingAReaderBeforeTheLastRowLeavesTheConnectionUsable()
     {
         using var connection = Open("ARROW");
@@ -182,7 +182,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetChar(3)).ErrorCode);
     }
 
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void GetStringOnANegativeNumberIgnoresTheCurrentCulture()
     {
         Skip.OnOldDriver("BD#reader-get-string-invariant-culture", "the old driver's text depends on the result format the server picks");
@@ -203,7 +203,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         }
     }
 
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory]
     [InlineData("ARROW")]
     [InlineData("JSON")]
     public void AnIntegerOutsideTheLongRangeIsADecimal(string resultFormat)

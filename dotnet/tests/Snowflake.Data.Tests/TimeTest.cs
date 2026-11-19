@@ -15,7 +15,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast time values to appropriate type
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldCastTimeValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -36,7 +36,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select time <values>
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(TimeValuesData))]
     public void ShouldSelectTimeValues(string values, string queryValues, string[] expectedValues)
     {
@@ -75,7 +75,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should handle time precision <scale>
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(TimePrecisionData))]
     public void ShouldHandleTimePrecisionScale(int scale, DateTime expected)
     {
@@ -103,7 +103,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should preserve nanosecond precision for time
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldPreserveNanosecondPrecisionForTime()
     {
         Skip.FutureMilestone();
@@ -125,7 +125,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for time
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullValuesForTime()
     {
         // Given Snowflake client is logged in
@@ -146,7 +146,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks for time
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksForTime()
     {
         const int rowCount = 100000;
@@ -179,7 +179,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <values> from table for time
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(TimeTableValuesData))]
     public void ShouldSelectValuesFromTableForTime(string values, string insertValues, string?[] expectedValues)
     {
@@ -239,7 +239,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for time
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromTableForTime()
     {
         const int rowCount = 100000;
@@ -282,7 +282,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select time using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectTimeUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -319,7 +319,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select null time using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectNullTimeUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -344,7 +344,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert time using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertTimeUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -396,7 +396,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert time with fractional seconds using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertTimeWithFractionalSecondsUsingParameterBinding()
     {
         Skip.FutureMilestone();

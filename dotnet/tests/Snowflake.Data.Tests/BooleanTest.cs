@@ -15,7 +15,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast boolean values to appropriate type
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldCastBooleanValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select boolean literals
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBooleanLiterals()
     {
         // Given Snowflake client is logged in
@@ -61,7 +61,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from literals for boolean
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullValuesFromLiteralsForBoolean()
     {
         // Given Snowflake client is logged in
@@ -83,7 +83,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from GENERATOR for boolean
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromGeneratorForBoolean()
     {
         const int rowCount = 1000000;
@@ -113,7 +113,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select boolean values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBooleanValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -145,7 +145,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from table for boolean
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullValuesFromTableForBoolean()
     {
         // Given Snowflake client is logged in
@@ -181,7 +181,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for boolean
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromTableForBoolean()
     {
         const int rowCount = 1000000;
@@ -221,7 +221,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select boolean using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBooleanUsingParameterBinding()
     {
         Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
@@ -263,7 +263,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select null boolean using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectNullBooleanUsingParameterBinding()
     {
         Skip.FutureMilestone("Commands with bound parameters are not implemented (SNOW-4382583)");
@@ -291,7 +291,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert boolean using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertBooleanUsingParameterBinding()
     {
         Skip.FutureMilestone("Bound parameters, including array binding, are not implemented (SNOW-4382583, SNOW-4382600)");

@@ -15,7 +15,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast binary values to appropriate type
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldCastBinaryValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary literals
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBinaryLiterals()
     {
         // Given Snowflake client is logged in
@@ -74,7 +74,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle binary corner case values from literals
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleBinaryCornerCaseValuesFromLiterals()
     {
         // Given Snowflake client is logged in
@@ -98,7 +98,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL binary values from literals
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullBinaryValuesFromLiterals()
     {
         // Given Snowflake client is logged in
@@ -119,7 +119,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -153,7 +153,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select corner case binary values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectCornerCaseBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -191,7 +191,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select NULL binary values from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectNullBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -234,7 +234,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary with specified length from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBinaryWithSpecifiedLengthFromTable()
     {
         // Given Snowflake client is logged in
@@ -271,7 +271,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary literals using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectBinaryLiteralsUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -312,7 +312,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert binary using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertBinaryUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -367,7 +367,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should bind corner case binary values
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldBindCornerCaseBinaryValues()
     {
         Skip.FutureMilestone();
@@ -412,7 +412,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download binary data in multiple chunks using GENERATOR
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadBinaryDataInMultipleChunksUsingGenerator()
     {
         const int rowCount = 30000;
@@ -443,7 +443,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download binary data in multiple chunks from table
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadBinaryDataInMultipleChunksFromTable()
     {
         const int rowCount = 30000;

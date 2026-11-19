@@ -18,7 +18,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select float literals for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -44,7 +44,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should handle float <case> boundary values from literals for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(BoundaryValuesData))]
     public void ShouldHandleFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms(string floatType, string caseLabel, string queryValues, double[] expectedValues)
     {
@@ -99,7 +99,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should handle realistic large float <case> boundary values from literals for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(RealisticBoundaryValuesData))]
     public void ShouldHandleRealisticLargeFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms(string floatType, string caseLabel, double[] expectedValues)
     {
@@ -134,7 +134,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle float precision boundary values from literals for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -164,7 +164,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from literals for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -188,7 +188,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -216,7 +216,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select floats from table for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -253,7 +253,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle float boundary values from table for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -301,7 +301,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from table for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -339,7 +339,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select large result set from table for float and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -377,7 +377,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select float using parameter binding for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -421,7 +421,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert float using parameter binding for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -470,7 +470,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle special float values as doubles from literals for float and synonyms
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleSpecialFloatValuesAsDoublesFromLiteralsForFloatAndSynonyms()
     {
         Skip.FutureMilestone();
@@ -496,7 +496,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle special float values as doubles from table for float and synonyms
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleSpecialFloatValuesAsDoublesFromTableForFloatAndSynonyms()
     {
         Skip.FutureMilestone();

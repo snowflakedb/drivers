@@ -532,7 +532,7 @@ public sealed class SnowflakeResultSetTest
             UnitBatches.Strings(rows.Select(row => row.Name).ToArray()));
 
     private static RecordBatch TrackedBatch(TrackedMemory memory) =>
-        UnitBatches.Batch(new TrackedArray(UnitBatches.Int64(1), memory));
+        UnitBatches.Batch(TrackedArray.Create(UnitBatches.Int64(1), memory.Disposed));
 
     private static List<(LogLevel Level, string Message, Exception? Exception)> LoggedEntries(ILogger logger) =>
         logger.ReceivedCalls()
@@ -548,37 +548,5 @@ public sealed class SnowflakeResultSetTest
         public int DisposeCalls => Volatile.Read(ref _disposeCalls);
 
         public void Disposed() => Interlocked.Increment(ref _disposeCalls);
-    }
-
-    private sealed class TrackedArray : IArrowArray
-    {
-        private readonly IArrowArray _inner;
-        private readonly TrackedMemory _memory;
-
-        public TrackedArray(IArrowArray inner, TrackedMemory memory)
-        {
-            _inner = inner;
-            _memory = memory;
-        }
-
-        public int Length => _inner.Length;
-
-        public int Offset => _inner.Offset;
-
-        public int NullCount => _inner.NullCount;
-
-        public ArrayData Data => _inner.Data;
-
-        public bool IsNull(int index) => _inner.IsNull(index);
-
-        public bool IsValid(int index) => _inner.IsValid(index);
-
-        public void Accept(IArrowArrayVisitor visitor) => _inner.Accept(visitor);
-
-        public void Dispose()
-        {
-            _memory.Disposed();
-            _inner.Dispose();
-        }
     }
 }

@@ -16,7 +16,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast timestamp_ntz values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldCastTimestampNtzValuesToAppropriateType()
     {
         Skip.FutureMilestone();
@@ -40,7 +40,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select timestamp_ntz <values>
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(SelectTimestampNtzData))]
     public void ShouldSelectTimestampNtzValues(string values, string queryValues, DateTime[] expectedValues)
     {
@@ -89,7 +89,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for timestamp_ntz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullValuesForTimestampNtz()
     {
         Skip.FutureMilestone();
@@ -111,7 +111,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks for timestamp_ntz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksForTimestampNtz()
     {
         Skip.FutureMilestone();
@@ -139,7 +139,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <values> from table for timestamp_ntz
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [MemberData(nameof(TableTimestampNtzData))]
     public void ShouldSelectValuesFromTableForTimestampNtz(string values, string insertValues, DateTime?[] expectedValues)
     {
@@ -211,7 +211,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for timestamp_ntz
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromTableForTimestampNtz()
     {
         Skip.FutureMilestone();
@@ -249,7 +249,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select timestamp_ntz using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectTimestampNtzUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -290,7 +290,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should return NULL when selecting timestamp_ntz using parameter binding with NULL value
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldReturnNullWhenSelectingTimestampNtzUsingParameterBindingWithNullValue()
     {
         Skip.FutureMilestone();
@@ -317,8 +317,49 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
         Assert.False(reader.Read(), "Expected exactly one row");
     }
 
+    // Scenario Outline: should store UTC equivalent when binding timezone-aware datetime to timestamp_ntz
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(TimezoneAwareBindingData))]
+    public void ShouldStoreUtcEquivalentWhenBindingTimezoneAwareDatetimeToTimestampNtz(string input, DateTime expected)
+    {
+        _ = input; // used for test display name only
+        Skip.FutureMilestone();
+
+        // Given Snowflake client is logged in
+        using var connection = Fixture.Factory.Create(Output);
+        connection.Open();
+
+        // When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT ?::TIMESTAMP_NTZ";
+
+        var param = cmd.CreateParameter();
+        param.ParameterName = "1";
+        param.DbType = DbType.DateTimeOffset;
+        param.Value = DateTimeOffset.Parse(input);
+        cmd.Parameters.Add(param);
+
+        using var reader = cmd.ExecuteReader();
+
+        // Then Result should contain [<expected>]
+        Assert.True(reader.Read(), "Expected one row");
+        var value = reader.GetDateTime(0);
+        Assert.Equal(expected, value);
+
+        // And Values should not have timezone info
+        Assert.Equal(DateTimeKind.Unspecified, value.Kind);
+        Assert.False(reader.Read(), "Expected exactly one row");
+    }
+
+    public static IEnumerable<object[]> TimezoneAwareBindingData()
+    {
+        yield return ["2024-01-15 10:30:00+00:00", new DateTime(2024, 1, 15, 10, 30, 0)];
+        yield return ["2024-01-15 12:30:00+02:00", new DateTime(2024, 1, 15, 10, 30, 0)];
+        yield return ["2024-01-15 10:30:00-05:00", new DateTime(2024, 1, 15, 15, 30, 0)];
+    }
+
     // Scenario: should insert timestamp_ntz using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertTimestampNtzUsingParameterBinding()
     {
         Skip.FutureMilestone();
@@ -369,7 +410,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should return naive datetime for <type_name> alias when session mapping is TIMESTAMP_NTZ
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("TIMESTAMP")]
     [InlineData("DATETIME")]
     public void ShouldReturnNaiveDatetimeForTypeNameAliasWhenSessionMappingIsTimestampNtz(string typeName)
@@ -401,7 +442,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should return aware datetime for TIMESTAMP alias when session mapping is TIMESTAMP_LTZ
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public async Task ShouldReturnAwareDatetimeForTimestampAliasWhenSessionMappingIsTimestampLtzAsync()
     {
         // Given Snowflake client is logged in

@@ -35,12 +35,17 @@ internal abstract class ColumnConverter
     /// </summary>
     internal void Bind(IArrowArray array)
     {
+        Unbind();
         OnBind(array);
         _array = array;
     }
 
     /// <summary>Detaches the converter from the array of a batch that is being released.</summary>
-    internal void Unbind() => _array = null;
+    internal void Unbind()
+    {
+        _array = null;
+        OnUnbind();
+    }
 
     /// <summary>Whether the value at <paramref name="row"/> is NULL.</summary>
     internal bool IsNull(int row) => _array?.IsNull(row) ?? true;
@@ -81,6 +86,11 @@ internal abstract class ColumnConverter
     /// Checks the Arrow type of <paramref name="array"/> and captures the typed view the reads use.
     /// </summary>
     protected abstract void OnBind(IArrowArray array);
+
+    /// <summary>Drops the converter's typed references to the array of the batch being released.</summary>
+    protected virtual void OnUnbind()
+    {
+    }
 
     /// <summary>The value at <paramref name="row"/>, which is not NULL, in <see cref="FieldType"/>.</summary>
     protected abstract object GetNonNullValue(int row);

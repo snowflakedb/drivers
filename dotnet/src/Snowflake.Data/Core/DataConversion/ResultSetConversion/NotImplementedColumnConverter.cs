@@ -13,7 +13,7 @@ namespace Snowflake.Data.Core.DataConversion.ResultSetConversion;
 /// converter. Until then the reader still opens a result that has such columns, so the columns of
 /// supported types stay readable.
 /// </remarks>
-// TODO SNOW-4483010 future milestone: replace with a converter per Snowflake type and delete this class.
+// TODO(SNOW-4483010) future milestone: replace with a converter per Snowflake type and delete this class.
 internal sealed class NotImplementedColumnConverter : ColumnConverter
 {
     private const string Message = "Future milestone, not yet implemented";

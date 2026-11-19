@@ -16,7 +16,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <shape> geometry literal
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("Point", "TO_GEOMETRY('POINT(1820.12 890.56)')", "[1820.12,890.56]")]
     [InlineData("LineString", "TO_GEOMETRY('LINESTRING(0 0, 1 1, 2 2)')", "[[0,0],[1,1],[2,2]]")]
     [InlineData("Polygon", "TO_GEOMETRY('POLYGON((0 0, 4 0, 4 3, 0 3, 0 0))')", "[[[0,0],[4,0],[4,3],[0,3],[0,0]]]")]
@@ -42,7 +42,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should cast geometry to <expected_type> for <format> output format
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("GeoJSON", "str")]
     [InlineData("WKT", "str")]
     [InlineData("WKB", "bytearray")]
@@ -75,7 +75,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select geometry values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectGeometryValuesFromTable()
     {
         Skip.FutureMilestone();
@@ -123,7 +123,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL geometry values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullGeometryValuesFromTable()
     {
         Skip.FutureMilestone();
@@ -166,7 +166,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download geometry data in multiple chunks
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadGeometryDataInMultipleChunks()
     {
         const int rowCount = 20000;
@@ -207,7 +207,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select geometry using parameter binding with <input_type> value
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     [InlineData("WKT string", "POINT(1820.12 890.56)", false)]
     [InlineData("NULL", null, true)]
     public void ShouldSelectGeometryUsingParameterBindingWithInputTypeValue(string inputType, string? boundValue, bool expectNull)
@@ -247,7 +247,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert geometry using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertGeometryUsingParameterBinding()
     {
         Skip.FutureMilestone();

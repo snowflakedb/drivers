@@ -15,7 +15,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast date values to appropriate type
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldCastDateValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select date literals
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectDateLiterals()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -63,7 +63,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select epoch and pre-epoch dates
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectEpochAndPreEpochDates()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -85,7 +85,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select historical and boundary dates
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectHistoricalAndBoundaryDates()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -107,7 +107,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for date
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldHandleNullValuesForDate()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -129,7 +129,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set for date
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetForDate()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -156,7 +156,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select dates from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectDatesFromTable()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -190,7 +190,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select dates with NULL from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectDatesWithNullFromTable()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -224,7 +224,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select historical and boundary dates from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectHistoricalAndBoundaryDatesFromTable()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -260,7 +260,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set for date from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldDownloadLargeResultSetForDateFromTable()
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -297,7 +297,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select date using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectDateUsingParameterBinding()
     {
         Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");
@@ -335,7 +335,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select null date using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldSelectNullDateUsingParameterBinding()
     {
         Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");
@@ -361,7 +361,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should insert date using parameter binding
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
     public void ShouldInsertDateUsingParameterBinding()
     {
         Skip.FutureMilestone("binding DbType.Date parameters is not implemented (SNOW-4382583)");

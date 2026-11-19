@@ -5,11 +5,16 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "E2E")]
 public class NumberTest : IClassFixture<ITFixture>
 {
+    public static readonly IEnumerable<object[]> NumberTypeSynonyms =
+    [
+        ["NUMBER"],
+        ["NUMERIC"],
+        ["DECIMAL"],
+        ["DEC"]
+    ];
+
     protected readonly ITestOutputHelper Output;
     protected readonly ITFixture Fixture;
-
-    private static readonly string[] NumberTypeSynonyms =
-        ["NUMBER", "NUMERIC", "DECIMAL", "DEC"];
 
     public NumberTest(ITFixture fixture, ITestOutputHelper output)
     {
@@ -18,11 +23,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast number values to appropriate type for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldCastNumberValuesToAppropriateTypeForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -48,11 +50,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select number literals for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldSelectNumberLiteralsForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -76,11 +75,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle scale and precision boundaries from literals for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldHandleScaleAndPrecisionBoundariesFromLiteralsForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -102,11 +98,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from literals for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldHandleNullValuesFromLiteralsForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -128,11 +121,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from GENERATOR for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromGeneratorForNumberAndSynonyms(string numberType)
     {
         const int rowCount = 30000;
@@ -160,11 +150,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select numbers from table with multiple scales for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldSelectNumbersFromTableWithMultipleScalesForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -228,11 +215,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle scale and precision boundaries from table for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldHandleScaleAndPrecisionBoundariesFromTableForNumberAndSynonyms(string numberType)
     {
         // Given Snowflake client is logged in
@@ -289,10 +273,7 @@ public class NumberTest : IClassFixture<ITFixture>
 
     // Scenario: should handle NULL values from table with multiple scales for number and synonyms
     [SnowflakeTheory]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldHandleNullValuesFromTableWithMultipleScalesForNumberAndSynonyms(string numberType)
     {
         Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
@@ -352,11 +333,8 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set from table for number and synonyms
-    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [SnowflakeTheory(Skip = "TODO SNOW-4483010 future milestone DataConversionNotImplemented")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldDownloadLargeResultSetFromTableForNumberAndSynonyms(string numberType)
     {
         const int rowCount = 30000;
@@ -395,10 +373,7 @@ public class NumberTest : IClassFixture<ITFixture>
 
     // Scenario: should select number using parameter binding for number and synonyms
     [SnowflakeTheory]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldSelectNumberUsingParameterBindingForNumberAndSynonyms(string numberType)
     {
         Skip.FutureMilestone();
@@ -455,10 +430,7 @@ public class NumberTest : IClassFixture<ITFixture>
 
     // Scenario: should insert number using parameter binding for number and synonyms
     [SnowflakeTheory]
-    [InlineData("NUMBER")]
-    [InlineData("NUMERIC")]
-    [InlineData("DECIMAL")]
-    [InlineData("DEC")]
+    [MemberData(nameof(NumberTypeSynonyms))]
     public void ShouldInsertNumberUsingParameterBindingForNumberAndSynonyms(string numberType)
     {
         Skip.FutureMilestone();
@@ -555,11 +527,9 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle high precision boundaries from literals as strings for number and synonyms
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldHandleHighPrecisionBoundariesFromLiteralsAsStringsForNumberAndSynonyms()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -577,11 +547,9 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle high precision values from table as strings for number and synonyms
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldHandleHighPrecisionValuesFromTableAsStringsForNumberAndSynonyms()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -608,11 +576,9 @@ public class NumberTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle high precision boundaries from table as strings for number and synonyms
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldHandleHighPrecisionBoundariesFromTableAsStringsForNumberAndSynonyms()
     {
-        Skip.FutureMilestone();
-
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();

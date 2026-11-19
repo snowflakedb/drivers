@@ -17,7 +17,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as password
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldAuthenticateUsingPatAsPassword()
     {
         // Given Authentication is set to password and valid PAT token is provided
@@ -48,7 +48,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as token
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldAuthenticateUsingPatAsToken()
     {
         // Given Authentication is set to Programmatic Access Token and valid PAT token is provided
@@ -80,7 +80,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as token with lowercase authenticator
-    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
+    [SnowflakeFact]
     public void ShouldAuthenticateUsingPatAsTokenWithLowercaseAuthenticator()
     {
         // Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided

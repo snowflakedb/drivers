@@ -4,7 +4,7 @@ using Snowflake.Data.Proto;
 namespace Snowflake.Data.Core.DataConversion.ResultSetConversion;
 
 /// <summary>
-/// Gives every column a <see cref="NotImplementedColumnConverter"/>; the TEXT and FIXED scale 0 converters are not wired in yet.
+/// Reads TEXT and FIXED with scale 0; every other type gets a <see cref="NotImplementedColumnConverter"/>.
 /// </summary>
 internal sealed class ColumnConverterFactory : IColumnConverterFactory
 {
@@ -13,7 +13,13 @@ internal sealed class ColumnConverterFactory : IColumnConverterFactory
 
     public ColumnConverter Create(ColumnMetadata column)
     {
-        // TODO(SNOW-4382582): choose the TEXT and FIXED scale 0 converters here; they arrive with PR stack #3380.
+        if (string.Equals(column.Type, SnowflakeTypeNames.Text, StringComparison.OrdinalIgnoreCase))
+            return new TextColumnConverter();
+
+        if (string.Equals(column.Type, SnowflakeTypeNames.Fixed, StringComparison.OrdinalIgnoreCase) && column.Scale == 0)
+            return new FixedColumnConverter();
+
+        // TODO(SNOW-4483010) future milestone: converters for FIXED with scale > 0 and every other Snowflake type.
         return new NotImplementedColumnConverter(column.Type.ToUpperInvariant());
     }
 }
