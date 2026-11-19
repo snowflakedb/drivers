@@ -46,7 +46,7 @@ public sealed class PrepareResultExtensionsTest
         var address = ArrowStreamExporter.Export(producer);
         try
         {
-            var prepareResult = new PrepareResult { Stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(address) } };
+            var prepareResult = new PrepareResult { Stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(address) } };
             Assert.False(ArrowStreamExporter.IsReleased(address));
 
             prepareResult.Release();
@@ -63,7 +63,7 @@ public sealed class PrepareResultExtensionsTest
     public void TestReleasingStreamClearsStream()
     {
         var producer = new FakeArrowArrayStream(UnitBatches.Batch(UnitBatches.Int64(1)).Schema);
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(ArrowStreamExporter.Export(producer)) };
+        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
         var prepareResult = new PrepareResult { Stream = stream };
 
         prepareResult.Release();
@@ -75,7 +75,7 @@ public sealed class PrepareResultExtensionsTest
     public void TestReleasingStreamTwiceIsNoOp()
     {
         var producer = new FakeArrowArrayStream(UnitBatches.Batch(UnitBatches.Int64(1)).Schema);
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(ArrowStreamExporter.Export(producer)) };
+        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
         var prepareResult = new PrepareResult { Stream = stream };
         prepareResult.Release();
 
@@ -86,7 +86,7 @@ public sealed class PrepareResultExtensionsTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestReleasingZeroAddressDoesNothing()
     {
-        var stream = new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(new byte[sizeof(long)]) };
+        var stream = new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(new byte[IntPtr.Size]) };
         var prepareResult = new PrepareResult { Stream = stream };
 
         Assert.Null(Record.Exception(prepareResult.Release));

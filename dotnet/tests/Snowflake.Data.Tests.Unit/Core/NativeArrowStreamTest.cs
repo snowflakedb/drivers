@@ -10,6 +10,7 @@ using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Extensions;
 using Snowflake.Data.Interop.Handles;
 using Snowflake.Data.Proto;
+using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.Utilities;
 
 namespace Snowflake.Data.Tests.Core;
@@ -328,6 +329,7 @@ public sealed class NativeArrowStreamTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestStreamWithProducerAlreadyReleasedCannotBeEnteredAndIsNotReleasedAgain()
     {
+        Skip.When(!Environment.Is64BitProcess, "sf_core expects 64-bit ptr, we can't unit test it in this process.");
         var producer = new FakeArrowArrayStream(_batch.Schema);
         var stream = Filled(producer);
         ArrowStreamExporter.ReleaseStreamAt(stream.ToProto().Value.Span);

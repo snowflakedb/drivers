@@ -72,14 +72,16 @@ public sealed class SFConnectionWiremockTest : E2ETestBase
     }
 
     [SnowflakeFact(retriesCount: RetriesCount.Thrice)]
-    public void ShouldFailFastForNonRetried404OnLogin()
+    public async Task ShouldFailFastForNonRetried404OnLoginAsync()
     {
         // TODO(SNOW-4382591): SnowflakeDbException
         Skip.FutureMilestone();
 
+        using var wiremock = await E2EWiremock.StartWithMappingsAsync(TestContext.Current.CancellationToken)
+            .ConfigureAwait(false);
         using var conn = Fixture.Factory.Create(
             Output,
-            $"host=docs.snowflake.com/404;{LoginTimeoutKey()}=0;account=testFailFast;user=testFailFast;password=testFailFast;certRevocationCheckMode=enabled;");
+            E2EWiremock.BuildHttpConnectionString(wiremock, $"{LoginTimeoutKey()}=0"));
 
         Assert.Equal(ConnectionState.Closed, conn.State);
         var exception = AssertThrowsSnowflakeDbException(conn.Open);
@@ -90,14 +92,17 @@ public sealed class SFConnectionWiremockTest : E2ETestBase
     }
 
     [SnowflakeFact]
-    public void ShouldRetryLoginOn404WhenForceRetryOn404Enabled()
+    public async Task ShouldRetryLoginOn404WhenForceRetryOn404EnabledAsync()
     {
         // TODO(SNOW-4382591): SnowflakeDbException
         Skip.FutureMilestone();
 
+        using var wiremock = await E2EWiremock.StartWithMappingsAsync(TestContext.Current.CancellationToken)
+            .ConfigureAwait(false);
         using var conn = Fixture.Factory.Create(
             Output,
-            $"host=docs.snowflake.com/404;{LoginTimeoutKey()}=0;account=testFailFast;user=testFailFast;password=testFailFast;disableretry=true;forceretryon404=true;certRevocationCheckMode=enabled;");
+            E2EWiremock.BuildHttpConnectionString(
+                wiremock, $"{LoginTimeoutKey()}=0", "disableretry=true", "forceretryon404=true"));
 
         Assert.Equal(ConnectionState.Closed, conn.State);
         var exception = AssertThrowsSnowflakeDbException(conn.Open);

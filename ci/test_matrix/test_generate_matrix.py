@@ -928,6 +928,7 @@ PYTHON_PATH = gm.MODELS_DIR / "python.py"
 CORE_PATH = gm.MODELS_DIR / "core.py"
 CORE_FIPS_PATH = gm.MODELS_DIR / "core_fips.py"
 ODBC_REFERENCE_PATH = gm.MODELS_DIR / "odbc_reference.py"
+DOTNET_PATH = gm.MODELS_DIR / "dotnet.py"
 SF_CORE_CARGO_TOML = gm.REPO_ROOT / "sf_core" / "Cargo.toml"
 
 
@@ -1313,6 +1314,62 @@ class PythonMatrixTests(unittest.TestCase):
             f"expected no macos-x64 rows at push-to-main scope (deferred to nightly); "
             f"got {[r['name'] for r in push_intel]}",
         )
+
+
+class DotnetMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(DOTNET_PATH, "dotnet")
+        cls.x86 = [r for r in cls.gha if r["name"].startswith("windows-x86-")]
+
+    def test_windows_x86_runs_regression_and_interop(self) -> None:
+        self.assertEqual({r["mode"] for r in self.x86}, {"regression", "interop"})
+
+    def test_windows_x86_runs_net481_regression_from_pr_and_the_rest_at_nightly(self) -> None:
+        self.assertTrue(self.x86, "expected Windows x86 .NET cells")
+        x86_names = {r["name"] for r in self.x86}
+        for level in ("pr", "merge"):
+            active = {r["name"] for r in gm.filter_active(self.gha, level)}
+            self.assertEqual(active & x86_names, {"windows-x86-azure-net481"}, level)
+        merge_queue = {r["name"] for r in gm.filter_active(self.gha, "merge_queue")}
+        self.assertFalse(merge_queue & x86_names)
+        self.assertEqual(
+            {r["trigger_level"] for r in self.x86 if r["name"] != "windows-x86-azure-net481"},
+            {"nightly"},
+        )
+
+    def test_windows_x86_covers_every_tfm_its_mode_supports(self) -> None:
+        regression = {r["dotnet_version"] for r in self.x86 if r["mode"] == "regression"}
+        interop = {r["dotnet_version"] for r in self.x86 if r["mode"] == "interop"}
+        self.assertEqual(regression, {"net481", "net8.0", "net9.0", "net10.0", "net11.0"})
+        self.assertEqual(interop, {"net472", "net9.0", "net11.0"})
+
+    def test_windows_x86_builds_a_32_bit_process_over_a_32_bit_sf_core(self) -> None:
+        for r in self.x86:
+            self.assertEqual(r["os"], "windows-latest", r["name"])
+            self.assertEqual(r["sf_core_lib"], "sf_core.dll", r["name"])
+            self.assertEqual(r["cargo_target"], "i686-pc-windows-msvc", r["name"])
+            self.assertEqual(r["cargo_flags"], "--no-default-features --features protobuf", r["name"])
+            self.assertEqual(r["dotnet_arch"], "x86", r["name"])
+            self.assertEqual(r["dotnet_build_flags"], "-p:PlatformTarget=x86", r["name"])
+
+    def test_net11_runs_windows_regression_and_ubuntu_interop_from_pr(self) -> None:
+        pr = {(r["os"], r["mode"]) for r in gm.filter_active(self.gha, "pr") if r["dotnet_version"] == "net11.0"}
+        self.assertEqual(
+            pr,
+            {("windows-latest", "regression"), ("ubuntu-latest", "interop")},
+        )
+
+    def test_net11_runs_on_windows_x86_at_nightly(self) -> None:
+        modes = {r["mode"] for r in self.x86 if r["dotnet_version"] == "net11.0"}
+        self.assertEqual(modes, {"regression", "interop"})
+
+    def test_other_cells_build_for_the_runner_architecture(self) -> None:
+        for r in self.gha:
+            if r in self.x86:
+                continue
+            for key in ("cargo_target", "dotnet_arch", "dotnet_build_flags"):
+                self.assertNotIn(key, r, r["name"])
 
 
 class CoreMatrixTests(unittest.TestCase):

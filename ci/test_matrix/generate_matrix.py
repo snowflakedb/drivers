@@ -550,6 +550,9 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
         "cargo_flags": platform["cargo_flags"],
         "copy_native_lib": tfm["copy_native_lib"],
     }
+    for key in ("cargo_target", "dotnet_arch", "dotnet_build_flags"):
+        if key in platform:
+            row[key] = platform[key]
     return row
 
 
