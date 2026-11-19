@@ -688,7 +688,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:unit \
             --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.unit.json \
             --junitxml=reports/universal-${{ env.MATRIX_KEY }}.unit.xml \
-            --cov=src/snowflake \
+            --cov=snowflake.connector \
             --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
@@ -706,7 +706,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:integ \
             --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.integ.json \
             --junitxml=reports/universal-${{ env.MATRIX_KEY }}.integ.xml \
-            --cov=src/snowflake --cov-append \
+            --cov=snowflake.connector --cov-append \
             --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
@@ -724,7 +724,7 @@ jobs:
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:e2e \
             --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.e2e.json \
             --junitxml=reports/universal-${{ env.MATRIX_KEY }}.e2e.xml \
-            --cov=src/snowflake --cov-append \
+            --cov=snowflake.connector --cov-append \
             --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
             --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:

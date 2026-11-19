@@ -197,6 +197,13 @@ omit = [
     "*/protobuf_gen/*",
 ]
 
+[tool.coverage.paths]
+connector = [
+    "src/snowflake/connector",
+    "*/site-packages/snowflake/connector",
+    "*/dist-packages/snowflake/connector",
+]
+
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
@@ -346,7 +353,7 @@ install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
 unit = "pytest tests/unit {args}"
 integ = "pytest tests/integ {args}"
 e2e = "pytest tests/e2e --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy {args}"
-cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy --cov=snowflake.connector --cov-report=xml --cov-report=html {args}"
 # Runs only tests marked @pytest.mark.flaky. `-m flaky` overrides the default
 # `-m "not flaky"` from [tool.pytest.ini_options].addopts.
 flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy -m flaky --no-cov {args}"
@@ -372,7 +379,7 @@ features = ["test", "dev", "pandas"]
 python = ["3.11", "3.12", "3.13", "3.14", "3.14t", "3.15", "3.15t"]
 
 [tool.hatch.envs.test-pandas.scripts]
-cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+cov = "pytest tests/e2e/pandas tests/e2e/numpy --cov=snowflake.connector --cov-report=xml --cov-report=html {args}"
 
 # Packaging tests environment - tests sdist build and installation
 [tool.hatch.envs.packaging]
