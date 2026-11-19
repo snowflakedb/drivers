@@ -60,6 +60,8 @@ dependencies {
 implementation 'net.snowflake:snowflake-jdbc-native-all:0.0.1'
 ```
 
+Protobuf and Jackson are relocated under `net.snowflake.client.jdbc.internal`. The fat jar does not bundle SLF4J; the default logger is JUL. Selecting `net.snowflake.client.log.SLF4JLogger` requires the application to provide `slf4j-api`.
+
 ## Testing
 
 - Set up credentials (see main [README.md](../README.md) for setup instructions)

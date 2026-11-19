@@ -248,8 +248,11 @@ shadowJar {
         )
     }
 
-    // Exclude compile-only annotations + the slf4j binding (consumer's choice).
+    // Exclude compile-only annotations and slf4j. slf4j-api 2.0 at org/slf4j makes an
+    // application's SLF4J 1.7 binding a no-op. SLF4JLogger needs the application to
+    // provide slf4j-api.
     dependencies {
+        exclude(dependency('org.slf4j:slf4j-api:.*'))
         exclude(dependency('org.slf4j:slf4j-simple:.*'))
         exclude(dependency('com.google.code.findbugs:jsr305:.*'))
         exclude(dependency('javax.annotation:javax.annotation-api:.*'))
@@ -258,7 +261,6 @@ shadowJar {
     def internal = 'net.snowflake.client.jdbc.internal'
     relocate 'com.google.protobuf', "${internal}.com.google.protobuf"
     relocate 'com.fasterxml.jackson', "${internal}.com.fasterxml.jackson"
-    // slf4j NOT relocated: ship slf4j-api, consumer binds a backend.
 
     mergeServiceFiles()
 
@@ -271,7 +273,7 @@ shadowJar {
 
 // Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
 // relocators so it can't drift from the config above; the rest are invariants not derivable
-// from relocate(): un-relocated slf4j-api, the java.sql.Driver
+// from relocate(): no slf4j classes, the java.sql.Driver
 // service file, and (with -PnativeLibsDir) all five platform libs.
 def verifyShadowJar = tasks.register('verifyShadowJar') {
     dependsOn 'shadowJar'
@@ -304,9 +306,9 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
         }
 
         // Non-derivable invariants.
-        // slf4j API deliberately un-relocated; slf4j-simple binding not bundled.
-        want 'org/slf4j/Logger.class'
-        absent 'org/slf4j/simple/'
+        // slf4j-api is compile-time only; neither the API nor a binding is bundled.
+        absent 'org/slf4j/'
+        absent 'net/snowflake/client/jdbc/internal/org/slf4j/'
         // JDBC auto-registration service must survive shading.
         want 'META-INF/services/java.sql.Driver'
         // Dropped from the driver dependency graph in #2521. Guard against a transitive drag-in

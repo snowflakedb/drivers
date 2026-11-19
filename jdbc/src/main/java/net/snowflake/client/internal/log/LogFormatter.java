@@ -2,21 +2,27 @@ package net.snowflake.client.internal.log;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Array;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import java.util.function.Supplier;
 import lombok.Value;
 import lombok.experimental.UtilityClass;
-import org.slf4j.helpers.FormattingTuple;
-import org.slf4j.helpers.MessageFormatter;
 
 /**
  * Shared message formatting for JDBC loggers.
  *
- * <p>Extracted so {@link SLF4JLogger}, {@link JDK14Logger}, and {@link CoreLogger} (which ships the
- * formatted string across JNI to core before it round-trips back) produce identical output instead
- * of each re-implementing SLF4J placeholder handling.
+ * <p>Substitutes {@code {}} the same way SLF4J {@code MessageFormatter} does, including {@code
+ * \\{}} escapes and a trailing {@link Throwable} that is not consumed as a placeholder. {@link
+ * SLF4JLogger}, {@link JDK14Logger}, and {@link CoreLogger} share this so JUL and SLF4J delivery
+ * stay aligned without a runtime slf4j-api dependency.
  */
 @UtilityClass
 class LogFormatter {
+
+  private static final String PLACEHOLDER = "{}";
+  private static final char ESCAPE = '\\';
 
   @Value
   static class Formatted {
@@ -25,8 +31,12 @@ class LogFormatter {
   }
 
   static Formatted format(String msg, Object... arguments) {
-    FormattingTuple ft = MessageFormatter.arrayFormat(msg, evaluateLambdaArgs(arguments));
-    return new Formatted(ft.getMessage(), ft.getThrowable());
+    Object[] args = evaluateLambdaArgs(arguments);
+    Throwable throwable = lastThrowable(args);
+    if (throwable != null) {
+      args = withoutLast(args);
+    }
+    return new Formatted(applyPlaceholders(msg, args), throwable);
   }
 
   /** Append the exception type when the full cause must not appear at WARN/INFO. */
@@ -61,5 +71,105 @@ class LogFormatter {
       result[i] = args[i] instanceof Supplier ? ((Supplier<?>) args[i]).get() : args[i];
     }
     return result;
+  }
+
+  private static Throwable lastThrowable(Object[] args) {
+    if (args.length == 0) {
+      return null;
+    }
+    Object last = args[args.length - 1];
+    return last instanceof Throwable ? (Throwable) last : null;
+  }
+
+  private static Object[] withoutLast(Object[] args) {
+    if (args.length == 1) {
+      return new Object[0];
+    }
+    Object[] trimmed = new Object[args.length - 1];
+    System.arraycopy(args, 0, trimmed, 0, trimmed.length);
+    return trimmed;
+  }
+
+  private static String applyPlaceholders(String pattern, Object[] args) {
+    if (pattern == null) {
+      return null;
+    }
+    if (args.length == 0) {
+      return pattern;
+    }
+    StringBuilder sbuf = new StringBuilder(pattern.length() + 50);
+    int from = 0;
+    int consumed = 0;
+    while (consumed < args.length) {
+      int placeholder = pattern.indexOf(PLACEHOLDER, from);
+      if (placeholder == -1) {
+        if (from == 0) {
+          return pattern;
+        }
+        sbuf.append(pattern, from, pattern.length());
+        return sbuf.toString();
+      }
+      if (isEscapedPlaceholder(pattern, placeholder)) {
+        if (!isDoubleEscapedPlaceholder(pattern, placeholder)) {
+          sbuf.append(pattern, from, placeholder - 1);
+          sbuf.append('{');
+          from = placeholder + 1;
+          continue;
+        }
+        sbuf.append(pattern, from, placeholder - 1);
+      } else {
+        sbuf.append(pattern, from, placeholder);
+      }
+      appendValue(sbuf, args[consumed], newIdentitySet());
+      consumed++;
+      from = placeholder + 2;
+    }
+    sbuf.append(pattern, from, pattern.length());
+    return sbuf.toString();
+  }
+
+  private static boolean isEscapedPlaceholder(String pattern, int placeholderIndex) {
+    return placeholderIndex > 0 && pattern.charAt(placeholderIndex - 1) == ESCAPE;
+  }
+
+  private static boolean isDoubleEscapedPlaceholder(String pattern, int placeholderIndex) {
+    return placeholderIndex >= 2 && pattern.charAt(placeholderIndex - 2) == ESCAPE;
+  }
+
+  private static Set<Object> newIdentitySet() {
+    return Collections.newSetFromMap(new IdentityHashMap<>());
+  }
+
+  private static void appendValue(StringBuilder sbuf, Object value, Set<Object> visitedArrays) {
+    if (value == null) {
+      sbuf.append("null");
+      return;
+    }
+    if (value.getClass().isArray()) {
+      appendArray(sbuf, value, visitedArrays);
+      return;
+    }
+    try {
+      sbuf.append(value.toString());
+    } catch (Throwable ignored) {
+      sbuf.append("[FAILED toString()]");
+    }
+  }
+
+  private static void appendArray(StringBuilder sbuf, Object array, Set<Object> visitedArrays) {
+    sbuf.append('[');
+    if (visitedArrays.add(array)) {
+      int length = Array.getLength(array);
+      for (int i = 0; i < length; i++) {
+        if (i > 0) {
+          sbuf.append(", ");
+        }
+        appendValue(sbuf, Array.get(array, i), visitedArrays);
+      }
+      visitedArrays.remove(array);
+    } else {
+      sbuf.append("...");
+    }
+    sbuf.append(']');
   }
 }
