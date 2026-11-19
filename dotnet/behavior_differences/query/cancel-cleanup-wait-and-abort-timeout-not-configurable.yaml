@@ -1,0 +1,16 @@
+name: "Cancel cleanup wait and abort-request timeout are not configurable"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  Connection-string keys such as cleanup_wait and abort_request_timeout control
+  how long Cancel waits for the abort request and for query cleanup after cancel.
+new_driver_behavior: |
+  Those keys have no effect. Cancel uses fixed shared-core values: a 5 second
+  cleanup wait and a 30 second abort-request timeout.
+rationale: |
+  The shared core hard-codes cancel cleanup and abort timeouts for every
+  wrapper. The .NET wrapper does not expose connection-string overrides for
+  those values.

@@ -1,0 +1,20 @@
+{
+  "name": "Abort-request succeeds immediately",
+  "request": {
+    "urlPathPattern": "/queries/v1/abort-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "aborted-query-id"
+      }
+    }
+  },
+  "priority": 10
+}

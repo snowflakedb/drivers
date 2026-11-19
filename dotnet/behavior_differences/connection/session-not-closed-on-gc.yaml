@@ -1,0 +1,17 @@
+name: "A connection does not close its session when garbage collected"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  When an open SnowflakeDbConnection with pooling disabled is garbage collected
+  without Close or Dispose, its finalizer sends the logout request on a
+  background task and returns without waiting for the response.
+new_driver_behavior: |
+  Finalizing an open SnowflakeDbConnection sends no logout request. The Snowflake
+  session stays open until the server expires it.
+rationale: |
+  The new driver closes the session and releases the sf_core handle only from
+  Close; SnowflakeDbConnection does not override Dispose(bool), so finalization
+  does not reach that path.

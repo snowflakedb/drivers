@@ -1,0 +1,23 @@
+{
+  "name": "Logout session always fails with 400",
+  "request": {
+    "urlPath": "/session",
+    "method": "POST",
+    "queryParameters": {
+      "delete": {
+        "equalTo": "true"
+      }
+    }
+  },
+  "response": {
+    "status": 400,
+    "jsonBody": {
+      "success": false,
+      "message": "Bad Request"
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "priority": 10
+}

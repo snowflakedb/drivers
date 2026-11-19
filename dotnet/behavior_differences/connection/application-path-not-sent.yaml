@@ -1,0 +1,16 @@
+name: "CLIENT_ENVIRONMENT.APPLICATION_PATH is sent as UNKNOWN on login"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The login request CLIENT_ENVIRONMENT includes APPLICATION_PATH naming the
+  path of the running executable or entry assembly.
+new_driver_behavior: |
+  The login request CLIENT_ENVIRONMENT.APPLICATION_PATH is the literal string
+  UNKNOWN.
+rationale: |
+  The shared core sends the wrapper identity's application_path and falls back
+  to UNKNOWN when it is absent. The .NET wrapper identity does not set
+  application_path.

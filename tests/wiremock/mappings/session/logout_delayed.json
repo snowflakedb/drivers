@@ -1,0 +1,23 @@
+{
+  "name": "Logout delayed to simulate hanging close",
+  "request": {
+    "urlPath": "/session",
+    "method": "POST",
+    "queryParameters": {
+      "delete": {
+        "equalTo": "true"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "fixedDelayMilliseconds": 10000,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true
+    }
+  },
+  "priority": 10
+}

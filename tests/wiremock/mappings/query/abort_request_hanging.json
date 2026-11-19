@@ -1,0 +1,21 @@
+{
+  "name": "Abort-request hangs beyond the cancel cleanup wait",
+  "request": {
+    "urlPathPattern": "/queries/v1/abort-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "fixedDelayMilliseconds": 60000,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "aborted-query-id"
+      }
+    }
+  },
+  "priority": 10
+}
