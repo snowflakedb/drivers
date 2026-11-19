@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -80,6 +81,10 @@ class PackageEvidenceTests(unittest.TestCase):
         self.assertEqual(
             sbom["metadata"]["component"]["hashes"][0]["content"],
             package_sha,
+        )
+        self.assertEqual(
+            sbom["serialNumber"],
+            f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, package_sha)}",
         )
         by_name = {component["name"]: component for component in sbom["components"]}
         self.assertEqual(by_name["usr/lib/libsfodbc.so"]["hashes"][0]["content"], hashlib.sha256(body).hexdigest())
@@ -157,6 +162,11 @@ class PackageEvidenceTests(unittest.TestCase):
         evidence.write_bundle(package, output, runner)
         sbom = json.loads((output / "sbom.cdx.json").read_text(encoding="utf-8"))
         self.assertEqual(sbom["components"][0]["name"], "Bin/sfodbc.dll")
+        dest = package.parent / "payload"
+        dest.mkdir()
+        found = evidence.packaged_driver(package, dest, runner)
+        self.assertEqual(found.name, "sfodbc.dll")
+        self.assertEqual(found.read_bytes(), b"dll")
 
     def test_cpio_rejects_a_path_that_escapes_the_payload(self) -> None:
         package, output = self.write(

@@ -19,8 +19,7 @@ on:
       - '.github/actions/install-wix-from-artifact/**'
       - '.github/workflows/build-odbc-packages.yml'
       - '.github/workflows/_build-odbc-packages.yml'
-      - 'ci/fips/package_evidence.py'
-      - 'ci/fips/check_packaged_driver.py'
+      - 'ci/fips/**'
   workflow_dispatch:
 
 concurrency:
@@ -40,4 +39,8 @@ jobs:
           && (github.event_name == 'schedule'
               || github.event_name == 'workflow_dispatch'
               || startsWith(github.ref, 'refs/heads/release/')))
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     uses: ./.github/workflows/_build-odbc-packages.yml

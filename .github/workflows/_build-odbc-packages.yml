@@ -13,10 +13,22 @@ env:
   WIX_VERSION: v7.0.0
 
 jobs:
+  test_fips_package_scripts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Test FIPS package evidence scripts
+        run: python3 -m unittest discover -s ci/fips -v
+
   build_wix:
     # Pinned to windows-2022 because WiX v7 sources reference the VS 2022 'v143'
     # platform toolset. windows-latest is transitioning to VS 2026 which removes v143.
     runs-on: windows-2022
+    permissions:
+      contents: read
     name: build_wix (WiX Toolset from source)
     env:
       DOTNET_NOLOGO: 'true'
@@ -119,6 +131,10 @@ jobs:
 
   build_msi:
     needs: build_wix
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -327,6 +343,23 @@ jobs:
           if ($msi.Count -ne 1) { throw "expected one FIPS MSI, found $($msi.Count)" }
           .\scripts\odbc\Test-OdbcMsiFipsLoad.ps1 -MsiPath $msi[0].FullName -LogDir build\msi-fips-load-logs
 
+      - name: Record FIPS MSI evidence
+        if: matrix.fips && success()
+        shell: pwsh
+        run: |
+          $msi = @(Get-Item build\snowflake-odbc-fips-*.msi)
+          if ($msi.Count -ne 1) { throw "expected one FIPS MSI, found $($msi.Count)" }
+          python ci/fips/package_evidence.py --package $msi[0].FullName --output-dir fips-evidence/msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "FIPS_MSI_PACKAGE=$($msi[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Check linked FIPS crypto in the hashed MSI
+        if: matrix.fips && success()
+        shell: pwsh
+        run: |
+          python ci/fips/check_packaged_driver.py --package "$env:FIPS_MSI_PACKAGE" --linker-map "$env:ODBC_LINKER_MAP"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload MSI
         if: always()
         uses: actions/upload-artifact@v7
@@ -337,9 +370,31 @@ jobs:
             build/msi-driver-name-logs/
           if-no-files-found: warn
 
+      - name: Upload FIPS MSI evidence
+        if: matrix.fips && success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: snowflake-odbc-fips-release-${{ matrix.arch }}-evidence
+          path: fips-evidence/msi/
+
+      - name: Attest FIPS MSI provenance
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_MSI_PACKAGE }}
+
+      - name: Attest FIPS MSI SBOM
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_MSI_PACKAGE }}
+          sbom-path: fips-evidence/msi/sbom.cdx.json
+
   verify_fips_same_version_upgrade:
     needs: build_msi
     runs-on: windows-latest
+    permissions:
+      contents: read
     name: verify FIPS MSI replaces the standard x64 MSI
     steps:
       - name: Checkout repository
@@ -404,6 +459,10 @@ jobs:
             arch: aarch64
             fips: true
     runs-on: ${{ matrix.os }}
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     name: build_rpm (${{ matrix.name }})
     steps:
       - name: Checkout repository
@@ -543,6 +602,24 @@ jobs:
           name: snowflake-odbc-fips-rpm-${{ matrix.arch }}-evidence
           path: fips-evidence/rpm/
 
+      # actions/attest@v4 is the same ref fips_artifacts already runs, and it is
+      # on the snowflakedb allowlist:
+      # https://github.com/snowflakedb/self-serve-snowflakedb/blob/26ecbd5af4827db3e40fe9cdbad9777d7abd3e35/configs/snowflakedb/default/default_actions.yml
+      # The subject is the CI package. Release Engineering signing still changes
+      # the bytes customers download.
+      - name: Attest FIPS RPM provenance
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_RPM_PACKAGE }}
+
+      - name: Attest FIPS RPM SBOM
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_RPM_PACKAGE }}
+          sbom-path: fips-evidence/rpm/sbom.cdx.json
+
   build_pkg:
     # The FIPS row builds both slices with --features fips and leaves release
     # symbols in place. check_linked_crypto.py reads each slice, and the
@@ -556,6 +633,10 @@ jobs:
           - name: macOS Universal FIPS
             fips: true
     runs-on: macos-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     name: build_pkg (${{ matrix.name }})
     steps:
       - name: Checkout repository
@@ -682,6 +763,20 @@ jobs:
           name: snowflake-odbc-fips-macos-universal-evidence
           path: fips-evidence/pkg/
 
+      # Same actions/attest@v4 ref as the RPM job. The subject is the CI pkg.
+      - name: Attest FIPS pkg provenance
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_PKG_PACKAGE }}
+
+      - name: Attest FIPS pkg SBOM
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_PKG_PACKAGE }}
+          sbom-path: fips-evidence/pkg/sbom.cdx.json
+
   build_deb:
     # FIPS rows are a second package. The image's FIPS=1 layer supplies GCC 13
     # and Go, and the .so stays unstripped so check_linked_crypto.py can see
@@ -715,6 +810,10 @@ jobs:
             arch: aarch64
             fips: true
     runs-on: ${{ matrix.os }}
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     name: build_deb (${{ matrix.name }})
     steps:
       - name: Checkout repository
@@ -870,3 +969,30 @@ jobs:
         with:
           name: snowflake-odbc-fips-tgz-${{ matrix.arch }}-evidence
           path: fips-evidence/tgz/
+
+      # Same actions/attest@v4 ref as the RPM job. Each subject is one CI package.
+      - name: Attest FIPS deb provenance
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_DEB_PACKAGE }}
+
+      - name: Attest FIPS deb SBOM
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_DEB_PACKAGE }}
+          sbom-path: fips-evidence/deb/sbom.cdx.json
+
+      - name: Attest FIPS tgz provenance
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_TGZ_PACKAGE }}
+
+      - name: Attest FIPS tgz SBOM
+        if: matrix.fips && github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ env.FIPS_TGZ_PACKAGE }}
+          sbom-path: fips-evidence/tgz/sbom.cdx.json

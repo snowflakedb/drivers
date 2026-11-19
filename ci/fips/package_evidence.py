@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
 
 
 STAGE = "gha-package-candidate"
@@ -216,7 +217,7 @@ def extract_msi(package: Path, dest: Path, runner=subprocess.run) -> None:
     _run(["msiexec", "/a", str(package), "/qn", f"TARGETDIR={target}"], runner)
 
 
-DRIVER_FILENAMES = frozenset({"libsfodbc.so", "libsfodbc.dylib"})
+DRIVER_FILENAMES = frozenset({"libsfodbc.so", "libsfodbc.dylib", "sfodbc.dll", "sfodbc32.dll"})
 
 
 def packaged_driver(package: Path, dest: Path, runner=subprocess.run) -> Path:
@@ -227,7 +228,7 @@ def packaged_driver(package: Path, dest: Path, runner=subprocess.run) -> Path:
     )
     if len(found) != 1:
         raise PackageEvidenceError(
-            f"{package.name}: expected one packaged libsfodbc driver, found {len(found)}"
+            f"{package.name}: expected one packaged ODBC driver, found {len(found)}"
         )
     return found[0]
 
@@ -297,6 +298,7 @@ def write_bundle(package: Path, output_dir: Path, runner=subprocess.run) -> None
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, package_sha)}",
         "version": 1,
         "metadata": {
             "component": {

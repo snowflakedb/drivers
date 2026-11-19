@@ -213,6 +213,7 @@ fn extract_zip(zip_path: &Path, dest: &Path) {
 #[cfg(windows)]
 fn extract_zip(zip_path: &Path, dest: &Path) {
     let status = std::process::Command::new("powershell")
+        .env_remove("PSModulePath")
         .args([
             "-NoProfile",
             "-Command",
