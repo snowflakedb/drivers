@@ -24,6 +24,13 @@ public sealed class BehaviorDifferenceIdsTest
     private static readonly string[] ExpectedViolations =
     [
         $"{nameof(TestDriverTest)}.cs: testdriver-unit",
+
+        // TODO Needs the TEXT and FIXED converters; PR stack #3380 unskips this test.
+        "DataReaderTest.cs: BD#reader-get-ordinal-missing-column-throws",
+        "DataReaderTest.cs: BD#reader-access-without-current-row-error-code",
+        "DataReaderTest.cs: BD#reader-conversion-failures-throw-invalid-data-conversion",
+        "DataReaderTest.cs: BD#reader-get-string-invariant-culture",
+        "DataReaderTest.cs: BD#reader-fixed-beyond-int64-returns-decimal-on-json"
     ];
 
     [SnowflakeFact]

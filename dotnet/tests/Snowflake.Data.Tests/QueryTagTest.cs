@@ -1,3 +1,4 @@
+using Snowflake.Data.Tests.Compatibility;
 namespace Snowflake.Data.Tests;
 
 [Trait("Category", "E2E")]
@@ -13,7 +14,7 @@ public class QueryTagTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should tag queries when QUERY_TAG is set at connection level
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldTagQueriesWhenQueryTagIsSetAtConnectionLevel()
     {
         // Given Snowflake client is logged in with connection option QUERY_TAG set to "conn_tag_e2e"

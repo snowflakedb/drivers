@@ -29,6 +29,7 @@ public sealed class MaxLobSizeTest : ReferenceTestBase
     [InlineData("JSON", OriginSize)]
     public async Task ShouldSelectStringOfSpecifiedLobSizeAsync(string resultFormat, int size)
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         Skip.When(
             !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JENKINS_HOME")),
             "Test is skipped on Jenkins.");

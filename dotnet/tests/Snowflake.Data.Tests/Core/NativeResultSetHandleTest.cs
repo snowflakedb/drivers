@@ -65,6 +65,8 @@ public sealed class NativeResultSetHandleTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void GetStreamRequestTargetsTheHandle()
     {
-        Assert.Equal(Handle, _resultSet.BuildGetStreamRequest().ResultSetHandle);
+        var request = _resultSet.BuildGetStreamRequest(out var stream);
+        using (stream)
+            Assert.Equal(Handle, request.ResultSetHandle);
     }
 }

@@ -3,7 +3,6 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Callback;
-using Snowflake.Data.Interop.Extensions;
 using Snowflake.Data.Interop.Handles;
 using Snowflake.Data.Interop.TfmDependent;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
@@ -35,10 +34,10 @@ public sealed class UnsafeCodeTest
             [AssembliesMetadata.TestsCommonsAssembly] = [$"Utilities/{nameof(ArrowStreamExporter)}.cs"],
             [AssembliesMetadata.TestsAssembly] =
             [
-                $"Core/{nameof(Core.UnitArrowStreamsTest)}.cs",
-                $"Core/{nameof(Core.UnitStreamRpcs)}.cs",
-                $"Core/{nameof(Core.SfCoreAsyncCallDataTest)}.cs",
-                $"Core/{nameof(Core.ProtoAsyncCallbackProviderTest)}.cs",
+                $"Core/{nameof(UnitArrowStreamsTest)}.cs",
+                $"Core/{nameof(UnitStreamRpcs)}.cs",
+                $"Core/{nameof(SfCoreAsyncCallDataTest)}.cs",
+                $"Core/{nameof(ProtoAsyncCallbackProviderTest)}.cs",
             ],
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
@@ -85,13 +84,7 @@ public sealed class UnsafeCodeTest
     [ClassData(typeof(DriverAssemblies))]
     public void TestUnsafeOnlyInInterop_UnsafeCodeConstructorsMustBeInAllowedNamespaces(string assemblyMetadata)
     {
-        Dictionary<AssemblyMetadata, string[]> exceptionsMap = new()
-        {
-            // TODO(SNOW-4382582) the reader rewrite removes the PoC reader's unsafe constructor.
-            [AssembliesMetadata.RootAssembly] = [$"{nameof(SnowflakeDbDataReader)}.cs"],
-        };
-        exceptionsMap.TryGetValue(assemblyMetadata, out var exception);
-        TestUnsafeSyntaxNodes<ConstructorDeclarationSyntax>(assemblyMetadata, exception ?? []);
+        TestUnsafeSyntaxNodes<ConstructorDeclarationSyntax>(assemblyMetadata);
     }
 
     [SnowflakeTheory]

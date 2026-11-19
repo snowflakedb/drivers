@@ -1,13 +1,12 @@
 using System.Data.Common;
-using Google.Protobuf;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
-using Snowflake.Data.Core.Handles;
-using Snowflake.Data.Core.Session;
 using Snowflake.Data.Interfaces;
+using Snowflake.Data.Interop.Extensions;
 using Snowflake.Data.Proto;
+using Snowflake.Data.Tests.Utilities;
 
 namespace Snowflake.Data.Tests.Core;
 
@@ -30,7 +29,7 @@ public sealed class SnowflakeStatementTest
     private static readonly ConnectionHandle ConnHandle = new() { Id = 2, Magic = 202 };
     private static readonly StatementHandle StmtHandle = new() { Id = 3, Magic = 303 };
     private static readonly ResultSetHandle ResultHandle = new() { Id = 4, Magic = 404 };
-    private static readonly ArrowArrayStreamPtr Stream = new() { Value = ByteString.CopyFrom(BitConverter.GetBytes(0x5EED_0000L)) };
+    private static readonly Apache.Arrow.Schema BatchSchema = UnitBatches.Batch(UnitBatches.Int64(1)).Schema;
     private static readonly QueryId AsyncQueryId = QueryId.Parse("01bf4a3e-0003-2c4f-0000-00a1b2c3d4e7");
     private static readonly SnowflakeStatementCtx PlainCtx = new(Sql, null, null);
 
@@ -46,8 +45,8 @@ public sealed class SnowflakeStatementTest
         _logger = Substitute.For<ILogger<SnowflakeStatement>>();
         _reader = Substitute.For<DbDataReader>();
         _readerFactory = Substitute.For<IResultSetReaderFactory>();
-        _readerFactory.Create(default!, default!, default!, default).ReturnsForAnyArgs(_reader);
-        _readerFactory.CreateForSchemaOnly(default!, default!, default).ReturnsForAnyArgs(_reader);
+        _readerFactory.Create(default!, default!, default).ReturnsForAnyArgs(_reader);
+        _readerFactory.CreateForSchemaOnly(default!).ReturnsForAnyArgs(_reader);
 
         _statement = new SnowflakeStatement(_connection, _statementInterpreter, _poller, _driver, _readerFactory, _logger);
     }
@@ -244,8 +243,8 @@ public sealed class SnowflakeStatementTest
     public void ReaderThatCannotOpenItsStreamReleasesTheResultSet()
     {
         _driver.StatementExecuteQueryAsync(Arg.Any<StatementExecuteQueryRequest>(), Arg.Any<CancellationToken>()).Returns(SingleResult(ExecutedQueryId));
-        _driver.ResultSetGetStreamAsync(Arg.Any<ResultSetGetStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<ResultSetGetStreamResponse>(new ServiceException(new DriverException { Message = "stream unavailable" })));
+        _driver.ResultSetExportStreamAsync(Arg.Any<ResultSetExportStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<ResultSetExportStreamResponse>(new ServiceException(new DriverException { Message = "stream unavailable" })));
 
         var exception = Assert.Throws<SnowflakeDriverException>(() => _statement.ExecuteReader(PlainCtx));
 
@@ -253,47 +252,75 @@ public sealed class SnowflakeStatementTest
         Assert.Equal(ExecutedQueryId, _statement.LastQueryId);
         Received.InOrder(() =>
         {
-            _driver.ResultSetGetStreamAsync(Arg.Is<ResultSetGetStreamRequest>(request => request.ResultSetHandle.Equals(ResultHandle)), Arg.Any<CancellationToken>());
+            _driver.ResultSetExportStreamAsync(Arg.Is<ResultSetExportStreamRequest>(request => request.ResultSetHandle.Equals(ResultHandle)), Arg.Any<CancellationToken>());
             _driver.ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
             _driver.StatementRelease(Arg.Is<StatementReleaseRequest>(request => request.StmtHandle.Equals(StmtHandle)));
         });
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void ExecuteReaderHandsTheResultSetToTheReaderWithoutReleasingIt()
+    public void StreamIsReleasedWhenTheExportCallFailsAfterFillingIt()
+    {
+        _driver.StatementExecuteQueryAsync(Arg.Any<StatementExecuteQueryRequest>(), Arg.Any<CancellationToken>()).Returns(SingleResult(ExecutedQueryId));
+        var producer = new FakeArrowArrayStream(BatchSchema);
+        _driver.ResultSetExportStreamAsync(Arg.Any<ResultSetExportStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                ArrowStreamExporter.ExportStreamInto(producer, call.Arg<ResultSetExportStreamRequest>().OutStream.Value.Span);
+                return Task.FromException<ResultSetExportStreamResponse>(new ServiceException(new DriverException { Message = "export failed" }));
+            });
+
+        var exception = Assert.Throws<SnowflakeDriverException>(() => _statement.ExecuteReader(PlainCtx));
+
+        Assert.Equal(SFError.INTERNAL_ERROR, exception.Error);
+        Assert.Equal(1, producer.DisposeCalls);
+        _driver.Received(1).ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
+        _readerFactory.DidNotReceiveWithAnyArgs().Create(default!, default!, default);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ExecuteReaderReleasesTheResultSetOnceItsStreamIsOpenAndHandsTheStreamToTheReader()
     {
         _driver.StatementExecuteQueryAsync(Arg.Any<StatementExecuteQueryRequest>(), Arg.Any<CancellationToken>()).Returns(SingleResult(ExecutedQueryId, rowsAffected: 3));
-        _driver.ResultSetGetStreamAsync(Arg.Any<ResultSetGetStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ResultSetGetStreamResponse { Stream = Stream });
+        var producer = new FakeArrowArrayStream(BatchSchema, UnitBatches.Batch(UnitBatches.Int64(42)));
+        UnitStreamRpcs.ServeGetStream(_driver, producer);
         _statementInterpreter.CalculateRecordsAffected(Arg.Is<ResultSetDescriptor>(descriptor => descriptor.RowsAffected == 3)).Returns(3);
-        NativeResultSetHandle? handedOver = null;
-        _readerFactory.Create(Arg.Do<NativeResultSetHandle>(handle => handedOver = handle), Arg.Any<ArrowArrayStreamPtr>(), Arg.Any<ResultSetDescriptor>(), Arg.Any<int>());
+        IRecordBatchSource? handedOver = null;
+        _readerFactory.Create(Arg.Do<IRecordBatchSource>(source => handedOver = source), Arg.Any<ResultSetDescriptor>(), Arg.Any<int>());
 
         var reader = _statement.ExecuteReader(PlainCtx);
 
         Assert.Same(_reader, reader);
         Assert.Equal(ExecutedQueryId, _statement.LastQueryId);
         _readerFactory.Received(1).Create(
-            Arg.Is<NativeResultSetHandle>(handle => handle.Handle.Equals(ResultHandle)),
-            Stream,
+            Arg.Any<IRecordBatchSource>(),
             Arg.Is<ResultSetDescriptor>(descriptor => descriptor.QueryId == ExecutedQueryId),
             3);
-        _readerFactory.DidNotReceiveWithAnyArgs().CreateForSchemaOnly(default!, default!, default);
-        _driver.DidNotReceiveWithAnyArgs().ResultSetRelease(default!);
-        _driver.Received(1).StatementRelease(Arg.Is<StatementReleaseRequest>(request => request.StmtHandle.Equals(StmtHandle)));
+        _readerFactory.DidNotReceiveWithAnyArgs().CreateForSchemaOnly(default!);
+        Received.InOrder(() =>
+        {
+            _driver.ResultSetExportStreamAsync(
+                Arg.Is<ResultSetExportStreamRequest>(request => request.ResultSetHandle.Equals(ResultHandle) && request.OutStream.Value.Length == sizeof(long)),
+                Arg.Any<CancellationToken>());
+            _driver.ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
+            _driver.StatementRelease(Arg.Is<StatementReleaseRequest>(request => request.StmtHandle.Equals(StmtHandle)));
+        });
+        Assert.Equal(0, producer.DisposeCalls);
 
-        handedOver!.Dispose();
-        _driver.Received(1).ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
+        using (var batch = handedOver!.Next())
+            Assert.Equal(42L, Assert.IsType<Apache.Arrow.Int64Array>(batch!.Column(0)).GetValue(0));
+        handedOver.Dispose();
+        Assert.Equal(1, producer.DisposeCalls);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ReaderCreationFailureReleasesTheResultSet()
     {
         _driver.StatementExecuteQueryAsync(Arg.Any<StatementExecuteQueryRequest>(), Arg.Any<CancellationToken>()).Returns(SingleResult(ExecutedQueryId));
-        _driver.ResultSetGetStreamAsync(Arg.Any<ResultSetGetStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ResultSetGetStreamResponse { Stream = Stream });
-        var failure = new InvalidOperationException("stream import failed");
-        _readerFactory.Create(default!, default!, default!, default).ReturnsForAnyArgs(_ => throw failure);
+        var producer = new FakeArrowArrayStream(BatchSchema);
+        UnitStreamRpcs.ServeGetStream(_driver, producer);
+        var failure = new InvalidOperationException("reader construction failed");
+        _readerFactory.Create(default!, default!, default).ReturnsForAnyArgs(_ => throw failure);
 
         var exception = Assert.Throws<InvalidOperationException>(() => _statement.ExecuteReader(PlainCtx));
 
@@ -303,6 +330,7 @@ public sealed class SnowflakeStatementTest
             _driver.ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
             _driver.StatementRelease(Arg.Is<StatementReleaseRequest>(request => request.StmtHandle.Equals(StmtHandle)));
         });
+        Assert.Equal(1, producer.DisposeCalls);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
@@ -322,7 +350,7 @@ public sealed class SnowflakeStatementTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DescribeOnlyReturnsASchemaOnlyReaderWithThePreparedColumns()
     {
-        var prepared = new PrepareResult { QueryId = ExecutedQueryId, Stream = Stream, SqlState = "02000" };
+        var prepared = new PrepareResult { QueryId = ExecutedQueryId, Stream = UnitArrowStreams.Int64Column(), SqlState = "02000" };
         prepared.Columns.Add(new ColumnMetadata { Name = "C1", Type = "FIXED" });
         _driver.StatementPrepareAsync(Arg.Any<StatementPrepareRequest>(), Arg.Any<CancellationToken>())
             .Returns(new StatementPrepareResponse { Result = prepared });
@@ -332,20 +360,18 @@ public sealed class SnowflakeStatementTest
         Assert.Same(_reader, reader);
         Assert.Equal(ExecutedQueryId, _statement.LastQueryId);
         _readerFactory.Received(1).CreateForSchemaOnly(
-            Stream,
             Arg.Is<ResultSetDescriptor>(descriptor =>
                 descriptor.QueryId == ExecutedQueryId
                 && descriptor.SqlState == "02000"
                 && descriptor.Columns.Count == 1
                 && descriptor.Columns[0].Name == "C1"
-                && descriptor.Columns[0].Type == "FIXED"),
-            -1);
-        _readerFactory.DidNotReceiveWithAnyArgs().Create(default!, default!, default!, default);
+                && descriptor.Columns[0].Type == "FIXED"));
+        _readerFactory.DidNotReceiveWithAnyArgs().Create(default!, default!, default);
         _ = _driver.DidNotReceiveWithAnyArgs().StatementExecuteQueryAsync(default!, default);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public async Task CancelStopsARunningExecutionAndReleasesTheStatementAsync()
+    public async Task CancelStopsRunningExecutionAndReleasesTheStatementAsync()
     {
         var executing = Signal();
         _driver.StatementExecuteQueryAsync(Arg.Any<StatementExecuteQueryRequest>(), Arg.Any<CancellationToken>()).Returns(call => HangAsync<ExecuteQueryResponse>(executing, call.ArgAt<CancellationToken>(1)));
@@ -492,8 +518,7 @@ public sealed class SnowflakeStatementTest
     {
         _driver.ConnectionGetQueryResultAsync(Arg.Any<ConnectionGetQueryResultRequest>(), Arg.Any<CancellationToken>())
             .Returns(SingleResult(AsyncQueryId.Value, rowsAffected: 7));
-        _driver.ResultSetGetStreamAsync(Arg.Any<ResultSetGetStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ResultSetGetStreamResponse { Stream = Stream });
+        UnitStreamRpcs.ServeGetStream(_driver, new FakeArrowArrayStream(BatchSchema));
         _statementInterpreter.CalculateRecordsAffected(Arg.Is<ResultSetDescriptor>(descriptor => descriptor.RowsAffected == 7)).Returns(7);
 
         var reader = await _statement.GetResultsFromQueryIdAsync(AsyncQueryId, null, CancellationToken.None).ConfigureAwait(false);
@@ -503,13 +528,12 @@ public sealed class SnowflakeStatementTest
         Received.InOrder(() =>
         {
             _poller.WaitUntilFinishedAsync(Arg.Any<Func<ConnectionHandle>>(), AsyncQueryId, Arg.Any<CancellationToken>());
+            _driver.ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
             _readerFactory.Create(
-                Arg.Is<NativeResultSetHandle>(handle => handle.Handle.Equals(ResultHandle)),
-                Stream,
+                Arg.Any<IRecordBatchSource>(),
                 Arg.Is<ResultSetDescriptor>(descriptor => descriptor.QueryId == AsyncQueryId.Value),
                 7);
         });
-        _driver.DidNotReceiveWithAnyArgs().ResultSetRelease(default!);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
@@ -670,8 +694,8 @@ public sealed class SnowflakeStatementTest
     {
         _driver.ConnectionGetQueryResultAsync(Arg.Any<ConnectionGetQueryResultRequest>(), Arg.Any<CancellationToken>())
             .Returns(SingleResult(ExecutedQueryId));
-        _driver.ResultSetGetStreamAsync(Arg.Any<ResultSetGetStreamRequest>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<ResultSetGetStreamResponse>(new ServiceException(new DriverException { Message = "stream unavailable" })));
+        _driver.ResultSetExportStreamAsync(Arg.Any<ResultSetExportStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<ResultSetExportStreamResponse>(new ServiceException(new DriverException { Message = "stream unavailable" })));
 
         var exception = Assert.Throws<SnowflakeDriverException>(() => _statement.GetResultsFromQueryId(AsyncQueryId, null));
 

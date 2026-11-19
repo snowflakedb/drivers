@@ -258,7 +258,6 @@ public sealed class AsyncMethodInvariantsTest
         {
             [AssembliesMetadata.RootAssembly] =
             [
-                "SnowflakeDbDataReader.cs:79: _arrowStream.ReadNextRecordBatchAsync().GetAwaiter().GetResult()", // TODO this shouldn't do that
                 "Core/SyncOverAsync.cs:20: task.GetAwaiter().GetResult()",
             ],
             [AssembliesMetadata.TestsAssembly] = ExpectedDummyExceptions4,

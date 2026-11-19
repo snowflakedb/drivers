@@ -19,7 +19,7 @@ public sealed unsafe class InteropStringHelperTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestTerminatedUtf8StringIsDecoded()
     {
-        var bytes = Encoding.UTF8.GetBytes("zażółć\0");
+        var bytes = "zażółć\0"u8.ToArray();
 
         fixed (byte* ptr = bytes)
             Assert.Equal("zażółć", _helper.PtrToStringUtf8(ptr));

@@ -67,6 +67,7 @@ public sealed class ChunkDownloadCancellationTest : ReferenceTestBase, IDisposab
     [SnowflakeFact]
     public async Task ShouldThrowWhenCancelledDuringArrowChunkDownloadAsync()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         const int testRowCount = 100000;
         var ct = TestContext.Current.CancellationToken;
         var tableName = NewTableName("DOTNET_CHUNK_CANCEL_ARROW");

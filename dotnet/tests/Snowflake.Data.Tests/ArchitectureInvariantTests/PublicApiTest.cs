@@ -137,6 +137,13 @@ public sealed class PublicApiTest
         $"M:{nameof(DbDataReader.NextResult)}()",
         $"M:{nameof(DbDataReader.GetEnumerator)}()",
         $"M:{nameof(DbDataReader.Close)}()",
+        $"M:{nameof(DbDataReader.ReadAsync)}({nameof(CancellationToken)})",
+        $"M:{nameof(DbDataReader.GetSchemaTable)}()",
+        $"M:{nameof(SnowflakeDbDataReader.GetQueryId)}()",
+        $"M:{nameof(SnowflakeDbDataReader.GetTimeSpan)}({nameof(Int32)})",
+        $"M:{nameof(SnowflakeDbDataReader.GetObject)}({nameof(Int32)})",
+        $"M:{nameof(SnowflakeDbDataReader.GetArray)}({nameof(Int32)})",
+        $"M:{nameof(SnowflakeDbDataReader.GetMap)}({nameof(Int32)})",
     ];
 
     private static readonly HashSet<string> SnowflakeDbParameterPublicApi =

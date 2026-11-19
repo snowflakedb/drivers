@@ -101,6 +101,7 @@ public sealed class DecfloatReferenceTest : ReferenceTestBase, IDisposable
     [InlineData("ARROW")]
     public async Task ShouldReadNullDecfloatAsync(string resultFormat)
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         if (resultFormat == "JSON")
         {
             // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected

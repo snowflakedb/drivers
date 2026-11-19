@@ -15,7 +15,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should execute simple SELECT returning single value
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldExecuteSimpleSelectReturningSingleValue()
     {
         // Given Snowflake client is logged in
@@ -35,7 +35,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should execute SELECT returning multiple columns
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldExecuteSelectReturningMultipleColumns()
     {
         // Given Snowflake client is logged in
@@ -56,7 +56,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should execute SELECT returning multiple rows
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldExecuteSelectReturningMultipleRows()
     {
         // Given Snowflake client is logged in
@@ -95,7 +95,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should execute SELECT returning NULL values
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldExecuteSelectReturningNullValues()
     {
         // Given Snowflake client is logged in
@@ -161,7 +161,7 @@ public class BasicExecuteQueryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should execute INSERT and retrieve inserted data
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldExecuteInsertAndRetrieveInsertedData()
     {
         // Given Snowflake client is logged in

@@ -18,4 +18,13 @@ internal interface IResultSetInterpreter
     /// -1 when sf_core reports none or it does not fit in an <see cref="int"/>.
     /// </summary>
     int CalculateRecordsAffected(ResultSetDescriptor resultSetDescriptor);
+
+    /// <summary>
+    /// Finds the first column named with given name.
+    /// </summary>
+    /// <param name="resultSetDescriptor">Descriptor for given result set.</param>
+    /// <param name="name">The column name to look up.</param>
+    /// <param name="ordinal">The column's ordinal when found; otherwise -1.</param>
+    /// <returns>False when no column has that name.</returns>
+    internal bool TryGetOrdinal(ResultSetDescriptor resultSetDescriptor, string name, out int ordinal);
 }

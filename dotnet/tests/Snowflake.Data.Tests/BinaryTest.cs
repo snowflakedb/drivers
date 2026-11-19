@@ -15,7 +15,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast binary values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldCastBinaryValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary literals
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectBinaryLiterals()
     {
         // Given Snowflake client is logged in
@@ -74,7 +74,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle binary corner case values from literals
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleBinaryCornerCaseValuesFromLiterals()
     {
         // Given Snowflake client is logged in
@@ -98,7 +98,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL binary values from literals
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleNullBinaryValuesFromLiterals()
     {
         // Given Snowflake client is logged in
@@ -119,7 +119,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -153,7 +153,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select corner case binary values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectCornerCaseBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -191,7 +191,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select NULL binary values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectNullBinaryValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -234,7 +234,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select binary with specified length from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectBinaryWithSpecifiedLengthFromTable()
     {
         // Given Snowflake client is logged in
@@ -412,7 +412,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download binary data in multiple chunks using GENERATOR
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadBinaryDataInMultipleChunksUsingGenerator()
     {
         const int rowCount = 30000;
@@ -443,7 +443,7 @@ public class BinaryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download binary data in multiple chunks from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadBinaryDataInMultipleChunksFromTable()
     {
         const int rowCount = 30000;

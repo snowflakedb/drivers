@@ -1,57 +1,57 @@
 using System.Collections;
+using System.Data;
 using System.Data.Common;
-using Apache.Arrow;
-using Apache.Arrow.C;
-using Apache.Arrow.Ipc;
-using Snowflake.Data.Core.Handles;
-using Snowflake.Data.Proto;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Logging;
+using Snowflake.Data.Compatibility;
+using Snowflake.Data.Core;
+using Snowflake.Data.Core.Errors;
+using Snowflake.Data.Interfaces;
+using Snowflake.Data.Telemetry;
 
 namespace Snowflake.Data;
 
-// TODO SNOW-4382582 this implementation is just PoC and will undergo heavy refactoring.
+/// <summary>
+/// Reads the rows of a Snowflake query result, one row at a time.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A reader is not thread-safe. Rows arrive in batches that are downloaded as <see cref="Read"/> and
+/// <see cref="ReadAsync"/> reach them. The command timeout does not apply to reading rows.
+/// </para>
+/// <para>
+/// Closing the reader stops the download of batches it has not reached. Column metadata
+/// (<see cref="FieldCount"/>, <see cref="GetName"/>, <see cref="GetDataTypeName"/>,
+/// <see cref="GetFieldType"/>) stays available after the reader is closed; row data does not.
+/// </para>
+/// </remarks>
 public sealed class SnowflakeDbDataReader : DbDataReader
 {
-    private readonly NativeResultSetHandle? _resultSet;
-    private readonly ResultSetDescriptor _descriptor;
-    private readonly IArrowArrayStream _arrowStream;
-    private readonly int _recordsAffected;
-    private readonly bool _schemaOnly;
+    private static readonly Task<bool> RowAvailable = Task.FromResult(true);
 
-    private RecordBatch? _currentBatch;
-    private int _rowIndexInBatch = -1;
-    private bool _closed;
-    private bool _exhausted;
+    private readonly ISnowflakeResultSet _resultSet;
+    private readonly ILogger<SnowflakeDbDataReader> _logger;
 
-    /// <summary>
-    /// Opens a reader over an sf_core Arrow stream and takes ownership of <paramref name="resultSet"/>,
-    /// which is released on close; a describe-only result has none, and reports no rows.
-    /// </summary>
-    internal unsafe SnowflakeDbDataReader(
-        NativeResultSetHandle? resultSet,
-        ArrowArrayStreamPtr arrowStreamPtr,
-        ResultSetDescriptor descriptor,
-        int recordsAffected,
-        bool schemaOnly)
+    /// <param name="resultSet">The result to read; the reader takes ownership and closes it on <see cref="Close"/>.</param>
+    /// <param name="logger">Receives the reader's diagnostics.</param>
+    internal SnowflakeDbDataReader(ISnowflakeResultSet resultSet, ILogger<SnowflakeDbDataReader> logger)
     {
         _resultSet = resultSet;
-        _descriptor = descriptor;
-        _recordsAffected = recordsAffected;
-        _schemaOnly = schemaOnly;
-
-        // Import the native Arrow C Data Interface stream pointer.
-        var ptrBytes = arrowStreamPtr.Value.ToByteArray();
-        var nativePtr = (nint)BitConverter.ToInt64(ptrBytes, 0);
-        var cStream = (CArrowArrayStream*)nativePtr;
-        _arrowStream = CArrowArrayStreamImporter.ImportArrayStream(cStream);
+        _logger = logger;
     }
 
-    public override int FieldCount => _descriptor.Columns.Count;
+    public override int FieldCount => _resultSet.FieldCount;
 
-    public override int RecordsAffected => _recordsAffected;
+    public override int RecordsAffected => _resultSet.RecordsAffected;
 
-    public override bool HasRows => !_schemaOnly && (!_descriptor.HasRowsAffected || _descriptor.RowsAffected > 0);
+    public override bool IsClosed => _resultSet.IsClosed;
 
-    public override bool IsClosed => _closed;
+    /// <summary>
+    /// Whether the result has at least one row. The answer does not change as rows are read, and is false
+    /// once the reader is closed. The first call may start downloading of the first batch, if it
+    /// hasn't started yet.
+    /// </summary>
+    public override bool HasRows => Run(static resultSet => resultSet.GetHasRows());
 
     public override int Depth => 0;
 
@@ -59,295 +59,189 @@ public sealed class SnowflakeDbDataReader : DbDataReader
 
     public override object this[string name] => GetValue(GetOrdinal(name));
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override bool Read()
+    /// <summary>The Snowflake query ID of the result, or an empty string when sf_core reported none.</summary>
+    public string GetQueryId() => _resultSet.QueryId;
+
+    public override bool Read() => Run(static resultSet => resultSet.Read());
+
+    public override Task<bool> ReadAsync(CancellationToken cancellationToken)
     {
-        if (_closed || _exhausted)
-            return false;
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<bool>(cancellationToken);
 
-        // Try to advance within the current batch.
-        if (_currentBatch is not null)
-        {
-            _rowIndexInBatch++;
-            if (_rowIndexInBatch < _currentBatch.Length)
-                return true;
-        }
-
-        // Current batch exhausted — load next batch.
-        while (true)
-        {
-            _currentBatch = _arrowStream.ReadNextRecordBatchAsync().GetAwaiter().GetResult();
-            if (_currentBatch is null)
-            {
-                _exhausted = true;
-                return false;
-            }
-
-            if (_currentBatch.Length > 0)
-            {
-                _rowIndexInBatch = 0;
-                return true;
-            }
-            // Skip empty batches.
-        }
+        return Run(static resultSet => resultSet.TryAdvanceWithinBatch()) ? RowAvailable : ReadNextBatchAsync(cancellationToken);
     }
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override bool IsDBNull(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        return column.IsNull(_rowIndexInBatch);
-    }
+    // TODO(SNOW-4429197): move to the next statement's result of a multi-statement query.
+    public override bool NextResult() => false;
 
-    public override object GetValue(int ordinal)
-    {
-        if (IsDBNull(ordinal))
-            return DBNull.Value;
+    public override bool IsDBNull(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.IsDBNull(column));
 
-        var column = _currentBatch!.Column(ordinal);
-        return ExtractValue(column, _rowIndexInBatch);
-    }
+    public override object GetValue(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetValue(column));
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
     public override int GetValues(object[] values)
     {
+        ArgumentNullExceptionHelper.ThrowIfNull(values, nameof(values));
+
         var count = Math.Min(values.Length, FieldCount);
         for (var i = 0; i < count; i++)
             values[i] = GetValue(i);
+
         return count;
     }
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override long GetInt64(int ordinal)
+    public override bool GetBoolean(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<bool>(column));
+
+    public override byte GetByte(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<byte>(column));
+
+    public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length)
     {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        return ExtractInt64(column, _rowIndexInBatch);
+        ThrowIfInvalidCopyArguments(dataOffset, buffer?.Length, bufferOffset, length);
+        return Run(resultSet => resultSet.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length));
     }
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override int GetInt32(int ordinal)
+    public override char GetChar(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<char>(column));
+
+    public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length)
     {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        return (int)ExtractInt64(column, _rowIndexInBatch);
+        ThrowIfInvalidCopyArguments(dataOffset, buffer?.Length, bufferOffset, length);
+        return Run(resultSet => resultSet.GetChars(ordinal, dataOffset, buffer, bufferOffset, length));
     }
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override short GetInt16(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        return (short)ExtractInt64(column, _rowIndexInBatch);
-    }
+    public override DateTime GetDateTime(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<DateTime>(column));
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override decimal GetDecimal(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        var scale = "0";
-        _currentBatch.Schema.FieldsLookup.ElementAt(ordinal).FirstOrDefault()?.Metadata.TryGetValue("scale", out scale);
-        var result = ExtractDecimal(column, _rowIndexInBatch);
-        var scaleNum = Math.Pow(10, int.Parse(scale ?? "0"));
-        result /= (decimal)scaleNum;
-        return result;
-    }
+    public override decimal GetDecimal(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<decimal>(column));
 
-    // TODO: Implement remaining typed accessors.
-    public override bool GetBoolean(int ordinal) => throw new NotImplementedException();
+    public override double GetDouble(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<double>(column));
 
-    public override byte GetByte(int ordinal) => throw new NotImplementedException();
+    public override float GetFloat(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<float>(column));
 
-    public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length) =>
-        throw new NotImplementedException();
+    public override Guid GetGuid(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<Guid>(column));
 
-    public override char GetChar(int ordinal) => throw new NotImplementedException();
+    public override short GetInt16(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<short>(column));
 
-    public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length) =>
-        throw new NotImplementedException();
+    public override int GetInt32(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<int>(column));
 
-    public override string GetDataTypeName(int ordinal) => _descriptor.Columns[ordinal].Type;
+    public override long GetInt64(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<long>(column));
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override DateTime GetDateTime(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
+    /// <summary>
+    /// The value of the column as a string. Returns null for a NULL value of a TEXT column; a NULL value of
+    /// any other column is a conversion error.
+    /// </summary>
+    public override string GetString(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<string>(column))!;
 
-        // Fallback: convert value to string.
-        var value = ExtractValue(column, _rowIndexInBatch);
+    // TODO(SNOW-4382582): override GetFieldValue<T> through Run once the converters from PR stack #3380 land; the
+    // base implementation casts GetValue, which skips the converter's IValueReader<T> and the carrier mapping.
+    /// <summary>The value of a TIME column as the time of day.</summary>
+    public TimeSpan GetTimeSpan(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<TimeSpan>(column))!;
 
-        // nanoseconds
-        if (value is long l)
-            return new DateTime(1970, 1, 1) + TimeSpan.FromMilliseconds(l / 1_000_000);
+    /// <summary>The value of a structured OBJECT column mapped onto <typeparamref name="T"/>.</summary>
+    public T GetObject<T>(int ordinal)
+        where T : class, new() =>
+        Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<T>(column))!;
 
-        return (DateTime)value;
-    }
+    /// <summary>The value of a structured ARRAY column.</summary>
+    public T[] GetArray<T>(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<T[]>(column))!;
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override double GetDouble(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        return (double)ExtractValue(column, _rowIndexInBatch);
-    }
+    /// <summary>The value of a structured MAP column.</summary>
+    // TODO future milestone: read structured types.
+    public Dictionary<TKey, TValue> GetMap<TKey, TValue>(int ordinal)
+        where TKey : notnull =>
+        Run(ordinal, static (resultSet, column) => resultSet.GetFieldValue<Dictionary<TKey, TValue>>(column))!;
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override Type GetFieldType(int ordinal)
-    {
-        var colType = _descriptor.Columns[ordinal].Type.ToUpperInvariant();
-        var scale = _descriptor.Columns[ordinal].HasScale ? _descriptor.Columns[ordinal].Scale : 0;
-        return colType switch
-        {
-            "FIXED" => scale == 0 ? typeof(long) : typeof(decimal),
-            "REAL" => typeof(double),
-            "TEXT" => typeof(string),
-            "BOOLEAN" => typeof(bool),
-            "BINARY" => typeof(byte[]),
-            "DATE" => typeof(DateTime),
-            _ => typeof(string),
-        };
-    }
+    /// <summary>The Snowflake type of the column in upper case, for example <c>FIXED</c> or <c>TEXT</c>.</summary>
+    public override string GetDataTypeName(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetDataTypeName(column));
 
-    public override float GetFloat(int ordinal) => throw new NotImplementedException();
+    public override Type GetFieldType(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetFieldType(column));
 
-    public override Guid GetGuid(int ordinal) => throw new NotImplementedException();
+    public override string GetName(int ordinal) => Run(ordinal, static (resultSet, column) => resultSet.GetName(column));
 
-    public override string GetName(int ordinal) => _descriptor.Columns[ordinal].Name;
+    /// <summary>
+    /// The ordinal of the first column with the given name.
+    /// </summary>
+    /// <exception cref="SnowflakeDbException">No column has that name (<see cref="SFError.COLUMN_INDEX_OUT_OF_BOUND"/>).</exception>
+    public override int GetOrdinal(string name) => name is null
+        ? throw new ArgumentNullException(nameof(name))
+        : Run(resultSet => resultSet.GetOrdinal(name));
 
-    // TODO: this implementation is just PoC and will undergo heavy refactoring.
-    public override int GetOrdinal(string name)
-    {
-        for (var i = 0; i < _descriptor.Columns.Count; i++)
-        {
-            if (string.Equals(_descriptor.Columns[i].Name, name, StringComparison.OrdinalIgnoreCase))
-                return i;
-        }
+    // TODO future milestone(SNOW-4478021): describe the columns once every Snowflake type reports its CTS type.
+    public override DataTable GetSchemaTable() => throw new NotImplementedException("Future milestone, not yet implemented");
 
-        throw new IndexOutOfRangeException($"Column '{name}' not found.");
-    }
+    public override IEnumerator GetEnumerator() => new DbEnumerator(this, closeReader: false);
 
-    // TODO this implementation is just PoC and will undergo heavy refactoring.
-    public override string GetString(int ordinal)
-    {
-        EnsurePositioned();
-        var column = _currentBatch!.Column(ordinal);
-        if (column is StringArray strArr)
-            return strArr.GetString(_rowIndexInBatch);
-
-        // Fallback: convert value to string.
-        var value = ExtractValue(column, _rowIndexInBatch);
-        return value.ToString() ?? string.Empty;
-    }
-
-    public override bool NextResult() => false;
-
-    public override IEnumerator GetEnumerator() => new DbEnumerator(this);
-
-    // TODO: this implementation is just PoC and will undergo heavy refactoring.
     public override void Close()
     {
-        if (_closed)
+        _logger.LogDebug("Closing the reader of query {QueryId}", _resultSet.QueryId);
+        if (_resultSet.IsClosed)
             return;
 
-        _closed = true;
-        _currentBatch = null;
-
-        try
-        {
-            _arrowStream.Dispose();
-        }
-        catch
-        {
-            // Best-effort release of Arrow stream.
-        }
-
-        _resultSet?.Dispose();
+        using var activity = LoggerAndTelemetryStubs.StartActivity(TelemetryActivities.DataReaderClose);
+        _resultSet.Close();
+        activity?.SetSuccess();
     }
 
-    // TODO: this implementation is just PoC and will undergo heavy refactoring.
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
-            Close();
-
+        _logger.LogDebug("Disposing the reader of query {QueryId}", _resultSet.QueryId);
         base.Dispose(disposing);
     }
 
-    // TODO this is just a PoC and will be changed significantly
-    private void EnsurePositioned()
+    private static void ThrowIfInvalidCopyArguments(long dataOffset, int? bufferLength, int bufferOffset, int length)
     {
-        if (_currentBatch is null || _rowIndexInBatch < 0)
-            throw new InvalidOperationException("No current row. Call Read() first.");
+        if (dataOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(dataOffset), dataOffset, "The offset must not be negative.");
+
+        if (!bufferLength.HasValue)
+            return;
+
+        if (bufferOffset < 0 || bufferOffset > bufferLength)
+            throw new ArgumentOutOfRangeException(nameof(bufferOffset), bufferOffset, "The offset must lie within the buffer.");
+
+        if (length < 0 || length > bufferLength - bufferOffset)
+            throw new ArgumentOutOfRangeException(nameof(length), length, "The length must fit in the buffer after the offset.");
     }
 
-    // TODO this is just a PoC and will be changed significantly
-    private static long ExtractInt64(IArrowArray column, int index)
+    // The result set logs a failed fetch at error level and leaves a failed conversion to the caller, so the
+    // boundary logs the carrier at debug level only.
+    private Exception ToPublicException(SnowflakeException carrier, string method)
     {
-        return column switch
-        {
-            Int64Array arr => arr.GetValue(index) ?? 0L,
-            Int32Array arr => arr.GetValue(index) ?? 0,
-            Int16Array arr => arr.GetValue(index) ?? 0,
-            Int8Array arr => arr.GetValue(index) ?? 0,
-            Decimal128Array arr => (long)(arr.GetValue(index) ?? 0m),
-            _ => throw new InvalidCastException($"Cannot convert {column.GetType().Name} to Int64."),
-        };
+        _logger.LogDebug(carrier, "The reader {Method} failed for query {QueryId}.", method, _resultSet.QueryId);
+        return carrier.ToPublicException();
     }
 
-    // TODO this is just a PoC and will be changed significantly
-    private static decimal ExtractDecimal(IArrowArray column, int index)
+    private async Task<bool> ReadNextBatchAsync(CancellationToken cancellationToken)
     {
-        return column switch
+        try
         {
-            Decimal128Array arr => arr.GetValue(index) ?? 0m,
-            Int64Array arr => arr.GetValue(index) ?? 0L,
-            Int32Array arr => arr.GetValue(index) ?? 0,
-            Int16Array arr => arr.GetValue(index) ?? 0,
-            Int8Array arr => arr.GetValue(index) ?? 0,
-            _ => throw new InvalidCastException($"Cannot convert {column.GetType().Name} to Decimal."),
-        };
-    }
-
-    // TODO: this implementation is just PoC to set foot in the door. It will undergo heavy refactoring.
-    private object ExtractValue(IArrowArray column, int index)
-    {
-        if (_descriptor.Columns[0].Type == "timestamp_ltz")
-        {
-            var d = (Int64Array)((StructArray)column).Fields[0];
-            var seconds = d.GetValue(index) ?? 0L;
-
-            var sinceUnix = TimeSpan.FromSeconds(seconds);
-            var dt = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc) + sinceUnix;
-            return new DateTimeOffset(dt, TimeSpan.Zero);
+            return await _resultSet.ReadNextBatchAsync(cancellationToken).ConfigureAwait(false);
         }
-
-        if (column is StructArray strArr)
+        catch (SnowflakeException exception)
         {
-            var d = (Int64Array)strArr.Fields[0];
-            var nanoseconds = d.GetValue(index) ?? 0L;
-
-            var sinceUnix = TimeSpan.FromMilliseconds(nanoseconds / 1_000_000);
-            var dt = new DateTime(1970, 1, 1) + sinceUnix;
-            return new DateTimeOffset(dt, TimeSpan.Zero);
+            throw ToPublicException(exception, nameof(ReadAsync));
         }
+    }
 
-        return column switch
+    private T Run<T>(Func<ISnowflakeResultSet, T> operation, [CallerMemberName] string method = "")
+    {
+        try
         {
-            Int64Array arr => arr.GetValue(index) ?? (object)DBNull.Value,
-            Int32Array arr => (long)(arr.GetValue(index) ?? 0),
-            Int16Array arr => (long)(arr.GetValue(index) ?? 0),
-            Int8Array arr => (long)(arr.GetValue(index) ?? 0),
-            Decimal128Array arr => arr.GetValue(index) ?? (object)DBNull.Value,
-            DoubleArray arr => arr.GetValue(index) ?? (object)DBNull.Value,
-            FloatArray arr => arr.GetValue(index) ?? (object)DBNull.Value,
-            StringArray arr => (object?)arr.GetString(index) ?? DBNull.Value,
-            BooleanArray arr => arr.GetValue(index) ?? (object)DBNull.Value,
-            BinaryArray arr => (object?)arr.GetBytes(index).ToArray() ?? DBNull.Value,
-            Date32Array arr => (object?)arr.GetDateTime(index) ?? DBNull.Value,
-            _ => throw new NotSupportedException($"Unsupported Arrow array type: {column.GetType().Name}"),
-        };
+            return operation(_resultSet);
+        }
+        catch (SnowflakeException exception)
+        {
+            throw ToPublicException(exception, method);
+        }
+    }
+
+    private T Run<T>(int ordinal, Func<ISnowflakeResultSet, int, T> operation, [CallerMemberName] string method = "")
+    {
+        try
+        {
+            return operation(_resultSet, ordinal);
+        }
+        catch (SnowflakeException exception)
+        {
+            throw ToPublicException(exception, method);
+        }
     }
 }

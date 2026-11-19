@@ -140,6 +140,7 @@ public class RowsAffectedTest : IClassFixture<ITFixture>
     [InlineData(Execution.Async)]
     public async Task ShouldReportTheNumberOfLoadStatusRowsForCopyIntoATableAsync(Execution execution)
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();

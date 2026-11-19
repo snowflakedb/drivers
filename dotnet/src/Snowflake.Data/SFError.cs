@@ -45,10 +45,14 @@ public enum SFError
     //   INVALID_QUERY_ID_FORMAT => "Invalid query id format. Expected a UUID."
     //   UNKNOWN_QUERY_STATUS => "The query status returned by the server is not recognized"
     //   QUERY_RESULT_NO_DATA_RETRIES_EXCEEDED => "Max retry for no data is reached"
+    // DATA_READER_NO_CURRENT_ROW, DATA_READER_FETCH_IN_PROGRESS and QUERY_RESULT_FETCH_FAILED have no classic counterpart.
     [SFError(ErrorCode = 270069)] COMMAND_TEXT_NOT_SET,
     [SFError(ErrorCode = 270070)] INVALID_QUERY_ID_FORMAT,
     [SFError(ErrorCode = 270071)] UNKNOWN_QUERY_STATUS,
     [SFError(ErrorCode = 270072)] QUERY_RESULT_NO_DATA_RETRIES_EXCEEDED,
+    [SFError(ErrorCode = 270073)] DATA_READER_NO_CURRENT_ROW,
+    [SFError(ErrorCode = 270074)] DATA_READER_FETCH_IN_PROGRESS,
+    [SFError(ErrorCode = 270075)] QUERY_RESULT_FETCH_FAILED,
     [SFError(ErrorCode = 390111)] SESSION_GONE,
     [SFError(ErrorCode = 390120)] EXT_AUTHN_DENIED,
     [SFError(ErrorCode = 390123)] EXT_AUTHN_LOCKED,

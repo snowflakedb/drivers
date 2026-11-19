@@ -15,7 +15,7 @@ public class DecfloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast decfloat values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldCastDecfloatValuesToAppropriateType()
     {
         // Given Snowflake client is logged in

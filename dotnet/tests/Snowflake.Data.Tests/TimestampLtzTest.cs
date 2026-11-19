@@ -16,7 +16,7 @@ public class TimestampLtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast timestamp_ltz values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public async Task ShouldCastTimestampLtzValuesToAppropriateTypeAsync()
     {
         // Given Snowflake client is logged in

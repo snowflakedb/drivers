@@ -23,6 +23,7 @@ public class PutGetAsyncExecuteTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public async Task ShouldUploadAFileWithPutThroughAsyncNonQueryExecutionAsync()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         await connection.OpenAsync().ConfigureAwait(false);

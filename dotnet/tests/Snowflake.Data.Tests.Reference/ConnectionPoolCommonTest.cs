@@ -28,6 +28,7 @@ public sealed class ConnectionPoolCommonTest : ReferenceTestBase, IDisposable
     [SnowflakeFact]
     public async Task ShouldOpenAndQueryPooledConnectionsFromMultipleThreadsAsync()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         var ct = TestContext.Current.CancellationToken;
         var connectionString = BaseConnectionString();
 

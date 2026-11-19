@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using Apache.Arrow;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Handles;
+using Snowflake.Data.Tests.Utilities;
 
 namespace Snowflake.Data.Tests.Core;
 

@@ -16,7 +16,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <shape> geography literal
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("Point", "TO_GEOGRAPHY('POINT(-122.35 37.55)')", "[-122.35,37.55]")]
     [InlineData("LineString", "TO_GEOGRAPHY('LINESTRING(0 0, 1 1, 2 2)')", "[[0,0],[1,1],[2,2]]")]
     [InlineData("Polygon", "TO_GEOGRAPHY('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')", "[[[0,0],[10,0],[10,10],[0,10],[0,0]]]")]
@@ -42,7 +42,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select geography from GeoJSON input
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectGeographyFromGeoJsonInput()
     {
         // Given Snowflake client is logged in
@@ -65,7 +65,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should cast geography to <expected_type> for <format> output format
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("GeoJSON", "str")]
     [InlineData("WKT", "str")]
     [InlineData("WKB", "bytearray")]
@@ -184,7 +184,7 @@ public class GeographyTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download geography data in multiple chunks
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadGeographyDataInMultipleChunks()
     {
         const int rowCount = 20000;

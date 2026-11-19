@@ -13,6 +13,15 @@ namespace Snowflake.Data.Tests.Core;
 /// </summary>
 internal static class UnitStreamRpcs
 {
+    /// <summary>ResultSetGetStream fills the caller-allocated stream it is given with <paramref name="stream"/>.</summary>
+    internal static void ServeGetStream(IDatabaseDriverService driver, IArrowArrayStream stream) =>
+        driver.ResultSetExportStreamAsync(Arg.Any<ResultSetExportStreamRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                ArrowStreamExporter.ExportStreamInto(stream, call.Arg<ResultSetExportStreamRequest>().OutStream.Value.Span);
+                return new ResultSetExportStreamResponse();
+            });
+
     /// <summary>ArrowStreamGetNext calls the stream's <c>get_next</c> on a thread of its own and reports the outcome.</summary>
     internal static void ServeGetNext(IDatabaseDriverService driver) =>
         driver.ArrowStreamGetNextBatchAsync(Arg.Any<ArrowStreamGetNextBatchRequest>(), Arg.Any<CancellationToken>())
@@ -22,7 +31,8 @@ internal static class UnitStreamRpcs
                 return Task.Run(() => GetNext(request));
             });
 
-    private static unsafe ArrowStreamGetNextBatchResponse GetNext(ArrowStreamGetNextBatchRequest request)
+    /// <summary>Calls the <c>get_next</c> of the stream in <paramref name="request"/> into its out array on the calling thread.</summary>
+    internal static unsafe ArrowStreamGetNextBatchResponse GetNext(ArrowStreamGetNextBatchRequest request)
     {
         var stream = (ArrowArrayStreamAbi*)ArrowPtrCodec.Decode(request.Stream.Value.Span);
         var array = (CArrowArray*)ArrowPtrCodec.Decode(request.OutArray.Value.Span);

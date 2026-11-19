@@ -4,9 +4,12 @@ using Microsoft.Extensions.Logging;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Core.Extensions;
 using Snowflake.Data.Core.Handles;
+using Snowflake.Data.Core.ResultSet;
 using Snowflake.Data.Core.Session;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Interop;
+using Snowflake.Data.Interop.Extensions;
+using Snowflake.Data.Interop.Handles;
 using Snowflake.Data.Proto;
 using Snowflake.Data.Proto.Errors;
 using Snowflake.Data.Telemetry;
@@ -18,7 +21,8 @@ namespace Snowflake.Data.Core;
 /// </summary>
 /// <remarks>
 /// Every execution creates its own sf_core statement handle and releases it as soon as the
-/// execution returns; an open reader does not depend on it. All sf_core calls go through the
+/// execution returns, and a reader's result set handle is released once its Arrow C stream is open;
+/// an open reader holds only that stream, which the driver owns. All sf_core calls go through the
 /// asynchronous FFI so that <see cref="Cancel"/> and command timeouts can interrupt them; the
 /// synchronous methods block on that path through <see cref="SyncOverAsync"/>.
 /// </remarks>
@@ -146,6 +150,7 @@ internal sealed class SnowflakeStatement : ISnowflakeStatement
         try
         {
             using var statement = await CreateNativeStatementAsync(ctx, asyncExecution: false, cancellationToken).ConfigureAwait(false);
+            // TODO(SNOW-4382583): upload array bindings above CLIENT_STAGE_ARRAY_BINDING_THRESHOLD to a stage before executing.
             var request = statement.BuildExecuteQueryRequest();
             var response = await _driverService.StatementExecuteQueryAsync(request, cancellationToken).ConfigureAwait(false);
             var resultSet = GetSingleResult(response);
@@ -177,6 +182,7 @@ internal sealed class SnowflakeStatement : ISnowflakeStatement
             if (ctx.DescribeOnly)
                 return await DescribeAsync(statement, cancellationToken).ConfigureAwait(false);
 
+            // TODO(SNOW-4382583): upload array bindings above CLIENT_STAGE_ARRAY_BINDING_THRESHOLD to a stage before executing.
             var request = statement.BuildExecuteQueryRequest();
             var response = await _driverService.StatementExecuteQueryAsync(request, cancellationToken).ConfigureAwait(false);
             var resultSet = GetSingleResult(response);
@@ -278,23 +284,40 @@ internal sealed class SnowflakeStatement : ISnowflakeStatement
         if (prepared.HasSqlState)
             descriptor.SqlState = prepared.SqlState;
 
-        return _resultSetReaderFactory.CreateForSchemaOnly(prepared.Stream, descriptor, -1);
+        // The described query's schema comes from its columns; the Arrow stream sf_core also returns is not read.
+        prepared.Release();
+
+        return _resultSetReaderFactory.CreateForSchemaOnly(descriptor);
     }
 
     private async Task<DbDataReader> OpenReaderAsync(ResultSetResponse resultSet, CancellationToken cancellationToken)
     {
-        var resultSetHandle = new NativeResultSetHandle(_driverService, resultSet.ResultSetHandle, _logger);
+        var descriptor = resultSet.ResultDescriptor;
+        IRecordBatchSource batches;
+        using (var resultSetHandle = new NativeResultSetHandle(_driverService, resultSet.ResultSetHandle, _logger))
+        {
+            var exportRequest = resultSetHandle.BuildGetStreamRequest(out var stream);
+            try
+            {
+                await _driverService.ResultSetExportStreamAsync(exportRequest, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+
+            batches = SfCoreRecordBatchSource.Open(_driverService, stream, descriptor.QueryId);
+        }
+
         try
         {
-            var streamResponse = await _driverService.ResultSetGetStreamAsync(
-                resultSetHandle.BuildGetStreamRequest(), cancellationToken).ConfigureAwait(false);
-            var descriptor = resultSet.ResultDescriptor;
-            var calculateRecordsAffected = _resultSetInterpreter.CalculateRecordsAffected(descriptor);
-            return _resultSetReaderFactory.Create(resultSetHandle, streamResponse.Stream, descriptor, calculateRecordsAffected);
+            var recordsAffected = _resultSetInterpreter.CalculateRecordsAffected(descriptor);
+            return _resultSetReaderFactory.Create(batches, descriptor, recordsAffected);
         }
         catch
         {
-            resultSetHandle.Dispose();
+            batches.Dispose();
             throw;
         }
     }

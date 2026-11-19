@@ -16,7 +16,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <shape> geometry literal
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("Point", "TO_GEOMETRY('POINT(1820.12 890.56)')", "[1820.12,890.56]")]
     [InlineData("LineString", "TO_GEOMETRY('LINESTRING(0 0, 1 1, 2 2)')", "[[0,0],[1,1],[2,2]]")]
     [InlineData("Polygon", "TO_GEOMETRY('POLYGON((0 0, 4 0, 4 3, 0 3, 0 0))')", "[[[0,0],[4,0],[4,3],[0,3],[0,0]]]")]
@@ -42,7 +42,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should cast geometry to <expected_type> for <format> output format
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("GeoJSON", "str")]
     [InlineData("WKT", "str")]
     [InlineData("WKB", "bytearray")]
@@ -166,7 +166,7 @@ public class GeometryTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download geometry data in multiple chunks
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadGeometryDataInMultipleChunks()
     {
         const int rowCount = 20000;

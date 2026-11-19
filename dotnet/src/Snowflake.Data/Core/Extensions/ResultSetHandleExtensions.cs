@@ -1,4 +1,5 @@
 using Snowflake.Data.Core.Handles;
+using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data.Core.Extensions;
@@ -10,9 +11,24 @@ internal static class ResultSetHandleExtensions
 {
     extension(NativeResultSetHandle resultSet)
     {
-        /// <summary>A request for the Arrow stream over the result set's rows.</summary>
-        internal ResultSetGetStreamRequest BuildGetStreamRequest() =>
-            new() { ResultSetHandle = resultSet.Handle };
+        /// <summary>
+        /// A request that opens an Arrow C stream over the result set's rows; sf_core fills the
+        /// caller-allocated stream at <paramref name="nativeArrowStream"/>.
+        /// </summary>
+        internal ResultSetExportStreamRequest BuildGetStreamRequest(out NativeArrowStream nativeArrowStream)
+        {
+            nativeArrowStream = new NativeArrowStream();
+
+            try
+            {
+                return new ResultSetExportStreamRequest { ResultSetHandle = resultSet.Handle, OutStream = nativeArrowStream.ToProto() };
+            }
+            catch
+            {
+                nativeArrowStream.Dispose();
+                throw;
+            }
+        }
 
         /// <summary>A request that releases the result set handle in sf_core.</summary>
         internal ResultSetReleaseRequest BuildReleaseRequest() =>

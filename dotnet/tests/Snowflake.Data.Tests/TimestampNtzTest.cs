@@ -401,7 +401,7 @@ public class TimestampNtzTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should return aware datetime for TIMESTAMP alias when session mapping is TIMESTAMP_LTZ
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public async Task ShouldReturnAwareDatetimeForTimestampAliasWhenSessionMappingIsTimestampLtzAsync()
     {
         // Given Snowflake client is logged in

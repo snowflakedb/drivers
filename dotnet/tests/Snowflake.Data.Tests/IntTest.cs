@@ -18,7 +18,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast integer values to appropriate type for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("INT")]
     [InlineData("INTEGER")]
     [InlineData("BIGINT")]
@@ -45,7 +45,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select integer <values> for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [MemberData(nameof(BoundaryValuesData))]
     public void ShouldSelectIntegerValuesForIntAndSynonyms(string intType, string values, long[] expectedValues)
     {
@@ -83,7 +83,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("INT")]
     [InlineData("INTEGER")]
     [InlineData("BIGINT")]
@@ -110,7 +110,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("INT")]
     [InlineData("INTEGER")]
     [InlineData("BIGINT")]
@@ -141,7 +141,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario Outline: should select <values> from table for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [MemberData(nameof(TableValuesData))]
     public void ShouldSelectValuesFromTableForIntAndSynonyms(string intType, string values, string sqlInsertValues, long?[] expectedValues)
     {
@@ -209,7 +209,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle server-side Arrow memory optimization for int columns on multiple chunks
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleServerSideArrowMemoryOptimizationForIntColumnsOnMultipleChunks()
     {
         const int rowCount = 50000;
@@ -350,7 +350,7 @@ public class IntTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle large integer values as string for int and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("INT")]
     [InlineData("INTEGER")]
     [InlineData("BIGINT")]

@@ -19,6 +19,9 @@ internal static class TelemetryActivities
     internal const string GetResultsFromQueryId = "GetResultsFromQueryId";
     internal const string GetResultsFromQueryIdAsync = "GetResultsFromQueryIdAsync";
     internal const string ExecuteWithCustomUploadStream = "ExecuteWithCustomUploadStream";
+    internal const string DataReaderFetchBatch = "DataReaderFetchBatch";
+    internal const string DataReaderFetchBatchAsync = "DataReaderFetchBatchAsync";
+    internal const string DataReaderClose = "DataReaderClose";
 }
 
 // TODO SNOW-4382577

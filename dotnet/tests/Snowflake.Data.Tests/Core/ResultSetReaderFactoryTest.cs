@@ -1,69 +1,51 @@
-using Microsoft.Extensions.Logging.Abstractions;
-using NSubstitute;
 using Snowflake.Data.Core;
-using Snowflake.Data.Core.Handles;
-using Snowflake.Data.Proto;
+using Snowflake.Data.Core.ResultSet;
 
 namespace Snowflake.Data.Tests.Core;
 
 [Trait("Category", "Unit")]
 public sealed class ResultSetReaderFactoryTest
 {
-    private static readonly ResultSetHandle ResultHandle = new() { Id = 4, Magic = 404 };
+    private const string ConverterSkipReason = "Needs the TEXT and FIXED converters; PR stack #3380 unskips this test.";
 
-    private readonly IDatabaseDriverService _driver = Substitute.For<IDatabaseDriverService>();
-
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void CreateOpensAReaderOverTheStreamWithTheGivenCounts()
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    public void CreateOpensAReaderOverTheBatchesWithTheGivenCount()
     {
-        using var reader = ResultSetReaderFactory.Instance.Create(ResultSet(), UnitArrowStreams.Int64Column(42), Int64Descriptor(rowsAffected: 1), 1);
+        var source = new FakeRecordBatchSource(UnitBatches.Batch(UnitBatches.Int64(42)));
+
+        using var reader = ResultSetReaderFactory.Instance.Create(source, UnitBatches.Descriptor(UnitBatches.FixedColumn()), 1);
 
         var snowflakeReader = Assert.IsType<SnowflakeDbDataReader>(reader);
-        Assert.Equal(1, snowflakeReader.FieldCount);
         Assert.Equal("C1", snowflakeReader.GetName(0));
         Assert.Equal(1, snowflakeReader.RecordsAffected);
-        Assert.True(snowflakeReader.HasRows);
         Assert.True(snowflakeReader.Read());
-        Assert.Equal(42L, snowflakeReader.GetInt64(0));
+        Assert.Equal(42L, snowflakeReader.GetValue(0));
         Assert.False(snowflakeReader.Read());
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void ReaderFromCreateReleasesTheResultSetWhenClosed()
+    public void ReaderFromCreateDisposesTheBatchesWhenClosed()
     {
-        var reader = ResultSetReaderFactory.Instance.Create(ResultSet(), UnitArrowStreams.Int64Column(42), Int64Descriptor(), -1);
-        _driver.DidNotReceiveWithAnyArgs().ResultSetRelease(default!);
+        var source = new FakeRecordBatchSource();
+        var reader = ResultSetReaderFactory.Instance.Create(source, UnitBatches.Descriptor(UnitBatches.FixedColumn()), -1);
+        Assert.Equal(0, source.DisposeCalls);
 
         reader.Close();
 
-        _driver.Received(1).ResultSetRelease(Arg.Is<ResultSetReleaseRequest>(request => request.ResultSetHandle.Equals(ResultHandle)));
+        Assert.Equal(1, source.DisposeCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void CreateForSchemaOnlyReportsTheColumnsAndNoRowsAndReleasesNothing()
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    public void CreateForSchemaOnlyReportsTheColumnsAndNoRows()
     {
-        var reader = ResultSetReaderFactory.Instance.CreateForSchemaOnly(UnitArrowStreams.Int64Column(), Int64Descriptor(), -1);
+        using var reader = ResultSetReaderFactory.Instance.CreateForSchemaOnly(UnitBatches.Descriptor(UnitBatches.FixedColumn(), UnitBatches.TextColumn("C2")));
 
         var snowflakeReader = Assert.IsType<SnowflakeDbDataReader>(reader);
-        Assert.Equal(1, snowflakeReader.FieldCount);
-        Assert.Equal("C1", snowflakeReader.GetName(0));
+        Assert.Equal(2, snowflakeReader.FieldCount);
+        Assert.Equal("C2", snowflakeReader.GetName(1));
+        Assert.Equal(typeof(long), snowflakeReader.GetFieldType(0));
         Assert.Equal(-1, snowflakeReader.RecordsAffected);
         Assert.False(snowflakeReader.HasRows);
-
-        snowflakeReader.Close();
-
-        _driver.DidNotReceiveWithAnyArgs().ResultSetRelease(default!);
-    }
-
-    private NativeResultSetHandle ResultSet() =>
-        new(_driver, ResultHandle, NullLogger.Instance);
-
-    private static ResultSetDescriptor Int64Descriptor(long? rowsAffected = null)
-    {
-        var descriptor = new ResultSetDescriptor();
-        descriptor.Columns.Add(new ColumnMetadata { Name = "C1", Type = "FIXED" });
-        if (rowsAffected is { } rows)
-            descriptor.RowsAffected = rows;
-        return descriptor;
+        Assert.False(snowflakeReader.Read());
     }
 }

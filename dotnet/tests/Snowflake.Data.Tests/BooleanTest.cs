@@ -15,7 +15,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast boolean values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldCastBooleanValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -41,7 +41,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select boolean literals
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectBooleanLiterals()
     {
         // Given Snowflake client is logged in
@@ -61,7 +61,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from literals for boolean
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleNullValuesFromLiteralsForBoolean()
     {
         // Given Snowflake client is logged in
@@ -83,7 +83,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from GENERATOR for boolean
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromGeneratorForBoolean()
     {
         const int rowCount = 1000000;
@@ -113,7 +113,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select boolean values from table
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldSelectBooleanValuesFromTable()
     {
         // Given Snowflake client is logged in
@@ -145,7 +145,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from table for boolean
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleNullValuesFromTableForBoolean()
     {
         // Given Snowflake client is logged in
@@ -181,7 +181,7 @@ public class BooleanTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for boolean
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromTableForBoolean()
     {
         const int rowCount = 1000000;

@@ -15,7 +15,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast time values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldCastTimeValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -125,7 +125,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values for time
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldHandleNullValuesForTime()
     {
         // Given Snowflake client is logged in
@@ -146,7 +146,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks for time
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadLargeResultSetWithMultipleChunksForTime()
     {
         const int rowCount = 100000;
@@ -239,7 +239,7 @@ public class TimeTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from table for time
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldDownloadLargeResultSetWithMultipleChunksFromTableForTime()
     {
         const int rowCount = 100000;

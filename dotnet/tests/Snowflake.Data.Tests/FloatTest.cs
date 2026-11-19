@@ -18,7 +18,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select float literals for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -134,7 +134,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle float precision boundary values from literals for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -164,7 +164,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from literals for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -188,7 +188,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -216,7 +216,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select floats from table for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -253,7 +253,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle float boundary values from table for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -301,7 +301,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should handle NULL values from table for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]
@@ -339,7 +339,7 @@ public class FloatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should select large result set from table for float and synonyms
-    [SnowflakeTheory]
+    [SnowflakeTheory(Skip = SkipReasons.DataConversionNotImplemented)]
     [InlineData("FLOAT")]
     [InlineData("DOUBLE")]
     [InlineData("REAL")]

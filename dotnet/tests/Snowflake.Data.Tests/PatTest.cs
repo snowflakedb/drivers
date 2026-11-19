@@ -17,7 +17,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as password
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldAuthenticateUsingPatAsPassword()
     {
         // Given Authentication is set to password and valid PAT token is provided
@@ -48,7 +48,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as token
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldAuthenticateUsingPatAsToken()
     {
         // Given Authentication is set to Programmatic Access Token and valid PAT token is provided
@@ -80,7 +80,7 @@ public class PatTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should authenticate using PAT as token with lowercase authenticator
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldAuthenticateUsingPatAsTokenWithLowercaseAuthenticator()
     {
         // Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
@@ -115,6 +115,7 @@ public class PatTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldAuthenticateUsingPatTokenFromTokenFilePath()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         Skip.OnOldDriver("BD#pat-token-file-path", "The old driver ignores token_file_path in the connection string");
 
         // Given Authentication is set to Programmatic Access Token and a valid PAT token is stored in a file

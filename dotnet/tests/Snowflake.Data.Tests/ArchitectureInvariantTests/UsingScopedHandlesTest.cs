@@ -2,7 +2,9 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Snowflake.Data.Core;
+using Snowflake.Data.Core.Extensions;
 using Snowflake.Data.Core.Handles;
+using Snowflake.Data.Core.ResultSet;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Handles;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
@@ -62,7 +64,12 @@ public sealed class UsingScopedHandlesTest
         var violations = AssemblyUtil.GetSyntaxRoots(AssembliesMetadata.RootAssembly)
             .SelectMany(file => FindViolations(file.RelativePath, file.Root));
 
-        AssertUtil.AssertOnViolations([], violations);
+        IEnumerable<string> expectedViolations =
+        [
+            $"Core/ResultSet/{nameof(SfCoreRecordBatchSource)}.cs:128: TryEnter(...)", // private helper called always as using var
+            $"Core/Extensions/{nameof(ResultSetHandleExtensions)}.cs:20: new NativeArrowStream", // explicitly disposed inside
+        ];
+        AssertUtil.AssertOnViolations(expectedViolations, violations);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]

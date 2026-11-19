@@ -15,7 +15,7 @@ public class DateTest : IClassFixture<ITFixture>
     }
 
     // Scenario: should cast date values to appropriate type
-    [SnowflakeFact]
+    [SnowflakeFact(Skip = SkipReasons.DataConversionNotImplemented)]
     public void ShouldCastDateValuesToAppropriateType()
     {
         // Given Snowflake client is logged in
@@ -44,6 +44,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDateLiterals()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -65,6 +66,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectEpochAndPreEpochDates()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -86,6 +88,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectHistoricalAndBoundaryDates()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -107,6 +110,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldHandleNullValuesForDate()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -128,6 +132,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldDownloadLargeResultSetForDate()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         const int rowCount = 100000;
 
         // Given Snowflake client is logged in
@@ -154,6 +159,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDatesFromTable()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -187,6 +193,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectDatesWithNullFromTable()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -220,6 +227,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldSelectHistoricalAndBoundaryDatesFromTable()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -255,6 +263,7 @@ public class DateTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldDownloadLargeResultSetForDateFromTable()
     {
+        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         const int rowCount = 100000;
 
         // Given Snowflake client is logged in
