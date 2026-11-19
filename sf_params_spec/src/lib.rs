@@ -86,6 +86,7 @@ pub mod param_names {
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
     pub const SSL: ParamKey = ParamKey("ssl");
     pub const SERVER_URL: ParamKey = ParamKey("server_url");
+    pub const URL: ParamKey = ParamKey("url");
     pub const PRESERVE_UNDERSCORES_IN_HOSTNAME: ParamKey =
         ParamKey("preserve_underscores_in_hostname");
     pub const USER: ParamKey = ParamKey("user");
@@ -977,6 +978,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .logical_type(LogicalType::Url)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::URL.as_str())
+        // JDBC stores the JDBC connection string so DatabaseMetaData.getURL()
+        // can read it back from core. Not a Snowflake login/session parameter.
+        .value_type(ValueType::String)
+        .sensitive(true)
+        .auth(false)
+        .description(
+            "JDBC-only. JDBC connection URL injected by the wrapper; not sent as a session parameter",
+        )
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .visible_to(visible_to!(Jdbc))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str())
@@ -3683,6 +3698,7 @@ mod tests {
                 || name == "master_token"
                 || name == "passcode"
                 || name == "proxy"
+                || name == "url"
                 || name == "password"
                 || name == "external_session_id"
                 || name.ends_with("_password")
@@ -4021,9 +4037,34 @@ mod tests {
         assert!(r.is_known("HOST"));
         assert!(r.is_known("enable_put_get"));
         assert!(r.is_known("ENABLE_PUT_GET"));
+        assert!(r.is_known("url"));
         assert!(!r.is_known("SERVER"));
         assert!(!r.is_known("unknown_key"));
         assert!(r.resolve("enable_put_get").is_none());
+        assert!(r.resolve("url").is_none());
+    }
+
+    #[test]
+    fn jdbc_url_canonical_resolves_only_for_jdbc() {
+        let r = registry();
+        let def = r
+            .resolve_for(Wrapper::Jdbc, "url")
+            .expect("url should resolve for Jdbc");
+        assert_eq!(def.canonical_name, "url");
+        assert!(def.sensitive);
+        assert!(!def.auth);
+        assert_eq!(def.visible_to, visible_to!(Jdbc));
+        for wrapper in [
+            Wrapper::Odbc,
+            Wrapper::Python,
+            Wrapper::NodeJs,
+            Wrapper::DotNet,
+        ] {
+            assert!(
+                r.resolve_for(wrapper, "url").is_none(),
+                "url must not resolve for {wrapper:?}"
+            );
+        }
     }
 
     #[test]

@@ -528,6 +528,30 @@ mod tests {
     }
 
     #[test]
+    fn jdbc_url_is_not_an_unknown_parameter() {
+        let mut options = HashMap::new();
+        options.insert(
+            "url".to_string(),
+            Setting::String("jdbc:snowflake://example.snowflakecomputing.com".to_string()),
+        );
+
+        let (resolved, issues) = resolve_options(Wrapper::Jdbc, options);
+
+        assert!(
+            issues
+                .iter()
+                .all(|i| i.code != ValidationCode::UnknownParameter),
+            "{issues:?}"
+        );
+        assert_eq!(
+            resolved.get("url"),
+            Some(&Setting::String(
+                "jdbc:snowflake://example.snowflakecomputing.com".to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn use_core_arrow_is_known_for_python() {
         let mut options = HashMap::new();
         options.insert("use_core_arrow".to_string(), Setting::Bool(true));
