@@ -88,7 +88,7 @@ internal sealed unsafe class NativeArrowStream : SafeHandle
         if (IsClosed)
             throw new ObjectDisposedException(nameof(NativeArrowStream));
 
-        return new() { Value = ArrowPtrCodec.Encode(handle) };
+        return new() { Value = ArrowPtrCodec.Encode64(handle) };
     }
 
     /// <summary>Starts a lease of the stream, unless another lease is in progress or the stream is released.</summary>

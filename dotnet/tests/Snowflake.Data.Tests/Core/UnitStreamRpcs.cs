@@ -34,8 +34,8 @@ internal static class UnitStreamRpcs
     /// <summary>Calls the <c>get_next</c> of the stream in <paramref name="request"/> into its out array on the calling thread.</summary>
     internal static unsafe ArrowStreamGetNextBatchResponse GetNext(ArrowStreamGetNextBatchRequest request)
     {
-        var stream = (ArrowArrayStreamAbi*)ArrowPtrCodec.Decode(request.Stream.Value.Span);
-        var array = (CArrowArray*)ArrowPtrCodec.Decode(request.OutArray.Value.Span);
+        var stream = (ArrowArrayStreamAbi*)ArrowPtrCodec.Decode64(request.Stream.Value.Span);
+        var array = (CArrowArray*)ArrowPtrCodec.Decode64(request.OutArray.Value.Span);
         var borrowedArray = new ArrowArrayHandle((nint)array);
         try
         {

@@ -7,13 +7,16 @@ using Snowflake.Data.Tests.Utilities;
 namespace Snowflake.Data.Tests.Core;
 
 [Trait("Category", "Unit")]
+[Collection(NativeMemorySensitiveCollection.Name)]
 public sealed class PrepareResultExtensionsTest
 {
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestReleasingStreamCallsProducerReleaseOnce()
     {
         var producer = new FakeArrowArrayStream(UnitBatches.Batch(UnitBatches.Int64(1)).Schema);
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
+        var address = ArrowStreamExporter.Export(producer);
+        var stream = UnitArrowStreams.NativeWidth(address);
+
         var prepareResult = new PrepareResult { Stream = stream };
 
         prepareResult.Release();
@@ -28,7 +31,8 @@ public sealed class PrepareResultExtensionsTest
         {
             FailSchemaWith = new InvalidOperationException("Failed to read schema"),
         };
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
+        var address = ArrowStreamExporter.Export(producer);
+        var stream = UnitArrowStreams.NativeWidth(address);
         var prepareResult = new PrepareResult { Stream = stream };
 
         Assert.Null(Record.Exception(prepareResult.Release));
@@ -42,7 +46,7 @@ public sealed class PrepareResultExtensionsTest
         var address = ArrowStreamExporter.Export(producer);
         try
         {
-            var prepareResult = new PrepareResult { Stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(address) } };
+            var prepareResult = new PrepareResult { Stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(address) } };
             Assert.False(ArrowStreamExporter.IsReleased(address));
 
             prepareResult.Release();
@@ -59,7 +63,7 @@ public sealed class PrepareResultExtensionsTest
     public void TestReleasingStreamClearsStream()
     {
         var producer = new FakeArrowArrayStream(UnitBatches.Batch(UnitBatches.Int64(1)).Schema);
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
+        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(ArrowStreamExporter.Export(producer)) };
         var prepareResult = new PrepareResult { Stream = stream };
 
         prepareResult.Release();
@@ -71,7 +75,7 @@ public sealed class PrepareResultExtensionsTest
     public void TestReleasingStreamTwiceIsNoOp()
     {
         var producer = new FakeArrowArrayStream(UnitBatches.Batch(UnitBatches.Int64(1)).Schema);
-        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode(ArrowStreamExporter.Export(producer)) };
+        var stream = new ArrowArrayStreamPtr { Value = ArrowPtrCodec.Encode64(ArrowStreamExporter.Export(producer)) };
         var prepareResult = new PrepareResult { Stream = stream };
         prepareResult.Release();
 

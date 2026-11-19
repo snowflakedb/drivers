@@ -2,6 +2,7 @@ using Apache.Arrow;
 using Apache.Arrow.C;
 using Apache.Arrow.Ipc;
 using Apache.Arrow.Types;
+using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data.Tests.Core;
@@ -11,12 +12,12 @@ namespace Snowflake.Data.Tests.Core;
 public sealed class UnitArrowStreamsTest
 {
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void Int64ColumnEncodesTheStreamAddressAsEightBytes()
+    public void Int64ColumnEncodesTheStreamAddressAsNativeWidthBytes()
     {
         var stream = UnitArrowStreams.Int64Column(1);
 
-        Assert.Equal(sizeof(long), stream.Value.Length);
-        Assert.NotEqual(0L, BitConverter.ToInt64(stream.Value.ToByteArray(), 0));
+        Assert.Equal(IntPtr.Size, stream.Value.Length);
+        Assert.NotEqual(0, ArrowPtrCodec.Decode(stream.Value.Span));
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
@@ -59,7 +60,7 @@ public sealed class UnitArrowStreamsTest
 
     private static unsafe IArrowArrayStream Import(ArrowArrayStreamPtr stream)
     {
-        var address = (nint)BitConverter.ToInt64(stream.Value.ToByteArray(), 0);
+        var address = ArrowPtrCodec.Decode(stream.Value.Span);
         return CArrowArrayStreamImporter.ImportArrayStream((CArrowArrayStream*)address);
     }
 }

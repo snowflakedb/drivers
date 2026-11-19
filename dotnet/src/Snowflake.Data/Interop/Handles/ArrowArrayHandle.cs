@@ -56,7 +56,7 @@ internal sealed unsafe class ArrowArrayHandle : SafeHandle
     internal ArrowArrayPtr ToProto()
     {
         ThrowIfUnusable();
-        return new() { Value = ArrowPtrCodec.Encode(handle) };
+        return new() { Value = ArrowPtrCodec.Encode64(handle) };
     }
 
     /// <summary>

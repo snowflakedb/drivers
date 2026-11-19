@@ -31,9 +31,13 @@ internal static class UnitArrowStreams
             }))
             .Build();
 
-        var address = ArrowStreamExporter.Export(batch.Schema, batch);
-        var bytes = BitConverter.GetBytes(address);
-        var byteString = ByteString.CopyFrom(bytes);
-        return new ArrowArrayStreamPtr { Value = byteString };
+        return NativeWidth(ArrowStreamExporter.Export(batch.Schema, batch));
+    }
+
+    /// <summary><paramref name="address"/> as sf_core sends the address of a stream it allocated: native-width bytes.</summary>
+    internal static ArrowArrayStreamPtr NativeWidth(nint address)
+    {
+        var bytes = IntPtr.Size == sizeof(int) ? BitConverter.GetBytes((int)address) : BitConverter.GetBytes((long)address);
+        return new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(bytes) };
     }
 }
