@@ -6,8 +6,7 @@
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
-use crate::crypto::dpop::DPoPKey;
-use crate::http::dpop::DPoPBinding;
+use crate::http::dpop::{DPoPBinding, DPoPSessionKey};
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::{
     HttpRetrySnafu, LogoutSnafu, QueryIds, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
@@ -47,7 +46,7 @@ pub async fn logout_session(
     session_token: &SensitiveString,
     client_info: &ClientInfo,
     retry_policy: &RetryPolicy,
-    dpop_key: Option<&DPoPKey>,
+    dpop_key: Option<&DPoPSessionKey>,
 ) -> Result<(), RestError> {
     tracing::info!("Initiating session logout");
 
@@ -266,7 +265,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let key = DPoPKey::generate().unwrap();
+        let key = crate::http::dpop::test_fixtures::session_key();
 
         logout_session(
             &reqwest::Client::new(),

@@ -1,2 +1,2 @@
-pub(crate) mod dpop;
+pub mod dpop;
 pub mod retry;

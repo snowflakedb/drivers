@@ -35,10 +35,9 @@ use crate::config::{
     retry::{RetryPolicy, read_optional_duration_secs},
     settings::Settings,
 };
-use crate::crypto::dpop::DPoPKey;
 use crate::diagnostic::DiagnosticRunner;
 use crate::handle_manager::Handle;
-use crate::http::dpop::DPoPBinding;
+use crate::http::dpop::{self, DPoPBinding, DPoPSessionKey};
 use crate::rest::snowflake::query_context_cache::QueryContextCacheAdapter;
 use crate::rest::snowflake::{
     self, QueryExecutionMode, QueryInput, RestError, SessionTokens, heartbeat,
@@ -1329,7 +1328,7 @@ pub struct Connection {
     pub(crate) external_session_id: Option<SensitiveString>,
     /// Key the server bound the session to. Every request of the session
     /// carries a DPoP proof from it.
-    pub(crate) dpop_key: Option<DPoPKey>,
+    pub(crate) dpop_key: Option<DPoPSessionKey>,
 
     /// Lifecycle state of the per-session `SYSTEM$BIND` stage.
     ///
@@ -1691,7 +1690,7 @@ impl Connection {
         timeout_config: crate::config::retry::TimeoutConfig,
         wrapper_presets: WrapperPresets,
         external_session_id: Option<SensitiveString>,
-        dpop_key: Option<DPoPKey>,
+        dpop_key: Option<DPoPSessionKey>,
     ) {
         self.external_session_id = external_session_id;
         self.dpop_key = dpop_key;
@@ -1937,7 +1936,7 @@ pub struct RefreshContext {
     xp_backend: Option<Arc<dyn SnowflakeBackend>>,
     skip_session_refresh: bool,
     external_session_id: Option<SensitiveString>,
-    dpop_key: Option<DPoPKey>,
+    dpop_key: Option<DPoPSessionKey>,
 }
 
 impl RefreshContext {
@@ -1986,7 +1985,7 @@ impl RefreshContext {
     }
 
     /// Sign the session's requests with the DPoP key it is bound to.
-    pub(crate) fn with_dpop_key(mut self, dpop_key: Option<DPoPKey>) -> Self {
+    pub(crate) fn with_dpop_key(mut self, dpop_key: Option<DPoPSessionKey>) -> Self {
         self.dpop_key = dpop_key;
         self
     }
@@ -2043,7 +2042,7 @@ impl RefreshContext {
     }
 
     /// Key the session is bound to.
-    pub(crate) fn dpop_key(&self) -> Option<&DPoPKey> {
+    pub(crate) fn dpop_key(&self) -> Option<&DPoPSessionKey> {
         self.dpop_key.as_ref()
     }
 
@@ -3052,14 +3051,11 @@ impl DatabaseDriverV1 {
                 builder = builder.body(body_bytes);
             }
 
-            let mut request = builder.build().context(HttpRequestSnafu {
+            let request = builder.build().context(HttpRequestSnafu {
                 context: format!("Failed to build {method} {full_url}"),
             })?;
-            if let Some(key) = &dpop_key {
-                DPoPBinding::new(key, &token).sign(&mut request);
-            }
-            let response = http_client
-                .execute(request)
+            let binding = dpop_key.map(|key| DPoPBinding::new(&key, &token));
+            let response = dpop::execute(&http_client, request, binding)
                 .await
                 .context(HttpRequestSnafu {
                     context: format!("Failed to send {method} {full_url}"),
@@ -5244,7 +5240,7 @@ mod tests {
             let conn = ds.connections.get_obj(handle).unwrap();
             let mut conn = conn.lock().await;
             conn.server_url = Some(server.uri());
-            conn.dpop_key = Some(DPoPKey::generate().unwrap());
+            conn.dpop_key = Some(dpop::test_fixtures::session_key());
         }
         let headers = HashMap::from([("DPoP".to_owned(), "caller-proof".to_owned())]);
 
@@ -5284,18 +5280,18 @@ mod tests {
 
         assert!(RefreshContext::new(&conn).unwrap().dpop_key().is_none());
 
-        let key = DPoPKey::generate().unwrap();
-        let jkt = jwk_thumbprint(&key).unwrap();
+        let key = dpop::test_fixtures::session_key();
+        let jkt = jwk_thumbprint(key.key()).unwrap();
         conn.dpop_key = Some(key);
 
         let params = conn.query_transport_parameters().await.unwrap();
         assert_eq!(
-            jwk_thumbprint(params.dpop_key.as_ref().expect("query key")).unwrap(),
+            jwk_thumbprint(params.dpop_key.as_ref().expect("query key").key()).unwrap(),
             jkt
         );
         let refresh = RefreshContext::new(&conn).unwrap();
         assert_eq!(
-            jwk_thumbprint(refresh.dpop_key().expect("refresh key")).unwrap(),
+            jwk_thumbprint(refresh.dpop_key().expect("refresh key").key()).unwrap(),
             jkt
         );
     }
@@ -5303,7 +5299,7 @@ mod tests {
     #[tokio::test]
     async fn closing_a_connection_drops_its_dpop_key() {
         let conn = Arc::new(Mutex::new(Connection::new()));
-        conn.lock().await.dpop_key = Some(DPoPKey::generate().unwrap());
+        conn.lock().await.dpop_key = Some(dpop::test_fixtures::session_key());
 
         cleanup_connection(&conn).await.unwrap();
 

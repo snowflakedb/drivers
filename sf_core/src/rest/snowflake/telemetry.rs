@@ -8,6 +8,7 @@ use snafu::ResultExt;
 use url::Url;
 
 use crate::config::rest_parameters::QueryParameters;
+use crate::http::dpop;
 use crate::rest::snowflake::{
     CommunicationSnafu, PayloadEncodeSnafu, RequestConstructionSnafu, RestError, UrlJoinSnafu,
     apply_json_content_type, apply_query_auth, read_response_json,
@@ -58,7 +59,7 @@ pub async fn send_telemetry(
         .build()
     })?;
 
-    let mut request = apply_json_content_type(apply_query_auth(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(url),
         query_parameters,
         session_token,
@@ -72,11 +73,14 @@ pub async fn send_telemetry(
     .context(RequestConstructionSnafu {
         request: "telemetry",
     })?;
-    if let Some(dpop) = query_parameters.dpop_binding(session_token) {
-        dpop.sign(&mut request);
-    }
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
+    let response = dpop::execute(
+        client,
+        request,
+        query_parameters.dpop_binding(session_token),
+    )
+    .await
+    .context(CommunicationSnafu {
         context: "Failed to execute telemetry request",
     })?;
 

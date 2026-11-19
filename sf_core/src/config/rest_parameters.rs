@@ -16,8 +16,7 @@ use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
 };
 use crate::crl::config::CrlConfig;
-use crate::crypto::dpop::DPoPKey;
-use crate::http::dpop::DPoPBinding;
+use crate::http::dpop::{DPoPBinding, DPoPSessionKey};
 use crate::rest::snowflake::BrowserLaunchFn;
 use crate::sensitive::SensitiveString;
 use crate::tls::config::{ProxyConfig, TlsConfig};
@@ -93,7 +92,7 @@ pub struct QueryParameters {
     /// request header so the proxy routes to the correct HTAP cluster.
     pub service_name: Option<String>,
     /// Key the session is bound to. Requests carry a DPoP proof from it.
-    pub dpop_key: Option<DPoPKey>,
+    pub dpop_key: Option<DPoPSessionKey>,
 }
 
 impl QueryParameters {

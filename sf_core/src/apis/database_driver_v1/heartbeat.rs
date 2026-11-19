@@ -13,7 +13,7 @@ use url::Url;
 use super::connection::{RefreshContext, SessionRenewal};
 use super::error::ApiError;
 use crate::config::rest_parameters::ClientInfo;
-use crate::crypto::dpop::DPoPKey;
+use crate::http::dpop::DPoPSessionKey;
 use crate::rest::snowflake::{RestError, SessionTokens, heartbeat::send_heartbeat};
 
 const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3600);
@@ -89,7 +89,7 @@ pub fn spawn_heartbeat_task(
     client_info: ClientInfo,
     heartbeat_interval: Duration,
     renewal: Arc<SessionRenewal>,
-    dpop_key: Option<DPoPKey>,
+    dpop_key: Option<DPoPSessionKey>,
 ) -> HeartbeatHandle {
     let cancel_token = CancellationToken::new();
     let task_token = cancel_token.clone();
@@ -123,7 +123,7 @@ async fn heartbeat_loop(
     interval: Duration,
     cancel_token: CancellationToken,
     renewal: Arc<SessionRenewal>,
-    dpop_key: Option<DPoPKey>,
+    dpop_key: Option<DPoPSessionKey>,
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 

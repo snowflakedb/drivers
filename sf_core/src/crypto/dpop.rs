@@ -228,14 +228,16 @@ pub(crate) fn proof_jwt(
 /// Build a DPoP proof JWT for a request that presents `access_token`.
 ///
 /// The `ath` claim (RFC 9449 §4.2) is the base64url SHA-256 of the token, so
-/// the proof is valid only together with that exact token.
+/// the proof is valid only together with that exact token. `nonce` is the
+/// server's latest `DPoP-Nonce`, if it has issued one.
 pub(crate) fn access_token_proof_jwt(
     key: &DPoPKey,
     method: &str,
     url: &Url,
+    nonce: Option<&str>,
     access_token: &str,
 ) -> Result<SensitiveString, DPoPError> {
-    sign_proof(key, method, url, None, Some(access_token))
+    sign_proof(key, method, url, nonce, Some(access_token))
 }
 
 fn sign_proof(
@@ -523,13 +525,27 @@ mod tests {
     fn access_token_proof_jwt_carries_the_token_hash() {
         let key = DPoPKey::generate().unwrap();
         let url = Url::parse("https://account.snowflakecomputing.com/session/heartbeat").unwrap();
-        let jwt = access_token_proof_jwt(&key, "POST", &url, "session-token").unwrap();
+        let jwt = access_token_proof_jwt(&key, "POST", &url, None, "session-token").unwrap();
         let (_h, claims, _) = split_jwt(jwt.reveal());
         assert_eq!(
             claims["ath"],
             URL_SAFE_NO_PAD.encode(openssl::sha::sha256(b"session-token"))
         );
         assert!(claims.get("nonce").is_none());
+    }
+
+    #[test]
+    fn access_token_proof_jwt_carries_the_nonce_next_to_the_token_hash() {
+        let key = DPoPKey::generate().unwrap();
+        let url = Url::parse("https://account.snowflakecomputing.com/session/heartbeat").unwrap();
+        let jwt = access_token_proof_jwt(&key, "POST", &url, Some("server-nonce"), "session-token")
+            .unwrap();
+        let (_h, claims, _) = split_jwt(jwt.reveal());
+        assert_eq!(claims["nonce"], "server-nonce");
+        assert_eq!(
+            claims["ath"],
+            URL_SAFE_NO_PAD.encode(openssl::sha::sha256(b"session-token"))
+        );
     }
 
     #[test]

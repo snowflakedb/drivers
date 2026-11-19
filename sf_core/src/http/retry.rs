@@ -67,9 +67,7 @@ async fn send_attempt(
         return req_builder.send().await;
     };
     let (client, request) = req_builder.build_split();
-    let mut request = request?;
-    dpop.sign(&mut request);
-    client.execute(request).await
+    dpop.send(&client, request?).await
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]

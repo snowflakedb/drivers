@@ -4,8 +4,7 @@ use snafu::ResultExt;
 use url::Url;
 
 use crate::config::rest_parameters::ClientInfo;
-use crate::crypto::dpop::DPoPKey;
-use crate::http::dpop::DPoPBinding;
+use crate::http::dpop::{self, DPoPBinding, DPoPSessionKey};
 use crate::rest::snowflake::{
     HeartbeatSnafu, RestError, UrlJoinSnafu, apply_query_headers, parse_external_session_header,
     parse_gs_code_or_unavailable, read_response_json,
@@ -25,7 +24,7 @@ pub async fn send_heartbeat(
     server_url: &Url,
     client_info: &ClientInfo,
     session_token: &str,
-    dpop_key: Option<&DPoPKey>,
+    dpop_key: Option<&DPoPSessionKey>,
 ) -> Result<(), RestError> {
     send_heartbeat_with_timeout(
         client,
@@ -50,14 +49,14 @@ pub async fn send_heartbeat_with_timeout(
     session_token: &str,
     timeout: Option<Duration>,
     external_session_id: Option<&str>,
-    dpop_key: Option<&DPoPKey>,
+    dpop_key: Option<&DPoPSessionKey>,
 ) -> Result<(), RestError> {
     let url = server_url.join(HEARTBEAT_PATH).context(UrlJoinSnafu {
         path: HEARTBEAT_PATH,
     })?;
 
     let external_session_header = parse_external_session_header(external_session_id)?;
-    let mut request = apply_query_headers(
+    let request = apply_query_headers(
         client.post(url),
         client_info,
         session_token,
@@ -69,17 +68,13 @@ pub async fn send_heartbeat_with_timeout(
     .context(crate::rest::snowflake::RequestConstructionSnafu {
         request: "heartbeat",
     })?;
-    if let Some(key) = dpop_key {
-        DPoPBinding::new(key, session_token).sign(&mut request);
-    }
 
-    let response =
-        client
-            .execute(request)
-            .await
-            .context(crate::rest::snowflake::CommunicationSnafu {
-                context: "Failed to execute heartbeat request",
-            })?;
+    let binding = dpop_key.map(|key| DPoPBinding::new(key, session_token));
+    let response = dpop::execute(client, request, binding).await.context(
+        crate::rest::snowflake::CommunicationSnafu {
+            context: "Failed to execute heartbeat request",
+        },
+    )?;
 
     let parsed: HeartbeatResponse = read_response_json::<serde_json::Value>(response).await?;
 
@@ -232,7 +227,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "success": true })))
             .mount(&server)
             .await;
-        let key = DPoPKey::generate().unwrap();
+        let key = dpop::test_fixtures::session_key();
 
         send_heartbeat(
             &reqwest::Client::new(),

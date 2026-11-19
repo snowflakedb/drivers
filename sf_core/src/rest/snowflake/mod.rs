@@ -39,7 +39,7 @@ use crate::config::settings::Setting;
 use crate::crl::ConnectionCrl;
 use crate::crl::config::CertRevocationCheckMode;
 use crate::crypto::dpop::DPoPKey;
-use crate::http::dpop::DPoPBinding;
+use crate::http::dpop::{self, DPoPBinding, DPoPSessionKey};
 use crate::http::retry::{
     HttpContext, HttpError, LastStatus, RetryState, TransportSnafu, execute_with_retry,
     execute_with_retry_state,
@@ -263,7 +263,7 @@ pub struct LoginResult {
     pub server_version: Option<String>,
     /// Key the server bound the session to. Every later request of the session
     /// carries a DPoP proof from it.
-    pub dpop_key: Option<DPoPKey>,
+    pub dpop_key: Option<DPoPSessionKey>,
 }
 
 impl SessionTokens {
@@ -1227,7 +1227,10 @@ async fn send_login_request(
             ids: QueryIds::default(),
         })?;
 
-    read_response_json::<auth::AuthResponseMain>(response).await
+    let issued_nonce = dpop::issued_nonce(response.headers());
+    let mut auth_response = read_response_json::<auth::AuthResponseMain>(response).await?;
+    auth_response.data.dpop_nonce = issued_nonce;
+    Ok(auth_response)
 }
 
 fn is_duo_challenge(next_action: Option<&str>) -> bool {
@@ -1935,7 +1938,8 @@ pub async fn snowflake_login_with_client(
         warehouse_name,
         role_name,
         server_version,
-        dpop_key,
+        dpop_key: dpop_key
+            .map(|key| DPoPSessionKey::new(key, auth_response.data.dpop_nonce.clone())),
     })
 }
 
@@ -1960,7 +1964,7 @@ pub async fn refresh_session(
     server_url: &str,
     client_info: &ClientInfo,
     tokens: &SessionTokens,
-    dpop_key: Option<&DPoPKey>,
+    dpop_key: Option<&DPoPSessionKey>,
 ) -> Result<SessionTokens, RestError> {
     let master_token = master_token_for_authenticated_request(tokens, "session refresh")?;
     tracing::info!(session_id = tokens.session_id, "Refreshing session token");
@@ -1977,7 +1981,7 @@ pub async fn refresh_session(
         "requestType": "RENEW"
     });
 
-    let mut request = client
+    let request = client
         .post(refresh_url)
         .query(&[
             ("requestId", uuid::Uuid::new_v4().to_string()),
@@ -1995,13 +1999,13 @@ pub async fn refresh_session(
         .context(RequestConstructionSnafu {
             request: "session refresh",
         })?;
-    if let Some(key) = dpop_key {
-        DPoPBinding::new(key, master_token.reveal()).sign(&mut request);
-    }
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute session refresh request",
-    })?;
+    let binding = dpop_key.map(|key| DPoPBinding::new(key, master_token.reveal()));
+    let response = dpop::execute(client, request, binding)
+        .await
+        .context(CommunicationSnafu {
+            context: "Failed to execute session refresh request",
+        })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -2088,7 +2092,7 @@ pub async fn token_request(
     client_info: &ClientInfo,
     tokens: &SessionTokens,
     request_type: &str,
-    dpop_key: Option<&DPoPKey>,
+    dpop_key: Option<&DPoPSessionKey>,
 ) -> Result<TokenRequestResult, RestError> {
     let master_token = master_token_for_authenticated_request(tokens, "token request")?;
     let token_url = Url::parse(server_url)
@@ -2102,7 +2106,7 @@ pub async fn token_request(
         "requestType": request_type,
     });
 
-    let mut request = client
+    let request = client
         .post(token_url)
         .query(&[
             ("requestId", uuid::Uuid::new_v4().to_string()),
@@ -2119,13 +2123,13 @@ pub async fn token_request(
         .context(RequestConstructionSnafu {
             request: "token request",
         })?;
-    if let Some(key) = dpop_key {
-        DPoPBinding::new(key, master_token.reveal()).sign(&mut request);
-    }
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute token request",
-    })?;
+    let binding = dpop_key.map(|key| DPoPBinding::new(key, master_token.reveal()));
+    let response = dpop::execute(client, request, binding)
+        .await
+        .context(CommunicationSnafu {
+            context: "Failed to execute token request",
+        })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -2964,7 +2968,7 @@ pub async fn snowflake_abort_query(
         query_parameters.server_url, query_id
     );
 
-    let mut request = apply_json_content_type(apply_query_auth(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(&abort_url),
         query_parameters,
         session_token,
@@ -2974,11 +2978,14 @@ pub async fn snowflake_abort_query(
     .context(RequestConstructionSnafu {
         request: "abort_query",
     })?;
-    if let Some(dpop) = query_parameters.dpop_binding(session_token) {
-        dpop.sign(&mut request);
-    }
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
+    let response = dpop::execute(
+        client,
+        request,
+        query_parameters.dpop_binding(session_token),
+    )
+    .await
+    .context(CommunicationSnafu {
         context: "Failed to execute abort query request",
     })?;
 
@@ -3047,7 +3054,7 @@ pub async fn snowflake_cancel_query(
         .map(|d| d.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_owned());
 
-    let mut request = apply_json_content_type(apply_query_auth(
+    let request = apply_json_content_type(apply_query_auth(
         client.post(abort_url),
         query_parameters,
         session_token,
@@ -3066,11 +3073,14 @@ pub async fn snowflake_cancel_query(
     .context(RequestConstructionSnafu {
         request: "cancel_query",
     })?;
-    if let Some(dpop) = query_parameters.dpop_binding(session_token) {
-        dpop.sign(&mut request);
-    }
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
+    let response = dpop::execute(
+        client,
+        request,
+        query_parameters.dpop_binding(session_token),
+    )
+    .await
+    .context(CommunicationSnafu {
         context: "Failed to execute cancel query request",
     })?;
 
@@ -6075,7 +6085,7 @@ mod tests {
             );
             let session_key = result.dpop_key.expect("the session keeps its key");
             assert_eq!(
-                crate::crypto::dpop::jwk_thumbprint(&session_key).unwrap(),
+                crate::crypto::dpop::jwk_thumbprint(session_key.key()).unwrap(),
                 jkt,
                 "later requests must prove possession of the key the login proved"
             );
@@ -6211,7 +6221,7 @@ mod tests {
                 .collect()
         }
 
-        fn bound_query_parameters(server_url: String, key: &DPoPKey) -> QueryParameters {
+        fn bound_query_parameters(server_url: String, key: &DPoPSessionKey) -> QueryParameters {
             QueryParameters {
                 server_url,
                 dpop_key: Some(key.clone()),
@@ -6236,7 +6246,7 @@ mod tests {
                 })))
                 .mount(&server)
                 .await;
-            let key = DPoPKey::generate().unwrap();
+            let key = crate::http::dpop::test_fixtures::session_key();
 
             execute_sync_query(
                 &reqwest::Client::new(),
@@ -6255,7 +6265,7 @@ mod tests {
                 .map(|proof| {
                     let (header, claims) =
                         decode_jwt(proof.as_deref().expect("a proof on every attempt"));
-                    assert_eq!(header_jkt(&header), jwk_thumbprint(&key).unwrap());
+                    assert_eq!(header_jkt(&header), jwk_thumbprint(key.key()).unwrap());
                     claims
                 })
                 .collect();
@@ -6301,6 +6311,131 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn a_query_asked_for_a_nonce_is_sent_again_with_it() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path(QUERY_REQUEST_PATH))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("DPoP-Nonce", "nonce-1")
+                        .insert_header("WWW-Authenticate", r#"DPoP error="use_dpop_nonce""#)
+                        .set_body_json(serde_json::json!({
+                            "success": false,
+                            "message": "DPoP nonce required",
+                            "data": { "dpopError": "use_dpop_nonce" },
+                        })),
+                )
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path(QUERY_REQUEST_PATH))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "data": { "queryId": "01abcdef-0000-0000-0000-000000000000" }
+                })))
+                .mount(&server)
+                .await;
+            let key = crate::http::dpop::test_fixtures::session_key();
+
+            execute_sync_query(
+                &reqwest::Client::new(),
+                &bound_query_parameters(server.uri(), &key),
+                "session-token",
+                &QueryInput::new("SELECT 1"),
+                uuid::Uuid::new_v4(),
+                &RetryPolicy::default(),
+            )
+            .await
+            .expect("the query succeeds once the proof carries the nonce");
+
+            let claims: Vec<_> = proofs(&server)
+                .await
+                .iter()
+                .map(|proof| decode_jwt(proof.as_deref().expect("a proof")).1)
+                .collect();
+            assert_eq!(claims.len(), 2);
+            assert!(claims[0].get("nonce").is_none());
+            assert_eq!(claims[1]["nonce"], "nonce-1");
+            assert_eq!(claims[1]["ath"], token_hash("session-token"));
+        }
+
+        #[tokio::test]
+        async fn the_login_nonce_is_in_the_first_proof_after_login() {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/session/v1/login-request"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("DPoP-Nonce", "login-nonce")
+                        .set_body_json(serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "token": "session",
+                                "masterToken": "master",
+                                "sessionId": 1,
+                                "dpopBound": true,
+                            },
+                        })),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/session/heartbeat"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "success": true })),
+                )
+                .mount(&server)
+                .await;
+            let rsa = openssl::rsa::Rsa::generate(2048).unwrap();
+            let params = LoginParameters {
+                server_url: server.uri(),
+                login_method: LoginMethod::PrivateKey {
+                    username: "testuser".to_string(),
+                    private_key: String::from_utf8(rsa.private_key_to_pem().unwrap())
+                        .unwrap()
+                        .into(),
+                    passphrase: None,
+                    jwt_timeout_secs: 60,
+                },
+                enable_dpop_bound_session: true,
+                ..test_login_params()
+            };
+            let result = snowflake_login_with_client(
+                &LoginClients::new(&reqwest::Client::new()),
+                &params,
+                None,
+                None,
+                None,
+                &RetryPolicy::default(),
+                None,
+                None,
+            )
+            .await
+            .expect("bound login");
+
+            heartbeat::send_heartbeat(
+                &reqwest::Client::new(),
+                &Url::parse(&server.uri()).unwrap(),
+                &test_client_info(),
+                "session",
+                result.dpop_key.as_ref(),
+            )
+            .await
+            .expect("heartbeat");
+
+            let requests = server.received_requests().await.unwrap();
+            let heartbeat_proof = requests
+                .iter()
+                .find(|request| request.url.path() == "/session/heartbeat")
+                .and_then(|request| request.headers.get("DPoP"))
+                .expect("a proof on the heartbeat");
+            let (_, claims) = decode_jwt(heartbeat_proof.to_str().unwrap());
+            assert_eq!(claims["nonce"], "login-nonce");
+        }
+
+        #[tokio::test]
         async fn refresh_proves_possession_with_the_master_token() {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
@@ -6315,7 +6450,7 @@ mod tests {
                 })))
                 .mount(&server)
                 .await;
-            let key = DPoPKey::generate().unwrap();
+            let key = crate::http::dpop::test_fixtures::session_key();
             let tokens = SessionTokens {
                 session_token: "old-session".into(),
                 master_token: "master".into(),
@@ -6346,7 +6481,7 @@ mod tests {
                 token_hash("master"),
                 "renewal presents the master token, so the proof covers it"
             );
-            assert_eq!(header_jkt(&header), jwk_thumbprint(&key).unwrap());
+            assert_eq!(header_jkt(&header), jwk_thumbprint(key.key()).unwrap());
         }
     }
 

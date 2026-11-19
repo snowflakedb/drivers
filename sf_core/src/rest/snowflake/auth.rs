@@ -207,6 +207,9 @@ pub struct AuthResponseMain {
     /// Absent on servers or accounts without DPoP-bound sessions.
     #[serde(rename = "dpopBound")]
     pub dpop_bound: Option<bool>,
+    /// The login response's `DPoP-Nonce` header, which a DPoP-bound session's first proofs carry.
+    #[serde(skip)]
+    pub dpop_nonce: Option<String>,
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]
