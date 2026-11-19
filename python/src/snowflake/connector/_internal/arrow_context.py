@@ -191,6 +191,11 @@ class ArrowConverterContext:
 
     def TIMESTAMP_LTZ_to_python(self, epoch: int, microseconds: int) -> datetime:
         tzinfo = self._get_session_tz()
+        # Integer Arrow timestamps can carry the entire epoch in microseconds.
+        # Resolve the local offset after moving to the target UTC second.
+        if not 0 <= microseconds < 1_000_000 and tzinfo is not pytz.UTC and tzinfo is not UTC:
+            seconds, microseconds = divmod(microseconds, 1_000_000)
+            return datetime.fromtimestamp(epoch + seconds, tz=tzinfo).replace(microsecond=microseconds)
         return datetime.fromtimestamp(epoch, tz=tzinfo) + timedelta(microseconds=microseconds)
 
     def TIMESTAMP_LTZ_to_python_windows(self, epoch: int, microseconds: int) -> datetime:
