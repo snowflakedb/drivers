@@ -308,7 +308,8 @@ pub mod param_names {
         ParamKey("workload_identity_entra_resource");
     /// Azure managed-identity client id (user-assigned MI). When absent, the
     /// driver falls back to `MANAGED_IDENTITY_CLIENT_ID` in the process
-    /// environment, then to the system-assigned identity. Azure provider only.
+    /// environment, then `AZURE_CLIENT_ID`, then to the system-assigned identity.
+    /// Azure provider only.
     pub const WORKLOAD_IDENTITY_AZURE_CLIENT_ID: ParamKey =
         ParamKey("workload_identity_azure_client_id");
     /// Comma-separated impersonation chain.
@@ -2484,7 +2485,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
-        .description("Azure user-assigned managed-identity client id (Azure only; falls back to MANAGED_IDENTITY_CLIENT_ID)")
+        .description("Azure user-assigned managed-identity client id (Azure only; falls back to MANAGED_IDENTITY_CLIENT_ID, then AZURE_CLIENT_ID)")
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .visible_to(visible_to!(NodeJs))

@@ -161,7 +161,16 @@ export type ConnectionOptions = {
   workloadIdentityAzureEntraIdResource?: string;
 
   /**
-   * When workloadIdentityProvider=AZURE, customizes Azure Managed Identity Client Id
+   * When workloadIdentityProvider=AZURE, customizes Azure Managed Identity Client Id.
+   *
+   * When this option is not set, the driver selects the managed identity from these
+   * environment variables, in order:
+   * * `MANAGED_IDENTITY_CLIENT_ID`
+   * * `AZURE_CLIENT_ID`
+   * * `DEFAULT_IDENTITY_CLIENT_ID` - on Azure ML only.
+   *
+   * If none of them is set, the driver uses the system-assigned managed identity.
+   * On AKS workload identity, the driver ignores this option and uses `AZURE_CLIENT_ID`.
    */
   workloadIdentityAzureClientId?: string;
 

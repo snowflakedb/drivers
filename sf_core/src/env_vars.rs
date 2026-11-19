@@ -68,13 +68,17 @@ pub const SNOWFLAKE_TROUBLESHOOTING_REPORT_PATH: &str = "SNOWFLAKE_TROUBLESHOOTI
 // Azure Workload Identity Federation
 //
 // All of the variables below are set by the Azure runtime (App Service /
-// Functions host, or the AKS Azure Workload Identity mutating webhook), not by
-// the driver or the user.
+// Functions host, Azure ML, or the AKS Azure Workload Identity mutating webhook),
+// not by the driver or the user.
 // ---------------------------------------------------------------------------
 
 /// Client ID of the user-assigned Managed Identity to request a token for.
-/// Unset ⇒ the system-assigned identity is used.
+/// Unset or empty ⇒ fall back to [`AZURE_CLIENT_ID`], then Azure ML's default
+/// identity (MSI endpoints only) or the system-assigned identity.
 pub const MANAGED_IDENTITY_CLIENT_ID: &str = "MANAGED_IDENTITY_CLIENT_ID";
+
+/// Azure ML default Managed Identity client ID; fallback only for MSI endpoints.
+pub const DEFAULT_IDENTITY_CLIENT_ID: &str = "DEFAULT_IDENTITY_CLIENT_ID";
 
 /// Local Managed Identity token endpoint exposed by the Azure App Service /
 /// Functions host. Paired with [`IDENTITY_HEADER`].
@@ -84,11 +88,11 @@ pub const IDENTITY_ENDPOINT: &str = "IDENTITY_ENDPOINT";
 /// the `X-IDENTITY-HEADER` request header.
 pub const IDENTITY_HEADER: &str = "IDENTITY_HEADER";
 
-/// Legacy (pre-2019) equivalent of [`IDENTITY_ENDPOINT`], still set by older
-/// Azure Functions runtimes.
+/// Local token endpoint exposed by Azure ML and legacy Azure Functions.
+/// Paired with [`MSI_SECRET`], using the `2017-09-01` MSI protocol.
 pub const MSI_ENDPOINT: &str = "MSI_ENDPOINT";
 
-/// Legacy (pre-2019) equivalent of [`IDENTITY_HEADER`].
+/// Shared secret for [`MSI_ENDPOINT`], sent in the `secret` request header.
 pub const MSI_SECRET: &str = "MSI_SECRET";
 
 /// AKS Workload Identity: client ID of the Entra ID application registration

@@ -6,9 +6,22 @@
 
 > Differences from 3.x that are new in this release or were missing from earlier beta notes. Read them together with the notes of earlier 4.0.0 beta releases.
 
+#### New Features
+
+- Added support for the `MANAGED_IDENTITY_CLIENT_ID` environment variable in Azure workload identity login. When `workloadIdentityAzureClientId` is not set, the driver selects the managed identity from `MANAGED_IDENTITY_CLIENT_ID`, then `AZURE_CLIENT_ID`. On Azure ML, it then uses `DEFAULT_IDENTITY_CLIENT_ID`.
+
 #### Bugfixes
 
 - Fixed the `Query result precision loss detected` warning being logged for large `NUMBER` values when `fetchAsString` includes `'Number'`. These values are returned as exact strings, so no precision is lost. The warning is still logged when such a value is returned as a JavaScript `Number`.
+
+### Beta Changes
+
+> Changes to behavior that only earlier 4.0.0 beta releases had. They don't affect you if you upgrade from 3.x.
+
+#### Bugfixes
+
+- Fixed Azure workload identity login on Azure ML, where the driver sent its token request to `MSI_ENDPOINT` in the App Service format instead of the Azure ML format, and didn't use `DEFAULT_IDENTITY_CLIENT_ID`.
+- Fixed Azure workload identity login ignoring `AZURE_CLIENT_ID` when selecting the managed identity. `MANAGED_IDENTITY_CLIENT_ID` still takes precedence.
 
 ## 4.0.0-beta.0
 

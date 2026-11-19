@@ -8,10 +8,10 @@
 //!    access token, so no IMDS round-trip is needed.
 //!    `workload_identity_impersonation_path` is **not supported** here and is
 //!    rejected with [`AzureAttestationError::AksImpersonationNotSupported`].
-//! 2. Azure Functions runtime (`IDENTITY_ENDPOINT` together with
-//!    `IDENTITY_HEADER`, or legacy `MSI_ENDPOINT` together with `MSI_SECRET`).
+//! 2. Azure Functions runtime (`IDENTITY_ENDPOINT` together with `IDENTITY_HEADER`).
 //!    `IDENTITY_ENDPOINT` without `IDENTITY_HEADER` returns an error.
-//! 3. Azure IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`).
+//! 3. Azure ML / legacy MSI (nonempty `MSI_ENDPOINT` together with nonempty `MSI_SECRET`).
+//! 4. Azure IMDS (`http://169.254.169.254/metadata/identity/oauth2/token`).
 //!
 //! The `resource` (Entra audience) defaults to the Snowflake-assigned
 //! resource URI [`crate::config::rest_parameters::DEFAULT_AZURE_ENTRA_RESOURCE`].
@@ -42,7 +42,7 @@ const AZURE_WIF_FEDERATION_AUDIENCE: &str = "api://AzureADTokenExchange";
 /// Errors raised while acquiring an Azure Managed Identity attestation.
 ///
 /// HTTP-plumbing variants carry a `context` label identifying the endpoint
-/// being called (IMDS, Azure Functions, or Entra ID token exchange).
+/// being called (IMDS, Azure Functions, Azure ML MSI, or Entra ID token exchange).
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum AzureAttestationError {
@@ -125,9 +125,8 @@ pub enum AzureAttestationError {
     },
 }
 
-/// Response shape shared by the Azure Managed Identity endpoints (IMDS and the
-/// Azure Functions identity endpoint) and the Entra ID `oauth2/v2.0/token`
-/// endpoint — all three return the token under `access_token`.
+/// Response shape shared by the Azure Managed Identity endpoints and the
+/// Entra ID `oauth2/v2.0/token` endpoint: the token is under `access_token`.
 #[derive(Debug, Deserialize)]
 struct AccessTokenResponse {
     access_token: SensitiveString,
@@ -209,11 +208,11 @@ pub(super) async fn get_managed_identity_token(
         AZURE_WIF_FEDERATION_AUDIENCE
     };
 
-    let client_id = config.azure_client_id.clone().or_else(|| {
-        std::env::var(env_vars::MANAGED_IDENTITY_CLIENT_ID)
-            .ok()
-            .filter(|value| !value.is_empty())
-    });
+    let client_id = config
+        .azure_client_id
+        .clone()
+        .or_else(|| non_empty_env(env_vars::MANAGED_IDENTITY_CLIENT_ID))
+        .or_else(|| non_empty_env(env_vars::AZURE_CLIENT_ID));
 
     if let Some(endpoint) = non_empty_env(env_vars::IDENTITY_ENDPOINT) {
         let header = non_empty_env(env_vars::IDENTITY_HEADER)
@@ -231,12 +230,13 @@ pub(super) async fn get_managed_identity_token(
         .await;
     }
 
-    // Legacy Azure Functions (older runtimes)
-    if let (Ok(endpoint), Ok(secret)) = (
-        std::env::var(env_vars::MSI_ENDPOINT),
-        std::env::var(env_vars::MSI_SECRET),
+    // Azure ML and legacy MSI use a different protocol from modern Functions.
+    if let (Some(endpoint), Some(secret)) = (
+        non_empty_env(env_vars::MSI_ENDPOINT),
+        non_empty_env(env_vars::MSI_SECRET),
     ) {
-        return get_from_azure_functions(
+        let client_id = client_id.or_else(|| non_empty_env(env_vars::DEFAULT_IDENTITY_CLIENT_ID));
+        return get_from_azure_ml(
             &endpoint,
             &secret,
             mi_resource,
@@ -474,6 +474,74 @@ async fn get_from_azure_functions(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn get_from_azure_ml(
+    endpoint: &str,
+    secret: &str,
+    mi_resource: &str,
+    client_id: Option<&str>,
+    client: &reqwest::Client,
+    snowflake_resource: &str,
+    impersonation_path: &[String],
+    endpoints: &AttestationEndpoints,
+) -> Result<String, AzureAttestationError> {
+    const CTX: &str = "Azure ML MSI request";
+
+    let mut params = vec![("api-version", "2017-09-01"), ("resource", mi_resource)];
+    if let Some(id) = client_id {
+        params.push(("clientid", id));
+    }
+
+    let parsed = reqwest::Url::parse(endpoint).ok();
+    tracing::info!(
+        method = "GET",
+        host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str())
+            .unwrap_or("<none>"),
+        path = parsed.as_ref().map_or("", |u| u.path()),
+        "outbound HTTP call"
+    );
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(IMDS_TIMEOUT_SECS),
+        client
+            .get(endpoint)
+            .query(&params)
+            .header("secret", secret)
+            .header("Metadata", "true")
+            .send(),
+    )
+    .await
+    .context(RequestTimedOutSnafu { context: CTX })?
+    .context(RequestSnafu { context: CTX })?;
+
+    let status = response.status();
+    tracing::info!(status = status.as_u16(), "HTTP response");
+    let body = response
+        .text()
+        .await
+        .context(ResponseBodyReadSnafu { context: CTX })?;
+    if !status.is_success() {
+        return UnexpectedHttpStatusSnafu {
+            context: CTX,
+            status,
+            body,
+        }
+        .fail();
+    }
+
+    let parsed: AccessTokenResponse =
+        serde_json::from_str(&body).context(ResponseParseSnafu { context: CTX })?;
+    maybe_impersonate_sp(
+        parsed.access_token.reveal().to_string(),
+        snowflake_resource,
+        impersonation_path,
+        client,
+        endpoints,
+    )
+    .await
+}
+
 async fn get_from_imds(
     mi_resource: &str,
     client_id: Option<&str>,
@@ -660,7 +728,8 @@ mod tests {
 
     /// Clears the Azure Functions and AKS env vars so `get_managed_identity_token`
     /// always takes the IMDS path, optionally setting
-    /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`.
+    /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`. An ML default
+    /// remains set to verify that it cannot affect IMDS selection.
     async fn without_azure_functions_env<F: Future<Output = ()>>(client_id: Option<&str>, f: F) {
         temp_env::async_with_vars(
             [
@@ -669,6 +738,10 @@ mod tests {
                 (env_vars::MSI_ENDPOINT, None::<&str>),
                 (env_vars::MSI_SECRET, None::<&str>),
                 (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
+                (
+                    env_vars::DEFAULT_IDENTITY_CLIENT_ID,
+                    Some("ml-default-client-id"),
+                ),
             ]
             .into_iter()
             .chain(NO_AKS_ENV)
@@ -711,17 +784,16 @@ mod tests {
     // -- Azure Functions dispatch --
     //
     // `get_managed_identity_token` dispatches to `get_from_azure_functions`
-    // when `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` are both set, or when
-    // the legacy `MSI_ENDPOINT`/`MSI_SECRET` pair is set. `IDENTITY_ENDPOINT`
+    // when `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` are both set.
+    // The legacy `MSI_ENDPOINT`/`MSI_SECRET` pair uses Azure ML. `IDENTITY_ENDPOINT`
     // without `IDENTITY_HEADER` returns an error and does not continue to
     // MSI or IMDS. Neither success branch is exercised by any test above,
     // which all force the IMDS path via `without_azure_functions_env`.
 
-    /// Sets `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` (clearing the legacy
-    /// `MSI_ENDPOINT`/`MSI_SECRET` pair). `identity_header` of `None` or `""`
+    /// Sets the modern pair alongside MSI and an ML default to verify precedence
+    /// and default isolation. `identity_header` of `None` or `""`
     /// leaves the header unset or empty. Optionally sets
-    /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`. Inverse of
-    /// `without_azure_functions_env`.
+    /// `MANAGED_IDENTITY_CLIENT_ID` for the duration of `f`.
     async fn with_azure_functions_env<F: Future<Output = ()>>(
         endpoint: &str,
         identity_header: Option<&str>,
@@ -732,9 +804,13 @@ mod tests {
             [
                 (env_vars::IDENTITY_ENDPOINT, Some(endpoint)),
                 (env_vars::IDENTITY_HEADER, identity_header),
-                (env_vars::MSI_ENDPOINT, None::<&str>),
-                (env_vars::MSI_SECRET, None::<&str>),
+                (env_vars::MSI_ENDPOINT, Some(endpoint)),
+                (env_vars::MSI_SECRET, Some("test-msi-secret")),
                 (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
+                (
+                    env_vars::DEFAULT_IDENTITY_CLIENT_ID,
+                    Some("ml-default-client-id"),
+                ),
             ]
             .into_iter()
             .chain(NO_AKS_ENV)
@@ -744,18 +820,22 @@ mod tests {
         .await;
     }
 
-    /// Sets the legacy `MSI_ENDPOINT`/`MSI_SECRET` pair (clearing
-    /// `IDENTITY_ENDPOINT`/`IDENTITY_HEADER`) so `get_managed_identity_token`
-    /// takes the Azure Functions branch via the legacy App Service MSI env
-    /// vars, which dispatch to the same `get_from_azure_functions` code path.
-    async fn with_legacy_msi_env<F: Future<Output = ()>>(endpoint: &str, secret: &str, f: F) {
+    /// Sets the MSI pair and selectors, clearing modern Functions and AKS.
+    async fn with_legacy_msi_env<F: Future<Output = ()>>(
+        endpoint: &str,
+        secret: &str,
+        client_id: Option<&str>,
+        default_client_id: Option<&str>,
+        f: F,
+    ) {
         temp_env::async_with_vars(
             [
                 (env_vars::IDENTITY_ENDPOINT, None::<&str>),
                 (env_vars::IDENTITY_HEADER, None::<&str>),
                 (env_vars::MSI_ENDPOINT, Some(endpoint)),
                 (env_vars::MSI_SECRET, Some(secret)),
-                (env_vars::MANAGED_IDENTITY_CLIENT_ID, None::<&str>),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, client_id),
+                (env_vars::DEFAULT_IDENTITY_CLIENT_ID, default_client_id),
             ]
             .into_iter()
             .chain(NO_AKS_ENV)
@@ -781,6 +861,7 @@ mod tests {
             .and(query_param("resource", DEFAULT_AZURE_ENTRA_RESOURCE))
             .and(query_param("api-version", "2019-08-01"))
             .and(query_param_is_missing("client_id"))
+            .and(query_param_is_missing("clientid"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_string(r#"{"access_token":"mocked-functions-token"}"#),
@@ -803,37 +884,137 @@ mod tests {
         .await;
     }
 
-    /// Proves the legacy `MSI_ENDPOINT`/`MSI_SECRET` dispatch branch also
-    /// reaches `get_from_azure_functions` — the same code path exercised
-    /// above via `IDENTITY_ENDPOINT`/`IDENTITY_HEADER`, so this only needs
-    /// to confirm the *other* `if` branch in `get_managed_identity_token`'s
-    /// dispatch is wired correctly, not re-prove the request shape.
+    /// Checks the MSI/ML protocol, selector precedence and omission, and no IMDS call.
+    #[test_case::test_case(None, None, None, None, None; "no_selector")]
+    #[test_case::test_case(None, None, Some(""), None, None; "empty_default")]
+    #[test_case::test_case(None, None, Some("ml-default"), Some("ml-default"), None; "ml_default")]
+    #[test_case::test_case(None, Some(""), Some("ml-default"), Some("ml-default"), None; "empty_env_uses_default")]
+    #[test_case::test_case(None, Some("env-client"), Some("ml-default"), Some("env-client"), None; "env_over_default")]
+    #[test_case::test_case(Some("option-client"), Some("env-client"), Some("ml-default"), Some("option-client"), None; "option_over_env")]
+    #[test_case::test_case(Some("option-client"), None, Some("ml-default"), Some("option-client"), Some("api://custom/resource?x=1&y=2"); "option_over_default_custom_resource")]
     #[tokio::test]
-    async fn get_managed_identity_token_reads_token_from_mocked_legacy_msi_endpoint() {
+    async fn get_managed_identity_token_reads_token_from_mocked_legacy_msi_endpoint(
+        option_client_id: Option<&str>,
+        env_client_id: Option<&str>,
+        default_client_id: Option<&str>,
+        expected_client_id: Option<&str>,
+        entra_resource: Option<&str>,
+    ) {
+        let server = MockServer::start().await;
+        let mut mock = Mock::given(method("GET"))
+            .and(path("/MSI/auth"))
+            .and(header("secret", "test-msi-secret"))
+            .and(header("Metadata", "true"))
+            .and(query_param("api-version", "2017-09-01"))
+            .and(query_param(
+                "resource",
+                entra_resource.unwrap_or(DEFAULT_AZURE_ENTRA_RESOURCE),
+            ))
+            .and(query_param_is_missing("client_id"));
+        mock = match expected_client_id {
+            Some(id) => mock.and(query_param("clientid", id)),
+            None => mock.and(query_param_is_missing("clientid")),
+        };
+        mock.respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"access_token":"mocked-legacy-msi-token"}"#),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+        Mock::given(path("/metadata/identity/oauth2/token"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let mut config = azure_config(entra_resource, Vec::new());
+        config.azure_client_id = option_client_id.map(str::to_owned);
+        let client = reqwest::Client::new();
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
+        let endpoint = format!("{}/MSI/auth", server.uri());
+
+        with_legacy_msi_env(
+            &endpoint,
+            "test-msi-secret",
+            env_client_id,
+            default_client_id,
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected managed identity token");
+                assert_eq!(token, "mocked-legacy-msi-token");
+            },
+        )
+        .await;
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(!requests[0].headers.contains_key("X-IDENTITY-HEADER"));
+    }
+
+    #[test_case::test_case(None, Some("test-msi-secret"); "missing_endpoint")]
+    #[test_case::test_case(Some(""), Some("test-msi-secret"); "empty_endpoint")]
+    #[test_case::test_case(Some("/MSI/auth"), None; "missing_secret")]
+    #[test_case::test_case(Some("/MSI/auth"), Some(""); "empty_secret")]
+    #[test_case::test_case(Some(""), Some(""); "both_empty")]
+    #[tokio::test]
+    async fn get_managed_identity_token_falls_back_to_imds_for_incomplete_msi_pair(
+        msi_path: Option<&str>,
+        secret: Option<&str>,
+    ) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/MSI/token"))
-            .and(header("X-IDENTITY-HEADER", "test-msi-secret"))
+            .and(path("/metadata/identity/oauth2/token"))
+            .and(header("Metadata", "true"))
+            .and(query_param("api-version", "2018-02-01"))
+            .and(query_param("resource", DEFAULT_AZURE_ENTRA_RESOURCE))
+            .and(query_param_is_missing("client_id"))
+            .and(query_param_is_missing("clientid"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_string(r#"{"access_token":"mocked-legacy-msi-token"}"#),
+                    .set_body_string(r#"{"access_token":"mocked-imds-token"}"#),
             )
             .expect(1)
             .mount(&server)
             .await;
-
+        let endpoint = msi_path.map(|value| {
+            if value.is_empty() {
+                String::new()
+            } else {
+                format!("{}{value}", server.uri())
+            }
+        });
         let config = azure_config(None, Vec::new());
         let client = reqwest::Client::new();
-        let endpoints = AttestationEndpoints::default();
-        let endpoint = format!("{}/MSI/token", server.uri());
+        let endpoints = AttestationEndpoints {
+            azure_imds_base_url: server.uri(),
+            ..Default::default()
+        };
 
-        with_legacy_msi_env(&endpoint, "test-msi-secret", async {
-            let token = get_managed_identity_token(&client, &config, &endpoints)
-                .await
-                .expect("expected managed identity token");
-            assert_eq!(token, "mocked-legacy-msi-token");
-        })
+        temp_env::async_with_vars(
+            [
+                (env_vars::IDENTITY_ENDPOINT, None),
+                (env_vars::IDENTITY_HEADER, None),
+                (env_vars::MSI_ENDPOINT, endpoint.as_deref()),
+                (env_vars::MSI_SECRET, secret),
+                (env_vars::MANAGED_IDENTITY_CLIENT_ID, None),
+                (env_vars::DEFAULT_IDENTITY_CLIENT_ID, Some("ml-default")),
+            ]
+            .into_iter()
+            .chain(NO_AKS_ENV)
+            .collect::<Vec<_>>(),
+            async {
+                let token = get_managed_identity_token(&client, &config, &endpoints)
+                    .await
+                    .expect("expected IMDS token");
+                assert_eq!(token, "mocked-imds-token");
+            },
+        )
         .await;
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     /// A non-2xx response from the Azure Functions endpoint surfaces
@@ -1208,6 +1389,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_managed_identity_token_resolves_azure_client_id_fallback() {
+        for (option, managed_id, azure_id, expected) in [
+            (None, None, Some("azure-id"), Some("azure-id")),
+            (None, Some(""), Some("azure-id"), Some("azure-id")),
+            (
+                None,
+                Some("managed-id"),
+                Some("azure-id"),
+                Some("managed-id"),
+            ),
+            (Some("option-id"), None, Some("azure-id"), Some("option-id")),
+            (
+                Some("option-id"),
+                Some("managed-id"),
+                Some("azure-id"),
+                Some("option-id"),
+            ),
+            (None, None, Some(""), None),
+        ] {
+            let server = MockServer::start().await;
+            let mock = Mock::given(method("GET")).and(path("/metadata/identity/oauth2/token"));
+            let mock = if let Some(expected) = expected {
+                mock.and(query_param("client_id", expected))
+            } else {
+                mock.and(query_param_is_missing("client_id"))
+            };
+            mock.respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mi-token"}"#),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+            let endpoints = AttestationEndpoints {
+                azure_imds_base_url: server.uri(),
+                ..Default::default()
+            };
+            let mut config = azure_config(None, Vec::new());
+            config.azure_client_id = option.map(String::from);
+            let client = reqwest::Client::new();
+
+            temp_env::async_with_vars(
+                [
+                    (env_vars::IDENTITY_ENDPOINT, None),
+                    (env_vars::IDENTITY_HEADER, None),
+                    (env_vars::MSI_ENDPOINT, None),
+                    (env_vars::MSI_SECRET, None),
+                    (env_vars::AZURE_TENANT_ID, None),
+                    (env_vars::AZURE_FEDERATED_TOKEN_FILE, None),
+                    (env_vars::MANAGED_IDENTITY_CLIENT_ID, managed_id),
+                    (env_vars::AZURE_CLIENT_ID, azure_id),
+                ],
+                async {
+                    let token = get_managed_identity_token(&client, &config, &endpoints)
+                        .await
+                        .expect("expected managed identity token");
+                    assert_eq!(token, "mi-token");
+                },
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
     async fn get_managed_identity_token_appends_client_id_when_connection_option_set() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1274,6 +1519,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/metadata/identity/oauth2/token"))
             .and(query_param_is_missing("client_id"))
+            .and(query_param_is_missing("clientid"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_string(r#"{"access_token":"mi-token"}"#),
             )
@@ -1408,15 +1654,23 @@ mod tests {
     /// correct scope. The mocked `access_token` becomes the returned token.
     /// Mirrors legacy's
     /// `test_azure_impersonation_calls_correct_api_and_populates_auth_data`.
+    #[test_case::test_case(false; "imds")]
+    #[test_case::test_case(true; "msi")]
     #[tokio::test]
-    async fn get_managed_identity_token_impersonation_sends_correct_sp_exchange_request() {
+    async fn get_managed_identity_token_impersonation_sends_correct_sp_exchange_request(
+        use_msi: bool,
+    ) {
         let tenant_id = "2c0183ed-cf17-480d-b3f7-df91bc0a97cd";
         let sp_client_id = "some-sp-client-id";
         let mi_token = make_jwt(&format!(r#"{{"tid":"{tenant_id}"}}"#));
 
         let imds_server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/metadata/identity/oauth2/token"))
+            .and(path(if use_msi {
+                "/MSI/auth"
+            } else {
+                "/metadata/identity/oauth2/token"
+            }))
             .and(query_param("resource", AZURE_WIF_FEDERATION_AUDIENCE))
             .respond_with(
                 ResponseTemplate::new(200)
@@ -1443,13 +1697,25 @@ mod tests {
         let config = azure_config(None, vec![sp_client_id.to_string()]);
         let client = reqwest::Client::new();
 
-        without_azure_functions_env(None, async {
+        let request = async {
             let token = get_managed_identity_token(&client, &config, &endpoints)
                 .await
                 .expect("expected an SP access token");
             assert_eq!(token, "sp-access-token");
-        })
-        .await;
+        };
+        if use_msi {
+            let endpoint = format!("{}/MSI/auth", imds_server.uri());
+            with_legacy_msi_env(
+                &endpoint,
+                "test-msi-secret",
+                None,
+                Some("ml-default"),
+                request,
+            )
+            .await;
+        } else {
+            without_azure_functions_env(None, request).await;
+        }
 
         let requests = entra_server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 1);
@@ -1666,7 +1932,8 @@ mod tests {
 
     /// Sets the three variables the Azure Workload Identity webhook injects
     /// (clearing the Azure Functions / IMDS pair so only the AKS branch can be
-    /// taken), plus any extra overrides the caller needs.
+    /// taken), plus any extra overrides the caller needs. An ML default remains
+    /// set to verify that it cannot affect the AKS client ID.
     async fn with_aks_env<F: Future<Output = ()>>(
         federated_token_file: &str,
         extra: &[(&str, Option<&str>)],
@@ -1685,6 +1952,10 @@ mod tests {
                 (env_vars::MSI_ENDPOINT, None),
                 (env_vars::MSI_SECRET, None),
                 (env_vars::MANAGED_IDENTITY_CLIENT_ID, None),
+                (
+                    env_vars::DEFAULT_IDENTITY_CLIENT_ID,
+                    Some("ml-default-client-id"),
+                ),
             ]
             .into_iter()
             .chain(extra.iter().copied())

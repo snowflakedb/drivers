@@ -611,7 +611,8 @@ pub struct WorkloadIdentityConfig {
     /// `None` ⇒ use [`DEFAULT_AZURE_ENTRA_RESOURCE`]. Azure provider only.
     pub entra_resource: Option<String>,
     /// Azure user-assigned managed-identity client id. `None` ⇒ use
-    /// `MANAGED_IDENTITY_CLIENT_ID` when set, otherwise the system-assigned MI.
+    /// `MANAGED_IDENTITY_CLIENT_ID`, then `AZURE_CLIENT_ID` when set, otherwise
+    /// the system-assigned MI.
     pub azure_client_id: Option<String>,
     /// Ordered impersonation chain.
     /// AWS: IAM role ARNs to `AssumeRole` in order.
