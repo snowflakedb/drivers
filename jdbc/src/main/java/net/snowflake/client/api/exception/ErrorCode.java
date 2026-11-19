@@ -31,7 +31,8 @@ public enum ErrorCode {
   FILE_OPERATION_UPLOAD_ERROR(
       200066, "XX000", "JDBC driver file operation error while performing stage upload."),
   FILE_OPERATION_DOWNLOAD_ERROR(
-      200067, "XX000", "JDBC driver file operation error while performing stage download.");
+      200067, "XX000", "JDBC driver file operation error while performing stage download."),
+  NATIVE_LIBRARY_LOAD_FAILED(200068, "08001", null);
 
   private final int messageCode;
   private final String sqlState;

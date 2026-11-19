@@ -14,8 +14,9 @@ import net.snowflake.client.api.exception.SnowflakeSQLException;
  * <p>The message is either verbatim (constructors) or rendered through the {@link ErrorCode} {@code
  * MessageFormat} template via {@link #fromErrorCode(ErrorCode, Object...)} (the path formerly on
  * {@code SFException}); a {@code null} template (e.g. {@link ErrorCode#INTERNAL_ERROR}) falls back
- * to {@code "CODE: [args]"}. The {@code errorCode} branch of {@link #toSQLException()} drops the
- * cause to match legacy parity.
+ * to {@code "CODE: [args]"}. The {@code errorCode} branch of {@link #toSQLException()} keeps the
+ * cause when the carrier was constructed with one; otherwise it matches the no-cause {@code
+ * ErrorCode} constructor.
  */
 @Getter
 public class SFSQLException extends SnowflakeSQLExceptionCarrier {
@@ -44,6 +45,12 @@ public class SFSQLException extends SnowflakeSQLExceptionCarrier {
 
   public SFSQLException(ErrorCode errorCode, String message) {
     super(message);
+    this.errorCode = errorCode;
+    this.surfaced = null;
+  }
+
+  public SFSQLException(ErrorCode errorCode, String message, Throwable cause) {
+    super(message, cause);
     this.errorCode = errorCode;
     this.surfaced = null;
   }
@@ -104,6 +111,14 @@ public class SFSQLException extends SnowflakeSQLExceptionCarrier {
       return surfaced;
     }
     if (errorCode != null) {
+      if (getCause() != null) {
+        return new SnowflakeSQLException(
+            getMessage(),
+            errorCode.getSqlState(),
+            errorCode.getMessageCode(),
+            getCause(),
+            getQueryId());
+      }
       return new SnowflakeSQLException(errorCode, getMessage(), getQueryId());
     }
     if (getCause() != null || getQueryId() != null) {

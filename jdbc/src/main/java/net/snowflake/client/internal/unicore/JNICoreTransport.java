@@ -6,13 +6,10 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 public class JNICoreTransport implements CoreTransport {
   private static final SFLogger logger = SFLoggerFactory.getLogger(JNICoreTransport.class);
 
-  public JNICoreTransport() {
-    NativeLibraryLoader.init();
-  }
-
   @Override
   public TransportResponse handleMessage(String serviceName, String methodName, byte[] requestBytes)
       throws TransportException {
+    NativeLibraryLoader.init();
     logger.debug(
         "JNI transport request: service={}, method={}, requestBytes={}",
         serviceName,
@@ -37,6 +34,7 @@ public class JNICoreTransport implements CoreTransport {
   @Override
   public long submitMessage(String serviceName, String methodName, byte[] requestBytes)
       throws TransportException {
+    NativeLibraryLoader.init();
     logger.debug(
         "JNI async submit: service={}, method={}, requestBytes={}",
         serviceName,

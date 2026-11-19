@@ -92,7 +92,13 @@ The JNI layer could not load the native bridge library (`libjdbc_bridge.so` /
 analog of Python's `_core` import failure.
 
 The loader (`jdbc/src/main/java/net/snowflake/client/internal/unicore/NativeLibraryLoader.java`)
-takes the first source that is set, once per JVM:
+takes the first source that is set, once per JVM, while `SnowflakeDriver` initializes
+(`Class.forName` at application bootstrap, or JDBC 4 SPI on the first
+`DriverManager.getConnection` if the class was not loaded earlier). Apps with a tight
+connect SLA should load the driver class during startup so `connect()` does not extract
+or `System.load`.
+
+Resolution order:
 
 1. the `CORE_PATH` environment variable — an absolute path to the library;
 2. the `-Djdbc.library.path` system property — an absolute path;
@@ -103,22 +109,37 @@ takes the first source that is set, once per JVM:
 
 A stale `CORE_PATH` from a dev setup therefore wins over the bundled library.
 
+The extract directory (`java.io.tmpdir`, default `/tmp`) must be writable, have
+about 30 MB free, and allow execution. `noexec` mounts, a full disk, and a
+read-only root fail at extract or `System.load`, not as a missing-resource
+error. Override with `-Djava.io.tmpdir` or skip extract via `CORE_PATH` /
+`-Djdbc.library.path`. Linux gnu natives need glibc 2.28+. Alpine/musl images
+need `apk add --no-cache libgcc`.
+
 Failure messages:
 
-- **`RuntimeException: No bundled native library found in JAR resources. The
-  classifier-less 'net.snowflake:snowflake-jdbc-native' jar is native-free by
-  design …`** (caused by **`Native library not found in JAR at <resource>`**) — the
-  jar on the classpath carries no library for this platform. The plain
-  `snowflake-jdbc-native` artifact carries none by design: depend on the platform
-  classifier jar (`net.snowflake:snowflake-jdbc-native:<version>:<classifier>`) or
-  the self-contained `net.snowflake:snowflake-jdbc-native-all`. The same message
-  appears with a classifier jar built for a different OS / CPU.
-- **`UnsatisfiedLinkError`** — a library was found but could not be loaded: a wrong
-  `CORE_PATH` / `jdbc.library.path`, a library for another architecture, or the
-  wrong libc flavor (try `-Djdbc.libc`). The message names the file it tried.
+- **`Native library not found in JAR at <resource>`** — the jar on the classpath
+  carries no library for this platform. The message names the running OS/arch and
+  the classifier to depend on (`linux-x86_64`, `linux-aarch_64`, `osx-aarch_64`,
+  …) or `snowflake-jdbc-native-all`. The classifier-less `snowflake-jdbc-native`
+  artifact carries none by design. The same message appears with a classifier jar
+  built for a different OS / CPU.
+- **`Failed to extract the bundled native library`** — `createTempDirectory` or
+  the copy failed (read-only tmpdir, disk full). The cause is the underlying
+  `IOException`.
+- **`Failed to load the native library`** — extract succeeded but `System.load`
+  failed (`noexec`, wrong arch, missing glibc/libgcc). The cause is the
+  `UnsatisfiedLinkError`.
 
-A shading step that strips the `native/` resources from a fat jar produces the first
-message; verify the resource is still present in the final artifact.
+A failed load is logged at error and cached as `SQLException` (SQLSTATE
+`08001`). `connect()` rethrows that failure. It is not allowed to escape
+`SnowflakeDriver` class initialization: that would poison the class as
+`NoClassDefFoundError` and DriverManager SPI would report no suitable driver.
+It is not `NoClassDefFoundError: Could not initialize class …ProtobufApis`.
+
+A shading step that strips the `native/` resources from a fat jar produces the
+missing-resource message; verify the resource is still present in the final
+artifact.
 
 ---
 

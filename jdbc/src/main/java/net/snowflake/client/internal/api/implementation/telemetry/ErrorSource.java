@@ -170,6 +170,7 @@ public enum ErrorSource {
       case IO_ERROR:
       case FILE_OPERATION_UPLOAD_ERROR:
       case FILE_OPERATION_DOWNLOAD_ERROR:
+      case NATIVE_LIBRARY_LOAD_FAILED:
         // These codes are the vendor-code form of ERROR_KIND_IO.
         return CONNECTIVITY;
       case INTERNAL_ERROR:

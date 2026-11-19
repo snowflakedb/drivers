@@ -275,6 +275,7 @@ public class ErrorSourceTest {
     mapped.put(ErrorCode.IO_ERROR, ErrorSource.CONNECTIVITY);
     mapped.put(ErrorCode.FILE_OPERATION_UPLOAD_ERROR, ErrorSource.CONNECTIVITY);
     mapped.put(ErrorCode.FILE_OPERATION_DOWNLOAD_ERROR, ErrorSource.CONNECTIVITY);
+    mapped.put(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, ErrorSource.CONNECTIVITY);
     return mapped;
   }
 

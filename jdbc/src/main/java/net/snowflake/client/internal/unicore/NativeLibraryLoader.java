@@ -6,6 +6,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import net.snowflake.client.api.driver.SnowflakeDriver;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 
@@ -23,11 +25,14 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * <p>The JAR-resource path is the default for end users: it works in sandboxed JVMs (e.g. UDFs,
  * BucketFS, Lambda) where host env vars and host filesystem layouts aren't predictable.
  *
- * <p>The load runs once, in this class's static initializer. {@link JNICoreTransport}'s constructor
- * calls {@link #init()} to trigger that initialization, ensuring the native lib is in place before
- * any JNI call.
+ * <p>{@code SnowflakeDriver} calls {@link #loadIfPresent()} while the driver class initializes so
+ * extract/{@code System.load} is not on the first {@code connect()} path. {@link #init()} remains
+ * the safety net for first JNI use. Any runtime or linkage failure is wrapped, logged at error,
+ * cached, and rethrown as {@code SQLException} from {@code connect()} / JNI. It does not escape
+ * {@code SnowflakeDriver}'s initializer, which would poison the class as {@code
+ * NoClassDefFoundError} and make DriverManager SPI report no suitable driver.
  */
-final class NativeLibraryLoader {
+public final class NativeLibraryLoader {
 
   // Bootstrap log must not round-trip through core (native lib is still loading).
   private static final SFLogger logger =
@@ -41,74 +46,187 @@ final class NativeLibraryLoader {
   private static final String NATIVE_RESOURCE_DIR =
       "/net/snowflake/client/internal/unicore/native/";
 
-  static {
-    load();
-    logger.info("JDBC driver starting v{}", SnowflakeDriver.getDriverVersion());
-  }
+  private static final Object LOCK = new Object();
+
+  private static volatile boolean loaded;
+  private static volatile SFSQLException loadFailure;
 
   private NativeLibraryLoader() {}
 
-  /** No-op; calling this forces class initialization, which runs the static block above. */
-  static void init() {}
+  /**
+   * Loads the native library during driver class initialization when a bundled lib or an explicit
+   * path is available, so {@code connect()} does not pay extract/{@code System.load} on the first
+   * user call. A failure is cached and logged by {@link #init()}; it is not rethrown here.
+   */
+  public static void loadIfPresent() {
+    if (explicitLibraryPath() == null && !bundledNativePresent()) {
+      return;
+    }
+    try {
+      init();
+    } catch (SFSQLException e) {
+      // Already cached and logged by init().
+    }
+  }
+
+  /**
+   * Loads the native library if it is not already loaded. Subsequent calls after a failure rethrow
+   * the same {@link SFSQLException}.
+   */
+  static void init() {
+    if (loaded) {
+      return;
+    }
+    SFSQLException previous = loadFailure;
+    if (previous != null) {
+      throw previous;
+    }
+    synchronized (LOCK) {
+      if (loaded) {
+        return;
+      }
+      if (loadFailure != null) {
+        throw loadFailure;
+      }
+      try {
+        load();
+        loaded = true;
+        logger.info("JDBC driver starting v{}", SnowflakeDriver.getDriverVersion());
+      } catch (SFSQLException e) {
+        loadFailure = e;
+        logger.error("Failed to load the JDBC native library", e);
+        throw e;
+      } catch (RuntimeException | LinkageError e) {
+        SFSQLException wrapped = nativeLoadFailure(loadFailedMessage(null, e.toString()), e);
+        loadFailure = wrapped;
+        logger.error("Failed to load the JDBC native library", wrapped);
+        throw wrapped;
+      }
+    }
+  }
 
   private static void load() {
+    String explicit = explicitLibraryPath();
+    if (explicit != null) {
+      loadPath(explicit);
+      return;
+    }
+
+    Path extracted = extractNativeLibFromResource();
+    loadPath(extracted.toAbsolutePath().toString());
+  }
+
+  private static String explicitLibraryPath() {
     String corePath = System.getenv("CORE_PATH");
     if (corePath != null && !corePath.isEmpty()) {
-      System.load(corePath);
-      return;
+      return corePath;
     }
-
     String libraryPath = System.getProperty("jdbc.library.path");
     if (libraryPath != null && !libraryPath.isEmpty()) {
-      System.load(libraryPath);
-      return;
+      return libraryPath;
     }
+    return null;
+  }
 
-    Path extracted;
+  private static String bundledResourcePath() {
+    return NATIVE_RESOURCE_DIR + osArchDir() + "/" + nativeLibFileName();
+  }
+
+  static boolean bundledNativePresent() {
+    return NativeLibraryLoader.class.getResource(bundledResourcePath()) != null;
+  }
+
+  private static void loadPath(String path) {
     try {
-      extracted = extractNativeLibFromResource();
-    } catch (IOException e) {
-      throw new RuntimeException(
-          "No bundled native library found in JAR resources. The classifier-less "
-              + "'net.snowflake:snowflake-jdbc-native' jar is native-free by design and is not runnable "
-              + "on its own. For a runnable driver, depend on the platform classifier jar "
-              + "'net.snowflake:snowflake-jdbc-native:<version>:<classifier>' (e.g. classifier "
-              + "osx-aarch_64; let os-maven-plugin / osdetector-gradle-plugin fill in "
-              + "${os.detected.classifier}), or the self-contained "
-              + "'net.snowflake:snowflake-jdbc-native-all' jar. Advanced setups can instead point "
-              + "CORE_PATH or the jdbc.library.path system property at a local native lib. See "
-              + "https://github.com/snowflakedb/drivers/tree/main/jdbc",
-          e);
+      System.load(path);
+    } catch (UnsatisfiedLinkError e) {
+      throw nativeLoadFailure(loadFailedMessage(path, e.getMessage()), e);
     }
-    System.load(extracted.toAbsolutePath().toString());
   }
 
   /** Copy the bundled native lib resource into a temp file the JVM can {@code System.load}. */
-  private static Path extractNativeLibFromResource() throws IOException {
+  private static Path extractNativeLibFromResource() {
     String libFileName = nativeLibFileName();
-    String resourcePath = NATIVE_RESOURCE_DIR + osArchDir() + "/" + libFileName;
+    String resourcePath = bundledResourcePath();
     try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
       if (in == null) {
-        throw new IOException(
-            "Native library not found in JAR at "
-                + resourcePath
-                + ". This JAR carries no native lib for this platform ("
-                + System.getProperty("os.name")
-                + "/"
-                + System.getProperty("os.arch")
-                + ") — expected for the native-free 'snowflake-jdbc-native' jar, or for a classifier "
-                + "jar built for a different platform.");
+        throw nativeLoadFailure(
+            missingNativeMessage(
+                resourcePath,
+                System.getProperty("os.name"),
+                System.getProperty("os.arch"),
+                mavenClassifier(osToken(), archToken())),
+            null);
       }
-      // Use a per-version subdir so concurrent JVMs don't clobber each other and the OS
-      // doesn't refuse to load a file that's been overwritten while still mapped.
-      Path tmpDir =
-          Files.createTempDirectory("snowflake-jdbc-native-" + SnowflakeDriver.getDriverVersion());
+      Path tmpDir;
+      try {
+        tmpDir =
+            Files.createTempDirectory(
+                "snowflake-jdbc-native-" + SnowflakeDriver.getDriverVersion());
+      } catch (IOException e) {
+        throw nativeLoadFailure(
+            extractFailedMessage(System.getProperty("java.io.tmpdir"), e.getMessage()), e);
+      }
       tmpDir.toFile().deleteOnExit();
       Path tmpLib = tmpDir.resolve(libFileName);
-      Files.copy(in, tmpLib, StandardCopyOption.REPLACE_EXISTING);
       tmpLib.toFile().deleteOnExit();
+      try {
+        Files.copy(in, tmpLib, StandardCopyOption.REPLACE_EXISTING);
+      } catch (IOException e) {
+        throw nativeLoadFailure(extractFailedMessage(tmpDir.toString(), e.getMessage()), e);
+      }
       return tmpLib;
+    } catch (IOException e) {
+      throw nativeLoadFailure(
+          extractFailedMessage(System.getProperty("java.io.tmpdir"), e.getMessage()), e);
     }
+  }
+
+  static String mavenClassifier(String osToken, String archToken) {
+    String mavenArch = "aarch64".equals(archToken) ? "aarch_64" : archToken;
+    if ("darwin".equals(osToken)) {
+      return "osx-" + mavenArch;
+    }
+    if ("windows".equals(osToken)) {
+      return "windows-" + mavenArch;
+    }
+    return "linux-" + mavenArch;
+  }
+
+  static String missingNativeMessage(
+      String resourcePath, String osName, String osArch, String classifier) {
+    return "Native library not found in JAR at "
+        + resourcePath
+        + ". This JAR carries no native library for this platform ("
+        + osName
+        + "/"
+        + osArch
+        + "). Use classifier "
+        + classifier
+        + " (net.snowflake:snowflake-jdbc-native:<version>:"
+        + classifier
+        + ") or the self-contained net.snowflake:snowflake-jdbc-native-all jar.";
+  }
+
+  static String extractFailedMessage(String location, String detail) {
+    return "Failed to extract the bundled native library"
+        + (location != null ? " under " + location : "")
+        + (detail != null ? ": " + detail : ".")
+        + " The directory must be writable and have about 30 MB free. Override with"
+        + " -Djava.io.tmpdir.";
+  }
+
+  static String loadFailedMessage(String path, String detail) {
+    return "Failed to load the native library"
+        + (path != null ? " from " + path : "")
+        + (detail != null ? ": " + detail : ".")
+        + " If the path is under /tmp, it must allow exec (noexec mounts fail with 'failed to"
+        + " map segment'). Linux gnu natives need glibc 2.28+. Alpine/musl images need libgcc"
+        + " (apk add --no-cache libgcc). Override the extract directory with -Djava.io.tmpdir.";
+  }
+
+  private static SFSQLException nativeLoadFailure(String message, Throwable cause) {
+    return new SFSQLException(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, message, cause);
   }
 
   /** Native lib filename cargo produces on the current OS. Keyed off {@link #osToken()}. */

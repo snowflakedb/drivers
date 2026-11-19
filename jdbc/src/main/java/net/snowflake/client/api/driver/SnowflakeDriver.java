@@ -18,6 +18,7 @@ import net.snowflake.client.internal.api.implementation.exception.SqlExceptionMa
 import net.snowflake.client.internal.api.implementation.parameters.ConnectionOptionsResolver;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
+import net.snowflake.client.internal.unicore.NativeLibraryLoader;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
 
@@ -83,6 +84,7 @@ public class SnowflakeDriver implements Driver {
   }
 
   static {
+    NativeLibraryLoader.loadIfPresent();
     registerDriver();
   }
 

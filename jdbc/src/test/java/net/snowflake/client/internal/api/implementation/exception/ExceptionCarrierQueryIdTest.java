@@ -41,8 +41,22 @@ public class ExceptionCarrierQueryIdTest {
     assertEquals("01a-b2c", sf.getQueryId());
     assertEquals(ErrorCode.CONNECTION_CLOSED.getSqlState(), sf.getSQLState());
     assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), sf.getErrorCode());
-    // The errorCode path drops the cause for legacy parity.
     assertNull(sf.getCause());
+  }
+
+  @Test
+  public void shouldPreserveCauseOnErrorCodePathWhenCauseIsAttached() {
+    Throwable cause = new UnsatisfiedLinkError("failed to map segment");
+    SFSQLException carrier =
+        new SFSQLException(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, "load failed", cause);
+
+    SnowflakeSQLException sf =
+        assertInstanceOf(SnowflakeSQLException.class, carrier.toSQLException());
+
+    assertSame(cause, sf.getCause());
+    assertEquals(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED.getSqlState(), sf.getSQLState());
+    assertEquals(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED.getMessageCode(), sf.getErrorCode());
+    assertEquals("load failed", sf.getMessage());
   }
 
   @Test
