@@ -4,6 +4,30 @@
 
 In-progress notes are files under `changelog/unreleased/`.
 
+## v4.4.0
+
+New features:
+
+- Added FIPS ODBC installer packages (`-fips-` in the filename) as a separate FIPS build for Linux x64, Linux ARM64, macOS, and Windows x64. (snowflakedb/drivers#3528)
+  - A FIPS build is not FIPS 140-3 validated; Snowflake does not claim that this driver is FIPS compliant.
+  - The FIPS build links AWS-LC FIPS 3.6.0, a bugfix of AWS-LC FIPS 3.1.0. CMVP certificates cover 3.1.0; they do not cover this module. See [FIPS 140-3 considerations for drivers built on the Universal Core](https://docs.snowflake.com/en/developer-guide/universal-core/universal-core-fips).
+  - Windows 32-bit and Windows ARM64 FIPS packages are not included.
+
+Changes:
+
+- Changed the macOS installer to write `~/Library/ODBC/odbcinst.ini` and `~/Library/ODBC/odbc.ini` as the installing user, and to print a warning instead of changing ownership when that directory is not writable by that user. (snowflakedb/drivers#3081)
+- Improved fetch latency for small results by reading result batches from the core directly instead of through an Arrow C stream. (snowflakedb/drivers#3271)
+- Improved fetch performance by building column converters once per statement and parsing each column type once. (snowflakedb/drivers#3272)
+- Stopped reporting `SQL_NO_DATA`, `SQL_NEED_DATA` and `SQL_STILL_EXECUTING` as wrapper errors in telemetry, which removes a runtime round trip from the end of every result set and from every async poll. (snowflakedb/drivers#3362)
+- Improved driver performance by building the native library optimized for speed, at the cost of a larger package size. (snowflakedb/drivers#3175)
+
+Bug fixes:
+
+- Fixed `SQLProcedureColumns` so a FILE argument reports the session VARCHAR maximum for `COLUMN_SIZE` and `BUFFER_LENGTH`, matching VARIANT, when `DEFAULT_VARCHAR_SIZE` is set. (snowflakedb/drivers#3008)
+- Fixed the macOS installer so reinstalling leaves an unchanged ODBC configuration file in place. (snowflakedb/drivers#3081)
+- Fixed a synchronous query that is still running at its second or later session-token expiry failing with `390112 Session expired - reauthentication required`; the driver now refreshes the session at every expiry while it waits for the result. (snowflakedb/drivers#3315)
+- Fixed a session-token expiry while waiting on an async-execution-mode query or a metadata (`SHOW`) query re-sending the statement; the driver now retries only the request that hit the expiry and keeps waiting on the same query. (snowflakedb/drivers#3315)
+
 ## v4.3.0
 
 Breaking changes:
