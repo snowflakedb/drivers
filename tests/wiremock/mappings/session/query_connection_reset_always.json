@@ -1,0 +1,11 @@
+{
+  "name": "Query request connection is always reset before any HTTP response",
+  "priority": 10,
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "fault": "CONNECTION_RESET_BY_PEER"
+  }
+}
