@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -50,6 +51,10 @@ public final class NativeLibraryLoader {
 
   private static volatile boolean loaded;
   private static volatile SFSQLException loadFailure;
+
+  /** Retained so the extract-directory lock is not garbage-collected. */
+  @SuppressWarnings("unused")
+  private static NativeLibraryTempDirs.ExtractDir extractDir;
 
   private NativeLibraryLoader() {}
 
@@ -112,8 +117,22 @@ public final class NativeLibraryLoader {
       return;
     }
 
-    Path extracted = extractNativeLibFromResource();
-    loadPath(extracted.toAbsolutePath().toString());
+    loadExtracted(extractNativeLibFromResource());
+  }
+
+  /**
+   * Loads the library from {@code extracted}. A load failure closes the extract lock so a cached
+   * error does not hold the file descriptor until the JVM exits.
+   */
+  static void loadExtracted(NativeLibraryTempDirs.ExtractDir extracted) {
+    try {
+      loadPath(extracted.dir.resolve(nativeLibFileName()).toAbsolutePath().toString());
+    } catch (RuntimeException | LinkageError e) {
+      closeExtract(extracted, e);
+      throw e;
+    }
+    extractDir = extracted;
+    NativeLibraryTempDirs.deleteStaleExtractsInBackground(extracted.dir);
   }
 
   private static String explicitLibraryPath() {
@@ -145,8 +164,7 @@ public final class NativeLibraryLoader {
   }
 
   /** Copy the bundled native lib resource into a temp file the JVM can {@code System.load}. */
-  private static Path extractNativeLibFromResource() {
-    String libFileName = nativeLibFileName();
+  private static NativeLibraryTempDirs.ExtractDir extractNativeLibFromResource() {
     String resourcePath = bundledResourcePath();
     try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
       if (in == null) {
@@ -158,27 +176,44 @@ public final class NativeLibraryLoader {
                 mavenClassifier(osToken(), archToken())),
             null);
       }
-      Path tmpDir;
-      try {
-        tmpDir =
-            Files.createTempDirectory(
-                "snowflake-jdbc-native-" + SnowflakeDriver.getDriverVersion());
-      } catch (IOException e) {
-        throw nativeLoadFailure(
-            extractFailedMessage(System.getProperty("java.io.tmpdir"), e.getMessage()), e);
-      }
-      tmpDir.toFile().deleteOnExit();
-      Path tmpLib = tmpDir.resolve(libFileName);
-      tmpLib.toFile().deleteOnExit();
-      try {
-        Files.copy(in, tmpLib, StandardCopyOption.REPLACE_EXISTING);
-      } catch (IOException e) {
-        throw nativeLoadFailure(extractFailedMessage(tmpDir.toString(), e.getMessage()), e);
-      }
-      return tmpLib;
+      return extractTo(
+          in, Paths.get(System.getProperty("java.io.tmpdir")), SnowflakeDriver.getDriverVersion());
     } catch (IOException e) {
       throw nativeLoadFailure(
           extractFailedMessage(System.getProperty("java.io.tmpdir"), e.getMessage()), e);
+    }
+  }
+
+  /**
+   * Copies {@code in} into a new extract directory under {@code tmpRoot}. The library is registered
+   * for {@code deleteOnExit} after the directory and its {@code .lock}, so a clean exit deletes the
+   * library, then {@code .lock}, then the empty directory.
+   */
+  static NativeLibraryTempDirs.ExtractDir extractTo(InputStream in, Path tmpRoot, String version) {
+    NativeLibraryTempDirs.ExtractDir extracted;
+    try {
+      extracted = NativeLibraryTempDirs.create(tmpRoot, version);
+    } catch (IOException e) {
+      throw nativeLoadFailure(extractFailedMessage(tmpRoot.toString(), e.getMessage()), e);
+    }
+    Path tmpLib = extracted.dir.resolve(nativeLibFileName());
+    tmpLib.toFile().deleteOnExit();
+    try {
+      Files.copy(in, tmpLib, StandardCopyOption.REPLACE_EXISTING);
+    } catch (IOException e) {
+      SFSQLException failure =
+          nativeLoadFailure(extractFailedMessage(extracted.dir.toString(), e.getMessage()), e);
+      closeExtract(extracted, failure);
+      throw failure;
+    }
+    return extracted;
+  }
+
+  private static void closeExtract(NativeLibraryTempDirs.ExtractDir extracted, Throwable failure) {
+    try {
+      extracted.close();
+    } catch (IOException closeFailure) {
+      failure.addSuppressed(closeFailure);
     }
   }
 
@@ -230,7 +265,7 @@ public final class NativeLibraryLoader {
   }
 
   /** Native lib filename cargo produces on the current OS. Keyed off {@link #osToken()}. */
-  private static String nativeLibFileName() {
+  static String nativeLibFileName() {
     switch (osToken()) {
       case "darwin":
         return "libjdbc_bridge.dylib";

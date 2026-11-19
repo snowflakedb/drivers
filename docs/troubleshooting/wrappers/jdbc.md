@@ -116,6 +116,24 @@ error. Override with `-Djava.io.tmpdir` or skip extract via `CORE_PATH` /
 `-Djdbc.library.path`. Linux gnu natives need glibc 2.28+. Alpine/musl images
 need `apk add --no-cache libgcc`.
 
+Each JVM extracts into its own `snowflake-jdbc-native-<version>*` directory
+(up to about 30 MB) and registers it for `deleteOnExit`. The directory is
+mode 700 on POSIX systems; on Windows it has the default ACLs of the temp
+directory. On Linux and macOS a clean exit leaves nothing behind. On Windows
+the DLL is still loaded at exit, so the copy is never removed then and is
+reclaimed by a later start. A crash or `kill -9` also leaves the copy behind.
+Each extract holds an exclusive lock on `.lock` in its own directory when the
+file system supports locks; the OS releases it when the process dies. If
+locking is unsupported (for example NFS without `lockd`), the driver still
+loads. After the library loads, a background thread deletes sibling directories
+that are real directories (not symlinks), belong to the same user, are older
+than 10 minutes, and whose lock is free or absent. Copies left by older
+lockless loaders are therefore removed after 10 minutes even if that JVM is
+still running. On Linux and macOS this
+does not affect the running process, which already mapped the library. On
+Windows the delete fails on the loaded DLL and is retried on a later load.
+`CORE_PATH` and `-Djdbc.library.path` skip both the extract and the cleanup.
+
 Failure messages:
 
 - **`Native library not found in JAR at <resource>`** — the jar on the classpath
