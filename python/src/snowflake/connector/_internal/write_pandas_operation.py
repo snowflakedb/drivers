@@ -1,7 +1,10 @@
-"""Write pandas DataFrame to Snowflake table via Parquet stage upload pipeline.
+"""Write DataFrames to Snowflake table via Parquet stage upload pipeline.
 
-This module contains WritePandasConfig (validated parameters) and
-WritePandasOperation (pipeline execution).  The public API lives in
+This module is DataFrame-library agnostic. It contains WriteDataFrameConfig
+(validated parameters) and WriteDataFrameOperation (pipeline execution).
+
+Dataframe specific functionality is abstracted behind the
+DataFrameProvider protocol. The public API lives in
 snowflake.connector.pandas_tools.
 """
 
@@ -11,10 +14,18 @@ import re
 import secrets
 import warnings
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NamedTuple,
+    Protocol,
+    cast,
+    runtime_checkable,
+)
 
 from .._common.extras import pandas
 from ..cursor import SnowflakeCursor
@@ -68,15 +79,14 @@ def sql_column_identifier(col: str, quote_identifiers: bool) -> str:
     characters letters, digits, underscores, or dollar signs); any other name
     raises ProgrammingError.
     """
-    name = str(col)
     if quote_identifiers:
-        return quote_identifier(name)
-    if not _UNQUOTED_IDENTIFIER_RE.fullmatch(name):
+        return quote_identifier(col)
+    if not _UNQUOTED_IDENTIFIER_RE.fullmatch(col):
         raise ProgrammingError(
-            msg=f"Column name {name!r} is not a valid unquoted identifier. "
+            msg=f"Column name {col!r} is not a valid unquoted identifier. "
             "Use quote_identifiers=True to allow other names."
         )
-    return name
+    return col
 
 
 def qualify_name(
@@ -99,7 +109,7 @@ def escape_path_for_sql(path: str) -> str:
 
 def generate_temp_name(prefix: str) -> str:
     """Generate a random temporary object name."""
-    return f"__WRITE_PANDAS_{prefix}_{secrets.token_hex(8)}"
+    return f"__WRITE_DATAFRAME_{prefix}_{secrets.token_hex(8)}"
 
 
 def _sql_bool(value: bool) -> str:
@@ -122,12 +132,12 @@ def _convert_value_to_sql_option(value: str | bool | int | float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# WritePandasResult
+# WriteDataFrameResult
 # ---------------------------------------------------------------------------
 
 
-class WritePandasResult(NamedTuple):
-    """Result of a write_pandas invocation. Backward-compatible with plain tuple."""
+class WriteDataFrameResult(NamedTuple):
+    """Result of a write invocation. Backward-compatible with plain tuple."""
 
     success: bool
     nchunks: int
@@ -136,12 +146,85 @@ class WritePandasResult(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# WritePandasConfig
+# WriteParquetFileResult
 # ---------------------------------------------------------------------------
 
 
-class WritePandasConfig:
-    """Validated, immutable configuration for a write_pandas invocation.
+class WriteParquetFileResult(NamedTuple):
+    """Result of writing a single Parquet file."""
+
+    path: Path
+    nrows: int
+
+
+# ---------------------------------------------------------------------------
+# WriteDataFrameProvider
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class WriteDataFrameProvider(Protocol):
+    """Minimal DataFrame protocol required by the Snowflake WriteDataFrame pipeline.
+
+    Contract:
+    * ``columns`` are strings (the provider normalizes non-string labels) and
+    stay stable for the lifetime of the provider. Reading them must not
+    materialize the data
+    * ``write_parquet_files`` yields at least one file, even for an empty
+    DataFrame, so an empty Parquet file is still uploaded.
+    """
+
+    @property
+    def columns(self) -> Sequence[str]:
+        """Column names, in output order."""
+        ...
+
+    def has_tz_aware_columns(self) -> bool:
+        """Return True if any column holds timezone-aware timestamps."""
+        ...
+
+    def is_standard_index(self) -> bool:
+        """Return True if the DataFrame carries a standard range / non-semantic index.
+
+        Index / row labels will not be written.
+        DataFrame libraries without an index concept should return True.
+        """
+        ...
+
+    def write_parquet_files(
+        self,
+        directory: Path,
+        chunk_size: int | None,
+        compression: Literal["gzip", "snappy"],
+        **parquet_kwargs: Any,
+    ) -> Iterator[WriteParquetFileResult]:
+        """Write the DataFrame as one or more Parquet files and yield each one.
+
+        * ``directory`` exists and is empty; every file must be written
+        directly inside it with unique names.
+        * ``chunk_size`` is the maximum number of rows per file, or ``None``
+        / ``0`` when the caller expressed no preference. Providers may
+        treat it as a hint if their writer has a better strategy.
+        * ``compression`` is the supported Parquet compression ("gzip" or "snappy").
+        * ``parquet_kwargs`` are the extra keyword arguments the caller gave
+        to the write function, to be forwarded to the library's writer.
+
+        Yield each file as soon as it is complete. The connector uploads a
+        yielded file and may delete it before asking for the next one, so a
+        provider must not touch a file again after yielding it. Providers
+        whose writer produces all files in one call simply yield them after
+        their write call returns.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# WriteDataFrameConfig
+# ---------------------------------------------------------------------------
+
+
+class WriteDataFrameConfig:
+    """Validated, immutable configuration for a DataFrame write invocation.
 
     All input parameters are normalized and validated at construction time.
     Raises ProgrammingError or ValueError for invalid inputs.
@@ -150,7 +233,7 @@ class WritePandasConfig:
     def __init__(
         self,
         conn: Connection | AsyncConnection,
-        df: DataFrame,
+        df_provider: WriteDataFrameProvider,
         table_name: str,
         *,
         database: str | None = None,
@@ -171,11 +254,11 @@ class WritePandasConfig:
         **parquet_kwargs: Any,
     ) -> None:
         self.conn = conn
-        self.df = df
+        self.df_provider = df_provider
         self.table_name = table_name
         self.database = database
         self.schema = schema
-        self.chunk_size = chunk_size if chunk_size is not None else len(df)
+        self.chunk_size = chunk_size
         self.compression = compression
         self.on_error = on_error
         self.parallel = parallel
@@ -216,8 +299,8 @@ class WritePandasConfig:
                     msg=f"Invalid iceberg configurations option(s) provided {', '.join(sorted(invalid))}"
                 )
         if not self.quote_identifiers:
-            for col in self.df.columns:
-                sql_column_identifier(str(col), False)
+            for col in self.df_provider.columns:
+                sql_column_identifier(col, False)
 
     # -- Branching properties -----------------------------------------------
 
@@ -245,15 +328,6 @@ class WritePandasConfig:
     def binary_as_text_false_on_copy(self) -> bool:
         return self.auto_create_table or self.overwrite or self.infer_schema
 
-    # -- DataFrame inspection -----------------------------------------------
-
-    def has_tz_aware_columns(self) -> bool:
-        return any(hasattr(dtype, "tz") and dtype.tz is not None for dtype in self.df.dtypes)
-
-    def is_standard_range_index(self) -> bool:
-        idx = self.df.index
-        return isinstance(idx, pandas.RangeIndex) and idx.start == 0 and idx.step == 1
-
     # -- Helpers ------------------------------------------------------------
 
     def qualify(self, name: str) -> str:
@@ -264,9 +338,9 @@ class WritePandasConfig:
         """Emit user-facing warnings about the input data.
 
         Called from execute() rather than __init__ so that stacklevel
-        correctly points to the caller of write_pandas().
+        correctly points to the caller of the public write function.
         """
-        if self.use_logical_type is not True and self.has_tz_aware_columns():
+        if self.use_logical_type is not True and self.df_provider.has_tz_aware_columns():
             warnings.warn(
                 "DataFrame contains a datetime column with timezone "
                 "information. This data may not round-trip correctly unless "
@@ -274,32 +348,32 @@ class WritePandasConfig:
                 UserWarning,
                 stacklevel=4,
             )
-        if not self.is_standard_range_index():
+        if not self.df_provider.is_standard_index():
             warnings.warn(
                 "The DataFrame has a non-standard index which will not be "
-                "written. Consider resetting the index with "
-                "df.reset_index().",
+                "written. Consider resetting or removing the index before "
+                "writing.",
                 UserWarning,
                 stacklevel=4,
             )
 
 
 # ---------------------------------------------------------------------------
-# WritePandasMixin
+# WriteDataFrameMixin
 # ---------------------------------------------------------------------------
 
 
-class WritePandasMixin:
-    """Pure SQL-building methods shared by sync and async write_pandas pipelines.
+class WriteDataFrameMixin:
+    """Pure SQL-building methods shared by sync and async write pipelines.
 
     Each SQL-builder returns a dict ready to unpack as ``**kwargs`` into
     ``cursor.execute()`` — keys ``operation``, ``parameters``, and
     ``_force_qmark_paramstyle`` match the canonical cursor API.
 
-    Subclasses must provide ``self._cfg: WritePandasConfig``.
+    Subclasses must provide ``self._cfg: WriteDataFrameConfig``.
     """
 
-    _cfg: WritePandasConfig
+    _cfg: WriteDataFrameConfig
 
     def _build_create_stage_sql(self, name: str) -> dict[str, Any]:
         cfg = self._cfg
@@ -335,7 +409,7 @@ class WritePandasMixin:
         target_cols: list[str] = []
         select_exprs: list[str] = []
 
-        for col in cfg.df.columns:
+        for col in cfg.df_provider.columns:
             col_name = sql_column_identifier(col, cfg.quote_identifiers)
             target_cols.append(col_name)
 
@@ -420,7 +494,7 @@ class WritePandasMixin:
     ) -> dict[str, Any]:
         cfg = self._cfg
         col_defs = []
-        for col in cfg.df.columns:
+        for col in cfg.df_provider.columns:
             col_type = column_type_map.get(col.upper(), "VARIANT") if column_type_map else "VARIANT"
             col_name = sql_column_identifier(col, cfg.quote_identifiers)
             col_defs.append(f"{col_name} {col_type}")
@@ -462,15 +536,6 @@ class WritePandasMixin:
         }
         return " ".join(f"{k}={v}" for k, v in normalized.items())
 
-    def _iter_chunks(self) -> Iterator[tuple[int, DataFrame]]:
-        """Yield (index, chunk_df). Empty DataFrame yields (0, empty_df)."""
-        cfg = self._cfg
-        if len(cfg.df) == 0 or cfg.chunk_size == 0:
-            yield 0, cfg.df
-            return
-        for idx, start in enumerate(range(0, len(cfg.df), cfg.chunk_size)):
-            yield idx, cfg.df.iloc[start : start + cfg.chunk_size]
-
     def _resolve_target_table(self) -> str:
         cfg = self._cfg
         if cfg.needs_swap:
@@ -479,25 +544,25 @@ class WritePandasMixin:
 
 
 # ---------------------------------------------------------------------------
-# WritePandasOperation
+# WriteDataFrameOperation
 # ---------------------------------------------------------------------------
 
 
-class WritePandasOperation(WritePandasMixin):
-    """Executes the write_pandas pipeline from a validated config.
+class WriteDataFrameOperation(WriteDataFrameMixin):
+    """Executes the write DataFrame pipeline from a validated config.
 
-    Accepts a single WritePandasConfig.  execute() runs the full pipeline
+    Accepts a single WriteDataFrameConfig.  execute() runs the full pipeline
     without mutating self — all intermediate state is threaded through
     local variables and return values.
     """
 
-    def __init__(self, cfg: WritePandasConfig) -> None:
+    def __init__(self, cfg: WriteDataFrameConfig) -> None:
         self._cfg = cfg
 
     # -- Main pipeline ---------------------------------------------------
 
-    def execute(self) -> WritePandasResult:
-        """Run the full pipeline. Returns a WritePandasResult (named tuple)."""
+    def execute(self) -> WriteDataFrameResult:
+        """Run the full pipeline. Returns a WriteDataFrameResult (named tuple)."""
         cfg = self._cfg
         cfg.emit_warnings()
 
@@ -532,7 +597,7 @@ class WritePandasOperation(WritePandasMixin):
                     self._drop_object(cursor, target_location, "TABLE")
                 except Exception:
                     logger.warning(
-                        "write_pandas failed and could not drop temporary "
+                        "DataFrame write failed and could not drop temporary "
                         "staging table %s created for overwrite swap — "
                         "it may need to be dropped manually",
                         target_location,
@@ -543,7 +608,7 @@ class WritePandasOperation(WritePandasMixin):
             cursor.close()
 
         success = all(row[1] == "LOADED" for row in copy_results)
-        return WritePandasResult(success, nchunks, nrows, copy_results)
+        return WriteDataFrameResult(success, nchunks, nrows, copy_results)
 
     # -- Object lifetime -------------------------------------------------
 
@@ -574,7 +639,7 @@ class WritePandasOperation(WritePandasMixin):
         return self._create_temp_object(cursor, self._build_create_stage_sql, qualified, name)
 
     def _upload_to_stage(self, cursor: SnowflakeCursor, stage_location: str) -> tuple[int, int]:
-        """Write DataFrame chunks to Parquet and PUT to stage.
+        """Write DataFrame to Parquet files and PUT them to stage.
 
         Returns (nchunks, nrows).
         """
@@ -582,15 +647,16 @@ class WritePandasOperation(WritePandasMixin):
         nchunks = 0
         nrows = 0
         with TemporaryDirectory() as tmp_dir:
-            for idx, chunk in self._iter_chunks():
-                chunk_path = Path(tmp_dir) / f"file{idx}.txt"
-                chunk.to_parquet(path=chunk_path, compression=cfg.compression, **cfg.parquet_kwargs)
+            files = cfg.df_provider.write_parquet_files(
+                Path(tmp_dir), cfg.chunk_size, cfg.compression, **cfg.parquet_kwargs
+            )
+            for parquet_file in files:
                 nchunks += 1
-                nrows += len(chunk)
+                nrows += parquet_file.nrows
 
                 if not cfg.bulk_upload:
-                    self._put_file(cursor, stage_location, chunk_path)
-                    chunk_path.unlink()
+                    self._put_file(cursor, stage_location, parquet_file.path)
+                    parquet_file.path.unlink()
 
             if cfg.bulk_upload:
                 self._put_directory(cursor, stage_location, tmp_dir)
@@ -655,3 +721,125 @@ class WritePandasOperation(WritePandasMixin):
         column_type_map: dict[str, str] | None,
     ) -> list:
         return cursor.execute(**self._build_copy_into_sql(stage_location, target_location, column_type_map)).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# WritePandasResult
+# ---------------------------------------------------------------------------
+
+
+WritePandasResult = WriteDataFrameResult
+
+
+# ---------------------------------------------------------------------------
+# WritePandasProvider
+# ---------------------------------------------------------------------------
+
+
+class WritePandasProvider:
+    """Reference pandas WriteDataFrameProvider."""
+
+    def __init__(self, df: DataFrame) -> None:
+        self.df = df
+
+    @property
+    def columns(self) -> Sequence[str]:
+        return [str(col) for col in self.df.columns]
+
+    def has_tz_aware_columns(self) -> bool:
+        return any(hasattr(dtype, "tz") and dtype.tz is not None for dtype in self.df.dtypes)
+
+    def is_standard_index(self) -> bool:
+        idx = self.df.index
+        return isinstance(idx, pandas.RangeIndex) and (idx.start == 0 and idx.step == 1)
+
+    def _iter_chunks(self, chunk_size: int) -> Iterator[tuple[int, DataFrame]]:
+        """Yield (index, chunk_df). Empty DataFrame yields (0, empty_df)."""
+        df_height = len(self.df)
+        if df_height == 0 or chunk_size == 0:
+            yield 0, self.df
+            return
+        for idx, start in enumerate(range(0, df_height, chunk_size)):
+            yield idx, self.df.iloc[start : start + chunk_size]
+
+    def write_parquet_files(
+        self,
+        directory: Path,
+        chunk_size: int | None,
+        compression: Literal["gzip", "snappy"],
+        **parquet_kwargs: Any,
+    ) -> Iterator[WriteParquetFileResult]:
+        chunk_size = len(self.df) if chunk_size is None else chunk_size
+        for idx, chunk in self._iter_chunks(chunk_size):
+            path = directory / f"part{idx}.parquet"
+            chunk.to_parquet(path=path, compression=compression, **parquet_kwargs)
+            yield WriteParquetFileResult(path, len(chunk))
+
+
+if TYPE_CHECKING:
+    _: type[WriteDataFrameProvider] = WritePandasProvider
+
+# ---------------------------------------------------------------------------
+# WritePandasConfig
+# ---------------------------------------------------------------------------
+
+
+class WritePandasConfig(WriteDataFrameConfig):
+    """WriteDataFrameConfig that accepts a bare pandas DataFrame."""
+
+    def __init__(
+        self,
+        conn: Connection | AsyncConnection,
+        df: DataFrame,
+        table_name: str,
+        *,
+        database: str | None = None,
+        schema: str | None = None,
+        chunk_size: int | None = None,
+        compression: Literal["gzip", "snappy"] = "gzip",
+        on_error: str = "abort_statement",
+        parallel: int = 4,
+        quote_identifiers: bool = True,
+        infer_schema: bool = False,
+        auto_create_table: bool = False,
+        overwrite: bool = False,
+        table_type: Literal["", "temp", "temporary", "transient"] = "",
+        use_logical_type: bool | None = None,
+        iceberg_config: dict[str, str] | None = None,
+        bulk_upload_chunks: bool = False,
+        use_vectorized_scanner: bool = False,
+        **parquet_kwargs: Any,
+    ) -> None:
+        super().__init__(
+            conn,
+            WritePandasProvider(df),
+            table_name,
+            database=database,
+            schema=schema,
+            chunk_size=chunk_size if chunk_size is not None else len(df),
+            compression=compression,
+            on_error=on_error,
+            parallel=parallel,
+            quote_identifiers=quote_identifiers,
+            infer_schema=infer_schema,
+            auto_create_table=auto_create_table,
+            overwrite=overwrite,
+            table_type=table_type,
+            use_logical_type=use_logical_type,
+            iceberg_config=iceberg_config,
+            bulk_upload_chunks=bulk_upload_chunks,
+            use_vectorized_scanner=use_vectorized_scanner,
+            **parquet_kwargs,
+        )
+
+
+# ---------------------------------------------------------------------------
+# WritePandasOperation
+# ---------------------------------------------------------------------------
+
+
+class WritePandasOperation(WriteDataFrameOperation):
+    """Executes the write_pandas pipeline from a validated WritePandasConfig."""
+
+    def __init__(self, cfg: WritePandasConfig) -> None:
+        super().__init__(cfg)

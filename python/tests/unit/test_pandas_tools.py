@@ -144,8 +144,8 @@ class TestEscapePathForSql:
 class TestGenerateTempName:
     def test_format(self):
         name = generate_temp_name("STAGE")
-        assert name.startswith("__WRITE_PANDAS_STAGE_")
-        assert len(name) > len("__WRITE_PANDAS_STAGE_")
+        assert name.startswith("__WRITE_DATAFRAME_STAGE_")
+        assert len(name) > len("__WRITE_DATAFRAME_STAGE_")
 
 
 class TestConvertValueToSqlOption:
@@ -286,29 +286,81 @@ class TestConfigQualify:
 class TestDataFrameInspection:
     def test_has_tz_aware_columns_false(self):
         cfg = _make_cfg()
-        assert not cfg.has_tz_aware_columns()
+        assert not cfg.df_provider.has_tz_aware_columns()
 
     def test_has_tz_aware_columns_true(self):
         tz_dtype = MagicMock()
         tz_dtype.tz = "UTC"
         cfg = _make_cfg(df=_mock_df(dtypes=[tz_dtype, MagicMock(spec=[])]))
-        assert cfg.has_tz_aware_columns()
+        assert cfg.df_provider.has_tz_aware_columns()
 
-    def test_is_standard_range_index_true(self):
+    def test_is_standard_index_true(self):
         idx = MagicMock()
         idx.start = 0
         idx.step = 1
         with patch.object(_wpo, "pandas", new=MagicMock(RangeIndex=type(idx))):
             cfg = _make_cfg(df=_mock_df(index=idx))
-            assert cfg.is_standard_range_index()
+            assert cfg.df_provider.is_standard_index()
 
-    def test_is_standard_range_index_false_wrong_start(self):
+    def test_is_standard_index_false_wrong_start(self):
         idx = MagicMock()
         idx.start = 5
         idx.step = 1
         with patch.object(_wpo, "pandas", new=MagicMock(RangeIndex=type(idx))):
             cfg = _make_cfg(df=_mock_df(index=idx))
-            assert not cfg.is_standard_range_index()
+            assert not cfg.df_provider.is_standard_index()
+
+
+# ---------------------------------------------------------------------------
+# WritePandasConfig — Iter chunks
+# ---------------------------------------------------------------------------
+
+
+class TestIterChunks:
+    def test_single_chunk(self):
+        cfg = _make_cfg(df=_mock_df(length=5), chunk_size=10)
+        chunks = list(cfg.df_provider._iter_chunks(cfg.chunk_size))
+        assert [idx for idx, _ in chunks] == [0]
+
+    def test_multiple_chunks(self):
+        cfg = _make_cfg(df=_mock_df(length=5), chunk_size=2)
+        chunks = list(cfg.df_provider._iter_chunks(cfg.chunk_size))
+        assert [idx for idx, _ in chunks] == [0, 1, 2]
+
+    def test_empty_df(self):
+        cfg = _make_cfg(df=_mock_df(length=0))
+        chunks = list(cfg.df_provider._iter_chunks(cfg.chunk_size))
+        assert [idx for idx, _ in chunks] == [0]
+
+
+# ---------------------------------------------------------------------------
+# WritePandasConfig — Write Parquet
+# ---------------------------------------------------------------------------
+
+
+class TestWriteParquetFiles:
+    def test_multiple_files(self, tmp_path):
+        cfg = _make_cfg(df=_mock_df(length=5), chunk_size=2)
+        files = list(cfg.df_provider.write_parquet_files(tmp_path, cfg.chunk_size, "gzip"))
+        assert [f.path for f in files] == [
+            tmp_path / "part0.parquet",
+            tmp_path / "part1.parquet",
+            tmp_path / "part2.parquet",
+        ]
+
+    def test_empty_df_yields_one_file(self, tmp_path):
+        cfg = _make_cfg(df=_mock_df(length=0))
+        files = list(cfg.df_provider.write_parquet_files(tmp_path, cfg.chunk_size, "gzip"))
+        assert len(files) == 1
+        cfg.df_provider.df.to_parquet.assert_called_once()
+
+    def test_forwards_compression_and_kwargs(self, tmp_path):
+        cfg = _make_cfg(df=_mock_df(length=0))
+        list(cfg.df_provider.write_parquet_files(tmp_path, cfg.chunk_size, "snappy", engine="pyarrow"))
+        kw = cfg.df_provider.df.to_parquet.call_args.kwargs
+        assert kw["compression"] == "snappy"
+        assert kw["engine"] == "pyarrow"
+
 
 
 # ---------------------------------------------------------------------------
@@ -629,31 +681,6 @@ class TestBuildRenameTableSql:
         result = op._build_rename_table_sql("TMP_TABLE")
         assert "MY_TABLE" not in result["operation"]
         assert "TMP_TABLE" not in result["operation"]
-
-
-# ---------------------------------------------------------------------------
-# Iter chunks
-# ---------------------------------------------------------------------------
-
-
-class TestIterChunks:
-    def test_single_chunk(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(length=5), chunk_size=10)
-        chunks = list(op._iter_chunks())
-        assert len(chunks) == 1
-        assert chunks[0][0] == 0
-
-    def test_multiple_chunks(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(length=5), chunk_size=2)
-        chunks = list(op._iter_chunks())
-        assert len(chunks) == 3
-        assert [idx for idx, _ in chunks] == [0, 1, 2]
-
-    def test_empty_df(self):
-        op: WritePandasOperation = _make_op(df=_mock_df(length=0))
-        chunks = list(op._iter_chunks())
-        assert len(chunks) == 1
-        assert chunks[0][0] == 0
 
 
 # ---------------------------------------------------------------------------
