@@ -1,0 +1,38 @@
+{
+  "name": "Login delayed beyond typical login timeout",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.LOGIN_NAME == 'wiremock_login_delayed')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "fixedDelayMilliseconds": 30000,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_session_token",
+        "masterToken": "mock_master_token",
+        "sessionId": 12345,
+        "validityInSeconds": 3600,
+        "masterValidityInSeconds": 14400,
+        "sessionInfo": {
+          "databaseName": "",
+          "schemaName": "",
+          "warehouseName": "",
+          "roleName": ""
+        },
+        "parameters": [
+          {"name": "CLIENT_TELEMETRY_ENABLED", "value": false}
+        ]
+      }
+    }
+  }
+}

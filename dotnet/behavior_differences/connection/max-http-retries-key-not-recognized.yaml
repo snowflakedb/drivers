@@ -1,0 +1,18 @@
+name: "maxHttpRetries is not recognized; use retry_max_attempts"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  The connection string accepts maxHttpRetries (or MAXHTTPRETRIES) as the maximum
+  number of HTTP retries for login and query requests. Values from 1 to 6 are
+  raised to 7, and 0 means no retry limit.
+new_driver_behavior: |
+  maxHttpRetries is not a recognized connection parameter. The HTTP retry limit is
+  retry_max_attempts, which counts every attempt including the first (default 6).
+  A connection that sets only maxHttpRetries keeps the default limit.
+rationale: |
+  The shared core exposes the retry limit as retry_max_attempts for every
+  wrapper. The .NET wrapper does not map the old driver's maxHttpRetries spelling
+  onto that key.

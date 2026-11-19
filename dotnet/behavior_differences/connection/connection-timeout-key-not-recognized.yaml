@@ -1,0 +1,16 @@
+name: "connection_timeout is not recognized; use login_timeout"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  The connection string accepts connection_timeout as the login wall-clock timeout
+  in seconds. DbConnection.ConnectionTimeout reports that value.
+new_driver_behavior: |
+  connection_timeout is not a recognized connection parameter. The login wall-clock
+  timeout is login_timeout. A connection that sets only connection_timeout leaves
+  the login timeout at its default.
+rationale: |
+  The shared core uses login_timeout for every wrapper. The .NET wrapper does not
+  map the old driver's connection_timeout spelling onto that key.

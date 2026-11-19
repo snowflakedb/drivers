@@ -1,0 +1,19 @@
+{
+  "name": "Login always returns 503",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data[?(@.LOGIN_NAME == 'wiremock_login_503_always')]"
+      }
+    ]
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "Content-Type": "text/plain"
+    },
+    "body": "Service Temporarily Unavailable"
+  }
+}
