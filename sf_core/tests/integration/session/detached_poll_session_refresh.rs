@@ -10,6 +10,10 @@
 //!   2. GET  /queries/<id>/result      → SessionExpired (390112 or 401)
 //!   3. POST /session/token-request    → 200 with new tokens
 //!   4. GET  /queries/<id>/result      → 200 success=true with data
+//!
+//! A statement can outlive several session tokens. Every poll refreshes its own
+//! expired token; a refreshed token rejected on that same poll is not refreshed
+//! a second time.
 
 use crate::common::mocks::password;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
@@ -132,6 +136,22 @@ fn success_poll_body() -> serde_json::Value {
     })
 }
 
+fn show_databases_poll_body() -> serde_json::Value {
+    json!({
+        "success": true,
+        "data": {
+            "queryId": "detached-test-qid",
+            "queryResultFormat": "json",
+            "rowtype": [{"name": "name", "type": "text", "nullable": true, "length": 16777216, "byteLength": 16777216, "precision": null, "scale": null}],
+            "rowset": [["TEST_DATABASE"]],
+            "total": 1,
+            "returned": 1,
+            "parameters": [],
+            "statementTypeId": 4096
+        }
+    })
+}
+
 struct Poll390112ThenSuccess(AtomicUsize);
 
 impl Poll390112ThenSuccess {
@@ -184,6 +204,88 @@ impl Respond for RefreshResponder {
             "data": {
                 "sessionToken": "refreshed-session-token",
                 "masterToken": "refreshed-master-token",
+                "sessionId": 12345
+            }
+        }))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PollStep {
+    InProgress,
+    Expired390112,
+    Expired401,
+    Success,
+    ShowDatabases,
+    ResultNotFound612,
+}
+
+struct ScriptedPoll {
+    steps: Vec<PollStep>,
+    calls: AtomicUsize,
+}
+
+impl ScriptedPoll {
+    fn new(steps: &[PollStep]) -> Self {
+        Self {
+            steps: steps.to_vec(),
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Respond for ScriptedPoll {
+    fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.steps.get(n).copied().unwrap_or(PollStep::Success) {
+            PollStep::InProgress => ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "code": "333334",
+                "data": {
+                    "queryId": "detached-test-qid",
+                    "getResultUrl": "/queries/detached-test-qid/result",
+                    "rowset": null,
+                    "rowsetBase64": null,
+                    "chunks": null
+                }
+            })),
+            PollStep::Expired390112 => ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "code": "390112",
+                "message": "Your session has expired. Please login again.",
+                "data": {}
+            })),
+            PollStep::Expired401 => ResponseTemplate::new(401),
+            PollStep::ResultNotFound612 => ResponseTemplate::new(200).set_body_json(json!({
+                "success": false,
+                "code": "612",
+                "message": "Result not found",
+                "data": {}
+            })),
+            PollStep::Success => ResponseTemplate::new(200).set_body_json(success_poll_body()),
+            PollStep::ShowDatabases => {
+                ResponseTemplate::new(200).set_body_json(show_databases_poll_body())
+            }
+        }
+    }
+}
+
+struct RotatingRefreshResponder(AtomicUsize);
+
+impl RotatingRefreshResponder {
+    fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+}
+
+impl Respond for RotatingRefreshResponder {
+    fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+        let n = self.0.fetch_add(1, Ordering::SeqCst) + 1;
+        ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "sessionToken": format!("refreshed-session-token-{n}"),
+                "masterToken": format!("refreshed-master-token-{n}"),
                 "sessionId": 12345
             }
         }))
@@ -324,4 +426,264 @@ fn poll_401_retries_only_the_poll_not_the_query_post() {
         second_auth.contains("refreshed-session-token"),
         "second poll should carry the refreshed token, got {second_auth}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tests — one refresh per expiry across a long poll
+// ---------------------------------------------------------------------------
+
+fn poll_tokens(h: &DetachedPollHarness) -> Vec<String> {
+    h.poll_requests()
+        .iter()
+        .map(|r| {
+            r.headers
+                .get("authorization")
+                .expect("every poll must have an Authorization header")
+                .to_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+fn assert_token_per_poll(h: &DetachedPollHarness, expected: &[&str]) {
+    let tokens = poll_tokens(h);
+    assert_eq!(tokens.len(), expected.len(), "poll count, got {tokens:?}");
+    for (index, (actual, wanted)) in tokens.iter().zip(expected).enumerate() {
+        assert!(
+            actual.contains(wanted),
+            "poll {index} should carry {wanted}, got {actual}"
+        );
+    }
+}
+
+#[test]
+fn each_expiry_during_one_poll_gets_its_own_refresh() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::InProgress,
+            PollStep::Success,
+        ]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.connect_and_query().unwrap();
+
+    assert_eq!(h.query_post_count(), 1, "the query must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 2, "expected one refresh per expiry");
+    assert_token_per_poll(
+        &h,
+        &[
+            "mock_session_token",
+            "mock_session_token",
+            "refreshed-session-token-1",
+            "refreshed-session-token-1",
+            "refreshed-session-token-2",
+            "refreshed-session-token-2",
+        ],
+    );
+}
+
+#[test]
+fn a_run_of_expiries_mixing_body_and_http_signals_is_refreshed_each_time() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[
+            PollStep::InProgress,
+            PollStep::Expired401,
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::InProgress,
+            PollStep::Expired401,
+            PollStep::InProgress,
+            PollStep::Success,
+        ]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.connect_and_query().unwrap();
+
+    assert_eq!(h.query_post_count(), 1, "the query must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 3, "expected one refresh per expiry");
+    assert_eq!(h.poll_get_count(), 8);
+}
+
+#[test]
+fn a_refreshed_token_rejected_on_the_same_poll_is_not_refreshed_again() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::Expired390112,
+            PollStep::Success,
+        ]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.client.connect().unwrap();
+    let err = h
+        .client
+        .execute_query_no_unwrap("SELECT 1")
+        .expect_err("a token rejected right after its refresh must fail the query");
+    assert!(
+        err.contains("390112"),
+        "expected GS 390112 on the rejected token, got: {err}"
+    );
+
+    assert_eq!(h.query_post_count(), 1, "the query must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 1, "expected exactly one refresh");
+    assert_eq!(h.poll_get_count(), 3, "no poll after the rejected one");
+}
+
+#[test]
+fn an_expiry_on_the_first_poll_and_a_later_expiry_are_each_refreshed() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[
+            PollStep::Expired390112,
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::Success,
+        ]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.connect_and_query().unwrap();
+
+    assert_eq!(h.query_post_count(), 1, "the query must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 2, "expected one refresh per expiry");
+}
+
+fn two_expiries_script(last: PollStep) -> ScriptedPoll {
+    ScriptedPoll::new(&[
+        PollStep::InProgress,
+        PollStep::Expired390112,
+        PollStep::InProgress,
+        PollStep::Expired401,
+        PollStep::InProgress,
+        last,
+    ])
+}
+
+#[test]
+fn each_expiry_during_an_async_execution_poll_gets_its_own_refresh() {
+    let h = DetachedPollHarness::new(
+        two_expiries_script(PollStep::Success),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.client.connect().unwrap();
+    let stmt = h.client.new_statement();
+    h.client.set_statement_async_execution(&stmt, true);
+    h.client.set_sql_query(&stmt, "SELECT 1");
+    h.client.execute_statement_query(&stmt);
+
+    assert_eq!(h.query_post_count(), 1, "the query must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 2, "expected one refresh per expiry");
+    assert_token_per_poll(
+        &h,
+        &[
+            "mock_session_token",
+            "mock_session_token",
+            "refreshed-session-token-1",
+            "refreshed-session-token-1",
+            "refreshed-session-token-2",
+            "refreshed-session-token-2",
+        ],
+    );
+}
+
+#[test]
+fn each_expiry_during_a_get_objects_poll_gets_its_own_refresh() {
+    let h = DetachedPollHarness::new(
+        two_expiries_script(PollStep::ShowDatabases),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.client.connect().unwrap();
+    h.client.get_catalogs_no_unwrap().unwrap();
+
+    assert_eq!(h.query_post_count(), 1, "the SHOW must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 2, "expected one refresh per expiry");
+    assert_eq!(h.poll_get_count(), 6);
+}
+
+#[test]
+fn a_refreshed_token_rejected_on_the_same_get_objects_poll_is_not_refreshed_again() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[
+            PollStep::InProgress,
+            PollStep::Expired390112,
+            PollStep::Expired390112,
+            PollStep::ShowDatabases,
+        ]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.client.connect().unwrap();
+    let err = h
+        .client
+        .get_catalogs_no_unwrap()
+        .expect_err("a token rejected right after its refresh must fail the call");
+    assert!(
+        err.contains("390112"),
+        "expected GS 390112 on the rejected token, got: {err}"
+    );
+
+    assert_eq!(h.query_post_count(), 1, "the SHOW must not be re-POSTed");
+    assert_eq!(h.refresh_post_count(), 1, "expected exactly one refresh");
+    assert_eq!(h.poll_get_count(), 3, "no poll after the rejected one");
+}
+
+#[test]
+fn refresh_failure_during_a_get_objects_poll_does_not_repost_the_show() {
+    let h = DetachedPollHarness::new(Poll390112ThenSuccess::new(), RefreshFailureResponder);
+
+    h.client.connect().unwrap();
+    let err = h
+        .client
+        .get_catalogs_no_unwrap()
+        .expect_err("get_objects should fail when token refresh fails");
+    assert!(
+        err.contains("390114"),
+        "expected master-token terminal error (GS 390114), got: {err}"
+    );
+
+    assert_eq!(h.query_post_count(), 1, "the SHOW must not be re-POSTed");
+    assert_eq!(
+        h.poll_get_count(),
+        1,
+        "only one poll GET before the refresh fails"
+    );
+}
+
+#[test]
+fn an_async_execution_612_on_the_first_poll_is_resubmitted_once_in_sync_mode() {
+    let h = DetachedPollHarness::new(
+        ScriptedPoll::new(&[PollStep::ResultNotFound612, PollStep::Success]),
+        RotatingRefreshResponder::new(),
+    );
+
+    h.client.connect().unwrap();
+    let stmt = h.client.new_statement();
+    h.client.set_statement_async_execution(&stmt, true);
+    h.client.set_sql_query(&stmt, "SELECT 1");
+    h.client.execute_statement_query(&stmt);
+
+    let async_exec_flags: Vec<bool> = h
+        .mock
+        .received_requests()
+        .into_iter()
+        .filter(|r| r.url.path().contains("query-request"))
+        .map(|r| {
+            serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["asyncExec"]
+                .as_bool()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(async_exec_flags, [true, false]);
+    assert_eq!(h.poll_get_count(), 2);
+    assert_eq!(h.refresh_post_count(), 0);
 }

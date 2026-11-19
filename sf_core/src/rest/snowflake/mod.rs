@@ -2295,18 +2295,40 @@ pub(crate) async fn snowflake_query_with_client_detachable<'a>(
         return result.into();
     }
 
-    // Async mode path (legacy, opt-in)
+    // Async mode path (legacy, opt-in): POST only. The caller polls, so a
+    // session refresh retries the poll instead of submitting again.
     if matches!(execution_mode, QueryExecutionMode::Async) {
-        let result = execute_async_with_fallback(
+        return match async_exec::submit_statement_async(
             client,
             query_parameters,
             session_token,
-            query_input,
-            &retry_policy,
+            &query_input,
             request_id,
+            &retry_policy,
+            None,
         )
-        .await;
-        return result.into();
+        .await
+        {
+            Err(error) => DetachableQueryOutcome::Completed(Err(error)),
+            Ok(submitted) => {
+                let ids = QueryIds {
+                    request_id: Some(request_id),
+                    query_id: submitted.query_id.clone(),
+                };
+                if async_exec::should_poll_for_completion(&submitted.response) {
+                    match submitted.get_result_url {
+                        Some(result_url) => DetachableQueryOutcome::Detached(Box::new(
+                            DetachedContext::new(result_url, &ids),
+                        )),
+                        None => {
+                            DetachableQueryOutcome::Completed(MissingResultUrlSnafu { ids }.fail())
+                        }
+                    }
+                } else {
+                    into_query_result(submitted.response, &ids).into()
+                }
+            }
+        };
     }
 
     // Sync mode (default): use requestId-based retry for connection failures

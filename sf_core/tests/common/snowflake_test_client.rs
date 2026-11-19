@@ -316,6 +316,31 @@ impl SnowflakeTestClient {
             .query_id
     }
 
+    pub fn get_catalogs_no_unwrap(&self) -> Result<(), String> {
+        match self
+            .client
+            .connection_get_objects_blocking(ConnectionGetObjectsRequest {
+                conn_handle: Some(self.conn_handle),
+                depth: 1,
+                catalog: None,
+                db_schema: None,
+                table_name: None,
+                table_type: Vec::new(),
+                column_name: None,
+            }) {
+            Ok(response) => {
+                if let Some(handle) = response.result_set_handle {
+                    self.created_result_sets.lock().unwrap().push(handle);
+                }
+                Ok(())
+            }
+            Err(e) => match *e {
+                ProtoError::Application(e) => Err(format!("Failed to get catalogs: {e:?}")),
+                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+            },
+        }
+    }
+
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
         self.client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {

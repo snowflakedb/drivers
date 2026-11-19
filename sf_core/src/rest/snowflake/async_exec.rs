@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 use url::Url;
 
-const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
+pub(crate) const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
     Duration::from_millis(5),
     Duration::from_millis(10),
     Duration::from_millis(20),
@@ -28,7 +28,7 @@ const QUERY_SEQUENCE_ID: u64 = 1;
 /// returns data or a terminal error.
 ///
 /// TODO: plumb a caller-supplied `statement_timeout` (e.g. configuration) so users can cap long-running queries.
-const STATEMENT_POLL_DEADLINE: Option<Duration> = None;
+pub(crate) const STATEMENT_POLL_DEADLINE: Option<Duration> = None;
 
 /// Metrics for async query execution phases, logged for monitoring and debugging.
 ///
@@ -556,6 +556,33 @@ pub(super) async fn poll_detached_query(
     result
 }
 
+pub(crate) async fn poll_detached_once(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    detached_ctx: &DetachedContext,
+    policy: &RetryPolicy,
+    is_first_poll: bool,
+) -> Result<Option<query_response::Response>, RestError> {
+    let ids = QueryIds {
+        request_id: Some(detached_ctx.request_id),
+        query_id: detached_ctx.query_id.clone(),
+    };
+    let response = poll_query_status(
+        client,
+        query_parameters,
+        session_token,
+        detached_ctx.result_url.as_str(),
+        policy,
+        &ids,
+    )
+    .await?;
+    match handle_poll_response(response, is_first_poll, &ids)? {
+        Some(response) => super::into_query_result(response, &ids).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Error code 612 indicates "Result not found" - typically returned when
 /// trying to poll for file transfer (PUT/GET) results in async mode.
 const SNOWFLAKE_ERROR_RESULT_NOT_FOUND: i32 = 612;
@@ -580,7 +607,7 @@ fn snowflake_failure(
     query_failed_from_response(resp, ids)
 }
 
-fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
+pub(crate) fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
     let base = backoff.base.as_millis() as f64;
     let mut next = if prev_ms <= 0.0 {
         base

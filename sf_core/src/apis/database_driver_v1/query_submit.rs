@@ -1,7 +1,11 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
-use std::sync::{Arc, OnceLock, atomic::Ordering};
+use std::sync::{Arc, atomic::Ordering};
 use std::time::Duration;
+
+use crate::rest::snowflake::async_exec::{
+    INLINE_SHORT_POLL_DELAYS, next_poll_delay_ms, poll_detached_once,
+};
 use tokio::sync::Mutex;
 
 use super::connection::{
@@ -14,7 +18,7 @@ use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::query_response::Response;
 use crate::rest::snowflake::{
     AbortOutcome, DetachableQueryOutcome, DetachedContext, QueryExecutionMode, QueryInput,
-    QueryOptions, RestError, poll_detached_result, snowflake_cancel_query,
+    QueryOptions, RestError, snowflake_cancel_query, snowflake_query_with_client,
     snowflake_query_with_client_detachable,
 };
 use crate::utils::sync::MutexRecoverExt;
@@ -168,70 +172,13 @@ pub(super) async fn submit_query(
     let sql = query_input.sql.clone();
 
     let submit = Box::pin(async {
-        let detached_ctx = Arc::new(OnceLock::<DetachedContext>::new());
-        let attempt = with_session_refresh(conn_arc, |token| {
-            let query_input = query_input.clone();
-            let detached_ctx = Arc::clone(&detached_ctx);
-            async move {
-                let detached = match detached_ctx.get() {
-                    None => {
-                        let detachable_outcome = snowflake_query_with_client_detachable(
-                            &transport.http_client,
-                            &transport.query_parameters,
-                            token.reveal(),
-                            query_input,
-                            QueryOptions {
-                                retry_policy: transport.retry_policy.clone(),
-                                execution_mode,
-                                request_id: Some(request_id),
-                            },
-                            transport.xp_backend.as_deref(),
-                        )
-                        .await;
-
-                        if let DetachableQueryOutcome::Detached(ref detached_inner_ctx) =
-                            detachable_outcome
-                        {
-                            let _ = detached_ctx.set(detached_inner_ctx.as_ref().clone());
-                        }
-                        detachable_outcome
-                    }
-                    Some(detached_ctx_inner) => {
-                        DetachableQueryOutcome::Detached(Box::new(detached_ctx_inner.clone()))
-                    }
-                };
-
-                let result = match detached {
-                    DetachableQueryOutcome::Detached(detached_ctx_inner) =>
-                    // On a session-refresh retry after the POST already
-                    // succeeded and returned a detached query, skip the POST
-                    // and only re-poll.
-                    {
-                        poll_detached_result(
-                            &transport.http_client,
-                            &transport.query_parameters,
-                            token.reveal(),
-                            detached_ctx_inner.as_ref(),
-                            &transport.retry_policy,
-                        )
-                        .await
-                    }
-                    DetachableQueryOutcome::Completed(result) => result,
-                };
-
-                if let Err(RestError::QueryFailed {
-                    query_context: Some(qctx),
-                    ..
-                }) = &result
-                {
-                    let mut conn = conn_arc.lock().await;
-                    conn.query_context_cache
-                        .update_query_context_cache(Some(qctx), None)
-                        .await;
-                }
-                result
-            }
-        });
+        let attempt = post_then_poll(
+            conn_arc,
+            transport,
+            query_input.clone(),
+            execution_mode,
+            request_id,
+        );
 
         match query_timeout {
             Some(budget) => match tokio::time::timeout(budget, attempt).await {
@@ -253,6 +200,171 @@ pub(super) async fn submit_query(
         }
         None => submit.await,
     }
+}
+
+enum Posted {
+    Done(Box<Response>),
+    Poll(DetachedContext),
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum PollRefresh {
+    Submit,
+    ValidSession,
+}
+
+pub(super) async fn poll_until_complete(
+    conn_arc: &Arc<Mutex<Connection>>,
+    http_client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    retry_policy: &RetryPolicy,
+    detached_ctx: DetachedContext,
+    refresh: PollRefresh,
+) -> Result<Response, ApiError> {
+    let mut is_first_poll = true;
+    let mut delay_i = 0;
+    let mut sleep_ms = retry_policy.backoff.base.as_millis() as f64;
+    loop {
+        if !is_first_poll {
+            let delay = if delay_i < INLINE_SHORT_POLL_DELAYS.len() {
+                INLINE_SHORT_POLL_DELAYS[delay_i]
+            } else {
+                sleep_ms = next_poll_delay_ms(sleep_ms, &retry_policy.backoff);
+                Duration::from_millis(sleep_ms as u64)
+            };
+            delay_i += 1;
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+        }
+
+        let poll = {
+            let http_client = http_client.clone();
+            let query_parameters = query_parameters.clone();
+            let retry_policy = retry_policy.clone();
+            let detached_ctx = detached_ctx.clone();
+            move |token: crate::sensitive::SensitiveString| {
+                let http_client = http_client.clone();
+                let query_parameters = query_parameters.clone();
+                let retry_policy = retry_policy.clone();
+                let detached_ctx = detached_ctx.clone();
+                async move {
+                    poll_detached_once(
+                        &http_client,
+                        &query_parameters,
+                        token.reveal(),
+                        &detached_ctx,
+                        &retry_policy,
+                        is_first_poll,
+                    )
+                    .await
+                }
+            }
+        };
+        let step = match refresh {
+            PollRefresh::Submit => with_session_refresh(conn_arc, poll).await?,
+            PollRefresh::ValidSession => with_valid_session(conn_arc, poll).await?,
+        };
+        is_first_poll = false;
+        if let Some(response) = step {
+            return Ok(response);
+        }
+    }
+}
+
+async fn post_then_poll(
+    conn_arc: &Arc<Mutex<Connection>>,
+    transport: &QueryTransport,
+    query_input: QueryInput<'_>,
+    execution_mode: QueryExecutionMode,
+    request_id: uuid::Uuid,
+) -> Result<Response, ApiError> {
+    let posted = with_session_refresh(conn_arc, |token| {
+        let query_input = query_input.clone();
+        async move {
+            match snowflake_query_with_client_detachable(
+                &transport.http_client,
+                &transport.query_parameters,
+                token.reveal(),
+                query_input,
+                QueryOptions {
+                    retry_policy: transport.retry_policy.clone(),
+                    execution_mode,
+                    request_id: Some(request_id),
+                },
+                transport.xp_backend.as_deref(),
+            )
+            .await
+            {
+                DetachableQueryOutcome::Completed(result) => {
+                    result.map(|response| Posted::Done(Box::new(response)))
+                }
+                DetachableQueryOutcome::Detached(detached_ctx) => Ok(Posted::Poll(*detached_ctx)),
+            }
+        }
+    })
+    .await;
+
+    let result = match posted {
+        Ok(Posted::Done(response)) => Ok(*response),
+        Ok(Posted::Poll(detached_ctx)) => {
+            let polled = poll_until_complete(
+                conn_arc,
+                &transport.http_client,
+                &transport.query_parameters,
+                &transport.retry_policy,
+                detached_ctx,
+                PollRefresh::Submit,
+            )
+            .await;
+            match (execution_mode, &polled) {
+                (QueryExecutionMode::Async, Err(ApiError::Query { source, .. }))
+                    if matches!(
+                        source.as_ref(),
+                        RestError::AsyncPollResultNotFound {
+                            is_first_poll: true,
+                            ..
+                        }
+                    ) =>
+                {
+                    with_session_refresh(conn_arc, |token| {
+                        let query_input = query_input.clone();
+                        async move {
+                            snowflake_query_with_client(
+                                &transport.http_client,
+                                transport.query_parameters.clone(),
+                                token.reveal(),
+                                query_input,
+                                QueryOptions {
+                                    retry_policy: transport.retry_policy.clone(),
+                                    execution_mode: QueryExecutionMode::Blocking,
+                                    request_id: Some(request_id),
+                                },
+                                transport.xp_backend.as_deref(),
+                            )
+                            .await
+                        }
+                    })
+                    .await
+                }
+                _ => polled,
+            }
+        }
+        Err(error) => Err(error),
+    };
+
+    if let Err(ApiError::Query { source, .. }) = &result
+        && let RestError::QueryFailed {
+            query_context: Some(qctx),
+            ..
+        } = source.as_ref()
+    {
+        let mut conn = conn_arc.lock().await;
+        conn.query_context_cache
+            .update_query_context_cache(Some(qctx), None)
+            .await;
+    }
+    result
 }
 
 /// Spawned so `QueryTimeout` surfaces at the deadline, not deadline + abort latency.

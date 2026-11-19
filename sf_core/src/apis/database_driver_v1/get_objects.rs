@@ -33,12 +33,17 @@ use super::connection::{Connection, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::like_pattern;
-use super::query_submit::{AbortReport, abort_on_cancel, run_reporting_abort};
+use super::query_submit::{
+    AbortReport, PollRefresh, abort_on_cancel, poll_until_complete, run_reporting_abort,
+};
 use crate::apis::operation_ctx::{CleanupScope, OperationCtx};
 use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::{QueryInput, QueryOptions, RestError, snowflake_query_with_client};
+use crate::rest::snowflake::{
+    DetachableQueryOutcome, QueryInput, QueryOptions, RestError,
+    snowflake_query_with_client_detachable,
+};
 // ---------------------------------------------------------------------------
 // Depth constants (public — used by wrapper to map SQLTables special cases)
 // ---------------------------------------------------------------------------
@@ -773,28 +778,54 @@ async fn execute_show(
     let query_input = QueryInput::new(sql_owned.clone());
     let request_id = uuid::Uuid::new_v4();
 
-    let submit = Box::pin(with_valid_session(conn_ptr, |token| {
+    let submit = Box::pin(async {
         let http_client = http_client.clone();
         let query_parameters = query_parameters.clone();
         let query_input = query_input.clone();
         let retry_policy = retry_policy.clone();
         let xp_backend = xp_backend.clone();
-        async move {
-            snowflake_query_with_client(
-                &http_client,
-                query_parameters,
-                token.reveal(),
-                query_input,
-                QueryOptions {
-                    retry_policy,
-                    request_id: Some(request_id),
-                    ..Default::default()
-                },
-                xp_backend.as_deref(),
-            )
-            .await
+        let posted = with_valid_session(conn_ptr, |token| {
+            let http_client = http_client.clone();
+            let query_parameters = query_parameters.clone();
+            let query_input = query_input.clone();
+            let retry_policy = retry_policy.clone();
+            let xp_backend = xp_backend.clone();
+            async move {
+                match snowflake_query_with_client_detachable(
+                    &http_client,
+                    &query_parameters,
+                    token.reveal(),
+                    query_input,
+                    QueryOptions {
+                        retry_policy,
+                        request_id: Some(request_id),
+                        ..Default::default()
+                    },
+                    xp_backend.as_deref(),
+                )
+                .await
+                {
+                    DetachableQueryOutcome::Completed(result) => result.map(Ok),
+                    DetachableQueryOutcome::Detached(detached_ctx) => Ok(Err(*detached_ctx)),
+                }
+            }
+        })
+        .await?;
+        match posted {
+            Ok(response) => Ok(response),
+            Err(detached_ctx) => {
+                poll_until_complete(
+                    conn_ptr,
+                    &http_client,
+                    &query_parameters,
+                    &retry_policy,
+                    detached_ctx,
+                    PollRefresh::ValidSession,
+                )
+                .await
+            }
         }
-    }));
+    });
     let response = match show_cancel {
         Some((scope, report)) => {
             let cleanup = abort_on_cancel(

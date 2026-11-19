@@ -1654,6 +1654,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionGetQueryStatusRequest,
     ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse>;
+    fn connection_get_objects_blocking(
+        &self,
+        input: ConnectionGetObjectsRequest,
+    ) -> BlockingProtoResult<ConnectionGetObjectsResponse>;
 }
 
 #[allow(clippy::result_large_err)]
@@ -1940,5 +1944,12 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionGetQueryStatusRequest,
     ) -> BlockingProtoResult<ConnectionGetQueryStatusResponse> {
         block_on_client_call(self.connection_get_query_status(input))
+    }
+
+    fn connection_get_objects_blocking(
+        &self,
+        input: ConnectionGetObjectsRequest,
+    ) -> BlockingProtoResult<ConnectionGetObjectsResponse> {
+        block_on_client_call(self.connection_get_objects(input))
     }
 }
