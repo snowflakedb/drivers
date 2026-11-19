@@ -1,0 +1,19 @@
+name: "Activity helpers for client-defined telemetry are public"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The new driver ships the activity helpers as public extension methods on
+  `SnowflakeActivityStarter`, next to `StartActivity`, so an application can complete the
+  activities it starts with the driver's status and event conventions.
+old_driver_behavior: |
+  `ActivityStarter.StartActivity(SnowflakeDbCommand, string)` is public, but
+  `AddTelemetryEvent`, `SetException` and `SetSuccess` live in the internal
+  `ActivityExtensions` class. An application cannot call them and sets status, tags and
+  events on the returned `Activity` through `System.Diagnostics` directly.
+new_driver_behavior: |
+  `SnowflakeActivityStarter` exposes `StartActivity`, `AddTelemetryEvent`, `SetException`
+  and `SetSuccess` as public extension methods, together with the public
+  `ActivitySourceName` and `ClientDefinedTelemetrySourceName` constants.
