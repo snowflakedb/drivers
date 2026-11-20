@@ -26,6 +26,27 @@ flags:
   gosnowflake:
     paths: ["gosnowflake/**"]
     carryforward: true
+  rust-core-nightly:
+    paths: ["sf_core/**"]
+    carryforward: true
+  python-nightly:
+    paths: ["python/src/snowflake/**"]
+    carryforward: true
+  jdbc-nightly:
+    paths: ["jdbc/**"]
+    carryforward: true
+  odbc-nightly:
+    paths: ["odbc/**"]
+    carryforward: true
+  nodejs-nightly:
+    paths: ["nodejs/**"]
+    carryforward: true
+  dotnet-nightly:
+    paths: ["dotnet/**"]
+    carryforward: true
+  gosnowflake-nightly:
+    paths: ["gosnowflake/**"]
+    carryforward: true
 
 
 

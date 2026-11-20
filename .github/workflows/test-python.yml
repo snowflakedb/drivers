@@ -56,6 +56,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       coverage-eligible: ${{ steps.coverage-plan.outputs.eligible }}
+      nightly-coverage-eligible: ${{ steps.coverage-plan.outputs.nightly-eligible }}
       build-targets: ${{ steps.targets.outputs.targets }}
       cleanup-clouds: ${{ steps.cleanup-clouds.outputs.clouds }}
     steps:
@@ -79,13 +80,22 @@ jobs:
         env:
           ACTIVE_MATRIX: ${{ steps.matrix.outputs.matrix }}
         run: |
-          python ci/test_matrix/python_coverage_plan.py "$RUNNER_TEMP/python-coverage-plan.json" >> "$GITHUB_OUTPUT"
+          python ci/test_matrix/python_coverage_plan.py \
+            "$RUNNER_TEMP/python-coverage-plan.json" \
+            "$RUNNER_TEMP/python-nightly-coverage-plan.json" >> "$GITHUB_OUTPUT"
       - name: Upload Python coverage plan
         if: inputs.run_python && steps.coverage-plan.outputs.eligible == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-plan-python
           path: ${{ runner.temp }}/python-coverage-plan.json
+          retention-days: 5
+      - name: Upload nightly Python coverage plan
+        if: inputs.run_python && steps.coverage-plan.outputs.nightly-eligible == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-plan-nightly-python
+          path: ${{ runner.temp }}/python-nightly-coverage-plan.json
           retention-days: 5
       - id: targets
         env:
@@ -802,6 +812,13 @@ jobs:
         uses: ./.github/actions/upload-coverage-artifact
         with:
           name: python-${{ env.MATRIX_KEY }}
+          path: python/reports/coverage-${{ env.MATRIX_KEY }}.xml
+
+      - name: Upload nightly coverage artifact
+        if: ${{ success() && needs.load-python-matrix.outputs.nightly-coverage-eligible == 'true' }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: nightly-python-${{ env.MATRIX_KEY }}
           path: python/reports/coverage-${{ env.MATRIX_KEY }}.xml
 
       # Prune unreachable entries (stale wheels, orphan metadata, old builds) before the cache

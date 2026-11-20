@@ -12,6 +12,8 @@ from __future__ import annotations
 import io
 import itertools
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -22,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import generate_matrix as gm  # noqa: E402
 import python_coverage_plan  # noqa: E402
+import rust_coverage_plan
 
 
 # ---------------------------------------------------------------------------
@@ -1096,6 +1099,43 @@ class PythonMatrixTests(unittest.TestCase):
         changed[0]["cloud_provider"] = "other"
         self.assertFalse(python_coverage_plan.coverage_plan(changed, self.gha)[0])
 
+    def test_nightly_coverage_plan_requires_every_cell_with_distinct_names(self) -> None:
+        eligible, nightly = python_coverage_plan.coverage_plan(self.gha, self.gha, nightly=True)
+        self.assertTrue(eligible)
+        self.assertEqual(len(nightly), len(self.gha))
+        self.assertTrue(all(name.startswith("coverage-nightly-python-") for name in nightly))
+        baseline = python_coverage_plan.coverage_plan(self.gha, self.gha)[1]
+        self.assertTrue(set(nightly).isdisjoint(baseline))
+        for level in ("pr", "merge", "merge_queue"):
+            self.assertFalse(python_coverage_plan.coverage_plan(gm.filter_active(self.gha, level), self.gha, nightly=True)[0])
+
+    def test_nightly_coverage_plan_cli_only_emits_full_scope_on_main(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "python-coverage-plan.json"
+            nightly = root / "python-nightly-coverage-plan.json"
+            for event, ref, expected in (
+                ("schedule", "refs/heads/main", True),
+                ("workflow_dispatch", "refs/heads/main", True),
+                ("pull_request", "refs/pull/1/merge", False),
+                ("workflow_dispatch", "refs/heads/feature", False),
+                ("push", "refs/heads/main", False),
+            ):
+                if nightly.exists():
+                    nightly.unlink()
+                env = dict(os.environ, ACTIVE_MATRIX=json.dumps(self.gha), GITHUB_EVENT_NAME=event, GITHUB_REF=ref)
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).parent / "python_coverage_plan.py"), str(baseline), str(nightly)],
+                    env=env, capture_output=True, text=True, check=True,
+                )
+                with self.subTest(event=event, ref=ref):
+                    self.assertIn("eligible=true\n", result.stdout)
+                    self.assertIn("nightly-eligible=" + str(expected).lower(), result.stdout)
+                    self.assertEqual(nightly.exists(), expected)
+                    self.assertEqual(len(json.loads(baseline.read_text())["artifacts"]), len(gm.filter_active(self.gha, "pr")))
+                    if expected:
+                        self.assertEqual(len(json.loads(nightly.read_text())["artifacts"]), len(self.gha))
+
     def test_sdist_py_has_no_wheel_artifact(self) -> None:
         offenders = [
             r for r in self.gha
@@ -1399,6 +1439,106 @@ class CoreMatrixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.gha = gm.generate(CORE_PATH, "core")
+
+    def test_comparison_coverage_plan_has_same_two_cells_at_every_scope(self) -> None:
+        expected = [
+            "coverage-rust-macos-arm-aws",
+            "coverage-rust-ubuntu-x64-aws",
+        ]
+        for level in ("pr", "merge", "nightly"):
+            with self.subTest(level=level):
+                eligible, artifacts = rust_coverage_plan.coverage_plan(
+                    gm.filter_active(self.gha, level), self.gha
+                )
+                self.assertTrue(eligible)
+                self.assertEqual(artifacts, expected)
+        self.assertFalse(
+            rust_coverage_plan.coverage_plan(
+                gm.filter_active(self.gha, "merge_queue"), self.gha
+            )[0]
+        )
+
+    def test_coverage_plan_rejects_missing_changed_or_duplicate_cells(self) -> None:
+        rows = gm.filter_active(self.gha, "pr")
+        self.assertFalse(rust_coverage_plan.coverage_plan(rows[1:], self.gha)[0])
+        changed = [dict(row) for row in rows]
+        changed[0]["cargo_flags"] = "--all-features"
+        self.assertFalse(rust_coverage_plan.coverage_plan(changed, self.gha)[0])
+        changed[0] = dict(rows[0], cloud_provider="azure")
+        self.assertFalse(rust_coverage_plan.coverage_plan(changed, self.gha)[0])
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            rust_coverage_plan.coverage_plan(rows + [rows[0]], self.gha)
+
+    def test_nightly_coverage_plan_requires_all_six_unix_cells(self) -> None:
+        eligible, artifacts = rust_coverage_plan.coverage_plan(
+            self.gha, self.gha, nightly=True
+        )
+        self.assertTrue(eligible)
+        self.assertEqual(
+            set(artifacts),
+            {
+                "coverage-nightly-rust-" + platform + "-" + cloud
+                for platform in ("ubuntu-x64", "macos-arm")
+                for cloud in ("aws", "gcp", "azure")
+            },
+        )
+        baseline = rust_coverage_plan.coverage_plan(self.gha, self.gha)[1]
+        self.assertTrue(set(artifacts).isdisjoint(baseline))
+        for row in self.gha:
+            if row.get("coverage"):
+                with self.subTest(platform=row["name"], cloud=row["cloud_provider"]):
+                    active = [other for other in self.gha if other != row]
+                    self.assertFalse(
+                        rust_coverage_plan.coverage_plan(active, self.gha, nightly=True)[0]
+                    )
+
+    def test_coverage_plan_cli_only_emits_nightly_reports_on_main(self) -> None:
+        for event, ref, level, eligible, nightly_eligible in (
+            ("pull_request", "refs/pull/1/merge", "pr", True, False),
+            ("pull_request", "refs/pull/1/merge", "nightly", True, False),
+            ("merge_group", "refs/heads/gh-readonly-queue/main/pr-1", "merge_queue", False, False),
+            ("push", "refs/heads/main", "merge", True, False),
+            ("schedule", "refs/heads/main", "nightly", True, True),
+            ("workflow_dispatch", "refs/heads/main", "nightly", True, True),
+            ("workflow_dispatch", "refs/heads/main", "pr", True, False),
+            ("workflow_dispatch", "refs/heads/feature", "nightly", True, False),
+        ):
+            with (
+                self.subTest(event=event, ref=ref, level=level),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                baseline = Path(directory) / "rust-coverage-plan.json"
+                nightly = Path(directory) / "rust-nightly-coverage-plan.json"
+                env = dict(
+                    os.environ,
+                    ACTIVE_MATRIX=json.dumps(gm.filter_active(self.gha, level)),
+                    GITHUB_EVENT_NAME=event,
+                    GITHUB_REF=ref,
+                )
+                result = subprocess.run(
+                    [sys.executable, str(Path(__file__).parent / "rust_coverage_plan.py"), str(baseline), str(nightly)],
+                    env=env, capture_output=True, text=True, check=True,
+                )
+                self.assertIn("eligible=" + str(eligible).lower() + "\n", result.stdout)
+                self.assertIn("nightly-eligible=" + str(nightly_eligible).lower(), result.stdout)
+                self.assertEqual(baseline.exists(), eligible)
+                self.assertEqual(nightly.exists(), nightly_eligible)
+                if eligible:
+                    self.assertEqual(len(json.loads(baseline.read_text())["artifacts"]), 2)
+                if nightly_eligible:
+                    self.assertEqual(len(json.loads(nightly.read_text())["artifacts"]), 6)
+
+    def test_comparison_report_precedes_nightly_only_tests(self) -> None:
+        workflow = (gm.REPO_ROOT / ".github/workflows/test-rust-core.yml").read_text()
+        proxy = workflow.index("- name: Run live-proxy e2e tests")
+        snapshot = workflow.index("- name: Generate PR-comparable lcov coverage report")
+        long_tests = workflow.index("- name: Run long-running tests")
+        full_report = workflow.index("- name: Generate lcov coverage report")
+        self.assertLess(proxy, snapshot)
+        self.assertLess(snapshot, long_tests)
+        self.assertLess(long_tests, full_report)
+        self.assertIn("path: coverage-pr/lcov.info", workflow)
+        self.assertIn("name: nightly-rust-${{ matrix.name }}-${{ matrix.cloud_provider }}", workflow)
 
     def test_pr_has_all_four_cells(self) -> None:
         names = {r["name"] for r in self.gha if r["trigger_level"] == "pr"}

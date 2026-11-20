@@ -206,6 +206,7 @@ jobs:
               - 'ci/test_matrix/models/core_fips.py'
               - 'ci/test_matrix/mappings/core.py'
               - 'ci/test_matrix/mappings/core_fips.py'
+              - 'ci/test_matrix/rust_coverage_plan.py'
               - 'ci/fips/check_linked_crypto.py'
               - 'ci/fips/release_evidence.py'
               - 'ci/fips/test_check_linked_crypto.py'

@@ -53,6 +53,8 @@ jobs:
       windows_x86_active: ${{ steps.split.outputs.windows_x86_active }}
       windows_arm_cloud: ${{ steps.split.outputs.windows_arm_cloud }}
       windows_x86_cloud: ${{ steps.split.outputs.windows_x86_cloud }}
+      coverage-eligible: ${{ steps.coverage-plan.outputs.eligible }}
+      nightly-coverage-eligible: ${{ steps.coverage-plan.outputs.nightly-eligible }}
     steps:
       - uses: actions/checkout@v7
       - id: read
@@ -80,6 +82,29 @@ jobs:
           # (job is skipped via the *_active gate in that case anyway).
           echo "windows_arm_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-arm-nonfips"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
           echo "windows_x86_cloud=$(printf '%s' "$FULL" | jq -r 'map(select(.name == "windows-x86"))[0].cloud_provider // "aws"')" >> "$GITHUB_OUTPUT"
+
+      - id: coverage-plan
+        if: inputs.run_rust_core
+        env:
+          ACTIVE_MATRIX: ${{ steps.read.outputs.matrix }}
+        run: |
+          python ci/test_matrix/rust_coverage_plan.py \
+            "$RUNNER_TEMP/rust-coverage-plan.json" \
+            "$RUNNER_TEMP/rust-nightly-coverage-plan.json" >> "$GITHUB_OUTPUT"
+      - name: Upload Rust coverage plan
+        if: inputs.run_rust_core && steps.coverage-plan.outputs.eligible == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-plan-rust
+          path: ${{ runner.temp }}/rust-coverage-plan.json
+          retention-days: 5
+      - name: Upload nightly Rust coverage plan
+        if: inputs.run_rust_core && steps.coverage-plan.outputs.nightly-eligible == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-plan-nightly-rust
+          path: ${{ runner.temp }}/rust-nightly-coverage-plan.json
+          retention-days: 5
 
   load-fips-matrix:
     runs-on: ubuntu-latest
@@ -787,6 +812,28 @@ jobs:
           pipx install 'mitmproxy==12.2.3'
           mitmdump --version
 
+      # Real PUT/GET through a genuine mitmdump proxy (see PR description for why).
+      # Runs whenever this job runs (PR, push, schedule) — the test itself is ~4s;
+      # the only real cost is the shared compile the coverage step above already pays.
+      # Filters on the `mitmdump_proxy` substring in the test *names* (not the
+      # `proxy_live_mitm` file path), so a file rename can't make this match nothing.
+      - name: Run live-proxy e2e tests (aws + azure + gcp)
+        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
+        timeout-minutes: 15
+        env:
+          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
+            -- --ignored mitmdump_proxy
+
+      - name: Generate PR-comparable lcov coverage report
+        if: ${{ success() && needs.load-core-matrix.outputs.coverage-eligible == 'true' && matrix.trigger_level == 'pr' }}
+        continue-on-error: true
+        run: |
+          mkdir -p coverage-pr
+          cargo llvm-cov report --locked --package sf_core --lcov --output-path coverage-pr/lcov.info
+
       # Long-running tests: real-cloud tests that are too slow for every PR but
       # must pass on nightly. Tests opt in by being #[ignore]d AND carrying `large_`
       # in the name (parallel to the `flaky_` convention above, but blocking —
@@ -807,21 +854,6 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
             -- --ignored large_
-
-      # Real PUT/GET through a genuine mitmdump proxy (see PR description for why).
-      # Runs whenever this job runs (PR, push, schedule) — the test itself is ~4s;
-      # the only real cost is the shared compile the coverage step above already pays.
-      # Filters on the `mitmdump_proxy` substring in the test *names* (not the
-      # `proxy_live_mitm` file path), so a file rename can't make this match nothing.
-      - name: Run live-proxy e2e tests (aws + azure + gcp)
-        if: matrix.os == 'ubuntu-latest' && (matrix.cloud_provider == 'aws' || matrix.cloud_provider == 'azure' || matrix.cloud_provider == 'gcp')
-        timeout-minutes: 15
-        env:
-          TEST_CLOUD_PROVIDER: ${{ matrix.cloud_provider }}
-        run: |
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --locked --no-report --package sf_core ${{ matrix.cargo_flags }} \
-            -- --ignored mitmdump_proxy
 
       # Report step is best-effort and gated on actually having coverage data. If the
       # build/run step failed at compilation (before any test ran), target/llvm-cov-target/
@@ -847,10 +879,17 @@ jobs:
           fi
 
       - name: Upload coverage artifact
-        if: ${{ !cancelled() }}
+        if: ${{ success() && needs.load-core-matrix.outputs.coverage-eligible == 'true' && matrix.trigger_level == 'pr' }}
         uses: ./.github/actions/upload-coverage-artifact
         with:
           name: rust-${{ matrix.name }}-${{ matrix.cloud_provider }}
+          path: coverage-pr/lcov.info
+
+      - name: Upload nightly coverage artifact
+        if: ${{ success() && needs.load-core-matrix.outputs.nightly-coverage-eligible == 'true' }}
+        uses: ./.github/actions/upload-coverage-artifact
+        with:
+          name: nightly-rust-${{ matrix.name }}-${{ matrix.cloud_provider }}
           path: lcov.info
 
       # NOTE: profraw/profdata cleanup and llvm-cov-target/ removal happen inside
