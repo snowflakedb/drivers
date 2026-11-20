@@ -110,9 +110,9 @@ pub(crate) struct AcquiredOAuthToken {
     /// Refresh token returned by the IdP, when issued. Persisted by the
     /// flow itself; the wiring layer does not consume it directly.
     pub(crate) refresh_token: Option<SensitiveString>,
-    /// Present iff DPoP was negotiated. Carries the JWK JSON so the
-    /// Snowflake login-request can reuse the same key when signing.
-    pub(crate) dpop_jwk_json: Option<SensitiveString>,
+    /// Present iff DPoP was negotiated. The same key signs the Snowflake
+    /// login request's DPoP proof.
+    pub(crate) dpop_key: Option<DPoPKey>,
     /// IdP-reported lifetime of the access token, when present. Snowflake
     /// drives session validity itself, so this is informational only.
     #[allow(dead_code)]
@@ -380,10 +380,10 @@ async fn try_cache_short_circuit(
         return None;
     };
 
-    // Drift B.11: when DPoP is enabled, look up the bundled cache entry
-    // first. The bundle carries both the access token and the JWK JSON
-    // so the same DPoP key can sign the Snowflake login leg without
-    // re-running the interactive flow.
+    // When DPoP is enabled, look up the bundled cache entry first. The
+    // bundle carries both the access token and the JWK JSON so the same
+    // DPoP key can sign the Snowflake login without re-running the
+    // interactive flow.
     if config.flow_options.enable_dpop
         && let Some((cached_at, jwk_json)) = token::try_get_cached_oauth_dpop_bundled(
             idp_url,
@@ -394,17 +394,15 @@ async fn try_cache_short_circuit(
         )
         .await
     {
-        // Validate the cached JWK before handing the bundle back to
-        // the caller. A corrupt JWK would only surface later when
-        // the Snowflake-login DPoP signing path tries to rehydrate
-        // the key, so fail fast here and evict the bad entry.
+        // Parse the cached JWK here, so a corrupt entry is evicted instead
+        // of failing the Snowflake login later.
         match dpop::DPoPKey::from_jwk_json(jwk_json.reveal()) {
-            Ok(_) => {
+            Ok(key) => {
                 tracing::debug!("OAuth access token served from DPoP-bundled cache");
                 return Some(AcquiredOAuthToken {
                     access_token: cached_at,
                     refresh_token: None,
-                    dpop_jwk_json: Some(jwk_json),
+                    dpop_key: Some(key),
                     expires_in: None,
                 });
             }
@@ -438,7 +436,7 @@ async fn try_cache_short_circuit(
         return Some(AcquiredOAuthToken {
             access_token: cached,
             refresh_token: None,
-            dpop_jwk_json: None,
+            dpop_key: None,
             expires_in: None,
         });
     }
@@ -670,15 +668,10 @@ async fn run_interactive_flow(
         .map(SensitiveString::from);
     let expires_in = response.expires_in();
 
-    let dpop_jwk_json = match dpop_key.as_ref() {
-        Some(k) => Some(k.to_jwk_json()?),
-        None => None,
-    };
-
     Ok(AcquiredOAuthToken {
         access_token,
         refresh_token,
-        dpop_jwk_json,
+        dpop_key,
         expires_in,
     })
 }
@@ -734,19 +727,13 @@ async fn refresh_access_token(
         .filter(|s| !s.is_empty())
         .map(SensitiveString::from);
 
-    // Drift B.12: serialize the DPoP JWK alongside the new access token
-    // so `persist_access_token` takes the bundled-cache write path
-    // (DPoP key + access token lives under the bundled entry, not
-    // `OAUTH_ACCESS_TOKEN`).
-    let dpop_jwk_json = match dpop_key {
-        Some(k) => Some(k.to_jwk_json()?),
-        None => None,
-    };
-
+    // Keep the DPoP key with the new access token, so `persist_access_token`
+    // writes the bundled cache entry (DPoP key + access token) rather than
+    // `OAUTH_ACCESS_TOKEN`.
     Ok(AcquiredOAuthToken {
         access_token,
         refresh_token,
-        dpop_jwk_json,
+        dpop_key: dpop_key.cloned(),
         expires_in: response.expires_in(),
     })
 }
@@ -903,14 +890,21 @@ async fn persist_access_token(
         return;
     }
 
-    if let Some(jwk_json) = acquired.dpop_jwk_json.as_ref().map(SensitiveString::reveal) {
+    if let Some(key) = acquired.dpop_key.as_ref() {
+        let jwk_json = match key.to_jwk_json() {
+            Ok(jwk_json) => jwk_json,
+            Err(error) => {
+                tracing::warn!(%error, "Failed to serialize the DPoP key; not caching the access token");
+                return;
+            }
+        };
         token::store_oauth_dpop_bundled(
             idp_url,
             snowflake_url,
             &config.username,
             role,
             acquired.access_token.reveal(),
-            jwk_json,
+            jwk_json.reveal(),
             token_cache,
         )
         .await;
@@ -1399,7 +1393,7 @@ mod tests {
         .expect("cache hit");
         assert_eq!(acquired.access_token.reveal(), "CACHED-AT");
         assert!(acquired.refresh_token.is_none());
-        assert!(acquired.dpop_jwk_json.is_none());
+        assert!(acquired.dpop_key.is_none());
     }
 
     #[tokio::test]

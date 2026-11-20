@@ -975,7 +975,7 @@ pub(crate) async fn auth_request_data(
             // With DPoP, the OAuth key also signs the Snowflake login proof;
             // the server checks it against the `jkt` in the access token
             // (RFC 9449).
-            data.dpop_key = oauth_dpop_key(acquired.dpop_jwk_json)?;
+            data.dpop_key = acquired.dpop_key;
         }
         // Client Credentials is external-IdP only and tokens are
         // intentionally not cached. On Snowflake error codes
@@ -991,7 +991,7 @@ pub(crate) async fn auth_request_data(
             data.authenticator = Some(authenticator::OAUTH.to_string());
             data.oauth_type = Some("OAUTH_CLIENT_CREDENTIALS".to_string());
             // See the authorization code branch above.
-            data.dpop_key = oauth_dpop_key(acquired.dpop_jwk_json)?;
+            data.dpop_key = acquired.dpop_key;
         }
         LoginMethod::WorkloadIdentity(cfg) => {
             // Verify the host is a recognized Snowflake endpoint before
@@ -1350,19 +1350,6 @@ async fn complete_duo_challenge(
 struct DPoPSigner {
     key: crate::crypto::dpop::DPoPKey,
     url: Url,
-}
-
-/// The OAuth flow's DPoP key, parsed once from the JWK it hands over.
-fn oauth_dpop_key(
-    jwk_json: Option<SensitiveString>,
-) -> Result<Option<crate::crypto::dpop::DPoPKey>, RestError> {
-    jwk_json
-        .map(|json| {
-            crate::crypto::dpop::DPoPKey::from_jwk_json(json.reveal())
-                .map_err(oauth::OAuthError::from)
-        })
-        .transpose()
-        .context(OAuthFlowSnafu)
 }
 
 #[tracing::instrument(
