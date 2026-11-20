@@ -1,6 +1,6 @@
 //! GetObjects engine — implements the ADBC-shaped `ConnectionGetObjects` RPC.
 //!
-//! This is the shared metadata engine used by all driver wrappers (ODBC, JDBC, ADBC).
+//! This metadata engine is exposed through the core RPC; in-repo wrappers do not call it.
 //! It executes `SHOW` commands against Snowflake and returns a nested Arrow result set.
 //!
 //! ## Depth constants
@@ -41,8 +41,8 @@ use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
-    DetachableQueryOutcome, QueryInput, QueryOptions, RestError,
-    snowflake_query_with_client_detachable,
+    DetachableQueryOutcome, OBJECT_NOT_FOUND, QueryInput, QueryOptions,
+    SHARED_DATABASE_UNAVAILABLE, SHOW_NO_MATCH, snowflake_query_with_client_detachable,
 };
 // ---------------------------------------------------------------------------
 // Depth constants (public — used by wrapper to map SQLTables special cases)
@@ -201,8 +201,8 @@ fn escape_dq(s: &str) -> String {
 /// literal backslash must be doubled before the value is wrapped in single
 /// quotes. Order matters: escape `\` first, then `'`. Otherwise a trailing
 /// backslash (e.g. `AB\`) would escape the closing quote and produce an
-/// unterminated literal — which surfaces as SQLSTATE 42000 and is then swallowed
-/// as an empty result set, silently returning wrong (empty) metadata.
+/// unterminated literal — which fails GetObjects with a SQLSTATE 42000 syntax
+/// error.
 fn escape_show_like(pattern: &str) -> String {
     pattern.replace('\\', "\\\\").replace('\'', "\\'")
 }
@@ -218,6 +218,7 @@ type ShowCancel = Option<(CleanupScope, AbortReport)>;
 impl DatabaseDriverV1 {
     /// Cancelling aborts each in-flight `SHOW` by the request id it was submitted
     /// with, and stops a chunk drain that is still reading a result.
+    /// A missing, unauthorized, or unshared scope yields no rows; other SHOW errors fail the call.
     pub async fn connection_get_objects(
         &self,
         operation_ctx: Option<&OperationCtx>,
@@ -714,21 +715,15 @@ async fn execute_scoped_show(
 // SHOW query execution
 // ---------------------------------------------------------------------------
 
-/// SQLSTATEs the legacy ODBC driver treats as "no metadata" for SHOW queries.
-const SHOW_NOT_FOUND_SQLSTATES: &[&str] = &["02000", "42000", "42S02"];
-
-fn is_show_not_found_sql_state(sql_state: Option<&str>) -> bool {
-    sql_state.is_some_and(|s| SHOW_NOT_FOUND_SQLSTATES.contains(&s))
-}
-
-fn api_error_sql_state(err: &ApiError) -> Option<&str> {
-    let ApiError::Query { source, .. } = err else {
-        return None;
-    };
-    let RestError::QueryFailed { sql_state, .. } = source.as_ref() else {
-        return None;
-    };
-    sql_state.as_deref()
+/// Snowflake codes for a missing or unauthorized object (2003), a SHOW with no
+/// match (2043), or a shared database that is no longer available (3030).
+/// SQLSTATE alone is insufficient: 42000 also covers syntax and access errors.
+fn is_show_not_found(err: &ApiError) -> bool {
+    matches!(err, ApiError::Query { .. })
+        && matches!(
+            err.vendor_code(),
+            Some(OBJECT_NOT_FOUND | SHOW_NO_MATCH | SHARED_DATABASE_UNAVAILABLE)
+        )
 }
 
 fn map_execute_show_error(
@@ -736,7 +731,7 @@ fn map_execute_show_error(
     sql: &str,
     log_query_text: bool,
 ) -> Result<Vec<Vec<(String, String)>>, ApiError> {
-    if is_show_not_found_sql_state(api_error_sql_state(&err)) {
+    if is_show_not_found(&err) {
         if log_query_text {
             tracing::info!("SHOW query not found (returning empty): {sql}: {err}");
         } else {
@@ -749,7 +744,7 @@ fn map_execute_show_error(
 }
 
 /// Executes a SHOW query and returns rows as `Vec<Vec<(column_name, value)>>`.
-/// Only maps the legacy "not found / no data" SQLSTATEs to an empty result;
+/// Only maps Snowflake's missing-object / no-match / unshared codes to an empty result;
 /// all other failures propagate as [`ApiError`].
 async fn execute_show(
     conn_ptr: &Arc<Mutex<Connection>>,
@@ -1588,7 +1583,7 @@ fn build_full_columns_schema_list_array(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rest::snowflake::QueryIds;
+    use crate::rest::snowflake::{QueryIds, RestError};
     use arrow::ipc::reader::StreamReader;
 
     // --- Schema contract ---
@@ -1877,12 +1872,28 @@ mod tests {
     }
 
     #[test]
-    fn show_not_found_sql_states_are_recognized() {
-        assert!(is_show_not_found_sql_state(Some("02000")));
-        assert!(is_show_not_found_sql_state(Some("42000")));
-        assert!(is_show_not_found_sql_state(Some("42S02")));
-        assert!(!is_show_not_found_sql_state(Some("42501")));
-        assert!(!is_show_not_found_sql_state(None));
+    fn map_execute_show_error_propagates_other_errors_regardless_of_sql_state() {
+        use snafu::IntoError;
+        for sql_state in ["02000", "42000", "42S02"] {
+            for code in [Some(1003), None] {
+                let err = QuerySnafu.into_error(RestError::QueryFailed {
+                    message: "syntax error".to_string(),
+                    code,
+                    sql_state: Some(sql_state.to_string()),
+                    query_context: None,
+                    ids: QueryIds::default(),
+                    location: snafu::Location::new("test", 1, 1),
+                });
+                let err = map_execute_show_error(err, "SHOW TABLES", false).unwrap_err();
+                let ApiError::Query { source, .. } = err else {
+                    panic!("expected the original query error");
+                };
+                assert!(matches!(
+                    source.as_ref(),
+                    RestError::QueryFailed { code: actual, .. } if *actual == code
+                ));
+            }
+        }
     }
 
     #[test]
@@ -1900,31 +1911,52 @@ mod tests {
     }
 
     #[test]
-    fn map_execute_show_error_swallows_not_found_sql_states() {
+    fn map_execute_show_error_swallows_not_found_codes_with_any_sql_state() {
         use snafu::IntoError;
-        let err = QuerySnafu.into_error(RestError::QueryFailed {
-            message: "does not exist".to_string(),
-            code: Some(2003),
-            sql_state: Some("42S02".to_string()),
-            query_context: None,
-            ids: QueryIds::default(),
-            location: snafu::Location::new("test", 1, 1),
-        });
-        assert!(
-            map_execute_show_error(err, "SHOW TABLES", false)
-                .unwrap()
-                .is_empty()
-        );
+        for code in [2003, 2043, 3030] {
+            for sql_state in [Some("42S02"), Some("42000"), Some("02000"), None] {
+                let err = QuerySnafu.into_error(RestError::QueryFailed {
+                    message: "does not exist".to_string(),
+                    code: Some(code),
+                    sql_state: sql_state.map(str::to_string),
+                    query_context: None,
+                    ids: QueryIds::default(),
+                    location: snafu::Location::new("test", 1, 1),
+                });
+                assert!(
+                    map_execute_show_error(err, "SHOW TABLES", false)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn map_execute_show_error_classifies_xp_backend_vendor_codes() {
+        use snafu::IntoError;
+        for code in [2003, 2043, 3030, 1003, 3001] {
+            let err = QuerySnafu.into_error(RestError::Backend {
+                source: crate::xp_backend::BackendError::new(code, "SHOW failed"),
+                location: snafu::Location::new("test", 1, 1),
+            });
+            let result = map_execute_show_error(err, "SHOW TABLES", false);
+            if matches!(code, 2003 | 2043 | 3030) {
+                assert!(result.unwrap().is_empty());
+            } else {
+                assert_eq!(result.unwrap_err().vendor_code(), Some(code));
+            }
+        }
     }
 
     #[tokio::test]
     async fn missing_show_scope_keeps_other_rows_but_unrelated_errors_fail() {
         use snafu::IntoError;
 
-        let error = |sql_state: &str| {
+        let error = |code, sql_state: &str, message: &str| {
             QuerySnafu.into_error(RestError::QueryFailed {
-                message: "object does not exist or not authorized".to_string(),
-                code: Some(2003),
+                message: message.to_string(),
+                code: Some(code),
                 sql_state: Some(sql_state.to_string()),
                 query_context: None,
                 ids: QueryIds::default(),
@@ -1933,7 +1965,7 @@ mod tests {
         };
         let found = vec![vec![("name".to_string(), "SURVIVING_TABLE".to_string())]];
         let missing = map_execute_show_error(
-            error("42S02"),
+            error(2003, "42S02", "object does not exist or not authorized"),
             "SHOW COLUMNS IN SCHEMA \"DB\".\"DROPPED\"",
             false,
         );
@@ -1946,7 +1978,7 @@ mod tests {
         assert_eq!(rows.into_iter().flatten().collect::<Vec<_>>(), found);
 
         let other = map_execute_show_error(
-            error("42501"),
+            error(3001, "42501", "permission denied"),
             "SHOW COLUMNS IN SCHEMA \"DB\".\"NOT_PERMITTED\"",
             false,
         );

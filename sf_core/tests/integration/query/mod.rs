@@ -1,5 +1,6 @@
 mod abort_query;
 mod concurrent_execution;
+mod get_objects;
 mod json_result_set;
 mod json_result_set_large;
 mod json_result_set_nulls;

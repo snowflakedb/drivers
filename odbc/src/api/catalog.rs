@@ -1451,16 +1451,16 @@ fn is_procedures_empty_result_sql_state(state: &str) -> bool {
 }
 
 /// SQLSTATEs that `SQLTables` SHOW paths map to an empty result set instead of
-/// an error. Matches core GetObjects `SHOW_NOT_FOUND_SQLSTATES` (`02000` /
-/// `42000` / `42S02`) — the legacy "no metadata" treatment for SHOW queries.
+/// an error. Follows legacy ODBC SQLSTATE handling (`02000` / `42000` / `42S02`);
+/// core GetObjects instead classifies missing scopes by Snowflake vendor codes.
 /// Kept separate from [`is_object_not_found_sql_state`] so widening with `02000`
 /// does not change `SQLPrimaryKeys`/`SQLForeignKeys` behavior.
 ///
 /// `42000` specifically: Snowflake raises it when a `SHOW … IN DATABASE/SCHEMA`
 /// names an object that does not exist or the role cannot see (e.g. a catalog
 /// argument resolving to a dropped/invisible database). ODBC contract is to
-/// return zero rows there, not an error, and legacy/core behave the same — so we
-/// keep parity. The residual risk is that these SHOW statements are now
+/// return zero rows there, not an error, so we keep legacy parity.
+/// The residual risk is that these SHOW statements are now
 /// wrapper-constructed (see [`build_show_objects_sql`]): a *builder* bug that
 /// emits malformed SQL would also surface as `42000` and be swallowed as an
 /// empty result rather than a diagnosable error. That path is covered by the
