@@ -55,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      coverage-eligible: ${{ steps.coverage-plan.outputs.eligible }}
       build-targets: ${{ steps.targets.outputs.targets }}
       cleanup-clouds: ${{ steps.cleanup-clouds.outputs.clouds }}
     steps:
@@ -73,6 +74,19 @@ jobs:
           python ci/test_matrix/generate_matrix.py \
             --driver python --event "$GITHUB_EVENT_NAME" --labels "$LABELS" --emit-active $LEVEL_ARG \
             >> "$GITHUB_OUTPUT"
+      - id: coverage-plan
+        if: inputs.run_python
+        env:
+          ACTIVE_MATRIX: ${{ steps.matrix.outputs.matrix }}
+        run: |
+          python ci/test_matrix/python_coverage_plan.py "$RUNNER_TEMP/python-coverage-plan.json" >> "$GITHUB_OUTPUT"
+      - name: Upload Python coverage plan
+        if: inputs.run_python && steps.coverage-plan.outputs.eligible == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-plan-python
+          path: ${{ runner.temp }}/python-coverage-plan.json
+          retention-days: 5
       - id: targets
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -784,7 +798,7 @@ jobs:
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
       - name: Upload coverage artifact
-        if: ${{ !cancelled() }}
+        if: ${{ success() && needs.load-python-matrix.outputs.coverage-eligible == 'true' && matrix.trigger_level == 'pr' }}
         uses: ./.github/actions/upload-coverage-artifact
         with:
           name: python-${{ env.MATRIX_KEY }}

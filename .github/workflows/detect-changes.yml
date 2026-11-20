@@ -298,6 +298,7 @@ jobs:
               - '.github/actions/setup-windows-openssl/**'
               - 'ci/test_matrix/models/python.py'
               - 'ci/test_matrix/mappings/python.py'
+              - 'ci/test_matrix/python_coverage_plan.py'
             python_e2e_integ:
               - 'python/tests/e2e/**'
               - 'python/tests/integ/**'
