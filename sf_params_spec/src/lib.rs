@@ -2094,7 +2094,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         )
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
-        .visible_to(visible_to!(Jdbc, Python))
+        .visible_to(visible_to!(Jdbc, Python, Odbc))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PLATFORM_DETECTION_TIMEOUT_SECONDS.as_str())

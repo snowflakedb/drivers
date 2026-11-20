@@ -188,7 +188,9 @@ impl WrapperPresets {
             serialize_session_operations: true,
             validate_session_token: true,
             use_proxy_env_default: false,
-            chunk_download_read_timeout_default: None,
+            chunk_download_read_timeout_default: Some(Duration::from_secs(
+                DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
+            )),
             trace_encoding: TraceEncoding::FoldIntoDebug,
         }
     }
@@ -847,7 +849,7 @@ mod tests {
         );
         assert_eq!(
             WrapperPresets::odbc().chunk_download_read_timeout_default,
-            None
+            Some(Duration::from_secs(30))
         );
         assert_eq!(
             WrapperPresets::nodejs().chunk_download_read_timeout_default,
