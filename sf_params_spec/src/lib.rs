@@ -397,9 +397,9 @@ pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 120;
 
 pub const DEFAULT_RETRY_TIMEOUT_SECS: u64 = 300;
 
-/// JDBC's default `chunk_download_read_timeout` in seconds. Other wrappers have
-/// no default, so their result chunk downloads run without an inactivity timer.
-pub const JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
+/// Default `chunk_download_read_timeout` in seconds for wrappers that enable
+/// the result chunk download inactivity timer by default.
+pub const DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS: u64 = 30;
 
 /// Common exponential-backoff defaults shared by the HTTP and PUT/GET retry
 /// pipelines. These are the single source of truth: both the `ParamDef`
@@ -2087,15 +2087,14 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description(
-            "JDBC-only. Seconds a result chunk download may receive no data, while waiting \
+            "Seconds a result chunk download may receive no data, while waiting \
              for the response or between body reads, before the download is retried. \
              0 or a negative value disables the timer, and a body that fails is not retried. \
-             When unset, an explicit retry_timeout (HTTP_CLIENT_SOCKET_TIMEOUT) applies, \
-             otherwise 30.",
+             When unset, an explicit retry_timeout applies, otherwise 30.",
         )
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
-        .visible_to(visible_to!(Jdbc))
+        .visible_to(visible_to!(Jdbc, Python))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PLATFORM_DETECTION_TIMEOUT_SECONDS.as_str())

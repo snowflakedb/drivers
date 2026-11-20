@@ -12,7 +12,9 @@ new_driver_behavior: |
   retry_timeout defaults to 300 seconds when unset and bounds each HTTP
   attempt from start until the response body finishes. 0 removes the per-attempt
   limit. ConnectionConfig.retry_timeout and conn.socket_timeout still read back None
-  when the caller does not set them. Result chunk downloads do not use this policy.
+  when the caller does not set them. Result chunk downloads use an inactivity timeout
+  instead (chunk_download_read_timeout, default 30 seconds, or an explicitly set
+  retry_timeout / socket_timeout when chunk_download_read_timeout is unset).
 description: |
   The Python field stays None so generated ConnectionConfig is unchanged. The 300-second
   cap is applied in RetryPolicy::operation when the parameter is absent.

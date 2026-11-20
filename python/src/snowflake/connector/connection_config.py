@@ -52,6 +52,12 @@ class ConnectionConfig(ConnectionConfigMixin):
     authenticator: str | None = None
     """Authenticator type for the connection"""
 
+    chunk_download_read_timeout: int | None = None
+    """Seconds a result chunk download may receive no data, while waiting for the response or between body reads, before
+    the download is retried. 0 or a negative value disables the timer, and a body that fails is not retried. When unset,
+    an explicit retry_timeout applies, otherwise 30.
+    """
+
     client_app_id: str | None = None
     """Driver identity sent as CLIENT_APP_ID in the login request (e.g. PythonConnector, SnowSQL)"""
 

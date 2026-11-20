@@ -490,6 +490,10 @@ impl DatabaseDriverV1 {
                     &resolved_snapshot,
                     self.wrapper_presets.chunk_download_read_timeout_default,
                 );
+                tracing::debug!(
+                    chunk_read_timeout = ?timeout_config.chunk_read_timeout,
+                    "resolved result chunk download idle timeout"
+                );
 
                 let login_parameters = LoginParameters::from_connection_config(
                     &config,
@@ -6614,6 +6618,89 @@ mod tests {
         assert_eq!(
             crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
             Some(Duration::from_secs(600))
+        );
+    }
+
+    #[test]
+    fn python_chunk_read_timeout_follows_connect_resolution() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::python(),
+            ..Default::default()
+        });
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let paths = crate::config::path_resolver::ConfigPaths {
+            config_file: Some(temp_dir.path().join("config.toml")),
+            connections_file: Some(temp_dir.path().join("connections.toml")),
+        };
+        let flavor = ds.wrapper_presets.configuration_flavor;
+        let preset = ds.wrapper_presets.chunk_download_read_timeout_default;
+
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &ParamStore::new(),
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert!(resolved.get_int(param_names::RETRY_TIMEOUT).is_none());
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            Some(Duration::from_secs(30))
+        );
+
+        let mut retry_timeout = ParamStore::new();
+        retry_timeout.insert(
+            param_names::RETRY_TIMEOUT.as_str().to_owned(),
+            Setting::Int(120),
+        );
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &retry_timeout,
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            Some(Duration::from_secs(120))
+        );
+
+        let mut disabled = ParamStore::new();
+        disabled.insert(
+            param_names::RETRY_TIMEOUT.as_str().to_owned(),
+            Setting::Int(0),
+        );
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &disabled,
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            None
+        );
+
+        let mut explicit_chunk = ParamStore::new();
+        explicit_chunk.insert(
+            param_names::RETRY_TIMEOUT.as_str().to_owned(),
+            Setting::Int(120),
+        );
+        explicit_chunk.insert(
+            param_names::CHUNK_DOWNLOAD_READ_TIMEOUT.as_str().to_owned(),
+            Setting::Int(45),
+        );
+        let resolved = crate::config::resolver::resolve_with_paths_for_wrapper(
+            &explicit_chunk,
+            &paths,
+            false,
+            Some(flavor),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
+            Some(Duration::from_secs(45))
         );
     }
 

@@ -1,0 +1,26 @@
+name: "Result chunk downloads use a 30-second inactivity timeout and retry_max_attempts"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  Synchronous result chunk downloads pass a fixed 7-second `DOWNLOAD_TIMEOUT` to `requests`
+  (an inactivity timeout on connect and each socket read) and retry up to 10 attempts
+  (`MAX_DOWNLOAD_RETRY`). Neither value is configurable. `socket_timeout` does not apply
+  to chunk downloads.
+new_driver_behavior: |
+  Result chunk downloads time out after 30 seconds without data while waiting for response
+  headers or between body reads, configurable via `chunk_download_read_timeout` in seconds
+  (or an explicitly set `retry_timeout` / `socket_timeout` when `chunk_download_read_timeout`
+  is unset). `0` or a negative value disables the timer and also disables retries of a body
+  that fails mid-download. Timed-out or interrupted chunk downloads retry up to
+  `retry_max_attempts` total attempts (default 6) using the `retry_backoff_*` backoff curve.
+description: |
+  A result chunk that stalls for 7 to 30 seconds is retried after 7 seconds in the old
+  driver, while the new driver waits up to 30 seconds before retrying. A transfer that
+  keeps receiving data continues past 30 seconds. Both the inactivity timeout and the
+  attempt limit are now configurable. `connect(socket_timeout=N)` fans out to
+  `retry_timeout` and therefore to the chunk inactivity timeout when
+  `chunk_download_read_timeout` is unset. `retry_timeout=0` disables the timer and body
+  retries; the old driver always retried up to 10 times.
