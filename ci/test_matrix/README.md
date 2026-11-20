@@ -91,8 +91,14 @@ only on macOS-arm-aws-py3.13) are not guaranteed to surface at `merge`.
 GHA picks the level from `GITHUB_EVENT_NAME` (`pull_request` → pr,
 `merge_group` → merge_queue, `push` → merge, `schedule` → nightly).
 
-The Python coverage reported to Codecov uses the PR cells at every eligible
-scope, rather than combining a different set of cells on `main` and on PRs.
+The Python and Rust coverage reported to Codecov uses the PR coverage cells
+at every eligible scope, rather than combining a different set of cells on
+`main` and on PRs. Rust's population includes only coverage-producing
+Linux/macOS cells, not Windows or FIPS jobs.
+Successful scheduled or manually dispatched main nightlies also publish the
+full coverage population to `python-nightly` and `rust-core-nightly`, with
+separate completeness manifests. Rust freezes its PR-comparable report
+before scheduled-only tests add coverage to the nightly report.
 See [Code coverage](../COVERAGE.md) for the comparison, baseline and rollout
 details.
 

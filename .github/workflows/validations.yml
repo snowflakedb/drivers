@@ -94,6 +94,9 @@ jobs:
       - name: Run ci/test_matrix unit tests
         run: python -m unittest ci/test_matrix/test_generate_matrix.py
 
+      - name: Run coverage pipeline unit tests
+        run: python -m unittest discover -s ci/NOMIRROR -p 'test_*.py'
+
   test-coverage-report:
     if: >-
       github.repository_owner != 'snowflakedb' &&
