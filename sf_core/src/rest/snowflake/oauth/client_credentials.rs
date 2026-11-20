@@ -93,18 +93,13 @@ pub(crate) async fn acquire_client_credentials(
         return MissingAccessTokenSnafu.fail();
     }
 
-    let dpop_jwk_json = match dpop_key.as_ref() {
-        Some(k) => Some(k.to_jwk_json()?),
-        None => None,
-    };
-
     tracing::info!("OAuth client credentials flow completed");
     // CC tokens MUST NOT be persisted (matches JDBC/.NET/Python/Node);
     // we hand them straight back to the caller.
     Ok(AcquiredOAuthToken {
         access_token,
         refresh_token: None,
-        dpop_jwk_json,
+        dpop_key,
         expires_in: response.expires_in(),
     })
 }
@@ -155,7 +150,7 @@ mod tests {
         assert_eq!(acquired.access_token.reveal(), "AT-CC");
         assert!(acquired.refresh_token.is_none());
         assert_eq!(acquired.expires_in, Some(Duration::from_secs(900)));
-        assert!(acquired.dpop_jwk_json.is_none());
+        assert!(acquired.dpop_key.is_none());
     }
 
     #[tokio::test]
