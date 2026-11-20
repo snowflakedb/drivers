@@ -1,0 +1,16 @@
+name: "Result chunk parser is not pluggable"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The new driver downloads and parses result chunks in sf_core, so the old
+  driver's internal ChunkParserFactory seam has no counterpart in the .NET
+  wrapper.
+old_driver_behavior: |
+  The parser that decodes downloaded result chunks can be replaced, so a
+  caller can change how chunks are parsed or inject parse failures.
+new_driver_behavior: |
+  The parser that decodes downloaded result chunks cannot be replaced. The
+  .NET driver exposes no hook to change how chunks are parsed.
