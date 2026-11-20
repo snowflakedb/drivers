@@ -7,25 +7,25 @@ codecov:
 flags:
   rust-core:
     paths: ["sf_core/**"]
-    carryforward: false
+    carryforward: true
   python:
     paths: ["python/src/snowflake/**"]
-    carryforward: false
+    carryforward: true
   jdbc:
     paths: ["jdbc/**"]
-    carryforward: false
+    carryforward: true
   odbc:
     paths: ["odbc/**"]
-    carryforward: false
+    carryforward: true
   nodejs:
     paths: ["nodejs/**"]
-    carryforward: false
+    carryforward: true
   dotnet:
     paths: ["dotnet/**"]
-    carryforward: false
+    carryforward: true
   gosnowflake:
     paths: ["gosnowflake/**"]
-    carryforward: false
+    carryforward: true
 
 
 
@@ -36,15 +36,46 @@ coverage:
   
   status:
     project:
-      default:
+      default: off
+      rust-core:
         target: auto
         threshold: 1%
-        flags: [rust-core, python, jdbc, odbc, nodejs, dotnet, gosnowflake]
+        flags: [rust-core]
+        flag_coverage_not_uploaded_behavior: exclude
+      python:
+        target: auto
+        threshold: 1%
+        flags: [python]
+        flag_coverage_not_uploaded_behavior: exclude
+      jdbc:
+        target: auto
+        threshold: 1%
+        flags: [jdbc]
+        flag_coverage_not_uploaded_behavior: exclude
+      odbc:
+        target: auto
+        threshold: 1%
+        flags: [odbc]
+        flag_coverage_not_uploaded_behavior: exclude
+      nodejs:
+        target: auto
+        threshold: 1%
+        flags: [nodejs]
+        flag_coverage_not_uploaded_behavior: exclude
+      dotnet:
+        target: auto
+        threshold: 1%
+        flags: [dotnet]
+        flag_coverage_not_uploaded_behavior: exclude
+      gosnowflake:
+        target: auto
+        threshold: 1%
+        flags: [gosnowflake]
         flag_coverage_not_uploaded_behavior: exclude
     patch: off
 
 comment:
-  layout: "header,diff,components,tree"
+  layout: "header,diff,flags,components,tree"
   behavior: default
   require_changes: false
   require_base: true
@@ -53,12 +84,6 @@ comment:
   show_carryforward_flags: false
 
 component_management:
-  default_rules:
-    statuses:
-      - type: project
-        target: auto
-        threshold: 2%
-
   individual_components:
     - component_id: rust-core
       name: "Rust Core"

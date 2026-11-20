@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import generate_matrix as gm  # noqa: E402
+import python_coverage_plan  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1072,6 +1073,28 @@ class PythonMatrixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.gha = gm.generate(PYTHON_PATH, "python")
+
+    def test_coverage_plan_uses_pr_cells_across_matrix_levels(self) -> None:
+        pr = gm.filter_active(self.gha, "pr")
+        eligible, expected = python_coverage_plan.coverage_plan(pr, self.gha)
+        self.assertTrue(eligible)
+        self.assertTrue(expected)
+        self.assertEqual(expected, sorted(python_coverage_plan.artifact_name(row) for row in pr))
+        for level in ("merge", "nightly"):
+            self.assertEqual(
+                python_coverage_plan.coverage_plan(gm.filter_active(self.gha, level), self.gha),
+                (True, expected),
+            )
+        self.assertFalse(
+            python_coverage_plan.coverage_plan(gm.filter_active(self.gha, "merge_queue"), self.gha)[0]
+        )
+
+    def test_coverage_plan_rejects_missing_or_changed_cells(self) -> None:
+        rows = gm.filter_active(self.gha, "pr")
+        self.assertFalse(python_coverage_plan.coverage_plan(rows[1:], self.gha)[0])
+        changed = [dict(row) for row in rows]
+        changed[0]["cloud_provider"] = "other"
+        self.assertFalse(python_coverage_plan.coverage_plan(changed, self.gha)[0])
 
     def test_sdist_py_has_no_wheel_artifact(self) -> None:
         offenders = [
