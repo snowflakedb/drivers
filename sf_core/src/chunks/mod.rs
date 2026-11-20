@@ -56,6 +56,9 @@ pub struct PrefetchConfig {
     /// inactivity timer. Applies only to HTTP downloads; chunks fetched through
     /// an XP backend are not timed by sf_core.
     pub chunk_read_timeout: Option<Duration>,
+    /// Retry policy for HTTP chunk downloads. Chunks fetched through an XP
+    /// backend do not use it.
+    pub chunk_retry_policy: RetryPolicy,
 }
 
 impl Default for PrefetchConfig {
@@ -64,6 +67,7 @@ impl Default for PrefetchConfig {
             prefetch_threads: DEFAULT_PREFETCH_THREADS,
             memory_limit_mb: DEFAULT_MEMORY_LIMIT_MB,
             chunk_read_timeout: None,
+            chunk_retry_policy: RetryPolicy::default(),
         }
     }
 }
@@ -84,6 +88,7 @@ impl PrefetchConfig {
             prefetch_threads,
             memory_limit_mb,
             chunk_read_timeout: None,
+            chunk_retry_policy: RetryPolicy::default(),
         }
     }
 }
@@ -161,7 +166,12 @@ async fn open_json_prefetch(
     PrefetchChunkReader::open(
         Some(initial_future),
         chunk_download_data.into(),
-        ChunkTransport::new(client, config.chunk_read_timeout, xp_backend),
+        ChunkTransport::new(
+            client,
+            config.chunk_read_timeout,
+            config.chunk_retry_policy.clone(),
+            xp_backend,
+        ),
         JsonChunkParser { row_types },
         config,
     )
@@ -224,7 +234,12 @@ pub(crate) async fn arrow_prefetch(
     PrefetchChunkReader::open(
         initial_base64_opt.map(spawn_initial_arrow_decode),
         chunk_download_data,
-        ChunkTransport::new(client, config.chunk_read_timeout, xp_backend),
+        ChunkTransport::new(
+            client,
+            config.chunk_read_timeout,
+            config.chunk_retry_policy.clone(),
+            xp_backend,
+        ),
         ArrowChunkParser,
         config,
     )
@@ -239,7 +254,7 @@ async fn get_initial_chunk_reader(
     initial_base64_opt: Option<&str>,
     chunk_download_data: &mut VecDeque<ChunkDownloadData>,
     client: &Client,
-    read_timeout: Option<Duration>,
+    config: &PrefetchConfig,
     remote_format: ChunkFormatKind,
     row_types: &[RowType],
     xp_backend: Option<Arc<dyn SnowflakeBackend>>,
@@ -254,7 +269,12 @@ async fn get_initial_chunk_reader(
         let first = chunk_download_data
             .pop_front()
             .context(MissingInitialChunkSnafu)?;
-        let transport = ChunkTransport::new(client.clone(), read_timeout, xp_backend);
+        let transport = ChunkTransport::new(
+            client.clone(),
+            config.chunk_read_timeout,
+            config.chunk_retry_policy.clone(),
+            xp_backend,
+        );
         let bytes = transport
             .download_chunk(first)
             .await
@@ -454,7 +474,7 @@ pub async fn fetch_chunks_reader(
                 initial_base64_opt.as_deref(),
                 &mut remote_chunks,
                 &client,
-                prefetch_config.chunk_read_timeout,
+                prefetch_config,
                 ChunkFormatKind::Json,
                 &row_types,
                 xp_backend.clone(),
@@ -522,10 +542,10 @@ pub struct InitialChunkData {
 /// the whole GET with backoff, up to the retry policy's `max_attempts`. Each of
 /// those attempts also runs `execute_with_retry` with the same policy, so a mix
 /// of status or header failures and body stalls can issue up to `max_attempts`
-/// squared GETs. Callers pass [`RetryPolicy::default`]: the connection's
-/// `retry_max_attempts`, `request_timeout`, and `retry_timeout` do not bound
-/// this download. Without a `read_timeout`, there is no inactivity timer and a
-/// body failure is not retried.
+/// squared GETs. [`get_chunk_data`] uses [`RetryPolicy::default`]; the prefetch
+/// pipeline calls [`get_chunk_data_with_policy`] with [`RetryPolicy::chunk_download`].
+/// Without a `read_timeout`, there is no inactivity timer and a body failure is
+/// not retried.
 pub async fn get_chunk_data(
     client: Client,
     chunk: ChunkDownloadData,
@@ -534,7 +554,7 @@ pub async fn get_chunk_data(
     get_chunk_data_with_policy(client, chunk, read_timeout, &RetryPolicy::default()).await
 }
 
-async fn get_chunk_data_with_policy(
+pub(super) async fn get_chunk_data_with_policy(
     client: Client,
     chunk: ChunkDownloadData,
     read_timeout: Option<Duration>,

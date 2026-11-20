@@ -170,8 +170,11 @@ impl RetryPolicy {
     /// Reads the common retry knobs — `retry_max_attempts`, the `retry_backoff_*`
     /// curve, `retry_extra_status_codes`, and `retry_timeout` (as
     /// `per_request_timeout`) — and applies the caller-supplied `max_elapsed`.
-    /// The four public constructors ([`http`](Self::http), [`login`](Self::login),
-    /// [`query`](Self::query), [`logout`](Self::logout)) differ only in that budget.
+    /// The public constructors ([`http`](Self::http), [`login`](Self::login),
+    /// [`query`](Self::query), [`logout`](Self::logout),
+    /// [`chunk_download`](Self::chunk_download)) share those knobs. They differ
+    /// in `max_elapsed`; [`chunk_download`](Self::chunk_download) also clears
+    /// `per_request_timeout`.
     fn operation(params: &ParamStore, max_elapsed: Option<Duration>) -> Self {
         let max_attempts = params
             .get_int(param_names::RETRY_MAX_ATTEMPTS)
@@ -193,8 +196,8 @@ impl RetryPolicy {
     }
 
     /// Retry policy for general HTTP operations — token refresh, `SHOW`,
-    /// result-chunk fetch, query-status polling, and other non-login, non-query
-    /// REST calls.
+    /// query-status polling, and other non-login, non-query REST calls.
+    /// Result-chunk downloads use [`chunk_download`](Self::chunk_download).
     ///
     /// `max_elapsed` is set to `request_timeout` (0/absent ⇒ `None`), giving the
     /// retry loop a self-contained wall-clock budget per request. Login and query
@@ -210,6 +213,20 @@ impl RetryPolicy {
             params,
             read_optional_duration_secs(params, param_names::REQUEST_TIMEOUT),
         )
+    }
+
+    /// Retry policy for result-chunk HTTP downloads.
+    ///
+    /// Reads `retry_max_attempts`, `retry_backoff_*`, and
+    /// `retry_extra_status_codes` from the [`ParamStore`]. `max_elapsed` and
+    /// `per_request_timeout` are `None` so neither `request_timeout` nor
+    /// `retry_timeout` caps the transfer as a whole; socket inactivity is
+    /// bounded separately by [`TimeoutConfig::chunk_read_timeout`].
+    pub fn chunk_download(params: &ParamStore) -> Self {
+        Self {
+            per_request_timeout: None,
+            ..Self::operation(params, None)
+        }
     }
 
     /// Retry policy for the login operation.
@@ -698,6 +715,29 @@ mod tests {
             // Still read the shared knobs (retry_timeout -> per_request_timeout).
             assert_eq!(policy.per_request_timeout, Some(Duration::from_secs(15)));
         }
+    }
+
+    #[test]
+    fn chunk_download_reads_retry_knobs_without_request_or_attempt_deadlines() {
+        let default_policy = RetryPolicy::chunk_download(&ParamStore::new());
+        assert_eq!(default_policy.max_attempts, DEFAULT_RETRY_MAX_ATTEMPTS);
+        assert_eq!(default_policy.max_elapsed, None);
+        assert_eq!(default_policy.per_request_timeout, None);
+
+        let store = params(&[
+            (param_names::RETRY_MAX_ATTEMPTS.as_str(), Setting::Int(4)),
+            (
+                param_names::RETRY_BACKOFF_BASE_MS.as_str(),
+                Setting::Int(500),
+            ),
+            (param_names::REQUEST_TIMEOUT.as_str(), Setting::Int(90)),
+            (param_names::RETRY_TIMEOUT.as_str(), Setting::Int(15)),
+        ]);
+        let policy = RetryPolicy::chunk_download(&store);
+        assert_eq!(policy.max_attempts, 4);
+        assert_eq!(policy.backoff.base, Duration::from_millis(500));
+        assert_eq!(policy.max_elapsed, None);
+        assert_eq!(policy.per_request_timeout, None);
     }
 
     #[test]

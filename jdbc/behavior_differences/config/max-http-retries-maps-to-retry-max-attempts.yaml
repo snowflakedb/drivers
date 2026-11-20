@@ -1,0 +1,18 @@
+name: "maxHttpRetries maps to retry_max_attempts with different default and zero semantics"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `maxHttpRetries` (default 7) caps HTTP retries for all requests, including login
+  and result chunk downloads. The value counts retries after the first attempt.
+  `0` retries indefinitely.
+new_driver_behavior: |
+  `maxHttpRetries` is accepted and sets `retry_max_attempts` (default 6). The value
+  counts total attempts (1 means no retry). `0` is treated as unset and falls back
+  to 6. Result chunk downloads now use this cap as well.
+description: |
+  JDBC keeps the `maxHttpRetries` spelling so existing URLs still set a retry cap.
+  The shared `retry_max_attempts` contract does not reproduce the old default of 7,
+  retry-versus-attempt counting, or 0-means-infinite.

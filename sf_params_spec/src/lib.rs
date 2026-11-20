@@ -1951,7 +1951,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .default(DefaultValue::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64))
         .sensitive(false)
         .auth(false)
-        .description("Maximum total attempts for general HTTP calls (login, query, logout). 1 = no retry")
+        .description("Maximum total attempts for general HTTP calls (login, query, logout) and result chunk downloads. 1 = no retry")
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),

@@ -1666,8 +1666,10 @@ impl Connection {
 
     pub(crate) async fn prefetch_config(&self) -> PrefetchConfig {
         let session_params = self.session_parameters.read().await;
+        let settings = self.effective_settings();
         PrefetchConfig {
             chunk_read_timeout: self.timeout_config.chunk_read_timeout,
+            chunk_retry_policy: RetryPolicy::chunk_download(&settings),
             ..PrefetchConfig::from_session_params(&session_params)
         }
     }
@@ -6613,5 +6615,27 @@ mod tests {
             crate::config::retry::TimeoutConfig::from_params(&resolved, preset).chunk_read_timeout,
             Some(Duration::from_secs(600))
         );
+    }
+
+    #[tokio::test]
+    async fn prefetch_config_reads_chunk_retry_policy_from_effective_settings() {
+        let conn = make_connection_with_settings(vec![
+            (param_names::RETRY_MAX_ATTEMPTS.as_str(), Setting::Int(2)),
+            (
+                param_names::RETRY_BACKOFF_BASE_MS.as_str(),
+                Setting::Int(400),
+            ),
+            (param_names::REQUEST_TIMEOUT.as_str(), Setting::Int(90)),
+            (param_names::RETRY_TIMEOUT.as_str(), Setting::Int(15)),
+        ]);
+
+        let config = conn.prefetch_config().await;
+        assert_eq!(config.chunk_retry_policy.max_attempts, 2);
+        assert_eq!(
+            config.chunk_retry_policy.backoff.base,
+            Duration::from_millis(400)
+        );
+        assert_eq!(config.chunk_retry_policy.max_elapsed, None);
+        assert_eq!(config.chunk_retry_policy.per_request_timeout, None);
     }
 }
