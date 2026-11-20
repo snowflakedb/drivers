@@ -2,6 +2,7 @@
 Unit tests for Connection.
 """
 
+import json
 import logging
 import warnings
 
@@ -9,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from snowflake.connector._internal.binding_converters import ParamStyle
+from snowflake.connector._internal.binding_converters import JsonBindingConverter, ParamStyle
 from snowflake.connector._internal.connection import CURRENT_VERSION_SQL
 from snowflake.connector._internal.errorcode import ER_INVALID_VALUE, ER_INVALID_WIF_SETTINGS
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -2078,3 +2079,49 @@ class TestSetClientPrefetchThreads:
         connection.set_client_prefetch_threads(7)
 
         assert connection.get_client_prefetch_threads() == 7
+
+
+class TestProcessParamsQmarks:
+    """Unit tests for the legacy Connection._process_params_qmarks shim.
+
+    Stored procedures call it and hand the result to ``_snowflake.execute_sql``,
+    so the output must keep the reference connector's binding-dict shape.
+    """
+
+    @pytest.mark.parametrize("params", [None, [], ()])
+    def test_empty_params_return_none(self, connection, params):
+        assert connection._process_params_qmarks(params) is None
+
+    def test_scalars_map_to_positional_bindings(self, connection):
+        assert connection._process_params_qmarks([1, "a", None, True]) == {
+            "1": {"type": "FIXED", "value": "1"},
+            "2": {"type": "TEXT", "value": "a"},
+            "3": {"type": "ANY", "value": None},
+            "4": {"type": "BOOLEAN", "value": "true"},
+        }
+
+    def test_list_maps_to_array_binding(self, connection):
+        assert connection._process_params_qmarks([[1, 2, 3], ["x", "y", "z"]]) == {
+            "1": {"type": "FIXED", "value": ["1", "2", "3"]},
+            "2": {"type": "TEXT", "value": ["x", "y", "z"]},
+        }
+
+    def test_type_hint_tuple_is_honoured(self, connection):
+        assert connection._process_params_qmarks([("TIMESTAMP_NTZ", "2000-01-01 00:00:00")]) == {
+            "1": {"type": "TIMESTAMP_NTZ", "value": "2000-01-01 00:00:00"},
+        }
+
+    def test_matches_server_side_binding_payload(self, connection):
+        params = [1, "01-01-1970", 2.5, b"\x01", None]
+        payload, _ = JsonBindingConverter.serialize_parameters(params)
+
+        assert connection._process_params_qmarks(params) == json.loads(payload)
+
+    def test_accepts_cursor_argument(self, connection):
+        assert connection._process_params_qmarks(["a"], cursor=MagicMock()) == {
+            "1": {"type": "TEXT", "value": "a"},
+        }
+
+    def test_unsupported_type_raises_programming_error(self, connection):
+        with pytest.raises(ProgrammingError):
+            connection._process_params_qmarks([object()])

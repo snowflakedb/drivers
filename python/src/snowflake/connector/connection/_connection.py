@@ -9,13 +9,14 @@ import platform
 import threading
 import warnings
 
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from functools import cached_property
 from io import StringIO
 from typing import Any, TypeVar, cast, overload
 
 from .._common.telemetry import TelemetryClient as _InternalTelemetryClient
 from .._internal.api_client.client_api import core_driver
+from .._internal.binding_converters import JsonBindingConverter
 from .._internal.browser_opener import CallerThreadBrowserOpener, register_browser_opener
 from .._internal.config_utils import create_config_settings_from_dict
 from .._internal.connection import (
@@ -595,6 +596,22 @@ class Connection(ConnectionMixin):
     @backward_compatibility
     def _telemetry(self) -> _InternalTelemetryClient:
         return self._telemetry_client
+
+    @internal_api
+    @backward_compatibility(recommendation="Pass the parameters to `cursor.execute()` instead.")
+    def _process_params_qmarks(
+        self,
+        params: Sequence[Any] | None,
+        cursor: SnowflakeCursorBase | None = None,
+    ) -> dict[str, dict[str, Any]] | None:
+        """Convert qmark parameters to server-side binding dicts, as the reference connector does.
+
+        Python stored procedures pass the result to ``_snowflake.execute_sql``.
+        ``cursor`` is accepted for signature compatibility and is unused.
+        """
+        if not params:
+            return None
+        return JsonBindingConverter._process_params(params)
 
     @property
     def _errorhandler_connection(self) -> Connection:
