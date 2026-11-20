@@ -44,9 +44,9 @@ const UNCOMPRESSED_POINT_BYTES: usize = 1 + 2 * COORD_BYTES;
 /// The keypair lives behind an `Arc` because `EcdsaKeyPair` is not `Clone`
 /// (AWS-LC key objects are deliberately not copyable) while `DPoPContext`
 /// needs an owned handle. Cloning a `DPoPKey` is therefore a refcount bump,
-/// not a key copy. Outside the crate it is an opaque handle.
+/// not a key copy.
 #[derive(Clone)]
-pub struct DPoPKey {
+pub(crate) struct DPoPKey {
     key: Arc<EcdsaKeyPair>,
 }
 
