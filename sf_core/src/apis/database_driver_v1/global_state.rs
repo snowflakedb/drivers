@@ -12,7 +12,7 @@ use super::result_set::ResultSet;
 use super::statement::Statement;
 use super::stream_transfer::{DownloadStream, UploadStreamSession};
 use crate::config::ParamStore;
-use crate::config::param_registry::{JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS, Wrapper};
+use crate::config::param_registry::{DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS, Wrapper};
 use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::{Handle, HandleManager};
@@ -119,8 +119,7 @@ pub struct WrapperPresets {
     /// Inactivity timeout for result chunk downloads when
     /// `chunk_download_read_timeout` is unset. When `Some`, an explicit
     /// `retry_timeout` overrides it; when `None`, chunk downloads have no
-    /// inactivity timer and `retry_timeout` does not apply to them. Only JDBC
-    /// sets it.
+    /// inactivity timer and `retry_timeout` does not apply to them.
     pub chunk_download_read_timeout_default: Option<Duration>,
     /// TRACE encoding for the log callback installed at init.
     /// [`Self::dotnet`] uses [`TraceEncoding::Distinct`]; the other constructors
@@ -166,6 +165,9 @@ impl WrapperPresets {
             optimistic_alter_session_param_cache: true,
             honor_scoped_temp_bind_stage: true,
             use_proxy_env_default: true,
+            chunk_download_read_timeout_default: Some(Duration::from_secs(
+                DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
+            )),
             ..Self::default()
         }
     }
@@ -201,7 +203,7 @@ impl WrapperPresets {
             clear_query_context_on_null_entries: false,
             put_compress_level_default: 6,
             chunk_download_read_timeout_default: Some(Duration::from_secs(
-                JDBC_DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
+                DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
             )),
             ..Self::default()
         }
@@ -831,14 +833,14 @@ mod tests {
     }
 
     #[test]
-    fn only_jdbc_times_out_idle_chunk_downloads_by_default() {
+    fn chunk_download_idle_timeout_default_follows_wrapper() {
         assert_eq!(
             WrapperPresets::jdbc().chunk_download_read_timeout_default,
             Some(Duration::from_secs(30))
         );
         assert_eq!(
             WrapperPresets::python().chunk_download_read_timeout_default,
-            None
+            Some(Duration::from_secs(30))
         );
         assert_eq!(
             WrapperPresets::odbc().chunk_download_read_timeout_default,

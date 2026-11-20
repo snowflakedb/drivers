@@ -18,7 +18,7 @@ new_driver_behavior: |
   explicitly set `HTTP_CLIENT_SOCKET_TIMEOUT`, otherwise 30 seconds. `0` or a negative
   value disables the timer and also disables retries of a body that fails mid-download.
   Retries use `maxHttpRetries` (`retry_max_attempts`, default 6 total attempts) and the
-  `retry_backoff_*` backoff curve. The timeout error names `chunkDownloadReadTimeout`.
+  `retry_backoff_*` backoff curve. The timeout error names `chunk_download_read_timeout`.
 description: |
   A login or query attempt whose response body takes more than five minutes fails where it
   previously completed. A result chunk that stops sending data fails after its retries once

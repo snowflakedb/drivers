@@ -82,6 +82,18 @@ class TestFromKwargs:
         assert "platform_detection_timeout_seconds" not in config._extra
         assert config.to_options()["platform_detection_timeout_seconds"] == 0
 
+    @pytest.mark.parametrize("value", [45, 0])
+    def test_chunk_download_read_timeout_is_a_known_field(self, value):
+        config = ConnectionConfig.from_kwargs(chunk_download_read_timeout=value)
+        assert config.chunk_download_read_timeout == value
+        assert "chunk_download_read_timeout" not in config._extra
+        assert config.to_options()["chunk_download_read_timeout"] == value
+
+    def test_chunk_download_read_timeout_unset_is_not_forwarded(self):
+        config = ConnectionConfig.from_kwargs(user="u")
+        assert config.chunk_download_read_timeout is None
+        assert "chunk_download_read_timeout" not in config.to_options()
+
     def test_unknown_keys_go_to_extra(self):
         config = ConnectionConfig.from_kwargs(user="u", custom_param="value")
         assert config.user == "u"

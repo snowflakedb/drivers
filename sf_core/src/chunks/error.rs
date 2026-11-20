@@ -26,7 +26,7 @@ pub enum ChunkError {
     },
     #[snafu(display(
         "Result chunk download timed out: no data received for {read_timeout:?}. \
-         Check your network connection or proxy, or increase chunkDownloadReadTimeout"
+         Check your network connection or proxy, or increase chunk_download_read_timeout"
     ))]
     ChunkReadTimeout {
         read_timeout: std::time::Duration,
