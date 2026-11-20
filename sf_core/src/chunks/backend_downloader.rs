@@ -11,6 +11,7 @@ use reqwest::Client;
 
 use super::http_downloader::HttpChunkDownloader;
 use super::prefetch::DownloadChunk;
+use crate::config::retry::RetryPolicy;
 use crate::xp_backend::SnowflakeBackend;
 
 use super::ChunkDownloadData;
@@ -60,6 +61,7 @@ impl ChunkTransport {
     pub(crate) fn new(
         client: Client,
         read_timeout: Option<Duration>,
+        retry_policy: RetryPolicy,
         xp_backend: Option<Arc<dyn SnowflakeBackend>>,
     ) -> Self {
         match xp_backend {
@@ -67,6 +69,7 @@ impl ChunkTransport {
             None => Self::Http(HttpChunkDownloader {
                 client,
                 read_timeout,
+                retry_policy,
             }),
         }
     }
@@ -246,6 +249,7 @@ mod tests {
         let transport = ChunkTransport::new(
             Client::new(),
             None,
+            RetryPolicy::default(),
             Some(Arc::clone(&backend) as Arc<dyn SnowflakeBackend>),
         );
 
@@ -262,7 +266,7 @@ mod tests {
 
     #[test]
     fn chunk_transport_falls_back_to_http_without_a_registered_backend() {
-        let transport = ChunkTransport::new(Client::new(), None, None);
+        let transport = ChunkTransport::new(Client::new(), None, RetryPolicy::default(), None);
         assert!(matches!(transport, ChunkTransport::Http(_)));
     }
 }

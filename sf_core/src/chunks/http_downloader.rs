@@ -4,12 +4,14 @@ use arrow::error::ArrowError;
 use reqwest::Client;
 
 use super::prefetch::DownloadChunk;
-use super::{ChunkDownloadData, get_chunk_data};
+use super::{ChunkDownloadData, get_chunk_data_with_policy};
+use crate::config::retry::RetryPolicy;
 
 #[derive(Clone)]
 pub struct HttpChunkDownloader {
     pub client: Client,
     pub read_timeout: Option<Duration>,
+    pub retry_policy: RetryPolicy,
 }
 
 impl DownloadChunk for HttpChunkDownloader {
@@ -20,8 +22,13 @@ impl DownloadChunk for HttpChunkDownloader {
         skip_all
     )]
     async fn download_chunk(&self, chunk: ChunkDownloadData) -> Result<Vec<u8>, ArrowError> {
-        get_chunk_data(self.client.clone(), chunk, self.read_timeout)
-            .await
-            .map_err(|e| ArrowError::ExternalError(Box::new(e)))
+        get_chunk_data_with_policy(
+            self.client.clone(),
+            chunk,
+            self.read_timeout,
+            &self.retry_policy,
+        )
+        .await
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))
     }
 }
