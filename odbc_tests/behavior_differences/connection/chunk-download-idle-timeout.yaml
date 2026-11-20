@@ -1,0 +1,23 @@
+name: "Result chunk downloads use a 30-second inactivity timeout instead of a 300-second per-attempt deadline"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A result chunk download attempt fails after RETRYTIMEOUT seconds (default 300, minimum
+  300) of wall-clock time, even while data is still arriving, and is retried up to
+  MAXHTTPRETRIES (default 7) while elapsed time since the first attempt stays under
+  RETRYTIMEOUT.
+new_driver_behavior: |
+  Result chunk downloads time out after 30 seconds without data while waiting for response
+  headers or between body reads, configurable via chunk_download_read_timeout in seconds
+  (or an explicitly set retry_timeout when chunk_download_read_timeout is unset; 0 or a
+  negative value disables the timer). Timed-out or interrupted chunk downloads retry up to
+  MaxHttpRetries (retry_max_attempts, default 6 total attempts) using the retry_backoff_*
+  backoff curve.
+description: |
+  A stalled result chunk fails after 30 seconds without data instead of waiting 300 seconds
+  per attempt, while a transfer that keeps receiving data continues past 300 seconds without
+  being cut off. The old driver applies RETRYTIMEOUT as both the libcurl connect timeout
+  and the whole-transfer timeout for each chunk request.

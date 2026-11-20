@@ -12,7 +12,8 @@ new_driver_behavior: |
   retry_timeout defaults to 300 seconds and bounds each HTTP attempt from start
   until the response body finishes. Login still also has LOGIN_TIMEOUT (default 300
   seconds) across retries. 0 removes the per-attempt limit. Result chunk downloads
-  do not use this policy.
+  use an inactivity timeout instead (chunk_download_read_timeout, default 30 seconds,
+  or an explicitly set retry_timeout when chunk_download_read_timeout is unset).
 description: |
   After login, a single HTTP attempt that takes longer than 135 seconds fails on
   the old driver and succeeds here until 300 seconds. During login both drivers
