@@ -23,7 +23,7 @@ internal static class ArrowPtrCodec
     /// <summary>Encodes <paramref name="address"/> in the native pointer size form.</summary>
     internal static ByteString Encode(nint address)
     {
-        if (IntPtr.Size == sizeof(ulong))
+        if (nint.Size == sizeof(ulong))
             return Encode64(address);
 
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
@@ -38,7 +38,7 @@ internal static class ArrowPtrCodec
     internal static nint Decode64(ReadOnlySpan<byte> bytes)
     {
         var address = BinaryPrimitives.ReadUInt64LittleEndian(bytes);
-        if (IntPtr.Size == sizeof(uint) && address > uint.MaxValue)
+        if (nint.Size == sizeof(uint) && address > uint.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(bytes), address, "The address does not fit in a 32-bit pointer.");
 
         return (nint)(nuint)address;
@@ -48,8 +48,8 @@ internal static class ArrowPtrCodec
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="bytes"/> is not <see cref="IntPtr.Size"/> bytes.</exception>
     internal static nint Decode(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.Length != IntPtr.Size)
-            throw new ArgumentOutOfRangeException(nameof(bytes), bytes.Length, $"A native address is {IntPtr.Size} bytes in this process.");
+        if (bytes.Length != nint.Size)
+            throw new ArgumentOutOfRangeException(nameof(bytes), bytes.Length, $"A native address is {nint.Size} bytes in this process.");
 
         return MemoryMarshal.Read<nint>(bytes);
     }

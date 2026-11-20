@@ -16,7 +16,7 @@ public sealed class UnitArrowStreamsTest
     {
         var stream = UnitArrowStreams.Int64Column(1);
 
-        Assert.Equal(IntPtr.Size, stream.Value.Length);
+        Assert.Equal(nint.Size, stream.Value.Length);
         Assert.NotEqual(0, ArrowPtrCodec.Decode(stream.Value.Span));
     }
 

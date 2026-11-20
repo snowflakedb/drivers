@@ -33,13 +33,13 @@ public sealed class ArrowAbiLayoutTest
     [InlineData(nameof(ArrowArrayStreamAbi.PrivateData), 4)]
     public void TestStreamFieldIsPointerAtCDeclarationIndex(string field, int pointerIndex)
     {
-        Assert.Equal(pointerIndex * IntPtr.Size, Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32());
+        Assert.Equal(pointerIndex * nint.Size, Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32());
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestStreamIsFivePointersLikeApacheArrowStream()
     {
-        Assert.Equal(5 * IntPtr.Size, Marshal.SizeOf<ArrowArrayStreamAbi>());
+        Assert.Equal(5 * nint.Size, Marshal.SizeOf<ArrowArrayStreamAbi>());
         Assert.Equal(Marshal.SizeOf<CArrowArrayStream>(), Marshal.SizeOf<ArrowArrayStreamAbi>());
     }
 
@@ -72,7 +72,7 @@ public sealed class ArrowAbiLayoutTest
     [InlineData(nameof(ArrowArrayAbi.PrivateData), 5, 4)]
     public void TestArrayFieldFollowsInt64sAndPointersDeclaredBeforeIt(string field, int int64sBefore, int pointersBefore)
     {
-        var expected = (int64sBefore * Int64Size) + (pointersBefore * IntPtr.Size);
+        var expected = (int64sBefore * Int64Size) + (pointersBefore * nint.Size);
 
         Assert.Equal(expected, Marshal.OffsetOf<ArrowArrayAbi>(field).ToInt32());
     }

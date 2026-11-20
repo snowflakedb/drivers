@@ -25,12 +25,12 @@ internal sealed unsafe class ArrowArrayHandle : SafeHandle
     /// <summary>
     /// Takes ownership of the struct at <paramref name="ptr"/>, which <see cref="CArrowArray.Create"/> allocated.
     /// </summary>
-    internal ArrowArrayHandle(nint ptr) : base(PtrHelper.Zero, ownsHandle: true)
+    internal ArrowArrayHandle(nint ptr) : base(nint.Zero, ownsHandle: true)
     {
         SetHandle(ptr);
     }
 
-    public override bool IsInvalid => handle == PtrHelper.Zero;
+    public override bool IsInvalid => handle == nint.Zero;
 
     /// <summary>The handle's address, for a stream's <c>get_next</c>.</summary>
     /// <exception cref="ObjectDisposedException">The handle is closed.</exception>

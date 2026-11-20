@@ -86,7 +86,7 @@ public sealed class PrepareResultExtensionsTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestReleasingZeroAddressDoesNothing()
     {
-        var stream = new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(new byte[IntPtr.Size]) };
+        var stream = new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(new byte[nint.Size]) };
         var prepareResult = new PrepareResult { Stream = stream };
 
         Assert.Null(Record.Exception(prepareResult.Release));

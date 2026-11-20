@@ -14,13 +14,13 @@ internal unsafe partial class SfCoreNativeMethods : ISfCoreInterop
 
     public void Initialize() => Initialize(SfCoreLibraryLoader.Instance);
 
-    public nuint CallProto(string api, string method, byte* request, UIntPtr requestLen, byte** response, UIntPtr* responseLen) => sf_core_api_call_proto(api, method, request, requestLen, response, responseLen);
+    public nuint CallProto(string api, string method, byte* request, nuint requestLen, byte** response, nuint* responseLen) => sf_core_api_call_proto(api, method, request, requestLen, response, responseLen);
 
-    public ulong CallProtoAsync(string api, string method, byte* request, UIntPtr requestLen, void* userData) => sf_core_api_call_proto_async(api, method, request, requestLen, &ResponseCallback, userData);
+    public ulong CallProtoAsync(string api, string method, byte* request, nuint requestLen, void* userData) => sf_core_api_call_proto_async(api, method, request, requestLen, &ResponseCallback, userData);
 
     public void CallProtoCancel(ulong asyncHandle) => sf_core_api_cancel(asyncHandle);
 
-    public void CallFreeBuffer(byte* buffer, UIntPtr responseLen) => sf_core_free_buffer(buffer, responseLen);
+    public void CallFreeBuffer(byte* buffer, nuint responseLen) => sf_core_free_buffer(buffer, responseLen);
 
     [LibraryImport(LibName, EntryPoint = "sf_core_init_dotnet")]
     private static partial SfCoreInitResult sf_core_init_dotnet(delegate* unmanaged[Cdecl]<uint, byte*, byte*, uint, byte*, byte*, uint> callback);

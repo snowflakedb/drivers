@@ -36,7 +36,7 @@ public sealed class ArrowPtrCodecTest
     public void TestAddressWithTopBitSetIsZeroExtendedToSixtyFourBits()
     {
         nint address = -16;
-        var expected = IntPtr.Size == sizeof(uint) ? 0x0000_0000_FFFF_FFF0UL : 0xFFFF_FFFF_FFFF_FFF0UL;
+        var expected = nint.Size == sizeof(uint) ? 0x0000_0000_FFFF_FFF0UL : 0xFFFF_FFFF_FFFF_FFF0UL;
 
         var encoded = ArrowPtrCodec.Encode64(address);
 
@@ -67,7 +67,7 @@ public sealed class ArrowPtrCodecTest
         BinaryPrimitives.WriteUInt64LittleEndian(bytes, 0x0000_0001_0000_0010UL);
         var encoded = bytes.ToArray();
 
-        if (IntPtr.Size == sizeof(uint))
+        if (nint.Size == sizeof(uint))
             Assert.Throws<ArgumentOutOfRangeException>(() => _ = ArrowPtrCodec.Decode64(encoded));
         else
             Assert.Equal(unchecked((nint)0x0000_0001_0000_0010L), ArrowPtrCodec.Decode64(encoded));
@@ -79,7 +79,7 @@ public sealed class ArrowPtrCodecTest
     [InlineData(-16)]
     public void TestDecodeReadsPointerSizedBytes(int address)
     {
-        var bytes = IntPtr.Size == sizeof(int) ? BitConverter.GetBytes(address) : BitConverter.GetBytes((long)address);
+        var bytes = nint.Size == sizeof(int) ? BitConverter.GetBytes(address) : BitConverter.GetBytes((long)address);
 
         Assert.Equal((nint)address, ArrowPtrCodec.Decode(bytes));
     }
@@ -87,7 +87,7 @@ public sealed class ArrowPtrCodecTest
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void TestDecodeRejectsOtherPointerWidth()
     {
-        var otherWidth = IntPtr.Size == sizeof(int) ? sizeof(long) : sizeof(int);
+        var otherWidth = nint.Size == sizeof(int) ? sizeof(long) : sizeof(int);
 
         Assert.Throws<ArgumentOutOfRangeException>(() => _ = ArrowPtrCodec.Decode(new byte[otherWidth]));
     }

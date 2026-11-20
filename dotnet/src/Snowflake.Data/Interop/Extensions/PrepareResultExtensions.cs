@@ -1,3 +1,4 @@
+using Snowflake.Data.Compatibility;
 using Snowflake.Data.Proto;
 
 namespace Snowflake.Data.Interop.Extensions;
@@ -22,7 +23,7 @@ internal static class PrepareResultExtensions
                 return;
 
             var address = ArrowPtrCodec.Decode(stream.Value.Span);
-            if (address == IntPtr.Zero)
+            if (address == nint.Zero)
                 return;
 
             PrepareResult.Release(address);
