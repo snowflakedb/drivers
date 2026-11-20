@@ -487,7 +487,7 @@ public sealed class NativeArrowStreamTest
     }
 
     internal static void ClearCallback(NativeArrowStream stream, string field) =>
-        Marshal.WriteIntPtr(stream.DangerousGetHandle(), Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32(), IntPtr.Zero);
+        Marshal.WriteIntPtr(stream.DangerousGetHandle(), Marshal.OffsetOf<ArrowArrayStreamAbi>(field).ToInt32(), nint.Zero);
 
     internal static NativeArrowStream Filled(FakeArrowArrayStream producer) => Filled(producer, NullLogger.Instance);
 

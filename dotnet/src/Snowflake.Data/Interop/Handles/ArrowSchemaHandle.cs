@@ -23,12 +23,12 @@ internal sealed unsafe class ArrowSchemaHandle : SafeHandle
     /// <summary>
     /// Takes ownership of the struct at <paramref name="ptr"/>, which <see cref="CArrowSchema.Create"/> allocated.
     /// </summary>
-    internal ArrowSchemaHandle(nint ptr) : base(PtrHelper.Zero, ownsHandle: true)
+    internal ArrowSchemaHandle(nint ptr) : base(nint.Zero, ownsHandle: true)
     {
         SetHandle(ptr);
     }
 
-    public override bool IsInvalid => handle == PtrHelper.Zero;
+    public override bool IsInvalid => handle == nint.Zero;
 
     /// <summary>The handle's address, for a stream's <c>get_schema</c>.</summary>
     /// <exception cref="ObjectDisposedException">The handle is closed.</exception>

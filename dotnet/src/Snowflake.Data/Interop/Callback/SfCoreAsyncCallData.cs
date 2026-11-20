@@ -25,7 +25,7 @@ internal sealed unsafe class SfCoreAsyncCallData : IDisposable
     /// </summary>
     public static SfCoreAsyncCallData FromPtr(void* callDataPointer)
     {
-        var gcHandleHandle = GCHandle.FromIntPtr((IntPtr)callDataPointer);
+        var gcHandleHandle = GCHandle.FromIntPtr((nint)callDataPointer);
         var gcHandle = (GCHandle)gcHandleHandle.Target!;
         return (SfCoreAsyncCallData)gcHandle.Target!;
     }

@@ -37,7 +37,7 @@ internal static class UnitArrowStreams
     /// <summary><paramref name="address"/> as sf_core sends the address of a stream it allocated: native-width bytes.</summary>
     internal static ArrowArrayStreamPtr NativeWidth(nint address)
     {
-        var bytes = IntPtr.Size == sizeof(int) ? BitConverter.GetBytes((int)address) : BitConverter.GetBytes((long)address);
+        var bytes = nint.Size == sizeof(int) ? BitConverter.GetBytes((int)address) : BitConverter.GetBytes((long)address);
         return new ArrowArrayStreamPtr { Value = ByteString.CopyFrom(bytes) };
     }
 }

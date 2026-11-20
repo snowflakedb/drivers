@@ -44,7 +44,7 @@ internal class SfCoreLibraryLoader : ISfCoreLibraryLoader
         return nint.Zero;
     }
 
-    private static bool TryResolveFromOutputDir(out IntPtr resolveLibrary)
+    private static bool TryResolveFromOutputDir(out nint resolveLibrary)
     {
         resolveLibrary = nint.Zero;
         // TODO GetCurrentDirectory() returns the process working directory, not the directory where the assembly (.dll) was deployed. If tests or the host app are launched from a different CWD, this fallback silently searches the wrong location. Use the assembly's own directory
@@ -52,7 +52,7 @@ internal class SfCoreLibraryLoader : ISfCoreLibraryLoader
         return TryResolveFromPath(assemblyDir, out resolveLibrary);
     }
 
-    private static bool TryResolveFromEnvVar(out IntPtr resolveLibrary)
+    private static bool TryResolveFromEnvVar(out nint resolveLibrary)
     {
         resolveLibrary = nint.Zero;
         var envPath = Environment.GetEnvironmentVariable("SF_CORE_LIB_PATH");

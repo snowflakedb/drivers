@@ -13,5 +13,5 @@ internal unsafe interface ISfCoreInterop
 
     void CallProtoCancel(ulong asyncHandle);
 
-    void CallFreeBuffer(byte* buffer, UIntPtr responseLen);
+    void CallFreeBuffer(byte* buffer, nuint responseLen);
 }

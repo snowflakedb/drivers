@@ -60,20 +60,20 @@ internal sealed unsafe class NativeArrowStream : SafeHandle
     /// is non-zero and the stream is live.
     /// </param>
     /// <exception cref="ArgumentException"><paramref name="selfAllocated"/> is false and the stream is already released.</exception>
-    internal NativeArrowStream(nint streamPtr, ILogger logger, bool selfAllocated) : base(PtrHelper.Zero, ownsHandle: true)
+    internal NativeArrowStream(nint streamPtr, ILogger logger, bool selfAllocated) : base(nint.Zero, ownsHandle: true)
     {
         _selfAllocated = selfAllocated;
         if (!_selfAllocated)
         {
             var cPtr = (ArrowArrayStreamAbi*)streamPtr;
-            if (cPtr->Release == IntPtr.Zero)
+            if (cPtr->Release == nint.Zero)
                 throw new ArgumentException("Tried to import an array stream that has already been released.");
         }
         _logger = logger;
         SetHandle(streamPtr);
     }
 
-    public override bool IsInvalid => handle == PtrHelper.Zero;
+    public override bool IsInvalid => handle == nint.Zero;
 
     /// <summary>
     /// Whether the stream has been disposed. Unlike <see cref="SafeHandle.IsClosed"/>, this is true as soon as
