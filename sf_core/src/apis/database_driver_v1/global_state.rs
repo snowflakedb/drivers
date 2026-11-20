@@ -217,6 +217,9 @@ impl WrapperPresets {
             put_compress_level_default: 6,
             validate_session_token: false,
             use_proxy_env_default: true,
+            chunk_download_read_timeout_default: Some(Duration::from_secs(
+                DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS,
+            )),
             ..Self::default()
         }
     }
@@ -848,7 +851,7 @@ mod tests {
         );
         assert_eq!(
             WrapperPresets::nodejs().chunk_download_read_timeout_default,
-            None
+            Some(Duration::from_secs(30))
         );
         assert_eq!(
             WrapperPresets::default().chunk_download_read_timeout_default,

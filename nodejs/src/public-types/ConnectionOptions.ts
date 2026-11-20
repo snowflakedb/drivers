@@ -424,11 +424,11 @@ export type ConnectionOptions = {
   crlOnDiskCache?: boolean;
 
   /**
-   * Per-attempt timeout of login, query, and other requests, in milliseconds. The value is
-   * rounded down to whole seconds; a positive value under 1000 becomes 1 second. 0 and negative
-   * values behave like an omitted timeout.
+   * Per-attempt timeout of login, query, and other requests, and inactivity timeout of result
+   * chunk downloads, in milliseconds. The value is rounded down to whole seconds; a positive
+   * value under 1000 becomes 1 second. 0 and negative values disable the timeout.
    *
-   * @default login attempts time out after 30 seconds; other requests have no per-request timeout
+   * @default 300000 for HTTP requests; 30000 (inactivity) for result chunk downloads
    */
   timeout?: number;
 

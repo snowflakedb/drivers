@@ -3042,17 +3042,22 @@ behavior_differences:
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      Each HTTP request uses axios timeout (default 360000 ms, or the timeout option)
-      as an idle socket timer covering the whole request.
+      Each HTTP request uses axios timeout (default 360000 ms, or the timeout option,
+      which defaults to 90000 ms on ConnectionConfig) as an idle socket timer covering
+      the whole request, including result chunk downloads. Result chunk downloads retry up
+      to 10 times.
     new_driver_behavior: |
-      retry_timeout defaults to 300 seconds and bounds each HTTP attempt from start
-      until the response body finishes. 0 removes the per-attempt limit. Result chunk
-      downloads do not use this policy.
+      retry_timeout defaults to 300 seconds and bounds each ordinary HTTP attempt from
+      start until the response body finishes. 0 removes the per-attempt limit. Result chunk
+      downloads use an inactivity timeout instead: when timeout is set, that duration applies
+      (0 or negative disables the timer); when omitted, chunk downloads time out after 30
+      seconds without data and retry up to 6 total attempts (retry_max_attempts).
     description: |
-      The new driver applies a 300-second wall-clock cap per HTTP attempt, matching
+      The new driver applies a 300-second wall-clock cap per ordinary HTTP attempt, matching
       the old JDBC socket default. A request that stays active longer than 300 seconds
-      fails here; the old driver waited up to its 360-second request timeout. The Node
-      timeout option still maps to retry_timeout.
+      fails here; the old driver waited up to its request timeout. The Node timeout option
+      still maps to retry_timeout and also steers the result chunk download inactivity
+      timeout (defaulting to 30 seconds when omitted, versus 90 seconds in the old driver).
 
   138:
     name: 'Client-credentials token endpoint failures expose different errors'
