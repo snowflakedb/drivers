@@ -1,0 +1,13 @@
+name: "PUT/GET compression type labels are uppercase"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  The new driver reports file-transfer compression types using the shared-core
+  labels, which are uppercase.
+old_driver_behavior: |
+  Source and destination compression types are lowercase, for example "none" and "gzip".
+new_driver_behavior: |
+  Source and destination compression types are uppercase, for example "NONE" and "GZIP".

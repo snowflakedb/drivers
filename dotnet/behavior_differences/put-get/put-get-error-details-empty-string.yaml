@@ -1,0 +1,13 @@
+name: "PUT/GET error-details column is an empty string on success"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The new driver materializes PUT/GET result columns from shared-core text values,
+  so a missing error-details cell is an empty string rather than a database null.
+old_driver_behavior: |
+  `GetString` on the error-details column returns null when the transfer succeeds.
+new_driver_behavior: |
+  `GetString` on the error-details column returns an empty string when the transfer succeeds.
