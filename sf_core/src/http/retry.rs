@@ -417,8 +417,26 @@ fn parse_retry_after(resp: &Response) -> Option<Duration> {
     Some(Duration::from_secs(secs))
 }
 
+fn has_tls_error(e: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(cause) = source {
+        if cause.downcast_ref::<rustls::Error>().is_some() {
+            return true;
+        }
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>()
+            && let Some(inner) = io_err.get_ref()
+        {
+            source = Some(inner);
+            continue;
+        }
+        source = cause.source();
+    }
+    false
+}
+
 fn is_retryable_transport(e: &reqwest::Error) -> bool {
-    e.is_timeout() || e.is_connect() || e.is_request() || e.is_body() || e.is_decode()
+    !has_tls_error(e)
+        && (e.is_timeout() || e.is_connect() || e.is_request() || e.is_body() || e.is_decode())
 }
 
 /// Convenience helper: execute with retries and return the response body as bytes.
@@ -604,6 +622,179 @@ mod jitter_tests {
             "Jitter::None must be deterministic, got {delays:?}"
         );
         assert_eq!(delays[0], 2000.0);
+    }
+}
+
+#[cfg(test)]
+mod transport_classification_tests {
+    use super::*;
+    use crate::tls::test_helpers::tls_server::TlsTestServer;
+    use crate::tls::test_helpers::x509::test_setup;
+    use rustls::CertificateError;
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct Wrapper(io::Error);
+
+    impl std::fmt::Display for Wrapper {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("wrapper")
+        }
+    }
+
+    impl std::error::Error for Wrapper {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    fn revoked_io_error() -> io::Error {
+        io::Error::other(rustls::Error::InvalidCertificate(CertificateError::Revoked))
+    }
+
+    fn reqwest_client(timeout: Duration) -> reqwest::Client {
+        test_setup();
+        reqwest::Client::builder().timeout(timeout).build().unwrap()
+    }
+
+    async fn closed_port_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        format!("http://{addr}/")
+    }
+
+    async fn silent_server_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    fn fast_policy(max_attempts: u32) -> RetryPolicy {
+        RetryPolicy {
+            max_attempts,
+            backoff: BackoffConfig {
+                base: Duration::from_millis(1),
+                factor: 1.0,
+                cap: Duration::from_millis(1),
+                jitter: Jitter::None,
+            },
+            ..RetryPolicy::default()
+        }
+    }
+
+    async fn get_counting_attempts(
+        client: &reqwest::Client,
+        url: &str,
+        policy: &RetryPolicy,
+    ) -> (Result<Response, HttpError>, usize) {
+        let attempts = AtomicUsize::new(0);
+        let result = execute_with_retry_state(
+            |_: &RetryState| {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                client.get(url)
+            },
+            &HttpContext::new(Method::GET, "/"),
+            policy,
+            |r| async move { Ok(r) },
+        )
+        .await;
+        (result, attempts.load(Ordering::SeqCst))
+    }
+
+    #[test]
+    fn should_detect_rustls_error_at_chain_root() {
+        let err = rustls::Error::InvalidCertificate(CertificateError::Revoked);
+        assert!(has_tls_error(&err));
+    }
+
+    #[test]
+    fn should_detect_rustls_error_wrapped_in_io_error() {
+        assert!(has_tls_error(&revoked_io_error()));
+    }
+
+    #[test]
+    fn should_detect_rustls_error_behind_io_error_deeper_in_chain() {
+        assert!(has_tls_error(&Wrapper(revoked_io_error())));
+    }
+
+    #[test]
+    fn should_not_detect_tls_error_in_io_error_without_rustls_cause() {
+        assert!(!has_tls_error(&io::Error::from(
+            io::ErrorKind::ConnectionRefused
+        )));
+        assert!(!has_tls_error(&Wrapper(io::Error::other("reset"))));
+    }
+
+    #[tokio::test]
+    async fn should_classify_connection_refused_as_retryable() {
+        let err = reqwest_client(Duration::from_secs(5))
+            .get(closed_port_url().await)
+            .send()
+            .await
+            .expect_err("closed port must refuse the connection");
+        assert!(err.is_connect(), "expected a connect error, got {err:?}");
+        assert!(is_retryable_transport(&err));
+    }
+
+    #[tokio::test]
+    async fn should_classify_timeout_as_retryable() {
+        let err = reqwest_client(Duration::from_millis(100))
+            .get(silent_server_url().await)
+            .send()
+            .await
+            .expect_err("silent server must time out");
+        assert!(err.is_timeout(), "expected a timeout, got {err:?}");
+        assert!(is_retryable_transport(&err));
+    }
+
+    #[tokio::test]
+    async fn should_classify_untrusted_certificate_as_not_retryable() {
+        let server = TlsTestServer::spawn_self_signed().await;
+        let err = reqwest_client(Duration::from_secs(5))
+            .get(server.url("/"))
+            .send()
+            .await
+            .expect_err("self-signed certificate must be rejected");
+        assert!(err.is_connect(), "expected a connect error, got {err:?}");
+        assert!(!is_retryable_transport(&err));
+    }
+
+    #[tokio::test]
+    async fn should_retry_connection_refused_until_max_attempts() {
+        let client = reqwest_client(Duration::from_secs(5));
+        let url = closed_port_url().await;
+
+        let (result, attempts) = get_counting_attempts(&client, &url, &fast_policy(3)).await;
+
+        assert!(
+            matches!(result, Err(HttpError::Transport { .. })),
+            "expected a transport error, got {result:?}"
+        );
+        assert_eq!(attempts, 3);
+    }
+
+    #[tokio::test]
+    async fn should_not_retry_when_tls_handshake_fails() {
+        let client = reqwest_client(Duration::from_secs(5));
+        let server = TlsTestServer::spawn_self_signed().await;
+
+        let (result, attempts) =
+            get_counting_attempts(&client, &server.url("/"), &fast_policy(3)).await;
+
+        assert!(
+            matches!(result, Err(HttpError::Transport { .. })),
+            "expected a transport error, got {result:?}"
+        );
+        assert_eq!(attempts, 1);
+        assert_eq!(server.handshakes(), 1);
     }
 }
 

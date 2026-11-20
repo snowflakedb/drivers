@@ -2172,6 +2172,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_not_retry_crl_download_or_handshake_when_certificate_is_revoked() {
+        use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
+        use crate::crl::config::CertRevocationCheckMode;
+        use crate::http::retry::{HttpContext, execute_with_retry};
+        use crate::tls::config::TlsConfig;
+        use crate::tls::create_tls_client_with_config;
+        use crate::tls::test_helpers::tls_server::RevokedLeafFixture;
+        use std::time::Duration;
+
+        let fixture = RevokedLeafFixture::start().await;
+        let client = create_tls_client_with_config(
+            TlsConfig {
+                custom_root_store_path: Some(fixture.root_pem_path().to_path_buf()),
+                crl_config: CrlConfig {
+                    check_mode: CertRevocationCheckMode::Enabled,
+                    enable_memory_caching: false,
+                    enable_disk_caching: false,
+                    allow_certificates_without_crl_url: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            crate::crl::CrlManager::new().connection_crl(),
+            RootStoreProvider::new(),
+        )
+        .unwrap();
+        let policy = RetryPolicy {
+            backoff: BackoffConfig {
+                base: Duration::from_millis(1),
+                factor: 1.0,
+                cap: Duration::from_millis(1),
+                jitter: Jitter::None,
+            },
+            ..RetryPolicy::default()
+        };
+        let target_url = fixture.server.url("/session/v1/login-request");
+        let http_ctx =
+            HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
+
+        let err = execute_with_retry(
+            || client.post(&target_url),
+            &http_ctx,
+            &policy,
+            |r| async move { Ok(r) },
+        )
+        .await
+        .expect_err("revoked cert must fail");
+
+        assert_eq!(
+            fixture.server.handshakes(),
+            1,
+            "revoked cert must not retry TLS handshakes"
+        );
+        assert_eq!(
+            fixture.crl_downloads().await,
+            1,
+            "revoked cert must download CRL only once"
+        );
+        assert!(
+            format!("{err:?}").contains("end-entity certificate revoked"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn should_emit_crl_stats_when_the_download_returns_not_found() {
         let f = crl_fixture_with(
             CrlBytes::Raw(b"missing".to_vec()),
