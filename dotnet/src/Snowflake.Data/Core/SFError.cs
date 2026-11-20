@@ -2,7 +2,7 @@
 
 using Snowflake.Data.Attributes;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Core;
 
 public enum SFError
 {

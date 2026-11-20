@@ -1,3 +1,5 @@
+using Snowflake.Data.Client;
+
 namespace Snowflake.Data.Core.Errors;
 
 /// <summary>

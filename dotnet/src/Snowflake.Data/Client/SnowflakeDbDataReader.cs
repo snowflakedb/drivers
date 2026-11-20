@@ -9,7 +9,7 @@ using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Telemetry;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 /// <summary>
 /// Reads the rows of a Snowflake query result, one row at a time.

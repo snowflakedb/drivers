@@ -1,4 +1,5 @@
 using Snowflake.Data.Compatibility;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Extensions;
 
 namespace Snowflake.Data.Tests.Core.Extensions;

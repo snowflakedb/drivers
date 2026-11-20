@@ -1,4 +1,5 @@
 using System.Globalization;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.DataConversion.ResultSetConversion;
 using Snowflake.Data.Core.Errors;
 

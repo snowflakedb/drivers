@@ -1,3 +1,4 @@
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 
 namespace Snowflake.Data.Tests.Core.Conversion;

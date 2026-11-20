@@ -1,7 +1,7 @@
 using System.Data;
 using System.Data.Common;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbTransaction : DbTransaction
 {

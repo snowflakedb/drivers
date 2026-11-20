@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using NSubstitute.Extensions;
+using Snowflake.Data.Client;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Core.Extensions;

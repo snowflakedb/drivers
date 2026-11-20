@@ -1,5 +1,7 @@
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Client;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 
 namespace Snowflake.Data.Tests.E2E;

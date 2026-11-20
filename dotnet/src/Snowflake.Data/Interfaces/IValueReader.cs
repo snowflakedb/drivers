@@ -1,3 +1,5 @@
+using Snowflake.Data.Core;
+
 namespace Snowflake.Data.Interfaces;
 
 /// <summary>

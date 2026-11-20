@@ -1,3 +1,5 @@
+using Snowflake.Data.Client;
+
 namespace Snowflake.Data.Core.Errors;
 
 /// <summary>A failure reported with a Snowflake vendor code, as the server reports query errors.</summary>

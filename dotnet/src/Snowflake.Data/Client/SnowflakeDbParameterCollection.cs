@@ -1,7 +1,7 @@
 using System.Collections;
 using System.Data.Common;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbParameterCollection : DbParameterCollection
 {

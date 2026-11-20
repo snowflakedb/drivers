@@ -1,12 +1,8 @@
 using System.Data;
 using System.Data.Common;
 using System.Security;
-using System.Threading;
-using System.Threading.Tasks;
-using Snowflake.Data.Core;
 
-
-namespace Snowflake.Data;
+namespace Snowflake.Data.Interfaces;
 
 public interface ISnowflakeDbConnection : IDbConnection
 {

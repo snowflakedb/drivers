@@ -1,7 +1,7 @@
 using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbDriver
 {

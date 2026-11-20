@@ -1,8 +1,10 @@
+extern alias OldDriver;
 using System.Data.Common;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
 namespace Snowflake.Data.Tests.E2E;
 

@@ -1,3 +1,5 @@
+using Snowflake.Data.Client;
+
 namespace Snowflake.Data.Tests;
 
 public sealed class SnowflakeDbDriverTest

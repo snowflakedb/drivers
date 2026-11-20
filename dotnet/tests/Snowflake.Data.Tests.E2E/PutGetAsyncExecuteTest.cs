@@ -1,3 +1,4 @@
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.Utilities;
 

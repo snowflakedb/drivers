@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Diagnostics;
+using Snowflake.Data.Client;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 

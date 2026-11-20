@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Snowflake.Data.Client;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Interop.Callback;
 using Snowflake.Data.Interop.Handles;

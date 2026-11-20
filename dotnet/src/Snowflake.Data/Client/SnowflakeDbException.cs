@@ -1,6 +1,7 @@
 using System.Data.Common;
+using Snowflake.Data.Core;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 // TODO SNOW-4382591 this is just a PoC to get foot into the door. It will be completely overhauled. It's just to settle contract.
 public sealed class SnowflakeDbException : DbException
