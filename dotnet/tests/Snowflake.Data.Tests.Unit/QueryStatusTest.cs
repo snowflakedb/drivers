@@ -1,4 +1,6 @@
+using Snowflake.Data.Client;
 using Snowflake.Data.Core;
+using Snowflake.Data.Interfaces;
 
 namespace Snowflake.Data.Tests;
 

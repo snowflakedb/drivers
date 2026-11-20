@@ -1,9 +1,10 @@
 using System.Data;
 using System.Data.Common;
+
 // ReSharper disable UnusedMember.Global
 // ReSharper disable UnusedParameter.Local
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public class SnowflakeDbDataAdapter : DbDataAdapter, IDbDataAdapter
 {

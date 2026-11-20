@@ -1,4 +1,5 @@
 using Apache.Arrow;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Interfaces;
 

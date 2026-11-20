@@ -1,3 +1,5 @@
+using Snowflake.Data.Client;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Config;
 using Snowflake.Data.Tests.Utilities;
 

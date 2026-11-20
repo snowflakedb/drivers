@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbParameter : DbParameter
 {

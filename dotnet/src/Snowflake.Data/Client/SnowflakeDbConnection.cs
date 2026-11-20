@@ -3,13 +3,12 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Security;
-using Snowflake.Data.Core;
 using Snowflake.Data.Core.Extensions;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Interop;
 using Snowflake.Data.Proto;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection, IConnectionHandleWrapper
 {

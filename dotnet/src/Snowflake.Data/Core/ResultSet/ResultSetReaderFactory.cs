@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Snowflake.Data.Client;
 using Snowflake.Data.Core.DataConversion.ResultSetConversion;
 using Snowflake.Data.Core.Session;
 using Snowflake.Data.Interfaces;

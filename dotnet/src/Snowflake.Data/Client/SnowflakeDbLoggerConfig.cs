@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Snowflake.Data.Logging;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public sealed class SnowflakeDbLoggerConfig
 {

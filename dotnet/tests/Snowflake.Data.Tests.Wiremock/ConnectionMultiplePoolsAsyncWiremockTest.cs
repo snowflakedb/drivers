@@ -1,7 +1,8 @@
+extern alias OldDriver;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using OldSnowflakeDbConnectionPool = Snowflake.Data.Client.SnowflakeDbConnectionPool;
+using OldSnowflakeDbConnectionPool = OldDriver::Snowflake.Data.Client.SnowflakeDbConnectionPool;
 
 namespace Snowflake.Data.Tests.Wiremock;
 

@@ -1,9 +1,10 @@
-using System.Data;
+extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Security;
-using OldQueryStatus = Snowflake.Data.Core.QueryStatus;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
+using Snowflake.Data.Interfaces;
+using OldQueryStatus = OldDriver::Snowflake.Data.Core.QueryStatus;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
 
 namespace Snowflake.Data.Tests.E2E.Legacy;
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Snowflake.Data.Client;
 using Snowflake.Data.Logging;
 using Snowflake.Data.Tests.Logging;
 

@@ -2,6 +2,7 @@ using Apache.Arrow;
 using Google.Protobuf;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Core.ResultSet;
 using Snowflake.Data.Proto;

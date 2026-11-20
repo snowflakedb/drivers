@@ -16,7 +16,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Snowflake.Data" Version="*" />
+    <PackageReference Include="Snowflake.Data" Version="*">
+      <Aliases>OldDriver</Aliases>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

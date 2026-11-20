@@ -1,5 +1,6 @@
 using Apache.Arrow;
 using Google.Protobuf;
+using Snowflake.Data.Client;
 using Snowflake.Data.Proto;
 using Snowflake.Data.Tests.Utilities;
 

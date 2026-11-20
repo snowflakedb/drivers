@@ -2,6 +2,7 @@ using Apache.Arrow;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.DataConversion.ResultSetConversion;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Core.ResultSet;

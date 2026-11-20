@@ -1,3 +1,5 @@
+using Snowflake.Data.Interfaces;
+
 namespace Snowflake.Data.Tests;
 
 public interface ITestConnectionFactory

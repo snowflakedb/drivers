@@ -1,7 +1,8 @@
-using System.Data;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using Snowflake.Data.Client;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Interfaces;
 

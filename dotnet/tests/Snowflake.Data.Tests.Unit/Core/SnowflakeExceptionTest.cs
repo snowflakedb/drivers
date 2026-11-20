@@ -1,4 +1,5 @@
 using NSubstitute;
+using Snowflake.Data.Client;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Core.Extensions;

@@ -8,7 +8,7 @@ using Snowflake.Data.Core.Errors;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Telemetry;
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 /// <summary>
 /// Represents a SQL statement to execute against Snowflake.

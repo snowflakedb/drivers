@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Snowflake.Data.Client;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Dummies;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
@@ -130,7 +131,7 @@ public sealed class AsyncMethodInvariantsTest
         {
             [AssembliesMetadata.RootAssembly] =
             [
-                $"{nameof(SnowflakeDbCommand)}.cs"
+                $"Client/{nameof(SnowflakeDbCommand)}.cs"
             ],
             [AssembliesMetadata.TestsAssembly] = ExpectedDummyExceptions2,
             [AssembliesMetadata.TestsCommonsAssembly] =
@@ -258,7 +259,7 @@ public sealed class AsyncMethodInvariantsTest
         {
             [AssembliesMetadata.RootAssembly] =
             [
-                "Core/SyncOverAsync.cs:20: task.GetAwaiter().GetResult()",
+                "Core/SyncOverAsync.cs:22: task.GetAwaiter().GetResult()",
             ],
             [AssembliesMetadata.TestsAssembly] = ExpectedDummyExceptions4,
         };

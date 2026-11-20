@@ -1,7 +1,7 @@
 // TODO
 // ReSharper disable UnusedType.Global
 // ReSharper disable UnusedMember.Global
-namespace Snowflake.Data;
+namespace Snowflake.Data.Client;
 
 public interface ISnowflakeCredentialManager
 {

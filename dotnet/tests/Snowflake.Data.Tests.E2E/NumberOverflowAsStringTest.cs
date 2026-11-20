@@ -1,10 +1,12 @@
+extern alias OldDriver;
 using System.Data.Common;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbDataAdapter = Snowflake.Data.SnowflakeDbDataAdapter;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbDataAdapter = Snowflake.Data.Client.SnowflakeDbDataAdapter;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbDataAdapter = Snowflake.Data.Client.SnowflakeDbDataAdapter;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbDataAdapter = OldDriver::Snowflake.Data.Client.SnowflakeDbDataAdapter;
 
 namespace Snowflake.Data.Tests.E2E;
 

@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Snowflake.Data.Client;
 using Snowflake.Data.Interop.Callback;
 using Snowflake.Data.Logging;
 

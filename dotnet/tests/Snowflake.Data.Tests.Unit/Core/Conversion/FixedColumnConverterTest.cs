@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 using Apache.Arrow;
+using Snowflake.Data.Core;
 using Snowflake.Data.Core.DataConversion.ResultSetConversion;
 using Snowflake.Data.Core.Errors;
 

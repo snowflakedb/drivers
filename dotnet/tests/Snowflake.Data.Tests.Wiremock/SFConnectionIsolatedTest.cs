@@ -1,12 +1,13 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Reflection;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
 namespace Snowflake.Data.Tests.Wiremock;
 

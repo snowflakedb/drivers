@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using Snowflake.Data.Client;
+
 // ReSharper disable UnusedType.Global
 // ReSharper disable UnusedMember.Global
 // ReSharper disable UnusedParameter.Global
 
-namespace Snowflake.Data;
+namespace Snowflake.Data.Telemetry;
 
 public static class SnowflakeActivityStarter
 {

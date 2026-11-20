@@ -1,8 +1,9 @@
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Config;
 using Snowflake.Data.Tests.E2E.Config;
 using Snowflake.Data.Tests.E2E.Legacy;
 using Snowflake.Data.Tests.Utilities;
-using NewSnowflakeDbConnection = Snowflake.Data.SnowflakeDbConnection;
+using NewSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
 
 namespace Snowflake.Data.Tests.E2E;
 

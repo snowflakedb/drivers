@@ -1,3 +1,5 @@
+using Snowflake.Data.Client;
+
 namespace Snowflake.Data.Core.Errors;
 
 /// <summary>A failure detected by the driver itself, identified by an <see cref="SFError"/>.</summary>

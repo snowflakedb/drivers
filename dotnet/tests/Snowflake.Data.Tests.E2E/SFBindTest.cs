@@ -1,14 +1,16 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
 using Newtonsoft.Json;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSFDataType = Snowflake.Data.Core.SFDataType;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
-using OldSnowflakeDbParameter = Snowflake.Data.Client.SnowflakeDbParameter;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSFDataType = OldDriver::Snowflake.Data.Core.SFDataType;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbParameter = OldDriver::Snowflake.Data.Client.SnowflakeDbParameter;
 
 namespace Snowflake.Data.Tests.E2E;
 

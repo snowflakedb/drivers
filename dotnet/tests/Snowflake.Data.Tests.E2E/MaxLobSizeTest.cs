@@ -1,8 +1,10 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using OldSFDataType = Snowflake.Data.Core.SFDataType;
+using OldSFDataType = OldDriver::Snowflake.Data.Core.SFDataType;
 
 namespace Snowflake.Data.Tests.E2E;
 

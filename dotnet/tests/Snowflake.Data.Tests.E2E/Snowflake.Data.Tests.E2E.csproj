@@ -17,7 +17,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-    <PackageReference Include="Snowflake.Data" Version="*" />
+    <PackageReference Include="Snowflake.Data" Version="*">
+      <Aliases>OldDriver</Aliases>
+    </PackageReference>
   </ItemGroup>
 
   <Target Name="CopyCustomContent" AfterTargets="AfterBuild">

@@ -1,9 +1,11 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
 
 namespace Snowflake.Data.Tests.E2E;
 
