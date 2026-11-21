@@ -37,7 +37,6 @@ use super::query_submit::{
     AbortReport, PollRefresh, abort_on_cancel, poll_until_complete, run_reporting_abort,
 };
 use crate::apis::operation_ctx::{CleanupScope, OperationCtx};
-use crate::chunks::PrefetchConfig;
 use crate::config::settings::Settings;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{
