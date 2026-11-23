@@ -101,7 +101,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # Temurin downloads from GitHub Releases occasionally return a non-gzip
+      # body ("gzip: stdin: not in gzip format"). Retry once; the retry is not
+      # continue-on-error, so a persistent failure still fails the job.
       - name: Set up Java ${{ matrix.java-version }}
+        id: setup-java
+        continue-on-error: true
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+
+      - name: Wait before retrying Java setup
+        if: steps.setup-java.outcome == 'failure'
+        run: sleep 30
+
+      - name: Set up Java ${{ matrix.java-version }} (retry)
+        if: steps.setup-java.outcome == 'failure'
         uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.java-version }}
