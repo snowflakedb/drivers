@@ -105,7 +105,10 @@ Resolution order:
 3. the library bundled in the jar under
    `/net/snowflake/client/internal/unicore/native/<os>-<arch>[-gnu|-musl]/`,
    extracted to a temp directory and loaded from there. On Linux the libc flavor is
-   detected; `-Djdbc.libc=gnu|musl` overrides it.
+   detected; `-Djdbc.libc=gnu|musl` overrides it. FIPS jars on macOS and Windows
+   also carry the AWS-LC FIPS libraries, listed in `companions.txt` in the same
+   directory; those are extracted next to the bridge and loaded before it. Linux
+   FIPS natives link the module into the bridge and carry no companions.
 
 A stale `CORE_PATH` from a dev setup therefore wins over the bundled library.
 
@@ -133,18 +136,25 @@ still running. On Linux and macOS this
 does not affect the running process, which already mapped the library. On
 Windows the delete fails on the loaded DLL and is retried on a later load.
 `CORE_PATH` and `-Djdbc.library.path` skip both the extract and the cleanup.
+They load one file and no companions, so a macOS or Windows FIPS bridge loaded
+that way needs its AWS-LC library on the OS loader's search path.
 
 Failure messages:
 
 - **`Native library not found in JAR at <resource>`** — the jar on the classpath
   carries no library for this platform. The message names the running OS/arch and
   the classifier to depend on (`linux-x86_64`, `linux-aarch_64`, `osx-aarch_64`,
-  …) or `snowflake-jdbc-native-all`. The classifier-less `snowflake-jdbc-native`
-  artifact carries none by design. The same message appears with a classifier jar
-  built for a different OS / CPU.
+  …) or `snowflake-jdbc-native-all`, and their `-fips` counterparts. The
+  classifier-less `snowflake-jdbc-native` artifact carries none by design. The
+  same message appears with a classifier jar built for a different OS / CPU. On
+  Alpine/musl, if the jar has a glibc native and no musl native, the message says
+  the jar carries only the glibc native.
+- **`Failed to read the companion library list`** — `companions.txt` in the
+  platform directory is unreadable or names a path rather than a file. The jar
+  is damaged or was repackaged.
 - **`Failed to extract the bundled native library`** — `createTempDirectory` or
-  the copy failed (read-only tmpdir, disk full). The cause is the underlying
-  `IOException`.
+  the copy failed (read-only tmpdir, disk full, or a file `companions.txt`
+  lists is missing from the jar). The cause is the underlying `IOException`.
 - **`Failed to load the native library`** — extract succeeded but `System.load`
   failed (`noexec`, wrong arch, missing glibc/libgcc). The cause is the
   `UnsatisfiedLinkError`.
@@ -157,7 +167,9 @@ It is not `NoClassDefFoundError: Could not initialize class …ProtobufApis`.
 
 A shading step that strips the `native/` resources from a fat jar produces the
 missing-resource message; verify the resource is still present in the final
-artifact.
+artifact. For a FIPS jar on macOS or Windows, also keep `companions.txt` and the
+`*aws_lc_fips*` files beside the bridge; without the manifest the bridge loads
+alone and `System.load` fails on the missing AWS-LC library.
 
 ---
 

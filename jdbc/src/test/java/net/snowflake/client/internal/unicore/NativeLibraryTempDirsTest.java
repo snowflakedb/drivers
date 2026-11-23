@@ -44,6 +44,8 @@ import org.junit.jupiter.api.io.TempDir;
 class NativeLibraryTempDirsTest {
 
   private static final byte[] LIBRARY_BYTES = {1, 2, 3};
+  private static final String RESOURCE_DIR = "/native/test/";
+  private static final String COMPANION = "libcompanion.so";
 
   @TempDir Path tmpDir;
 
@@ -222,12 +224,29 @@ class NativeLibraryTempDirsTest {
   @Test
   void shouldExtractOnlyTheLockAndTheLibrary() throws Exception {
     try (NativeLibraryTempDirs.ExtractDir extracted =
-        NativeLibraryLoader.extractTo(new ByteArrayInputStream(LIBRARY_BYTES), tmpDir, "test")) {
+        NativeLibraryLoader.extractTo(
+            libraryOnly(new ByteArrayInputStream(LIBRARY_BYTES)), tmpDir, "test")) {
       assertNotNull(extracted.lock);
       assertEquals(
           new HashSet<>(
               Arrays.asList(
                   NativeLibraryTempDirs.LOCK_NAME, NativeLibraryLoader.nativeLibFileName())),
+          childNames(extracted.dir));
+    }
+  }
+
+  @Test
+  void shouldExtractCompanionsNextToTheLibrary() throws Exception {
+    try (NativeLibraryTempDirs.ExtractDir extracted =
+        NativeLibraryLoader.extractTo(
+            withCompanion(new ByteArrayInputStream(LIBRARY_BYTES)), tmpDir, "companion")) {
+      assertNotNull(extracted.lock);
+      assertEquals(
+          new HashSet<>(
+              Arrays.asList(
+                  NativeLibraryTempDirs.LOCK_NAME,
+                  COMPANION,
+                  NativeLibraryLoader.nativeLibFileName())),
           childNames(extracted.dir));
     }
   }
@@ -242,9 +261,11 @@ class NativeLibraryTempDirsTest {
           }
         };
 
+    BundledNativeLibrary bundle = libraryOnly(failing);
+
     SFSQLException thrown =
         assertThrows(
-            SFSQLException.class, () -> NativeLibraryLoader.extractTo(failing, tmpDir, "copyfail"));
+            SFSQLException.class, () -> NativeLibraryLoader.extractTo(bundle, tmpDir, "copyfail"));
 
     assertEquals(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, thrown.getErrorCode());
     Path failedExtract = onlyChildWithPrefix(tmpDir, NativeLibraryTempDirs.DIR_PREFIX + "copyfail");
@@ -256,13 +277,35 @@ class NativeLibraryTempDirsTest {
 
   @Test
   void shouldReleaseTheLockWhenSystemLoadFails() throws Exception {
+    BundledNativeLibrary bundle = libraryOnly(new ByteArrayInputStream(LIBRARY_BYTES));
     NativeLibraryTempDirs.ExtractDir extracted =
-        NativeLibraryLoader.extractTo(new ByteArrayInputStream(LIBRARY_BYTES), tmpDir, "loadfail");
+        NativeLibraryLoader.extractTo(bundle, tmpDir, "loadfail");
 
     SFSQLException thrown =
-        assertThrows(SFSQLException.class, () -> NativeLibraryLoader.loadExtracted(extracted));
+        assertThrows(
+            SFSQLException.class, () -> NativeLibraryLoader.loadExtracted(extracted, bundle));
 
     assertEquals(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, thrown.getErrorCode());
+    FileLock lock =
+        NativeLibraryTempDirs.tryLock(extracted.dir.resolve(NativeLibraryTempDirs.LOCK_NAME));
+    assertNotNull(lock);
+    lock.channel().close();
+  }
+
+  @Test
+  void shouldReleaseTheLockWhenCompanionSystemLoadFails() throws Exception {
+    BundledNativeLibrary bundle = withCompanion(new ByteArrayInputStream(LIBRARY_BYTES));
+    NativeLibraryTempDirs.ExtractDir extracted =
+        NativeLibraryLoader.extractTo(bundle, tmpDir, "companionloadfail");
+
+    SFSQLException thrown =
+        assertThrows(
+            SFSQLException.class, () -> NativeLibraryLoader.loadExtracted(extracted, bundle));
+
+    assertEquals(ErrorCode.NATIVE_LIBRARY_LOAD_FAILED, thrown.getErrorCode());
+    assertTrue(
+        thrown.getMessage().contains(extracted.dir.resolve(COMPANION).toAbsolutePath().toString()),
+        thrown.getMessage());
     FileLock lock =
         NativeLibraryTempDirs.tryLock(extracted.dir.resolve(NativeLibraryTempDirs.LOCK_NAME));
     assertNotNull(lock);
@@ -432,8 +475,40 @@ class NativeLibraryTempDirsTest {
           // Hold the lock until the parent closes stdin.
         }
       } else {
-        NativeLibraryLoader.extractTo(new ByteArrayInputStream(LIBRARY_BYTES), path, "test");
+        NativeLibraryLoader.extractTo(
+            withCompanion(new ByteArrayInputStream(LIBRARY_BYTES)), path, "test");
       }
     }
+  }
+
+  private static BundledNativeLibrary libraryOnly(InputStream library) throws IOException {
+    return bundle(library, false);
+  }
+
+  private static BundledNativeLibrary withCompanion(InputStream library) throws IOException {
+    return bundle(library, true);
+  }
+
+  private static BundledNativeLibrary bundle(InputStream library, boolean companion)
+      throws IOException {
+    String libFileName = NativeLibraryLoader.nativeLibFileName();
+    return BundledNativeLibrary.read(
+        RESOURCE_DIR,
+        libFileName,
+        resourcePath -> {
+          if (resourcePath.equals(RESOURCE_DIR + libFileName)) {
+            return library;
+          }
+          if (!companion) {
+            return null;
+          }
+          if (resourcePath.equals(RESOURCE_DIR + BundledNativeLibrary.COMPANIONS_MANIFEST)) {
+            return new ByteArrayInputStream(COMPANION.getBytes(StandardCharsets.UTF_8));
+          }
+          if (resourcePath.equals(RESOURCE_DIR + COMPANION)) {
+            return new ByteArrayInputStream(LIBRARY_BYTES);
+          }
+          return null;
+        });
   }
 }

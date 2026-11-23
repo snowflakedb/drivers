@@ -25,6 +25,8 @@ class NativeLibraryLoaderTest {
             "/native/linux-aarch64-gnu/libjdbc_bridge.so", "Linux", "aarch64", "linux-aarch_64");
     assertTrue(message.contains("linux-aarch_64"));
     assertTrue(message.contains("Linux/aarch64"));
+    assertTrue(message.contains("snowflake-jdbc-native-fips:<version>:linux-aarch_64"));
+    assertTrue(message.contains("snowflake-jdbc-native-all-fips"));
     assertFalse(message.contains("classifier-less"));
     assertFalse(message.contains("CORE_PATH"));
     assertFalse(message.contains("jdbc.library.path"));
@@ -38,6 +40,37 @@ class NativeLibraryLoaderTest {
     assertTrue(message.contains("-Djava.io.tmpdir"));
     assertFalse(message.contains("CORE_PATH"));
     assertFalse(message.contains("jdbc.library.path"));
+    assertFalse(message.contains("github.com"));
+  }
+
+  @Test
+  void shouldExplainGlibcOnlyJarOnMuslHost() {
+    String message =
+        NativeLibraryLoader.glibcOnlyMessage("/native/linux-x86_64-musl/libjdbc_bridge.so");
+    assertTrue(message.contains("/native/linux-x86_64-musl/libjdbc_bridge.so"));
+    assertTrue(message.contains("only the glibc native"));
+    assertTrue(message.contains("-Djdbc.libc=gnu"));
+    assertFalse(message.contains("FIPS"));
+    assertFalse(message.contains("CORE_PATH"));
+    assertFalse(message.contains("github.com"));
+  }
+
+  @Test
+  void shouldTreatMuslHostWithGlibcNativeAsGlibcOnlyJar() {
+    assertTrue(NativeLibraryLoader.onlyGlibcNativeBundled("linux", "musl", true));
+    assertFalse(NativeLibraryLoader.onlyGlibcNativeBundled("linux", "musl", false));
+    assertFalse(NativeLibraryLoader.onlyGlibcNativeBundled("linux", "gnu", true));
+    assertFalse(NativeLibraryLoader.onlyGlibcNativeBundled("darwin", "musl", true));
+  }
+
+  @Test
+  void shouldNameManifestFailureCauseWithoutTmpdirHint() {
+    String message =
+        NativeLibraryLoader.manifestFailedMessage(
+            "/native/darwin-aarch64/libjdbc_bridge.dylib", "Invalid entry '../x.dylib'");
+    assertTrue(message.contains("/native/darwin-aarch64/libjdbc_bridge.dylib"));
+    assertTrue(message.contains("Invalid entry '../x.dylib'"));
+    assertFalse(message.contains("java.io.tmpdir"));
     assertFalse(message.contains("github.com"));
   }
 
