@@ -23,10 +23,15 @@ Changes:
 
 Bug fixes:
 
+- Fixed result set fetches hanging indefinitely when a chunk download stalls; downloads now time out after 30 seconds without data and are retried, configurable with `chunk_download_read_timeout`. (snowflakedb/drivers#3517)
+- Fixed result chunk download retries ignoring `MaxHttpRetries` (`retry_max_attempts`) and `retry_backoff_*` connection settings. (snowflakedb/drivers#3514)
+- Fixed Azure workload identity authentication on Azure ML by requesting the token from `MSI_ENDPOINT` with the protocol Azure ML expects, using `DEFAULT_IDENTITY_CLIENT_ID` when no managed identity client ID is set, and falling back to IMDS when `MSI_ENDPOINT` or `MSI_SECRET` is empty. (snowflakedb/drivers#3248)
+- Fixed Azure workload identity login ignoring `AZURE_CLIENT_ID` when selecting the managed identity. `MANAGED_IDENTITY_CLIENT_ID` still takes precedence. (snowflakedb/drivers#3248)
 - Fixed `SQLProcedureColumns` so a FILE argument reports the session VARCHAR maximum for `COLUMN_SIZE` and `BUFFER_LENGTH`, matching VARIANT, when `DEFAULT_VARCHAR_SIZE` is set. (snowflakedb/drivers#3008)
 - Fixed the macOS installer so reinstalling leaves an unchanged ODBC configuration file in place. (snowflakedb/drivers#3081)
 - Fixed a synchronous query that is still running at its second or later session-token expiry failing with `390112 Session expired - reauthentication required`; the driver now refreshes the session at every expiry while it waits for the result. (snowflakedb/drivers#3315)
 - Fixed a session-token expiry while waiting on an async-execution-mode query or a metadata (`SHOW`) query re-sending the statement; the driver now retries only the request that hit the expiry and keeps waiting on the same query. (snowflakedb/drivers#3315)
+- Fixed `SQLPrepare`, `SQLColumns`, and `SQLProcedureColumns` ignoring `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`, `DEFAULT_VARCHAR_SIZE`, `DEFAULT_BINARY_SIZE`, and account- or user-level `ODBC_*` type-mapping parameters until the first statement executed on a connection. (snowflakedb/drivers#3487)
 
 ## v4.3.0
 
