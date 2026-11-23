@@ -127,8 +127,22 @@ class ParameterKeyNormalizerTest {
                 "enable_connection_diag", ParameterKeyNormalizer.normalize("enableDiagnostics")),
         () ->
             assertEquals(
+                "enable_connection_diag", ParameterKeyNormalizer.normalize("ENABLE_DIAGNOSTICS")),
+        () ->
+            assertEquals(
+                "enable_connection_diag", ParameterKeyNormalizer.normalize("enable_diagnostics")),
+        () ->
+            assertEquals(
                 "connection_diag_allowlist_path",
                 ParameterKeyNormalizer.normalize("diagnosticsAllowlistFile")),
+        () ->
+            assertEquals(
+                "connection_diag_allowlist_path",
+                ParameterKeyNormalizer.normalize("DIAGNOSTICS_ALLOWLIST_FILE")),
+        () ->
+            assertEquals(
+                "connection_diag_allowlist_path",
+                ParameterKeyNormalizer.normalize("diagnostics_allowlist_file")),
         () ->
             assertEquals(
                 "platform_detection_timeout_ms",

@@ -51,7 +51,9 @@ public final class ParameterKeyNormalizer {
     LEGACY_KEY_ALIASES.put("platformdetectiontimeoutms", "platform_detection_timeout_ms");
     LEGACY_KEY_ALIASES.put("disableplatformdetection", "disable_platform_detection");
     LEGACY_KEY_ALIASES.put("enablediagnostics", "enable_connection_diag");
+    LEGACY_KEY_ALIASES.put("enable_diagnostics", "enable_connection_diag");
     LEGACY_KEY_ALIASES.put("diagnosticsallowlistfile", "connection_diag_allowlist_path");
+    LEGACY_KEY_ALIASES.put("diagnostics_allowlist_file", "connection_diag_allowlist_path");
     LEGACY_KEY_ALIASES.put("browser_response_timeout", "authentication_timeout");
   }
 

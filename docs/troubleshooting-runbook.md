@@ -198,7 +198,8 @@ DriverManager.getConnection("jdbc:snowflake://myaccount.snowflakecomputing.com",
 ```
 
 Legacy old-driver aliases are accepted (`ParameterKeyNormalizer`):
-`enableDiagnostics` → `enable_connection_diag`, `diagnosticsAllowlistFile` →
+`enableDiagnostics` / `ENABLE_DIAGNOSTICS` → `enable_connection_diag`,
+`diagnosticsAllowlistFile` / `DIAGNOSTICS_ALLOWLIST_FILE` →
 `connection_diag_allowlist_path`.
 
 ### 2.4 What it checks
