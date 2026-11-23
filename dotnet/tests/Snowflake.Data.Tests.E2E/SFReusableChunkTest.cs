@@ -1,8 +1,9 @@
 using System.Data.Common;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
+using Snowflake.Data.Tests.E2E.Fixtures;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class SFReusableChunkTestCollection
@@ -12,12 +13,12 @@ public sealed class SFReusableChunkTestCollection
 
 // ChunkParserFactory.Instance is process-wide in the old driver, so fault-injecting tests must not overlap other queries.
 [Collection(SFReusableChunkTestCollection.Name)]
-public sealed class SFReusableChunkTest : ReferenceTestBase
+public sealed class SFReusableChunkTest : LiveE2ETestBase
 {
     private const string FaultInjectionNotAvailable =
         "Chunk parser fault injection uses the old driver's internal ChunkParserFactory; the new driver parses result chunks in sf_core";
 
-    public SFReusableChunkTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFReusableChunkTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

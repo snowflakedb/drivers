@@ -1,16 +1,18 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbCommandTest : ReferenceTestBase
+public sealed class SFDbCommandTest : LiveE2ETestBase
 {
     private const int ObjectNotFoundErrorCode = 2003;
     private const int ServerQueryCancelledErrorCode = 604;
@@ -18,7 +20,7 @@ public sealed class SFDbCommandTest : ReferenceTestBase
     private const string InvalidQueryIdMessage = "Invalid query id format. Expected a UUID.";
     private const string NoDataMaxRetryMessage = "Max retry for no data is reached";
 
-    public SFDbCommandTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbCommandTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

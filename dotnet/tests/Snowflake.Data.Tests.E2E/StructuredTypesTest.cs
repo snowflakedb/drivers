@@ -1,13 +1,15 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using System.Text;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class StructuredTypesTest : ReferenceTestBase
+public sealed class StructuredTypesTest : LiveE2ETestBase
 {
     private const string AllTypesObjectDefinition = @"::OBJECT(
                         StringValue VARCHAR,
@@ -32,7 +34,7 @@ public sealed class StructuredTypesTest : ReferenceTestBase
                         SemiStructuredValue OBJECT
                     )";
 
-    public StructuredTypesTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public StructuredTypesTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

@@ -1,19 +1,20 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Runtime.InteropServices;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbConnection = Snowflake.Data.SnowflakeDbConnection;
-using NewSnowflakeDbDataAdapter = Snowflake.Data.SnowflakeDbDataAdapter;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
-using OldSnowflakeDbDataAdapter = Snowflake.Data.Client.SnowflakeDbDataAdapter;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
+using NewSnowflakeDbDataAdapter = Snowflake.Data.Client.SnowflakeDbDataAdapter;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
+using OldSnowflakeDbDataAdapter = OldDriver::Snowflake.Data.Client.SnowflakeDbDataAdapter;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbAdaptorTest : ReferenceTestBase
+public sealed class SFDbAdaptorTest : LiveE2ETestBase
 {
-    public SFDbAdaptorTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbAdaptorTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

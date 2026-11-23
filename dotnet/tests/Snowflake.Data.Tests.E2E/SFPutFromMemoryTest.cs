@@ -1,20 +1,22 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using System.IO.Compression;
 using System.Text;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
+using Snowflake.Data.Tests.E2E.Fixtures;
 using NewQueryStatus = Snowflake.Data.QueryStatus;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldQueryStatus = Snowflake.Data.Core.QueryStatus;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldQueryStatus = OldDriver::Snowflake.Data.Core.QueryStatus;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFPutFromMemoryTest : ReferenceTestBase
+public sealed class SFPutFromMemoryTest : LiveE2ETestBase
 {
     private const int SourceFileSizeOrdinal = 2;
     private const int DestinationFileNameOrdinal = 1;
@@ -28,7 +30,7 @@ public sealed class SFPutFromMemoryTest : ReferenceTestBase
     private const string SyntaxErrorSqlState = "42000";
     private static readonly string[] s_colData = ["FIRST", "SECOND", "THIRD"];
 
-    public SFPutFromMemoryTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFPutFromMemoryTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

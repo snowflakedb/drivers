@@ -1,13 +1,14 @@
+extern alias OldDriver;
 using System.Collections.Concurrent;
 using System.Reflection;
 using Snowflake.Data.Tests.Compatibility;
 using Xunit.Sdk;
-using NewISnowflakeCredentialManager = Snowflake.Data.ISnowflakeCredentialManager;
+using NewISnowflakeCredentialManager = Snowflake.Data.Client.ISnowflakeCredentialManager;
 using NewSnowflakeCredentialManagerFactory = Snowflake.Data.SnowflakeCredentialManagerFactory;
-using OldISnowflakeCredentialManager = Snowflake.Data.Client.ISnowflakeCredentialManager;
-using OldSnowflakeCredentialManagerFactory = Snowflake.Data.Client.SnowflakeCredentialManagerFactory;
+using OldISnowflakeCredentialManager = OldDriver::Snowflake.Data.Client.ISnowflakeCredentialManager;
+using OldSnowflakeCredentialManagerFactory = OldDriver::Snowflake.Data.Client.SnowflakeCredentialManagerFactory;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
 internal sealed class CredentialStore
 {

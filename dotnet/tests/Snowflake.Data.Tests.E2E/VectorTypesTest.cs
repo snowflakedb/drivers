@@ -1,13 +1,15 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class VectorTypesTest : ReferenceTestBase
+public sealed class VectorTypesTest : LiveE2ETestBase
 {
     private const float LargeNegativeFloat = -1E+38f;
     private const float LargePositiveFloat = 1E+38f;
@@ -16,7 +18,7 @@ public sealed class VectorTypesTest : ReferenceTestBase
     private const int InvalidVectorValueErrorCode = 220000;
     private const string InvalidVectorValueSqlState = "22000";
 
-    public VectorTypesTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public VectorTypesTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

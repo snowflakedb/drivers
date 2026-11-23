@@ -1,17 +1,18 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
 [Collection(nameof(SFConnectionWithTomlTest))]
-public sealed class SFConnectionWithTomlTest : ReferenceTestBase, IDisposable
+public sealed class SFConnectionWithTomlTest : LiveE2ETestBase, IDisposable
 {
     private const string SnowflakeHome = "SNOWFLAKE_HOME";
     private const string DefaultConnectionName = "SNOWFLAKE_DEFAULT_CONNECTION_NAME";
@@ -22,7 +23,7 @@ public sealed class SFConnectionWithTomlTest : ReferenceTestBase, IDisposable
     private readonly string _workingDirectory =
         Path.Combine(Path.GetTempPath(), $"toml_config_folder_{Guid.NewGuid():N}");
 
-    public SFConnectionWithTomlTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFConnectionWithTomlTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
         Directory.CreateDirectory(_workingDirectory);

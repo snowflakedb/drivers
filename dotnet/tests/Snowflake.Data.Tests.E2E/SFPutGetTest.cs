@@ -1,18 +1,20 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using System.IO.Compression;
 using System.Text;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFPutGetTest : ReferenceTestBase
+public sealed class SFPutGetTest : LiveE2ETestBase
 {
     private const long NumberOfRows = 4;
     private const int SourceCompressionTypeOrdinal = 4;
@@ -34,7 +36,7 @@ public sealed class SFPutGetTest : ReferenceTestBase
     private static readonly string[] s_colName = ["C1", "C2", "C3"];
     private static readonly string[] s_colData = ["FIRST", "SECOND", "THIRD"];
 
-    public SFPutGetTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFPutGetTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

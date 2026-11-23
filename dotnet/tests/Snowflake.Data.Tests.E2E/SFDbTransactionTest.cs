@@ -1,15 +1,17 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbTransactionTest : ReferenceTestBase
+public sealed class SFDbTransactionTest : LiveE2ETestBase
 {
-    public SFDbTransactionTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbTransactionTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

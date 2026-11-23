@@ -1,16 +1,17 @@
+extern alias OldDriver;
 using System.Data.Common;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFMaxLobSizeSwitchTest : ReferenceTestBase
+public sealed class SFMaxLobSizeSwitchTest : LiveE2ETestBase
 {
     private const string SqlSelectLargeString = "select randstr(20000000, random()) as large_str";
 
-    public SFMaxLobSizeSwitchTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFMaxLobSizeSwitchTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

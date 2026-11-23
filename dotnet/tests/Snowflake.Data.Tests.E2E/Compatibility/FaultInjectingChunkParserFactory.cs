@@ -1,8 +1,9 @@
+extern alias OldDriver;
 using System.Reflection;
 using Xunit.Sdk;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
 #if NETFRAMEWORK
 internal sealed class FaultInjectingChunkParserFactory : IDisposable

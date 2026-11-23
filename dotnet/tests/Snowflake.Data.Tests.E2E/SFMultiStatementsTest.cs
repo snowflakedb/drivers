@@ -1,19 +1,21 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFMultiStatementsTest : ReferenceTestBase
+public sealed class SFMultiStatementsTest : LiveE2ETestBase
 {
     private const int MultiStatementCountMismatchErrorCode = 8;
     private const string FeatureNotSupportedSqlState = "0A000";
 
-    public SFMultiStatementsTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFMultiStatementsTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

@@ -1,20 +1,23 @@
+extern alias OldDriver;
 using System.Collections.Concurrent;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
+using Snowflake.Data.Interfaces;
+using Snowflake.Data.Telemetry;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using NewActivityStarter = Snowflake.Data.SnowflakeActivityStarter;
-using NewSnowflakeDbCommand = Snowflake.Data.SnowflakeDbCommand;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldActivityStarter = Snowflake.Data.Telemetry.ActivityStarter;
-using OldSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
-using OldSnowflakeDbDataReader = Snowflake.Data.Client.SnowflakeDbDataReader;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewActivityStarter = Snowflake.Data.Telemetry.SnowflakeActivityStarter;
+using NewSnowflakeDbCommand = Snowflake.Data.Client.SnowflakeDbCommand;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldActivityStarter = OldDriver::Snowflake.Data.Telemetry.ActivityStarter;
+using OldSnowflakeDbCommand = OldDriver::Snowflake.Data.Client.SnowflakeDbCommand;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbCommandAsyncTest : ReferenceTestBase
+public sealed class SFDbCommandAsyncTest : LiveE2ETestBase
 {
     private const int ObjectNotFoundErrorCode = 2003;
     private const int ServerQueryCancelledErrorCode = 604;
@@ -34,7 +37,7 @@ public sealed class SFDbCommandAsyncTest : ReferenceTestBase
     private const string DbWarehouseTag = "snowflake.warehouse";
     private const string DbRoleTag = "snowflake.role";
 
-    public SFDbCommandAsyncTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbCommandAsyncTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

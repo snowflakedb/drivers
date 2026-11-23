@@ -1,14 +1,15 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Reflection;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using Snowflake.Data.Tests.Reference.Wiremock;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
-using OldSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.Wiremock;
 
 [CollectionDefinition(nameof(SFConnectionAsyncIsolatedTestCollection), DisableParallelization = true)]
 public sealed class SFConnectionAsyncIsolatedTestCollection
@@ -16,7 +17,8 @@ public sealed class SFConnectionAsyncIsolatedTestCollection
 }
 
 [Collection(nameof(SFConnectionAsyncIsolatedTestCollection))]
-public sealed class SFConnectionAsyncIsolatedTest : ReferenceTestBase, IDisposable
+[Trait("Category", "Wiremock")]
+public sealed class SFConnectionAsyncIsolatedTest : E2ETestBase, IDisposable
 {
     private const string DelayedLoginUser = "wiremock_login_delayed";
     private const int RequestTimeoutErrorCode = 270007;
@@ -25,7 +27,7 @@ public sealed class SFConnectionAsyncIsolatedTest : ReferenceTestBase, IDisposab
 
     // The old driver raises any retry_timeout below SFSessionHttpClientProperties.DefaultRetryTimeout
     // (300 s) to that value, so the floor is lowered to 1 s for the duration of each test.
-    public SFConnectionAsyncIsolatedTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFConnectionAsyncIsolatedTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
         if (TestDriver.Current != TestDriver.Kind.Old)
@@ -49,14 +51,14 @@ public sealed class SFConnectionAsyncIsolatedTest : ReferenceTestBase, IDisposab
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        using var wiremock = await ReferenceWiremock.StartWithMappingsAsync(
+        using var wiremock = await E2EWiremock.StartWithMappingsAsync(
             ct, "auth/login_delayed.json", "auth/login_success_any.json").ConfigureAwait(false);
         var connectionTimeout = 5;
         var retryTimeout = 1;
         string[] timeoutSettings = [$"{LoginTimeoutKey()}={connectionTimeout}", $"retry_timeout={retryTimeout}", MaxHttpRetriesSetting(0)];
         using var conn = Fixture.Factory.Create(
             Output,
-            ReferenceWiremock.BuildHttpConnectionString(wiremock, [$"user={DelayedLoginUser}", .. timeoutSettings]));
+            E2EWiremock.BuildHttpConnectionString(wiremock, [$"user={DelayedLoginUser}", .. timeoutSettings]));
 
         Assert.Equal(ConnectionState.Closed, conn.State);
 
@@ -70,7 +72,7 @@ public sealed class SFConnectionAsyncIsolatedTest : ReferenceTestBase, IDisposab
 
         using var openedConn = Fixture.Factory.Create(
             Output,
-            ReferenceWiremock.BuildHttpConnectionString(wiremock, timeoutSettings));
+            E2EWiremock.BuildHttpConnectionString(wiremock, timeoutSettings));
         await openedConn.OpenAsync(ct).ConfigureAwait(false);
         Assert.Equal(retryTimeout, openedConn.ConnectionTimeout);
     }

@@ -1,60 +1,23 @@
 using System.Diagnostics;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using Snowflake.Data.Tests.Reference.Wiremock;
-using Snowflake.Data.Tests.Wiremock;
-using NewSnowflakeDbException = Snowflake.Data.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using Snowflake.Data.Tests.Utilities;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.Wiremock;
 
-public sealed class SFDbCommandSlowTest : ReferenceTestBase
+[Trait("Category", "Wiremock")]
+public sealed class SFDbCommandSlowWiremockTest : E2ETestBase
 {
     private const int MaxHttpRetries = 8;
     // Backoff between the MaxHttpRetries + 1 query attempts: 1, 2, 4, 8, 16, 16, 16 and 16 seconds.
     private const int TotalBackoffSeconds = 1 + 2 + 4 + 8 + 16 + 16 + 16 + 16;
 
-    public SFDbCommandSlowTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbCommandSlowWiremockTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
-    }
-
-    [SnowflakeFact]
-    public async Task ShouldExecuteLongRunningQueryAsync()
-    {
-        using var conn = Fixture.Factory.Create(Output, NonPooledConnectionString());
-        await conn.OpenAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "select count(seq4()) from table(generator(timelimit => 60)) v order by 1";
-        using var reader = cmd.ExecuteReader();
-        Assert.True(reader.Read());
-
-        await conn.CloseAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-    }
-
-    [SnowflakeFact]
-    public async Task ShouldReturnMinusOneWhenRowsAffectedOverflowsIntAsync()
-    {
-        Skip.When(true, "This test case takes too much time so run it manually");
-
-        var tableName = $"SFDBCOMMANDSLOWTEST_{Guid.NewGuid():N}";
-        using var conn = Fixture.Factory.Create(Output, NonPooledConnectionString());
-        await conn.OpenAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-        try
-        {
-            ExecuteNonQuery(conn, $"CREATE OR REPLACE TABLE {tableName}(c1 NUMBER)");
-
-            var affected = ExecuteNonQuery(
-                conn,
-                $"INSERT INTO {tableName} SELECT SEQ4() FROM TABLE(GENERATOR(ROWCOUNT=>2147484000))");
-
-            Assert.Equal(-1, affected);
-        }
-        finally
-        {
-            ExecuteNonQuery(conn, $"DROP TABLE IF EXISTS {tableName}");
-            await conn.CloseAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-        }
     }
 
     [SnowflakeFact(retriesCount: RetriesCount.Thrice)]
@@ -117,7 +80,7 @@ public sealed class SFDbCommandSlowTest : ReferenceTestBase
         // sf_core waits base * factor before the first retry, so a 500 ms base reproduces the 1 s first backoff.
         using var conn = Fixture.Factory.Create(
             Output,
-            ReferenceWiremock.BuildHttpConnectionString(
+            E2EWiremock.BuildHttpConnectionString(
                 wiremock,
                 $"retry_max_attempts={MaxHttpRetries + 1}",
                 "retry_backoff_base_ms=500",
@@ -136,32 +99,19 @@ public sealed class SFDbCommandSlowTest : ReferenceTestBase
     }
 
     private static Task<WiremockClient> StartWiremockResettingQueryRequestsAsync(CancellationToken cancellationToken) =>
-        ReferenceWiremock.StartWithMappingsAsync(
+        E2EWiremock.StartWithMappingsAsync(
             cancellationToken,
             "auth/login_success_any.json",
             "session/query_connection_reset_always.json",
             "session/logout_success.json");
 
     private static string MaxRetryConnectionString(WiremockClient wiremock) =>
-        ReferenceWiremock.BuildHttpConnectionString(wiremock, $"maxHttpRetries={MaxHttpRetries}", "poolingEnabled=false");
+        E2EWiremock.BuildHttpConnectionString(wiremock, $"maxHttpRetries={MaxHttpRetries}", "poolingEnabled=false");
 
     private static object? ExecuteScalar(ISnowflakeDbConnection conn, string commandText)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = commandText;
         return cmd.ExecuteScalar();
-    }
-
-    private string NonPooledConnectionString()
-    {
-        using var probe = Fixture.Factory.Create(Output);
-        return $"{probe.ConnectionString.TrimEnd(';')};poolingEnabled=false";
-    }
-
-    private static int ExecuteNonQuery(ISnowflakeDbConnection conn, string commandText)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = commandText;
-        return cmd.ExecuteNonQuery();
     }
 }

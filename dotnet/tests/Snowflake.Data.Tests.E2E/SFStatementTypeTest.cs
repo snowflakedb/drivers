@@ -1,13 +1,15 @@
+extern alias OldDriver;
 using System.Data.Common;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using OldSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFStatementTypeTest : ReferenceTestBase
+public sealed class SFStatementTypeTest : LiveE2ETestBase
 {
-    public SFStatementTypeTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFStatementTypeTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }
@@ -63,13 +65,13 @@ public sealed class SFStatementTypeTest : ReferenceTestBase
     }
 
     private static bool IsSnowflakeDbException(Exception ex) =>
-        ex is OldSnowflakeDbException || ex is SnowflakeDbException;
+        ex is OldSnowflakeDbException || ex is NewSnowflakeDbException;
 
     private static string? GetSqlState(Exception ex) =>
         ex switch
         {
             OldSnowflakeDbException oldException => oldException.SqlState,
-            SnowflakeDbException newException => newException.SqlState,
+            NewSnowflakeDbException newException => newException.SqlState,
             _ => null,
         };
 

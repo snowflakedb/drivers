@@ -1,12 +1,13 @@
 using System.Data.Common;
+using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
+using Snowflake.Data.Tests.E2E.Fixtures;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbDataReaderGetEnumeratorTest : ReferenceTestBase
+public sealed class SFDbDataReaderGetEnumeratorTest : LiveE2ETestBase
 {
-    public SFDbDataReaderGetEnumeratorTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbDataReaderGetEnumeratorTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }

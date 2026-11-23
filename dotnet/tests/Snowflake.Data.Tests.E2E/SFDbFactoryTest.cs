@@ -1,13 +1,14 @@
+extern alias OldDriver;
 using System.Data.Common;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.Reference.Fixtures;
-using OldSnowflakeDbFactory = Snowflake.Data.Client.SnowflakeDbFactory;
+using Snowflake.Data.Tests.E2E.Fixtures;
+using OldSnowflakeDbFactory = OldDriver::Snowflake.Data.Client.SnowflakeDbFactory;
 
-namespace Snowflake.Data.Tests.Reference;
+namespace Snowflake.Data.Tests.E2E;
 
-public sealed class SFDbFactoryTest : ReferenceTestBase
+public sealed class SFDbFactoryTest : LiveE2ETestBase
 {
-    public SFDbFactoryTest(ReferenceITFixture fixture, ITestOutputHelper output)
+    public SFDbFactoryTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
     }
