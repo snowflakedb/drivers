@@ -13,13 +13,14 @@ internal sealed class ColumnConverterFactory : IColumnConverterFactory
 
     public ColumnConverter Create(ColumnMetadata column)
     {
-        if (string.Equals(column.Type, SnowflakeTypeNames.Text, StringComparison.OrdinalIgnoreCase))
-            return new TextColumnConverter();
+        if (!SnowflakeTypes.TryParse(column.Type, out var type))
+            return new NotImplementedColumnConverter(column.Type.ToUpperInvariant());
 
-        if (string.Equals(column.Type, SnowflakeTypeNames.Fixed, StringComparison.OrdinalIgnoreCase) && column.Scale == 0)
-            return new FixedColumnConverter();
-
-        // TODO(SNOW-4483010) future milestone: converters for FIXED with scale > 0 and every other Snowflake type.
-        return new NotImplementedColumnConverter(column.Type.ToUpperInvariant());
+        return type switch
+        {
+            SFDataType.TEXT => new TextColumnConverter(),
+            SFDataType.FIXED when column.Scale == 0 => new FixedColumnConverter(),
+            _ => new NotImplementedColumnConverter(column.Type.ToUpperInvariant())
+        };
     }
 }

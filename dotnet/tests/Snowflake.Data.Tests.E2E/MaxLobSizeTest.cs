@@ -1,10 +1,9 @@
-extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
+using Snowflake.Data.Core;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
-using OldSFDataType = OldDriver::Snowflake.Data.Core.SFDataType;
 
 namespace Snowflake.Data.Tests.E2E;
 
@@ -68,9 +67,6 @@ public sealed class MaxLobSizeTest : LiveE2ETestBase
             // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected
             Skip.FutureMilestone();
         }
-
-        // TODO(SNOW-4478021): GetSchemaTable
-        Skip.FutureMilestone();
 
         var tableName = UniqueTableName();
         var c1 = GenerateRandomString(lobSize);
@@ -236,7 +232,7 @@ public sealed class MaxLobSizeTest : LiveE2ETestBase
             Skip.FutureMilestone();
         }
 
-        // TODO(SNOW-4478021): GetSchemaTable
+        // TODO(SNOW-4483010): GetString on a FIXED column
         Skip.FutureMilestone();
 
         var tableName = UniqueTableName();
@@ -358,19 +354,19 @@ public sealed class MaxLobSizeTest : LiveE2ETestBase
         Assert.Equal(s_colName[0], row[SchemaTableColumn.ColumnName]);
         Assert.Equal(0, row[SchemaTableColumn.ColumnOrdinal]);
         Assert.Equal(MaxLobSize, row[SchemaTableColumn.ColumnSize]);
-        Assert.Equal(OldSFDataType.TEXT, (OldSFDataType)row[SchemaTableColumn.ProviderType]);
+        Assert.Equal(SFDataType.TEXT, (SFDataType)row[SchemaTableColumn.ProviderType]);
 
         row = dataTable.Rows[1];
         Assert.Equal(s_colName[1], row[SchemaTableColumn.ColumnName]);
         Assert.Equal(1, row[SchemaTableColumn.ColumnOrdinal]);
         Assert.Equal(MaxLobSize, row[SchemaTableColumn.ColumnSize]);
-        Assert.Equal(OldSFDataType.TEXT, (OldSFDataType)row[SchemaTableColumn.ProviderType]);
+        Assert.Equal(SFDataType.TEXT, (SFDataType)row[SchemaTableColumn.ProviderType]);
 
         row = dataTable.Rows[2];
         Assert.Equal(s_colName[2], row[SchemaTableColumn.ColumnName]);
         Assert.Equal(2, row[SchemaTableColumn.ColumnOrdinal]);
         Assert.Equal(0, row[SchemaTableColumn.ColumnSize]);
-        Assert.Equal(OldSFDataType.FIXED, (OldSFDataType)row[SchemaTableColumn.ProviderType]);
+        Assert.Equal(SFDataType.FIXED, (SFDataType)row[SchemaTableColumn.ProviderType]);
     }
 
     private static string GenerateRandomString(int sizeInBytes)

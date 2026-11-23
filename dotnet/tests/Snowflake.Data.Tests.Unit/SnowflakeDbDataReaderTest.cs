@@ -247,9 +247,21 @@ public sealed class SnowflakeDbDataReaderTest
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void TheSchemaTableIsNotImplemented()
+    public void SchemaTableComesFromTheResultSet()
     {
-        Assert.Throws<NotImplementedException>(() => _reader.GetSchemaTable());
+        var table = new DataTable();
+        _resultSet.GetSchemaTable().Returns(table);
+
+        Assert.Same(table, _reader.GetSchemaTable());
+        _resultSet.Received(1).GetSchemaTable();
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void CarrierFromTheSchemaTableDoesNotReachTheCaller()
+    {
+        _resultSet.GetSchemaTable().Throws(new SnowflakeDriverException(SFError.INTERNAL_ERROR, null, "Unknown column type: geography"));
+
+        AssertNotACarrier(Record.Exception(() => _reader.GetSchemaTable()));
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]

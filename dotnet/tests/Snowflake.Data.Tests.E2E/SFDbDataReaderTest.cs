@@ -1476,9 +1476,6 @@ public sealed class SFDbDataReaderTest : LiveE2ETestBase
             Skip.FutureMilestone();
         }
 
-        // TODO(SNOW-4478021): SnowflakeDbDataReader.GetSchemaTable
-        Skip.FutureMilestone();
-
         var tableName = UniqueName();
         using var conn = await OpenConnectionAsync(resultFormat, TestContext.Current.CancellationToken).ConfigureAwait(false);
         try

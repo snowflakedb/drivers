@@ -349,6 +349,7 @@ public sealed class PublicApiTest
             typeof(SnowflakeFipsStatus).FullName!,
             typeof(SnowflakeDbException).FullName!,
             typeof(SFError).FullName!,
+            typeof(SFDataType).FullName!,
             typeof(ISnowflakeDbConnection).FullName!,
             typeof(QueryStatus).FullName!,
         };

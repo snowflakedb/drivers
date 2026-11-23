@@ -1,3 +1,4 @@
+using System.Data;
 using Snowflake.Data.Client;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
@@ -64,6 +65,12 @@ internal interface ISnowflakeResultSet : IDisposable
 
     /// <summary>The CLR type <see cref="GetValue"/> returns for the column.</summary>
     Type GetFieldType(int ordinal);
+
+    /// <summary>
+    /// The description of the columns, built on the first call and returned again afterwards. Available after
+    /// <see cref="Close"/>.
+    /// </summary>
+    DataTable GetSchemaTable();
 
     /// <summary>Whether the column of the current row is NULL.</summary>
     bool IsDBNull(int ordinal);

@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics;
 using Apache.Arrow;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,7 @@ internal sealed class SnowflakeResultSet : ISnowflakeResultSet
     private readonly ILogger<SnowflakeResultSet> _logger;
     private readonly LockObject _gate = new();
 
+    private DataTable? _schemaTable;
     private RecordBatch? _batch;
     private RecordBatch? _peeked;
     private int _row = -1;
@@ -171,6 +173,12 @@ internal sealed class SnowflakeResultSet : ISnowflakeResultSet
     {
         ThrowIfOutOfRange(ordinal);
         return _converters[ordinal].FieldType;
+    }
+
+    public DataTable GetSchemaTable()
+    {
+        lock (_gate)
+            return _schemaTable ??= SchemaTableBuilder.Build(_descriptor);
     }
 
     public bool IsDBNull(int ordinal) => ReadColumn(ordinal, static (column, row) => column.IsNull(row));

@@ -39,7 +39,7 @@ internal sealed class FixedColumnConverter :
     private Decimal128Array? _decimal128;
 
     internal FixedColumnConverter()
-        : base(SnowflakeTypeNames.Fixed)
+        : base(nameof(SFDataType.FIXED))
     {
     }
 
@@ -52,7 +52,7 @@ internal sealed class FixedColumnConverter :
         Decimal128,
     }
 
-    internal override Type FieldType => typeof(long);
+    internal override Type FieldType => SnowflakeTypes.CtsType(SFDataType.FIXED, scale: 0);
 
     long IValueReader<long>.Read(int row)
     {

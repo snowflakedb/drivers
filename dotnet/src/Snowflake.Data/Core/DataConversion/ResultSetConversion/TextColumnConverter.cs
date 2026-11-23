@@ -30,11 +30,11 @@ internal sealed class TextColumnConverter :
     private StringArray? _strings;
 
     internal TextColumnConverter()
-        : base(SnowflakeTypeNames.Text)
+        : base(nameof(SFDataType.TEXT))
     {
     }
 
-    internal override Type FieldType => typeof(string);
+    internal override Type FieldType => SnowflakeTypes.CtsType(SFDataType.TEXT, scale: 0);
 
     /// <summary>The text at <paramref name="row"/>, or null when the value is NULL.</summary>
     string? IValueReader<string>.Read(int row) => IsNull(row) ? null : Text(row);

@@ -1,3 +1,5 @@
+using System.Data;
+using System.Data.Common;
 using Apache.Arrow;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -248,6 +250,84 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal("TIMESTAMP_LTZ", resultSet.GetDataTypeName(1));
         Assert.Equal(typeof(long), resultSet.GetFieldType(0));
         Assert.Throws<NotImplementedException>(() => resultSet.GetFieldType(1));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void SchemaTableDescribesTheColumnsAndIsBuiltOnce()
+    {
+        using var resultSet = ResultSet(new FakeRecordBatchSource(), IdAndName);
+
+        var table = resultSet.GetSchemaTable();
+
+        Assert.Equal(["ID", "NAME"], table.Rows.Cast<DataRow>().Select(row => (string)row[SchemaTableColumn.ColumnName]));
+        Assert.Same(table, resultSet.GetSchemaTable());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void SchemaTableOfAColumnTheConverterDoesNotReadYetIsStillAvailable()
+    {
+        var descriptor = UnitBatches.Descriptor(UnitBatches.Column("CREATED", "timestamp_ltz"));
+        using var resultSet = ResultSet(new FakeRecordBatchSource(), descriptor);
+
+        var row = Assert.Single(resultSet.GetSchemaTable().Rows.Cast<DataRow>());
+
+        Assert.Equal(typeof(DateTimeOffset), row[SchemaTableColumn.DataType]);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void SchemaTableStaysAvailableAfterClose()
+    {
+        var resultSet = ResultSet(new FakeRecordBatchSource(), IdAndName);
+
+        resultSet.Close();
+
+        Assert.Equal(2, resultSet.GetSchemaTable().Rows.Count);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void UnknownColumnTypeFailsTheSchemaTableOnlyAndNotTheResultSet()
+    {
+        var descriptor = UnitBatches.Descriptor(UnitBatches.TextColumn("C1"), UnitBatches.Column("C2", "geography"));
+        using var resultSet = ResultSet(new FakeRecordBatchSource(), descriptor);
+
+        var exception = Assert.Throws<SnowflakeDriverException>(() => resultSet.GetSchemaTable());
+
+        Assert.Equal(SFError.INTERNAL_ERROR, exception.Error);
+        Assert.Equal(2, resultSet.FieldCount);
+        Assert.Throws<SnowflakeDriverException>(() => resultSet.GetSchemaTable());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void SchemaTableOfNoColumnsHasNoRows()
+    {
+        using var resultSet = ResultSet(new FakeRecordBatchSource(), UnitBatches.Descriptor());
+
+        var table = resultSet.GetSchemaTable();
+
+        Assert.Empty(table.Rows);
+        Assert.Equal(8, table.Columns.Count);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void SchemaTableStaysAvailableAfterDispose()
+    {
+        var resultSet = ResultSet(new FakeRecordBatchSource(), IdAndName);
+        var table = resultSet.GetSchemaTable();
+
+        resultSet.Dispose();
+
+        Assert.Same(table, resultSet.GetSchemaTable());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ConcurrentCallersShareOneSchemaTable()
+    {
+        using var resultSet = ResultSet(new FakeRecordBatchSource(), IdAndName);
+
+        var tables = new DataTable[32];
+        Parallel.For(0, tables.Length, index => tables[index] = resultSet.GetSchemaTable());
+
+        Assert.All(tables, table => Assert.Same(tables[0], table));
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]

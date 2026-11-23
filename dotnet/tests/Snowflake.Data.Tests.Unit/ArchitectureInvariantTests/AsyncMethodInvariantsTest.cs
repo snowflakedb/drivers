@@ -176,6 +176,17 @@ public sealed class AsyncMethodInvariantsTest
                 $"Compatibility/{nameof(FileShims)}",
                 "Logging/ZLoggerSession.cs",
             ],
+            [AssembliesMetadata.E2ETestsAssembly] =
+            [
+                "Legacy/LegacySnowflakeDbDataReader.cs:40: ReadAsync",
+                "Legacy/LegacySnowflakeDbDataReader.cs:114: IsDBNullAsync",
+                "Legacy/LegacySnowflakeDbDataReader.cs:118: NextResultAsync",
+            ],
+            [AssembliesMetadata.RootAssembly] = [
+                "Interfaces/ISnowflakeDbDataReader.cs:24: ReadAsync",
+                "Interfaces/ISnowflakeDbDataReader.cs:73: IsDBNullAsync",
+                "Interfaces/ISnowflakeDbDataReader.cs:75: NextResultAsync",
+            ]
         };
         exceptionsMap.TryGetValue(assemblyMetadata, out var exceptions);
         AssertUtil.AssertOnViolations(exceptions ?? [], violations, new StartsWithEqualityComparer());

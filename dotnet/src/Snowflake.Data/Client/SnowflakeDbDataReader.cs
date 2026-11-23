@@ -25,7 +25,7 @@ namespace Snowflake.Data.Client;
 /// <see cref="GetFieldType"/>) stays available after the reader is closed; row data does not.
 /// </para>
 /// </remarks>
-public sealed class SnowflakeDbDataReader : DbDataReader
+public sealed class SnowflakeDbDataReader : DbDataReader, ISnowflakeDbDataReader
 {
     private static readonly Task<bool> RowAvailable = Task.FromResult(true);
 
@@ -164,8 +164,12 @@ public sealed class SnowflakeDbDataReader : DbDataReader
         ? throw new ArgumentNullException(nameof(name))
         : Run(resultSet => resultSet.GetOrdinal(name));
 
-    // TODO future milestone(SNOW-4478021): describe the columns once every Snowflake type reports its CTS type.
-    public override DataTable GetSchemaTable() => throw new NotImplementedException("Future milestone, not yet implemented");
+    /// <summary>
+    /// Describes the columns, one row per column. Available after the reader is closed, and returns the same
+    /// <see cref="DataTable"/> on every call.
+    /// </summary>
+    /// <exception cref="SnowflakeDbException">A column has a Snowflake type the driver does not know (<see cref="SFError.INTERNAL_ERROR"/>).</exception>
+    public override DataTable GetSchemaTable() => Run(static resultSet => resultSet.GetSchemaTable());
 
     public override IEnumerator GetEnumerator() => new DbEnumerator(this, closeReader: false);
 
