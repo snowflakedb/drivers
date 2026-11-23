@@ -23,6 +23,7 @@ Related: [tls-handshake.md](tls-handshake.md) · [cert-chain.md](cert-chain.md) 
 | `custom_root_store_path` | path | — | PEM bundle used **instead of** the system roots (replaces, not adds) |
 | `min_tls_version` | string | `tls12` | Lowest protocol version to offer (`tls12` / `tls13`) |
 | `max_tls_version` | string | `tls13` | Highest protocol version to offer; must be ≥ `min_tls_version` |
+| `tls_prefer_post_quantum` | bool | `false` | Prefer `X25519MLKEM768` over a classical group (X25519, or P-256 in FIPS builds), in FIPS builds too. The preferred group is listed first and its key share is sent in the ClientHello; servers that honor the client's order negotiate it, others pick their own. Covers login, queries, stage transfers and workload identity during login. CRL downloads, platform detection and the standalone workload identity attestation call prefer a classical group |
 
 ### `SNOWFLAKE_TLS_CIPHERS`
 

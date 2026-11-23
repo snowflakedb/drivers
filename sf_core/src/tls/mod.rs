@@ -46,7 +46,9 @@ pub use x509_utils::{crl_times, extract_skid, subject_der_hash, verify_crl_signa
 /// undefined behaviour.
 pub(crate) fn ensure_crypto_provider() {
     if rustls::crypto::CryptoProvider::get_default().is_none()
-        && let Err(existing) = rustls::crypto::aws_lc_rs::default_provider().install_default()
+        && let Err(existing) = (*crypto_module::CryptoModule::get().provider())
+            .clone()
+            .install_default()
     {
         tracing::debug!(
             existing_provider_is_fips = existing.fips(),

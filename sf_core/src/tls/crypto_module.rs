@@ -39,7 +39,61 @@
 
 use std::sync::{Arc, LazyLock};
 
+use rustls::NamedGroup;
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyShareOrder {
+    ClassicalFirst,
+    PostQuantumFirst,
+}
+
+impl KeyShareOrder {
+    pub(crate) fn from_prefer_post_quantum(prefer_post_quantum: bool) -> Self {
+        if prefer_post_quantum {
+            Self::PostQuantumFirst
+        } else {
+            Self::ClassicalFirst
+        }
+    }
+}
+
+pub(crate) fn is_post_quantum(group: NamedGroup) -> bool {
+    post_quantum_classification(group) == Some(true)
+}
+
+/// `NamedGroup` is non-exhaustive, so groups added by a rustls upgrade land in
+/// `None`; the provider test rejects any offered group that is unclassified.
+fn post_quantum_classification(group: NamedGroup) -> Option<bool> {
+    match group {
+        NamedGroup::X25519MLKEM768
+        | NamedGroup::secp256r1MLKEM768
+        | NamedGroup::MLKEM512
+        | NamedGroup::MLKEM768
+        | NamedGroup::MLKEM1024 => Some(true),
+        NamedGroup::secp256r1
+        | NamedGroup::secp384r1
+        | NamedGroup::secp521r1
+        | NamedGroup::X25519
+        | NamedGroup::X448
+        | NamedGroup::FFDHE2048
+        | NamedGroup::FFDHE3072
+        | NamedGroup::FFDHE4096
+        | NamedGroup::FFDHE6144
+        | NamedGroup::FFDHE8192 => Some(false),
+        _ => None,
+    }
+}
+
+/// rustls sends the key share of the first group in the ClientHello, and
+/// servers that honor the client's preference pick the first group they share.
+fn ordered(mut provider: CryptoProvider, order: KeyShareOrder) -> CryptoProvider {
+    let post_quantum_first = order == KeyShareOrder::PostQuantumFirst;
+    provider
+        .kx_groups
+        .sort_by_key(|group| is_post_quantum(group.name()) != post_quantum_first);
+    provider
+}
 
 /// The aws-lc module this build linked.
 ///
@@ -50,11 +104,14 @@ use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 #[derive(Debug)]
 pub(crate) struct CryptoModule {
     provider: Arc<CryptoProvider>,
+    post_quantum_first: Arc<CryptoProvider>,
 }
 
 static MODULE: LazyLock<CryptoModule> = LazyLock::new(|| {
+    let base = rustls::crypto::aws_lc_rs::default_provider();
     let module = CryptoModule {
-        provider: Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        post_quantum_first: Arc::new(ordered(base.clone(), KeyShareOrder::PostQuantumFirst)),
+        provider: Arc::new(ordered(base, KeyShareOrder::ClassicalFirst)),
     };
     #[cfg(feature = "fips")]
     let version = tracing::field::debug(module.version());
@@ -78,11 +135,19 @@ impl CryptoModule {
         &MODULE
     }
 
-    /// The provider to hand to `builder_with_provider` entry points.
+    /// The provider to hand to `builder_with_provider` entry points. It offers
+    /// a classical key share first.
     ///
     /// Cloning is an `Arc` bump; rustls takes the provider by value.
     pub(crate) fn provider(&self) -> Arc<CryptoProvider> {
         Arc::clone(&self.provider)
+    }
+
+    pub(crate) fn provider_for(&self, order: KeyShareOrder) -> Arc<CryptoProvider> {
+        match order {
+            KeyShareOrder::ClassicalFirst => self.provider(),
+            KeyShareOrder::PostQuantumFirst => Arc::clone(&self.post_quantum_first),
+        }
     }
 
     /// Signature algorithms for certificate-chain and CRL signature
@@ -139,6 +204,21 @@ impl CryptoModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_offered_group_is_classified() {
+        let unclassified: Vec<_> = CryptoModule::get()
+            .provider()
+            .kx_groups
+            .iter()
+            .map(|group| group.name())
+            .filter(|name| post_quantum_classification(*name).is_none())
+            .collect();
+        assert!(
+            unclassified.is_empty(),
+            "unclassified key exchange groups: {unclassified:?}"
+        );
+    }
 
     /// The instance is shared, not rebuilt per call. This is the property that
     /// makes "the handshake and the CRL check used the same module" true by

@@ -1,0 +1,25 @@
+name: "TLS ClientHello offers a classical key share first"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The ClientHello follows the platform TLS stack (SChannel on Windows, the system
+  OpenSSL on Linux). With OpenSSL 3.5 or newer it offers X25519MLKEM768 first and
+  sends its key share, which makes the ClientHello about 1.5 KB.
+new_driver_behavior: |
+  The ClientHello offers X25519 first (P-256 in FIPS builds) and sends one classical
+  key share, so it fits in one packet. X25519MLKEM768 is still offered; a server that
+  prefers it asks for it with a HelloRetryRequest. Setting tls_prefer_post_quantum=true
+  offers X25519MLKEM768 first.
+description: |
+  Servers that follow the client's order (Snowflake) negotiate X25519. Servers that
+  prefer post-quantum (S3 today) negotiate X25519MLKEM768 after one extra round trip.
+rationale: |
+  sf_core performs the handshake with rustls instead of the platform TLS stack. A
+  ClientHello larger than one packet is dropped by firewalls that inspect the server
+  name before forwarding, which delays every new connection behind them.
+status_rationale: |
+  Accepted: post-quantum is still offered and negotiated with servers that prefer it,
+  and tls_prefer_post_quantum restores the post-quantum-first order.

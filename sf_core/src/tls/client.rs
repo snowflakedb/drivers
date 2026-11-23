@@ -1,14 +1,14 @@
 use crate::crl::ConnectionCrl;
-use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
+use crate::crl::config::CertRevocationCheckMode;
 use crate::tls::CrlServerCertVerifier;
 use crate::tls::config::{ProxyConfig, TlsConfig};
+use crate::tls::crypto_module::{KeyShareOrder, is_post_quantum};
 use crate::tls::error::{
     ClientBuildSnafu, NativeRootLoadSnafu, PemParseSnafu, ProxyBuildSnafu, RedactedUrl,
     RootStoreAddSnafu, RustlsConfigSnafu, TlsError, VerifierBuildSnafu,
 };
 use once_cell::sync::OnceCell;
 use reqwest::{Client, ClientBuilder, NoProxy, Proxy};
-use rustls::ClientConfig;
 use snafu::ResultExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -344,10 +344,7 @@ fn build_tls_client_and_rustls_config_sync(
     #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        let rustls_cfg = build_insecure_traffic_rustls_config(
-            &tls_config.versions.enabled_rustls_versions(),
-            ClientAlpn::Default,
-        )?;
+        let rustls_cfg = build_insecure_traffic_rustls_config(tls_config, ClientAlpn::Default)?;
         let mut builder =
             configure_http_client(Client::builder(), proxy)?.use_preconfigured_tls(rustls_cfg);
         if let Some(ct) = connect_timeout {
@@ -357,12 +354,10 @@ fn build_tls_client_and_rustls_config_sync(
         return Ok((
             client,
             need_diag_config
-                .then(build_insecure_rustls_config)
+                .then(|| build_insecure_rustls_config(tls_config))
                 .transpose()?,
         ));
     }
-
-    let protocol_versions = tls_config.versions.enabled_rustls_versions();
 
     let root_certificates = load_root_certificates(tls_config)?;
 
@@ -373,8 +368,7 @@ fn build_tls_client_and_rustls_config_sync(
             }
             let reqwest_rustls_cfg = build_verified_rustls_config(
                 roots.plain_store(&root_certificates)?,
-                &protocol_versions,
-                tls_config.verify_hostname,
+                tls_config,
                 ClientAlpn::Default,
             )?;
             let diag_rustls_cfg = need_diag_config.then(|| {
@@ -395,16 +389,13 @@ fn build_tls_client_and_rustls_config_sync(
             tracing::debug!(
                 "CRL validation enabled, creating client with full TLS handshake validation"
             );
-            // Compute the enabled protocol-version window before moving
-            // `crl_config` into the builder. reqwest's min/max_tls_version are
-            // ignored on the preconfigured-rustls path, so the window must be
-            // baked into the rustls ClientConfig instead.
+            // reqwest's min/max_tls_version are ignored on the
+            // preconfigured-rustls path, so the window must be baked into the
+            // rustls ClientConfig instead.
             let root_store = roots.crl_store(&root_certificates)?;
             let reqwest_rustls_cfg = build_crl_rustls_config(
-                tls_config.crl_config.clone(),
+                tls_config,
                 root_store,
-                tls_config.verify_hostname,
-                &protocol_versions,
                 ClientAlpn::Default,
                 crl_manager,
                 roots,
@@ -421,7 +412,7 @@ fn build_tls_client_and_rustls_config_sync(
             // which is exactly when a user reaches for the diagnostic tool.
             let diag_rustls_cfg = need_diag_config
                 .then(|| {
-                    build_plain_rustls_client_config(roots, &root_certificates, &protocol_versions)
+                    build_plain_rustls_client_config(tls_config, roots, &root_certificates)
                         .map(Arc::new)
                 })
                 .transpose()?;
@@ -509,10 +500,7 @@ fn configure_tls_builder(
     #[cfg(not(feature = "fips"))]
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        let rustls_cfg = build_insecure_traffic_rustls_config(
-            &tls_config.versions.enabled_rustls_versions(),
-            alpn,
-        )?;
+        let rustls_cfg = build_insecure_traffic_rustls_config(tls_config, alpn)?;
         return Ok(builder.use_preconfigured_tls(rustls_cfg));
     }
 
@@ -522,25 +510,16 @@ fn configure_tls_builder(
         CertRevocationCheckMode::Disabled => {
             let rustls_cfg = build_verified_rustls_config(
                 roots.plain_store(&root_certificates)?,
-                &tls_config.versions.enabled_rustls_versions(),
-                tls_config.verify_hostname,
+                tls_config,
                 alpn,
             )?;
             Ok(builder.use_preconfigured_tls(rustls_cfg))
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!("CRL validation enabled, configuring storage TLS client");
-            let protocol_versions = tls_config.versions.enabled_rustls_versions();
             let root_store = roots.crl_store(&root_certificates)?;
-            let rustls_cfg = build_crl_rustls_config(
-                tls_config.crl_config.clone(),
-                root_store,
-                tls_config.verify_hostname,
-                &protocol_versions,
-                alpn,
-                crl_manager,
-                roots,
-            )?;
+            let rustls_cfg =
+                build_crl_rustls_config(tls_config, root_store, alpn, crl_manager, roots)?;
             Ok(builder.use_preconfigured_tls(rustls_cfg))
         }
     }
@@ -601,38 +580,109 @@ fn configure_storage_from_snapshot(
     .map(ClientBuilder::no_gzip)
 }
 
+// TODO(SNOW-4546333): derive provider, versions and resumption once for all rustls ClientConfig builders.
 fn handshake_provider(
     protocol_versions: &[&'static rustls::SupportedProtocolVersion],
+    tls_config: &TlsConfig,
 ) -> Result<Arc<rustls::crypto::CryptoProvider>, TlsError> {
-    super::cipher_policy::provider_for_versions(protocol_versions)
+    super::cipher_policy::provider_for_versions(protocol_versions, tls_config.key_share_order())
+}
+
+/// rustls leads the next ClientHello to a host with the group that host chose
+/// last time. Classical-first configs keep the session cache but drop
+/// post-quantum hints, so a server that negotiated ML-KEM through a
+/// HelloRetryRequest does not get a post-quantum-first ClientHello on the next
+/// connection.
+// TODO(SNOW-4546334): report handshakes where the server forces a post-quantum HelloRetryRequest.
+fn apply_key_share_order(config: &mut rustls::ClientConfig, tls_config: &TlsConfig) {
+    if tls_config.key_share_order() == KeyShareOrder::ClassicalFirst {
+        config.resumption = rustls::client::Resumption::store(Arc::new(ClassicalKxHints(
+            Arc::new(rustls::client::ClientSessionMemoryCache::new(256)),
+        )));
+    }
+}
+
+#[derive(Debug)]
+struct ClassicalKxHints(Arc<dyn rustls::client::ClientSessionStore>);
+
+impl rustls::client::ClientSessionStore for ClassicalKxHints {
+    fn set_kx_hint(
+        &self,
+        server_name: rustls::pki_types::ServerName<'static>,
+        group: rustls::NamedGroup,
+    ) {
+        if !is_post_quantum(group) {
+            self.0.set_kx_hint(server_name, group);
+        }
+    }
+
+    fn kx_hint(
+        &self,
+        server_name: &rustls::pki_types::ServerName<'_>,
+    ) -> Option<rustls::NamedGroup> {
+        self.0.kx_hint(server_name)
+    }
+
+    fn set_tls12_session(
+        &self,
+        server_name: rustls::pki_types::ServerName<'static>,
+        value: rustls::client::Tls12ClientSessionValue,
+    ) {
+        self.0.set_tls12_session(server_name, value);
+    }
+
+    fn tls12_session(
+        &self,
+        server_name: &rustls::pki_types::ServerName<'_>,
+    ) -> Option<rustls::client::Tls12ClientSessionValue> {
+        self.0.tls12_session(server_name)
+    }
+
+    fn remove_tls12_session(&self, server_name: &rustls::pki_types::ServerName<'static>) {
+        self.0.remove_tls12_session(server_name);
+    }
+
+    fn insert_tls13_ticket(
+        &self,
+        server_name: rustls::pki_types::ServerName<'static>,
+        value: rustls::client::Tls13ClientSessionValue,
+    ) {
+        self.0.insert_tls13_ticket(server_name, value);
+    }
+
+    fn take_tls13_ticket(
+        &self,
+        server_name: &rustls::pki_types::ServerName<'static>,
+    ) -> Option<rustls::client::Tls13ClientSessionValue> {
+        self.0.take_tls13_ticket(server_name)
+    }
 }
 
 /// Build a rustls `ClientConfig` with CRL validation. Shared by
 /// [`configure_tls_builder`] (storage clients) and
 /// [`build_tls_client_and_rustls_config`] (connection-level client).
 fn build_crl_rustls_config(
-    crl_config: CrlConfig,
+    tls_config: &TlsConfig,
     root_store: Arc<rustls::RootCertStore>,
-    verify_hostname: bool,
-    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
     alpn: ClientAlpn,
     crl_manager: ConnectionCrl,
     roots: &RootStoreSnapshot<'_>,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    if !verify_hostname {
+    if !tls_config.verify_hostname {
         tracing::warn!("Hostname verification disabled (CRL path)");
     }
     // Reject an empty version window instead of silently restoring rustls's
     // defaults, which could re-enable a protocol the caller excluded.
-    let provider = handshake_provider(protocol_versions)?;
-    let version_builder = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(protocol_versions)
+    let protocol_versions = tls_config.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let version_builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?;
 
     let crl_verifier = CrlServerCertVerifier::new_with_root_store(
-        crl_config,
+        tls_config.crl_config.clone(),
         root_store,
-        verify_hostname,
+        tls_config.verify_hostname,
         crl_manager,
         roots,
     )
@@ -647,6 +697,7 @@ fn build_crl_rustls_config(
         .with_custom_certificate_verifier(Arc::new(crl_verifier))
         .with_no_client_auth();
     config.alpn_protocols = alpn.protocols();
+    apply_key_share_order(&mut config, tls_config);
     Ok(config)
 }
 
@@ -654,27 +705,24 @@ fn build_crl_rustls_config(
 /// the verified reqwest client, CRL verification currently uses native roots;
 /// keep its diagnostic on the same roots instead of the native ∪ webpki union.
 fn build_plain_rustls_client_config(
+    tls_config: &TlsConfig,
     roots: &RootStoreSnapshot<'_>,
     root_certificates: &RootCertificates,
-    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
 ) -> Result<rustls::ClientConfig, TlsError> {
     let root_store = match root_certificates {
         RootCertificates::Default => roots.native_store_lenient(),
         RootCertificates::Custom(pem) => Arc::new(create_root_store_from_pem(pem)?),
         RootCertificates::Extra(pem) => roots.with_native_and_pem(pem)?,
     };
-    let versions = if protocol_versions.is_empty() {
-        rustls::DEFAULT_VERSIONS
-    } else {
-        protocol_versions
-    };
-    let provider = handshake_provider(versions)?;
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(versions)
-        .context(RustlsConfigSnafu)?;
-    Ok(builder
+    let protocol_versions = tls_config.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&protocol_versions)
+        .context(RustlsConfigSnafu)?
         .with_root_certificates(root_store)
-        .with_no_client_auth())
+        .with_no_client_auth();
+    apply_key_share_order(&mut config, tls_config);
+    Ok(config)
 }
 
 /// Module-backed config with reqwest's default trust (native ∪ webpki roots)
@@ -701,8 +749,7 @@ fn build_default_verified_rustls_config(
 ) -> Result<rustls::ClientConfig, TlsError> {
     build_verified_rustls_config(
         roots.with_bundled()?,
-        rustls::DEFAULT_VERSIONS,
-        true,
+        &TlsConfig::default(),
         ClientAlpn::Default,
     )
 }
@@ -712,19 +759,19 @@ fn build_default_verified_rustls_config(
 /// precedence; reqwest ignores builder TLS settings after use_preconfigured_tls.
 fn build_verified_rustls_config(
     root_store: Arc<rustls::RootCertStore>,
-    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
-    verify_hostname: bool,
+    tls_config: &TlsConfig,
     alpn: ClientAlpn,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let provider = handshake_provider(protocol_versions)?;
+    let protocol_versions = tls_config.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, tls_config)?;
     let supported_algs = provider.signature_verification_algorithms;
     // An empty version window can be constructed through TlsConfig's public
     // fields. Reqwest rejects it; silently using safe defaults would downgrade
     // a caller asking for TLS 1.3 to TLS 1.2.
-    let builder = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(protocol_versions)
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?;
-    let mut config = if verify_hostname {
+    let mut config = if tls_config.verify_hostname {
         builder
             .with_root_certificates(root_store)
             .with_no_client_auth()
@@ -739,6 +786,7 @@ fn build_verified_rustls_config(
             .with_no_client_auth()
     };
     config.alpn_protocols = alpn.protocols();
+    apply_key_share_order(&mut config, tls_config);
     Ok(config)
 }
 
@@ -793,17 +841,19 @@ impl rustls::client::danger::ServerCertVerifier for IgnoreHostnameCertVerifier {
 
 #[cfg(not(feature = "fips"))]
 fn build_insecure_traffic_rustls_config(
-    protocol_versions: &[&'static rustls::SupportedProtocolVersion],
+    tls_config: &TlsConfig,
     alpn: ClientAlpn,
 ) -> Result<rustls::ClientConfig, TlsError> {
-    let provider = handshake_provider(protocol_versions)?;
+    let protocol_versions = tls_config.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, tls_config)?;
     let mut config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(protocol_versions)
+        .with_protocol_versions(&protocol_versions)
         .context(RustlsConfigSnafu)?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
         .with_no_client_auth();
     config.alpn_protocols = alpn.protocols();
+    apply_key_share_order(&mut config, tls_config);
     Ok(config)
 }
 
@@ -869,24 +919,27 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyCert {
 }
 
 #[cfg(not(feature = "fips"))]
-/// rustls [`ClientConfig`] that skips all certificate verification.
+/// rustls [`rustls::ClientConfig`] that skips all certificate verification.
 ///
 /// Returned by [`build_tls_client_and_rustls_config`] for the `verify_certificates=false`
 /// path so the diagnostic's TLS probe behaves consistently with the reqwest client: neither
 /// verifies the server certificate.  Using a cert-verified config here would cause
 /// false-negative TLS failures in environments with custom or self-signed CAs, which is
 /// exactly the case where users reach for `verify_certificates=false`.
-pub(crate) fn build_insecure_rustls_config() -> Result<Arc<rustls::ClientConfig>, TlsError> {
+pub(crate) fn build_insecure_rustls_config(
+    tls_config: &TlsConfig,
+) -> Result<Arc<rustls::ClientConfig>, TlsError> {
     super::ensure_crypto_provider();
-    let provider = handshake_provider(rustls::DEFAULT_VERSIONS)?;
-    Ok(Arc::new(
-        rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .context(RustlsConfigSnafu)?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifyCertVerifier::new()))
-            .with_no_client_auth(),
-    ))
+    let protocol_versions = tls_config.versions.enabled_rustls_versions();
+    let provider = handshake_provider(&protocol_versions, tls_config)?;
+    let mut config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&protocol_versions)
+        .context(RustlsConfigSnafu)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifyCertVerifier::new()))
+        .with_no_client_auth();
+    apply_key_share_order(&mut config, tls_config);
+    Ok(Arc::new(config))
 }
 
 #[cfg(not(feature = "fips"))]
@@ -1134,8 +1187,377 @@ fn build_proxy_url(host: &str, proxy: &ProxyConfig) -> String {
 mod tests {
     use super::*;
     use crate::crl::CrlManager;
+    use crate::crl::config::CrlConfig;
     use crate::sensitive::SensitiveString;
     use std::io::Write;
+
+    use rustls::NamedGroup;
+    use rustls::pki_types::ServerName;
+
+    fn expected_groups(prefer_post_quantum: bool) -> Vec<NamedGroup> {
+        let classical: &[NamedGroup] = if cfg!(feature = "fips") {
+            &[NamedGroup::secp256r1, NamedGroup::secp384r1]
+        } else {
+            &[
+                NamedGroup::X25519,
+                NamedGroup::secp256r1,
+                NamedGroup::secp384r1,
+            ]
+        };
+        let post_quantum = [NamedGroup::X25519MLKEM768];
+        if prefer_post_quantum {
+            post_quantum.iter().chain(classical).copied().collect()
+        } else {
+            classical.iter().chain(&post_quantum).copied().collect()
+        }
+    }
+
+    fn assert_groups(config: &rustls::ClientConfig, prefer_post_quantum: bool, path: &str) {
+        let groups: Vec<_> = config
+            .crypto_provider()
+            .kx_groups
+            .iter()
+            .map(|group| group.name())
+            .collect();
+        assert_eq!(
+            groups,
+            expected_groups(prefer_post_quantum),
+            "{path}: key-exchange group order"
+        );
+    }
+
+    fn server_name() -> ServerName<'static> {
+        ServerName::try_from("localhost").expect("server name")
+    }
+
+    fn client_hello_key_shares(
+        config: &Arc<rustls::ClientConfig>,
+        name: ServerName<'static>,
+    ) -> Vec<NamedGroup> {
+        let mut client =
+            rustls::ClientConnection::new(Arc::clone(config), name).expect("client connection");
+        let mut hello = Vec::new();
+        client.write_tls(&mut hello).expect("client hello");
+        key_share_groups(&hello)
+    }
+
+    fn key_share_groups(record: &[u8]) -> Vec<NamedGroup> {
+        let u16_at = |at: usize| usize::from(u16::from_be_bytes([record[at], record[at + 1]]));
+        assert_eq!(record[0], 0x16, "handshake record");
+        assert_eq!(
+            record.len(),
+            5 + u16_at(3),
+            "one record holds the ClientHello"
+        );
+        assert_eq!(record[5], 0x01, "ClientHello message");
+        let mut at = 5 + 4 + 2 + 32;
+        at += 1 + usize::from(record[at]);
+        at += 2 + u16_at(at);
+        at += 1 + usize::from(record[at]);
+        let extensions_end = at + 2 + u16_at(at);
+        at += 2;
+        while at < extensions_end {
+            let (kind, len) = (u16_at(at), u16_at(at + 2));
+            if kind == 51 {
+                let mut share = at + 6;
+                let mut groups = Vec::new();
+                while share < at + 4 + len {
+                    groups.push(NamedGroup::from(u16_at(share) as u16));
+                    share += 4 + u16_at(share + 2);
+                }
+                return groups;
+            }
+            at += 4 + len;
+        }
+        Vec::new()
+    }
+
+    struct TestServer {
+        config: Arc<rustls::ServerConfig>,
+        roots: Arc<rustls::RootCertStore>,
+    }
+
+    fn test_server(
+        groups: &[NamedGroup],
+        versions: &[&'static rustls::SupportedProtocolVersion],
+    ) -> TestServer {
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("certificate");
+        let cert_der = cert.cert.der().clone();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert_der.clone()).expect("root");
+        let mut provider = (*crate::tls::crypto_module::CryptoModule::get().provider()).clone();
+        provider
+            .kx_groups
+            .retain(|group| groups.contains(&group.name()));
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(versions)
+            .expect("server versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert_der],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()).into(),
+            )
+            .expect("server config");
+        TestServer {
+            config: Arc::new(config),
+            roots: Arc::new(roots),
+        }
+    }
+
+    fn handshake(
+        client_config: &Arc<rustls::ClientConfig>,
+        server: &TestServer,
+    ) -> Result<rustls::ClientConnection, rustls::Error> {
+        let mut client = rustls::ClientConnection::new(Arc::clone(client_config), server_name())
+            .expect("client connection");
+        let mut server =
+            rustls::ServerConnection::new(Arc::clone(&server.config)).expect("server connection");
+        loop {
+            let mut moved = false;
+            while client.wants_write() {
+                let mut bytes = Vec::new();
+                client.write_tls(&mut bytes).expect("client write");
+                moved |= !bytes.is_empty();
+                let mut pending = &bytes[..];
+                while !pending.is_empty() {
+                    server.read_tls(&mut pending).expect("server read");
+                }
+                server.process_new_packets()?;
+            }
+            while server.wants_write() {
+                let mut bytes = Vec::new();
+                server.write_tls(&mut bytes).expect("server write");
+                moved |= !bytes.is_empty();
+                let mut pending = &bytes[..];
+                while !pending.is_empty() {
+                    client.read_tls(&mut pending).expect("client read");
+                }
+                client.process_new_packets()?;
+            }
+            if !moved {
+                return Ok(client);
+            }
+        }
+    }
+
+    fn verified_config(tls_config: &TlsConfig, server: &TestServer) -> Arc<rustls::ClientConfig> {
+        Arc::new(
+            build_verified_rustls_config(
+                Arc::clone(&server.roots),
+                tls_config,
+                ClientAlpn::Default,
+            )
+            .expect("verified config"),
+        )
+    }
+
+    fn tls13_only() -> TlsConfig {
+        TlsConfig {
+            versions: crate::tls::config::TlsVersions {
+                min: crate::tls::config::TlsVersion::Tls13,
+                max: crate::tls::config::TlsVersion::Tls13,
+            },
+            ..Default::default()
+        }
+    }
+
+    fn post_quantum_config(
+        prefer_post_quantum: bool,
+        check_mode: CertRevocationCheckMode,
+        verify_certificates: bool,
+    ) -> TlsConfig {
+        TlsConfig {
+            prefer_post_quantum,
+            verify_certificates,
+            crl_config: CrlConfig {
+                check_mode,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn traffic_configs_use_the_configured_group_order() {
+        let provider = RootStoreProvider::new();
+        let snapshot = provider.snapshot();
+        for prefer_post_quantum in [false, true] {
+            let tls_config =
+                post_quantum_config(prefer_post_quantum, CertRevocationCheckMode::Disabled, true);
+            let verified = build_verified_rustls_config(
+                Arc::new(rustls::RootCertStore::empty()),
+                &tls_config,
+                ClientAlpn::Default,
+            )
+            .expect("verified config");
+            assert_groups(&verified, prefer_post_quantum, "verified");
+
+            let crl = build_crl_rustls_config(
+                &tls_config,
+                snapshot
+                    .crl_store(&RootCertificates::Default)
+                    .expect("crl roots"),
+                ClientAlpn::Default,
+                CrlManager::new().connection_crl(),
+                &snapshot,
+            )
+            .expect("crl config");
+            assert_groups(&crl, prefer_post_quantum, "crl");
+
+            #[cfg(not(feature = "fips"))]
+            {
+                let insecure =
+                    build_insecure_traffic_rustls_config(&tls_config, ClientAlpn::Default)
+                        .expect("insecure traffic config");
+                assert_groups(&insecure, prefer_post_quantum, "insecure traffic");
+            }
+        }
+    }
+
+    #[test]
+    fn diagnostic_configs_use_the_configured_group_order() {
+        let provider = RootStoreProvider::new();
+        let snapshot = provider.snapshot();
+        let mut cases = vec![
+            ("crl disabled", CertRevocationCheckMode::Disabled, true),
+            ("crl enabled", CertRevocationCheckMode::Enabled, true),
+        ];
+        if cfg!(not(feature = "fips")) {
+            cases.push(("insecure", CertRevocationCheckMode::Disabled, false));
+        }
+        for prefer_post_quantum in [false, true] {
+            for (path, check_mode, verify_certificates) in &cases {
+                let tls_config = post_quantum_config(
+                    prefer_post_quantum,
+                    check_mode.clone(),
+                    *verify_certificates,
+                );
+                let (_, diag) = build_tls_client_and_rustls_config_sync(
+                    &tls_config,
+                    None,
+                    CrlManager::new().connection_crl(),
+                    &snapshot,
+                    None,
+                    true,
+                )
+                .expect("client");
+                assert_groups(&diag.expect("diagnostic config"), prefer_post_quantum, path);
+            }
+        }
+    }
+
+    #[test]
+    fn post_quantum_first_order_matches_rustls_default() {
+        let names = |provider: &rustls::crypto::CryptoProvider| {
+            provider
+                .kx_groups
+                .iter()
+                .map(|group| group.name())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(
+                &crate::tls::crypto_module::CryptoModule::get()
+                    .provider_for(KeyShareOrder::PostQuantumFirst)
+            ),
+            names(&rustls::crypto::aws_lc_rs::default_provider())
+        );
+    }
+
+    #[test]
+    fn client_hello_carries_the_shares_of_the_first_group() {
+        let server = test_server(&[NamedGroup::X25519MLKEM768], &[&rustls::version::TLS13]);
+        let classical = client_hello_key_shares(
+            &verified_config(&TlsConfig::default(), &server),
+            server_name(),
+        );
+        assert_eq!(classical, vec![expected_groups(false)[0]]);
+
+        let post_quantum = client_hello_key_shares(
+            &verified_config(
+                &TlsConfig {
+                    prefer_post_quantum: true,
+                    ..Default::default()
+                },
+                &server,
+            ),
+            server_name(),
+        );
+        let expected = if cfg!(feature = "fips") {
+            vec![NamedGroup::X25519MLKEM768]
+        } else {
+            vec![NamedGroup::X25519MLKEM768, NamedGroup::X25519]
+        };
+        assert_eq!(post_quantum, expected);
+    }
+
+    #[test]
+    fn post_quantum_only_server_needs_a_retry_only_by_default() {
+        let server = test_server(&[NamedGroup::X25519MLKEM768], &[&rustls::version::TLS13]);
+        for (prefer_post_quantum, expected) in [
+            (false, rustls::HandshakeKind::FullWithHelloRetryRequest),
+            (true, rustls::HandshakeKind::Full),
+        ] {
+            let config = verified_config(
+                &TlsConfig {
+                    prefer_post_quantum,
+                    ..Default::default()
+                },
+                &server,
+            );
+            let client = handshake(&config, &server).expect("handshake");
+            assert_eq!(
+                client.handshake_kind(),
+                Some(expected),
+                "prefer_post_quantum={prefer_post_quantum}"
+            );
+        }
+    }
+
+    #[test]
+    fn classical_first_ignores_post_quantum_hints_but_keeps_resumption() {
+        let server = test_server(&[NamedGroup::X25519MLKEM768], &[&rustls::version::TLS13]);
+        let config = verified_config(&TlsConfig::default(), &server);
+        handshake(&config, &server).expect("first handshake");
+
+        assert_eq!(
+            client_hello_key_shares(&config, server_name()),
+            vec![expected_groups(false)[0]]
+        );
+        let second = handshake(&config, &server).expect("second handshake");
+        assert_eq!(
+            second.handshake_kind(),
+            Some(rustls::HandshakeKind::Resumed)
+        );
+    }
+
+    #[test]
+    fn classical_first_keeps_tls12_resumption() {
+        let server = test_server(&expected_groups(false), &[&rustls::version::TLS12]);
+        let config = verified_config(&TlsConfig::default(), &server);
+        handshake(&config, &server).expect("first handshake");
+        let second = handshake(&config, &server).expect("second handshake");
+        assert_eq!(
+            second.handshake_kind(),
+            Some(rustls::HandshakeKind::Resumed)
+        );
+    }
+
+    #[cfg(not(feature = "fips"))]
+    #[test]
+    fn insecure_diagnostic_honors_the_version_window() {
+        let server = test_server(&expected_groups(false), &[&rustls::version::TLS12]);
+        let config = |tls_config: TlsConfig| {
+            build_insecure_rustls_config(&TlsConfig {
+                verify_certificates: false,
+                ..tls_config
+            })
+            .expect("insecure diagnostic config")
+        };
+        handshake(&config(TlsConfig::default()), &server).expect("default window");
+        handshake(&config(tls13_only()), &server).expect_err("TLS 1.3-only window");
+    }
 
     fn proxy(
         host: Option<&str>,
@@ -1164,9 +1586,9 @@ mod tests {
     #[test]
     fn plain_config_uses_the_module_provider() {
         let config = build_plain_rustls_client_config(
+            &TlsConfig::default(),
             &RootStoreProvider::new().snapshot(),
             &RootCertificates::Default,
-            &[],
         )
         .expect("plain rustls config");
         assert!(
@@ -1192,7 +1614,8 @@ mod tests {
     /// The standard-build diagnostic must not inherit a host-installed provider.
     #[test]
     fn insecure_config_uses_the_module_provider() {
-        let config = build_insecure_rustls_config().expect("insecure rustls config");
+        let config =
+            build_insecure_rustls_config(&TlsConfig::default()).expect("insecure rustls config");
         assert!(
             Arc::ptr_eq(
                 config.crypto_provider(),
@@ -1207,9 +1630,9 @@ mod tests {
     #[test]
     fn version_window_does_not_change_the_provider() {
         let config = build_plain_rustls_client_config(
+            &tls13_only(),
             &RootStoreProvider::new().snapshot(),
             &RootCertificates::Default,
-            &[&rustls::version::TLS13],
         )
         .expect("versioned rustls config");
         assert!(
@@ -1231,8 +1654,7 @@ mod tests {
                         .snapshot()
                         .with_bundled()
                         .expect("roots"),
-                    &[&rustls::version::TLS13],
-                    true,
+                    &tls13_only(),
                     ClientAlpn::Default,
                 )
                 .expect("verified config")
@@ -1259,13 +1681,11 @@ mod tests {
         let (config, http1) = crate::tls::cipher_policy::with_tls_ciphers_env(
             Some("TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256"),
             || {
-                let config = build_insecure_traffic_rustls_config(
-                    &[&rustls::version::TLS13],
-                    ClientAlpn::Default,
-                )
-                .expect("insecure traffic config");
+                let config =
+                    build_insecure_traffic_rustls_config(&tls13_only(), ClientAlpn::Default)
+                        .expect("insecure traffic config");
                 let http1 = build_insecure_traffic_rustls_config(
-                    rustls::DEFAULT_VERSIONS,
+                    &TlsConfig::default(),
                     ClientAlpn::Http1Only,
                 )
                 .expect("http1 insecure config");

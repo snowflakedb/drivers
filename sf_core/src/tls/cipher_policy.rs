@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::env_vars::SNOWFLAKE_TLS_CIPHERS;
+use crate::tls::crypto_module::KeyShareOrder;
 use crate::tls::error::{CipherPolicySnafu, TlsError};
 use rustls::CipherSuite;
 use rustls::SupportedCipherSuite;
@@ -22,8 +23,9 @@ struct CipherPolicy {
 
 pub(crate) fn provider_for_versions(
     versions: &[&'static rustls::SupportedProtocolVersion],
+    order: KeyShareOrder,
 ) -> Result<Arc<CryptoProvider>, TlsError> {
-    let base = super::crypto_module::CryptoModule::get().provider();
+    let base = super::crypto_module::CryptoModule::get().provider_for(order);
     let Some(policy) = read_policy()? else {
         return Ok(base);
     };
@@ -275,6 +277,7 @@ pub(crate) use test_env::with_tls_ciphers_env;
 mod tests {
     use std::sync::Arc;
 
+    use crate::tls::crypto_module::KeyShareOrder;
     use rustls::CipherSuite;
     use rustls::crypto::CryptoProvider;
 
@@ -472,7 +475,8 @@ mod tests {
     fn unset_provider_still_offers_chacha() {
         super::with_tls_ciphers_env(None, || {
             let provider =
-                provider_for_versions(&protocol_window(true, true)).expect("default provider");
+                provider_for_versions(&protocol_window(true, true), KeyShareOrder::ClassicalFirst)
+                    .expect("default provider");
             assert!(suite_ids(&provider).contains(&CipherSuite::TLS13_CHACHA20_POLY1305_SHA256));
             assert!(Arc::ptr_eq(&provider, &CryptoModule::get().provider()));
         });
@@ -482,7 +486,8 @@ mod tests {
     fn the_environment_variable_reaches_the_provider() {
         super::with_tls_ciphers_env(Some("NOT-A-CIPHER"), || {
             let err =
-                provider_for_versions(&protocol_window(false, true)).expect_err("unknown name");
+                provider_for_versions(&protocol_window(false, true), KeyShareOrder::ClassicalFirst)
+                    .expect_err("unknown name");
             assert!(message(err).contains("does not recognize 'NOT-A-CIPHER'"));
         });
     }

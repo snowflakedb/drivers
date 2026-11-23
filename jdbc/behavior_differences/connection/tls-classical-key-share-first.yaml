@@ -1,0 +1,23 @@
+name: "TLS ClientHello offers a classical key share first"
+status: allowed
+type: enhancement
+reviewed: true
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The ClientHello follows the JDK's default named groups. JDK 26 and older offer x25519
+  first and no post-quantum group. JDK 27 and newer offer X25519MLKEM768 first and send
+  its key share next to x25519, which makes the ClientHello about 1.5 KB.
+new_driver_behavior: |
+  The ClientHello offers X25519 first (P-256 in FIPS builds) and sends one classical
+  key share, so it fits in one packet, regardless of the JDK. X25519MLKEM768 is still
+  offered; a server that prefers it asks for it with a HelloRetryRequest. Setting
+  tls_prefer_post_quantum=true offers X25519MLKEM768 first. jdk.tls.namedGroups has no
+  effect.
+description: |
+  Servers that follow the client's order (Snowflake) negotiate X25519. Servers that
+  prefer post-quantum (S3 today) negotiate X25519MLKEM768 after one extra round trip;
+  on JDK 26 and older the old driver never negotiated post-quantum.
+status_rationale: |
+  Accepted: post-quantum is still offered and negotiated with servers that prefer it,
+  and tls_prefer_post_quantum restores the post-quantum-first order.

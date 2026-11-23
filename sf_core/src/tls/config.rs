@@ -2,11 +2,12 @@ use crate::config::ConfigError;
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::param_names::{
     CUSTOM_ROOT_STORE_PATH, EXTRA_ROOT_STORE_PATH, MAX_TLS_VERSION, MIN_TLS_VERSION,
-    TLS_SKIP_VERIFY, VERIFY_CERTIFICATES, VERIFY_HOSTNAME,
+    TLS_PREFER_POST_QUANTUM, TLS_SKIP_VERIFY, VERIFY_CERTIFICATES, VERIFY_HOSTNAME,
 };
 use crate::config::settings::{Setting, Settings};
 use crate::crl::config::CrlConfig;
 use crate::sensitive::SensitiveString;
+use crate::tls::crypto_module::KeyShareOrder;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -132,6 +133,8 @@ pub struct TlsConfig {
     pub verify_certificates: bool,
     /// TLS protocol-version window to negotiate (default `Tls12..=Tls13`).
     pub versions: TlsVersions,
+    /// Send the post-quantum key share first instead of a classical one.
+    pub prefer_post_quantum: bool,
 }
 
 /// Scheme for the hop to the proxy, not the origin. Only `https` uses TLS to
@@ -330,7 +333,12 @@ impl TlsConfig {
             verify_hostname: false,
             verify_certificates: false,
             versions: TlsVersions::default(),
+            prefer_post_quantum: false,
         }
+    }
+
+    pub(crate) fn key_share_order(&self) -> KeyShareOrder {
+        KeyShareOrder::from_prefer_post_quantum(self.prefer_post_quantum)
     }
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
@@ -369,6 +377,8 @@ impl TlsConfig {
         // effective default (1.2..=1.3), so behaviour is unchanged unless the
         // caller opts in; a bad spelling or inverted window fails here.
         let versions = TlsVersions::from_settings(settings)?;
+        let prefer_post_quantum = settings.get_bool_or(TLS_PREFER_POST_QUANTUM.as_str(), false);
+        tracing::debug!(prefer_post_quantum, "TLS key share order");
 
         Ok(Self {
             crl_config,
@@ -377,6 +387,7 @@ impl TlsConfig {
             verify_hostname,
             verify_certificates,
             versions,
+            prefer_post_quantum,
         })
     }
 }
@@ -400,6 +411,7 @@ impl Default for TlsConfig {
             verify_hostname: true,
             verify_certificates: true,
             versions: TlsVersions::default(),
+            prefer_post_quantum: false,
         }
     }
 }
@@ -488,6 +500,25 @@ mod tests {
         let cfg = TlsConfig::from_settings(&HashMap::<String, Setting>::new()).unwrap();
         assert!(cfg.verify_hostname);
         assert!(cfg.verify_certificates);
+        assert!(!cfg.prefer_post_quantum);
+    }
+
+    #[test]
+    fn from_settings_reads_prefer_post_quantum() {
+        for (setting, expected) in [
+            (Setting::String("true".into()), true),
+            (Setting::String("false".into()), false),
+            (Setting::Bool(true), true),
+            (Setting::Bool(false), false),
+        ] {
+            let settings = HashMap::from([("tls_prefer_post_quantum".to_string(), setting)]);
+            assert_eq!(
+                TlsConfig::from_settings(&settings)
+                    .unwrap()
+                    .prefer_post_quantum,
+                expected
+            );
+        }
     }
 
     #[test]

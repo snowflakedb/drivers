@@ -127,6 +127,7 @@ pub mod param_names {
     pub const TLS_SKIP_VERIFY: ParamKey = ParamKey("tls_skip_verify");
     pub const MIN_TLS_VERSION: ParamKey = ParamKey("min_tls_version");
     pub const MAX_TLS_VERSION: ParamKey = ParamKey("max_tls_version");
+    pub const TLS_PREFER_POST_QUANTUM: ParamKey = ParamKey("tls_prefer_post_quantum");
     pub const CRL_CHECK_MODE: ParamKey = ParamKey("crl_check_mode");
     pub const CRL_ENABLE_DISK_CACHING: ParamKey = ParamKey("crl_enable_disk_caching");
     pub const CRL_ENABLE_MEMORY_CACHING: ParamKey = ParamKey("crl_enable_memory_caching");
@@ -1700,6 +1701,16 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description("Maximum TLS protocol version to negotiate (tls12 or tls13)")
+        .scopes(&[ParamScope::Connection])
+        .mutable_after_connect(false)
+        .build(),
+    ParamDef::builder()
+        .canonical_name(param_names::TLS_PREFER_POST_QUANTUM.as_str())
+        .value_type(ValueType::Bool)
+        .default(DefaultValue::Bool(false))
+        .sensitive(false)
+        .auth(false)
+        .description("Prefer the post-quantum X25519MLKEM768 key exchange over a classical group (X25519, or P-256 in FIPS builds), in FIPS builds too. The preferred group is listed first and its key share is sent in the ClientHello; servers that honor the client's order negotiate it, others pick their own. Applies to the connection's clients: login, queries, stage transfers and workload identity during login. CRL downloads, platform detection and the standalone workload identity attestation call prefer a classical group")
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),

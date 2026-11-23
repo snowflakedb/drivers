@@ -370,6 +370,16 @@ class ConnectionConfig(ConnectionConfigMixin):
     ssl: bool | None = None
     """Enable or disable SSL/TLS (sets protocol to https or http). Deprecated: use protocol instead"""
 
+    tls_prefer_post_quantum: bool | None = False
+    """Prefer the post-quantum X25519MLKEM768 key exchange over a classical group (X25519, or P-256 in FIPS builds), in
+    FIPS builds too. The preferred group is listed first and its key share is sent in the ClientHello; servers that
+    honor the client's order negotiate it, others pick their own. Applies to the connection's clients: login, queries,
+    stage transfers and workload identity during login. CRL downloads, platform detection and the standalone workload
+    identity attestation call prefer a classical group.
+
+    Default: False
+    """
+
     tls_skip_verify: bool | None = False
     """Skip all TLS verification with a single switch: disables both certificate and hostname checks (and, since
     certificate verification is off, CRL revocation checks are bypassed too). Insecure; intended for testing only.
