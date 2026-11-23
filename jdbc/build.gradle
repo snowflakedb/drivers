@@ -29,8 +29,17 @@ version = '5.0.0-RC2'
 sourceCompatibility = '1.8'
 targetCompatibility = '1.8'
 
-// Base publication artifactId: thin uses it as-is, fat appends "-all".
-def artifactBaseName = 'snowflake-jdbc-native'
+// -Pfips builds the FIPS variant: same Java bytecode, natives built with `--features fips` plus
+// their AWS-LC FIPS companion libraries, published under separate coordinates. A jar never mixes
+// FIPS and non-FIPS natives.
+def fipsProperty = project.hasProperty('fips') ? project.property('fips').toString() : null
+if (fipsProperty != null && fipsProperty != '' && fipsProperty != 'true' && fipsProperty != 'false') {
+    throw new GradleException("-Pfips must be omitted, empty, true, or false (found '${fipsProperty}')")
+}
+def fipsBuild = fipsProperty != null && fipsProperty != 'false'
+// Publication artifactIds and archive base names: thin, then the shaded fat jar.
+def artifactBaseName = fipsBuild ? 'snowflake-jdbc-native-fips' : 'snowflake-jdbc-native'
+def fatArtifactName = fipsBuild ? 'snowflake-jdbc-native-all-fips' : 'snowflake-jdbc-native-all'
 
 // ====================
 // Dependency resolution
@@ -220,13 +229,13 @@ tasks.withType(Javadoc).configureEach {
 }
 
 // Per-task archive base names — each jar is named for its published coordinate:
-//   plain jar → snowflake-jdbc-native            (thin, unshaded, native-free)
-//   shadowJar → snowflake-jdbc-native-all (fat, shaded + natives)
+//   plain jar → snowflake-jdbc-native[-fips]     (thin, unshaded, native-free)
+//   shadowJar → snowflake-jdbc-native-all[-fips] (fat, shaded + natives)
 // sources/javadoc reuse the fat name; Maven renames by artifactId at publish time.
-tasks.named('jar')        { archiveBaseName = 'snowflake-jdbc-native' }
-tasks.named('shadowJar')  { archiveBaseName = 'snowflake-jdbc-native-all' }
-tasks.named('sourcesJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
-tasks.named('javadocJar') { archiveBaseName = 'snowflake-jdbc-native-all' }
+tasks.named('jar')        { archiveBaseName = artifactBaseName }
+tasks.named('shadowJar')  { archiveBaseName = fatArtifactName }
+tasks.named('sourcesJar') { archiveBaseName = fatArtifactName }
+tasks.named('javadocJar') { archiveBaseName = fatArtifactName }
 
 // ====================
 // Self-contained fat jar (shadow)
@@ -271,21 +280,70 @@ shadowJar {
     exclude '**/module-info.class'
 }
 
+def bridgeLibPatterns = ['**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll']
+// Files staged beside a FIPS bridge: the AWS-LC FIPS shared libraries (macOS/Windows only; Linux
+// links the module into the bridge) and the companions.txt manifest NativeLibraryLoader reads.
+def companionFilePatterns = ['*aws_lc_fips*', 'companions.txt']
+// Core FIPS CI does not cover musl, so the FIPS variant ships glibc Linux natives only.
+def fipsExcludedDirPatterns = ['*-musl/**']
+def nativeResourceRoot = 'net/snowflake/client/internal/unicore/native/'
+
+// Native layout invariants shared by verifyShadowJar and verifyThinPlatformJars. Under -Pfips the
+// jar carries no musl dir, the publication artifactId ends in -fips, and every darwin/windows dir
+// carries a companions.txt whose entries are all in the jar. Without -Pfips the jar carries no
+// FIPS companion library or manifest.
+def checkFipsNativeLayout = { java.util.zip.ZipFile zf, List<String> entries, String label,
+                              String artifactId, List problems ->
+    def nativeEntries = entries.findAll { !it.endsWith('/') && it.startsWith(nativeResourceRoot) }
+    def companionEntries = nativeEntries.findAll { it.endsWith('/companions.txt') || it.contains('aws_lc_fips') }
+    if (!fipsBuild) {
+        if (!companionEntries.isEmpty()) {
+            problems << "${label}: non-FIPS jar carries FIPS companion files: ${companionEntries.take(3)}"
+        }
+        return
+    }
+    if (!artifactId.endsWith('-fips')) {
+        problems << "${label}: FIPS publication artifactId '${artifactId}' does not end with -fips"
+    }
+    def dirs = nativeEntries.collect { it.substring(nativeResourceRoot.length()).split('/')[0] }.unique()
+    dirs.findAll { it.endsWith('-musl') }.each { problems << "${label}: FIPS jar carries musl dir ${it}" }
+    dirs.findAll { it.startsWith('darwin-') || it.startsWith('windows-') }.each { d ->
+        def manifest = zf.getEntry("${nativeResourceRoot}${d}/companions.txt")
+        if (manifest == null) {
+            problems << "${label}: ${d} has no companions.txt"
+            return
+        }
+        def names = zf.getInputStream(manifest).withCloseable { it.getText('UTF-8') }
+            .readLines()*.trim().findAll { it }
+        if (names.isEmpty()) {
+            problems << "${label}: ${d}/companions.txt lists no companion libraries"
+        }
+        names.each { n ->
+            if (!entries.contains("${nativeResourceRoot}${d}/${n}".toString())) {
+                problems << "${label}: ${d}/companions.txt lists ${n}, which the jar does not carry"
+            }
+        }
+    }
+}
+
 // Self-verify the shaded jar (shadowJar finalizer). The leak check iterates shadowJar's own
 // relocators so it can't drift from the config above; the rest are invariants not derivable
 // from relocate(): no slf4j classes, the java.sql.Driver
-// service file, and (with -PnativeLibsDir) all five platform libs.
+// service file, (with -PnativeLibsDir) every staged platform lib, and the FIPS layout.
 def verifyShadowJar = tasks.register('verifyShadowJar') {
     dependsOn 'shadowJar'
     def shadowJarTask = tasks.named('shadowJar')
     def jarProvider = shadowJarTask.flatMap { it.archiveFile }
     def hasNativeLibsDir = project.hasProperty('nativeLibsDir')
+    def fatArtifactId = provider { publishing.publications.maven.artifactId }
     doLast {
         def jarFile = jarProvider.get().asFile
-        def entries = new java.util.zip.ZipFile(jarFile).withCloseable { zf ->
-            zf.entries().collect { it.name }
-        }
         def problems = []
+        def entries = new java.util.zip.ZipFile(jarFile).withCloseable { zf ->
+            def names = zf.entries().collect { it.name }
+            checkFipsNativeLayout(zf, names, 'fat jar', fatArtifactId.get(), problems)
+            names
+        }
         def want = { String p -> if (!entries.any { it.startsWith(p) }) problems << "expected present but missing: ${p}" }
         def absent = { String p -> if (entries.any { it.startsWith(p) }) problems << "expected absent but present: ${p}" }
 
@@ -324,12 +382,20 @@ def verifyShadowJar = tasks.register('verifyShadowJar') {
         if (hasNativeLibsDir) {
             def nativeRoot = 'net/snowflake/client/internal/unicore/native'
             def stagedRoot = file(project.property('nativeLibsDir'))
-            def staged = fileTree(stagedRoot) {
-                include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+            def stagedLibs = fileTree(stagedRoot) {
+                include bridgeLibPatterns
+                if (fipsBuild) exclude fipsExcludedDirPatterns
             }.files
-            stagedLibCount = staged.size()
-            if (staged.isEmpty()) {
+            stagedLibCount = stagedLibs.size()
+            if (stagedLibs.isEmpty()) {
                 problems << "no native libs found under -PnativeLibsDir=${stagedRoot}"
+            }
+            def staged = stagedLibs
+            if (fipsBuild) {
+                staged += fileTree(stagedRoot) {
+                    include companionFilePatterns.collect { "**/${it}" }
+                    exclude fipsExcludedDirPatterns
+                }.files
             }
             staged.each { f ->
                 def rel = stagedRoot.toPath().relativize(f.toPath()).toString().replace(File.separator, '/')
@@ -390,11 +456,26 @@ def hostDir = (hostLibcToken
     : "${hostOsToken}-${hostArchToken}").toString()
 def nativeResourcePath = 'net/snowflake/client/internal/unicore/native'
 
+// The dev path stages no companion libraries or manifest, so a FIPS jar needs a staged tree.
+def requireStagedTreeForFips = { Task t ->
+    if (fipsBuild && !project.hasProperty('nativeLibsDir')) {
+        t.doFirst {
+            throw new GradleException("${t.name}: -Pfips requires -PnativeLibsDir pointing at a staged " +
+                "tree of FIPS natives with their companion libraries and companions.txt")
+        }
+    }
+}
+
 tasks.named('shadowJar') {
+    requireStagedTreeForFips(it)
     if (project.hasProperty('nativeLibsDir')) {
         // Release/CI: bundle the staged <os>-<arch>/<lib> tree verbatim.
         from(project.property('nativeLibsDir')) {
-            include '**/libjdbc_bridge.so', '**/libjdbc_bridge.dylib', '**/jdbc_bridge.dll'
+            include bridgeLibPatterns
+            if (fipsBuild) {
+                include companionFilePatterns.collect { "**/${it}" }
+                exclude fipsExcludedDirPatterns
+            }
             into nativeResourcePath
         }
     } else {
@@ -436,19 +517,20 @@ def configureCommonPom = { pom ->
 }
 
 // ====================
-// Per-platform thin jars (net.snowflake:snowflake-jdbc-native:<classifier>)
+// Per-platform thin jars (net.snowflake:snowflake-jdbc-native[-fips]:<classifier>)
 // ====================
 // One self-contained jar per platform = full thin Java + that platform's native, published as
 // classifiers on snowflake-jdbc-native. `classifier` is the os-maven-plugin name; `dirs` are the
 // resource subdir(s) it carries and MUST match NativeLibraryLoader.osArchDir(). Linux lists both
 // libc variants under one classifier (osdetector has no musl classifier); the loader picks at run.
+// -Pfips keeps the same classifiers and drops the musl dirs.
 def nativePlatforms = [
     [classifier: 'linux-x86_64',   lib: 'libjdbc_bridge.so',    dirs: ['linux-x86_64-gnu', 'linux-x86_64-musl']],
     [classifier: 'linux-aarch_64', lib: 'libjdbc_bridge.so',    dirs: ['linux-aarch64-gnu', 'linux-aarch64-musl']],
     [classifier: 'osx-x86_64',     lib: 'libjdbc_bridge.dylib', dirs: ['darwin-x86_64']],
     [classifier: 'osx-aarch_64',   lib: 'libjdbc_bridge.dylib', dirs: ['darwin-aarch64']],
     [classifier: 'windows-x86_64', lib: 'jdbc_bridge.dll',      dirs: ['windows-x86_64']],
-]
+].collect { p -> fipsBuild ? p + [dirs: p.dirs.findAll { !it.endsWith('-musl') }] : p }
 
 def hostPlatform = nativePlatforms.find { it.dirs.contains(hostDir) }
 
@@ -463,15 +545,17 @@ def stagedDirs = { p ->
 // host lib (../target/{release,debug}), so non-host jars build native-free and aren't published.
 def thinPlatformJars = nativePlatforms.collectEntries { p ->
     def t = tasks.register("thinJar-${p.classifier}", Jar) {
+        requireStagedTreeForFips(it)
         dependsOn 'jar'
-        archiveBaseName = 'snowflake-jdbc-native'
+        archiveBaseName = artifactBaseName
         archiveClassifier = p.classifier
         from(zipTree(tasks.named('jar').flatMap { it.archiveFile }))
         if (project.hasProperty('nativeLibsDir')) {
-            // Bundle every libc variant this platform ships (Linux: gnu + musl).
+            // Bundle every libc variant this platform ships (Linux: gnu + musl; FIPS: gnu only).
             stagedDirs(p).each { d ->
                 from("${project.property('nativeLibsDir')}/${d}") {
                     include p.lib
+                    if (fipsBuild) include companionFilePatterns
                     into "${nativeResourcePath}/${d}"
                 }
             }
@@ -515,13 +599,13 @@ publishing {
             attach.each { artifact(it) }
             pom { configureCommonPom(delegate) }
         }
-        // Fat (snowflake-jdbc-native-all): shaded jar with natives bundled; deps inlined, so stripped from POM.
+        // Fat (snowflake-jdbc-native-all[-fips]): shaded jar with natives bundled; deps inlined, so stripped from POM.
         maven(MavenPublication) {
             artifact tasks.named('shadowJar')
             artifact tasks.named('sourcesJar')
             artifact tasks.named('javadocJar')
 
-            artifactId = artifactBaseName + '-all'
+            artifactId = fatArtifactName
 
             pom {
                 configureCommonPom(delegate)
@@ -590,15 +674,23 @@ def verifyThinPlatformJars = tasks.register('verifyThinPlatformJars') {
     def specs = nativePlatforms.findAll { enforceAll || it.dirs.contains(hostDir) }.collect { p ->
         // -PnativeLibsDir: every libc variant staged for the platform; dev: host libc only.
         def dirs = enforceAll ? stagedDirs(p) : p.dirs.findAll { it == hostDir }
+        // -Pfips: the companion libraries and manifest staged beside each bridge.
+        def companions = (fipsBuild && enforceAll) ? dirs.collectMany { d ->
+            fileTree("${project.property('nativeLibsDir')}/${d}") { include companionFilePatterns }
+                .files.collect { "${d}/${it.name}".toString() }
+        } : []
         [jar: tasks.named("thinJar-${p.classifier}").flatMap { it.archiveFile },
-         classifier: p.classifier, dirs: dirs, lib: p.lib]
+         classifier: p.classifier, dirs: dirs, lib: p.lib, companions: companions]
     }
+    def thinArtifactId = provider { publishing.publications.thin.artifactId }
     doLast {
         def base = 'net/snowflake/client/internal/unicore/native'
         def problems = []
         specs.each { s ->
             def entries = new java.util.zip.ZipFile(s.jar.get().asFile).withCloseable { zf ->
-                zf.entries().collect { it.name }
+                def names = zf.entries().collect { it.name }
+                checkFipsNativeLayout(zf, names, s.classifier, thinArtifactId.get(), problems)
+                names
             }
             // Runnable driver present (not just a bag of natives).
             if (!entries.contains('net/snowflake/client/api/driver/SnowflakeDriver.class')) {
@@ -608,10 +700,12 @@ def verifyThinPlatformJars = tasks.register('verifyThinPlatformJars') {
                 problems << "${s.classifier}: missing META-INF/services/java.sql.Driver"
             }
             // A runnable classifier jar must carry at least one native; and exactly the libc
-            // variant(s) staged for this platform, each at the loader's resource path.
+            // variant(s) staged for this platform (plus their FIPS companions), each at the
+            // loader's resource path.
             def libs = entries.findAll { !it.endsWith('/') && it.startsWith("${base}/") }.sort()
-            def expected = s.dirs.collect { "${base}/${it}/${s.lib}".toString() }.sort()
-            if (expected.isEmpty()) {
+            def expected = (s.dirs.collect { "${base}/${it}/${s.lib}".toString() } +
+                s.companions.collect { "${base}/${it}".toString() }).sort()
+            if (s.dirs.isEmpty()) {
                 problems << "${s.classifier}: no native staged for this platform"
             } else if (libs != expected) {
                 problems << "${s.classifier}: expected exactly ${expected} but jar holds ${libs}"

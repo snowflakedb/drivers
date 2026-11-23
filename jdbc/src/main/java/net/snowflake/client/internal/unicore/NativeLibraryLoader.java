@@ -1,11 +1,8 @@
 package net.snowflake.client.internal.unicore;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
@@ -20,8 +17,14 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  * <ol>
  *   <li>{@code CORE_PATH} env var — explicit absolute path (back-compat for dev/CI setups).
  *   <li>{@code jdbc.library.path} system property — explicit absolute path.
- *   <li>JAR resource — extract the bundled native lib to a temp file and load from there.
+ *   <li>JAR resource — extract the bundled native lib, plus any companion libraries listed in the
+ *       platform dir's {@code companions.txt}, to a temp dir and load from there. See {@link
+ *       BundledNativeLibrary}.
  * </ol>
+ *
+ * <p>{@code CORE_PATH} and {@code jdbc.library.path} name a single file and load no companions. A
+ * FIPS build on macOS or Windows loaded that way needs its AWS-LC companion libraries resolvable by
+ * the OS loader on its own (for example on {@code PATH} on Windows).
  *
  * <p>The JAR-resource path is the default for end users: it works in sandboxed JVMs (e.g. UDFs,
  * BucketFS, Lambda) where host env vars and host filesystem layouts aren't predictable.
@@ -117,16 +120,26 @@ public final class NativeLibraryLoader {
       return;
     }
 
-    loadExtracted(extractNativeLibFromResource());
+    BundledNativeLibrary bundle = readBundledLibrary();
+    loadExtracted(
+        extractTo(
+            bundle,
+            Paths.get(System.getProperty("java.io.tmpdir")),
+            SnowflakeDriver.getDriverVersion()),
+        bundle);
   }
 
   /**
-   * Loads the library from {@code extracted}. A load failure closes the extract lock so a cached
-   * error does not hold the file descriptor until the JVM exits.
+   * Loads every file of {@code bundle} from {@code extracted}, companions first. A load failure
+   * closes the extract lock so a cached error does not hold the file descriptor until the JVM
+   * exits.
    */
-  static void loadExtracted(NativeLibraryTempDirs.ExtractDir extracted) {
+  static void loadExtracted(
+      NativeLibraryTempDirs.ExtractDir extracted, BundledNativeLibrary bundle) {
     try {
-      loadPath(extracted.dir.resolve(nativeLibFileName()).toAbsolutePath().toString());
+      for (String name : bundle.loadOrder()) {
+        loadPath(extracted.dir.resolve(name).toAbsolutePath().toString());
+      }
     } catch (RuntimeException | LinkageError e) {
       closeExtract(extracted, e);
       throw e;
@@ -147,8 +160,12 @@ public final class NativeLibraryLoader {
     return null;
   }
 
+  private static String bundledResourceDir() {
+    return NATIVE_RESOURCE_DIR + osArchDir() + "/";
+  }
+
   private static String bundledResourcePath() {
-    return NATIVE_RESOURCE_DIR + osArchDir() + "/" + nativeLibFileName();
+    return bundledResourceDir() + nativeLibFileName();
   }
 
   static boolean bundledNativePresent() {
@@ -163,43 +180,44 @@ public final class NativeLibraryLoader {
     }
   }
 
-  /** Copy the bundled native lib resource into a temp file the JVM can {@code System.load}. */
-  private static NativeLibraryTempDirs.ExtractDir extractNativeLibFromResource() {
+  private static BundledNativeLibrary readBundledLibrary() {
     String resourcePath = bundledResourcePath();
-    try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
-      if (in == null) {
-        throw nativeLoadFailure(
-            missingNativeMessage(
-                resourcePath,
-                System.getProperty("os.name"),
-                System.getProperty("os.arch"),
-                mavenClassifier(osToken(), archToken())),
-            null);
-      }
-      return extractTo(
-          in, Paths.get(System.getProperty("java.io.tmpdir")), SnowflakeDriver.getDriverVersion());
+    if (!bundledNativePresent()) {
+      String message =
+          onlyGlibcNativeBundled()
+              ? glibcOnlyMessage(resourcePath)
+              : missingNativeMessage(
+                  resourcePath,
+                  System.getProperty("os.name"),
+                  System.getProperty("os.arch"),
+                  mavenClassifier(osToken(), archToken()));
+      throw nativeLoadFailure(message, null);
+    }
+    try {
+      return BundledNativeLibrary.read(
+          bundledResourceDir(),
+          nativeLibFileName(),
+          NativeLibraryLoader.class::getResourceAsStream);
     } catch (IOException e) {
-      throw nativeLoadFailure(
-          extractFailedMessage(System.getProperty("java.io.tmpdir"), e.getMessage()), e);
+      throw nativeLoadFailure(manifestFailedMessage(resourcePath, e.getMessage()), e);
     }
   }
 
   /**
-   * Copies {@code in} into a new extract directory under {@code tmpRoot}. The library is registered
-   * for {@code deleteOnExit} after the directory and its {@code .lock}, so a clean exit deletes the
-   * library, then {@code .lock}, then the empty directory.
+   * Copies {@code bundle} into a new extract directory under {@code tmpRoot}. The files are
+   * registered for {@code deleteOnExit} after the directory and its {@code .lock}, so a clean exit
+   * deletes the files, then {@code .lock}, then the empty directory.
    */
-  static NativeLibraryTempDirs.ExtractDir extractTo(InputStream in, Path tmpRoot, String version) {
+  static NativeLibraryTempDirs.ExtractDir extractTo(
+      BundledNativeLibrary bundle, Path tmpRoot, String version) {
     NativeLibraryTempDirs.ExtractDir extracted;
     try {
       extracted = NativeLibraryTempDirs.create(tmpRoot, version);
     } catch (IOException e) {
       throw nativeLoadFailure(extractFailedMessage(tmpRoot.toString(), e.getMessage()), e);
     }
-    Path tmpLib = extracted.dir.resolve(nativeLibFileName());
-    tmpLib.toFile().deleteOnExit();
     try {
-      Files.copy(in, tmpLib, StandardCopyOption.REPLACE_EXISTING);
+      bundle.copyInto(extracted.dir);
     } catch (IOException e) {
       SFSQLException failure =
           nativeLoadFailure(extractFailedMessage(extracted.dir.toString(), e.getMessage()), e);
@@ -240,7 +258,41 @@ public final class NativeLibraryLoader {
         + classifier
         + " (net.snowflake:snowflake-jdbc-native:<version>:"
         + classifier
-        + ") or the self-contained net.snowflake:snowflake-jdbc-native-all jar.";
+        + " or net.snowflake:snowflake-jdbc-native-fips:<version>:"
+        + classifier
+        + ") or the self-contained net.snowflake:snowflake-jdbc-native-all / "
+        + "net.snowflake:snowflake-jdbc-native-all-fips jar.";
+  }
+
+  /**
+   * True when this process is a musl Linux host and {@code gnuNativePresent} is the glibc native
+   * for the same arch. Used when the musl resource is missing so the error can name a glibc-only
+   * jar instead of a missing platform.
+   */
+  static boolean onlyGlibcNativeBundled(
+      String osToken, String libcToken, boolean gnuNativePresent) {
+    return "linux".equals(osToken) && "musl".equals(libcToken) && gnuNativePresent;
+  }
+
+  private static boolean onlyGlibcNativeBundled() {
+    String glibcPath =
+        NATIVE_RESOURCE_DIR + osToken() + "-" + archToken() + "-gnu/" + nativeLibFileName();
+    return onlyGlibcNativeBundled(
+        osToken(), libcToken(), NativeLibraryLoader.class.getResource(glibcPath) != null);
+  }
+
+  static String glibcOnlyMessage(String resourcePath) {
+    return "Native library not found in JAR at "
+        + resourcePath
+        + ". This JAR carries only the glibc native for this platform. Run on a glibc-based"
+        + " image, or set -Djdbc.libc=gnu if this host is glibc and was detected as musl.";
+  }
+
+  static String manifestFailedMessage(String resourcePath, String detail) {
+    return "Failed to read the companion library list next to "
+        + resourcePath
+        + (detail != null ? ": " + detail : ".")
+        + " The JAR is damaged or was repackaged without it; use the published driver jar.";
   }
 
   static String extractFailedMessage(String location, String detail) {
