@@ -47,8 +47,9 @@ public static class AssembliesMetadata
     public static readonly AssemblyMetadata TestsCommonsAssembly = new("Snowflake.Data.Tests.Common", RootAssembly, ProtoAssembly);
     public static readonly AssemblyMetadata InteropTestsAssembly = new("Snowflake.Data.Tests.Interop", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
     public static readonly AssemblyMetadata TestsAssembly = new("Snowflake.Data.Tests.Unit", RootAssembly, ProtoAssembly, TestsCommonsAssembly);
-    public static readonly AssemblyMetadata E2ETestsAssembly = new("Snowflake.Data.Tests.E2E", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly);
-    public static readonly AssemblyMetadata WiremockTestsAssembly = new("Snowflake.Data.Tests.Wiremock", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly);
+    public static readonly AssemblyMetadata E2ESharedTestsAssembly = new("Snowflake.Data.Tests.E2E.Shared", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly);
+    public static readonly AssemblyMetadata E2ETestsAssembly = new("Snowflake.Data.Tests.E2E", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly, E2ESharedTestsAssembly);
+    public static readonly AssemblyMetadata WiremockTestsAssembly = new("Snowflake.Data.Tests.Wiremock", RootAssembly, ProtoAssembly, OldDriverAssembly, TestsCommonsAssembly, E2ESharedTestsAssembly);
 
     public static AssemblyMetadata[] AllAssemblies => DriverAssemblies.Concat([OldDriverAssembly]).ToArray();
 
@@ -59,6 +60,7 @@ public static class AssembliesMetadata
         TestsAssembly,
         TestsCommonsAssembly,
         InteropTestsAssembly,
+        E2ESharedTestsAssembly,
         E2ETestsAssembly,
         WiremockTestsAssembly
     ];
@@ -73,6 +75,7 @@ public static class AssembliesMetadata
     [
         TestsAssembly,
         TestsCommonsAssembly,
+        E2ESharedTestsAssembly,
         E2ETestsAssembly,
         WiremockTestsAssembly,
         InteropTestsAssembly,

@@ -26,12 +26,13 @@
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!--
-    Build the Rust stub before the .NET project.
-    Set SkipCargoBuild=true in CI (cargo is run as a separate job step).
-  -->
-  <Target Name="BuildRustStub" BeforeTargets="Build" Condition="'$(SkipCargoBuild)' != 'true'">
+  <Target Name="BuildRustStub" BeforeTargets="BeforeBuild" Condition="'$(SkipCargoBuild)' != 'true'">
     <Exec Command="cargo build" WorkingDirectory="$(MSBuildThisFileDirectory)sf_core_stub" ConsoleToMSBuild="true" />
+  </Target>
+
+  <Target Name="CopyStubNativeLib" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(TargetFrameworkIdentifier)' == '.NETFramework'">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)sf_core_stub\target\debug\sf_core_stub.dll" DestinationFiles="$(OutDir)sf_core.dll" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)sf_core_stub\target\debug\sf_core_stub.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

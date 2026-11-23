@@ -10,6 +10,7 @@ using OldSnowflakeDbDataAdapter = OldDriver::Snowflake.Data.Client.SnowflakeDbDa
 
 namespace Snowflake.Data.Tests.E2E;
 
+[Trait("Category", "Conversion")]
 public sealed class NumberOverflowAsStringTest : LiveE2ETestBase
 {
     private const string BigNumber = "99999999999999999999999999999999";

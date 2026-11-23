@@ -40,6 +40,8 @@ public static class AssemblyUtil
     {
         if (TryLoadAs(assemblyMetadata, AssembliesMetadata.E2ETestsAssembly, out var loadFrom))
             return loadFrom!;
+        if (TryLoadAs(assemblyMetadata, AssembliesMetadata.E2ESharedTestsAssembly, out loadFrom))
+            return loadFrom!;
         if (TryLoadAs(assemblyMetadata, AssembliesMetadata.WiremockTestsAssembly, out loadFrom))
             return loadFrom!;
         if (TryLoadAs(assemblyMetadata, AssembliesMetadata.InteropTestsAssembly, out loadFrom))

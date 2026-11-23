@@ -3,6 +3,7 @@ using Snowflake.Data.Tests.Compatibility;
 namespace Snowflake.Data.Tests.E2E;
 
 [Trait("Category", "E2E")]
+[Trait("Category", "Conversion")]
 public class BinaryLobTest : IClassFixture<ITFixture>
 {
     protected readonly ITestOutputHelper Output;

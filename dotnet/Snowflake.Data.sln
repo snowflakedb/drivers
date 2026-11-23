@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Wiremo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.Interop", "tests\Snowflake.Data.Tests.Interop\Snowflake.Data.Tests.Interop.csproj", "{B7EE50B8-A3BB-4752-850C-71A295745D01}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Snowflake.Data.Tests.E2E.Shared", "tests\Snowflake.Data.Tests.E2E.Shared\Snowflake.Data.Tests.E2E.Shared.csproj", "{CC208E16-A0B0-49EB-9711-65100DE31E9F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -115,6 +117,18 @@ Global
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x64.Build.0 = Release|Any CPU
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x86.ActiveCfg = Release|Any CPU
 		{B7EE50B8-A3BB-4752-850C-71A295745D01}.Release|x86.Build.0 = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|x64.Build.0 = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Debug|x86.Build.0 = Debug|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|x64.ActiveCfg = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|x64.Build.0 = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|x86.ActiveCfg = Release|Any CPU
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -127,5 +141,6 @@ Global
 		{226607A3-8B54-4953-8578-0078AC1199AC} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C3A91B27-6E4F-4A8D-9C11-7B2E4F1A9D03} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{B7EE50B8-A3BB-4752-850C-71A295745D01} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{CC208E16-A0B0-49EB-9711-65100DE31E9F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

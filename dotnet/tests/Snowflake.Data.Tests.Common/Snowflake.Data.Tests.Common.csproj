@@ -7,6 +7,14 @@
     <IsTestProject>false</IsTestProject>
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SfCoreRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', '..'))</SfCoreRepoRoot>
+    <SfCoreTargetDir Condition="'$(CARGO_TARGET_DIR)' != ''">$([MSBuild]::NormalizeDirectory('$(SfCoreRepoRoot)', '$(CARGO_TARGET_DIR)'))</SfCoreTargetDir>
+    <SfCoreTargetDir Condition="'$(SfCoreTargetDir)' == ''">$(SfCoreRepoRoot)target/</SfCoreTargetDir>
+    <SfCoreCargoTargetArg Condition="'$(SfCoreCargoTarget)' != ''">--target $(SfCoreCargoTarget)</SfCoreCargoTargetArg>
+    <SfCoreLibDir>$([MSBuild]::NormalizeDirectory('$(SfCoreTargetDir)', '$(SfCoreCargoTarget)', 'debug'))</SfCoreLibDir>
+    <SfCoreNativeFileName Condition="$([MSBuild]::IsOSPlatform('Windows'))">sf_core.dll</SfCoreNativeFileName>
+    <SfCoreNativeFileName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libsf_core.dylib</SfCoreNativeFileName>
+    <SfCoreNativeFileName Condition="'$(SfCoreNativeFileName)' == ''">libsf_core.so</SfCoreNativeFileName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -31,4 +39,13 @@
   <ItemGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
     <PackageReference Include="ZLogger" Version="2.6.1" />
   </ItemGroup>
+
+  <ItemGroup Condition="'$(SkipSfCoreBuild)' != 'true'">
+    <None Include="$(SfCoreLibDir)$(SfCoreNativeFileName)" Link="$(SfCoreNativeFileName)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="BuildSfCoreNative" BeforeTargets="BeforeBuild" Condition="'$(SkipSfCoreBuild)' != 'true'">
+    <Error Condition="$(SfCoreCargoFlags.Contains('--release')) Or $(SfCoreCargoFlags.Contains('--target'))" Text="SfCoreCargoFlags cannot contain --release or --target; set SfCoreCargoTarget for a target triple." />
+    <Exec Command="cargo build --locked --package sf_core --target-dir &quot;$(SfCoreTargetDir)&quot; $(SfCoreCargoFlags) $(SfCoreCargoTargetArg)" WorkingDirectory="$(SfCoreRepoRoot)" />
+  </Target>
 </Project>

@@ -15,6 +15,7 @@ public sealed class DecfloatDriverVersionCollection
 }
 
 [Collection(nameof(DecfloatDriverVersionCollection))]
+[Trait("Category", "Conversion")]
 public sealed class DecfloatReferenceTest : LiveE2ETestBase, IDisposable
 {
     private readonly object? _originalDriverVersion;

@@ -15,6 +15,7 @@ using OldSnowflakeDbParameter = OldDriver::Snowflake.Data.Client.SnowflakeDbPara
 namespace Snowflake.Data.Tests.E2E;
 
 [Collection(nameof(IsolatedCollection))]
+[Trait("Category", "Conversion")]
 public sealed class SFBindTest : LiveE2ETestBase
 {
     private const string TablePrefix = "DOTNET_TEST_SFBIND";

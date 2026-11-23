@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0;net481</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
+    <RootNamespace>Snowflake.Data.Tests.E2E</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <!-- Old Snowflake.Data NuGet has transitive vuln deps (log4net) we can't control -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj" />
+    <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="Snowflake.Data" Version="*" PrivateAssets="all">
+      <Aliases>OldDriver</Aliases>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

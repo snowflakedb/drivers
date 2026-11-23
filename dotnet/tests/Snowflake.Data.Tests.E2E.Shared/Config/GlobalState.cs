@@ -1,5 +1,3 @@
-[assembly: AssemblyFixture(typeof(Snowflake.Data.Tests.E2E.Config.GlobalState.DatabaseFixture))]
-
 namespace Snowflake.Data.Tests.E2E.Config;
 
 public static class GlobalState

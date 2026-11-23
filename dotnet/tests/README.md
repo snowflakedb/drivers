@@ -1,6 +1,6 @@
 # .NET Tests
 
-Four test projects, one shared infrastructure library:
+Four test projects, two shared infrastructure libraries:
 
 | Project | Purpose | CI |
 |---------|---------|----|
@@ -9,6 +9,7 @@ Four test projects, one shared infrastructure library:
 | `Snowflake.Data.Tests.E2E` | Live Snowflake E2E tests | `dotnet_tests_e2e` (old + new driver) |
 | `Snowflake.Data.Tests.Wiremock` | HTTP/TLS tests against WireMock | `dotnet_tests_e2e` (old + new driver) |
 | `Snowflake.Data.Tests.Common` | Shared test infrastructure (not a test project) | N/A |
+| `Snowflake.Data.Tests.E2E.Shared` | Connection factory, fixtures and old-driver facade shared by E2E and Wiremock (not a test project) | N/A |
 
 ## Running locally
 

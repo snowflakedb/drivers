@@ -8,6 +8,7 @@ using OldSFDataType = OldDriver::Snowflake.Data.Core.SFDataType;
 
 namespace Snowflake.Data.Tests.E2E;
 
+[Trait("Category", "Conversion")]
 public sealed class MaxLobSizeTest : LiveE2ETestBase
 {
     private const int MaxLobSize = 16 * 1024 * 1024;

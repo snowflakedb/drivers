@@ -87,7 +87,9 @@ if [[ "$SKIP_BUILD" == 0 ]]; then
     cd "$REPO_ROOT/dotnet"
     run dotnet restore
     run dotnet msbuild -t:RegenerateProto src/Snowflake.Data.Proto/
-    run dotnet build --no-restore
+    skip_core=true
+    [[ "$NEEDS_CORE" == 1 ]] && skip_core=false
+    run dotnet build --no-restore "-p:SkipSfCoreBuild=$skip_core"
 fi
 
 cd "$REPO_ROOT/dotnet/tests/$PROJECT"

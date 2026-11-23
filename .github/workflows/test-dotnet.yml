@@ -129,10 +129,6 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
-      - name: Build
-        run: dotnet build --no-restore ${{ matrix.dotnet_build_flags }}
-        working-directory: dotnet
-
       - name: Restore Cargo cache (sf_core)
         if: matrix.mode == 'regression'
         id: sf-core-cache
@@ -142,10 +138,13 @@ jobs:
           mode: restore
           shared-key: ${{ matrix.cargo_target && format('sf-core-{0}', matrix.cargo_target) || 'sf-core' }}
 
-      - name: Build Rust components
-        run: cargo build --locked --package sf_core ${{ matrix.cargo_flags }} ${{ matrix.cargo_target && format('--target {0}', matrix.cargo_target) || '' }}
+      - name: Build
+        run: dotnet build --no-restore ${{ matrix.dotnet_build_flags }} ${{ matrix.mode == 'interop' && '-p:SkipSfCoreBuild=true' || '' }}
+        working-directory: dotnet
         env:
-          RUSTFLAGS: ${{ matrix.cargo_target && '-C linker=rust-lld' || '' }}
+          SfCoreCargoFlags: ${{ matrix.cargo_flags }}
+          SfCoreCargoTarget: ${{ matrix.cargo_target }}
+          RUSTFLAGS: ${{ matrix.cargo_target && matrix.mode == 'regression' && '-C linker=rust-lld' || '' }}
 
       - name: Save Cargo cache (sf_core)
         if: always() && matrix.mode == 'regression'
@@ -166,27 +165,6 @@ jobs:
         run: |
           mkdir -p target/debug
           cp "target/${{ matrix.cargo_target }}/debug/${{ matrix.sf_core_lib }}" target/debug/
-
-      - name: Copy native lib to test output directory
-        if: matrix.mode == 'regression' && matrix.copy_native_lib
-        shell: bash
-        run: |
-          cp "${{ github.workspace }}/target/debug/${{ matrix.sf_core_lib }}" \
-             "dotnet/tests/Snowflake.Data.Tests.Unit/bin/Debug/${{ matrix.dotnet_version }}/"
-
-      - name: Build sf_core_stub
-        if: matrix.mode == 'interop'
-        run: cargo build
-        working-directory: dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub
-
-      - name: Copy stub DLLs for Framework DllImport
-        if: matrix.mode == 'interop' && runner.os == 'Windows' && matrix.dotnet_version == 'net472'
-        shell: pwsh
-        run: |
-          $stubDll = "dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub/target/debug/sf_core_stub.dll"
-          $outDir = "dotnet/tests/Snowflake.Data.Tests.Interop/bin/Debug/net472"
-          Copy-Item $stubDll "$outDir/sf_core.dll"
-          Copy-Item $stubDll "$outDir/sf_core_stub.dll"
 
       - name: Run unit tests (new driver)
         if: ${{ matrix.mode == 'regression' && !(matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu')) }}
@@ -286,7 +264,7 @@ jobs:
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Build
-        run: dotnet build --no-restore
+        run: dotnet build --no-restore -p:SkipSfCoreBuild=true
         working-directory: dotnet
 
       - name: Decode secrets
@@ -327,20 +305,7 @@ jobs:
 
       - name: Run E2E tests (old driver, JSON)
         if: ${{ !cancelled() }}
-        # Blacklist of non-conversion tests. A new conversion class is included
-        # automatically; a new non-conversion class is also included until it
-        # is listed here. Running a test twice is better than omitting one.
-        run: >
-          dotnet run --no-build --framework net11.0 --
-          -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
-          -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
-          -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
-          -class- Snowflake.Data.Tests.E2E.ConnectionTest
-          -class- Snowflake.Data.Tests.E2E.IcebergTableTest
-          -class- Snowflake.Data.Tests.E2E.Legacy.LegacyFacadeForwardingTest
-          -class- Snowflake.Data.Tests.E2E.PatTest
-          -class- Snowflake.Data.Tests.E2E.PutGetAsyncExecuteTest
-          -class- Snowflake.Data.Tests.E2E.QueryTagTest
+        run: dotnet run --no-build --framework net11.0 -- -trait "Category=Conversion"
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -407,19 +372,6 @@ jobs:
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
-      - name: Build
-        run: dotnet build --no-restore
-        working-directory: dotnet
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
-        shell: bash
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
-          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
-          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
-
       - name: Restore Cargo cache (sf_core)
         id: sf-core-cache
         continue-on-error: true
@@ -428,8 +380,9 @@ jobs:
           mode: restore
           shared-key: "sf-core"
 
-      - name: Build Rust components
-        run: cargo build --locked --package sf_core
+      - name: Build
+        run: dotnet build --no-restore
+        working-directory: dotnet
 
       - name: Save Cargo cache (sf_core)
         if: always()
@@ -442,13 +395,14 @@ jobs:
           registry-cache-hit: ${{ steps.sf-core-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.sf-core-cache.outputs.target-cache-hit }}
 
-      - name: Copy native lib to test output directories
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
         shell: bash
-        run: |
-          cp "${{ github.workspace }}/target/debug/libsf_core.so" \
-            "dotnet/tests/Snowflake.Data.Tests.E2E/bin/Debug/net11.0/"
-          cp "${{ github.workspace }}/target/debug/libsf_core.so" \
-            "dotnet/tests/Snowflake.Data.Tests.Wiremock/bin/Debug/net11.0/"
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
 
       - name: Run E2E tests (new driver)
         run: dotnet run --no-build --framework net11.0
@@ -479,20 +433,7 @@ jobs:
 
       - name: Run E2E tests (new driver, JSON)
         if: ${{ !cancelled() }}
-        # Blacklist of non-conversion tests. A new conversion class is included
-        # automatically; a new non-conversion class is also included until it
-        # is listed here. Running a test twice is better than omitting one.
-        run: >
-          dotnet run --no-build --framework net11.0 --
-          -class- Snowflake.Data.Tests.E2E.BasicExecuteQueryTest
-          -class- Snowflake.Data.Tests.E2E.CertificateRevocationTest
-          -class- Snowflake.Data.Tests.E2E.ConnectionLifecycleTest
-          -class- Snowflake.Data.Tests.E2E.ConnectionTest
-          -class- Snowflake.Data.Tests.E2E.IcebergTableTest
-          -class- Snowflake.Data.Tests.E2E.Legacy.LegacyFacadeForwardingTest
-          -class- Snowflake.Data.Tests.E2E.PatTest
-          -class- Snowflake.Data.Tests.E2E.PutGetAsyncExecuteTest
-          -class- Snowflake.Data.Tests.E2E.QueryTagTest
+        run: dotnet run --no-build --framework net11.0 -- -trait "Category=Conversion"
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json

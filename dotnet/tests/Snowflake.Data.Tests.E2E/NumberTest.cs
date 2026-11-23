@@ -3,6 +3,7 @@ using Snowflake.Data.Tests.Compatibility;
 namespace Snowflake.Data.Tests.E2E;
 
 [Trait("Category", "E2E")]
+[Trait("Category", "Conversion")]
 public class NumberTest : IClassFixture<ITFixture>
 {
     public static readonly IEnumerable<object[]> NumberTypeSynonyms =

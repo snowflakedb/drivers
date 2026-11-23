@@ -129,8 +129,7 @@ public sealed class LegacyFacadeForwardingTest
     }
 
     private static IEnumerable<SyntaxTree> FacadeTrees(string thisFile) =>
-        Directory.GetFiles(Path.GetDirectoryName(thisFile)!, "*.cs")
-            .Where(file => !file.EndsWith("Test.cs", StringComparison.Ordinal))
+        Directory.GetFiles(Path.Combine(Path.GetDirectoryName(thisFile)!, "..", "..", "Snowflake.Data.Tests.E2E.Shared", "Legacy"), "*.cs")
             .Select(file => CSharpSyntaxTree.ParseText(File.ReadAllText(file)));
 
     private static IEnumerable<SyntaxTree> Parse(string source) =>

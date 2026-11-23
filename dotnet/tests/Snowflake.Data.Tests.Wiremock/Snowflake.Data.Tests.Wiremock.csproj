@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Snowflake.Data.Tests.Common\Snowflake.Data.Tests.Common.csproj" />
+    <ProjectReference Include="..\Snowflake.Data.Tests.E2E.Shared\Snowflake.Data.Tests.E2E.Shared.csproj" />
     <ProjectReference Include="..\..\src\Snowflake.Data\Snowflake.Data.csproj" />
   </ItemGroup>
 
@@ -19,15 +20,6 @@
     <PackageReference Include="Snowflake.Data" Version="*">
       <Aliases>OldDriver</Aliases>
     </PackageReference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="..\Snowflake.Data.Tests.E2E\TestConnectionFactory.cs" Link="Shared\TestConnectionFactory.cs" />
-    <Compile Include="..\Snowflake.Data.Tests.E2E\E2ETestBase.cs" Link="Shared\E2ETestBase.cs" />
-    <Compile Include="..\Snowflake.Data.Tests.E2E\Config\GlobalState.cs" Link="Shared\Config\GlobalState.cs" />
-    <Compile Include="..\Snowflake.Data.Tests.E2E\Fixtures\E2EITFixture.cs" Link="Shared\Fixtures\E2EITFixture.cs" />
-    <Compile Include="..\Snowflake.Data.Tests.E2E\Legacy\LegacySnowflakeConnection.cs" Link="Shared\Legacy\LegacySnowflakeConnection.cs" />
-    <Compile Include="..\Snowflake.Data.Tests.E2E\Compatibility\GlobalUsings.cs" Link="Shared\Compatibility\GlobalUsings.cs" />
   </ItemGroup>
 
   <Target Name="CopyCustomContent" AfterTargets="AfterBuild">
