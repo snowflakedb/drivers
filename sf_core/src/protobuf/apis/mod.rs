@@ -468,6 +468,10 @@ mod tests {
             "connection_get_objects is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("result_set_get_stream"),
+            "result_set_get_stream is marked async_first in the proto"
+        );
+        assert!(
             observes_cancellation("result_set_export_stream"),
             "result_set_export_stream is marked async_first in the proto"
         );

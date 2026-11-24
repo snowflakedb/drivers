@@ -28,10 +28,11 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionSetOptionsRequest, ConnectionSetOptionsResponse, ConnectionTokenRequest,
     ConnectionUseDatabaseRequest, ConnectionUseSchemaRequest, DatabaseFetchChunkRequest,
     DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, ErrorKind, RemoteChunk, ResultChunk, StatementExecuteAsyncRequest,
-    StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
-    TokenRequestType, config_setting, result_chunk,
+    DriverException, ErrorKind, ExecuteQueryResponse, RemoteChunk, ResultChunk,
+    ResultSetGetStreamRequest, StatementExecuteAsyncRequest, StatementExecuteQueryRequest,
+    StatementHandle, StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
+    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
+    execute_query_response, result_chunk,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -125,6 +126,14 @@ const EMPTY_RESULT: &str = r#"{"success":true,"data":{"rowtype":[],"rowset":[],"
 const RESULT_WITHOUT_QUERY_ID: &str =
     r#"{"success":true,"data":{"rowtype":[],"rowset":[],"total":0,"queryResultFormat":"json"}}"#;
 const CATCH_ALL_OK: &str = r#"{"success":true,"data":{}}"#;
+
+/// A query-request answer with no `rowsetBase64`, so opening its stream has to
+/// download the remote chunk before it can return.
+fn remote_chunk_result(addr: SocketAddr) -> String {
+    format!(
+        r#"{{"success":true,"data":{{"rowtype":[],"total":1,"queryId":"01b2-cancel-test","queryResultFormat":"arrow","chunks":[{{"url":"http://{addr}/chunk-hang","rowCount":1,"uncompressedSize":64,"compressedSize":64}}]}}}}"#
+    )
+}
 /// Query id for the finished-query lookups (`connection_get_result_set`,
 /// `connection_get_query_status`, `connection_get_query_result`). Must be a
 /// syntactically valid UUID: `snowflake_get_query_result` parses it with
@@ -204,6 +213,10 @@ struct HangingServer {
     /// [`EMPTY_RESULT`]. Orthogonal to [`HangOn`]: this is about *what* is answered,
     /// not where the mock parks.
     omit_query_id: AtomicBool,
+    /// Answer the query-request with [`remote_chunk_result`]: an Arrow result with
+    /// no inline rows whose only chunk is `/chunk-hang` on this mock. Takes
+    /// precedence over [`Self::omit_query_id`].
+    remote_chunk_result: AtomicBool,
     /// Request target the mock actually parked on. `HangOn::FinishedQueryLookup`
     /// matches two different endpoints, so without recording this a test could
     /// pass having hung the wrong one.
@@ -333,7 +346,9 @@ async fn spawn_hanging_server(
                         // is cancellation.
                         std::future::pending::<()>().await;
                     }
-                    if state.omit_query_id.load(Ordering::SeqCst) {
+                    if state.remote_chunk_result.load(Ordering::SeqCst) {
+                        remote_chunk_result(addr)
+                    } else if state.omit_query_id.load(Ordering::SeqCst) {
                         RESULT_WITHOUT_QUERY_ID.to_string()
                     } else {
                         EMPTY_RESULT.to_string()
@@ -650,6 +665,7 @@ fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
             query_request_id: Mutex::new(None),
             abort_bodies: Mutex::new(Vec::new()),
             omit_query_id: AtomicBool::new(false),
+            remote_chunk_result: AtomicBool::new(false),
             hung_target: Mutex::new(None),
             logout_seen: AtomicUsize::new(0),
             connections: Mutex::new(Vec::new()),
@@ -1376,6 +1392,53 @@ async fn cancelling_an_in_flight_chunk_download_reports_cancelled_without_aborti
                 row_count: 1,
             }],
             columns: Vec::new(),
+        }
+        .encode_to_vec(),
+    )
+    .await;
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/chunk-hang");
+    assert_no_abort_requests(&state);
+}
+
+/// `result_set_get_stream` on a result with no inline rows downloads the first
+/// remote chunk before returning. Cancelling drops that download and issues no
+/// abort-request, because the query has already finished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_stream_open_waiting_on_its_first_chunk_reports_cancelled_without_aborting() {
+    let (state, request_received) = hanging_server_state();
+    state.remote_chunk_result.store(true, Ordering::SeqCst);
+    let (addr, _server) = spawn_hanging_chunk_download(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let stmt = statement_with_slow_query(&transport, addr).await;
+    let executed: ExecuteQueryResponse = call(
+        &transport,
+        "statement_execute_query",
+        StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt),
+            bindings: None,
+            timeout_seconds: None,
+        },
+    )
+    .await;
+    let Some(execute_query_response::Result::Single(single)) = executed.result else {
+        panic!(
+            "expected a single-statement result, got {:?}",
+            executed.result
+        );
+    };
+    // The query-request signals too; drained so the canceller waits for the chunk download.
+    let _ = request_received.try_recv();
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "result_set_get_stream",
+        "chunk download",
+        ResultSetGetStreamRequest {
+            result_set_handle: single.result_set_handle,
         }
         .encode_to_vec(),
     )

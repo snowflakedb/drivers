@@ -1165,18 +1165,24 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::result_set_get_stream", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::result_set_get_stream",
+        skip(self, operation_ctx, input)
+    )]
     async fn result_set_get_stream(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ResultSetGetStreamRequest,
     ) -> Result<ResultSetGetStreamResponse, DriverException> {
         let handle = required(input.result_set_handle, "ResultSet handle is required")?;
 
-        let result = self
-            .driver
-            .result_set_get_stream(handle.into())
-            .await
-            .to_protobuf()?;
+        let result = run_opt(
+            operation_ctx,
+            "result_set_get_stream",
+            self.driver.result_set_get_stream(handle.into()),
+        )
+        .await
+        .to_protobuf()?;
 
         Ok(result.into())
     }
@@ -1309,9 +1315,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     // -- Workload Identity Federation (WIF) operations --
 
-    /// Unlike every other `async_first` RPC, cancellation is observed here in the
-    /// dispatch rather than in an `apis::` impl: this operation has no driver-level
-    /// counterpart to observe it in — the whole of it lives in this function.
+    /// Cancellation is observed here in the dispatch rather than in an `apis::`
+    /// impl: this operation has no driver-level counterpart to observe it in — the
+    /// whole of it lives in this function.
     #[instrument(
         name = "DatabaseDriverV1::wif_create_attestation",
         skip(self, operation_ctx, input)

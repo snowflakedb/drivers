@@ -886,6 +886,9 @@ message DatabaseFetchChunkResponse {
 
 // ResultSet RPCs
 
+// Opening a result whose first chunk is remote downloads that chunk before the call completes.
+// Cancelling the operation is observed while the result is being opened: the call then reports
+// CANCELLED and returns no stream.
 message ResultSetGetStreamRequest {
   ResultSetHandle result_set_handle = 1;
 }
@@ -1281,7 +1284,9 @@ service DatabaseDriver {
   }
 
   // ResultSet operations
-  rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse);
+  rpc ResultSetGetStream(ResultSetGetStreamRequest) returns (ResultSetGetStreamResponse) {
+    option (async_first) = true;
+  }
   rpc ResultSetExportStream(ResultSetExportStreamRequest) returns (ResultSetExportStreamResponse) {
     option (async_first) = true;
   }

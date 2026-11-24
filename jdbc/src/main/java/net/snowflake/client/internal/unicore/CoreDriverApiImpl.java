@@ -421,7 +421,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
   public ResultSetGetStreamResponse resultSetGetStream(ResultSetHandle resultSetHandle) {
     ResultSetGetStreamRequest request =
         ResultSetGetStreamRequest.newBuilder().setResultSetHandle(resultSetHandle).build();
-    return invoke(() -> client.resultSetGetStream(request));
+    return await(client.resultSetGetStream(request));
   }
 
   public ResultSetGetChunksResponse resultSetGetChunks(ResultSetHandle resultSetHandle) {
