@@ -55,6 +55,23 @@ public final class ParameterKeyNormalizer {
     LEGACY_KEY_ALIASES.put("diagnosticsallowlistfile", "connection_diag_allowlist_path");
     LEGACY_KEY_ALIASES.put("diagnostics_allowlist_file", "connection_diag_allowlist_path");
     LEGACY_KEY_ALIASES.put("browser_response_timeout", "authentication_timeout");
+    // sf_core reads crl_*. In 4.x only CERT_REVOCATION_CHECK_MODE and
+    // ALLOW_CERTIFICATES_WITHOUT_CRL_URL were connection properties; the other four were JVM -D
+    // flags. The camelCase spellings are extra aliases, not 4.x names.
+    LEGACY_KEY_ALIASES.put("cert_revocation_check_mode", "crl_check_mode");
+    LEGACY_KEY_ALIASES.put("certrevocationcheckmode", "crl_check_mode");
+    LEGACY_KEY_ALIASES.put(
+        "allow_certificates_without_crl_url", "crl_allow_certificates_without_crl_url");
+    LEGACY_KEY_ALIASES.put(
+        "allowcertificateswithoutcrlurl", "crl_allow_certificates_without_crl_url");
+    LEGACY_KEY_ALIASES.put("enable_crl_in_memory_caching", "crl_enable_memory_caching");
+    LEGACY_KEY_ALIASES.put("enablecrlinmemorycaching", "crl_enable_memory_caching");
+    LEGACY_KEY_ALIASES.put("enable_crl_disk_caching", "crl_enable_disk_caching");
+    LEGACY_KEY_ALIASES.put("enablecrldiskcaching", "crl_enable_disk_caching");
+    LEGACY_KEY_ALIASES.put("crl_cache_validity_time", "crl_validity_time");
+    LEGACY_KEY_ALIASES.put("crlcachevaliditytime", "crl_validity_time");
+    LEGACY_KEY_ALIASES.put("crl_response_cache_dir", "crl_cache_dir");
+    LEGACY_KEY_ALIASES.put("crlresponsecachedir", "crl_cache_dir");
   }
 
   /**

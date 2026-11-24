@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class ParameterKeyNormalizerTest {
 
@@ -100,6 +102,26 @@ class ParameterKeyNormalizerTest {
     assertEquals(
         "clientStoreTemporaryCredential",
         ParameterKeyNormalizer.normalize("clientStoreTemporaryCredential"));
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "CERT_REVOCATION_CHECK_MODE, crl_check_mode",
+    "certRevocationCheckMode, crl_check_mode",
+    "cert_revocation_check_mode, crl_check_mode",
+    "ALLOW_CERTIFICATES_WITHOUT_CRL_URL, crl_allow_certificates_without_crl_url",
+    "allowCertificatesWithoutCrlUrl, crl_allow_certificates_without_crl_url",
+    "ENABLE_CRL_IN_MEMORY_CACHING, crl_enable_memory_caching",
+    "enableCrlInMemoryCaching, crl_enable_memory_caching",
+    "ENABLE_CRL_DISK_CACHING, crl_enable_disk_caching",
+    "enableCrlDiskCaching, crl_enable_disk_caching",
+    "CRL_CACHE_VALIDITY_TIME, crl_validity_time",
+    "crlCacheValidityTime, crl_validity_time",
+    "CRL_RESPONSE_CACHE_DIR, crl_cache_dir",
+    "crlResponseCacheDir, crl_cache_dir",
+  })
+  void shouldMapLegacyCrlProperties(String legacy, String canonical) {
+    assertEquals(canonical, ParameterKeyNormalizer.normalize(legacy));
   }
 
   @Test
