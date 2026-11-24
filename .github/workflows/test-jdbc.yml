@@ -101,9 +101,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # Temurin downloads from GitHub Releases occasionally return a non-gzip
-      # body ("gzip: stdin: not in gzip format"). Retry once; the retry is not
-      # continue-on-error, so a persistent failure still fails the job.
+      # Temurin downloads from GitHub Releases sometimes return a non-gzip
+      # body on the runner ("gzip: stdin: not in gzip format"). A same-URL
+      # retry 30s later hit the identical error on 2026-11-23 (runs
+      # 45148544467, 45208979106), so fall back to Zulu, which is served from
+      # Azul's CDN rather than GitHub Releases. The fallback is not
+      # continue-on-error, so a failure of both still fails the job.
       - name: Set up Java ${{ matrix.java-version }}
         id: setup-java
         continue-on-error: true
@@ -112,16 +115,12 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
-      - name: Wait before retrying Java setup
-        if: steps.setup-java.outcome == 'failure'
-        run: sleep 30
-
-      - name: Set up Java ${{ matrix.java-version }} (retry)
+      - name: Set up Java ${{ matrix.java-version }} (Zulu fallback)
         if: steps.setup-java.outcome == 'failure'
         uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.java-version }}
-          distribution: 'temurin'
+          distribution: 'zulu'
 
       - name: Restore Gradle cache
         id: gradle-cache
