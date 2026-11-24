@@ -7,6 +7,12 @@ public static class Skip
     public static void FutureMilestone(string rationale = "TODO not yet implemented") =>
         When(TestDriver.Current == TestDriver.Kind.New, rationale);
 
+    public static void FutureMilestone(SkipCondition condition, string rationale)
+    {
+        if (TestDriver.Current == TestDriver.Kind.New)
+            For(condition, rationale);
+    }
+
     public static void When(bool condition, string rationale)
     {
         if (condition)

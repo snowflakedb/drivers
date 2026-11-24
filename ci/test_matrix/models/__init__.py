@@ -74,6 +74,14 @@ MERGE_QUEUE_CELLS: list[dict[str, str]]   (optional, default [])
         ]
         # Also add to merge_valid() to block arm-aws and arm-gcp from pairwise.
 
+MERGE_CELLS: list[dict[str, str]]   (optional, default [])
+    Explicit cells pinned to trigger_level="merge" (push-to-main). They do
+    not run on PRs unless they are also in PR_CELLS. filter_active("merge")
+    is cumulative, so these cells run with PR_CELLS at push-to-main and
+    nightly. Use this when the merge set must be an exact list rather than
+    a pairwise cover. MERGE_VALID does not gate these. Cells listed here
+    are excluded from the pairwise candidate pool.
+
 MERGE_VALID: list[Callable[[dict[str, str]], bool]]   (optional, default [])
     Pairwise-only block-list. Same shape and semantics as CONSTRAINTS
     (return True = keep, return False = forbid). Predicates here gate

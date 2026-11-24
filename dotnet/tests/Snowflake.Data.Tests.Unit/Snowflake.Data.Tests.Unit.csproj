@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net481'">
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net481' OR '$(TargetFramework)' == 'net472'">
     <!-- TODO: remove once old Snowflake.Data NuGet reference is dropped — its transitive deps
          pull System.Memory versions that conflict with Apache.Arrow at runtime -->
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0;net481</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0;net481;net472</TargetFrameworks>
     <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>

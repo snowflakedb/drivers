@@ -36,12 +36,12 @@ public sealed class SfCoreTransportCancellationTest
     }
 
     [SnowflakeTheory]
-    [InlineData(10, SkipCondition.SkipOnMacOS)] // ~1k — cumulative threads exceed macOS limit
-    [InlineData(13, SkipCondition.SkipOnMacOS)] // ~8k
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~1k — cumulative threads exceed macOS limit
+    [InlineData(13, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~8k
     [InlineData(15, SkipCondition.SkipOnCI)]
     public async Task CancellationRace_ConcurrentCancels_NoCrashesOrLeaksAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "This exceeds thread OS limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on CI, on macOS, or in a 32-bit process");
 
         var count = 1 << dopExp;
         var leaksBefore = StubNativeMethods.sf_stub_leaked_alloc_count();
@@ -94,11 +94,11 @@ public sealed class SfCoreTransportCancellationTest
 
     [SnowflakeTheory(RetriesCount = RetriesCount.Thrice)]
     [InlineData(8, SkipCondition.None)]
-    [InlineData(10, SkipCondition.SkipOnMacOS)]
-    [InlineData(12, SkipCondition.SkipOnMacOS)] // ~4k (half blocked = ~2k parked threads)
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)]
+    [InlineData(12, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~4k (half blocked = ~2k parked threads)
     public async Task MassCancellation_MixedCancelAndComplete_BoundedMemoryGrowthAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "Exceeds macOS CI thread limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on macOS CI or in a 32-bit process");
 
         var count = 1 << dopExp;
 

@@ -28,6 +28,9 @@ public enum SkipCondition
     RunOnlyOnCloudAWS = SkipOnCloudAzure | SkipOnCloudGCP,
     RunOnlyOnCloudAzure = SkipOnCloudAWS | SkipOnCloudGCP,
     RunOnlyOnCloudGCP = SkipOnCloudAWS | SkipOnCloudAzure,
+
+    // Process bitness
+    SkipOn32Bit = 1 << 8,
 }
 
 internal static class SkipConditionEvaluator
@@ -59,6 +62,9 @@ internal static class SkipConditionEvaluator
 
         if (condition.HasFlag(SkipCondition.RunOnlyOnCI) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")))
             return "Test runs only on CI.";
+
+        if (condition.HasFlag(SkipCondition.SkipOn32Bit) && !Environment.Is64BitProcess)
+            return "Test is skipped in a 32-bit process.";
 
         // Cloud provider checks
         var cloudEnv = Environment.GetEnvironmentVariable("snowflake_cloud_env");

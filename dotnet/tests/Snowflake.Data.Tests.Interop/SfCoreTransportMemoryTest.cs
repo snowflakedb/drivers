@@ -18,13 +18,13 @@ public sealed class SfCoreTransportMemoryTest
     [SnowflakeTheory]
     [InlineData(3, SkipCondition.None)]
     [InlineData(6, SkipCondition.None)]
-    [InlineData(10, SkipCondition.SkipOnMacOS)] // ~1k — cumulative threads exceed macOS limit
-    [InlineData(13, SkipCondition.SkipOnMacOS)] // ~8k
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~1k — cumulative threads exceed macOS limit and the 32-bit address space
+    [InlineData(13, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~8k
     [InlineData(15, SkipCondition.SkipOnCI)]    // ~32k
     [InlineData(17, SkipCondition.SkipOnCI)]    // ~131k
     public async Task ConcurrentAsyncCalls_SurviveAggressiveGcMidFlightAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "Exceeds CI thread OS limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on CI, on macOS, or in a 32-bit process");
 
         var dop = 1 << dopExp;
         var tasks = Enumerable

@@ -1379,62 +1379,6 @@ class PythonMatrixTests(unittest.TestCase):
         )
 
 
-class DotnetMatrixTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.gha = gm.generate(DOTNET_PATH, "dotnet")
-        cls.x86 = [r for r in cls.gha if r["name"].startswith("windows-x86-")]
-
-    def test_windows_x86_runs_regression_and_interop(self) -> None:
-        self.assertEqual({r["mode"] for r in self.x86}, {"regression", "interop"})
-
-    def test_windows_x86_runs_net481_regression_from_pr_and_the_rest_at_nightly(self) -> None:
-        self.assertTrue(self.x86, "expected Windows x86 .NET cells")
-        x86_names = {r["name"] for r in self.x86}
-        for level in ("pr", "merge"):
-            active = {r["name"] for r in gm.filter_active(self.gha, level)}
-            self.assertEqual(active & x86_names, {"windows-x86-azure-net481"}, level)
-        merge_queue = {r["name"] for r in gm.filter_active(self.gha, "merge_queue")}
-        self.assertFalse(merge_queue & x86_names)
-        self.assertEqual(
-            {r["trigger_level"] for r in self.x86 if r["name"] != "windows-x86-azure-net481"},
-            {"nightly"},
-        )
-
-    def test_windows_x86_covers_every_tfm_its_mode_supports(self) -> None:
-        regression = {r["dotnet_version"] for r in self.x86 if r["mode"] == "regression"}
-        interop = {r["dotnet_version"] for r in self.x86 if r["mode"] == "interop"}
-        self.assertEqual(regression, {"net481", "net8.0", "net9.0", "net10.0", "net11.0"})
-        self.assertEqual(interop, {"net472", "net9.0", "net11.0"})
-
-    def test_windows_x86_builds_a_32_bit_process_over_a_32_bit_sf_core(self) -> None:
-        for r in self.x86:
-            self.assertEqual(r["os"], "windows-latest", r["name"])
-            self.assertEqual(r["sf_core_lib"], "sf_core.dll", r["name"])
-            self.assertEqual(r["cargo_target"], "i686-pc-windows-msvc", r["name"])
-            self.assertEqual(r["cargo_flags"], "--no-default-features --features protobuf", r["name"])
-            self.assertEqual(r["dotnet_arch"], "x86", r["name"])
-            self.assertEqual(r["dotnet_build_flags"], "-p:PlatformTarget=x86", r["name"])
-
-    def test_net11_runs_windows_regression_and_ubuntu_interop_from_pr(self) -> None:
-        pr = {(r["os"], r["mode"]) for r in gm.filter_active(self.gha, "pr") if r["dotnet_version"] == "net11.0"}
-        self.assertEqual(
-            pr,
-            {("windows-latest", "regression"), ("ubuntu-latest", "interop")},
-        )
-
-    def test_net11_runs_on_windows_x86_at_nightly(self) -> None:
-        modes = {r["mode"] for r in self.x86 if r["dotnet_version"] == "net11.0"}
-        self.assertEqual(modes, {"regression", "interop"})
-
-    def test_other_cells_build_for_the_runner_architecture(self) -> None:
-        for r in self.gha:
-            if r in self.x86:
-                continue
-            for key in ("cargo_target", "dotnet_arch", "dotnet_build_flags"):
-                self.assertNotIn(key, r, r["name"])
-
-
 class CoreMatrixTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1718,6 +1662,242 @@ class OdbcReferenceMatrixTests(unittest.TestCase):
             self.assertIn("ODBC_REFERENCE_PLATFORM", str(ctx.exception))
         finally:
             gm.ODBC_REFERENCE_PLATFORM[("windows", "x64")] = original
+
+
+class MergeCellsSemanticsTests(unittest.TestCase):
+    """MERGE_CELLS pin trigger_level=merge without running on PRs."""
+
+    MODEL = (
+        "PARAMS = {'OS': ['ubuntu', 'windows'], 'Arch': ['x64'], 'Cloud': ['aws']}\n"
+        "CONSTRAINTS = []\n"
+        "PR_CELLS = [{'OS': 'ubuntu', 'Arch': 'x64', 'Cloud': 'aws'}]\n"
+        "MERGE_CELLS = [{'OS': 'windows', 'Arch': 'x64', 'Cloud': 'aws'}]\n"
+        "MERGE_QUEUE_CELLS = []\n"
+        "JSON_CELLS = {}\n"
+        "def merge_valid(_c):\n"
+        "    return False\n"
+        "MERGE_VALID = [merge_valid]\n"
+    )
+
+    def setUp(self) -> None:
+        path = _write_model(self.MODEL)
+        try:
+            self.rows = gm.generate(path, "odbc")
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_pr_excludes_merge_cells(self) -> None:
+        names = sorted(r["name"] for r in gm.filter_active(self.rows, "pr"))
+        self.assertEqual(names, ["ubuntu-x64-aws"])
+
+    def test_merge_includes_pr_and_merge_cells(self) -> None:
+        names = sorted(r["name"] for r in gm.filter_active(self.rows, "merge"))
+        self.assertEqual(names, ["ubuntu-x64-aws", "windows-x64-aws"])
+
+    def test_merge_queue_falls_back_to_pr(self) -> None:
+        names = sorted(r["name"] for r in gm.filter_active(self.rows, "merge_queue"))
+        self.assertEqual(names, ["ubuntu-x64-aws"])
+
+
+class DotnetMatrixTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.gha = gm.generate(DOTNET_PATH, "dotnet")
+
+    def _keys(self, level: str, mode: str | None = None) -> list[tuple]:
+        rows = gm.filter_active(self.gha, level)
+        if mode:
+            rows = [r for r in rows if r["mode"] == mode]
+        return sorted(
+            (r["mode"], r["os"], r["arch"], r.get("cloud_provider"), r["dotnet_version"])
+            for r in rows
+        )
+
+    OSES = {"ubuntu-latest", "macos-latest", "windows-latest"}
+    CLOUDS = {"aws", "azure", "gcp"}
+
+    def test_pr_unit_matrix(self) -> None:
+        self.assertEqual(
+            self._keys("pr", "unit"),
+            [
+                ("unit", "ubuntu-latest", "x64", None, "net11.0"),
+                ("unit", "windows-latest", "x64", None, "net481"),
+                ("unit", "windows-latest", "x86", None, "net481"),
+            ],
+        )
+
+    def test_pr_e2e_matrix(self) -> None:
+        self.assertEqual(
+            self._keys("pr", "e2e"),
+            [
+                ("e2e", "macos-latest", "arm", "gcp", "net11.0"),
+                ("e2e", "ubuntu-latest", "x64", "aws", "net11.0"),
+                ("e2e", "windows-latest", "x64", "azure", "net481"),
+                ("e2e", "windows-latest", "x86", "azure", "net481"),
+            ],
+        )
+
+    def test_pr_old_driver_is_unix_net11(self) -> None:
+        self.assertEqual(
+            self._keys("pr", "e2e_old"),
+            [("e2e_old", "ubuntu-latest", "x64", "aws", "net11.0")],
+        )
+
+    def test_merge_queue_skips_windows_x86(self) -> None:
+        self.assertEqual(
+            self._keys("merge_queue"),
+            [
+                ("e2e", "macos-latest", "arm", "gcp", "net11.0"),
+                ("e2e", "ubuntu-latest", "x64", "aws", "net11.0"),
+                ("e2e", "windows-latest", "x64", "azure", "net481"),
+                ("e2e_old", "ubuntu-latest", "x64", "aws", "net11.0"),
+                ("unit", "ubuntu-latest", "x64", None, "net11.0"),
+                ("unit", "windows-latest", "x64", None, "net481"),
+            ],
+        )
+        self.assertFalse(
+            [r for r in gm.filter_active(self.gha, "merge_queue") if r["arch"] == "x86"]
+        )
+
+    def test_merge_unit_is_os_by_kind(self) -> None:
+        self.assertEqual(
+            self._keys("merge", "unit"),
+            [
+                ("unit", "macos-latest", "arm", None, "net11.0"),
+                ("unit", "ubuntu-latest", "x64", None, "net11.0"),
+                ("unit", "windows-latest", "x64", None, "net11.0"),
+                ("unit", "windows-latest", "x64", None, "net481"),
+                ("unit", "windows-latest", "x86", None, "net11.0"),
+                ("unit", "windows-latest", "x86", None, "net481"),
+            ],
+        )
+
+    def test_merge_e2e_is_os_by_cloud(self) -> None:
+        rows = [
+            r for r in gm.filter_active(self.gha, "merge")
+            if r["mode"] == "e2e"
+        ]
+        pairs = {(r["os"], r["cloud_provider"]) for r in rows}
+        want = {(os_, cloud) for os_ in self.OSES for cloud in self.CLOUDS}
+        self.assertEqual(pairs, want)
+        unix_kinds = {
+            "framework" if r["dotnet_version"] == "net481" else "modern"
+            for r in rows
+            if r["os"] != "windows-latest"
+        }
+        self.assertEqual(unix_kinds, {"modern"})
+        win_kinds = {
+            "framework" if r["dotnet_version"] == "net481" else "modern"
+            for r in rows
+            if r["os"] == "windows-latest"
+        }
+        self.assertEqual(win_kinds, {"framework", "modern"})
+
+    def test_merge_keeps_old_driver(self) -> None:
+        self.assertEqual(
+            self._keys("merge", "e2e_old"),
+            [("e2e_old", "ubuntu-latest", "x64", "aws", "net11.0")],
+        )
+
+    def test_nightly_unit_is_full_os_by_tfm(self) -> None:
+        rows = [r for r in gm.filter_active(self.gha, "nightly") if r["mode"] == "unit"]
+        got = sorted((r["os"], r["arch"], r["dotnet_version"]) for r in rows)
+        want = sorted(
+            [("ubuntu-latest", "x64", v) for v in ("net8.0", "net9.0", "net10.0", "net11.0")]
+            + [("macos-latest", "arm", v) for v in ("net8.0", "net9.0", "net10.0", "net11.0")]
+            + [
+                ("windows-latest", arch, v)
+                for arch in ("x64", "x86")
+                for v in ("net8.0", "net9.0", "net10.0", "net11.0", "net481", "net472")
+            ]
+        )
+        self.assertEqual(got, want)
+
+    def test_net472_is_nightly_only(self) -> None:
+        for level in ("pr", "merge"):
+            rows = gm.filter_active(self.gha, level)
+            self.assertFalse(
+                [r for r in rows if r["dotnet_version"] == "net472"],
+                level,
+            )
+
+    def test_nightly_e2e_matches_unit_os_tfm_and_spreads_clouds(self) -> None:
+        unit = [r for r in gm.filter_active(self.gha, "nightly") if r["mode"] == "unit"]
+        e2e = [r for r in gm.filter_active(self.gha, "nightly") if r["mode"] == "e2e"]
+        self.assertEqual(
+            sorted((r["os"], r["arch"], r["dotnet_version"]) for r in unit),
+            sorted((r["os"], r["arch"], r["dotnet_version"]) for r in e2e),
+        )
+        for os_ in self.OSES:
+            self.assertEqual(
+                {r["cloud_provider"] for r in e2e if r["os"] == os_},
+                self.CLOUDS,
+                os_,
+            )
+
+    def test_unit_interop_tfm_mapping(self) -> None:
+        by_tfm = {
+            r["dotnet_version"]: r.get("interop_dotnet_version")
+            for r in self.gha
+            if r["mode"] == "unit"
+        }
+        self.assertEqual(by_tfm["net481"], "net481")
+        self.assertEqual(by_tfm["net472"], "net472")
+        self.assertEqual(by_tfm["net11.0"], "net11.0")
+        self.assertEqual(by_tfm["net10.0"], "net10.0")
+        self.assertEqual(by_tfm["net9.0"], "net9.0")
+        net8 = [r for r in self.gha if r["mode"] == "unit" and r["dotnet_version"] == "net8.0"]
+        self.assertTrue(net8)
+        self.assertTrue(all("interop_dotnet_version" not in r for r in net8))
+
+    def test_unit_rows_have_no_cloud(self) -> None:
+        unit = [r for r in self.gha if r["mode"] == "unit"]
+        self.assertTrue(unit)
+        self.assertTrue(all("cloud_provider" not in r for r in unit))
+        self.assertTrue(all(", aws," not in r["name"] and ", azure," not in r["name"] and ", gcp," not in r["name"] for r in unit))
+        e2e = [r for r in self.gha if r["mode"] in ("e2e", "e2e_old")]
+        self.assertTrue(e2e)
+        self.assertTrue(all("cloud_provider" in r for r in e2e))
+
+    def test_job_names_use_comma_separator(self) -> None:
+        self.assertIn(
+            "windows, x86, net481",
+            {r["name"] for r in self.gha if r["mode"] == "unit"},
+        )
+        self.assertIn(
+            "windows, x86, azure, net481, e2e",
+            {r["name"] for r in self.gha if r["mode"] == "e2e"},
+        )
+        self.assertTrue(all(", " in r["name"] for r in self.gha))
+        self.assertFalse(any("-x86-" in r["name"] or "-x64-" in r["name"] for r in self.gha))
+
+    def test_windows_x86_builds_a_32_bit_process_over_a_32_bit_sf_core(self) -> None:
+        x86 = [r for r in self.gha if r["arch"] == "x86"]
+        self.assertTrue(x86)
+        for r in x86:
+            self.assertEqual(r["os"], "windows-latest", r["name"])
+            self.assertEqual(r["sf_core_lib"], "sf_core.dll", r["name"])
+            self.assertEqual(r["cargo_target"], "i686-pc-windows-msvc", r["name"])
+            self.assertEqual(r["cargo_flags"], "--no-default-features --features protobuf", r["name"])
+            self.assertEqual(r["dotnet_arch"], "x86", r["name"])
+            self.assertEqual(r["dotnet_build_flags"], "-p:PlatformTarget=x86", r["name"])
+
+    def test_other_cells_build_for_the_runner_architecture(self) -> None:
+        for r in self.gha:
+            if r["arch"] == "x86":
+                continue
+            for key in ("cargo_target", "dotnet_arch", "dotnet_build_flags"):
+                self.assertNotIn(key, r, r["name"])
+
+    def test_windows_x86_covers_every_tfm_at_nightly(self) -> None:
+        nightly = gm.filter_active(self.gha, "nightly")
+        for mode in ("unit", "e2e"):
+            tfms = {r["dotnet_version"] for r in nightly if r["arch"] == "x86" and r["mode"] == mode}
+            self.assertEqual(tfms, {"net472", "net481", "net8.0", "net9.0", "net10.0", "net11.0"}, mode)
+
+    def test_net11_runs_on_every_os_at_pr_or_merge(self) -> None:
+        rows = [r for r in gm.filter_active(self.gha, "merge") if r["dotnet_version"] == "net11.0"]
+        self.assertEqual({r["os"] for r in rows}, self.OSES)
 
 
 class JsonMergeQueueCellsTests(unittest.TestCase):

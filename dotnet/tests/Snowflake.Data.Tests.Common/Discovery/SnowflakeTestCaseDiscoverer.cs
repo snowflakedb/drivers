@@ -51,7 +51,26 @@ public sealed class SnowflakeTheoryDiscoverer : TheoryDiscoverer
         var wrappedCases = new List<IXunitTestCase>(baseCases.Count);
         foreach (var baseCase in baseCases)
         {
-            if (baseCase is XunitTestCase xtc)
+            if (baseCase is XunitDelayEnumeratedTheoryTestCase)
+            {
+                var details = TestIntrospectionHelper.GetTestCaseDetails(discoveryOptions, testMethod, factAttribute);
+                wrappedCases.Add(new SnowflakeEnumeratedTestCase(
+                    retriesCount,
+                    testMethod,
+                    baseCase.TestCaseDisplayName,
+                    baseCase.UniqueID,
+                    details.Explicit,
+                    theoryAttribute.SkipTestWithoutData,
+                    details.SkipExceptions,
+                    details.SkipReason,
+                    details.SkipType,
+                    details.SkipUnless,
+                    details.SkipWhen,
+                    testMethod.Traits.ToReadWrite(StringComparer.OrdinalIgnoreCase),
+                    timeout: details.Timeout
+                ));
+            }
+            else if (baseCase is XunitTestCase xtc)
             {
                 // Re-create as SnowflakeTestCase with retry support
                 var details = TestIntrospectionHelper.GetTestCaseDetails(discoveryOptions, testMethod, factAttribute);

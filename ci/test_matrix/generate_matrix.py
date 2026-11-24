@@ -242,6 +242,19 @@ def _normalize_cell(
     return {p: raw[p] for p in params}
 
 
+def _load_named_cells(path: Path, params: dict[str, list[str]], attr: str) -> list[dict[str, str]]:
+    """Load an optional explicit-cell list (e.g. MERGE_CELLS) from a model module."""
+    spec = importlib.util.spec_from_file_location(f"_model_{attr}_{path.stem}", path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"could not load model module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    raw = getattr(module, attr, [])
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}: {attr} must be a list")
+    return [_normalize_cell(c, params, path, attr) for c in raw]
+
+
 def apply_constraints(combo: dict[str, str], constraints: list) -> bool:
     """Return True if the combination satisfies every constraint predicate."""
     return all(predicate(combo) for predicate in constraints)
@@ -350,8 +363,17 @@ def validate_mappings(driver: str, all_combos: list[dict[str, str]]) -> None:
 # Row construction
 # ---------------------------------------------------------------------------
 
-def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
-    parts = [combo["OS"], combo["Arch"], combo["Cloud"]]
+def _make_name(
+    combo: dict[str, str],
+    result_format: str | None = None,
+    *,
+    sep: str = "-",
+) -> str:
+    parts = [combo["OS"], combo["Arch"]]
+    # .NET unit/interop cells do not decode a cloud account. Keep cloud out of
+    # the job name so the GHA UI does not look like a live-account run.
+    if combo.get("Mode") != "unit":
+        parts.append(combo["Cloud"])
     py = combo.get("PyVersion")
     hatch_env = combo.get("HatchEnv")
     dm = combo.get("DM")
@@ -368,11 +390,11 @@ def _make_name(combo: dict[str, str], result_format: str | None = None) -> str:
     mode = combo.get("Mode")
     if dotnet_version:
         parts.append(dotnet_version)
-    if mode and mode != "regression":
+    if mode and mode not in ("regression", "unit"):
         parts.append(mode)
     if result_format:
         parts.append(result_format)
-    return "-".join(parts)
+    return sep.join(parts)
 
 
 def _build_gha_row(
@@ -521,10 +543,12 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
 
     Each row targets one (OS, Arch, Cloud, DotnetVersion, Mode) combination.
     Platform metadata from DOTNET_PLATFORM, version metadata from DOTNET_TFM.
+    Unit cells that also run interop set `interop_dotnet_version` to the
+    same TFM. net8.0 has no interop TFM, so that key is omitted.
     """
-    os_, arch, cloud = combo["OS"], combo["Arch"], combo["Cloud"]
+    os_, arch = combo["OS"], combo["Arch"]
     dotnet_version = combo["DotnetVersion"]
-    mode = combo.get("Mode", "regression")
+    mode = combo.get("Mode", "unit")
     runner = GHA_RUNNER.get((os_, arch))
     if runner is None:
         return None
@@ -537,13 +561,13 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
     if tfm is None:
         return None
 
-    name = _make_name(combo)
+    name = _make_name(combo, sep=", ")
 
     row: dict[str, Any] = {
         "name": name,
         "os": runner,
+        "arch": arch,
         "mode": mode,
-        "cloud_provider": cloud,
         "trigger_level": trigger,
         "dotnet_version": dotnet_version,
         "sf_core_lib": platform["sf_core_lib"],
@@ -553,6 +577,11 @@ def _build_dotnet_row(combo: dict[str, str], trigger: str) -> dict[str, Any] | N
     for key in ("cargo_target", "dotnet_arch", "dotnet_build_flags"):
         if key in platform:
             row[key] = platform[key]
+    # Unit + interop never decode credentials. Cloud stays on E2E rows only.
+    if mode != "unit":
+        row["cloud_provider"] = combo["Cloud"]
+    if mode == "unit" and dotnet_version != "net8.0":
+        row["interop_dotnet_version"] = dotnet_version
     return row
 
 
@@ -567,6 +596,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     Returns the list of GitHub Actions matrix rows.
     """
     params, constraints, merge_valid, pr_cells, merge_queue_cells, json_cells = load_model(model_path)
+    merge_cells = _load_named_cells(model_path, params, "MERGE_CELLS")
     param_names = list(params.keys())
     param_values = list(params.values())
 
@@ -593,6 +623,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
     # level, which would produce no duplicate row (trigger assignment below
     # prefers merge_queue_keys) but would waste a pairwise slot.
     merge_queue_keys: set[tuple] = {tuple(c.values()) for c in merge_queue_cells}
+    merge_keys: set[tuple] = {tuple(c.values()) for c in merge_cells}
     valid_keys = {tuple(c.values()) for c in all_combos}
 
     # Warn about MERGE_QUEUE_CELLS entries that violate constraints.
@@ -600,6 +631,12 @@ def generate(model_path: Path, driver: str) -> list[dict]:
         if tuple(cell.values()) not in valid_keys:
             print(
                 f"WARNING: [merge_queue] cell {cell} violates constraints — no row will be emitted",
+                file=sys.stderr,
+            )
+    for cell in merge_cells:
+        if tuple(cell.values()) not in valid_keys:
+            print(
+                f"WARNING: [merge] cell {cell} violates constraints — no row will be emitted",
                 file=sys.stderr,
             )
 
@@ -623,7 +660,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
             return False
         if not apply_constraints(combo, merge_valid):
             return False
-        if combo_tuple in merge_queue_keys:
+        if combo_tuple in merge_queue_keys or combo_tuple in merge_keys:
             return False
         # `trigger` doesn't influence the build/skip decision, so any
         # placeholder value works. Pass "merge" for clarity.
@@ -672,7 +709,7 @@ def generate(model_path: Path, driver: str) -> list[dict]:
             combo["_trigger"] = "pr"
         elif key in merge_queue_keys:
             combo["_trigger"] = "merge_queue"
-        elif key in pairwise_keys:
+        elif key in merge_keys or key in pairwise_keys:
             combo["_trigger"] = "merge"
         else:
             combo["_trigger"] = "nightly"

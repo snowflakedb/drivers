@@ -18,12 +18,12 @@ public sealed class SfCoreTransportResilienceTest
     private static readonly byte[] HelloBytes = "hello, stub!"u8.ToArray();
 
     [SnowflakeTheory]
-    [InlineData(10, SkipCondition.SkipOnMacOS)] // ~1k — cumulative threads exceed macOS limit
-    [InlineData(13, SkipCondition.SkipOnMacOS)] // ~8k
-    [InlineData(15, SkipCondition.SkipOnMacOS)] // ~32k
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~1k — cumulative threads exceed macOS limit
+    [InlineData(13, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~8k
+    [InlineData(15, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~32k
     public async Task MalformedResponse_NullPtr_DriverRemainsUsableAfterStormAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "Exceeds macOS CI thread limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on macOS CI or in a 32-bit process");
 
         var count = 1 << dopExp;
 
@@ -46,12 +46,12 @@ public sealed class SfCoreTransportResilienceTest
     }
 
     [SnowflakeTheory]
-    [InlineData(10, SkipCondition.SkipOnMacOS)] // ~1k — cumulative threads exceed macOS limit
-    [InlineData(13, SkipCondition.SkipOnMacOS)] // ~8k
-    [InlineData(15, SkipCondition.SkipOnMacOS)] // ~32k
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~1k — cumulative threads exceed macOS limit
+    [InlineData(13, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~8k
+    [InlineData(15, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~32k
     public async Task MalformedResponse_HugeLen_DriverRemainsUsableAfterStormAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "Exceeds macOS CI thread limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on macOS CI or in a 32-bit process");
 
         var count = 1 << dopExp;
 
@@ -72,12 +72,12 @@ public sealed class SfCoreTransportResilienceTest
     }
 
     [SnowflakeTheory]
-    [InlineData(10, SkipCondition.SkipOnMacOS)] // ~1k — cumulative threads exceed macOS limit
-    [InlineData(13, SkipCondition.SkipOnMacOS)] // ~8k
+    [InlineData(10, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~1k — cumulative threads exceed macOS limit
+    [InlineData(13, SkipCondition.SkipOnMacOS | SkipCondition.SkipOn32Bit)] // ~8k
     [InlineData(15, SkipCondition.SkipOnCI)]    // ~32k
     public async Task AsyncCalls_SurviveArrayPoolExhaustionAndGcPressureAsync(int dopExp, SkipCondition skipCondition)
     {
-        Skip.For(skipCondition, "Exceeds CI thread OS limit");
+        Skip.For(skipCondition, "Exceeds the thread limit on CI, on macOS, or in a 32-bit process");
 
         var dop = 1 << dopExp;
 
