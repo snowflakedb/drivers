@@ -18,6 +18,7 @@ use crate::sensitive::SensitiveString;
 use crate::tls::RootStoreProvider;
 
 pub const BIND_STAGE_NAME: &str = "SYSTEM$BIND";
+pub const SCOPED_BIND_STAGE_NAME: &str = "SNOWPARK_TEMP_STAGE_BIND";
 
 const PYTHON_SNOWPARK_USE_SCOPED_TEMP_OBJECTS: &str = "PYTHON_SNOWPARK_USE_SCOPED_TEMP_OBJECTS";
 
@@ -71,7 +72,7 @@ impl AtomicStageState {
 
 const CREATE_SESSION_STAGE_SQL: &str = "CREATE TEMPORARY STAGE IF NOT EXISTS SYSTEM$BIND \
      file_format=(type=csv field_optionally_enclosed_by='\"' encoding='UTF8' escape_unenclosed_field=NONE)";
-const CREATE_SCOPED_STAGE_SQL: &str = "CREATE OR REPLACE SCOPED TEMPORARY STAGE SYSTEM$BIND \
+const CREATE_SCOPED_STAGE_SQL: &str = "CREATE OR REPLACE SCOPED TEMPORARY STAGE SNOWPARK_TEMP_STAGE_BIND \
      file_format=(type=csv field_optionally_enclosed_by='\"' encoding='UTF8' escape_unenclosed_field=NONE)";
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
@@ -142,6 +143,14 @@ pub struct StageBindingContext<'a> {
 }
 
 impl<'a> StageBindingContext<'a> {
+    pub fn bind_stage_name(&self) -> &'static str {
+        if self.use_scoped_stage {
+            SCOPED_BIND_STAGE_NAME
+        } else {
+            BIND_STAGE_NAME
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         client: &'a reqwest::Client,
@@ -208,7 +217,10 @@ pub async fn upload_csv_bindings(
     let put_response = issue_put_query(stage_binding_ctx, request_id).await?;
     upload_blob(stage_binding_ctx, csv_bytes, &put_response.data).await?;
 
-    Ok(format!("@{BIND_STAGE_NAME}/{request_id}"))
+    Ok(format!(
+        "@{}/{request_id}",
+        stage_binding_ctx.bind_stage_name()
+    ))
 }
 
 async fn ensure_stage(
@@ -264,7 +276,8 @@ async fn issue_put_query(
     request_id: Uuid,
 ) -> Result<Response, StageBindingError> {
     let put_sql = format!(
-        "PUT 'file:///tmp/placeholder/0' '@{BIND_STAGE_NAME}/{request_id}' overwrite=true",
+        "PUT 'file:///tmp/placeholder/0' '@{}/{request_id}' overwrite=true",
+        stage_binding_ctx.bind_stage_name()
     );
 
     let query_input = QueryInput::new(&put_sql);
@@ -390,9 +403,16 @@ mod tests {
     fn scoped_stage_sql_matches_python_connector() {
         assert_eq!(
             CREATE_SCOPED_STAGE_SQL,
-            "CREATE OR REPLACE SCOPED TEMPORARY STAGE SYSTEM$BIND \
+            "CREATE OR REPLACE SCOPED TEMPORARY STAGE SNOWPARK_TEMP_STAGE_BIND \
              file_format=(type=csv field_optionally_enclosed_by='\"' encoding='UTF8' escape_unenclosed_field=NONE)"
         );
+    }
+
+    #[test]
+    fn a_scoped_bind_stage_takes_the_snowpark_temp_name() {
+        assert_eq!(SCOPED_BIND_STAGE_NAME, "SNOWPARK_TEMP_STAGE_BIND");
+        assert!(CREATE_SCOPED_STAGE_SQL.contains(SCOPED_BIND_STAGE_NAME));
+        assert!(CREATE_SESSION_STAGE_SQL.contains(BIND_STAGE_NAME));
     }
 
     #[test]

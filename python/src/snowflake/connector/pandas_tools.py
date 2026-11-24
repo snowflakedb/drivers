@@ -94,6 +94,7 @@ def write_pandas(
     iceberg_config: dict[str, str] | None = None,
     bulk_upload_chunks: bool = False,
     use_vectorized_scanner: bool = False,
+    use_scoped_temp_object: bool | None = None,
     **kwargs: Any,
 ) -> WritePandasResult:
     """Write a pandas DataFrame to a Snowflake table via Parquet stage upload.
@@ -121,6 +122,7 @@ def write_pandas(
             iceberg_config=iceberg_config,
             bulk_upload_chunks=bulk_upload_chunks,
             use_vectorized_scanner=use_vectorized_scanner,
+            use_scoped_temp_object=use_scoped_temp_object,
             **kwargs,
         )
         return WritePandasOperation(cfg).execute()

@@ -438,6 +438,58 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         other => panic!("expected RestError::Backend, got: {other:?}"),
     }
 
+    host.set_query_response(
+        r#"{"data":{"queryId":"01-failed","sqlState":"42S02"},"code":"002003","message":"SQL compilation error: Object 'MISSING' does not exist or not authorized.","success":false}"#,
+    );
+    let err = snowflake_query_with_client(
+        &client,
+        query_parameters(),
+        "unused-session-token",
+        QueryInput::new("select * from missing"),
+        QueryOptions::default(),
+        xp_backend,
+    )
+    .await
+    .map(|_| ())
+    .expect_err("a failed query answered by the host must not read as an empty result");
+    match err {
+        RestError::QueryFailed {
+            code,
+            sql_state,
+            message,
+            ids,
+            ..
+        } => {
+            assert_eq!(code, Some(2003));
+            assert_eq!(sql_state.as_deref(), Some("42S02"));
+            assert!(message.contains("does not exist"), "got: {message}");
+            assert_eq!(ids.query_id.as_deref(), Some("01-failed"));
+            assert!(ids.request_id.is_some());
+        }
+        other => panic!("expected RestError::QueryFailed, got: {other:?}"),
+    }
+    let err = snowflake_get_query_result(
+        &client,
+        &query_parameters(),
+        "unused-session-token",
+        "01-failed",
+        &Default::default(),
+        xp_backend,
+    )
+    .await
+    .map(|_| ())
+    .expect_err("a failed result fetched from the host must surface as an error");
+    assert!(
+        matches!(
+            err,
+            RestError::QueryFailed {
+                code: Some(2003),
+                ..
+            }
+        ),
+        "got: {err:?}"
+    );
+
     host.set_session_info(SESSION_INFO);
     host.set_query_response(SELECT_ONE_RESPONSE);
     let authenticate_before_init = host.operation_count("authenticate");

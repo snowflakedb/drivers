@@ -6,6 +6,7 @@ Uses MagicMock for DataFrames — no pandas dependency required.
 from __future__ import annotations
 
 import inspect
+import re
 
 from unittest.mock import MagicMock, patch
 
@@ -366,6 +367,86 @@ class TestBuildCreateFileFormatSql:
         op: WritePandasOperation = _make_op(use_logical_type=False)
         result = op._build_create_file_format_sql("MY_FF")
         assert "USE_LOGICAL_TYPE=FALSE" in result["operation"]
+
+
+# ---------------------------------------------------------------------------
+# Scoped temporary objects
+# ---------------------------------------------------------------------------
+
+
+def _conn_with_scoped_parameter(value):
+    conn = MagicMock()
+    conn._session_parameters.get.side_effect = lambda name, default=None: (
+        value if name == "PYTHON_SNOWPARK_USE_SCOPED_TEMP_OBJECTS" else default
+    )
+    return conn
+
+
+@pytest.fixture
+def in_stored_procedure(monkeypatch):
+    from snowflake.connector import description
+
+    monkeypatch.setattr(description, "PLATFORM", "XP")
+
+
+class TestScopedTempObjects:
+    def test_outside_a_stored_procedure_objects_are_temporary(self):
+        cfg = _make_cfg(conn=_conn_with_scoped_parameter(None))
+        op = WritePandasOperation(cfg)
+
+        assert not cfg.use_scoped_temp_object
+        assert op._build_create_stage_sql("S")["operation"].startswith("CREATE TEMPORARY STAGE ")
+        assert op._build_create_file_format_sql("F")["operation"].startswith("CREATE TEMPORARY FILE FORMAT ")
+        assert cfg.temp_object_name("STAGE").startswith("__WRITE_PANDAS_STAGE_")
+
+    @pytest.mark.usefixtures("in_stored_procedure")
+    @pytest.mark.parametrize("parameter", [None, True, "true", "TRUE"])
+    def test_inside_a_stored_procedure_objects_are_scoped_by_default(self, parameter):
+        cfg = _make_cfg(conn=_conn_with_scoped_parameter(parameter))
+        op = WritePandasOperation(cfg)
+
+        assert cfg.use_scoped_temp_object
+        assert op._build_create_stage_sql("S")["operation"].startswith("CREATE SCOPED TEMPORARY STAGE ")
+        assert op._build_create_file_format_sql("F")["operation"].startswith("CREATE SCOPED TEMPORARY FILE FORMAT ")
+
+    @pytest.mark.usefixtures("in_stored_procedure")
+    @pytest.mark.parametrize("parameter", [False, "false", "FALSE"])
+    def test_the_session_parameter_turns_scoped_objects_off(self, parameter):
+        cfg = _make_cfg(conn=_conn_with_scoped_parameter(parameter))
+
+        assert not cfg.use_scoped_temp_object
+
+    @pytest.mark.usefixtures("in_stored_procedure")
+    def test_an_explicit_choice_wins_inside_a_stored_procedure(self):
+        assert not _make_cfg(
+            conn=_conn_with_scoped_parameter(True), use_scoped_temp_object=False
+        ).use_scoped_temp_object
+
+    def test_an_explicit_choice_wins_outside_a_stored_procedure(self):
+        assert _make_cfg(conn=_conn_with_scoped_parameter(None), use_scoped_temp_object=True).use_scoped_temp_object
+
+    @pytest.mark.parametrize("object_type", ["STAGE", "FILE_FORMAT"])
+    def test_scoped_names_follow_snowparks_scheme(self, object_type):
+        cfg = _make_cfg(conn=_conn_with_scoped_parameter(None), use_scoped_temp_object=True)
+
+        name = cfg.temp_object_name(object_type)
+
+        assert re.fullmatch(rf"SNOWPARK_TEMP_{object_type}_[A-Z0-9]{{10}}", name), name
+        assert name != cfg.temp_object_name(object_type)
+
+    def test_the_flag_does_not_reach_to_parquet(self):
+        cfg = _make_cfg(conn=_conn_with_scoped_parameter(None), use_scoped_temp_object=True)
+
+        assert "use_scoped_temp_object" not in cfg.parquet_kwargs
+
+    @pytest.mark.usefixtures("_bypass_deps")
+    def test_write_pandas_forwards_the_flag(self):
+        from snowflake.connector import pandas_tools
+
+        with patch.object(pandas_tools, "WritePandasOperation") as operation:
+            pandas_tools.write_pandas(_conn_with_scoped_parameter(None), _mock_df(), "T", use_scoped_temp_object=True)
+
+        assert operation.call_args.args[0].use_scoped_temp_object
 
 
 # ---------------------------------------------------------------------------

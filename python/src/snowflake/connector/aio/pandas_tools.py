@@ -21,7 +21,6 @@ from .._internal.write_pandas_operation import (
     WritePandasConfig,
     WritePandasMixin,
     WritePandasResult,
-    generate_temp_name,
 )
 from ..errors import Error, ProgrammingError
 from .cursor import SnowflakeCursor as AsyncSnowflakeCursor
@@ -123,7 +122,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
 
     async def _create_stage(self, cur: AsyncSnowflakeCursor) -> str:
         cfg = self._cfg
-        name = generate_temp_name("STAGE")
+        name = cfg.temp_object_name("STAGE")
         qualified = cfg.qualify(name)
         return await self._create_temp_object(cur, self._build_create_stage_sql, qualified, name)
 
@@ -157,7 +156,7 @@ class _AsyncWritePandasOperation(WritePandasMixin):
 
     async def _create_file_format(self, cur: AsyncSnowflakeCursor) -> str:
         cfg = self._cfg
-        name = generate_temp_name("FILE_FORMAT")
+        name = cfg.temp_object_name("FILE_FORMAT")
         qualified = cfg.qualify(name)
         return await self._create_temp_object(cur, self._build_create_file_format_sql, qualified, name)
 
@@ -235,6 +234,7 @@ async def write_pandas(
     iceberg_config: dict[str, str] | None = None,
     bulk_upload_chunks: bool = False,
     use_vectorized_scanner: bool = False,
+    use_scoped_temp_object: bool | None = None,
     **kwargs: Any,
 ) -> WritePandasResult:
     """Write a pandas DataFrame to a Snowflake table via Parquet stage upload (async).
@@ -272,6 +272,7 @@ async def write_pandas(
             iceberg_config=iceberg_config,
             bulk_upload_chunks=bulk_upload_chunks,
             use_vectorized_scanner=use_vectorized_scanner,
+            use_scoped_temp_object=use_scoped_temp_object,
             **kwargs,
         )
         return await _AsyncWritePandasOperation(cfg).execute()

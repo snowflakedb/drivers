@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import string
 import warnings
 
 from collections.abc import Callable, Iterator
@@ -102,6 +103,37 @@ def generate_temp_name(prefix: str) -> str:
     return f"__WRITE_PANDAS_{prefix}_{secrets.token_hex(8)}"
 
 
+#: Session parameter Snowpark reads to decide on scoped temporary objects; on unless set false.
+USE_SCOPED_TEMP_OBJECTS_PARAMETER = "PYTHON_SNOWPARK_USE_SCOPED_TEMP_OBJECTS"
+
+_SCOPED_TEMP_NAME_ALPHABET = string.ascii_uppercase + string.digits
+
+
+def generate_scoped_temp_name(object_type: str) -> str:
+    """Generate a name for a SCOPED TEMPORARY object.
+
+    Global Services accepts a scoped temporary object only under Snowpark's naming scheme,
+    ``SNOWPARK_TEMP_<TYPE>_<10 alphanumerics>``, as the 3.x connector generates it.
+    """
+    suffix = "".join(secrets.choice(_SCOPED_TEMP_NAME_ALPHABET) for _ in range(10))
+    return f"SNOWPARK_TEMP_{object_type}_{suffix}"
+
+
+def _in_stored_procedure() -> bool:
+    # XP overrides this attribute in every stored procedure; read it at call time to see that.
+    from .. import description
+
+    return description.PLATFORM == "XP"
+
+
+def _parameter_enabled(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
+
+
 def _sql_bool(value: bool) -> str:
     """Convert Python bool to SQL TRUE/FALSE literal."""
     return "TRUE" if value else "FALSE"
@@ -168,6 +200,7 @@ class WritePandasConfig:
         iceberg_config: dict[str, str] | None = None,
         bulk_upload_chunks: bool = False,
         use_vectorized_scanner: bool = False,
+        use_scoped_temp_object: bool | None = None,
         **parquet_kwargs: Any,
     ) -> None:
         self.conn = conn
@@ -188,9 +221,24 @@ class WritePandasConfig:
         self.iceberg_config = iceberg_config
         self.bulk_upload = bulk_upload_chunks
         self.use_vectorized_scanner = use_vectorized_scanner
+        self.use_scoped_temp_object = self._resolve_scoped_temp_object(conn, use_scoped_temp_object)
         self.parquet_kwargs = parquet_kwargs
 
         self._validate()
+
+    @staticmethod
+    def _resolve_scoped_temp_object(conn: Connection | AsyncConnection, requested: bool | None) -> bool:
+        """Return whether to use scoped temporary objects: as asked, else by default in a procedure.
+
+        An owner's-rights procedure may not create a plain TEMPORARY stage or file format, and
+        Snowpark's ``session.write_pandas`` does not say which kind it wants, so inside a procedure
+        the default follows ``PYTHON_SNOWPARK_USE_SCOPED_TEMP_OBJECTS`` as Snowpark's own does.
+        """
+        if requested is not None:
+            return requested
+        if not _in_stored_procedure():
+            return False
+        return _parameter_enabled(conn._session_parameters.get(USE_SCOPED_TEMP_OBJECTS_PARAMETER), True)
 
     # -- Validation ---------------------------------------------------------
 
@@ -260,6 +308,16 @@ class WritePandasConfig:
         """Build a fully-qualified name using this config's database/schema."""
         return qualify_name(self.database, self.schema, name, self.quote_identifiers)
 
+    @property
+    def temp_object_kind(self) -> str:
+        return "SCOPED TEMPORARY" if self.use_scoped_temp_object else "TEMPORARY"
+
+    def temp_object_name(self, object_type: str) -> str:
+        """Return a fresh name for the temporary stage or file format write_pandas creates."""
+        if self.use_scoped_temp_object:
+            return generate_scoped_temp_name(object_type)
+        return generate_temp_name(object_type)
+
     def emit_warnings(self) -> None:
         """Emit user-facing warnings about the input data.
 
@@ -308,7 +366,7 @@ class WritePandasMixin:
         if cfg.binary_as_text_false_on_stage:
             fmt_opts.append("BINARY_AS_TEXT=FALSE")
         return {
-            "operation": f"CREATE TEMPORARY STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})",
+            "operation": f"CREATE {cfg.temp_object_kind} STAGE IDENTIFIER(?) FILE_FORMAT=({' '.join(fmt_opts)})",
             "parameters": (name,),
             "_force_qmark_paramstyle": True,
         }
@@ -316,7 +374,7 @@ class WritePandasMixin:
     def _build_create_file_format_sql(self, name: str) -> dict[str, Any]:
         cfg = self._cfg
         mapped = VALID_COMPRESSIONS_MAP[cfg.compression]
-        parts = [f"CREATE TEMPORARY FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}"]
+        parts = [f"CREATE {cfg.temp_object_kind} FILE FORMAT IDENTIFIER(?) TYPE=PARQUET COMPRESSION={mapped}"]
         if cfg.use_logical_type is not None:
             parts.append(f"USE_LOGICAL_TYPE={_sql_bool(cfg.use_logical_type)}")
         return {
@@ -569,7 +627,7 @@ class WritePandasOperation(WritePandasMixin):
 
     def _create_stage(self, cursor: SnowflakeCursor) -> str:
         cfg = self._cfg
-        name = generate_temp_name("STAGE")
+        name = cfg.temp_object_name("STAGE")
         qualified = cfg.qualify(name)
         return self._create_temp_object(cursor, self._build_create_stage_sql, qualified, name)
 
@@ -607,7 +665,7 @@ class WritePandasOperation(WritePandasMixin):
 
     def _create_file_format(self, cursor: SnowflakeCursor) -> str:
         cfg = self._cfg
-        name = generate_temp_name("FILE_FORMAT")
+        name = cfg.temp_object_name("FILE_FORMAT")
         qualified = cfg.qualify(name)
         return self._create_temp_object(cursor, self._build_create_file_format_sql, qualified, name)
 

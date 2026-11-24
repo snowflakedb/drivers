@@ -2283,7 +2283,14 @@ pub(crate) async fn snowflake_query_with_client_detachable<'a>(
         let result = backend
             .execute_query(&query_input, query_parameters, backend_options)
             .await
-            .map_err(RestError::from);
+            .map_err(RestError::from)
+            .and_then(|response| {
+                let ids = QueryIds {
+                    request_id: Some(request_id),
+                    query_id: response.data.query_id.clone(),
+                };
+                into_query_result(response, &ids)
+            });
         return result.into();
     }
 
@@ -2652,18 +2659,18 @@ pub async fn snowflake_get_query_result(
 ) -> Result<query_response::Response, RestError> {
     tracing::info!(query_id = query_id, "Fetching query result");
 
+    let ids = QueryIds {
+        request_id: None,
+        query_id: Some(query_id.to_owned()),
+    };
     if let Some(backend) = xp_backend {
-        return Ok(backend.get_query_result(query_id).await?);
+        return into_query_result(backend.get_query_result(query_id).await?, &ids);
     }
 
     let result_url = format!(
         "{}/queries/{}/result",
         query_parameters.server_url, query_id
     );
-    let ids = QueryIds {
-        request_id: None,
-        query_id: Some(query_id.to_owned()),
-    };
     let query_response = async_exec::poll_query_status(
         client,
         query_parameters,
