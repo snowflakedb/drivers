@@ -20,7 +20,8 @@ use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
     CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionAbortQueryRequest,
     ConnectionCloseRequest, ConnectionCloseResponse, ConnectionCommitRequest,
-    ConnectionGetObjectsRequest, ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
+    ConnectionDownloadStreamBeginRequest, ConnectionGetObjectsRequest,
+    ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionIsClosedRequest,
     ConnectionIsClosedResponse, ConnectionNewRequest, ConnectionNewResponse,
@@ -134,6 +135,15 @@ fn remote_chunk_result(addr: SocketAddr) -> String {
         r#"{{"success":true,"data":{{"rowtype":[],"total":1,"queryId":"01b2-cancel-test","queryResultFormat":"arrow","chunks":[{{"url":"http://{addr}/chunk-hang","rowCount":1,"uncompressedSize":64,"compressedSize":64}}]}}}}"#
     )
 }
+/// A GET answer for a GCS stage whose presigned URL is `/chunk-hang` on this
+/// mock, so opening a download stream parks on the cloud GET.
+fn gcs_download_result(addr: SocketAddr) -> String {
+    format!(
+        r#"{{"success":true,"data":{{"command":"DOWNLOAD","src_locations":["{DOWNLOAD_FILE}"],"stageInfo":{{"locationType":"GCS","location":"test-bucket/prefix/","path":"prefix/","region":"us-central1","creds":{{"GCS_ACCESS_TOKEN":null}},"presignedUrl":null,"endPoint":null}},"localLocation":"/tmp","presignedUrls":["http://{addr}/chunk-hang"]}}}}"#
+    )
+}
+const DOWNLOAD_STAGE: &str = "@cancel_stage";
+const DOWNLOAD_FILE: &str = "data.csv";
 /// Query id for the finished-query lookups (`connection_get_result_set`,
 /// `connection_get_query_status`, `connection_get_query_result`). Must be a
 /// syntactically valid UUID: `snowflake_get_query_result` parses it with
@@ -217,6 +227,10 @@ struct HangingServer {
     /// no inline rows whose only chunk is `/chunk-hang` on this mock. Takes
     /// precedence over [`Self::omit_query_id`].
     remote_chunk_result: AtomicBool,
+    /// Answer the query-request with [`gcs_download_result`]: a GET whose
+    /// presigned URL is `/chunk-hang` on this mock. Takes precedence over
+    /// [`Self::remote_chunk_result`].
+    gcs_download_result: AtomicBool,
     /// Request target the mock actually parked on. `HangOn::FinishedQueryLookup`
     /// matches two different endpoints, so without recording this a test could
     /// pass having hung the wrong one.
@@ -337,16 +351,16 @@ async fn spawn_hanging_server(
                     *state.query_request_id.lock().unwrap() = query_param(&target, "requestId");
                     if hang_on == HangOn::QueryRequest {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
-                    }
-                    // A full/closed channel just means the canceller already has
-                    // its signal.
-                    let _ = state.request_received.lock().unwrap().try_send(());
-                    if hang_on == HangOn::QueryRequest {
+                        // A full/closed channel just means the canceller already
+                        // has its signal.
+                        let _ = state.request_received.lock().unwrap().try_send(());
                         // Hold the query open, writing nothing: the only way out
                         // is cancellation.
                         std::future::pending::<()>().await;
                     }
-                    if state.remote_chunk_result.load(Ordering::SeqCst) {
+                    if state.gcs_download_result.load(Ordering::SeqCst) {
+                        gcs_download_result(addr)
+                    } else if state.remote_chunk_result.load(Ordering::SeqCst) {
                         remote_chunk_result(addr)
                     } else if state.omit_query_id.load(Ordering::SeqCst) {
                         RESULT_WITHOUT_QUERY_ID.to_string()
@@ -666,6 +680,7 @@ fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
             abort_bodies: Mutex::new(Vec::new()),
             omit_query_id: AtomicBool::new(false),
             remote_chunk_result: AtomicBool::new(false),
+            gcs_download_result: AtomicBool::new(false),
             hung_target: Mutex::new(None),
             logout_seen: AtomicUsize::new(0),
             connections: Mutex::new(Vec::new()),
@@ -766,6 +781,22 @@ fn assert_aborted_the_submitted_query(state: &HangingServer) {
 /// Assert that cancellation emitted exactly one abort-request, and that it
 /// targeted the `requestId` the mock saw on the query-request and echoed `sql`.
 fn assert_aborted_sql(state: &HangingServer, sql: &str) {
+    assert_aborted_sql_text(state, &format!("{}\"", json_escape(sql)));
+}
+
+/// [`assert_aborted_sql`] for a statement known only by its leading text, such
+/// as a GET whose local directory is a fresh temp path.
+fn assert_aborted_sql_starting_with(state: &HangingServer, sql_prefix: &str) {
+    assert_aborted_sql_text(state, &json_escape(sql_prefix));
+}
+
+fn json_escape(sql: &str) -> String {
+    sql.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Assert one abort-request for the observed `requestId` whose `sqlText` value
+/// starts with the already JSON-escaped `sql_text_json`.
+fn assert_aborted_sql_text(state: &HangingServer, sql_text_json: &str) {
     let query_request_id = state
         .query_request_id
         .lock()
@@ -783,9 +814,8 @@ fn assert_aborted_sql(state: &HangingServer, sql: &str) {
         "abort body must target the cancelled query's requestId {query_request_id}; body: {}",
         abort_bodies[0]
     );
-    let sql_json = sql.replace('\\', "\\\\").replace('"', "\\\"");
     assert!(
-        abort_bodies[0].contains(&format!(r#""sqlText":"{sql_json}""#)),
+        abort_bodies[0].contains(&format!(r#""sqlText":"{sql_text_json}"#)),
         "abort body must echo the cancelled query's sqlText; body: {}",
         abort_bodies[0]
     );
@@ -1429,8 +1459,6 @@ async fn cancelling_a_stream_open_waiting_on_its_first_chunk_reports_cancelled_w
             executed.result
         );
     };
-    // The query-request signals too; drained so the canceller waits for the chunk download.
-    let _ = request_received.try_recv();
 
     let result = cancel_once_the_request_is_on_the_wire(
         &transport,
@@ -1445,6 +1473,70 @@ async fn cancelling_a_stream_open_waiting_on_its_first_chunk_reports_cancelled_w
     .await;
 
     assert_cancelled(result);
+    assert_hung_on(&state, "/chunk-hang");
+    assert_no_abort_requests(&state);
+}
+
+fn download_stream_begin_request(conn: ConnectionHandle) -> Vec<u8> {
+    ConnectionDownloadStreamBeginRequest {
+        conn_handle: Some(conn),
+        stage_name: DOWNLOAD_STAGE.to_string(),
+        source_filename: DOWNLOAD_FILE.to_string(),
+        decompress: false,
+    }
+    .encode_to_vec()
+}
+
+/// `connection_download_stream_begin` first runs a GET to resolve the stage
+/// file. Cancelling while that GET is in flight aborts it on the server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_download_stream_begin_while_its_get_runs_aborts_the_get() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_download_stream_begin",
+        "query-request",
+        download_stream_begin_request(conn),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_hung_on(&state, "/queries/v1/query-request");
+    assert_aborted_sql_starting_with(
+        &state,
+        &format!("GET {DOWNLOAD_STAGE}/{DOWNLOAD_FILE} 'file://"),
+    );
+}
+
+/// Once the GET has answered, `connection_download_stream_begin` opens the
+/// cloud download and waits for its response. Cancelling then issues no
+/// abort-request, because the GET has already finished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_download_stream_begin_while_the_cloud_get_opens_reports_cancelled_without_aborting()
+ {
+    let (state, request_received) = hanging_server_state();
+    state.gcs_download_result.store(true, Ordering::SeqCst);
+    let (addr, _server) = spawn_hanging_chunk_download(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_download_stream_begin",
+        "cloud download",
+        download_stream_begin_request(conn),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, None);
     assert_hung_on(&state, "/chunk-hang");
     assert_no_abort_requests(&state);
 }

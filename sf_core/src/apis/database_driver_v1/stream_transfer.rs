@@ -63,9 +63,12 @@ use super::query::{
     StageInfoRefreshContext, build_and_upload_stream, remote_file_not_found,
     stream_stage_info_refresher,
 };
-use super::query_submit::{QueryTransport, query_context, submit_query, update_caches};
+use super::query_submit::{
+    AbortReport, QueryTransport, query_context, run_reporting_abort, submit_query, update_caches,
+};
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
 use super::statement::skip_leading_whitespace_and_comments;
+use crate::apis::operation_ctx::OperationCtx;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{QueryExecutionMode, QueryInput, RestError, query_response};
@@ -277,7 +280,8 @@ impl DatabaseDriverV1 {
 
             let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(&conn_ptr, &query_transport, sql.clone()).await?;
+            let response =
+                run_sql_against_gs(None, &conn_ptr, &query_transport, sql.clone()).await?;
             update_caches(&conn_ptr, &sql, &response).await;
 
             let gs_data = response.data;
@@ -350,8 +354,39 @@ impl DatabaseDriverV1 {
     ///
     /// Returns the new handle plus the on-cloud byte count
     /// (pre-decompression), if the cloud response reported one.
+    ///
+    /// Cancelling through `operation_ctx` while the GET is in flight aborts it
+    /// on the server. Cancelling while the cloud stream opens drops the open
+    /// and registers no session: the background tasks are spawned only once
+    /// the cloud GET has answered, and the session is registered without an
+    /// intervening await.
     pub async fn download_stream_begin(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        stage_name: String,
+        source_filename: String,
+        decompress: bool,
+    ) -> Result<(Handle, Option<i64>), ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_download_stream_begin",
+            &report,
+            Box::pin(self.open_download_stream(
+                operation_ctx.map(|operation_ctx| (operation_ctx, &report)),
+                conn_handle,
+                stage_name,
+                source_filename,
+                decompress,
+            )),
+        )
+        .await
+    }
+
+    async fn open_download_stream(
+        &self,
+        cancellation: Option<(&OperationCtx, &AbortReport)>,
         conn_handle: Handle,
         stage_name: String,
         source_filename: String,
@@ -387,7 +422,9 @@ impl DatabaseDriverV1 {
 
             let query_transport = query_context(&conn_ptr).await?;
 
-            let response = run_sql_against_gs(&conn_ptr, &query_transport, get_sql.clone()).await?;
+            let response =
+                run_sql_against_gs(cancellation, &conn_ptr, &query_transport, get_sql.clone())
+                    .await?;
             update_caches(&conn_ptr, &get_sql, &response).await;
 
             let (use_s3_regional_url, unsafe_file_write, transport) = {
@@ -590,15 +627,17 @@ impl DatabaseDriverV1 {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Submit `sql` with no cancellation and no client-side deadline: the stream
-/// APIs reach core without an operation handle.
+/// Submit `sql` with no client-side deadline. `cancellation` arms an
+/// abort-request if the submit is dropped; `None` when the caller cannot be
+/// cancelled.
 async fn run_sql_against_gs(
+    cancellation: Option<(&OperationCtx, &AbortReport)>,
     conn_ptr: &Arc<Mutex<Connection>>,
     transport: &QueryTransport,
     sql: String,
 ) -> Result<query_response::Response, ApiError> {
     submit_query(
-        None,
+        cancellation,
         conn_ptr,
         transport,
         QueryInput::new(sql),
@@ -1323,7 +1362,13 @@ mod tests {
     async fn download_stream_begin_rejects_unknown_connection() {
         let driver = DatabaseDriverV1::new();
         let result = driver
-            .download_stream_begin(bogus_handle(), "@my_stage".into(), "data.csv".into(), false)
+            .download_stream_begin(
+                None,
+                bogus_handle(),
+                "@my_stage".into(),
+                "data.csv".into(),
+                false,
+            )
             .await;
         assert!(
             result.is_err(),

@@ -777,16 +777,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_download_stream_begin",
-        skip(self, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_download_stream_begin(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionDownloadStreamBeginRequest,
     ) -> Result<ConnectionDownloadStreamBeginResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let (download_handle, total_len) = self
             .driver
             .download_stream_begin(
+                operation_ctx,
                 conn_handle.into(),
                 input.stage_name,
                 input.source_filename,

@@ -524,7 +524,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setSourceFilename(sourceFilename)
             .setDecompress(decompress)
             .build();
-    return invoke(() -> client.connectionDownloadStreamBegin(request));
+    return await(client.connectionDownloadStreamBegin(request));
   }
 
   @Override

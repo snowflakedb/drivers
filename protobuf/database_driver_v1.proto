@@ -688,6 +688,9 @@ message DownloadStreamHandle {
 // whole file on local disk or fully buffering it in memory. The core keeps
 // only a small bounded window of bytes in flight regardless of file size.
 // Supports S3, GCS, and Azure-backed stages.
+// Cancelling the operation while the GET runs aborts it on the server.
+// Cancelling while the cloud download opens sends no abort-request. In both
+// cases the call reports CANCELLED and opens no session.
 message ConnectionDownloadStreamBeginRequest {
   ConnectionHandle conn_handle = 1;
   string stage_name = 2;
@@ -1248,7 +1251,9 @@ service DatabaseDriver {
   // Chunked streaming GET: begin a session, pull chunks, then close.
   // Zero-disk, bounded-memory streaming download. Supports S3, GCS, and
   // Azure-backed stages.
-  rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse);
+  rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionDownloadStreamChunk(ConnectionDownloadStreamChunkRequest) returns (ConnectionDownloadStreamChunkResponse);
   rpc ConnectionDownloadStreamClose(ConnectionDownloadStreamCloseRequest) returns (ConnectionDownloadStreamCloseResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
