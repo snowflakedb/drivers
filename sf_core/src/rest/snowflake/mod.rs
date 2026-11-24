@@ -17,6 +17,8 @@ pub(crate) use external_browser::BrowserOpenFn;
 /// carry a `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` factory
 /// without reaching into the private `oauth` module hierarchy.
 pub(crate) use oauth::BrowserLaunchFn;
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) use oauth::LaunchOutcome;
 /// Re-exported under `cfg(any(test, feature = "test-utils"))` so e2e
 /// tests can derive the OAuth token-cache key host without
 /// reimplementing the Python-style `urlparse(token_request_url).hostname`
@@ -956,6 +958,9 @@ pub(crate) async fn auth_request_data(
             }
             if let Some(renderer) = &login_parameters.browser_hooks.response_renderer {
                 cfg.to_mut().browser_response_renderer = Some(renderer.clone());
+            }
+            if let Some(redirect_input) = &login_parameters.browser_hooks.redirect_input {
+                cfg.to_mut().redirect_input = Some(redirect_input.clone());
             }
             let acquired = oauth::run_oauth_authorization_code(
                 client,

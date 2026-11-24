@@ -25,6 +25,8 @@ mod token;
 /// `crate::config::rest_parameters` can name the field type without
 /// reaching into `oauth::authorization_code` directly.
 pub(crate) use authorization_code::BrowserLaunchFn;
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) use authorization_code::LaunchOutcome;
 pub(crate) use authorization_code::derive_idp_url;
 pub(crate) use authorization_code::launcher_from_url_opener;
 pub(crate) use authorization_code::run_oauth_authorization_code;

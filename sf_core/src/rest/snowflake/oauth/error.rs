@@ -38,6 +38,24 @@ pub enum OAuthError {
         location: Location,
     },
 
+    /// A pasted redirect URL differs from the advertised redirect URI in
+    /// scheme, host, effective port or path. The pasted URL carries the
+    /// authorization code, so it is not part of the message.
+    #[snafu(display("Pasted URL does not match the OAuth redirect URI"))]
+    RedirectUriMismatch {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// The redirect-input provider failed or was cancelled before it
+    /// produced a redirect URL.
+    #[snafu(display("Redirect input failed: {reason}"))]
+    RedirectInputFailed {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// IdP returned `error=...&error_description=...` either on the
     /// authorize redirect or in the token-endpoint response.
     #[snafu(display("Identity Provider responded with error: {error}: {description}"))]
@@ -236,6 +254,7 @@ mod tests {
         let variants: Vec<OAuthError> = vec![
             OAuthError::StateMismatch { location: mock_loc },
             OAuthError::MissingAuthorizationCode { location: mock_loc },
+            OAuthError::RedirectUriMismatch { location: mock_loc },
             // `IdpError` is the one variant whose payload could be tempted to
             // hold a token. The cross-driver convention is that only the
             // server-supplied `error` slug + `error_description` are stored,

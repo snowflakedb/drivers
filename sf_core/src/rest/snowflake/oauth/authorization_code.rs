@@ -36,14 +36,16 @@ use url::Url;
 
 use super::error::{
     AuthenticationTimeoutSnafu, BrowserCallbackSnafu, EndpointUrlParseSnafu, IdpSnafu,
-    MissingAccessTokenSnafu, OAuthError, RedirectUriParseSnafu, RefreshTokenExchangeSnafu,
-    StateMismatchSnafu, TokenResponseDecodeSnafu,
+    MissingAccessTokenSnafu, OAuthError, RedirectInputFailedSnafu, RedirectUriParseSnafu,
+    RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
 };
 use super::http_client::make_http_client;
 use super::loopback_server::{self, RedirectResult};
 use super::pkce;
 use super::token;
-use crate::config::rest_parameters::OAuthAuthorizationCodeConfig;
+use crate::config::rest_parameters::{
+    OAuthAuthorizationCodeConfig, RedirectInputError, RedirectInputFn, RedirectInputRequest,
+};
 use crate::crypto::dpop::{self, DPoPKey};
 use crate::crypto::random;
 use crate::sensitive::SensitiveString;
@@ -121,8 +123,8 @@ pub(crate) struct AcquiredOAuthToken {
 
 /// Closure-shaped browser launcher. Production callers go through
 /// [`crate::rest::snowflake::browser::open_url`] (WSL-safe; see
-/// SNOW-3649282) with a stdout paste fallback (drift C.6 — the fallback
-/// URL is stdout per `features/auth/NOMIRROR/oauth.md` §3), and only after the URL passes
+/// SNOW-3649282) and report [`LaunchOutcome::NotOpened`] when no browser
+/// opens (drift C.6 — see the internal OAuth design notes, §3), and only after the URL passes
 /// [`crate::rest::snowflake::browser::validate_browser_url`]; tests can
 /// substitute a deterministic driver that pokes the loopback directly.
 ///
@@ -130,8 +132,19 @@ pub(crate) struct AcquiredOAuthToken {
 /// an `Arc<dyn Fn() -> BrowserLaunchFn + …>` factory field — letting
 /// tests inject deterministic launchers as configuration data rather
 /// than through global mutable state.
-pub(crate) type BrowserLaunchFn =
-    Box<dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send>;
+pub(crate) type BrowserLaunchFn = Box<
+    dyn FnOnce(Url, Url) -> Pin<Box<dyn Future<Output = Result<LaunchOutcome, String>> + Send>>
+        + Send,
+>;
+
+/// Whether the launcher opened a browser. `NotOpened` means the system
+/// browser could not be launched for a validated URL; the flow then hands
+/// the URL to the redirect-input provider, or prints it when there is none.
+#[derive(Debug)]
+pub(crate) enum LaunchOutcome {
+    Opened,
+    NotOpened,
+}
 
 fn default_browser_launch() -> BrowserLaunchFn {
     Box::new(|authorize_url, _redirect_uri| {
@@ -142,16 +155,19 @@ fn default_browser_launch() -> BrowserLaunchFn {
                 "Opening system browser for OAuth authorization"
             );
             // Validate the URL and route it through the WSL-safe launcher
-            // (SNOW-3649282). The paste fallback is printed only when a
-            // *validated* URL fails to launch.
+            // (SNOW-3649282). The fallback runs only when a *validated* URL
+            // fails to launch.
             let url = authorize_url.to_string();
-            let pasted = std::cell::Cell::new(false);
+            let launch_failed = std::cell::Cell::new(false);
             let result =
                 launch_authorize_url(&url, crate::rest::snowflake::browser::open_url, || {
-                    pasted.set(true);
-                    println!("Open this URL in your browser to continue: {url}")
+                    launch_failed.set(true);
                 });
-            if pasted.get() { Ok(()) } else { result }
+            if launch_failed.get() {
+                Ok(LaunchOutcome::NotOpened)
+            } else {
+                result.map(|()| LaunchOutcome::Opened)
+            }
         })
     })
 }
@@ -166,8 +182,8 @@ fn default_browser_launch() -> BrowserLaunchFn {
 ///   hand-open the very URL we rejected).
 /// * URL is valid ⇒ hand it to `open`; on launch `Err` the caller-supplied
 ///   `fallback` runs and the `Err` is returned. The system-browser path
-///   prints a paste URL there and swallows the `Err`; a custom opener
-///   passes a no-op so login fails with no paste.
+///   records the failure and reports `NotOpened` instead of the `Err`; a
+///   custom opener passes a no-op so login fails without a fallback.
 fn launch_authorize_url(
     url: &str,
     open: impl FnOnce(&str) -> Result<(), String>,
@@ -198,9 +214,45 @@ pub(crate) fn launcher_from_url_opener(
                 })
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()))
+                .map(|()| LaunchOutcome::Opened)
             })
         })
     })
+}
+
+/// Waits for the redirect after the system browser could not be opened.
+/// With a redirect-input provider, the provider races the loopback
+/// listener, and whichever finishes first wins; the loser is dropped. The
+/// loopback future carries the remaining authentication budget, so its
+/// timeout also bounds the provider. A provider error fails the login at
+/// once. The pasted URL carries the authorization code and is never logged.
+async fn await_redirect_without_browser(
+    redirect_input: Option<&RedirectInputFn>,
+    request: RedirectInputRequest,
+    mut loopback: Pin<&mut impl Future<Output = Result<RedirectResult, OAuthError>>>,
+) -> Result<RedirectResult, OAuthError> {
+    let Some(redirect_input) = redirect_input else {
+        // User-facing fallback on stdout (drift C.6), not a diagnostic.
+        println!(
+            "Open this URL in your browser to continue: {}",
+            request.authorize_url.reveal()
+        );
+        return loopback.await;
+    };
+    let advertised = Url::parse(&request.redirect_uri).context(RedirectUriParseSnafu)?;
+    let pasted = redirect_input(request);
+    tokio::select! {
+        biased;
+        redirect = &mut loopback => redirect,
+        pasted = pasted => match pasted {
+            Err(RedirectInputError { reason }) => RedirectInputFailedSnafu { reason }.fail(),
+            Ok(Some(pasted)) => loopback_server::parse_pasted_redirect(pasted.reveal().trim(), &advertised),
+            Ok(None) => {
+                tracing::debug!("Redirect-input provider returned no URL; waiting on loopback");
+                loopback.await
+            }
+        },
+    }
 }
 
 #[tracing::instrument(
@@ -564,7 +616,7 @@ async fn run_interactive_flow(
         config,
         authorize_url_base.clone(),
         token_url.clone(),
-        redirect_uri_advertised,
+        redirect_uri_advertised.clone(),
     )?;
 
     // PKCE S256 is on by default across drivers; Python
@@ -619,15 +671,32 @@ async fn run_interactive_flow(
             elapsed_secs: deadline.elapsed_secs(),
         })?;
 
-    let launch_fut = launch_browser(authorize_url, redirect_uri);
-    tokio::pin!(launch_fut);
-    let redirect: RedirectResult = tokio::select! {
-        biased;
-        redirect = listener.wait_for_redirect(
-            loopback_budget,
-            config.browser_response_renderer.clone(),
-        ) => redirect?,
-        Err(reason) = &mut launch_fut => return BrowserCallbackSnafu { reason }.fail(),
+    let authorize_url_text = SensitiveString::from(authorize_url.to_string());
+    let redirect: RedirectResult = {
+        let redirect_fut =
+            listener.wait_for_redirect(loopback_budget, config.browser_response_renderer.clone());
+        tokio::pin!(redirect_fut);
+        let launch_fut = launch_browser(authorize_url, redirect_uri.clone());
+        tokio::pin!(launch_fut);
+        tokio::select! {
+            biased;
+            redirect = &mut redirect_fut => redirect?,
+            launched = &mut launch_fut => match launched {
+                Err(reason) => return BrowserCallbackSnafu { reason }.fail(),
+                Ok(LaunchOutcome::Opened) => redirect_fut.await?,
+                Ok(LaunchOutcome::NotOpened) => {
+                    await_redirect_without_browser(
+                        config.redirect_input.as_ref(),
+                        RedirectInputRequest {
+                            authorize_url: authorize_url_text,
+                            redirect_uri: redirect_uri_advertised,
+                        },
+                        redirect_fut,
+                    )
+                    .await?
+                }
+            },
+        }
     };
 
     // CSRF check via timing-safe equality on `oauth2::CsrfToken`.
@@ -1078,6 +1147,439 @@ mod tests {
         assert_eq!(result, Err("no browser available".to_string()));
     }
 
+    fn authorize_state(authorize_url: &str) -> String {
+        Url::parse(authorize_url)
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "state")
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default()
+    }
+
+    fn browser_not_opened() -> BrowserLaunchFn {
+        Box::new(|_authorize_url, _redirect_uri| Box::pin(async { Ok(LaunchOutcome::NotOpened) }))
+    }
+
+    fn browser_not_opened_then_loopback_hit(code: &'static str) -> BrowserLaunchFn {
+        Box::new(move |authorize_url, redirect_uri| {
+            Box::pin(async move {
+                let state = authorize_state(authorize_url.as_str());
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    let mut s = tokio::net::TcpStream::connect((
+                        redirect_uri.host_str().unwrap(),
+                        redirect_uri.port().unwrap(),
+                    ))
+                    .await
+                    .expect("connect loopback");
+                    let req = format!(
+                        "GET /?code={code}&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                    );
+                    let _ = s.write_all(req.as_bytes()).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                });
+                Ok(LaunchOutcome::NotOpened)
+            })
+        })
+    }
+
+    fn pasting_provider(
+        code: &'static str,
+        state: Option<&'static str>,
+        seen: Arc<Mutex<Vec<RedirectInputRequest>>>,
+    ) -> RedirectInputFn {
+        Arc::new(move |request: RedirectInputRequest| {
+            let seen = Arc::clone(&seen);
+            Box::pin(async move {
+                let state = state
+                    .map(str::to_string)
+                    .unwrap_or_else(|| authorize_state(request.authorize_url.reveal()));
+                let pasted = format!(" {}?code={code}&state={state} \n", request.redirect_uri);
+                seen.lock().unwrap().push(request);
+                Ok(Some(SensitiveString::from(pasted)))
+            })
+        })
+    }
+
+    struct SetOnDrop(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn pending_provider(dropped: Arc<std::sync::atomic::AtomicBool>) -> RedirectInputFn {
+        Arc::new(move |_request| {
+            let guard = SetOnDrop(Arc::clone(&dropped));
+            Box::pin(async move {
+                let _guard = guard;
+                std::future::pending::<Result<Option<SensitiveString>, RedirectInputError>>().await
+            })
+        })
+    }
+
+    async fn token_endpoint(code: &str, access_token: &str, server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .and(body_string_contains(format!("code={code}")))
+            .and(body_string_contains("code_verifier="))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(
+                    r#"{{"access_token":"{access_token}","token_type":"Bearer","expires_in":600}}"#
+                ),
+                "application/json",
+            ))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    fn interactive_cfg(server: &MockServer) -> OAuthAuthorizationCodeConfig {
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.snowflake.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+        config.flow_options.authentication_timeout_secs = 30;
+        config
+    }
+
+    async fn run_flow(
+        config: &OAuthAuthorizationCodeConfig,
+        launch: BrowserLaunchFn,
+    ) -> Result<AcquiredOAuthToken, OAuthError> {
+        let client = reqwest::Client::new();
+        run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            config,
+            "",
+            None,
+            launch,
+            false,
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn pasted_redirect_completes_exchange_without_loopback_hit() {
+        let server = MockServer::start().await;
+        token_endpoint("PASTED-CODE", "AT-PASTED", &server).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(pasting_provider("PASTED-CODE", None, Arc::clone(&seen)));
+
+        let started = Instant::now();
+        let acquired = run_flow(&config, browser_not_opened())
+            .await
+            .expect("pasted redirect must complete the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-PASTED");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a pasted redirect must not wait for the loopback listener"
+        );
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(
+            seen[0]
+                .authorize_url
+                .reveal()
+                .starts_with("https://idp.snowflake.com/oauth/authorize?"),
+            "got {:?}",
+            seen[0].authorize_url.reveal()
+        );
+        let advertised = Url::parse(&seen[0].redirect_uri).unwrap();
+        assert_eq!(advertised.host_str(), Some("127.0.0.1"));
+        assert!(advertised.port().is_some());
+    }
+
+    #[tokio::test]
+    async fn provider_is_not_called_when_the_browser_opened() {
+        let server = MockServer::start().await;
+        token_endpoint("THE-CODE", "AT-LOOPBACK", &server).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(pasting_provider("PASTED-CODE", None, Arc::clone(&seen)));
+
+        let acquired = run_flow(&config, loopback_redirect_with("THE-CODE"))
+            .await
+            .expect("loopback redirect must complete the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-LOOPBACK");
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pasted_redirect_with_foreign_state_surfaces_state_mismatch() {
+        let server = MockServer::start().await;
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(pasting_provider(
+            "PASTED-CODE",
+            Some("ATTACKER-SUPPLIED"),
+            Arc::new(Mutex::new(Vec::new())),
+        ));
+        let err = run_flow(&config, browser_not_opened())
+            .await
+            .expect_err("a pasted redirect with a foreign state must fail");
+        assert!(
+            matches!(err, OAuthError::StateMismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn pasted_redirect_for_another_callback_surfaces_redirect_uri_mismatch() {
+        let server = MockServer::start().await;
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(Arc::new(|request: RedirectInputRequest| {
+            Box::pin(async move {
+                let state = authorize_state(request.authorize_url.reveal());
+                Ok(Some(SensitiveString::from(format!(
+                    "https://callback.snowflake.com/?code=C&state={state}"
+                ))))
+            })
+        }));
+        let err = run_flow(&config, browser_not_opened())
+            .await
+            .expect_err("a pasted URL for another callback must fail");
+        assert!(
+            matches!(err, OAuthError::RedirectUriMismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn loopback_redirect_wins_over_pending_provider_and_drops_it() {
+        let server = MockServer::start().await;
+        token_endpoint("LOOPBACK-CODE", "AT-LOOPBACK", &server).await;
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(pending_provider(Arc::clone(&dropped)));
+
+        let acquired = run_flow(
+            &config,
+            browser_not_opened_then_loopback_hit("LOOPBACK-CODE"),
+        )
+        .await
+        .expect("a loopback redirect must complete the flow while the provider waits");
+        assert_eq!(acquired.access_token.reveal(), "AT-LOOPBACK");
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::Relaxed),
+            "the provider future must be dropped once the loopback wins"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_failure_fails_the_login_immediately() {
+        let server = MockServer::start().await;
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(Arc::new(|_request| {
+            Box::pin(async {
+                Err(RedirectInputError {
+                    reason: "input closed".to_string(),
+                })
+            })
+        }));
+
+        let started = Instant::now();
+        let err = run_flow(&config, browser_not_opened())
+            .await
+            .expect_err("a provider failure must fail the login");
+        assert!(
+            matches!(&err, OAuthError::RedirectInputFailed { reason, .. } if reason == "input closed"),
+            "got {err:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "a provider failure must not wait for the authentication timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn pasted_redirect_matches_the_advertised_scheme_not_the_listener_scheme() {
+        let server = MockServer::start().await;
+        token_endpoint("PASTED-CODE", "AT-PASTED", &server).await;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut config = interactive_cfg(&server);
+        config.redirect_uri = Some(
+            crate::config::configured_redirect_uri::ConfiguredRedirectUri::parse(format!(
+                "https://localhost:{port}/callback"
+            ))
+            .unwrap(),
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        config.redirect_input = Some(pasting_provider("PASTED-CODE", None, Arc::clone(&seen)));
+
+        let acquired = run_flow(&config, browser_not_opened())
+            .await
+            .expect("a paste of the advertised redirect URI must be accepted");
+        assert_eq!(acquired.access_token.reveal(), "AT-PASTED");
+        assert_eq!(
+            seen.lock().unwrap()[0].redirect_uri,
+            format!("https://localhost:{port}/callback")
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_returning_none_leaves_the_flow_on_the_loopback() {
+        let server = MockServer::start().await;
+        token_endpoint("LOOPBACK-CODE", "AT-LOOPBACK", &server).await;
+        let mut config = interactive_cfg(&server);
+        config.redirect_input = Some(Arc::new(|_request| Box::pin(async { Ok(None) })));
+
+        let acquired = run_flow(
+            &config,
+            browser_not_opened_then_loopback_hit("LOOPBACK-CODE"),
+        )
+        .await
+        .expect("the loopback must still complete the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-LOOPBACK");
+    }
+
+    #[tokio::test]
+    async fn without_provider_a_failed_launch_waits_on_the_loopback() {
+        let server = MockServer::start().await;
+        token_endpoint("LOOPBACK-CODE", "AT-LOOPBACK", &server).await;
+        let config = interactive_cfg(&server);
+        assert!(config.redirect_input.is_none());
+
+        let acquired = run_flow(
+            &config,
+            browser_not_opened_then_loopback_hit("LOOPBACK-CODE"),
+        )
+        .await
+        .expect("the loopback must complete the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-LOOPBACK");
+    }
+
+    #[tokio::test]
+    async fn authentication_timeout_drops_pending_provider() {
+        let server = MockServer::start().await;
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut config = interactive_cfg(&server);
+        config.flow_options.authentication_timeout_secs = 1;
+        config.redirect_input = Some(pending_provider(Arc::clone(&dropped)));
+
+        let err = run_flow(&config, browser_not_opened())
+            .await
+            .expect_err("a provider that never answers must time out");
+        assert!(
+            matches!(
+                err,
+                OAuthError::BrowserTimeout { .. } | OAuthError::AuthenticationTimeout { .. }
+            ),
+            "got {err:?}"
+        );
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::Relaxed),
+            "the provider future must be dropped once the flow times out"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_flows_each_complete_with_their_own_pasted_redirect() {
+        let server = MockServer::start().await;
+        token_endpoint("CODE-A", "AT-A", &server).await;
+        token_endpoint("CODE-B", "AT-B", &server).await;
+
+        let delayed_provider = |code: &'static str, delay_ms: u64| -> RedirectInputFn {
+            Arc::new(move |request: RedirectInputRequest| {
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    let state = authorize_state(request.authorize_url.reveal());
+                    Ok(Some(SensitiveString::from(format!(
+                        "{}?code={code}&state={state}",
+                        request.redirect_uri
+                    ))))
+                })
+            })
+        };
+        let mut config_a = interactive_cfg(&server);
+        config_a.redirect_input = Some(delayed_provider("CODE-A", 300));
+        let mut config_b = interactive_cfg(&server);
+        config_b.redirect_input = Some(delayed_provider("CODE-B", 100));
+
+        let (a, b) = tokio::join!(
+            run_flow(&config_a, browser_not_opened()),
+            run_flow(&config_b, browser_not_opened()),
+        );
+        assert_eq!(a.expect("flow A").access_token.reveal(), "AT-A");
+        assert_eq!(b.expect("flow B").access_token.reveal(), "AT-B");
+    }
+
+    #[tokio::test]
+    async fn loopback_redirect_arriving_after_the_launcher_returned_completes_the_flow() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("code=LATE-CODE"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-LATE","token_type":"Bearer","expires_in":600}"#,
+                "application/json",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.snowflake.com/oauth/authorize").unwrap());
+        config.client_store_temporary_credential = false;
+        config.flow_options.authentication_timeout_secs = 30;
+
+        let late_loopback: BrowserLaunchFn = Box::new(|authorize_url, redirect_uri| {
+            Box::pin(async move {
+                let state = authorize_url
+                    .query_pairs()
+                    .find(|(k, _)| k == "state")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                tokio::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let mut s = tokio::net::TcpStream::connect((
+                        redirect_uri.host_str().unwrap(),
+                        redirect_uri.port().unwrap(),
+                    ))
+                    .await
+                    .expect("connect loopback");
+                    let req = format!(
+                        "GET /?code=LATE-CODE&state={state} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+                    );
+                    let _ = s.write_all(req.as_bytes()).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                });
+                Ok(LaunchOutcome::Opened)
+            })
+        });
+
+        let client = reqwest::Client::new();
+        let acquired = run_authorization_code_flow(
+            &client,
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            None,
+            late_loopback,
+            false,
+            None,
+        )
+        .await
+        .expect("a loopback redirect after the launcher returned must complete the flow");
+        assert_eq!(acquired.access_token.reveal(), "AT-LATE");
+    }
+
     struct StubTokenCache {
         store: Mutex<HashMap<String, String>>,
     }
@@ -1143,6 +1645,7 @@ mod tests {
             // never invoke the launcher, so `None` is safe.
             browser_launcher: None,
             browser_response_renderer: None,
+            redirect_input: None,
         }
     }
 
@@ -1481,7 +1984,8 @@ mod tests {
         )
         .await;
 
-        let launch: BrowserLaunchFn = Box::new(|_, _| Box::pin(async { Ok(()) }));
+        let launch: BrowserLaunchFn =
+            Box::new(|_, _| Box::pin(async { Ok(LaunchOutcome::Opened) }));
         let mut config_short =
             cfg_with_token_url(Url::parse(&format!("{}/oauth/token", server.uri())).unwrap());
         config_short.flow_options.authentication_timeout_secs = 1;
@@ -1826,7 +2330,7 @@ mod tests {
                 );
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
+                Ok(LaunchOutcome::Opened)
             })
         });
 
@@ -2058,7 +2562,7 @@ mod tests {
                 use tokio::io::AsyncWriteExt;
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
+                Ok(LaunchOutcome::Opened)
             })
         });
         let client = reqwest::Client::new();
@@ -2111,7 +2615,7 @@ mod tests {
                 let req = "GET /?code=THE-CODE&state=ATTACKER-SUPPLIED HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
                 let _ = s.write_all(req.as_bytes()).await;
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
+                Ok(LaunchOutcome::Opened)
             })
         });
         let client = reqwest::Client::new();
@@ -2207,7 +2711,7 @@ mod tests {
                 // race with axum's handler invocation (mirrors the same
                 // guard in `full_interactive_flow_drives_loopback_and_stores_tokens`).
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
+                Ok(LaunchOutcome::Opened)
             })
         })
     }

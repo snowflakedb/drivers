@@ -276,10 +276,48 @@ pub type BrowserOpenFn = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 pub type BrowserResponseRenderFn =
     Arc<dyn Fn(Option<&str>) -> Result<String, String> + Send + Sync>;
 
+/// What an OAuth authorization code login hands the redirect-input provider
+/// when the system browser cannot be opened.
+#[derive(Debug, Clone)]
+pub struct RedirectInputRequest {
+    /// URL the user opens in a browser on another machine. Its query carries
+    /// the CSRF state, so it is revealed only to display or open it.
+    pub authorize_url: SensitiveString,
+    /// Redirect URI advertised to the IdP, verbatim. A pasted URL is accepted
+    /// only when its scheme, host, effective port and path match it.
+    pub redirect_uri: String,
+}
+
+/// Why a redirect-input provider could not produce a URL, for example an
+/// input error, end of input or the user cancelling the prompt.
+#[derive(Debug, Clone)]
+pub struct RedirectInputError {
+    pub reason: String,
+}
+
+/// Asks the user for the URL the browser was redirected to. The wrapper owns
+/// the prompt, its input source and its concurrency; core drops the returned
+/// future when the loopback listener receives the redirect first or the
+/// authentication timeout expires. Resolving to `Ok(None)` leaves the login
+/// waiting on the loopback listener; resolving to `Err` fails the login.
+pub type RedirectInputFn = Arc<
+    dyn Fn(
+            RedirectInputRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<Option<SensitiveString>, RedirectInputError>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
 #[derive(Clone, Default)]
 pub struct BrowserHooks {
     pub opener: Option<BrowserOpenFn>,
     pub response_renderer: Option<BrowserResponseRenderFn>,
+    pub redirect_input: Option<RedirectInputFn>,
 }
 
 pub struct LoginParameters {
@@ -459,6 +497,9 @@ pub struct OAuthAuthorizationCodeConfig {
     /// production builds carry `None` and use the system browser.
     pub(crate) browser_launcher: Option<Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>>,
     pub(crate) browser_response_renderer: Option<BrowserResponseRenderFn>,
+    /// `None` ⇒ a failed browser launch prints the authorization URL and
+    /// waits on the loopback listener only.
+    pub(crate) redirect_input: Option<RedirectInputFn>,
 }
 
 // `Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>` is not `Debug`, so we
@@ -493,6 +534,10 @@ impl fmt::Debug for OAuthAuthorizationCodeConfig {
             .field(
                 "browser_response_renderer",
                 &self.browser_response_renderer.as_ref().map(|_| "<opaque>"),
+            )
+            .field(
+                "redirect_input",
+                &self.redirect_input.as_ref().map(|_| "<opaque>"),
             )
             .finish()
     }
@@ -975,7 +1020,9 @@ impl OAuthAuthorizationCodeConfig {
         #[cfg(any(test, feature = "test-utils"))]
         let browser_launcher: Option<Arc<dyn Fn() -> BrowserLaunchFn + Send + Sync>> =
             Some(Arc::new(|| -> BrowserLaunchFn {
-                Box::new(|_authorize_url, _redirect_uri| Box::pin(async { Ok(()) }))
+                Box::new(|_authorize_url, _redirect_uri| {
+                    Box::pin(async { Ok(crate::rest::snowflake::LaunchOutcome::Opened) })
+                })
             }));
 
         Ok(Self {
@@ -996,6 +1043,7 @@ impl OAuthAuthorizationCodeConfig {
             },
             browser_launcher,
             browser_response_renderer: None,
+            redirect_input: None,
         })
     }
 }

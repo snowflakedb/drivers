@@ -29,7 +29,7 @@ use crate::config::{
     resolver,
     rest_parameters::{
         BrowserHooks, BrowserOpenFn, BrowserResponseRenderFn, ClientInfo, LoginMethod,
-        LoginParameters, QueryParameters, resolve_log_max_query_length,
+        LoginParameters, QueryParameters, RedirectInputFn, resolve_log_max_query_length,
         resolve_log_query_parameters, resolve_log_query_text,
     },
     retry::{RetryPolicy, read_optional_duration_secs},
@@ -1075,6 +1075,24 @@ impl DatabaseDriverV1 {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 conn.browser_hooks.response_renderer = Some(renderer);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub async fn connection_set_redirect_input_provider(
+        &self,
+        conn_handle: Handle,
+        provider: RedirectInputFn,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                conn.browser_hooks.redirect_input = Some(provider);
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -4536,6 +4554,65 @@ mod tests {
         drop(conn);
 
         ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_redirect_input_provider_stores_the_callback() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_set_redirect_input_provider(
+            handle,
+            Arc::new(
+                |request: crate::config::rest_parameters::RedirectInputRequest| {
+                    Box::pin(async move {
+                        Ok(Some(crate::sensitive::SensitiveString::from(format!(
+                            "{}?code=C&state=S",
+                            request.redirect_uri
+                        ))))
+                    })
+                },
+            ),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        let provider = conn
+            .browser_hooks
+            .redirect_input
+            .clone()
+            .expect("provider should be stored");
+        assert!(conn.browser_hooks.opener.is_none());
+        drop(conn);
+
+        let pasted = provider(crate::config::rest_parameters::RedirectInputRequest {
+            authorize_url: "https://snowflake.com/oauth/authorize".to_string().into(),
+            redirect_uri: "http://127.0.0.1:50123/".to_string(),
+        })
+        .await
+        .expect("provider should succeed")
+        .expect("provider should return the pasted URL");
+        assert_eq!(pasted.reveal(), "http://127.0.0.1:50123/?code=C&state=S");
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_redirect_input_provider_rejects_unknown_handle() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+        ds.connection_release(handle).unwrap();
+        let result = ds
+            .connection_set_redirect_input_provider(
+                handle,
+                Arc::new(|_| Box::pin(async { Ok(None) })),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(ApiError::InvalidArgument { .. })),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]

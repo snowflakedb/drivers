@@ -17,12 +17,13 @@ use serde::Deserialize;
 use snafu::ResultExt;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::instrument::WithSubscriber;
 use url::Url;
 
 use super::error::{
     BrowserResponseRendererSnafu, BrowserTimeoutSnafu, IdpSnafu, MissingAuthorizationCodeSnafu,
-    OAuthError, PortBindSnafu, RedirectUriParseSnafu,
+    OAuthError, PortBindSnafu, RedirectUriMismatchSnafu, RedirectUriParseSnafu,
 };
 use crate::config::configured_redirect_uri::ConfiguredRedirectUri;
 use crate::config::rest_parameters::BrowserResponseRenderFn;
@@ -194,6 +195,8 @@ impl LoopbackBinding {
     ///
     /// `timeout` is the total deadline for receiving the redirect,
     /// mirroring the browser-response-timeout knob in JDBC and ODBC.
+    /// Dropping the returned future (for example when a pasted redirect
+    /// wins the race) aborts the server and releases the listener.
     pub(crate) async fn wait_for_redirect(
         self,
         timeout: Duration,
@@ -217,7 +220,7 @@ impl LoopbackBinding {
             .route(redirect_uri.parsed().path(), get(handle_redirect))
             .with_state(state);
 
-        let server_task = tokio::spawn(
+        let mut server_task = AbortOnDropHandle::new(tokio::spawn(
             async move {
                 let _ = axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
@@ -226,7 +229,7 @@ impl LoopbackBinding {
                     .await;
             }
             .with_current_subscriber(),
-        );
+        ));
 
         let (outcome, handler_fired) = tokio::select! {
             received = result_rx => {
@@ -240,11 +243,11 @@ impl LoopbackBinding {
         if handler_fired {
             // Handler triggered the graceful shutdown; give axum a brief
             // window to drain the response back to the browser.
-            let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), &mut server_task).await;
         } else {
             // Timeout path — abort the spawn so the listener is released.
             server_task.abort();
-            let _ = server_task.await;
+            let _ = (&mut server_task).await;
         }
 
         outcome
@@ -300,6 +303,46 @@ async fn render_page(
     tokio::task::spawn_blocking(move || -> Result<String, String> { render(escaped.as_deref()) })
         .await
         .unwrap_or_else(|join_err| Err(join_err.to_string()))
+}
+
+/// Parse the redirect URL a user copied from the browser address bar.
+/// The URL must match `expected` in scheme, host, effective port and path.
+/// Text that is not a URL, and a URL that repeats `code`, `state`, `error`
+/// or `error_description`, is treated like a redirect without `code`. The
+/// loopback handler's query extractor rejects the repeated form as well.
+pub(crate) fn parse_pasted_redirect(
+    pasted: &str,
+    expected: &Url,
+) -> Result<RedirectResult, OAuthError> {
+    let Ok(url) = Url::parse(pasted) else {
+        return MissingAuthorizationCodeSnafu.fail();
+    };
+    snafu::ensure!(
+        url.scheme() == expected.scheme()
+            && url.host() == expected.host()
+            && url.port_or_known_default() == expected.port_or_known_default()
+            && url.path() == expected.path(),
+        RedirectUriMismatchSnafu
+    );
+    let mut query = RedirectQuery {
+        code: None,
+        state: None,
+        error: None,
+        error_description: None,
+    };
+    for (key, value) in url.query_pairs() {
+        let slot = match key.as_ref() {
+            "code" => &mut query.code,
+            "state" => &mut query.state,
+            "error" => &mut query.error,
+            "error_description" => &mut query.error_description,
+            _ => continue,
+        };
+        if slot.replace(value.into_owned()).is_some() {
+            return MissingAuthorizationCodeSnafu.fail();
+        }
+    }
+    parse_redirect_query(query)
 }
 
 fn parse_redirect_query(query: RedirectQuery) -> Result<RedirectResult, OAuthError> {
@@ -550,6 +593,121 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    fn expected_redirect() -> Url {
+        Url::parse("http://127.0.0.1:50123/callback").unwrap()
+    }
+
+    #[test]
+    fn pasted_redirect_matching_the_redirect_uri_yields_code_and_state() {
+        let redirect = parse_pasted_redirect(
+            "http://127.0.0.1:50123/callback?code=PASTED-CODE&state=PASTED-STATE",
+            &expected_redirect(),
+        )
+        .expect("must parse");
+        assert_eq!(redirect.code.reveal(), "PASTED-CODE");
+        assert_eq!(redirect.state, "PASTED-STATE");
+    }
+
+    #[test]
+    fn pasted_redirect_with_explicit_default_port_matches_implicit_port() {
+        let expected = Url::parse("https://callback.snowflake.com/cb").unwrap();
+        let redirect = parse_pasted_redirect(
+            "https://callback.snowflake.com:443/cb?code=C&state=S",
+            &expected,
+        )
+        .expect("an explicit default port is the same effective port");
+        assert_eq!(redirect.code.reveal(), "C");
+    }
+
+    #[test]
+    fn pasted_redirect_for_another_callback_surfaces_redirect_uri_mismatch() {
+        for pasted in [
+            "https://127.0.0.1:50123/callback?code=C&state=S",
+            "http://localhost:50123/callback?code=C&state=S",
+            "http://127.0.0.2:50123/callback?code=C&state=S",
+            "http://127.0.0.1:50124/callback?code=C&state=S",
+            "http://127.0.0.1/callback?code=C&state=S",
+            "http://127.0.0.1:50123/other?code=C&state=S",
+            "http://127.0.0.1:50123/?code=C&state=S",
+        ] {
+            let err = parse_pasted_redirect(pasted, &expected_redirect()).expect_err("must fail");
+            assert!(
+                matches!(err, OAuthError::RedirectUriMismatch { .. }),
+                "{pasted}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pasted_redirect_without_url_shape_surfaces_missing_code() {
+        let err = parse_pasted_redirect("not a url", &expected_redirect()).expect_err("must fail");
+        assert!(matches!(err, OAuthError::MissingAuthorizationCode { .. }));
+    }
+
+    #[test]
+    fn pasted_redirect_with_idp_error_surfaces_idp_error() {
+        let err = parse_pasted_redirect(
+            "http://127.0.0.1:50123/callback?error=access_denied&error_description=user%20declined",
+            &expected_redirect(),
+        )
+        .expect_err("must fail");
+        match err {
+            OAuthError::IdpError {
+                error, description, ..
+            } => {
+                assert_eq!(error, "access_denied");
+                assert_eq!(description, "user declined");
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pasted_redirect_with_repeated_keys_surfaces_missing_code() {
+        for pasted in [
+            "http://127.0.0.1:50123/callback?code=A&code=B&state=S",
+            "http://127.0.0.1:50123/callback?code=A&state=S&state=T",
+        ] {
+            let err = parse_pasted_redirect(pasted, &expected_redirect()).expect_err("must fail");
+            assert!(
+                matches!(err, OAuthError::MissingAuthorizationCode { .. }),
+                "{pasted}: {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_wait_for_redirect_releases_the_listener() {
+        let b = bind(None).await.expect("bind");
+        let addr = b.listener.local_addr().unwrap();
+        let wait = tokio::spawn(b.wait_for_redirect(Duration::from_secs(30), None));
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect");
+        stream
+            .write_all(b"GET /unrouted HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 404"), "got {response:?}");
+
+        wait.abort();
+        let _ = wait.await;
+
+        let mut released = false;
+        for _ in 0..40 {
+            if std::net::TcpListener::bind(addr).is_ok() {
+                released = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            released,
+            "the port must be free once the wait future is dropped"
+        );
     }
 
     #[tokio::test]
