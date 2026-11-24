@@ -78,6 +78,28 @@ hatch run reference:run --json-report --json-report-file=reports/reference.json
 hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/universal.json --reference reports/reference.json --fail-on-regressions 0
 ```
 
+### Run tests inside a stored procedure
+`tests/stored_proc/run_stored_proc.py` stages the connector wheel, an optional
+snowpark wheel and `tests/` in a throwaway schema, then runs pytest inside a
+Python stored procedure. The procedure puts the staged wheels ahead of the
+sandbox's own connector and snowpark. Tests read `SNOWFLAKE_TEST_IN_STORED_PROC`
+and connect without credentials, because the host owns login.
+
+```bash
+# One connector wheel per architecture, separated by ':'; all for the same CPython.
+export SPROC_CONNECTOR_WHEEL=dist/snowflake_connector_python-...-cp313-cp313-manylinux_2_28_x86_64.whl
+export SPROC_SNOWPARK_WHEEL=dist/snowflake_snowpark_python-...-py3-none-any.whl   # optional
+hatch run test.py3.13:sproc tests/e2e/query/test_basic_execute_query.py
+```
+
+The runner passes `--expected-connector-version` (the connector wheel's version)
+to pytest. In `tests/e2e/stored_proc`, every test fails unless the procedure
+imported that version, and the tests skip outside a stored procedure.
+The JUnit report lands in `reports/stored_proc.xml`. In CI, the
+`Python Stored Procedure Tests` workflow (`ci:python-sproc` label or manual
+dispatch) builds the Linux aarch64 wheel and a snowpark wheel from a chosen
+`snowpark-python` ref.
+
 ## Testing Commands
 
 ### Test Environments

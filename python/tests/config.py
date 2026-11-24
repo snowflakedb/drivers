@@ -7,6 +7,14 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+# Set by tests/stored_proc/sproc_handler.py when the suite runs inside a stored
+# procedure, where the host owns login and no credentials are available.
+IN_STORED_PROC_ENV_VAR = "SNOWFLAKE_TEST_IN_STORED_PROC"
+
+
+def running_in_stored_proc() -> bool:
+    return os.environ.get(IN_STORED_PROC_ENV_VAR) == "1"
+
 
 def get_test_parameters() -> dict[str, Any]:
     """Get test connection parameters from environment or parameters file.

@@ -93,6 +93,16 @@ def pytest_configure(config):
     module.bootstrap(parameters_path=param_path)
 
 
+def pytest_addoption(parser):
+    # Registered here rather than in tests/e2e/stored_proc/conftest.py so the
+    # flag is accepted whichever tests run_stored_proc.py selects.
+    parser.addoption(
+        "--expected-connector-version",
+        default=None,
+        help="Connector version the stored-procedure tests must import (set by run_stored_proc.py)",
+    )
+
+
 def pytest_xdist_auto_num_workers(config):
     return os.cpu_count() or 1
 

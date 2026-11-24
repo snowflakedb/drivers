@@ -13,7 +13,7 @@ from typing import Any
 from snowflake import connector
 
 from .compatibility import IS_UNIVERSAL_DRIVER, is_new_driver
-from .config import get_test_parameters
+from .config import get_test_parameters, running_in_stored_proc
 from .connector_types import ConnectorType
 from .private_key_helper import (
     get_private_key_from_parameters,
@@ -98,9 +98,11 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     # Use JWT authentication by default (unless custom private_key / private_key_file
     # or authenticator is provided). uSUT (local Snowflake test instance) only provisions
     # password credentials for the test user — no RSA key is registered — so fall back to
-    # password auth when SNOWFLAKE_TEST_IS_USUT is set.
+    # password auth when SNOWFLAKE_TEST_IS_USUT is set. Inside a stored procedure the
+    # host backend logs in, so no credentials are sent.
     if (
-        "private_key" not in override_params
+        not running_in_stored_proc()
+        and "private_key" not in override_params
         and "private_key_file" not in override_params
         and "authenticator" not in override_params
     ):
@@ -146,6 +148,12 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
             # Don't override if already set in override_params
             if "PYTHON_CONNECTOR_QUERY_RESULT_FORMAT" not in connection_params["session_parameters"]:
                 connection_params["session_parameters"]["PYTHON_CONNECTOR_QUERY_RESULT_FORMAT"] = result_format_upper
+
+    # Sessions opened inside a stored procedure do not inherit the caller's session
+    # parameters, so the procedure lane opts in on every connection.
+    if running_in_stored_proc():
+        session_parameters = connection_params.setdefault("session_parameters", {})
+        session_parameters.setdefault("ENABLE_UNIVERSAL_DRIVER_BACKEND", True)
 
     return adapter.connect(**connection_params)
 

@@ -359,6 +359,8 @@ cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore
 flaky = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --ignore=tests/e2e/numpy -m flaky --no-cov {args}"
 # Runs @pytest.mark.requires_no_mfa tests (parameters_aws_local.json).
 no_mfa = "pytest tests/e2e/authentication/test_user_password.py -m requires_no_mfa -n 0 --no-cov {args}"
+# Runs a pytest selection inside a stored procedure; see tests/stored_proc/run_stored_proc.py.
+sproc = "python -m tests.stored_proc.run_stored_proc {args}"
 
 # Same unit/integ/e2e split as `test`. The harness sets use_core_arrow.
 [tool.hatch.envs.test-native-arrow]

@@ -1,0 +1,183 @@
+name: Python Stored Procedure Tests
+
+# Runs a pytest selection inside a Snowflake Python stored procedure, against
+# the connector wheel built from this ref and a snowpark wheel built from a
+# snowpark-python ref. tests/stored_proc/run_stored_proc.py stages both wheels
+# with tests/ and calls the procedure; see python/tests/README.md.
+#
+# A pull request starts it only when the `ci:python-sproc` label is applied,
+# with the default snowpark ref and test selection. workflow_dispatch can pick
+# the snowpark ref, the cloud and the tests.
+#
+# Only the Linux aarch64 wheel is built. The test job runs on an arm runner so
+# it can install the same wheel to stage the payload.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      cloud_provider:
+        description: Cloud provider
+        required: true
+        type: choice
+        default: aws
+        options:
+          - aws
+          - azure
+          - gcp
+      snowpark_repository:
+        description: GitHub repository to build snowpark from
+        required: true
+        type: string
+        default: snowflakedb/snowpark-python
+      snowpark_ref:
+        description: Branch, tag or SHA of snowpark_repository
+        required: true
+        type: string
+        default: main
+      pytest_args:
+        description: >
+          pytest arguments, paths relative to python/. Empty runs
+          DEFAULT_PYTEST_ARGS from run_stored_proc.py. Example:
+          tests/e2e/query/test_basic_execute_query.py -k select
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.label.name == 'ci:python-sproc' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  UV_HTTP_RETRIES: "6"
+  UV_HTTP_TIMEOUT: "300"
+
+jobs:
+  build_wheels:
+    # `labeled` fires for every label. Only ci:python-sproc starts the lane.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ci:python-sproc')
+    uses: ./.github/workflows/_build-python-wheels.yml
+    with:
+      targets: '{"linux_aarch":["3.13"]}'
+      build_sdist: false
+
+  build_snowpark:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ci:python-sproc')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.snowpark_repository || 'snowflakedb/snowpark-python' }}
+          ref: ${{ inputs.snowpark_ref || 'main' }}
+          path: snowpark-python
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.13.5"
+
+      - name: Build snowpark wheel
+        working-directory: snowpark-python
+        run: |
+          uv build --wheel --python 3.13 --out-dir dist
+          echo "Built from $(git rev-parse HEAD):"
+          ls dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: snowpark-wheel
+          path: snowpark-python/dist/*.whl
+          if-no-files-found: error
+
+  python_sproc_tests:
+    needs: [build_wheels, build_snowpark]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    name: python_sproc_tests (py3.13, ${{ inputs.cloud_provider || 'aws' }})
+    env:
+      CLOUD_PROVIDER: ${{ inputs.cloud_provider || 'aws' }}
+    steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.13.5"
+
+      - name: Set up Python 3.13
+        shell: bash
+        run: bash ./scripts/ci/uv-python-install.sh 3.13
+
+      - name: Download aarch64 wheel
+        uses: ./.github/actions/download-artifact-retry
+        with:
+          name: manylinux_aarch64_py3.13
+          path: python/dist/aarch64
+
+      - name: Download snowpark wheel
+        uses: ./.github/actions/download-artifact-retry
+        with:
+          name: snowpark-wheel
+          path: python/dist/snowpark
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh "$CLOUD_PROVIDER"
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+          PARAMETERS_JSON_GCP: ${{ secrets.PARAMETERS_JSON_GCP }}
+          PARAMETERS_JSON_AZURE: ${{ secrets.PARAMETERS_JSON_AZURE }}
+        shell: bash
+
+      - name: Wait for test host DNS
+        run: ./scripts/wait_for_test_host.sh
+        shell: bash
+
+      - name: Install Hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
+
+      - name: Select wheels
+        working-directory: python
+        run: |
+          set -euo pipefail
+          arm="$(python3 ../scripts/ci/select_connector_wheel.py dist/aarch64 3.13)"
+          snowpark=(dist/snowpark/snowflake_snowpark_python-*.whl)
+          if [[ ${#snowpark[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly 1 snowpark wheel, found ${#snowpark[@]}"; ls -la dist/snowpark; exit 1
+          fi
+          {
+            echo "WHEEL_PATH=$arm"
+            echo "SPROC_CONNECTOR_WHEEL=$arm"
+            echo "SPROC_SNOWPARK_WHEEL=${snowpark[0]}"
+          } >> "$GITHUB_ENV"
+
+      # The runner itself connects with the same wheel to stage the payload.
+      - name: Install snowflake ud driver from wheel
+        working-directory: python
+        run: hatch run test.py3.13:install-wheel
+
+      - name: Run tests in stored procedure
+        working-directory: python
+        run: hatch run test.py3.13:sproc
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          SPROC_PYTEST_ARGS: ${{ inputs.pytest_args }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-sproc-${{ env.CLOUD_PROVIDER }}
+          path: python/reports/stored_proc.xml
+          if-no-files-found: ignore
