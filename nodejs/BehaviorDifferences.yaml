@@ -4128,3 +4128,24 @@ behavior_differences:
     status_rationale: |
       Accepted: post-quantum is still offered and negotiated with servers that
       prefer it, and tls_prefer_post_quantum restores the post-quantum-first order.
+  184:
+    name: 'GCS endpoint comes from GS when it sends one'
+    status: unknown
+    type: enhancement
+    reviewed: false
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      The driver computes the GCS endpoint itself when the stage info has no `endPoint`: a
+      virtual-hosted `{bucket}.storage.googleapis.com` host when `useVirtualUrl` is set, the regional
+      `storage.{region}.rep.googleapis.com` host when `useRegionalUrl` is set or the region is
+      `me-central2`, and `storage.googleapis.com` otherwise.
+    new_driver_behavior: |
+      The driver declares the `GCS_ENDPOINT_IN_STAGE_LOCATIONINFO` login capability. When GS returns an
+      `endPoint` in the stage info, the driver builds the URL from `endPoint` and `useVirtualUrl`;
+      otherwise it computes the endpoint itself, the same way it did before.
+    description: |
+      There are several valid ways of constructing a URL to access a specific blob in a GCS bucket.
+      The appropriate one depends on the stage being accessed, including account policies and network
+      configuration. GS can select the endpoint by returning it in stage info; when it does not, the
+      driver falls back to its own computation.

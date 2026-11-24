@@ -31,6 +31,8 @@ pub mod authenticator {
 pub struct AuthRequestClientCapabilities {
     #[serde(rename = "SMK_ID_AS_STRING")]
     pub smk_id_as_string: bool,
+    #[serde(rename = "GCS_ENDPOINT_IN_STAGE_LOCATIONINFO")]
+    pub gcs_endpoint_in_stage_locationinfo: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Default)]

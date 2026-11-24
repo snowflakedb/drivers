@@ -129,10 +129,3 @@ pub const SNOWFLAKE_TLS_CIPHERS: &str = "SNOWFLAKE_TLS_CIPHERS";
 /// AWS SDK convention for retargeting the EC2 metadata service in tests.
 /// Unset or empty keeps `http://169.254.169.254`.
 pub const AWS_EC2_METADATA_SERVICE_ENDPOINT: &str = "AWS_EC2_METADATA_SERVICE_ENDPOINT";
-
-/// Operator/CI override read only from the process environment, never from the
-/// DSN, connection parameters, or the server. When set to `true` or `1`, GCS
-/// object URLs use the virtual-host style (`{bucket}.storage.googleapis.com`)
-/// even when the stage payload omits `useVirtualUrl`.
-pub const SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS: &str =
-    "SNOWFLAKE_GCS_FORCE_VIRTUAL_STYLE_DOMAINS";

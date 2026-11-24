@@ -513,6 +513,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
         client_app_version: login_parameters.client_info.version.clone(),
         client_capabilities: AuthRequestClientCapabilities {
             smk_id_as_string: true,
+            gcs_endpoint_in_stage_locationinfo: true,
         },
         client_environment: AuthRequestClientEnvironment {
             application: login_parameters.client_info.application.clone(),
@@ -4763,6 +4764,17 @@ mod tests {
         assert_eq!(
             data.client_environment.is_fips,
             crate::tls::tls_provider_is_fips()
+        );
+    }
+
+    #[test]
+    fn base_auth_request_data_declares_gcs_endpoint_capability() {
+        let data = base_auth_request_data(&test_login_params());
+        assert!(data.client_capabilities.gcs_endpoint_in_stage_locationinfo);
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(
+            json["CLIENT_CAPABILITIES"]["GCS_ENDPOINT_IN_STAGE_LOCATIONINFO"],
+            true
         );
     }
 
