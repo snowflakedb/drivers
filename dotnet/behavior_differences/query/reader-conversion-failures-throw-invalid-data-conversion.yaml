@@ -1,0 +1,25 @@
+name: "Value conversion failures throw error code 270003"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  A typed getter that cannot produce its type throws a .NET exception that depends on the
+  result format and the failure: `InvalidCastException` for an unsupported conversion or a
+  NULL value, `OverflowException` for a value outside the target range, `FormatException` for
+  text that does not parse, and `IndexOutOfRangeException` for `GetChar` on an empty string.
+  `GetChar` on a string longer than one character returns its first character.
+  `GetTimeSpan` on a value of a column that is not TIME throws `SnowflakeDbException` with
+  error code 270003. For a JSON result, `GetBoolean` on text that is not a boolean returns
+  false instead of throwing. `GetValue` on a NUMBER(38,0) value outside the `decimal` range
+  throws `OverflowException` for both result formats.
+new_driver_behavior: |
+  Every such failure, including `GetValue` on a NUMBER(38,0) value outside the `decimal`
+  range and `GetChar` on a string that is not exactly one character long, throws `SnowflakeDbException` with error code 270003 (`INVALID_DATA_CONVERSION`),
+  for both result formats. The underlying .NET exception, when there is one, is the inner
+  exception.
+rationale: |
+  Exceptions that leave the driver carry a Snowflake error code that callers can branch on,
+  and the new driver reads Arrow and JSON results through one code path, so the same failure
+  reports the same error.

@@ -1,0 +1,78 @@
+{
+  "mappings": [
+    {
+      "name": "SELECT returns two rows inline and one remote chunk",
+      "priority": 10,
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          {
+            "matches": "(?s).*SELECT_CHUNK_DELAYED.*"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "01b2c3d4-0000-0000-0000-000000000002",
+            "statementTypeId": 4096,
+            "queryResultFormat": "json",
+            "rowtype": [
+              {
+                "name": "N",
+                "database": "",
+                "schema": "",
+                "table": "",
+                "type": "fixed",
+                "precision": 38,
+                "scale": 0,
+                "nullable": true,
+                "byteLength": null,
+                "length": null
+              }
+            ],
+            "rowset": [["1"], ["2"]],
+            "total": 4,
+            "returned": 4,
+            "parameters": [
+              {
+                "name": "CLIENT_PREFETCH_THREADS",
+                "value": 4
+              }
+            ],
+            "chunkHeaders": {
+              "x-snowflake-test-chunk": "1"
+            },
+            "chunks": [
+              {
+                "url": "{{WIREMOCK_HTTP_URL}}/chunks/select_chunk_delayed/1",
+                "rowCount": 2,
+                "uncompressedSize": 11,
+                "compressedSize": 11
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Result chunk answers after a delay",
+      "priority": 10,
+      "request": {
+        "urlPath": "/chunks/select_chunk_delayed/1",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "body": "[\"3\"],[\"4\"]",
+        "fixedDelayMilliseconds": 10000
+      }
+    }
+  ]
+}

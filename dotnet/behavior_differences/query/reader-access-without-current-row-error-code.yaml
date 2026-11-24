@@ -1,0 +1,17 @@
+name: "Reading a value with no current row throws error code 270073"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  Calling a value getter such as `GetValue` or `GetInt64` before the first `Read`, or after
+  `Read` returned false, throws `SnowflakeDbException` with error code 270001 for an Arrow
+  result and `IndexOutOfRangeException` for a JSON result.
+new_driver_behavior: |
+  The same calls throw `SnowflakeDbException` with error code 270073
+  (`DATA_READER_NO_CURRENT_ROW`) for both result formats.
+rationale: |
+  The new driver reads Arrow and JSON results through one code path, so the outcome no longer
+  depends on the result format, and it reports the misuse with a dedicated error code that
+  callers can branch on instead of the generic internal error.

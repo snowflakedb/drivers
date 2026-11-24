@@ -1,0 +1,25 @@
+name: "Result chunk fetch failures throw error code 270075, and every later read throws it again"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  When a result chunk cannot be downloaded or parsed, `Read` and `ReadAsync` throw the .NET
+  exception the chunk downloader produced, for example an `HttpRequestException`, an
+  `AggregateException`, or a bare `System.Exception` with a message such as
+  "Parse stream to chunk error: ...". None of them carries a Snowflake error code.
+  A later `Read` returns the rows of the next chunk, so the rows of the failed chunk are skipped.
+new_driver_behavior: |
+  Every such failure throws `SnowflakeDbException` with error code 270075
+  (`QUERY_RESULT_FETCH_FAILED`), carrying the query ID and a message that describes the failure.
+  The failure is final: every later `Read` or `ReadAsync` on the reader throws the same error,
+  and no row after the failed chunk is returned.
+rationale: |
+  Exceptions that leave the driver carry a Snowflake error code that callers can branch on. The
+  shared core downloads and decodes result chunks, and reports a failure through the Arrow C stream
+  interface as a status code and a message, which the driver maps to one error code.
+  After reporting one failure, that stream reports a clean end of the result, so a later `Read`
+  would return false as though every row had been read. The driver keeps the first failure and
+  throws it again on every later read, so a truncated result is never mistaken for a complete
+  one. This matches the old ODBC and JDBC drivers, which keep failing after a chunk failure.

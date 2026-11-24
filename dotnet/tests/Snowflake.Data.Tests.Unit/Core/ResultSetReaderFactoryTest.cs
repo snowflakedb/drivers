@@ -7,9 +7,7 @@ namespace Snowflake.Data.Tests.Core;
 [Trait("Category", "Unit")]
 public sealed class ResultSetReaderFactoryTest
 {
-    private const string ConverterSkipReason = "Needs the TEXT and FIXED converters; PR stack #3380 unskips this test.";
-
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void CreateOpensAReaderOverTheBatchesWithTheGivenCount()
     {
         var source = new FakeRecordBatchSource(UnitBatches.Batch(UnitBatches.Int64(42)));
@@ -36,7 +34,7 @@ public sealed class ResultSetReaderFactoryTest
         Assert.Equal(1, source.DisposeCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void CreateForSchemaOnlyReportsTheColumnsAndNoRows()
     {
         using var reader = ResultSetReaderFactory.Instance.CreateForSchemaOnly(UnitBatches.Descriptor(UnitBatches.FixedColumn(), UnitBatches.TextColumn("C2")));

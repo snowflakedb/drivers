@@ -1,0 +1,20 @@
+name: "GetOrdinal throws for a missing column and falls back to a case-insensitive match"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  `SnowflakeDbDataReader.GetOrdinal` matches the column name case-sensitively and returns -1
+  when no column has that name, so the string indexer then fails with error code 270002.
+new_driver_behavior: |
+  `GetOrdinal` returns the first column with exactly that name and otherwise the first column
+  whose name matches ignoring case. When no column matches it throws `SnowflakeDbException`
+  with error code 270002, and so does the string indexer.
+rationale: |
+  The ADO.NET contract for `DbDataReader.GetOrdinal` requires an exception for a missing name
+  rather than a sentinel value. The contract names `IndexOutOfRangeException`; the new driver
+  throws `SnowflakeDbException` instead, so the failure carries a Snowflake error code like every
+  other exception that leaves the driver. The error code is the one the old driver's string
+  indexer already reported for a missing column. The case-insensitive fallback after an exact
+  match follows `SqlDataReader.GetOrdinal`, which documents the same two-step lookup today.

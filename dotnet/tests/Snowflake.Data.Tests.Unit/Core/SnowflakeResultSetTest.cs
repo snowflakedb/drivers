@@ -17,14 +17,12 @@ namespace Snowflake.Data.Tests.Core;
 [Trait("Category", "Unit")]
 public sealed class SnowflakeResultSetTest
 {
-    private const string ConverterSkipReason = "Needs the TEXT and FIXED converters; PR stack #3380 unskips this test.";
-
     private const string QueryId = "01bf4a3e-0001-2c4f-0000-00a1b2c3d4e5";
 
     private static readonly ResultSetDescriptor IdAndName = WithQueryId(
         UnitBatches.Descriptor(UnitBatches.FixedColumn("ID"), UnitBatches.TextColumn("NAME")));
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ReadWalksEveryRowAcrossBatchesAndSkipsEmptyOnes()
     {
         var source = new FakeRecordBatchSource(
@@ -42,7 +40,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(4, source.NextCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public async Task AdvancingWithinABatchFetchesNothingAndReadNextBatchAsyncMovesToTheNextBatchAsync()
     {
         var source = new FakeRecordBatchSource(IdNameBatch((1, "a"), (2, "b")), IdNameBatch(), IdNameBatch((3, "c")));
@@ -63,7 +61,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(0, source.NextCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public async Task ACancelledFetchPropagatesWithTheQueryIdAndTheResultStaysUsableAsync()
     {
         var cancellation = new SnowflakeCancellationException(SFError.QUERY_CANCELLED, null, null);
@@ -103,7 +101,7 @@ public sealed class SnowflakeResultSetTest
         AssertDriverError(SFError.DATA_READER_NO_CURRENT_ROW, () => resultSet.GetChars(1, 0, null, 0, 0));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ConversionFailuresAreInvalidDataConversionWithTheQueryId()
     {
         var descriptor = WithQueryId(UnitBatches.Descriptor(UnitBatches.FixedColumn("BIG"), UnitBatches.FixedColumn("NOTHING"), UnitBatches.TextColumn("WORD")));
@@ -118,7 +116,7 @@ public sealed class SnowflakeResultSetTest
         AssertDriverError(SFError.INVALID_DATA_CONVERSION, () => resultSet.GetBytes(2, 0, null, 0, 0));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void CharsAreCopiedFromTheCurrentRow()
     {
         using var resultSet = ResultSet(new FakeRecordBatchSource(IdNameBatch((1, "abc"))), IdAndName);
@@ -156,7 +154,7 @@ public sealed class SnowflakeResultSetTest
         AssertDriverError(SFError.DATA_READER_ALREADY_CLOSED, () => resultSet.GetValue(0));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void MetadataStaysAvailableAfterClose()
     {
         var resultSet = ResultSet(new FakeRecordBatchSource(), IdAndName);
@@ -202,7 +200,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(0, source.NextCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void HasRowsWithoutARowCountPeeksTheFirstRowsAndReadStillReturnsThem()
     {
         var source = new FakeRecordBatchSource(IdNameBatch(), IdNameBatch((7, "x")));
@@ -238,7 +236,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal("missing", Assert.Single(missing.Args));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ColumnMetadataComesFromTheDescriptorAndTheConverters()
     {
         var descriptor = UnitBatches.Descriptor(UnitBatches.FixedColumn("ID"), UnitBatches.Column("CREATED", "timestamp_ltz"));
@@ -494,7 +492,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(1, memory.DisposeCalls);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ValuesAndNullsComeFromTheCurrentRow()
     {
         using var resultSet = ResultSet(new FakeRecordBatchSource(IdNameBatch((1, null))), IdAndName);
@@ -507,7 +505,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Null(resultSet.GetFieldValue<string>(1));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void AColumnOfAnUnsupportedTypeDoesNotBlockTheOthers()
     {
         var descriptor = UnitBatches.Descriptor(UnitBatches.FixedColumn("ID"), UnitBatches.Column("D", "date"));
@@ -539,7 +537,7 @@ public sealed class SnowflakeResultSetTest
         AssertDriverError(SFError.DATA_READER_NO_CURRENT_ROW, () => resultSet.GetValue(0));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void EachValueTypeIsReadByTheMatchingConverterGetter()
     {
         var guid = Guid.Parse("4b7e2c0e-8f3a-4d55-9b1e-2a6c7d8e9f01");
@@ -562,7 +560,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(nameof(DateTime), AssertDriverError(SFError.INVALID_DATA_CONVERSION, () => resultSet.GetFieldValue<DateTime>(0)).Args[2]);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ATypeTheColumnCannotBeReadAsIsAConversionError()
     {
         using var resultSet = ResultSet(new FakeRecordBatchSource(IdNameBatch((1, "a"))), IdAndName);
@@ -571,7 +569,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Equal(nameof(TimeSpan), AssertDriverError(SFError.INVALID_DATA_CONVERSION, () => resultSet.GetFieldValue<TimeSpan>(0)).Args[2]);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ReadAsObjectAValueIsItsNaturalTypeAndNullIsDbNull()
     {
         using var resultSet = ResultSet(new FakeRecordBatchSource(IdNameBatch((1, null))), IdAndName);
@@ -581,7 +579,7 @@ public sealed class SnowflakeResultSetTest
         Assert.Same(DBNull.Value, resultSet.GetFieldValue<object>(1));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = ConverterSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ABaseTypeOfATypeTheConverterReadsIsServedByThatRead()
     {
         using var resultSet = ResultSet(new FakeRecordBatchSource(IdNameBatch((1, "a"))), IdAndName);

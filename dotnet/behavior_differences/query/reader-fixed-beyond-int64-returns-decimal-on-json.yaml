@@ -1,0 +1,14 @@
+name: "GetValue returns a decimal for an integer outside the long range in a JSON result"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  For a JSON result, `GetValue` on a NUMBER(38,0) value outside the `long` range throws
+  `OverflowException`. For an Arrow result it returns the value as a `decimal`.
+new_driver_behavior: |
+  `GetValue` returns such a value as a `decimal` for both result formats.
+rationale: |
+  sf_core converts a JSON result into the same Arrow layout as an Arrow result, and the new
+  driver reads both through one code path, which follows the old driver's Arrow behavior.

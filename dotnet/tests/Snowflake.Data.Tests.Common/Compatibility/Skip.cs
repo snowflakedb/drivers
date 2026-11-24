@@ -7,6 +7,16 @@ public static class Skip
     public static void FutureMilestone(string rationale = "TODO not yet implemented") =>
         When(TestDriver.Current == TestDriver.Kind.New, rationale);
 
+    // TODO(SNOW-4382591): remove once SnowflakeDbException can be constructed.
+    public static void UntilPublicExceptionsExist() =>
+        When(TestDriver.Current == TestDriver.Kind.New, "every SnowflakeDbException constructor throws NotImplementedException until SNOW-4382591");
+
+    // TODO(SNOW-4382580): remove once the new driver honours DOTNET_QUERY_RESULT_FORMAT.
+    public static void UntilNewDriverSelectsResultFormat(string resultFormat) =>
+        When(
+            TestDriver.Current == TestDriver.Kind.New && string.Equals(resultFormat, "JSON", StringComparison.OrdinalIgnoreCase),
+            "the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so a JSON row would read an Arrow result");
+
     public static void FutureMilestone(SkipCondition condition, string rationale)
     {
         if (TestDriver.Current == TestDriver.Kind.New)

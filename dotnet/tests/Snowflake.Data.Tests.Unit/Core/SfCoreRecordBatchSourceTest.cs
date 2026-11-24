@@ -266,6 +266,25 @@ public sealed class SfCoreRecordBatchSourceTest : IDisposable
         Assert.Equal(1, _producer.DisposeCalls);
     }
 
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DisposingDuringFailingReadReportsReaderClosedAndReleasesStreamOnceAsync(bool async)
+    {
+        _producer.Gate = new SemaphoreSlim(0);
+        _producer.FailNextWith = new InvalidOperationException("Failed to read chunk data");
+        var inFlight = async ? _source.NextAsync(CancellationToken.None) : Task.Run(() => _source.Next());
+        Assert.True(_producer.ReadStarted.Wait(TimeSpan.FromSeconds(30)));
+
+        _source.Dispose();
+        _producer.Gate.Release();
+
+        AssertDriverError(
+            SFError.DATA_READER_ALREADY_CLOSED,
+            await Assert.ThrowsAsync<SnowflakeDriverException>(() => inFlight).ConfigureAwait(false));
+        Assert.Equal(1, _producer.DisposeCalls);
+    }
+
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void OpenWithAFailedSchemaIsAFetchFailedCarrierAndDisposesTheStream()
     {

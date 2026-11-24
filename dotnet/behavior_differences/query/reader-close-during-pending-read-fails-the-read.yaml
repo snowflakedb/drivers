@@ -1,0 +1,18 @@
+name: "Close while a ReadAsync is pending makes that ReadAsync throw error code 270010"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `Close` called while a `ReadAsync` is pending returns at once and the reader reports
+  `IsClosed`. The pending `ReadAsync` then returns true with the next row.
+new_driver_behavior: |
+  `Close` called while a `ReadAsync` is pending returns at once and the reader reports
+  `IsClosed`. The pending `ReadAsync` then throws `SnowflakeDbException` with error code 270010
+  (`DATA_READER_ALREADY_CLOSED`).
+rationale: |
+  The new driver reads each batch through an Arrow C stream whose memory the driver owns. The
+  Arrow C stream interface does not allow releasing a stream while a call on it is in progress,
+  so `Close` defers the release until the pending call returns, and the pending read reports
+  that the reader was closed instead of returning a row from a released result.

@@ -1,14 +1,14 @@
+extern alias OldDriver;
 using System.Data.Common;
 using System.Globalization;
 using Snowflake.Data.Client;
 using Snowflake.Data.Core;
-using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
-using Snowflake.Data.Tests.E2E.Legacy;
+using Snowflake.Data.Tests.Utilities;
+using OldSnowflakeDbDataReader = OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader;
+using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
 namespace Snowflake.Data.Tests.E2E;
-
-extern alias OldDriver;
 
 [Trait("Category", "E2E")]
 [Trait("Category", "Conversion")]
@@ -23,15 +23,15 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Output = output;
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public async Task ReadsIntegerAndTextColumnsWithTheirMetadataAsync(string resultFormat)
+    [SnowflakeFact]
+    public async Task ReadsIntegerAndTextColumnsWithTheirMetadataAsync()
     {
-        using var connection = await OpenAsync(resultFormat, CancellationToken.None).ConfigureAwait(false);
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT 42::NUMBER(38,0) AS ID, 'żółw'::VARCHAR AS NAME, NULL::NUMBER(38,0) AS NO_ID, NULL::VARCHAR AS NO_NAME";
-        var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
 
         Assert.Equal(4, reader.FieldCount);
         Assert.Equal("ID", reader.GetName(0));
@@ -40,7 +40,7 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal(typeof(long), reader.GetFieldType(0));
         Assert.Equal(typeof(string), reader.GetFieldType(1));
         Assert.True(reader.HasRows);
-        Assert.True(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
         Assert.Equal(42L, Assert.IsType<long>(reader.GetValue(0)));
         Assert.Equal(42, reader.GetInt32(0));
         Assert.Equal("42", reader.GetString(0));
@@ -49,18 +49,18 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Same(DBNull.Value, reader.GetValue(2));
         Assert.True(reader.IsDBNull(3));
         Assert.Null(reader.GetString(3));
-        Assert.False(await reader.ReadAsync().ConfigureAwait(false));
+        Assert.False(await reader.ReadAsync(ct).ConfigureAwait(false));
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public async Task DescribesColumnsInSchemaTableAsync(string resultFormat)
+    [SnowflakeFact]
+    public async Task DescribesColumnsInSchemaTableAsync()
     {
-        using var connection = await OpenAsync(resultFormat, CancellationToken.None).ConfigureAwait(false);
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT NULL::VARCHAR AS JUSTMAYBE, 'YOURE'::VARCHAR(100) AS GONNABETHE, 1::NUMBER(20,4) AS THATSAVESME, 1::NUMBER(38,0) AS ID, TRUE AS FLAG";
-        var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
 
         var table = reader.GetSchemaTable();
 
@@ -94,16 +94,17 @@ public class DataReaderTest : IClassFixture<ITFixture>
         var flag = table.Rows[4];
         Assert.Equal(typeof(bool), flag[SchemaTableColumn.DataType]);
         Assert.Equal(SFDataType.BOOLEAN, (SFDataType)flag[SchemaTableColumn.ProviderType]);
-
     }
 
     [SnowflakeFact]
-    public void SchemaTableOfSchemaOnlyReaderListsColumnsWithoutRows()
+    public async Task SchemaTableOfSchemaOnlyReaderListsColumnsWithoutRowsAsync()
     {
-        using var connection = Open("ARROW");
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT 1::NUMBER(38,0) AS ID, 'a'::VARCHAR AS NAME";
-        var reader = cmd.ExecuteReader(CommandBehavior.SchemaOnly);
+        using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly, ct).ConfigureAwait(false);
 
         var table = reader.GetSchemaTable();
 
@@ -113,10 +114,14 @@ public class DataReaderTest : IClassFixture<ITFixture>
     }
 
     [SnowflakeFact]
-    public void SchemaTableStaysAvailableAfterReaderIsClosed()
+    public async Task SchemaTableStaysAvailableAfterReaderIsClosedAsync()
     {
-        using var connection = Open("ARROW");
-        var reader = ExecuteReader(connection, "SELECT 1::NUMBER(38,0) AS ID");
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 1::NUMBER(38,0) AS ID";
+        var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
         reader.Close();
 
         var table = reader.GetSchemaTable();
@@ -125,16 +130,16 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal("ID", Assert.Single(table.Rows.Cast<DataRow>())[SchemaTableColumn.ColumnName]);
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public void ReadsEveryRowOfAResultSpanningManyChunks(string resultFormat)
+    [SnowflakeFact]
+    public async Task ReadsEveryRowOfAResultSpanningManyChunksAsync()
     {
         const int rowCount = 300_000;
-        using var connection = Open(resultFormat);
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
         cmd.CommandText = $"SELECT SEQ8() AS N, RANDSTR(20, RANDOM()) AS S FROM TABLE(GENERATOR(ROWCOUNT => {rowCount}))";
-        var reader = cmd.ExecuteReader();
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
 
         long rows = 0;
         long sum = 0;
@@ -149,36 +154,37 @@ public class DataReaderTest : IClassFixture<ITFixture>
         Assert.Equal((long)rowCount * (rowCount - 1) / 2, sum);
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public async Task ReadAsyncReadsEveryRowOfAResultSpanningManyChunksAsync(string resultFormat)
+    [SnowflakeFact]
+    public async Task ReadAsyncReadsEveryRowOfAResultSpanningManyChunksAsync()
     {
         const int rowCount = 300_000;
-        using var connection = await OpenAsync(resultFormat, CancellationToken.None).ConfigureAwait(false);
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"SELECT SEQ8() AS N FROM TABLE(GENERATOR(ROWCOUNT => {rowCount}))";
-        var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
+        cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY SEQ8()) AS N FROM TABLE(GENERATOR(ROWCOUNT => {rowCount}))";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
 
         long rows = 0;
-        while (await reader.ReadAsync().ConfigureAwait(false))
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            Assert.Equal(rows, reader.GetInt64(0));
-            rows++;
+            Assert.Equal(++rows, reader.GetInt64(0));
         }
 
         Assert.Equal(rowCount, rows);
     }
 
     [SnowflakeFact]
-    public void ClosingAReaderBeforeTheLastRowLeavesTheConnectionUsable()
+    public async Task ClosingAReaderBeforeTheLastRowLeavesTheConnectionUsableAsync()
     {
-        using var connection = Open("ARROW");
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = "SELECT SEQ8() FROM TABLE(GENERATOR(ROWCOUNT => 300000))";
-            var reader = cmd.ExecuteReader();
-            Assert.True(reader.Read());
+            var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
             Assert.Equal(0L, reader.GetInt64(0));
             reader.Dispose();
             Assert.True(reader.IsClosed);
@@ -186,90 +192,134 @@ public class DataReaderTest : IClassFixture<ITFixture>
 
         using var next = connection.CreateCommand();
         next.CommandText = "SELECT 'still open'";
-        Assert.Equal("still open", next.ExecuteScalar());
-    }
-
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public void HasRowsReportsWhetherTheResultHasRows(string resultFormat)
-    {
-        using var connection = Open(resultFormat);
-
-        var reader1 = ExecuteReader(connection, "SELECT 1 WHERE 1 = 0");
-        Assert.False(reader1.HasRows);
-        Assert.False(reader1.Read());
-
-        var reader2 = ExecuteReader(connection, "SELECT 1");
-        Assert.True(reader2.HasRows);
-        Assert.True(reader2.Read());
-        Assert.True(reader2.HasRows);
+        Assert.Equal("still open", await next.ExecuteScalarAsync(ct).ConfigureAwait(false));
     }
 
     [SnowflakeFact]
-    public void GetOrdinalFindsAColumnIgnoringCaseAndRejectsAMissingOne()
+    public async Task HasRowsReportsWhetherTheResultHasRowsAsync()
     {
-        using var connection = Open("ARROW");
-        var reader = ExecuteReader(connection, "SELECT 1 AS FIRST_COL, 2 AS SECOND_COL");
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT 1 WHERE 1 = 0";
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            Assert.False(reader.HasRows);
+            Assert.False(await reader.ReadAsync(ct).ConfigureAwait(false));
+        }
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT 1";
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            Assert.True(reader.HasRows);
+            Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
+            Assert.True(reader.HasRows);
+        }
+    }
+
+    [SnowflakeFact]
+    public async Task GetOrdinalFindsAColumnIgnoringCaseAndRejectsAMissingOneAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 1 AS FIRST_COL, 2 AS SECOND_COL";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+
+        Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
 
         Assert.Equal(1, reader.GetOrdinal("SECOND_COL"));
         if (BehaviorDifference.NewDriverOnly("BD#reader-get-ordinal-missing-column-throws"))
         {
             Assert.Equal(1, reader.GetOrdinal("second_col"));
-            SkipUntilPublicExceptionsExist();
+            Assert.Equal(2L, reader["second_col"]);
+            Skip.UntilPublicExceptionsExist();
             Assert.Equal(270002, Assert.Throws<SnowflakeDbException>(() => reader.GetOrdinal("MISSING")).ErrorCode);
+            Assert.Equal(270002, Assert.Throws<SnowflakeDbException>(() => reader["MISSING"]).ErrorCode);
         }
         else
         {
             Assert.Equal(-1, reader.GetOrdinal("second_col"));
             Assert.Equal(-1, reader.GetOrdinal("MISSING"));
+            Assert.Equal(270002, Assert.Throws<OldSnowflakeDbException>(() => reader["second_col"]).ErrorCode);
+            Assert.Equal(270002, Assert.Throws<OldSnowflakeDbException>(() => reader["MISSING"]).ErrorCode);
         }
     }
 
-    [SnowflakeFact]
-    public void ReadingAValueWithNoCurrentRowIsDataReaderNoCurrentRow()
+    [SnowflakeTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadingAValueWithNoCurrentRowIsDataReaderNoCurrentRowAsync(bool readAsync)
     {
-        Skip.OnOldDriver("BD#reader-access-without-current-row-error-code", "the old driver throws a format-dependent exception");
-        SkipUntilPublicExceptionsExist();
-        using var connection = Open("ARROW");
-        var reader = ExecuteReader(connection, "SELECT 1");
+        Skip.OnOldDriver("BD#reader-access-without-current-row-error-code", "the old driver throws an exception that depends on the result format the server picks");
+        Skip.UntilPublicExceptionsExist();
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 1";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        Func<Task<bool>> read = readAsync ? () => reader.ReadAsync(ct) : () => Task.FromResult(reader.Read());
 
         Assert.Equal(270073, Assert.Throws<SnowflakeDbException>(() => reader.GetValue(0)).ErrorCode);
-        Assert.True(reader.Read());
-        Assert.False(reader.Read());
+        Assert.True(await read().ConfigureAwait(false));
+        Assert.False(await read().ConfigureAwait(false));
         Assert.Equal(270073, Assert.Throws<SnowflakeDbException>(() => reader.GetInt64(0)).ErrorCode);
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public void ConversionFailuresAreInvalidDataConversion(string resultFormat)
+    [SnowflakeFact]
+    public async Task ConversionFailuresAreInvalidDataConversionAsync()
     {
-        Skip.OnOldDriver("BD#reader-conversion-failures-throw-invalid-data-conversion", "the old driver throws format-dependent BCL exceptions");
-        SkipUntilPublicExceptionsExist();
-        using var connection = Open(resultFormat);
-        var reader = ExecuteReader(connection, "SELECT 3000000000::NUMBER(38,0), NULL::NUMBER(38,0), 'abc'::VARCHAR, ''::VARCHAR");
-        Assert.True(reader.Read());
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 3000000000::NUMBER(38,0), NULL::NUMBER(38,0), 'abc'::VARCHAR, ''::VARCHAR, 'ab'::VARCHAR";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
 
+        if (BehaviorDifference.OldDriverOnly("BD#reader-conversion-failures-throw-invalid-data-conversion"))
+        {
+            Assert.Throws<OverflowException>(() => reader.GetInt32(0));
+            Assert.Throws<InvalidCastException>(() => reader.GetInt64(1));
+            Assert.Throws<FormatException>(() => reader.GetInt64(2));
+            Assert.Throws<IndexOutOfRangeException>(() => reader.GetChar(3));
+            Assert.Equal('a', reader.GetChar(4));
+            var oldReader = Assert.IsType<OldSnowflakeDbDataReader>(reader);
+            Assert.Equal(270003, Assert.Throws<OldSnowflakeDbException>(() => oldReader.GetTimeSpan(0)).ErrorCode);
+            return;
+        }
+
+        var newReader = Assert.IsType<SnowflakeDbDataReader>(reader);
+        Skip.UntilPublicExceptionsExist();
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt32(0)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt64(1)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt64(2)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetBoolean(2)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetChar(3)).ErrorCode);
+        Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetChar(4)).ErrorCode);
+        Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => newReader.GetTimeSpan(0)).ErrorCode);
     }
 
     [SnowflakeFact]
-    public void GetStringOnANegativeNumberIgnoresTheCurrentCulture()
+    public async Task GetStringOnANegativeNumberIgnoresTheCurrentCultureAsync()
     {
         Skip.OnOldDriver("BD#reader-get-string-invariant-culture", "the old driver's text depends on the result format the server picks");
+        var ct = TestContext.Current.CancellationToken;
         var original = CultureInfo.CurrentCulture;
-        // sv-SE formats negative numbers with U+2212 MINUS SIGN instead of '-'.
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
+        CultureInfo.CurrentCulture = TestCultures.UnicodeMinus();
         try
         {
-            using var connection = Open("ARROW");
-            var reader = ExecuteReader(connection, "SELECT -5");
-            Assert.True(reader.Read());
+            using var connection = Fixture.Factory.Create(Output);
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT -5";
+            using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
 
             Assert.Equal("-5", reader.GetString(0));
         }
@@ -279,58 +329,41 @@ public class DataReaderTest : IClassFixture<ITFixture>
         }
     }
 
-    [SnowflakeTheory]
-    [InlineData("ARROW")]
-    [InlineData("JSON")]
-    public void AnIntegerOutsideTheLongRangeIsADecimal(string resultFormat)
+    [SnowflakeFact]
+    public async Task AnIntegerOutsideTheLongRangeIsADecimalAsync()
     {
-        using var connection = Open(resultFormat);
-        var reader = ExecuteReader(connection, "SELECT 12345678901234567890123::NUMBER(38,0)");
-        Assert.True(reader.Read());
-
-        if (resultFormat == "JSON" && BehaviorDifference.OldDriverOnly("BD#reader-fixed-beyond-int64-returns-decimal-on-json"))
-        {
-            Assert.Throws<OverflowException>(() => reader.GetValue(0));
-            return;
-        }
+        Skip.OnOldDriver("BD#reader-fixed-beyond-int64-returns-decimal-on-json", "the old driver's result depends on the result format the server picks");
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT 12345678901234567890123::NUMBER(38,0)";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
 
         Assert.Equal(12345678901234567890123m, Assert.IsType<decimal>(reader.GetValue(0)));
         Assert.Equal("12345678901234567890123", reader.GetString(0));
     }
 
-    // TODO SNOW-4382591: remove once SnowflakeDbException can be constructed.
-    private static void SkipUntilPublicExceptionsExist() =>
-        Skip.When(TestDriver.Current == TestDriver.Kind.New, "every SnowflakeDbException constructor throws NotImplementedException until SNOW-4382591");
-
-    private ISnowflakeDbConnection Open(string resultFormat)
+    [SnowflakeFact]
+    public async Task AnIntegerOutsideTheDecimalRangeIsInvalidDataConversionAsync()
     {
-        var connection = Fixture.Factory.Create(Output);
-        connection.Open();
+        var ct = TestContext.Current.CancellationToken;
+        using var connection = Fixture.Factory.Create(Output);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
         using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = {resultFormat}";
-        cmd.ExecuteNonQuery();
-        return connection;
-    }
+        cmd.CommandText = "SELECT 99999999999999999999999999999999999999::NUMBER(38,0)";
+        using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        Assert.True(await reader.ReadAsync(ct).ConfigureAwait(false));
 
-    private async Task<ISnowflakeDbConnection> OpenAsync(string resultFormat, CancellationToken cancellationToken)
-    {
-        var connection = Fixture.Factory.Create(Output);
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = $"ALTER SESSION SET DOTNET_QUERY_RESULT_FORMAT = {resultFormat}";
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return connection;
-    }
+        Assert.Equal("99999999999999999999999999999999999999", reader.GetString(0));
+        if (BehaviorDifference.OldDriverOnly("BD#reader-conversion-failures-throw-invalid-data-conversion"))
+        {
+            Assert.Throws<OverflowException>(() => reader.GetValue(0));
+            return;
+        }
 
-    private static ISnowflakeDbDataReader ExecuteReader(ISnowflakeDbConnection connection, string sql)
-    {
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-        var dbDataReader = cmd.ExecuteReader();
-
-        if (dbDataReader is SnowflakeDbDataReader reader)
-            return reader;
-
-        return new LegacySnowflakeDbDataReader((OldDriver::Snowflake.Data.Client.SnowflakeDbDataReader)dbDataReader);
+        Skip.UntilPublicExceptionsExist();
+        Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetValue(0)).ErrorCode);
     }
 }

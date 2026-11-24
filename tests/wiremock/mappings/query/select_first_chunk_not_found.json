@@ -1,0 +1,94 @@
+{
+  "mappings": [
+    {
+      "name": "SELECT returns two rows inline and two remote chunks",
+      "priority": 10,
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          {
+            "matches": "(?s).*SELECT_FIRST_CHUNK_NOT_FOUND.*"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "01b2c3d4-0000-0000-0000-000000000001",
+            "statementTypeId": 4096,
+            "queryResultFormat": "json",
+            "rowtype": [
+              {
+                "name": "N",
+                "database": "",
+                "schema": "",
+                "table": "",
+                "type": "fixed",
+                "precision": 38,
+                "scale": 0,
+                "nullable": true,
+                "byteLength": null,
+                "length": null
+              }
+            ],
+            "rowset": [["1"], ["2"]],
+            "total": 6,
+            "returned": 6,
+            "parameters": [
+              {
+                "name": "CLIENT_PREFETCH_THREADS",
+                "value": 4
+              }
+            ],
+            "chunkHeaders": {
+              "x-snowflake-test-chunk": "1"
+            },
+            "chunks": [
+              {
+                "url": "{{WIREMOCK_HTTP_URL}}/chunks/select_first_chunk_not_found/1",
+                "rowCount": 2,
+                "uncompressedSize": 11,
+                "compressedSize": 11
+              },
+              {
+                "url": "{{WIREMOCK_HTTP_URL}}/chunks/select_first_chunk_not_found/2",
+                "rowCount": 2,
+                "uncompressedSize": 11,
+                "compressedSize": 11
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "First result chunk is not found",
+      "priority": 10,
+      "request": {
+        "urlPath": "/chunks/select_first_chunk_not_found/1",
+        "method": "GET"
+      },
+      "response": {
+        "status": 404
+      }
+    },
+    {
+      "name": "Second result chunk returns two rows",
+      "priority": 10,
+      "request": {
+        "urlPath": "/chunks/select_first_chunk_not_found/2",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "body": "[\"5\"],[\"6\"]"
+      }
+    }
+  ]
+}

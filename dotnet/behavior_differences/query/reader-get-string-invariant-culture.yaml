@@ -1,0 +1,17 @@
+name: "GetString on a number formats with the invariant culture"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  For an Arrow result, `GetString` on a NUMBER column formats the value with the current
+  culture, so a culture whose negative sign is U+2212 MINUS SIGN renders -5 as "−5". Which
+  cultures do that depends on the platform's culture data: sv-SE does under ICU (.NET 5+ on
+  macOS, Linux, and Windows 10 1903+), but not under the Windows NLS data .NET Framework reads.
+new_driver_behavior: |
+  `GetString` on a NUMBER column formats the value with the invariant culture, whatever the
+  current culture, so -5 is always "-5".
+rationale: |
+  Text the driver produces from a value is the same on every machine, matching how the server
+  renders the number. The new driver has no setting that selects a culture for this formatting.

@@ -4,6 +4,7 @@ using Apache.Arrow;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.DataConversion.ResultSetConversion;
 using Snowflake.Data.Core.Errors;
+using Snowflake.Data.Tests.Utilities;
 
 namespace Snowflake.Data.Tests.Core.Conversion;
 
@@ -53,6 +54,20 @@ public sealed class FixedColumnConverterTest
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void DecimalBatchValueAtTheLongRangeLimitsIsALong()
+    {
+        var belowLong = (decimal)long.MinValue - 1;
+        _converter.Bind(UnitBatches.Decimals(long.MaxValue, long.MinValue, belowLong));
+
+        Assert.Equal(long.MaxValue, Assert.IsType<long>(_converter.GetValue(0)));
+        Assert.Equal(long.MinValue, Assert.IsType<long>(_converter.GetValue(1)));
+        Assert.Equal(belowLong, Assert.IsType<decimal>(_converter.GetValue(2)));
+        Assert.Equal(long.MaxValue, _converter.Get<long>(0));
+        Assert.Equal(long.MinValue, _converter.Get<long>(1));
+        ConversionAssert.Fails(() => _converter.Get<long>(2), "FIXED", typeof(long));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ValueBeyondTheDecimalRangeIsAConversionErrorExceptAsStringOrFloatingPoint()
     {
         var max = BigInteger.Pow(10, 38) - 1;
@@ -90,17 +105,21 @@ public sealed class FixedColumnConverterTest
         Assert.Equal(byte.MaxValue, _converter.Get<byte>(2));
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
-    public void StringUsesTheInvariantCultureWhateverTheCurrentCulture()
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData("Int8")]
+    [InlineData("Int16")]
+    [InlineData("Int32")]
+    [InlineData("Int64")]
+    [InlineData("Decimal128")]
+    public void StringUsesTheInvariantCultureWhateverTheCurrentCulture(string arrowType)
     {
         var original = CultureInfo.CurrentCulture;
-        // sv-SE formats negative numbers with U+2212 MINUS SIGN instead of '-'.
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("sv-SE");
+        CultureInfo.CurrentCulture = TestCultures.UnicodeMinus();
         try
         {
-            _converter.Bind(UnitBatches.Int64(-5));
+            _converter.Bind(MinusFortyTwo(arrowType));
 
-            Assert.Equal("-5", _converter.Get<string>(0));
+            Assert.Equal("-42", _converter.Get<string>(0));
         }
         finally
         {

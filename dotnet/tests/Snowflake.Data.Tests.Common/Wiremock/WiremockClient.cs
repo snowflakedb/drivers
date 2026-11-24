@@ -150,6 +150,7 @@ public sealed class WiremockClient : IDisposable
 
         var content = await FileShims.ReadAllTextAsync(mappingFile).ConfigureAwait(false);
         content = content.Replace("{{REPO_ROOT}}", _workspaceRoot.Replace(Path.DirectorySeparatorChar, '/'));
+        content = content.Replace("{{WIREMOCK_HTTP_URL}}", $"http://localhost:{_httpPort}");
         if (placeholders is not null)
         {
             foreach (var kvp in placeholders)

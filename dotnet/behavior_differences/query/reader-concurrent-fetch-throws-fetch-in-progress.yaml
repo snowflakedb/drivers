@@ -1,0 +1,18 @@
+name: "A read that overlaps a pending ReadAsync throws error code 270074"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `Read` or `ReadAsync` called while another `ReadAsync` on the same reader is waiting for the
+  next result chunk does not throw. It returns false, as though every row had been read, and the
+  pending `ReadAsync` then returns true with the next row.
+new_driver_behavior: |
+  `Read` or `ReadAsync` called while another fetch on the same reader is in progress throws
+  `SnowflakeDbException` with error code 270074 (`DATA_READER_FETCH_IN_PROGRESS`). The pending
+  `ReadAsync` then returns true with the next row, and later reads continue from there.
+rationale: |
+  The new driver reads each batch through an Arrow C stream whose memory the driver owns. The
+  Arrow C stream interface does not allow concurrent calls on one stream, so the driver rejects
+  the overlapping call instead of corrupting native memory.
