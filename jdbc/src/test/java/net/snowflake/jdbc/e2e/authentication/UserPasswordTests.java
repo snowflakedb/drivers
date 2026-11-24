@@ -1,7 +1,7 @@
 package net.snowflake.jdbc.e2e.authentication;
 
-import static net.snowflake.jdbc.utils.DriverCompatibility.isNewDriver;
 import static net.snowflake.jdbc.utils.TestParameters.loadDefaultConnectionProperties;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,8 +67,7 @@ class UserPasswordTests implements WithQueryUtils, WithConnect {
             .getMessage()
             .toLowerCase()
             .contains("incorrect username or password was specified"));
-    if (isNewDriver()) {
-      assertTrue(exception.getMessage().contains("390100"));
-    }
+    assertEquals(390100, exception.getErrorCode());
+    assertEquals("08001", exception.getSQLState());
   }
 }

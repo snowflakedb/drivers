@@ -9,6 +9,8 @@ import net.snowflake.jdbc.utils.RequiresBrowser;
 import net.snowflake.jdbc.utils.TestParameters;
 import net.snowflake.jdbc.utils.WithConnect;
 import net.snowflake.jdbc.utils.WithQueryUtils;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -24,60 +26,68 @@ import org.junit.jupiter.api.Test;
 @RequiresBrowser
 class ExternalBrowserTests implements WithQueryUtils, WithConnect, WithBrowserAutomation {
 
+  @BeforeEach
+  void cleanBrowserBeforeTest() {
+    cleanBrowserProcesses();
+  }
+
+  @AfterEach
+  void cleanBrowserAfterTest() {
+    cleanBrowserProcesses();
+  }
+
   @Test
   void shouldAuthenticateWithExternalBrowserViaOktaIdp() throws Exception {
-    cleanBrowserProcesses();
-    try {
-      // Given External browser authentication is configured with valid Okta user
-      String login = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
-      String password = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
+    // Given External browser authentication is configured with valid Okta user
+    String login = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
+    String password = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
 
-      Properties props = loadDefaultConnectionProperties();
-      props.setProperty("authenticator", "EXTERNALBROWSER");
-      props.setProperty("user", login);
-      props.setProperty("clientStoreTemporaryCredential", "false");
+    Properties props = externalBrowserProperties(login);
 
-      // When Trying to Connect with headless browser providing valid credentials
-      try (Connection conn =
-          connectWithBrowserAutomation(() -> connect(props), "success", login, password)) {
-        // Then Login is successful and simple query can be executed
-        assertSimpleQuerySucceeds(conn);
-      }
-    } finally {
-      cleanBrowserProcesses();
+    // When Trying to Connect with headless browser providing valid credentials
+    try (Connection conn =
+        connectWithBrowserAutomation(() -> connect(props), "success", login, password)) {
+      // Then Login is successful and simple query can be executed
+      assertSimpleQuerySucceeds(conn);
     }
   }
 
   @Test
   void shouldReuseCachedIdTokenWithoutBrowserInteraction() throws Exception {
-    cleanBrowserProcesses();
-    try {
-      // Given External browser authentication is configured with caching enabled and a token has
-      // been cached from a previous connection
-      String login = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
-      String password = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
+    // Given External browser authentication is configured with caching enabled and a token has
+    // been cached from a previous connection
+    String login = TestParameters.get("SNOWFLAKE_TEST_OKTA_USER");
+    String password = TestParameters.get("SNOWFLAKE_TEST_OKTA_PASSWORD");
 
-      Properties props = loadDefaultConnectionProperties();
-      props.setProperty("authenticator", "EXTERNALBROWSER");
-      props.setProperty("user", login);
-      props.setProperty("clientStoreTemporaryCredential", "true");
-      if (isOldDriver()) {
-        // BD#42: legacy snowflake-jdbc on Linux gates id-token cache on this session parameter.
-        props.put("CLIENT_STORE_TEMPORARY_CREDENTIAL", Boolean.TRUE);
-      }
+    Properties props = cachingExternalBrowserProperties(login);
 
-      try (Connection first =
-          connectWithBrowserAutomation(() -> connect(props), "success", login, password)) {
-        assertSimpleQuerySucceeds(first);
-      }
-
-      // When Trying to Connect without browser interaction
-      try (Connection second = connect(props)) {
-        // Then Login is successful and simple query can be executed
-        assertSimpleQuerySucceeds(second);
-      }
-    } finally {
-      cleanBrowserProcesses();
+    try (Connection first =
+        connectWithBrowserAutomation(() -> connect(props), "success", login, password)) {
+      assertSimpleQuerySucceeds(first);
     }
+
+    // When Trying to Connect without browser interaction
+    try (Connection second = connect(props)) {
+      // Then Login is successful and simple query can be executed
+      assertSimpleQuerySucceeds(second);
+    }
+  }
+
+  static Properties externalBrowserProperties(String user) {
+    Properties props = loadDefaultConnectionProperties();
+    props.setProperty("authenticator", "EXTERNALBROWSER");
+    props.setProperty("user", user);
+    props.setProperty("clientStoreTemporaryCredential", "false");
+    return props;
+  }
+
+  static Properties cachingExternalBrowserProperties(String user) {
+    Properties props = externalBrowserProperties(user);
+    props.setProperty("clientStoreTemporaryCredential", "true");
+    if (isOldDriver()) {
+      // BD#42: legacy snowflake-jdbc on Linux gates id-token cache on this session parameter.
+      props.put("CLIENT_STORE_TEMPORARY_CREDENTIAL", Boolean.TRUE);
+    }
+    return props;
   }
 }

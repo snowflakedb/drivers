@@ -45,6 +45,63 @@ interface WithBrowserAutomation extends WithNodeScripts {
   default Connection connectWithBrowserAutomation(
       ConnectSupplier connectFn, String scenario, String login, String password, String totpSeed)
       throws SQLException {
+    BrowserRun run = runConnectWithBrowser(connectFn, scenario, login, password, totpSeed);
+
+    if (run.connectError != null) {
+      throw run.connectError;
+    }
+    if (run.connection != null) {
+      return run.connection;
+    }
+
+    if (run.browserError != null) {
+      throw new RuntimeException("Browser automation failed", run.browserError);
+    }
+    throw new IllegalStateException("Connection was not established");
+  }
+
+  /**
+   * Run the connect call and browser automation concurrently for a flow that must end with a failed
+   * connect, and return the driver's exception. Unlike {@link #connectWithBrowserAutomation}, a
+   * failing browser leg fails the test even when connect also failed, so a failure caused by the
+   * browser never reaching the IdP cannot pass as the expected one.
+   */
+  default SQLException connectExpectingFailureWithBrowserAutomation(
+      ConnectSupplier connectFn, String scenario, String login, String password) {
+    BrowserRun run = runConnectWithBrowser(connectFn, scenario, login, password, null);
+
+    if (run.connection != null) {
+      try {
+        run.connection.close();
+      } catch (SQLException ignored) {
+        // Best-effort close of a connection the test did not expect to get.
+      }
+      throw new IllegalStateException("Connection was established but expected to fail");
+    }
+    if (run.browserError != null) {
+      throw new RuntimeException("Browser automation failed", run.browserError);
+    }
+    if (run.connectError == null) {
+      throw new IllegalStateException("Connect finished without a connection or an error");
+    }
+    return run.connectError;
+  }
+
+  /** Outcome of one concurrent connect and browser-automation run. */
+  final class BrowserRun {
+    final Connection connection;
+    final SQLException connectError;
+    final Throwable browserError;
+
+    BrowserRun(Connection connection, SQLException connectError, Throwable browserError) {
+      this.connection = connection;
+      this.connectError = connectError;
+      this.browserError = browserError;
+    }
+  }
+
+  static BrowserRun runConnectWithBrowser(
+      ConnectSupplier connectFn, String scenario, String login, String password, String totpSeed) {
     AtomicReference<Connection> connection = new AtomicReference<>();
     AtomicReference<SQLException> connectError = new AtomicReference<>();
 
@@ -87,17 +144,7 @@ interface WithBrowserAutomation extends WithNodeScripts {
       throw new RuntimeException("Connect thread failed", e.getCause());
     }
 
-    if (connectError.get() != null) {
-      throw connectError.get();
-    }
-    if (connection.get() != null) {
-      return connection.get();
-    }
-
-    if (browserError != null) {
-      throw new RuntimeException("Browser automation failed", browserError);
-    }
-    throw new IllegalStateException("Connection was not established");
+    return new BrowserRun(connection.get(), connectError.get(), browserError);
   }
 
   default void cleanBrowserProcesses() {

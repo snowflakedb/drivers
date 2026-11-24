@@ -85,6 +85,47 @@ public class CoreExceptionErrorKindMappingTest {
   }
 
   @Test
+  public void shouldReportConnectionNotEstablishedSqlStateForLoginError() {
+    DriverException withCredentialSqlState =
+        DriverException.newBuilder()
+            .setMessage("Login error: Incorrect username or password was specified., code: 390100")
+            .setKind(ErrorKind.ERROR_KIND_LOGIN_ERROR)
+            .setVendorCode(390100)
+            .setSqlState("28000")
+            .build();
+    SnowflakeSQLException credentialRejection =
+        surface(new CoreException(withCredentialSqlState, null));
+    assertEquals(390100, credentialRejection.getErrorCode());
+    assertEquals(ErrorKindMapper.LOGIN_REJECTION_SQL_STATE, credentialRejection.getSQLState());
+
+    DriverException withoutSqlState =
+        DriverException.newBuilder()
+            .setMessage(
+                "Login error: The user you were trying to authenticate as differs from the user"
+                    + " currently logged in at the IDP., code: 390191")
+            .setKind(ErrorKind.ERROR_KIND_LOGIN_ERROR)
+            .setVendorCode(390191)
+            .build();
+    SnowflakeSQLException idpMismatch = surface(new CoreException(withoutSqlState, null));
+    assertEquals(390191, idpMismatch.getErrorCode());
+    assertEquals(ErrorKindMapper.LOGIN_REJECTION_SQL_STATE, idpMismatch.getSQLState());
+  }
+
+  @Test
+  public void shouldKeepCoreSqlStateForAuthenticationError() {
+    DriverException payload =
+        DriverException.newBuilder()
+            .setMessage("token expired")
+            .setKind(ErrorKind.ERROR_KIND_AUTHENTICATION_ERROR)
+            .setVendorCode(390112)
+            .setSqlState("08001")
+            .build();
+    SnowflakeSQLException thrown = surface(new CoreException(payload, null));
+    assertEquals(390112, thrown.getErrorCode());
+    assertEquals("08001", thrown.getSQLState());
+  }
+
+  @Test
   public void shouldPreferServerVendorCodeAndSqlStateWhenPresent() {
     DriverException payload =
         DriverException.newBuilder()

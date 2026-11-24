@@ -15,6 +15,13 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.IoCla
  */
 final class ErrorKindMapper {
 
+  /**
+   * snowflake-jdbc reports SQLSTATE {@code 08001} for every GS {@code success: false} login
+   * rejection. Core may send {@code 28000} for credential-rejection codes or omit SQLSTATE for
+   * other login codes such as {@code 390191}.
+   */
+  static final String LOGIN_REJECTION_SQL_STATE = "08001";
+
   private static final Map<ErrorKind, ErrorCode> KIND_TO_ERROR_CODE;
 
   static {
@@ -37,6 +44,9 @@ final class ErrorKindMapper {
   }
 
   static String sqlState(DriverException error) {
+    if (error.getKind() == ErrorKind.ERROR_KIND_LOGIN_ERROR) {
+      return LOGIN_REJECTION_SQL_STATE;
+    }
     if (error.hasSqlState()) {
       return error.getSqlState();
     }
