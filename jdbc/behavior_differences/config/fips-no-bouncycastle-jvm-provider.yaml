@@ -1,0 +1,19 @@
+name: "FIPS jars do not install or require BouncyCastle FIPS in the JVM"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  `snowflake-jdbc-fips` ships `bc-fips` / `bcpkix-fips`. Tests and some deployments insert
+  `BouncyCastleFipsProvider` and set `CryptoServicesRegistrar.setApprovedOnlyMode(true)`.
+  JVM system properties for SSL protocols and cipher suites are part of that setup.
+new_driver_behavior: |
+  The FIPS coordinates (`snowflake-jdbc-native-fips`, `snowflake-jdbc-native-all-fips`)
+  bundle a FIPS `jdbc_bridge` and do not shade BouncyCastle FIPS. Inserting BC-FIPS or
+  toggling approved-only mode in the JVM does not change driver TLS. `getFipsStatus()`
+  reports whether the loaded native was built with `fips`.
+description: |
+  Migration from `snowflake-jdbc-fips` is a Maven coordinate change plus a startup check,
+  not a JCE-provider swap. Application code that only connected through JDBC does not
+  need to register BC-FIPS for the driver.

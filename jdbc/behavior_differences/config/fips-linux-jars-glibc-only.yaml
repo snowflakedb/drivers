@@ -1,0 +1,17 @@
+name: "FIPS Linux jars ship glibc natives only"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `snowflake-jdbc-fips` is a pure-Java fat jar. It has no native library and no glibc or
+  musl split.
+new_driver_behavior: |
+  Standard `snowflake-jdbc-native` Linux classifiers bundle both gnu and musl
+  `jdbc_bridge` libraries. The FIPS classifiers bundle only the gnu (glibc) library.
+  Alpine / musl hosts load no bundled native from the FIPS jars and fail unless
+  `CORE_PATH` or `jdbc.library.path` points at a consumer-built FIPS library.
+description: |
+  musl is outside the current FIPS build matrix. Alpine users of the FIPS jars cannot
+  rely on the bundled native. A non-FIPS musl `.so` is not shipped inside a `-fips` jar.

@@ -11,6 +11,8 @@ The driver is published under `net.snowflake` in three flavors:
 | `net.snowflake:snowflake-jdbc-native:<version>:<classifier>` | **Recommended.** Self-contained *per-platform* jar: thin Java + that platform's native, in one artifact. Dependencies (protobuf, Jackson, …) resolve from the POM. One dependency, one platform. |
 | `net.snowflake:snowflake-jdbc-native-all` | Self-contained *fat* jar: all dependencies shaded **and** every platform's native bundled in. Portable across platforms in a single artifact; larger, and shades transitive deps. |
 | `net.snowflake:snowflake-jdbc-native` (no classifier) | **Advanced / native-free.** No native bundled — the JVM resolves the lib from `CORE_PATH` or the `jdbc.library.path` system property. Used on unlisted platforms or when you supply the native out-of-band. Not runnable on its own. |
+| `net.snowflake:snowflake-jdbc-native-fips:<version>:<classifier>` | FIPS *per-platform* jar: same Java as the standard classifier jar, with a `jdbc_bridge` built against the AWS-LC FIPS module. |
+| `net.snowflake:snowflake-jdbc-native-all-fips` | FIPS *fat* jar: same Java as `-all`, with only FIPS natives. Do not mix this with the standard `-all` jar. |
 
 The `<classifier>` follows the [`os-maven-plugin`](https://github.com/trustin/os-maven-plugin) / [`osdetector`](https://github.com/google/osdetector-gradle-plugin) convention: `linux-x86_64`, `linux-aarch_64`, `osx-x86_64`, `osx-aarch_64`, `windows-x86_64`.
 
@@ -61,6 +63,33 @@ implementation 'net.snowflake:snowflake-jdbc-native-all:0.0.1'
 ```
 
 Protobuf and Jackson are relocated under `net.snowflake.client.jdbc.internal`. The fat jar does not bundle SLF4J; the default logger is JUL. Selecting `net.snowflake.client.log.SLF4JLogger` requires the application to provide `slf4j-api`.
+
+### FIPS jars
+
+The FIPS coordinates use the same classifiers as the standard jars (`linux-x86_64`, `linux-aarch_64`, `osx-x86_64`, `osx-aarch_64`, `windows-x86_64`). Change only the `artifactId`. Linux FIPS natives are glibc only; there is no musl FIPS native and no Windows ARM64 FIPS native.
+
+```xml
+<dependency>
+  <groupId>net.snowflake</groupId><artifactId>snowflake-jdbc-native-fips</artifactId>
+  <version>0.0.1</version><classifier>${os.detected.classifier}</classifier>
+</dependency>
+```
+
+```groovy
+implementation "net.snowflake:snowflake-jdbc-native-fips:0.0.1:${osdetector.classifier}"
+// or the portable fat jar:
+implementation 'net.snowflake:snowflake-jdbc-native-all-fips:0.0.1'
+```
+
+Call `getFipsStatus()` once at process start, before opening a connection. A true value means this process loaded the FIPS build and its TLS provider is in FIPS mode. It does not certify the rest of the deployment.
+
+```java
+if (!new SnowflakeDriver().getFipsStatus().isFips()) {
+  throw new IllegalStateException("Snowflake driver is not the FIPS build");
+}
+```
+
+The old `snowflake-jdbc-fips` jar installed BouncyCastle FIPS as a JVM provider. These jars do not. Crypto is in the native library. `verify_certificates=false` and `tls_skip_verify=true`, which the standard jars accept, are rejected. 3DES-encrypted and traditional MD5-encrypted PEM keys are rejected.
 
 ## Testing
 

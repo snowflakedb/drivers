@@ -1,0 +1,18 @@
+name: "FIPS builds reject 3DES-encrypted and traditional MD5-encrypted private keys"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+old_driver_behavior: |
+  `snowflake-jdbc-fips` decrypts private keys with BouncyCastle FIPS in the JVM. Encrypted
+  PKCS#8 that BC-FIPS can unwrap, including some 3DES constructions when the provider
+  allows them, can be used for key-pair login.
+new_driver_behavior: |
+  A FIPS `jdbc_bridge` rejects 3DES-CBC PKCS#8 unwrap and traditional encrypted PEM
+  (`Proc-Type: 4,ENCRYPTED`, MD5 KDF). Login fails with a conversion error. AES-encrypted
+  PKCS#8, a `java.security.PrivateKey` object, and `private_key_file` still work. A
+  standard (non-FIPS) native still unwraps the rejected formats.
+description: |
+  Customers moving from `snowflake-jdbc-fips` who still ship 3DES or traditional PEM keys
+  must re-encrypt those keys before using the FIPS native jars.
