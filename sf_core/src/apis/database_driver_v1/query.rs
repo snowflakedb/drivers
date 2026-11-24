@@ -280,6 +280,36 @@ pub(super) async fn build_and_upload_stream(
     Ok(RowsetData::Upload(vec![result]))
 }
 
+/// Uploads the files matched by `upload_data` through `backend`.
+pub(super) async fn upload_files_via_xp_backend(
+    upload_data: &file_manager::UploadData,
+    retry_policy: &RetryPolicy,
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+    operation_ctx: Option<&OperationCtx>,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let transfer_ctx =
+        file_manager::TransferCtx::new(None, operation_ctx.map(OperationCtx::cleanup_scope))
+            .with_backend(backend);
+    let results = upload_files(upload_data, retry_policy, transfer_ctx)
+        .await
+        .context(FileUploadSnafu)?;
+    Ok(RowsetData::Upload(results))
+}
+
+/// Uploads one in-memory or spooled `source` through `backend`.
+pub(super) async fn upload_stream_via_xp_backend(
+    source: ByteSource,
+    single: SingleUploadData,
+    retry_policy: &RetryPolicy,
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let transfer_ctx = file_manager::TransferCtx::default().with_backend(backend);
+    let result = upload_prepared_source(source, single, retry_policy, transfer_ctx)
+        .await
+        .context(FileUploadSnafu)?;
+    Ok(RowsetData::Upload(vec![result]))
+}
+
 /// Builds the stage-info refresher used by `download_stream_begin`. Exposed
 /// so `stream_transfer.rs` can drive a streaming GET with the same
 /// cred/URL-refresh machinery as the file-path path, without re-exposing the

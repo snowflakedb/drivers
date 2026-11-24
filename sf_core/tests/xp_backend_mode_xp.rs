@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use sf_core::apis::database_driver_v1::{
-    AsyncArrowBatchFetcher, DatabaseDriverV1, ExecuteQueryResult,
+    AsyncArrowBatchFetcher, DatabaseDriverV1, ErrorKind, ExecuteQueryResult, StageUploadOptions,
 };
 #[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
@@ -44,8 +44,8 @@ use sf_core::xp_backend::SnowflakeBackend;
 use sf_core::xp_backend::error_codes;
 #[cfg(target_os = "linux")]
 use sf_core::xp_backend::ffi::{
-    XP_BACKEND_ABI_VERSION, XpCancelRequest, XpQueryRequest, sf_core_register_xp_backend,
-    sf_core_xp_backend_is_available,
+    UPLOAD_STREAM_CHUNK_LEN, XP_BACKEND_ABI_VERSION, XpCancelRequest, XpQueryRequest,
+    sf_core_register_xp_backend, sf_core_xp_backend_is_available,
 };
 
 #[cfg(target_os = "linux")]
@@ -57,7 +57,36 @@ use fixtures::{
 };
 
 #[cfg(target_os = "linux")]
-#[tokio::test(flavor = "current_thread")]
+async fn upload_rows(
+    driver: &DatabaseDriverV1,
+    handle: sf_core::handle_manager::Handle,
+) -> Vec<Vec<String>> {
+    let mut fetcher: AsyncArrowBatchFetcher = driver
+        .result_set_get_async_stream(handle)
+        .await
+        .expect("PUT result set stream");
+    let mut rows = Vec::new();
+    while let Some(batch) = fetcher.next_batch().await.expect("PUT result batch") {
+        for row in 0..batch.num_rows() {
+            rows.push(
+                (0..batch.num_columns())
+                    .map(|col| {
+                        arrow::util::display::array_value_to_string(batch.column(col), row)
+                            .expect("render PUT cell")
+                    })
+                    .collect(),
+            );
+        }
+    }
+    rows
+}
+
+#[cfg(target_os = "linux")]
+// `multi_thread`, not `current_thread`: the chunked-upload-stream coverage
+// below goes through `connection_upload_stream_chunk`, which calls
+// `tokio::task::block_in_place` (see `stream_transfer.rs`) and panics outside
+// a multi-threaded runtime.
+#[tokio::test(flavor = "multi_thread")]
 async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
     set_running_inside_xp();
     let driver = DatabaseDriverV1::new();
@@ -444,6 +473,333 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         Some("select 1".to_string())
     );
     driver.statement_release(stmt).expect("release statement");
+    // --- Stage uploads through the structured API ---
+    //
+    // `query_parameters()` points at `UNREACHABLE_SERVER_URL`, so a regression
+    // that fell back to GS fails instead of reaching a real endpoint.
+
+    host.set_stage_listing("[]");
+    let put_dir = tempfile::tempdir().expect("tempdir");
+    let put_file = put_dir.path().join("data.csv");
+    std::fs::write(&put_file, b"a,b,c\n1,2,3\n").expect("write temp file");
+    let default_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            format!("'file://{}'", put_file.display()),
+            "mystage/sub".to_string(),
+            StageUploadOptions::default(),
+        )
+        .await
+        .expect("PUT should route through the backend, never GS");
+    let rows = upload_rows(&driver, default_put.handle).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], "data.csv");
+    assert_eq!(rows[0][1], "data.csv.gz");
+    assert_eq!(rows[0][6], "UPLOADED");
+
+    let (uploaded_bytes, metadata_json) = host
+        .uploaded_blob("@mystage/sub/data.csv.gz")
+        .expect("auto-compress must rename the target with a .gz suffix");
+    assert_eq!(
+        &uploaded_bytes[..2],
+        &[0x1f, 0x8b],
+        "the backend must receive gzip bytes, not the plaintext source"
+    );
+    assert_eq!(rows[0][3], uploaded_bytes.len().to_string());
+    let metadata: serde_json::Value =
+        serde_json::from_str(&metadata_json.expect("upload_stream carries metadata_json"))
+            .expect("metadata_json must parse");
+    assert_eq!(metadata["overwrite"], false);
+    assert_eq!(metadata["target_compression"], "GZIP");
+
+    // The host reports the stored size when it pads the object.
+    host.set_upload_stream_response(Some(r#"{"padded_file_size": 4096}"#));
+    let padded_file = put_dir.path().join("padded.csv");
+    std::fs::write(&padded_file, b"x").expect("write temp file");
+    let padded_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            padded_file.display().to_string(),
+            "@mystage".to_string(),
+            StageUploadOptions::default(),
+        )
+        .await
+        .expect("PUT should succeed");
+    assert_eq!(upload_rows(&driver, padded_put.handle).await[0][3], "4096");
+
+    // The stored size is part of the host contract: a result without it fails.
+    host.set_upload_stream_response(Some(r#"{"status":"UPLOADED"}"#));
+    let unsized_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            padded_file.display().to_string(),
+            "@mystage".to_string(),
+            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+        )
+        .await;
+    assert!(
+        unsized_put.is_err(),
+        "a finish result without padded_file_size must fail the PUT"
+    );
+    host.set_upload_stream_response(None);
+
+    // A file larger than one chunk reaches the host as several writes.
+    let large_file = put_dir.path().join("large.bin");
+    let large_bytes: Vec<u8> = (0..UPLOAD_STREAM_CHUNK_LEN * 2 + 123)
+        .map(|i| (i % 251) as u8)
+        .collect();
+    std::fs::write(&large_file, &large_bytes).expect("write temp file");
+    let large_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            large_file.display().to_string(),
+            "@mystage/large".to_string(),
+            StageUploadOptions::new([
+                ("AUTO_COMPRESS".to_string(), "FALSE".to_string()),
+                ("OVERWRITE".to_string(), "TRUE".to_string()),
+            ]),
+        )
+        .await
+        .expect("a multi-chunk PUT should succeed");
+    let (received, _) = host
+        .uploaded_blob("@mystage/large/large.bin")
+        .expect("the large file must reach the host");
+    assert!(
+        received == large_bytes,
+        "the chunks must reassemble to the source bytes"
+    );
+    assert_eq!(host.upload_write_count("@mystage/large/large.bin"), Some(3));
+    assert_eq!(
+        upload_rows(&driver, large_put.handle).await[0][3],
+        large_bytes.len().to_string()
+    );
+
+    // A failed write aborts the host's upload and fails the PUT.
+    let aborts_before = host.aborted_uploads();
+    host.fail_next_upload_write(2003);
+    let write_failure = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            large_file.display().to_string(),
+            "@mystage/broken".to_string(),
+            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+        )
+        .await
+        .err()
+        .expect("a failed write must fail the PUT");
+    assert_eq!(write_failure.kind(), ErrorKind::QueryFailed);
+    assert_eq!(host.aborted_uploads(), aborts_before + 1);
+    assert!(host.uploaded_blob("@mystage/broken/large.bin.gz").is_none());
+
+    // OVERWRITE=FALSE against an existing destination skips without uploading.
+    let uploads_before_skip = host.operation_count("upload_stream");
+    host.set_stage_listing(r#"[{"name":"@mystage/sub/skip.csv"}]"#);
+    let skip_file = put_dir.path().join("skip.csv");
+    std::fs::write(&skip_file, b"ignored").expect("write temp file");
+    let skip_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            skip_file.display().to_string(),
+            "mystage/sub".to_string(),
+            StageUploadOptions::new([("auto_compress".to_string(), "False".to_string())]),
+        )
+        .await
+        .expect("an existing target must SKIP, not error");
+    let skip_rows = upload_rows(&driver, skip_put.handle).await;
+    assert_eq!(skip_rows[0][6], "SKIPPED");
+    assert_eq!(
+        skip_rows[0][3], "0",
+        "a skipped file reports a target size of 0"
+    );
+    assert_eq!(
+        host.operation_count("upload_stream"),
+        uploads_before_skip,
+        "a SKIPPED upload must never call upload_stream"
+    );
+    let listing_call = host
+        .last_call("list_stage_files")
+        .expect("the skip check must consult list_stage_files");
+    assert_eq!(
+        listing_call.subject.as_deref(),
+        Some("@mystage/sub/skip.csv")
+    );
+    assert_eq!(
+        listing_call.payload.as_deref(),
+        Some("1"),
+        "the skip check must ask for an exact match"
+    );
+
+    // A listing that is not a JSON array is a protocol error, never a skip.
+    host.set_stage_listing("null");
+    let malformed = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            skip_file.display().to_string(),
+            "mystage/sub".to_string(),
+            StageUploadOptions::default(),
+        )
+        .await;
+    assert!(malformed.is_err(), "a malformed listing must fail the PUT");
+    assert_eq!(host.operation_count("upload_stream"), uploads_before_skip);
+
+    // OVERWRITE=FALSE cannot be honored on snow:// stages.
+    host.set_stage_listing("[]");
+    let snow_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            skip_file.display().to_string(),
+            "snow://stage/dir".to_string(),
+            StageUploadOptions::default(),
+        )
+        .await
+        .err()
+        .expect("overwrite=false on snow:// must be rejected");
+    assert_eq!(snow_put.kind(), ErrorKind::NotImplemented);
+    assert_eq!(host.operation_count("upload_stream"), uploads_before_skip);
+
+    // A host error code surfaces as a query failure, and the PUT stops there.
+    host.fail_next(2003, Some("stage does not exist"));
+    let failed = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            skip_file.display().to_string(),
+            "mystage/sub".to_string(),
+            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+        )
+        .await
+        .err()
+        .expect("a host failure must fail the PUT");
+    assert_eq!(failed.kind(), ErrorKind::QueryFailed);
+
+    // A glob matching several files uploads them one at a time.
+    let glob_dir = tempfile::tempdir().expect("tempdir");
+    for name in ["a.csv", "b.csv", "c.csv", "d.csv"] {
+        std::fs::write(glob_dir.path().join(name), name).expect("write temp file");
+    }
+    let glob_put = driver
+        .connection_stage_upload(
+            None,
+            conn,
+            format!("file://{}/*.csv", glob_dir.path().display()),
+            "mystage/glob".to_string(),
+            StageUploadOptions::new([
+                ("PARALLEL".to_string(), "8".to_string()),
+                ("OVERWRITE".to_string(), "TRUE".to_string()),
+            ]),
+        )
+        .await
+        .expect("glob PUT should succeed");
+    assert_eq!(upload_rows(&driver, glob_put.handle).await.len(), 4);
+    assert_eq!(
+        host.max_concurrent_uploads(),
+        1,
+        "XP uploads run one file at a time whatever PARALLEL says"
+    );
+
+    // Upload stream, chunked: bytes arrive piecemeal but the host sees one body.
+    host.set_stage_listing("[]");
+    let upload_handle = driver
+        .connection_stage_upload_stream_begin(
+            conn,
+            "'@mystage/chunked/chunked.csv'".to_string(),
+            StageUploadOptions::new([("AUTO_COMPRESS".to_string(), "FALSE".to_string())]),
+        )
+        .await
+        .expect("begin a chunked upload");
+    driver
+        .connection_upload_stream_chunk(upload_handle, b"first,".to_vec())
+        .await
+        .expect("append first chunk");
+    driver
+        .connection_upload_stream_chunk(upload_handle, b"second".to_vec())
+        .await
+        .expect("append second chunk");
+    let stream_put = driver
+        .connection_upload_stream_finish(upload_handle)
+        .await
+        .expect("finish should route the assembled body through the backend");
+    let (chunked_bytes, _) = host
+        .uploaded_blob("@mystage/chunked/chunked.csv")
+        .expect("the assembled chunks must reach upload_stream as one body");
+    assert_eq!(chunked_bytes, b"first,second");
+    let stream_rows = upload_rows(&driver, stream_put.handle).await;
+    assert_eq!(stream_rows[0][1], "chunked.csv");
+    assert_eq!(stream_rows[0][6], "UPLOADED");
+
+    // `cursor.upload_stream`'s options write the bytes as is: gzip bytes under a
+    // .zip name are neither detected, recompressed nor renamed, and no listing
+    // runs.
+    let listings_before_raw = host.operation_count("list_stage_files");
+    let raw_bytes = vec![0x1f, 0x8b, 0x08, 0x00, 0x01, 0x02];
+    let raw_handle = driver
+        .connection_stage_upload_stream_begin(
+            conn,
+            "@db.sch.\"my stage\"/udfs/lib.zip".to_string(),
+            StageUploadOptions::new([
+                ("auto_compress".to_string(), "False".to_string()),
+                ("source_compression".to_string(), "NONE".to_string()),
+                ("overwrite".to_string(), "True".to_string()),
+            ]),
+        )
+        .await
+        .expect("begin a raw upload");
+    driver
+        .connection_upload_stream_chunk(raw_handle, raw_bytes.clone())
+        .await
+        .expect("append raw bytes");
+    driver
+        .connection_upload_stream_finish(raw_handle)
+        .await
+        .expect("finish the raw upload");
+    let (stored_raw, _) = host
+        .uploaded_blob("@db.sch.\"my stage\"/udfs/lib.zip")
+        .expect("the raw upload keeps its destination name");
+    assert_eq!(stored_raw, raw_bytes);
+    assert_eq!(
+        host.operation_count("list_stage_files"),
+        listings_before_raw
+    );
+
+    // A destination that names no file is rejected before any bytes move.
+    assert!(
+        driver
+            .connection_stage_upload_stream_begin(
+                conn,
+                "@mystage/dir/".to_string(),
+                StageUploadOptions::default(),
+            )
+            .await
+            .is_err()
+    );
+
+    // Raw PUT SQL gets no special handling: it is an ordinary query for the host.
+    let calls_before_sql = host.operation_count("execute_query");
+    let put_sql_stmt = driver.statement_new(conn).expect("statement handle");
+    driver
+        .statement_set_sql_query(put_sql_stmt, "PUT file:///tmp/x @st".to_string())
+        .await
+        .expect("set sql");
+    let _ = driver
+        .statement_execute_query(None, put_sql_stmt, None, None, None, None)
+        .await;
+    driver
+        .statement_release(put_sql_stmt)
+        .expect("release statement");
+    assert_eq!(
+        host.operation_count("execute_query"),
+        calls_before_sql + 1,
+        "PUT SQL must reach the host's execute_query like any other statement"
+    );
+
     // Multi-chunk result set: the initial inline row comes back with the
     // query response, and the remaining row is fetched from a URL the host
     // never actually serves as a reachable location — only

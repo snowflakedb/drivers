@@ -72,6 +72,10 @@ pub(super) async fn build_azure_gcs_client(
 pub(crate) enum StorageHttpClient {
     S3(crate::tls::aws_http_client::AwsSdkReqwestClient),
     Reqwest(reqwest::Client),
+    /// An XP-backend transfer goes through
+    /// `SnowflakeBackend::upload_stream`/`download_stream`, so it holds no
+    /// HTTP client.
+    XpBackend,
 }
 
 impl StorageHttpClient {
@@ -96,20 +100,21 @@ impl StorageHttpClient {
                 )
                 .await?,
             ),
+            LocationType::XpBackend => Self::XpBackend,
         })
     }
 
     pub(crate) fn s3(&self) -> Option<&crate::tls::aws_http_client::AwsSdkReqwestClient> {
         match self {
             Self::S3(client) => Some(client),
-            Self::Reqwest(_) => None,
+            Self::Reqwest(_) | Self::XpBackend => None,
         }
     }
 
     pub(crate) fn reqwest(&self) -> Option<&reqwest::Client> {
         match self {
             Self::Reqwest(client) => Some(client),
-            Self::S3(_) => None,
+            Self::S3(_) | Self::XpBackend => None,
         }
     }
 }

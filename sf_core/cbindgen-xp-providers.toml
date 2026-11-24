@@ -58,12 +58,17 @@ header = """/**
  * Optional callbacks
  * ==================
  *
- * upload_stream, download_stream, list_stage_files and download_query_chunk
- * may be null. Registration accepts a null pointer; the driver returns an
- * UNSUPPORTED error (-1001) the first time it needs that operation.
+ * The four upload_stream_* callbacks, download_stream, list_stage_files and
+ * download_query_chunk may be null. Registration accepts a null pointer; the
+ * driver returns an UNSUPPORTED error (-1001) the first time it needs that
+ * operation. The upload_stream_* callbacks are set or null together.
  *
- *   - upload_stream: PUT sends one file's bytes. The optional "padded_file_size"
- *     field of the JSON result overrides the reported upload size.
+ *   - upload_stream_begin / _write / _finish / _abort: PUT writes one file.
+ *     begin opens a write and returns an opaque handle; write delivers the
+ *     bytes in order, at most UPLOAD_STREAM_CHUNK_LEN per call, in a buffer
+ *     valid only for the call; then exactly one of finish or abort releases
+ *     the handle. finish returns a JSON object with an integer
+ *     "padded_file_size", the size of the stored object.
  *   - download_stream: GET fetches one whole file. The result is a
  *     host-allocated byte buffer.
  *   - list_stage_files: PUT with overwrite=false and GET enumerate stage files.

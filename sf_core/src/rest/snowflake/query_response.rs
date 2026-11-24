@@ -355,6 +355,15 @@ pub struct EncryptionMaterial {
 }
 
 impl Data {
+    /// A `Data` carrying only `command`, enough for `response_to_descriptor` to
+    /// derive the PUT/GET column layout when no GS response exists.
+    pub(crate) fn command_only(command: impl Into<String>) -> Self {
+        Self {
+            command: Some(command.into()),
+            ..Default::default()
+        }
+    }
+
     /// Returns the full `StageInfoSnapshot` (creds + `presignedUrl` +
     /// `presignedUrls[]`) embedded in the response's `stageInfo`, or `None`
     /// if the response carries no `stageInfo` block (non-PUT/GET). Used by
@@ -469,22 +478,10 @@ impl Data {
             })?
             .clone();
 
-        let source_compression = match source_compression_string.to_uppercase().as_str() {
-            "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
-            "GZIP" => SourceCompressionParam::Gzip,
-            "BZIP2" => SourceCompressionParam::Bzip2,
-            "BROTLI" => SourceCompressionParam::Brotli,
-            "ZSTD" => SourceCompressionParam::Zstd,
-            "DEFLATE" => SourceCompressionParam::Deflate,
-            "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
-            "PARQUET" => SourceCompressionParam::Parquet,
-            "ORC" => SourceCompressionParam::Orc,
-            "NONE" => SourceCompressionParam::None,
-            _ => InvalidFormatSnafu {
+        let source_compression = SourceCompressionParam::from_name(&source_compression_string)
+            .with_context(|| InvalidFormatSnafu {
                 message: format!("Unknown source compression type: {source_compression_string}"),
-            }
-            .fail()?,
-        };
+            })?;
 
         let overwrite = self.overwrite.unwrap_or(false);
 
@@ -1240,6 +1237,15 @@ impl StageInfo {
                     .clone()
                     .into(),
             },
+            // `location_type()` has no wire value for `XpBackend`; failing here
+            // keeps a future wire change from resolving to "no credentials".
+            file_manager::LocationType::XpBackend => {
+                return InvalidFormatSnafu {
+                    message: "XP backend location type has no cloud wire credentials to resolve"
+                        .to_string(),
+                }
+                .fail();
+            }
         })
     }
 

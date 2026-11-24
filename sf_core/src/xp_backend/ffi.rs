@@ -61,6 +61,9 @@ use crate::sensitive::SensitiveString;
 /// error message rather than undefined behaviour.
 pub const XP_BACKEND_ABI_VERSION: u32 = 1;
 
+/// Largest buffer the driver passes to one `upload_stream_write` call.
+pub const UPLOAD_STREAM_CHUNK_LEN: usize = 4 * 1024 * 1024;
+
 #[repr(C)]
 struct XpBackendCallbacksHeader {
     abi_version: u32,
@@ -135,15 +138,39 @@ pub type GetSessionParamsFn = unsafe extern "C" fn(
     error_out: *mut SfCoreFfiError,
 ) -> i32;
 
-pub type UploadStreamFn = unsafe extern "C" fn(
+/// Opens a write to `destination`. On success `upload_out` receives an opaque
+/// host handle; the driver then calls `upload_stream_write` zero or more times
+/// and exactly one of `upload_stream_finish` or `upload_stream_abort`.
+pub type UploadStreamBeginFn = unsafe extern "C" fn(
     ctx: *mut c_void,
     destination: *const c_char,
+    metadata_json: *const c_char,
+    upload_out: *mut *mut c_void,
+    error_out: *mut SfCoreFfiError,
+) -> i32;
+
+/// Appends `data_len` bytes, at most [`UPLOAD_STREAM_CHUNK_LEN`], to the write.
+/// `data` is driver-owned and valid only for the call.
+pub type UploadStreamWriteFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    upload: *mut c_void,
     data: *const u8,
     data_len: usize,
-    metadata_json: *const c_char,
+    error_out: *mut SfCoreFfiError,
+) -> i32;
+
+/// Commits the write and releases `upload`, whether or not it succeeds.
+/// `result_out` receives a JSON object whose integer `padded_file_size` is the
+/// size of the stored object.
+pub type UploadStreamFinishFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    upload: *mut c_void,
     result_out: *mut *mut c_char,
     error_out: *mut SfCoreFfiError,
 ) -> i32;
+
+/// Discards the write and releases `upload`.
+pub type UploadStreamAbortFn = unsafe extern "C" fn(ctx: *mut c_void, upload: *mut c_void);
 
 /// On success `data_out` receives a host-allocated buffer of `data_len_out`
 /// bytes, freed by the driver with `libc::free`.
@@ -244,17 +271,33 @@ pub struct XpBackendCallbacks {
             error_out: *mut SfCoreFfiError,
         ) -> i32,
     >,
-    pub upload_stream: Option<
+    pub upload_stream_begin: Option<
         unsafe extern "C" fn(
             ctx: *mut c_void,
             destination: *const c_char,
+            metadata_json: *const c_char,
+            upload_out: *mut *mut c_void,
+            error_out: *mut SfCoreFfiError,
+        ) -> i32,
+    >,
+    pub upload_stream_write: Option<
+        unsafe extern "C" fn(
+            ctx: *mut c_void,
+            upload: *mut c_void,
             data: *const u8,
             data_len: usize,
-            metadata_json: *const c_char,
+            error_out: *mut SfCoreFfiError,
+        ) -> i32,
+    >,
+    pub upload_stream_finish: Option<
+        unsafe extern "C" fn(
+            ctx: *mut c_void,
+            upload: *mut c_void,
             result_out: *mut *mut c_char,
             error_out: *mut SfCoreFfiError,
         ) -> i32,
     >,
+    pub upload_stream_abort: Option<unsafe extern "C" fn(ctx: *mut c_void, upload: *mut c_void)>,
     pub download_stream: Option<
         unsafe extern "C" fn(
             ctx: *mut c_void,
@@ -553,7 +596,7 @@ struct CBackendAdapter {
     get_query_result: GetResultFn,
     authenticate: AuthenticateFn,
     get_session_parameters: GetSessionParamsFn,
-    upload_stream: Option<UploadStreamFn>,
+    upload_stream: Option<UploadStreamCallbacks>,
     download_stream: Option<DownloadStreamFn>,
     list_stage_files: Option<ListStageFilesFn>,
     download_query_chunk: Option<DownloadQueryChunkFn>,
@@ -563,6 +606,37 @@ struct CBackendAdapter {
 // the function pointers are immutable after registration.
 unsafe impl Send for CBackendAdapter {}
 unsafe impl Sync for CBackendAdapter {}
+
+#[derive(Clone, Copy)]
+struct UploadStreamCallbacks {
+    begin: UploadStreamBeginFn,
+    write: UploadStreamWriteFn,
+    finish: UploadStreamFinishFn,
+    abort: UploadStreamAbortFn,
+}
+
+impl UploadStreamCallbacks {
+    fn from_host(cb: &XpBackendCallbacks) -> BackendResult<Option<Self>> {
+        match (
+            cb.upload_stream_begin,
+            cb.upload_stream_write,
+            cb.upload_stream_finish,
+            cb.upload_stream_abort,
+        ) {
+            (None, None, None, None) => Ok(None),
+            (Some(begin), Some(write), Some(finish), Some(abort)) => Ok(Some(Self {
+                begin,
+                write,
+                finish,
+                abort,
+            })),
+            _ => Err(BackendError::invalid_argument(
+                "upload_stream_begin, upload_stream_write, upload_stream_finish and \
+                 upload_stream_abort must be all set or all null",
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct HostContext(*mut c_void);
@@ -595,7 +669,7 @@ impl CBackendAdapter {
             get_query_result: required(cb.get_query_result, "get_query_result")?,
             authenticate: required(cb.authenticate, "authenticate")?,
             get_session_parameters: required(cb.get_session_parameters, "get_session_parameters")?,
-            upload_stream: cb.upload_stream,
+            upload_stream: UploadStreamCallbacks::from_host(cb)?,
             download_stream: cb.download_stream,
             list_stage_files: cb.list_stage_files,
             download_query_chunk: cb.download_query_chunk,
@@ -732,6 +806,21 @@ fn guard<T>(operation: &str, f: impl FnOnce() -> BackendResult<T>) -> BackendRes
             Err(BackendError::panicked(operation))
         }
     }
+}
+
+/// Fills `buffer` as far as the source allows, so every write but the last is
+/// a full chunk. Returns the number of bytes read; `0` means end of source.
+fn read_chunk(source: &mut dyn std::io::Read, buffer: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match source.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
 
 async fn run_callback<T: Send + 'static>(
@@ -947,33 +1036,73 @@ impl SnowflakeBackend for CBackendAdapter {
     async fn upload_stream(
         &self,
         destination: &str,
-        data: &[u8],
         metadata_json: &str,
+        mut source: Box<dyn std::io::Read + Send>,
     ) -> BackendResult<String> {
         const OP: &str = "upload_stream";
-        let Some(callback) = self.upload_stream else {
+        let Some(callbacks) = self.upload_stream else {
             return Err(BackendError::unsupported(OP));
         };
         let destination = destination.to_string();
-        let data = data.to_vec();
         let metadata_json = metadata_json.to_string();
         let context = self.context;
         let payload = run_callback(OP, move || {
             let destination_c = to_c_string(&destination, "upload destination")?;
             let metadata_c = to_c_string(&metadata_json, "upload metadata")?;
-            let mut result = std::ptr::null_mut();
+            let mut upload: *mut c_void = std::ptr::null_mut();
             let mut error = SfCoreFfiError::empty();
+            // SAFETY: registration validated the callbacks; the strings and out
+            // pointers outlive the call.
             let ret = unsafe {
-                callback(
+                (callbacks.begin)(
                     context.as_ptr(),
                     destination_c.as_ptr(),
-                    data.as_ptr(),
-                    data.len(),
                     metadata_c.as_ptr(),
-                    &mut result,
+                    &mut upload,
                     &mut error,
                 )
             };
+            // SAFETY: `error.message` is host-allocated per the callback contract.
+            unsafe { take_result(ret, error, OP, || Ok(()), || {}) }?;
+
+            let abort = |err: BackendError| {
+                // SAFETY: `upload` came from a successful begin and has not been
+                // finished or aborted.
+                unsafe { (callbacks.abort)(context.as_ptr(), upload) };
+                Err(err)
+            };
+            let mut buffer = vec![0u8; UPLOAD_STREAM_CHUNK_LEN];
+            loop {
+                let len = match read_chunk(source.as_mut(), &mut buffer) {
+                    Ok(0) => break,
+                    Ok(len) => len,
+                    Err(e) => {
+                        return abort(BackendError::new(
+                            error_codes::SOURCE_READ,
+                            format!("reading the upload source failed: {e}"),
+                        ));
+                    }
+                };
+                let mut error = SfCoreFfiError::empty();
+                // SAFETY: `upload` is open; `buffer` holds `len` initialized bytes
+                // for the duration of the call.
+                let ret = unsafe {
+                    (callbacks.write)(context.as_ptr(), upload, buffer.as_ptr(), len, &mut error)
+                };
+                // SAFETY: `error.message` is host-allocated per the callback contract.
+                if let Err(err) = unsafe { take_result(ret, error, OP, || Ok(()), || {}) } {
+                    return abort(err);
+                }
+            }
+
+            let mut result = std::ptr::null_mut();
+            let mut error = SfCoreFfiError::empty();
+            // SAFETY: `upload` is open and released by this call; the out pointers
+            // outlive it.
+            let ret =
+                unsafe { (callbacks.finish)(context.as_ptr(), upload, &mut result, &mut error) };
+            // SAFETY: `result` and `error.message` are host-allocated per the
+            // callback contract.
             unsafe { take_string_result(ret, result, error, OP) }
         })
         .await?;
@@ -1317,10 +1446,10 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     fn callbacks_layout_is_pinned_to_the_declared_abi_version() {
         assert_eq!(XP_BACKEND_ABI_VERSION, 1);
-        // u32 + 4 padding + struct_size + context + 10 function pointers.
+        // u32 + 4 padding + struct_size + context + 13 function pointers.
         assert_eq!(
             std::mem::size_of::<XpBackendCallbacks>(),
-            4 + 4 + 8 + 8 + 10 * 8,
+            4 + 4 + 8 + 8 + 13 * 8,
             "layout changed: update this size and regenerate \
              include/sf_core_providers.h"
         );
@@ -1478,7 +1607,10 @@ mod tests {
             get_query_result: Some(unused_result),
             authenticate: Some(unused_auth),
             get_session_parameters: Some(unused_session_params),
-            upload_stream: None,
+            upload_stream_begin: None,
+            upload_stream_write: None,
+            upload_stream_finish: None,
+            upload_stream_abort: None,
             download_stream: None,
             list_stage_files: None,
             download_query_chunk: None,
@@ -1609,5 +1741,136 @@ mod tests {
 
         assert_eq!(err.code, error_codes::UNSUPPORTED);
         assert!(err.message.contains("download_query_chunk"));
+    }
+
+    #[test]
+    fn registration_rejects_a_partial_set_of_upload_callbacks() {
+        let mut callbacks = minimal_callbacks();
+        callbacks.upload_stream_begin = Some(counting_begin);
+
+        let err = match CBackendAdapter::new(&callbacks) {
+            Err(err) => err,
+            Ok(_) => panic!("a partial upload callback set must be rejected"),
+        };
+        assert_eq!(err.code, error_codes::INVALID_ARGUMENT);
+        assert!(err.message.contains("upload_stream_abort"));
+    }
+
+    #[derive(Default)]
+    struct UploadCalls {
+        writes: std::sync::atomic::AtomicUsize,
+        finishes: std::sync::atomic::AtomicUsize,
+        aborts: std::sync::atomic::AtomicUsize,
+    }
+
+    unsafe extern "C" fn counting_begin(
+        _ctx: *mut c_void,
+        _destination: *const c_char,
+        _metadata_json: *const c_char,
+        upload_out: *mut *mut c_void,
+        _error_out: *mut SfCoreFfiError,
+    ) -> i32 {
+        // SAFETY: the driver passes a writable out pointer.
+        unsafe { *upload_out = std::ptr::dangling_mut::<u8>().cast() };
+        0
+    }
+
+    unsafe extern "C" fn counting_write(
+        ctx: *mut c_void,
+        _upload: *mut c_void,
+        _data: *const u8,
+        _data_len: usize,
+        _error_out: *mut SfCoreFfiError,
+    ) -> i32 {
+        // SAFETY: `ctx` is the `UploadCalls` the test registered.
+        let calls = unsafe { &*ctx.cast::<UploadCalls>() };
+        calls
+            .writes
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        0
+    }
+
+    unsafe extern "C" fn counting_finish(
+        ctx: *mut c_void,
+        _upload: *mut c_void,
+        result_out: *mut *mut c_char,
+        _error_out: *mut SfCoreFfiError,
+    ) -> i32 {
+        // SAFETY: `ctx` is the `UploadCalls` the test registered, and
+        // `result_out` is writable.
+        unsafe {
+            (*ctx.cast::<UploadCalls>())
+                .finishes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *result_out = libc::strdup(c"{\"padded_file_size\":0}".as_ptr());
+        }
+        0
+    }
+
+    unsafe extern "C" fn counting_abort(ctx: *mut c_void, _upload: *mut c_void) {
+        // SAFETY: `ctx` is the `UploadCalls` the test registered.
+        let calls = unsafe { &*ctx.cast::<UploadCalls>() };
+        calls
+            .aborts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    struct FailsAfterOneChunk(usize);
+
+    impl std::io::Read for FailsAfterOneChunk {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 == 0 {
+                return Err(std::io::Error::other("disk went away"));
+            }
+            let n = buf.len().min(self.0);
+            self.0 -= n;
+            Ok(n)
+        }
+    }
+
+    fn counting_upload_adapter(calls: &UploadCalls) -> CBackendAdapter {
+        let mut callbacks = minimal_callbacks();
+        callbacks.context = std::ptr::from_ref(calls).cast_mut().cast();
+        callbacks.upload_stream_begin = Some(counting_begin);
+        callbacks.upload_stream_write = Some(counting_write);
+        callbacks.upload_stream_finish = Some(counting_finish);
+        callbacks.upload_stream_abort = Some(counting_abort);
+        CBackendAdapter::new(&callbacks).expect("callbacks should be valid")
+    }
+
+    #[tokio::test]
+    async fn upload_stream_writes_full_chunks_then_finishes() {
+        let calls = UploadCalls::default();
+        let adapter = counting_upload_adapter(&calls);
+
+        let source = std::io::Cursor::new(vec![7u8; UPLOAD_STREAM_CHUNK_LEN + 1]);
+        adapter
+            .upload_stream("@st/f", "{}", Box::new(source))
+            .await
+            .expect("upload should succeed");
+
+        assert_eq!(calls.writes.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(calls.finishes.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(calls.aborts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_source_read_failure_mid_upload_aborts_the_host_upload() {
+        let calls = UploadCalls::default();
+        let adapter = counting_upload_adapter(&calls);
+
+        let err = adapter
+            .upload_stream(
+                "@st/f",
+                "{}",
+                Box::new(FailsAfterOneChunk(UPLOAD_STREAM_CHUNK_LEN)),
+            )
+            .await
+            .expect_err("a read failure must fail the upload");
+
+        assert_eq!(err.code, error_codes::SOURCE_READ);
+        assert_eq!(calls.writes.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(calls.finishes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(calls.aborts.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

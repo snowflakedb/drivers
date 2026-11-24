@@ -102,6 +102,7 @@ fn kind_from_query_response(value: &QueryResponseProcessingError) -> ErrorKind {
             // error, not a driver fault — surface it as
             // `InvalidArgument` rather than `InternalError`.
             s if s.is_file_too_large() => ErrorKind::InvalidArgument,
+            FileManagerError::XpBackendTransfer { source, .. } => kind_from_backend_error(source),
             // Everything else here (Io, UploadBatch, cloud
             // transport errors, ...) is an environmental/transfer
             // failure, not an internal driver bug — `Io` maps to
@@ -129,6 +130,7 @@ fn kind_from_backend_error(source: &crate::xp_backend::BackendError) -> ErrorKin
     match source.code {
         crate::xp_backend::error_codes::UNSUPPORTED => ErrorKind::NotImplemented,
         crate::xp_backend::error_codes::INVALID_ARGUMENT => ErrorKind::InvalidArgument,
+        crate::xp_backend::error_codes::SOURCE_READ => ErrorKind::Io,
         code if code > 0 => ErrorKind::QueryFailed,
         _ => ErrorKind::InternalError,
     }

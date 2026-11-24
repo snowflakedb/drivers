@@ -54,6 +54,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     QueryBindings,
     ResultSetResponse,
     StatementHandle,
+    UploadStreamHandle,
 )
 from .._internal.statement_utils import statement
 from .._internal.utils import _coerce_executemany_params, _resolve_alias
@@ -296,6 +297,9 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             sql=query,
         ).upload_handle
+        self._send_upload_stream(upload_handle, file_stream, query)
+
+    def _send_upload_stream(self, upload_handle: UploadStreamHandle, file_stream: BinaryIO, query: str | None) -> None:
         try:
             while chunk := file_stream.read(CHUNK_SIZE):
                 core_driver.upload_stream_chunk(upload_handle, chunk)
@@ -344,11 +348,19 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         options: dict[str, Any],
         _do_reset: bool = True,
     ) -> None:
-        """Synthesize and run the PUT that ``session.file.put`` would otherwise issue as SQL."""
-        from .._internal.snowpark_backcompat_helpers import file_uri, put_get_options, stage_ref
+        """Upload what ``session.file.put`` names; the core driver decides how the PUT is carried out."""
+        from .._internal.snowpark_backcompat_helpers import stage_upload_options
 
-        sql = f"PUT {file_uri(local_file_name)} {stage_ref(stage_location)} {put_get_options(options)}"
-        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+        if _do_reset:
+            self.reset()
+        response = core_driver.stage_upload(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            local_file_name=local_file_name,
+            stage_location=stage_location,
+            options=stage_upload_options(options),
+        )
+        self._apply_result_set(response, None)  # type: ignore[arg-type]
+        self._rownumber = -1
 
     @snowpark_compat
     @backward_compatibility
@@ -377,11 +389,30 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _do_reset: bool = True,
     ) -> None:
         """Stream-upload to the file named by *stage_location* (a file, not a directory)."""
-        from .._internal.snowpark_backcompat_helpers import put_get_options, unquoted_stage_ref
+        from .._internal.snowpark_backcompat_helpers import stage_upload_options
 
-        stage_dir, _, filename = unquoted_stage_ref(stage_location).rpartition("/")
-        sql = f"PUT file://{filename} {stage_dir} {put_get_options(options)}"
-        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset, file_stream=input_stream)
+        if _do_reset:
+            self.reset()
+        input_stream.seek(0)
+        upload_handle = core_driver.upload_stream_begin(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            stage_location=stage_location,
+            options=stage_upload_options(options),
+        ).upload_handle
+        self._send_upload_stream(upload_handle, input_stream, None)
+        self._rownumber = -1
+
+    @snowpark_compat
+    @backward_compatibility
+    @api_telemetry
+    @requires_open
+    def upload_stream(self, input_stream: BinaryIO, dest_path: str) -> None:
+        """Write *input_stream* to the stage file *dest_path* unchanged, replacing any existing file."""
+        self._upload_stream(
+            input_stream,
+            dest_path,
+            {"auto_compress": False, "source_compression": "NONE", "overwrite": True},
+        )
 
     @snowpark_compat
     @backward_compatibility

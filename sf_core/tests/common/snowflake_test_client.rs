@@ -711,7 +711,9 @@ impl SnowflakeTestClient {
             .client
             .connection_upload_stream_begin_blocking(ConnectionUploadStreamBeginRequest {
                 conn_handle: Some(self.conn_handle),
-                sql: sql.to_string(),
+                target: Some(connection_upload_stream_begin_request::Target::Sql(
+                    sql.to_string(),
+                )),
             })
             .map_err(|e| format!("{e:?}"))?;
         let upload_handle = begin.upload_handle;

@@ -27,6 +27,7 @@ mod query_submit;
 pub(crate) use self::query::test_counting_coordinator;
 pub(crate) mod result_set;
 pub mod spcs_token;
+mod stage_upload;
 pub(crate) mod statement;
 mod stream_transfer;
 pub(crate) mod validation;
@@ -57,5 +58,6 @@ pub use result_set::{
     AsyncArrowBatchFetcher, ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult,
     InlineData, ResultSetDescriptor, ResultSetInfo,
 };
+pub use stage_upload::StageUploadOptions;
 pub use statement::{AsyncExecuteResult, BindingType, DataPtr};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

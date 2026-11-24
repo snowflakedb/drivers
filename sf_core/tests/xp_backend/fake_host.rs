@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sf_core::xp_backend::ffi::{SfCoreFfiError, XP_BACKEND_ABI_VERSION, XpBackendCallbacks};
 
@@ -16,6 +17,15 @@ pub struct Call {
     /// SQL text for `execute_query`, the query id for the per-query calls.
     pub subject: Option<String>,
     pub payload: Option<String>,
+}
+
+/// One write opened by `upload_stream_begin`, and once finished, what it stored.
+#[derive(Clone)]
+struct Upload {
+    destination: String,
+    metadata: Option<String>,
+    bytes: Vec<u8>,
+    writes: usize,
 }
 
 /// Reached through the callbacks' `context` pointer.
@@ -32,6 +42,21 @@ pub struct HostState {
     cancel_response: Mutex<Option<String>>,
     /// Consumed by the next call, which then fails instead of succeeding.
     scripted_failure: Mutex<Option<(i32, Option<String>)>>,
+    /// Finished uploads keyed by destination — lets a test assert a PUT
+    /// reached the backend (and with what bytes) instead of an outbound cloud
+    /// HTTP client.
+    uploaded_blobs: Mutex<HashMap<String, Upload>>,
+    /// JSON array body `list_stage_files` reports (e.g. `[{"name":"@st/a.csv"}]`,
+    /// or `"[]"` for no match).
+    stage_listing: Mutex<Option<String>>,
+    /// JSON body `upload_stream_finish` reports; unscripted, it reports the
+    /// received byte count as `padded_file_size`.
+    upload_stream_response: Mutex<Option<String>>,
+    /// The next `upload_stream_write` fails with this code.
+    fail_next_write: Mutex<Option<i32>>,
+    upload_in_flight: AtomicUsize,
+    max_concurrent_uploads: AtomicUsize,
+    aborted_uploads: AtomicUsize,
     /// Bytes `download_query_chunk` reports, keyed by chunk URL.
     chunk_bodies: Mutex<HashMap<String, Vec<u8>>>,
     /// `headers_json` observed by the most recent `download_query_chunk` call
@@ -82,6 +107,48 @@ impl HostState {
     /// for `url`.
     pub fn chunk_headers(&self, url: &str) -> Option<String> {
         self.chunk_headers.lock().unwrap().get(url).cloned()
+    }
+
+    /// Body `list_stage_files` returns. `"[]"` (or unset) means no match.
+    pub fn set_stage_listing(&self, body: impl Into<String>) {
+        *self.stage_listing.lock().unwrap() = Some(body.into());
+    }
+
+    /// JSON body `upload_stream_finish` reports. `None` restores the default,
+    /// which reports the received byte count as `padded_file_size`.
+    pub fn set_upload_stream_response(&self, body: Option<&str>) {
+        *self.upload_stream_response.lock().unwrap() = body.map(str::to_string);
+    }
+
+    pub fn fail_next_upload_write(&self, code: i32) {
+        *self.fail_next_write.lock().unwrap() = Some(code);
+    }
+
+    /// Bytes and `metadata_json` most recently uploaded to `destination`.
+    pub fn uploaded_blob(&self, destination: &str) -> Option<(Vec<u8>, Option<String>)> {
+        self.uploaded_blobs
+            .lock()
+            .unwrap()
+            .get(destination)
+            .map(|upload| (upload.bytes.clone(), upload.metadata.clone()))
+    }
+
+    /// How many `upload_stream_write` calls delivered the upload to `destination`.
+    pub fn upload_write_count(&self, destination: &str) -> Option<usize> {
+        self.uploaded_blobs
+            .lock()
+            .unwrap()
+            .get(destination)
+            .map(|upload| upload.writes)
+    }
+
+    pub fn aborted_uploads(&self) -> usize {
+        self.aborted_uploads.load(Ordering::SeqCst)
+    }
+
+    /// Highest number of `upload_stream` calls running at the same time.
+    pub fn max_concurrent_uploads(&self) -> usize {
+        self.max_concurrent_uploads.load(Ordering::SeqCst)
     }
 
     pub fn calls(&self) -> Vec<Call> {
@@ -137,10 +204,13 @@ pub fn callbacks_for(state: &'static HostState) -> XpBackendCallbacks {
         get_query_result: Some(get_query_result),
         authenticate: Some(authenticate),
         get_session_parameters: Some(get_session_parameters),
+        upload_stream_begin: Some(upload_stream_begin),
+        upload_stream_write: Some(upload_stream_write),
+        upload_stream_finish: Some(upload_stream_finish),
+        upload_stream_abort: Some(upload_stream_abort),
         // Null on purpose: the trait's "unsupported" defaults must answer.
-        upload_stream: None,
         download_stream: None,
-        list_stage_files: None,
+        list_stage_files: Some(list_stage_files),
         download_query_chunk: Some(download_query_chunk),
     }
 }
@@ -367,5 +437,116 @@ unsafe extern "C" fn download_query_chunk(
                 999
             }
         }
+    }
+}
+
+unsafe extern "C" fn upload_stream_begin(
+    host_state: *mut c_void,
+    destination: *const c_char,
+    metadata_json: *const c_char,
+    upload_out: *mut *mut c_void,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        let destination = borrow_str(destination).unwrap_or_default();
+        let metadata = borrow_str(metadata_json);
+        host.record("upload_stream", Some(destination.clone()), metadata.clone());
+        if let Some(code) = maybe_fail(host, error_out) {
+            return code;
+        }
+        let running = host.upload_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        host.max_concurrent_uploads
+            .fetch_max(running, Ordering::SeqCst);
+        let upload = Box::new(Upload {
+            destination,
+            metadata,
+            bytes: Vec::new(),
+            writes: 0,
+        });
+        *upload_out = Box::into_raw(upload).cast::<c_void>();
+        0
+    }
+}
+
+/// SAFETY: `upload` must come from `upload_stream_begin` and still be open.
+unsafe extern "C" fn upload_stream_write(
+    host_state: *mut c_void,
+    upload: *mut c_void,
+    data: *const u8,
+    data_len: usize,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        if let Some(code) = host.fail_next_write.lock().unwrap().take() {
+            (*error_out).code = code;
+            (*error_out).message = host_strdup("scripted write failure");
+            return code;
+        }
+        let upload = &mut *upload.cast::<Upload>();
+        upload
+            .bytes
+            .extend_from_slice(std::slice::from_raw_parts(data, data_len));
+        upload.writes += 1;
+        0
+    }
+}
+
+/// SAFETY: `upload` must come from `upload_stream_begin` and still be open.
+unsafe extern "C" fn upload_stream_finish(
+    host_state: *mut c_void,
+    upload: *mut c_void,
+    result_out: *mut *mut c_char,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        let upload = *Box::from_raw(upload.cast::<Upload>());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        host.upload_in_flight.fetch_sub(1, Ordering::SeqCst);
+        let body = host
+            .upload_stream_response
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| format!(r#"{{"padded_file_size":{}}}"#, upload.bytes.len()));
+        host.uploaded_blobs
+            .lock()
+            .unwrap()
+            .insert(upload.destination.clone(), upload);
+        serve(Some(body), "upload response", result_out, error_out)
+    }
+}
+
+/// SAFETY: `upload` must come from `upload_stream_begin` and still be open.
+unsafe extern "C" fn upload_stream_abort(host_state: *mut c_void, upload: *mut c_void) {
+    unsafe {
+        let host = state(host_state);
+        drop(Box::from_raw(upload.cast::<Upload>()));
+        host.upload_in_flight.fetch_sub(1, Ordering::SeqCst);
+        host.aborted_uploads.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+unsafe extern "C" fn list_stage_files(
+    host_state: *mut c_void,
+    stage_location: *const c_char,
+    is_exact_match: i32,
+    result_out: *mut *mut c_char,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        host.record(
+            "list_stage_files",
+            borrow_str(stage_location),
+            Some(is_exact_match.to_string()),
+        );
+        if let Some(code) = maybe_fail(host, error_out) {
+            return code;
+        }
+        let body = host.stage_listing.lock().unwrap().clone();
+        serve(body, "stage listing", result_out, error_out)
     }
 }

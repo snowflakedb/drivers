@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 
+from collections.abc import Mapping
 from typing import Any
 
 from snowflake.connector._internal.error_kinds import (
@@ -62,6 +63,8 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionSetOptionsResponse,
     ConnectionSetSessionParametersRequest,
     ConnectionSetSessionParametersResponse,
+    ConnectionStageUploadRequest,
+    ConnectionStageUploadResponse,
     ConnectionTokenRequest,
     ConnectionTokenResponse,
     ConnectionUploadStreamAbortRequest,
@@ -95,6 +98,7 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ResultSetReleaseRequest,
     ResultSetReleaseResponse,
     ResultSetResponse,
+    StageUploadTarget,
     StatementExecuteAsyncRequest,
     StatementExecuteAsyncResponse,
     StatementExecuteQueryRequest,
@@ -456,9 +460,36 @@ class CoreDriver:
     # Connection chunked upload streaming (PUT)
     # =====================================================================
 
-    def upload_stream_begin(self, conn_handle: ConnectionHandle, sql: str) -> ConnectionUploadStreamBeginResponse:
-        request = ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+    def upload_stream_begin(
+        self,
+        conn_handle: ConnectionHandle,
+        sql: str | None = None,
+        *,
+        stage_location: str | None = None,
+        options: Mapping[str, str] | None = None,
+    ) -> ConnectionUploadStreamBeginResponse:
+        """Open an upload session for PUT *sql*, or for the stage file *stage_location*."""
+        if sql is not None:
+            request = ConnectionUploadStreamBeginRequest(conn_handle=conn_handle, sql=sql)
+        elif stage_location is not None:
+            request = ConnectionUploadStreamBeginRequest(
+                conn_handle=conn_handle,
+                stage=StageUploadTarget(stage_location=stage_location, options=options),
+            )
+        else:
+            raise ValueError("upload_stream_begin needs either sql or stage_location")
         return self.client.connection_upload_stream_begin(request)
+
+    def stage_upload(
+        self, conn_handle: ConnectionHandle, local_file_name: str, stage_location: str, options: Mapping[str, str]
+    ) -> ConnectionStageUploadResponse:
+        request = ConnectionStageUploadRequest(
+            conn_handle=conn_handle,
+            local_file_name=local_file_name,
+            stage_location=stage_location,
+            options=options,
+        )
+        return self.client.connection_stage_upload(request)
 
     def upload_stream_chunk(
         self, upload_handle: UploadStreamHandle, data: bytes

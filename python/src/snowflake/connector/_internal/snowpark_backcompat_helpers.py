@@ -29,3 +29,8 @@ def unquoted_stage_ref(path: str) -> str:
 def put_get_options(options: dict[str, Any] | None) -> str:
     """Render an options mapping as trailing ``KEY=VALUE`` pairs, unquoted."""
     return " ".join(f"{name}={value}" for name, value in (options or {}).items())
+
+
+def stage_upload_options(options: dict[str, Any] | None) -> dict[str, str]:
+    """Stringify an options mapping the way ``put_get_options`` renders it into SQL."""
+    return {str(name): str(value) for name, value in (options or {}).items()}

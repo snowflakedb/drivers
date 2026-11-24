@@ -50,12 +50,17 @@
  * Optional callbacks
  * ==================
  *
- * upload_stream, download_stream, list_stage_files and download_query_chunk
- * may be null. Registration accepts a null pointer; the driver returns an
- * UNSUPPORTED error (-1001) the first time it needs that operation.
+ * The four upload_stream_* callbacks, download_stream, list_stage_files and
+ * download_query_chunk may be null. Registration accepts a null pointer; the
+ * driver returns an UNSUPPORTED error (-1001) the first time it needs that
+ * operation. The upload_stream_* callbacks are set or null together.
  *
- *   - upload_stream: PUT sends one file's bytes. The optional "padded_file_size"
- *     field of the JSON result overrides the reported upload size.
+ *   - upload_stream_begin / _write / _finish / _abort: PUT writes one file.
+ *     begin opens a write and returns an opaque handle; write delivers the
+ *     bytes in order, at most UPLOAD_STREAM_CHUNK_LEN per call, in a buffer
+ *     valid only for the call; then exactly one of finish or abort releases
+ *     the handle. finish returns a JSON object with an integer
+ *     "padded_file_size", the size of the stored object.
  *   - download_stream: GET fetches one whole file. The result is a
  *     host-allocated byte buffer.
  *   - list_stage_files: PUT with overwrite=false and GET enumerate stage files.
@@ -87,6 +92,11 @@
  * error message rather than undefined behaviour.
  */
 #define XP_BACKEND_ABI_VERSION 1
+
+/**
+ * Largest buffer the driver passes to one `upload_stream_write` call.
+ */
+#define UPLOAD_STREAM_CHUNK_LEN ((4 * 1024) * 1024)
 
 /**
  * `message` is host-allocated and freed by the driver. `code` should be a
@@ -124,7 +134,10 @@ typedef struct XpBackendCallbacks {
     int32_t (*get_query_result)(void *ctx, const char *query_id, char **result_out, struct SfCoreFfiError *error_out);
     int32_t (*authenticate)(void *ctx, const char *params_json, char **result_out, struct SfCoreFfiError *error_out);
     int32_t (*get_session_parameters)(void *ctx, char **result_out, struct SfCoreFfiError *error_out);
-    int32_t (*upload_stream)(void *ctx, const char *destination, const uint8_t *data, uintptr_t data_len, const char *metadata_json, char **result_out, struct SfCoreFfiError *error_out);
+    int32_t (*upload_stream_begin)(void *ctx, const char *destination, const char *metadata_json, void **upload_out, struct SfCoreFfiError *error_out);
+    int32_t (*upload_stream_write)(void *ctx, void *upload, const uint8_t *data, uintptr_t data_len, struct SfCoreFfiError *error_out);
+    int32_t (*upload_stream_finish)(void *ctx, void *upload, char **result_out, struct SfCoreFfiError *error_out);
+    void (*upload_stream_abort)(void *ctx, void *upload);
     int32_t (*download_stream)(void *ctx, const char *source, const char *metadata_json, uint8_t **data_out, uintptr_t *data_len_out, struct SfCoreFfiError *error_out);
     int32_t (*list_stage_files)(void *ctx, const char *stage_location, int32_t is_exact_match, char **result_out, struct SfCoreFfiError *error_out);
     int32_t (*download_query_chunk)(void *ctx, const char *url, const char *headers_json, uint8_t **data_out, uintptr_t *data_len_out, struct SfCoreFfiError *error_out);

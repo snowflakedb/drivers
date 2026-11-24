@@ -67,6 +67,7 @@ use super::query_submit::{
     AbortReport, QueryTransport, query_context, run_reporting_abort, submit_query, update_caches,
 };
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
+use super::stage_upload::{StageUploadOptions, XpStreamUpload};
 use super::statement::skip_leading_whitespace_and_comments;
 use crate::apis::operation_ctx::OperationCtx;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
@@ -84,12 +85,19 @@ const UPLOAD_STREAM_REQUIRES_PUT_SQL: &str =
 /// `ConnectionDownloadStreamChunkRequest`.
 const DOWNLOAD_STREAM_MAX_CHUNK_LEN: usize = 8 * 1024 * 1024;
 
-/// A pending chunked upload: PUT SQL plus bytes received so far via
+/// Where a chunked upload goes: a PUT run through GS, or an upload through the
+/// XP backend (see `stage_upload`).
+pub(super) enum UploadStreamTarget {
+    Sql(String),
+    Xp(XpStreamUpload),
+}
+
+/// A pending chunked upload: its target plus bytes received so far via
 /// `ConnectionUploadStreamChunk`. Set up by `begin`, filled by `chunk`,
 /// consumed by `finish` (or dropped by `abort`). See module docs for lifetime.
 pub(super) struct UploadStreamSession {
     pub conn_handle: Handle,
-    pub sql: String,
+    pub target: UploadStreamTarget,
     pub buffer: Mutex<SpooledBuffer>,
     /// Mem-to-file spill threshold for `buffer`. Always `SPOOL_MEM_THRESHOLD`
     /// in production; tests inject a smaller value to exercise the mem→file
@@ -162,13 +170,38 @@ impl DatabaseDriverV1 {
             .fail();
         }
 
-        let session = UploadStreamSession {
+        Ok(self.add_upload_stream_session(conn_handle, UploadStreamTarget::Sql(sql)))
+    }
+
+    /// Begins a chunked upload to `stage_location`, a path that includes the
+    /// file name. The destination is parsed here; like
+    /// `connection_upload_stream_begin`, it does not contact GS or the XP backend
+    /// until `connection_upload_stream_finish`.
+    pub async fn connection_stage_upload_stream_begin(
+        &self,
+        conn_handle: Handle,
+        stage_location: String,
+        options: StageUploadOptions,
+    ) -> Result<Handle, ApiError> {
+        let conn = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found",
+            })?;
+        let target = self
+            .stage_upload_stream_target(&conn, &stage_location, options)
+            .await?;
+        Ok(self.add_upload_stream_session(conn_handle, target))
+    }
+
+    fn add_upload_stream_session(&self, conn_handle: Handle, target: UploadStreamTarget) -> Handle {
+        self.upload_streams.add_handle(UploadStreamSession {
             conn_handle,
-            sql,
+            target,
             buffer: Mutex::new(SpooledBuffer::default()),
             spill_threshold: SPOOL_MEM_THRESHOLD,
-        };
-        Ok(self.upload_streams.add_handle(session))
+        })
     }
 
     /// Appends one chunk to a pending upload started by
@@ -226,9 +259,16 @@ impl DatabaseDriverV1 {
 
         // Must outlive the upload below: it unlinks the spooled temp file on
         // drop, and the upload streams the PUT body from its path.
-        let result = self
-            .run_put_stream_via_gs(session.conn_handle, session.sql.clone(), source)
-            .await;
+        let result = match &session.target {
+            UploadStreamTarget::Sql(sql) => {
+                self.run_put_stream_via_gs(session.conn_handle, sql.clone(), source)
+                    .await
+            }
+            UploadStreamTarget::Xp(upload) => {
+                self.run_xp_stream_upload(session.conn_handle, upload.clone(), source)
+                    .await
+            }
+        };
         drop(temp_path_guard);
         result
     }
@@ -1046,8 +1086,47 @@ mod tests {
             .upload_streams
             .get_obj(upload_handle)
             .expect("session must be registered under the returned handle");
-        assert_eq!(session.sql, "PUT file://x @s");
+        assert!(
+            matches!(&session.target, UploadStreamTarget::Sql(sql) if sql == "PUT file://x @s")
+        );
         assert_eq!(session.conn_handle, conn_handle);
+    }
+
+    #[tokio::test]
+    async fn stage_upload_stream_begin_stores_the_put_that_finish_runs() {
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = register_bare_connection(&driver);
+        let upload_handle = driver
+            .connection_stage_upload_stream_begin(
+                conn_handle,
+                "'st/dir/name.csv'".into(),
+                StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+            )
+            .await
+            .expect("a stage file destination must open a session");
+
+        let session = driver
+            .upload_streams
+            .get_obj(upload_handle)
+            .expect("session must be registered under the returned handle");
+        assert!(matches!(&session.target, UploadStreamTarget::Sql(sql)
+                if sql == "PUT file://name.csv @st/dir OVERWRITE=TRUE"),);
+    }
+
+    #[tokio::test]
+    async fn stage_upload_stream_begin_rejects_a_destination_without_a_stage_directory() {
+        let driver = DatabaseDriverV1::new();
+        let conn_handle = register_bare_connection(&driver);
+        for destination in ["/name.csv", "@st/dir/", "name.csv"] {
+            let result = driver
+                .connection_stage_upload_stream_begin(
+                    conn_handle,
+                    destination.into(),
+                    StageUploadOptions::default(),
+                )
+                .await;
+            assert!(result.is_err(), "{destination:?} must be rejected at begin");
+        }
     }
 
     #[tokio::test]
@@ -1092,7 +1171,7 @@ mod tests {
         let conn_handle = register_bare_connection(&driver);
         let upload_handle = driver.upload_streams.add_handle(UploadStreamSession {
             conn_handle,
-            sql: "PUT file://x @s".into(),
+            target: UploadStreamTarget::Sql("PUT file://x @s".into()),
             buffer: Mutex::new(SpooledBuffer::default()),
             spill_threshold: 16,
         });

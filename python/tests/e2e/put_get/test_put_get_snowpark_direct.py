@@ -30,8 +30,8 @@ PAYLOAD = b"col1,col2\nhello,world\n"
 PUT_TARGET, PUT_STATUS = 1, 6
 GET_FILE, GET_STATUS = 0, 2
 
-# These methods synthesize SQL from an unquoted local path, matching legacy's
-# own parse_file_operation. That only works because production callers are a
+# Outside a stored procedure these calls become PUT/GET SQL with an unquoted
+# local path, matching legacy's own parse_file_operation. That only works because production callers are a
 # stored procedure running in a Linux sandbox; a real Windows path (backslashes,
 # 8.3 short names) breaks the unquoted SQL token these tests would generate.
 pytestmark = pytest.mark.skipif(

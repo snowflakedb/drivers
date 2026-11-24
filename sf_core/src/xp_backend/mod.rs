@@ -40,6 +40,8 @@ pub mod error_codes {
     /// The host returned a payload the driver could not parse.
     pub const PROTOCOL: i32 = -1006;
     pub const ABI_MISMATCH: i32 = -1007;
+    /// The driver could not read the local bytes it was uploading.
+    pub const SOURCE_READ: i32 = -1008;
 }
 
 /// `code` is a Snowflake server error code from the host, or one of
@@ -177,11 +179,13 @@ pub trait SnowflakeBackend: Send + Sync {
 
     async fn get_session_parameters(&self) -> BackendResult<HashMap<String, String>>;
 
+    /// Writes everything `source` yields to `destination`. The result is the
+    /// host's JSON object carrying `padded_file_size`.
     async fn upload_stream(
         &self,
         _destination: &str,
-        _data: &[u8],
         _metadata_json: &str,
+        _source: Box<dyn std::io::Read + Send>,
     ) -> BackendResult<String> {
         Err(BackendError::unsupported("upload_stream"))
     }
@@ -261,7 +265,9 @@ mod tests {
 
         for (err, operation) in [
             (
-                backend.upload_stream("@stage/f", b"x", "{}").await,
+                backend
+                    .upload_stream("@stage/f", "{}", Box::new(std::io::empty()))
+                    .await,
                 "upload_stream",
             ),
             (

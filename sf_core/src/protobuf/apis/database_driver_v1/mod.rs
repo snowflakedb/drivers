@@ -6,6 +6,7 @@ use crate::apis::database_driver_v1::BindingType;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Setting;
+use crate::apis::database_driver_v1::StageUploadOptions;
 use crate::apis::database_driver_v1::error::{
     ConfigurationSnafu, InvalidWifProviderSnafu, WorkloadIdentityAttestationSnafu,
 };
@@ -713,13 +714,53 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionUploadStreamBeginRequest,
     ) -> Result<ConnectionUploadStreamBeginResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let upload_handle = self
-            .driver
-            .connection_upload_stream_begin(conn_handle.into(), input.sql)
-            .await
-            .to_protobuf()?;
+        let target = required(input.target, "Upload stream target is required")?;
+        let upload_handle = match target {
+            connection_upload_stream_begin_request::Target::Sql(sql) => {
+                self.driver
+                    .connection_upload_stream_begin(conn_handle.into(), sql)
+                    .await
+            }
+            connection_upload_stream_begin_request::Target::Stage(stage) => {
+                self.driver
+                    .connection_stage_upload_stream_begin(
+                        conn_handle.into(),
+                        stage.stage_location,
+                        StageUploadOptions::new(stage.options),
+                    )
+                    .await
+            }
+        }
+        .to_protobuf()?;
         Ok(ConnectionUploadStreamBeginResponse {
             upload_handle: Some(upload_handle.into()),
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_stage_upload",
+        skip(self, operation_ctx, input)
+    )]
+    async fn connection_stage_upload(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        input: ConnectionStageUploadRequest,
+    ) -> Result<ConnectionStageUploadResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let info = self
+            .driver
+            .connection_stage_upload(
+                operation_ctx,
+                conn_handle.into(),
+                input.local_file_name,
+                input.stage_location,
+                StageUploadOptions::new(input.options),
+            )
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionStageUploadResponse {
+            result_set_handle: Some(info.handle.into()),
+            result_descriptor: Some(info.descriptor.into()),
         })
     }
 

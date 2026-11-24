@@ -196,6 +196,7 @@ use crate::compression::{CompressionError, compress_to_tempfile};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::config::retry::RetryPolicy;
 use crate::tls::error::TlsError;
+use crate::xp_backend::BackendError;
 use azure_transfer::{
     AzurePreparedUpload, azure_get_streaming, download_from_azure_streaming,
     upload_to_azure_or_skip,
@@ -218,7 +219,7 @@ use s3_transfer::{
     S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3, download_from_s3_streaming,
     upload_to_s3_or_skip,
 };
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -673,7 +674,7 @@ pub(crate) async fn upload_prepared_source(
         })
         .await
         .context(BlockingTaskSnafu)??;
-    let (data, (prepared, file_metadata)) = match preprocess_outcome {
+    let (data, (prepared, mut file_metadata)) = match preprocess_outcome {
         Ok(ready) => ready,
         Err(row) => return Ok(row),
     };
@@ -717,6 +718,20 @@ pub(crate) async fn upload_prepared_source(
         )
         .await
         .context(AzureUploadSnafu)?,
+        CloudPreparedUpload::XpBackend(prepared) => {
+            let (status, target_size) = upload_to_xp_backend_or_skip(
+                prepared,
+                &data.stage_info,
+                file_metadata.target.as_str(),
+                data.overwrite,
+                &file_metadata.source_compression,
+                &file_metadata.target_compression,
+                tx,
+            )
+            .await?;
+            file_metadata.target_size = target_size;
+            status
+        }
     };
 
     // `message` is populated for `Skipped` under ODBC (see `upload_result_message`).
@@ -795,13 +810,14 @@ enum CloudPreparedUpload {
     S3(PreparedUpload),
     Gcs(PreparedUpload),
     Azure(AzurePreparedUpload),
+    XpBackend(PreparedUpload),
 }
 
 #[cfg(test)]
 impl CloudPreparedUpload {
     fn upload(&self) -> &PreparedUpload {
         match self {
-            Self::S3(prepared) | Self::Gcs(prepared) => prepared,
+            Self::S3(prepared) | Self::Gcs(prepared) | Self::XpBackend(prepared) => prepared,
             Self::Azure(azure) => azure.upload(),
         }
     }
@@ -926,6 +942,13 @@ fn preprocess_file_before_upload(
                 cse,
             })
         }
+        // The backend has no digest to compare, and `encryption_material` is
+        // never set for it, so `cse` is `None`.
+        LocationType::XpBackend => CloudPreparedUpload::XpBackend(PreparedUpload {
+            source,
+            digest: String::new(),
+            cse,
+        }),
     };
 
     Ok((
@@ -939,6 +962,86 @@ fn preprocess_file_before_upload(
             target_compression,
         },
     ))
+}
+
+/// Uploads a prepared source through the registered XP backend.
+///
+/// With `overwrite=false` the destination is looked up with `list_stage_files`
+/// and an existing file is skipped with a reported size of 0. Otherwise the
+/// reported size is the `padded_file_size` the backend stored.
+async fn upload_to_xp_backend_or_skip(
+    prepared: PreparedUpload,
+    stage_info: &StageInfo,
+    target: &str,
+    overwrite: bool,
+    source_compression: &CompressionType,
+    target_compression: &CompressionType,
+    tx: TransferCtx<'_>,
+) -> Result<(UploadStatus, i64), FileManagerError> {
+    let backend = tx.backend.context(XpBackendMissingSnafu)?;
+    let destination = format!("{}{target}", stage_info.key_prefix);
+
+    if !overwrite {
+        if destination.to_ascii_lowercase().starts_with("snow://") {
+            return Err(BackendError::new(
+                crate::xp_backend::error_codes::UNSUPPORTED,
+                "overwrite=false is not supported for snow:// URLs",
+            ))
+            .context(XpBackendTransferSnafu);
+        }
+        let listing = backend
+            .list_stage_files(&destination, true)
+            .await
+            .context(XpBackendTransferSnafu)?;
+        if stage_listing_is_nonempty(&listing).context(XpBackendTransferSnafu)? {
+            return Ok((UploadStatus::Skipped, 0));
+        }
+    }
+
+    let source = prepared
+        .source
+        .byte_source()
+        .open_async()
+        .await
+        .context(IoSnafu)?;
+    let metadata_json = serde_json::json!({
+        "overwrite": overwrite,
+        "source_compression": source_compression.get_snowflake_representation(),
+        "target_compression": target_compression.get_snowflake_representation(),
+    })
+    .to_string();
+
+    let response = backend
+        .upload_stream(&destination, &metadata_json, source)
+        .await
+        .context(XpBackendTransferSnafu)?;
+    drop(prepared);
+
+    Ok((
+        UploadStatus::Uploaded,
+        parse_upload_stream_response(&response).context(XpBackendTransferSnafu)?,
+    ))
+}
+
+fn stage_listing_is_nonempty(listing: &str) -> Result<bool, BackendError> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(listing).map_err(|e| {
+        BackendError::protocol(format!("list_stage_files: expected a JSON array: {e}"))
+    })?;
+    Ok(!rows.is_empty())
+}
+
+fn parse_upload_stream_response(response: &str) -> Result<i64, BackendError> {
+    #[derive(serde::Deserialize)]
+    struct UploadStreamResponse {
+        padded_file_size: i64,
+    }
+    serde_json::from_str::<UploadStreamResponse>(response)
+        .map(|parsed| parsed.padded_file_size)
+        .map_err(|e| {
+            BackendError::protocol(format!(
+                "upload_stream: expected a JSON object with an integer padded_file_size: {e}"
+            ))
+        })
 }
 
 /// Reads the first `COMPRESSION_DETECT_PREFIX_LEN` bytes for compression
@@ -1780,6 +1883,10 @@ async fn download_single_file_to(
             };
             (cloud_byte_count, output_byte_len)
         }
+        LocationType::XpBackend => {
+            return Err(BackendError::unsupported("download_stream"))
+                .context(XpBackendTransferSnafu);
+        }
     };
 
     tracing::info!(
@@ -2023,6 +2130,9 @@ pub async fn open_download_stream_for_stage(
                 multipart,
             )
             .await
+        }
+        LocationType::XpBackend => {
+            Err(BackendError::unsupported("download_stream")).context(XpBackendTransferSnafu)
         }
     }
 }
@@ -2617,6 +2727,17 @@ pub enum FileManagerError {
     BatchHttpClient {
         #[snafu(source(from(TlsError, Box::new)))]
         source: Box<TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("XP backend file transfer failed: {source}"))]
+    XpBackendTransfer {
+        source: BackendError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("XP backend transfer requested but no backend was provided to the transfer"))]
+    XpBackendMissing {
         #[snafu(implicit)]
         location: Location,
     },
@@ -4921,6 +5042,9 @@ mod tests {
                 gcs_access_token: Some(SensitiveString::from("test-bearer-token".to_string())),
             },
             LocationType::Azure => unreachable!("Azure path covered by content_match_skip tests"),
+            LocationType::XpBackend => {
+                unreachable!("content_match_skip tests use S3 and Gcs stages")
+            }
         };
         SingleUploadData {
             source: ByteSource::Path(file_path.into()),
@@ -5194,6 +5318,44 @@ mod tests {
                     "GET {gs} cwd={cwd:?} resolved to {resolved:?} and wrote {output:?}"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod xp_backend_upload_tests {
+    use super::*;
+    use crate::xp_backend::error_codes;
+
+    #[test]
+    fn stage_listing_must_be_a_json_array() {
+        assert!(!stage_listing_is_nonempty("[]").unwrap());
+        assert!(!stage_listing_is_nonempty(" [ ] ").unwrap());
+        assert!(stage_listing_is_nonempty(r#"[{"name":"@st/a.csv"}]"#).unwrap());
+        for malformed in ["null", "{}", r#"{"files":[]}"#, "", "not json"] {
+            let err = stage_listing_is_nonempty(malformed).unwrap_err();
+            assert_eq!(err.code, error_codes::PROTOCOL, "{malformed:?}");
+        }
+    }
+
+    #[test]
+    fn upload_response_must_carry_the_padded_size() {
+        assert_eq!(
+            parse_upload_stream_response(r#"{"padded_file_size": 4096, "status": "UPLOADED"}"#)
+                .unwrap(),
+            4096
+        );
+        for malformed in [
+            "",
+            "not json",
+            "[]",
+            "{}",
+            r#"{"status":"UPLOADED"}"#,
+            r#"{"padded_file_size":null}"#,
+            r#"{"padded_file_size":"big"}"#,
+        ] {
+            let err = parse_upload_stream_response(malformed).unwrap_err();
+            assert_eq!(err.code, error_codes::PROTOCOL, "{malformed:?}");
         }
     }
 }

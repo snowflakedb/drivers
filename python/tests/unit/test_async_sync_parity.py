@@ -54,6 +54,9 @@ def _public_methods(cls: type) -> set[str]:
 _CURSOR_SYNC_ONLY: set[str] = {
     # `download_stream` is implemented on the sync cursor only.
     "download_stream",
+    # `upload_stream` is called only by Snowpark's stored-procedure path, which
+    # uses the sync cursor.
+    "upload_stream",
 }
 _CURSOR_ASYNC_ONLY: set[str] = set()  # none today
 

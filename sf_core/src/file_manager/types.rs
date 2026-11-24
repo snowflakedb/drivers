@@ -252,7 +252,7 @@ pub struct DownloadResult {
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceCompressionParam {
     Gzip,
     Bzip2,
@@ -266,12 +266,35 @@ pub enum SourceCompressionParam {
     AutoDetect,
 }
 
+impl SourceCompressionParam {
+    /// Parses a PUT `SOURCE_COMPRESSION` value, case-insensitively.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name.to_ascii_uppercase().as_str() {
+            "AUTO_DETECT" => Self::AutoDetect,
+            "GZIP" => Self::Gzip,
+            "BZIP2" => Self::Bzip2,
+            "BROTLI" => Self::Brotli,
+            "ZSTD" => Self::Zstd,
+            "DEFLATE" => Self::Deflate,
+            "RAW_DEFLATE" => Self::RawDeflate,
+            "PARQUET" => Self::Parquet,
+            "ORC" => Self::Orc,
+            "NONE" => Self::None,
+            _ => return None,
+        })
+    }
+}
+
 /// Cloud storage location type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocationType {
     S3,
     Gcs,
     Azure,
+    /// Stage I/O served by the registered [`crate::xp_backend::SnowflakeBackend`]
+    /// instead of a cloud provider. Built by [`StageInfo::for_xp_backend`];
+    /// GS responses have no location type that maps to it.
+    XpBackend,
 }
 
 impl fmt::Display for LocationType {
@@ -280,6 +303,7 @@ impl fmt::Display for LocationType {
             LocationType::S3 => f.write_str("S3"),
             LocationType::Gcs => f.write_str("GCS"),
             LocationType::Azure => f.write_str("Azure"),
+            LocationType::XpBackend => f.write_str("XpBackend"),
         }
     }
 }
@@ -315,6 +339,26 @@ pub struct StageInfo {
 }
 
 impl StageInfo {
+    /// A stage served by the XP backend. `stage_dir` is the stage reference
+    /// the host resolves (e.g. `@stage/dir`); `key_prefix` holds it with exactly
+    /// one trailing `/`. The cloud fields stay empty.
+    pub fn for_xp_backend(stage_dir: &str, transport: &StageTransport) -> Self {
+        Self {
+            location_type: LocationType::XpBackend,
+            bucket: String::new(),
+            key_prefix: format!("{}/", stage_dir.trim_end_matches('/')),
+            region: String::new(),
+            creds: CloudCredentials::None,
+            endpoint: None,
+            presigned_url: None,
+            use_virtual_url: false,
+            use_regional_url: false,
+            use_s3_regional_url: false,
+            storage_account: None,
+            transport: transport.clone(),
+        }
+    }
+
     /// Returns a copy of `self` with `creds` and `presigned_url` overlaid
     /// from `snapshot`. `presigned_url` is overlaid only when the snapshot
     /// carries one — this keeps S3/Azure callers from clobbering an inherited
@@ -385,6 +429,9 @@ pub enum CloudCredentials {
     },
     /// Azure Blob Storage credentials (SAS token).
     Azure { sas_token: SensitiveString },
+    /// [`LocationType::XpBackend`] stages carry no credentials; the backend
+    /// authenticates the transfer.
+    None,
 }
 
 /// Encryption material for file transfer.
@@ -840,6 +887,9 @@ pub struct TransferCtx<'a> {
     /// The connection's storage HTTP client cache. `None` (internal callers,
     /// tests) builds a fresh client per command.
     pub(crate) http_client_cache: Option<&'a super::cloud_http::StorageHttpClientCache>,
+    /// The registered XP backend. Set for [`LocationType::XpBackend`] stages and
+    /// `None` for every cloud transfer.
+    pub(crate) backend: Option<&'a dyn crate::xp_backend::SnowflakeBackend>,
 }
 
 impl<'a> TransferCtx<'a> {
@@ -866,6 +916,15 @@ impl<'a> TransferCtx<'a> {
             http_client: None,
             s3_client_cache: None,
             http_client_cache: None,
+            backend: None,
+        }
+    }
+
+    /// Joins the registered XP backend for [`LocationType::XpBackend`] transfers.
+    pub(crate) fn with_backend(self, backend: &'a dyn crate::xp_backend::SnowflakeBackend) -> Self {
+        Self {
+            backend: Some(backend),
+            ..self
         }
     }
 

@@ -625,17 +625,32 @@ message UploadStreamHandle {
   int64 magic = 2;
 }
 
-// Chunked streaming PUT, part 1/3: registers the PUT SQL and opens a session
-// that accumulates chunks handed in via ConnectionUploadStreamChunk. The core
-// does not contact GS until ConnectionUploadStreamFinish — bounding wrapper
-// memory to ~one chunk while preserving the existing upload path (digest,
-// retry, CSE, multipart) unchanged. Backs JDBC `uploadStream` and Python
-// `cursor.execute(file_stream=…)`.
+// Chunked streaming PUT, part 1/3: registers the PUT SQL or stage target and
+// opens a session that accumulates chunks handed in via
+// ConnectionUploadStreamChunk. The core does not contact GS or the XP backend
+// until ConnectionUploadStreamFinish — bounding wrapper memory to ~one chunk
+// while preserving the existing upload path (digest, retry, CSE, multipart)
+// unchanged. `sql` backs JDBC `uploadStream` and Python
+// `cursor.execute(file_stream=…)`; `stage` backs Python `_upload_stream` and
+// `upload_stream`.
 message ConnectionUploadStreamBeginRequest {
   ConnectionHandle conn_handle = 1;
-  // The PUT SQL statement. Must begin with PUT and reference a `file://`
-  // path whose basename is used as the destination filename in the stage.
-  string sql = 2;
+  oneof target {
+    // The PUT SQL statement. Must begin with PUT and reference a `file://`
+    // path whose basename is used as the destination filename in the stage.
+    string sql = 2;
+    // The stage file to write and its PUT options, for callers that hold no
+    // PUT SQL.
+    StageUploadTarget stage = 3;
+  }
+}
+
+// Destination of a chunked upload given without PUT SQL.
+message StageUploadTarget {
+  // Full destination path including the file name, e.g. `@stage/dir/name.csv`.
+  string stage_location = 1;
+  // As in `ConnectionStageUploadRequest.options`.
+  map<string, string> options = 2;
 }
 
 message ConnectionUploadStreamBeginResponse {
@@ -674,6 +689,30 @@ message ConnectionUploadStreamAbortRequest {
 }
 
 message ConnectionUploadStreamAbortResponse {}
+
+// Uploads local files to a stage without the caller rendering PUT SQL. The core
+// builds the PUT when it must ask GS for stage credentials, and drives the
+// upload directly when a host backend serves stage I/O.
+//
+// `stage_location` is the stage reference as the caller holds it, optionally
+// single-quoted. A missing `@` prefix is added unless it begins with `@` or
+// `snow://`, or, outside a stored procedure, with `/` or `'`.
+// `options` carries PUT options by name (`AUTO_COMPRESS`, `OVERWRITE`,
+// `SOURCE_COMPRESSION`, `PARALLEL`). Names are case-insensitive. Values are
+// written as in PUT SQL.
+message ConnectionStageUploadRequest {
+  ConnectionHandle conn_handle = 1;
+  // Local file or glob, optionally `file://`-prefixed and single-quoted.
+  string local_file_name = 2;
+  string stage_location = 3;
+  map<string, string> options = 4;
+}
+
+// Same shape as `ResultSetResponse`: the standard 8-column PUT rowset.
+message ConnectionStageUploadResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
 
 // Handle for a chunked download stream session opened by
 // ConnectionDownloadStreamBegin. Opaque outside sf_core, same shape as the
@@ -1248,6 +1287,9 @@ service DatabaseDriver {
   rpc ConnectionUploadStreamChunk(ConnectionUploadStreamChunkRequest) returns (ConnectionUploadStreamChunkResponse);
   rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse);
   rpc ConnectionUploadStreamAbort(ConnectionUploadStreamAbortRequest) returns (ConnectionUploadStreamAbortResponse);
+  rpc ConnectionStageUpload(ConnectionStageUploadRequest) returns (ConnectionStageUploadResponse) {
+    option (async_first) = true;
+  }
   // Chunked streaming GET: begin a session, pull chunks, then close.
   // Zero-disk, bounded-memory streaming download. Supports S3, GCS, and
   // Azure-backed stages.
