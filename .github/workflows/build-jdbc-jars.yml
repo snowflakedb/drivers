@@ -9,17 +9,25 @@ on:
   pull_request:
     # Packaging-only paths: the JAR layout (Gradle build), the runtime native
     # selection, and the workflows themselves. Deliberately NOT all of jdbc/** —
-    # the 7-leg build_native matrix is ~45 minutes, and driver code changes are
-    # already covered by JDBC CI.
+    # the 7-leg build_native and 5-leg build_native_fips matrices are slow, and
+    # driver code changes are already covered by JDBC CI.
     paths:
       - 'jdbc/build.gradle'
       - 'jdbc/settings.gradle'
       - 'jdbc/gradle/**'
       - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/NativeLibraryLoader.java'
+      - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/BundledNativeLibrary.java'
+      - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/NativeLibraryTempDirs.java'
       - 'jdbc/src/main/java/net/snowflake/client/internal/unicore/LibcDetector.java'
+      - 'jdbc_bridge/Cargo.toml'
       - '.github/workflows/build-jdbc-jars.yml'
       - '.github/workflows/_build-jdbc-fatjar.yml'
       - '.github/actions/jdbc-bridge-cache/**'
+      - '.github/actions/setup-fips-build-env/**'
+      - '.github/actions/fips-release-evidence/**'
+      - 'ci/fips/**'
+      - 'jdbc/src/test/java/net/snowflake/jdbc/e2e/tls/FipsBuildTest.java'
+      - 'jdbc/src/test/java/net/snowflake/client/internal/unicore/SnowflakeDriverTlsStatusTest.java'
   workflow_dispatch:
 
 concurrency:
@@ -40,3 +48,6 @@ jobs:
               || github.event_name == 'workflow_dispatch'
               || startsWith(github.ref, 'refs/heads/release/')))
     uses: ./.github/workflows/_build-jdbc-fatjar.yml
+    secrets:
+      PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+      PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}

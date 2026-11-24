@@ -4,14 +4,27 @@ name: Build JDBC JARs
 #   - fat (snowflake-jdbc-native-all): every platform's jdbc_bridge + shaded deps in one JAR (assemble).
 #   - thin bundle (snowflake-jdbc-native, assemble_thin): native-free plain jar + deps POM +
 #     sources/javadoc, plus one per-platform classifier jar (thin Java + that platform's native).
+#   - FIPS variants (snowflake-jdbc-native-all-fips, snowflake-jdbc-native-fips): the same Java
+#     classes with jdbc_bridge built against the AWS-LC FIPS module (build_native_fips,
+#     assemble_fips, assemble_thin_fips). FIPS and standard natives never share a jar; the
+#     standard assemble jobs download only jdbc-native-{linux,darwin,windows}-*.
 #
-# windows-aarch64 omitted: no CI runner yet.
+# windows-aarch64 omitted: no CI runner yet. FIPS has no musl build: aws-lc-fips-sys is only
+# built and validated against glibc.
 
 on:
   workflow_call:
+    secrets:
+      PARAMETERS_SECRET:
+        required: false
+      PARAMETERS_JSON_AWS:
+        required: false
 
 env:
   CARGO_TERM_COLOR: always
+  # Each matrix `rustup_sha256` is the rustup-init.sha256 that static.rust-lang.org publishes for
+  # this version and the row's target triple.
+  RUSTUP_VERSION: 1.29.3
 
 jobs:
   build_native:
@@ -23,10 +36,10 @@ jobs:
       # NativeLibraryLoader.osArchDir()), `pkg_setup` the in-container build deps (yum vs apk).
       matrix:
         include:
-          - { name: linux-x86_64-gnu,   os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-gnu,   lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_x86_64",  rust_host: x86_64-unknown-linux-gnu,   pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "" }
-          - { name: linux-aarch64-gnu,  os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-gnu,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_aarch64", rust_host: aarch64-unknown-linux-gnu,  pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "" }
-          - { name: linux-x86_64-musl,  os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-musl,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_x86_64",   rust_host: x86_64-unknown-linux-musl,  pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "" }
-          - { name: linux-aarch64-musl, os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-musl, lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_aarch64",  rust_host: aarch64-unknown-linux-musl, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "" }
+          - { name: linux-x86_64-gnu,   os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-gnu,   lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_x86_64",  rust_host: x86_64-unknown-linux-gnu,   rustup_sha256: b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55, pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "" }
+          - { name: linux-aarch64-gnu,  os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-gnu,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/manylinux_2_28_aarch64", rust_host: aarch64-unknown-linux-gnu,  rustup_sha256: 9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282, pkg_setup: "yum install -y perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel", cargo_extra_args: "" }
+          - { name: linux-x86_64-musl,  os: ubuntu-latest,    os_token: linux,   arch: x86_64,  dir: linux-x86_64-musl,  lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_x86_64",   rust_host: x86_64-unknown-linux-musl,  rustup_sha256: 1552169aba2836777136ccff7a381e95c17233b5d8250cd5e10ae3cb971bfcfc, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "" }
+          - { name: linux-aarch64-musl, os: ubuntu-24.04-arm, os_token: linux,   arch: aarch64, dir: linux-aarch64-musl, lib: libjdbc_bridge.so,    container: "quay.io/pypa/musllinux_1_2_aarch64",  rust_host: aarch64-unknown-linux-musl, rustup_sha256: 956deacdc27ab82ae7ac821d5d3e9e95e4795d476d17efe99743bb8531ca1031, pkg_setup: "apk add --no-cache build-base perl curl openjdk8 linux-headers", cargo_extra_args: "" }
           - { name: darwin-x86_64,      os: macos-15-intel,   os_token: darwin,  arch: x86_64,  dir: darwin-x86_64,      lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "", macos_deployment_target: "10.14" }
           - { name: darwin-aarch64,     os: macos-latest,     os_token: darwin,  arch: aarch64, dir: darwin-aarch64,     lib: libjdbc_bridge.dylib, container: "",                                    cargo_extra_args: "", macos_deployment_target: "11.0" }
           - { name: windows-x86_64,     os: windows-latest,   os_token: windows, arch: x86_64,  dir: windows-x86_64,     lib: jdbc_bridge.dll,      container: "",                                    cargo_extra_args: "--config profile.release.strip=false" }
@@ -100,8 +113,9 @@ jobs:
                 # Fetch the host-triple rustup-init directly; sh.rustup.rs misdetects libc as gnu
                 # inside the musl container and installs a cargo that cannot execute here.
                 curl --proto "=https" --tlsv1.2 -sSf \
-                  "https://static.rust-lang.org/rustup/dist/${{ matrix.rust_host }}/rustup-init" \
+                  "https://static.rust-lang.org/rustup/archive/${{ env.RUSTUP_VERSION }}/${{ matrix.rust_host }}/rustup-init" \
                   -o /tmp/rustup-init
+                echo "${{ matrix.rustup_sha256 }}  /tmp/rustup-init" | sha256sum -c -
                 chmod +x /tmp/rustup-init
                 /tmp/rustup-init -y --default-toolchain stable --profile minimal \
                   --default-host ${{ matrix.rust_host }}
@@ -202,7 +216,7 @@ jobs:
       - name: Download all native libs
         uses: actions/download-artifact@v8
         with:
-          pattern: jdbc-native-*
+          pattern: jdbc-native-{linux,darwin,windows}-*
           merge-multiple: true
           path: jdbc/build/native-staging
 
@@ -268,7 +282,7 @@ jobs:
       - name: Download all native libs
         uses: actions/download-artifact@v8
         with:
-          pattern: jdbc-native-*
+          pattern: jdbc-native-{linux,darwin,windows}-*
           merge-multiple: true
           path: jdbc/build/native-staging
 
@@ -313,3 +327,602 @@ jobs:
           shared-key: jdbc-assemble-thin-proto
           registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
           target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  # FIPS jdbc_bridge per platform. Every row builds with an explicit target triple: the evidence
+  # step resolves the macOS/Windows AWS-LC companion libraries under target/<triple>/release.
+  # Linux links the FIPS module statically, so Linux rows stage no companions.
+  build_native_fips:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64-gnu,  os: ubuntu-latest,    dir: linux-x86_64-gnu,  lib: libjdbc_bridge.so,    rust_target: x86_64-unknown-linux-gnu,  container: "quay.io/pypa/manylinux_2_28_x86_64",  rustup_sha256: b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55, go_arch: amd64, go_sha256: a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712, extra_cflags: "" }
+          - { name: linux-aarch64-gnu, os: ubuntu-24.04-arm, dir: linux-aarch64-gnu, lib: libjdbc_bridge.so,    rust_target: aarch64-unknown-linux-gnu, container: "quay.io/pypa/manylinux_2_28_aarch64", rustup_sha256: 9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282, go_arch: arm64, go_sha256: 9bf234ea70ffec9347fdf6b22ce4add51717d3386a38a441e8c8743fceb5eaee, extra_cflags: "-fno-jump-tables" }
+          - { name: darwin-x86_64,     os: macos-15-intel,   dir: darwin-x86_64,     lib: libjdbc_bridge.dylib, rust_target: x86_64-apple-darwin,       macos_deployment_target: "10.14" }
+          - { name: darwin-aarch64,    os: macos-latest,     dir: darwin-aarch64,    lib: libjdbc_bridge.dylib, rust_target: aarch64-apple-darwin,      macos_deployment_target: "11.0" }
+          - { name: windows-x86_64,    os: windows-latest,   dir: windows-x86_64,    lib: jdbc_bridge.dll,      rust_target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    name: build_native_fips (${{ matrix.name }})
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.rust_target }}
+      CARGO_PROFILE_RELEASE_STRIP: 'false'
+      JDBC_ARTIFACT: ${{ github.workspace }}/target/${{ matrix.rust_target }}/release/${{ matrix.lib }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free runner disk space
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/free-disk-space-linux
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-bridge-release-fips-${{ matrix.name }}
+
+      # Restore only: build_native saves this key, and a second saver would race it.
+      - name: Restore rustup toolchain cache (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: ${{ runner.os }}-${{ matrix.name }}-rustup-stable-minimal-v3
+
+      # The manylinux_2_28 image (AlmaLinux 8) provides the same GCC 13 toolset and checksummed
+      # Go 1.25 tarball that ci/Dockerfile.rocky-rpm-build installs for the ODBC FIPS RPM, with a
+      # glibc 2.28 floor instead of Rocky 9's 2.34. If this image cannot build the module, the
+      # fallback is that Rocky image (FIPS=1), at the cost of a glibc 2.34 floor for FIPS jars.
+      # -Wno-error=discarded-qualifiers and the aarch64 -fno-jump-tables match
+      # .github/actions/setup-fips-build-env.
+      - name: Build FIPS jdbc_bridge in manylinux container (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+                   "$HOME/.cargo/bin" "$HOME/.rustup"
+          docker run --rm \
+            -v "$HOME/.cargo/registry:/root/.cargo/registry" \
+            -v "$HOME/.cargo/git:/root/.cargo/git" \
+            -v "$HOME/.cargo/bin:/root/.cargo/bin" \
+            -v "$HOME/.rustup:/root/.rustup" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            -e CARGO_TERM_COLOR=always \
+            -e CARGO_BUILD_TARGET \
+            -e CARGO_PROFILE_RELEASE_STRIP \
+            -e RUSTUP_HOME=/root/.rustup \
+            -e CARGO_HOME=/root/.cargo \
+            ${{ matrix.container }} \
+            bash -c '
+              set -e
+              for attempt in 1 2 3; do
+                yum install -y gcc-toolset-13 perl-IPC-Cmd perl-Time-Piece java-1.8.0-openjdk-devel && break
+                if [ "$attempt" = 3 ]; then exit 1; fi
+                sleep 10
+              done
+              # manylinux_2_28 ships curl older than 7.71, which rejects --retry-all-errors.
+              curl --retry 5 --retry-delay 5 -fsSL \
+                "https://go.dev/dl/go1.25.14.linux-${{ matrix.go_arch }}.tar.gz" -o /tmp/go.tgz
+              echo "${{ matrix.go_sha256 }}  /tmp/go.tgz" | sha256sum -c -
+              rm -rf /usr/local/go
+              tar -C /usr/local -xzf /tmp/go.tgz
+              export PATH="/usr/local/go/bin:$PATH"
+              go version
+              /opt/python/cp312-cp312/bin/python -m venv /tmp/cmake-venv
+              /tmp/cmake-venv/bin/pip install --retries 5 "cmake>=3,<4"
+              export PATH="/tmp/cmake-venv/bin:$PATH" CMAKE=/tmp/cmake-venv/bin/cmake
+              cmake --version | grep "^cmake version 3\."
+              source /opt/rh/gcc-toolset-13/enable
+              export CC=gcc CXX=g++
+              export CFLAGS="-Wno-error=discarded-qualifiers ${{ matrix.extra_cflags }}"
+              if [ -n "${{ matrix.extra_cflags }}" ]; then export CXXFLAGS="${{ matrix.extra_cflags }}"; fi
+              gcc --version
+              export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+              export PATH="/root/.cargo/bin:$PATH"
+              if ! /root/.cargo/bin/cargo --version >/dev/null 2>&1; then
+                curl --proto "=https" --tlsv1.2 -sSf \
+                  "https://static.rust-lang.org/rustup/archive/${{ env.RUSTUP_VERSION }}/${{ matrix.rust_target }}/rustup-init" \
+                  -o /tmp/rustup-init
+                echo "${{ matrix.rustup_sha256 }}  /tmp/rustup-init" | sha256sum -c -
+                chmod +x /tmp/rustup-init
+                /tmp/rustup-init -y --default-toolchain stable --profile minimal \
+                  --default-host ${{ matrix.rust_target }}
+              fi
+              cargo build --locked --release --package jdbc_bridge --features fips
+            '
+
+      - name: Fix ownership of cached dirs (Linux)
+        if: always() && runner.os == 'Linux'
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" \
+            target/ \
+            "$HOME/.cargo/registry" "$HOME/.cargo/git" \
+            "$HOME/.cargo/bin" "$HOME/.rustup" 2>/dev/null || true
+
+      - name: Setup FIPS build environment (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: ./.github/actions/setup-fips-build-env
+
+      - name: Set up Java (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build FIPS jdbc_bridge (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --locked --release --package jdbc_bridge --features fips
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
+
+      # A unique /MAP path forces a fresh final link on cache hits, so the map always describes
+      # this artifact.
+      - name: Configure Windows linker map
+        if: runner.os == 'Windows'
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import tempfile
+
+          map_dir = Path(tempfile.mkdtemp(prefix="fips-jdbc-bridge-map-"))
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              print(f"JDBC_LINKER_MAP={map_dir / 'jdbc_bridge.map'}", file=env)
+
+      - name: Build FIPS jdbc_bridge with linker map (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo rustc --locked --release --lib --package jdbc_bridge --features fips -- -C "link-arg=/MAP:$env:JDBC_LINKER_MAP"
+
+      - name: Inspect linked crypto
+        shell: python {0}
+        run: |
+          import os
+          import subprocess
+          import sys
+
+          command = [sys.executable, "ci/fips/check_linked_crypto.py", os.environ["JDBC_ARTIFACT"]]
+          if sys.platform == "win32":
+              command.extend(["--linker-map", os.environ["JDBC_LINKER_MAP"]])
+          subprocess.run(command, check=True)
+
+      - name: Record jdbc_bridge FIPS evidence
+        uses: ./.github/actions/fips-release-evidence
+        with:
+          package: jdbc_bridge
+          manifest-path: jdbc_bridge/Cargo.toml
+          artifact-path: ${{ env.JDBC_ARTIFACT }}
+          output-dir: fips-evidence/jdbc_bridge
+          target: ${{ matrix.rust_target }}
+          linker-map: ${{ env.JDBC_LINKER_MAP }}
+
+      # Companions come from the evidence bundle so the staged bytes are the ones it hashed.
+      # companions.txt keeps the bundle's order (crypto, then the Windows rust_wrapper), which is
+      # the order NativeLibraryLoader loads them in before jdbc_bridge.
+      - name: Stage FIPS native lib and companions
+        shell: python {0}
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+
+          def sha256(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          out = Path("out", "${{ matrix.dir }}")
+          out.mkdir(parents=True, exist_ok=True)
+          hashes = json.loads(Path("fips-evidence/jdbc_bridge/hashes.json").read_text(encoding="utf-8"))
+          artifact = Path(os.environ["JDBC_ARTIFACT"])
+          if sha256(artifact) != hashes["artifact"]["sha256"]:
+              sys.exit(f"{artifact} does not match the evidence bundle hash")
+          shutil.copyfile(artifact, out / artifact.name)
+          names = []
+          for companion in hashes["companions"]:
+              source = Path(companion["path"])
+              if sha256(source) != companion["sha256"]:
+                  sys.exit(f"{source} does not match the evidence bundle hash")
+              shutil.copyfile(source, out / companion["name"])
+              names.append(companion["name"])
+          if sys.platform in ("darwin", "win32") and not names:
+              sys.exit("FIPS jdbc_bridge on this platform must ship its AWS-LC companion libraries")
+          if names:
+              (out / "companions.txt").write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
+          for path in sorted(out.iterdir()):
+              print(path, path.stat().st_size)
+
+      # Point jdbc_bridge at the companion beside it, as odbc/installer/mac/package.sh does. The
+      # edit invalidates the linker's ad-hoc signature, which arm64 refuses to load, so every
+      # staged dylib is re-signed ad hoc. The evidence bundle describes the pre-edit bytes.
+      - name: Rewrite companion install names (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "out/${{ matrix.dir }}"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            dep="$(otool -L "${{ matrix.lib }}" | awk -v n="$name" '$1 ~ ("/" n "$") || $1 == n { print $1 }')"
+            if [ -z "$dep" ]; then
+              echo "${{ matrix.lib }} does not link $name" >&2
+              exit 1
+            fi
+            install_name_tool -id "@loader_path/$name" "$name"
+            install_name_tool -change "$dep" "@loader_path/$name" "${{ matrix.lib }}"
+            codesign --force --sign - "$name"
+          done < companions.txt
+          codesign --force --sign - "${{ matrix.lib }}"
+          otool -L "${{ matrix.lib }}"
+
+      - name: Record digests of the staged FIPS natives
+        shell: python {0}
+        run: |
+          import hashlib
+          from pathlib import Path
+
+          staged = Path("out", "${{ matrix.dir }}")
+          lines = [
+              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  ${{ matrix.dir }}/{path.name}"
+              for path in sorted(staged.iterdir())
+          ]
+          digests = Path("fips-evidence", "jdbc_bridge", "staged-files.sha256")
+          digests.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(digests.read_text(encoding="utf-8"), end="")
+
+      - name: Upload FIPS native lib artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-native-fips-${{ matrix.name }}
+          path: out
+          if-no-files-found: error
+
+      - name: Upload FIPS evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fips-evidence-jdbc-${{ matrix.name }}
+          path: fips-evidence/
+          if-no-files-found: warn
+
+      - name: Clean up Windows linker map
+        if: always() && runner.os == 'Windows'
+        shell: python {0}
+        run: |
+          import os
+          from pathlib import Path
+          import shutil
+
+          if os.environ.get("JDBC_LINKER_MAP"):
+              shutil.rmtree(Path(os.environ["JDBC_LINKER_MAP"]).parent, ignore_errors=True)
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: jdbc-bridge-release-fips-${{ matrix.name }}
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  assemble_fips:
+    needs: build_native_fips
+    runs-on: ubuntu-latest
+    name: assemble fat jar (FIPS)
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Download FIPS native libs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jdbc-native-fips-*
+          merge-multiple: true
+          path: jdbc/build/native-staging
+
+      - name: Show staged native tree
+        run: find jdbc/build/native-staging -type f | sort
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-assemble-fips-proto
+
+      # -Pfips renames the artifact to snowflake-jdbc-native-all-fips and makes verifyShadowJar
+      # check every companions.txt entry is packaged and that no musl native is present.
+      - name: Build FIPS fat JAR + sources/javadoc/pom
+        working-directory: jdbc
+        run: |
+          ./gradlew --no-daemon \
+            shadowJar sourcesJar javadocJar generatePomFileForMavenPublication \
+            -Pfips -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
+
+      - name: Upload FIPS fat JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-fatjar-fips
+          path: |
+            jdbc/build/libs/*.jar
+            jdbc/build/publications/maven/pom-default.xml
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: jdbc-assemble-fips-proto
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  assemble_thin_fips:
+    needs: build_native_fips
+    runs-on: ubuntu-latest
+    name: assemble thin jar (FIPS)
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Download FIPS native libs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jdbc-native-fips-*
+          merge-multiple: true
+          path: jdbc/build/native-staging
+
+      - name: Show staged native tree
+        run: find jdbc/build/native-staging -type f | sort
+
+      - name: Restore Rust cache
+        id: rust-cache
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: restore
+          shared-key: jdbc-assemble-thin-fips-proto
+
+      - name: Build + stage FIPS thin JAR bundle (unsigned)
+        working-directory: jdbc
+        run: |
+          ./gradlew --no-daemon publishThinPublicationToStagingRepository \
+            -Pfips -PnativeLibsDir="$GITHUB_WORKSPACE/jdbc/build/native-staging"
+
+      - name: Upload FIPS thin JAR bundle (unsigned, ready for signing)
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-thin-fips
+          path: jdbc/build/staging-deploy/**
+          if-no-files-found: error
+
+      - name: Save Rust cache
+        if: always()
+        timeout-minutes: 20
+        continue-on-error: true
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          slim-mode: aggressive
+          shared-key: jdbc-assemble-thin-fips-proto
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
+
+  # Loads each FIPS jar the way a customer does: no CORE_PATH, so NativeLibraryLoader extracts
+  # jdbc_bridge and its companions from the jar. getFipsStatus() needs no connection.
+  smoke_fips:
+    needs: [assemble_fips, assemble_thin_fips]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,   os: ubuntu-latest,    classifier: linux-x86_64 }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, classifier: linux-aarch_64 }
+          - { name: macos-arm64, os: macos-latest,     classifier: osx-aarch_64 }
+          - { name: macos-intel, os: macos-15-intel,   classifier: osx-x86_64 }
+          - { name: windows-x64, os: windows-latest,   classifier: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    name: smoke FIPS jars (${{ matrix.name }})
+    timeout-minutes: 20
+    steps:
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Download FIPS fat JAR
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-fatjar-fips
+          path: fat
+
+      - name: Download FIPS thin bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-thin-fips
+          path: thin
+
+      - name: Write smoke program
+        shell: bash
+        run: |
+          mkdir -p smoke
+          cat > smoke/FipsSmoke.java <<'EOF'
+          import net.snowflake.client.api.driver.SnowflakeDriver;
+
+          public class FipsSmoke {
+            public static void main(String[] args) throws Exception {
+              boolean fips = new SnowflakeDriver().getFipsStatus().isFips();
+              System.out.println("isFips=" + fips);
+              if (!fips) {
+                System.exit(1);
+              }
+            }
+          }
+          EOF
+
+      - name: Smoke FIPS fat JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CORE_PATH
+          sep=":"; [ "$RUNNER_OS" = "Windows" ] && sep=";"
+          jar="$(find fat -name 'snowflake-jdbc-native-all-fips-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar')"
+          [ "$(printf '%s\n' "$jar" | wc -l)" -eq 1 ] || { echo "expected one fat jar, found: $jar" >&2; exit 1; }
+          javac -cp "$jar" -d smoke/classes-fat smoke/FipsSmoke.java
+          java -cp "smoke/classes-fat${sep}${jar}" FipsSmoke
+
+      # The classifier jar holds only the driver and this platform's native; its dependencies
+      # come from the staged POM, as Maven resolves them for a customer.
+      - name: Smoke FIPS thin classifier JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CORE_PATH
+          sep=":"; [ "$RUNNER_OS" = "Windows" ] && sep=";"
+          jar="$(find thin -name "snowflake-jdbc-native-fips-*-${{ matrix.classifier }}.jar")"
+          pom="$(find thin -name 'snowflake-jdbc-native-fips-*.pom')"
+          [ "$(printf '%s\n' "$jar" | wc -l)" -eq 1 ] || { echo "expected one classifier jar, found: $jar" >&2; exit 1; }
+          [ "$(printf '%s\n' "$pom" | wc -l)" -eq 1 ] || { echo "expected one pom, found: $pom" >&2; exit 1; }
+          mkdir -p smoke/deps-pom
+          cp "$pom" smoke/deps-pom/pom.xml
+          mvn -B -q -f smoke/deps-pom/pom.xml dependency:copy-dependencies \
+            -DincludeScope=runtime -DoutputDirectory=../deps
+          deps="$(find smoke/deps -name '*.jar' | sort | tr '\n' "$sep")"
+          javac -cp "${jar}${sep}${deps}" -d smoke/classes-thin smoke/FipsSmoke.java
+          java -cp "smoke/classes-thin${sep}${jar}${sep}${deps}" FipsSmoke
+
+  # Runs the FIPS-only e2e tests against the exact native each build_native_fips row staged. Gradle
+  # points CORE_PATH at target/release, so the staged files are copied there; macOS and Windows
+  # resolve the AWS-LC companions beside jdbc_bridge (macOS through @loader_path, Windows through
+  # PATH, since CORE_PATH loads one file). JDBC_EXPECT_FIPS_BUILD enables FipsBuildTest.
+  test_fips:
+    needs: build_native_fips
+    if: github.repository_owner != 'snowflakedb' && github.event.pull_request.head.repo.fork != true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,   os: ubuntu-latest,    native: linux-x86_64-gnu }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, native: linux-aarch64-gnu }
+          - { name: macos-arm64, os: macos-latest,     native: darwin-aarch64 }
+          - { name: macos-intel, os: macos-15-intel,   native: darwin-x86_64 }
+          - { name: windows-x64, os: windows-latest,   native: windows-x86_64 }
+    runs-on: ${{ matrix.os }}
+    name: test FIPS jdbc_bridge (${{ matrix.name }})
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Download staged FIPS native
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-native-fips-${{ matrix.native }}
+          path: fips-native
+
+      - name: Place FIPS native where Gradle expects jdbc_bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/release
+          cp fips-native/*/* target/release/
+          ls -l target/release
+
+      - name: Decode secrets
+        shell: bash
+        run: ./scripts/decode_secrets.sh aws
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+          PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
+
+      - name: Run FIPS e2e tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PARAMETER_PATH="$(cygpath -w "$(pwd)/parameters.json")"
+            export PATH="$(pwd)/target/release:$PATH"
+          else
+            export PARAMETER_PATH="$(pwd)/parameters.json"
+          fi
+          unset CORE_PATH
+          cd jdbc
+          bash ./ci/gradlew_with_resolve_retry.sh test \
+            --tests 'net.snowflake.jdbc.e2e.tls.FipsBuildTest' \
+            --tests 'net.snowflake.client.internal.unicore.SnowflakeDriverTlsStatusTest'
+        env:
+          CLOUD_PROVIDER: aws
+          JDBC_EXPECT_FIPS_BUILD: 'true'
+          GRADLE_TEST_RETRY_COUNT: '2'
+
+      - name: Check the FIPS tests ran instead of skipping
+        shell: python {0}
+        run: |
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          results = Path("jdbc/build/test-results/test")
+          suites = ["net.snowflake.jdbc.e2e.tls.FipsBuildTest", "net.snowflake.client.internal.unicore.SnowflakeDriverTlsStatusTest"]
+          for suite in suites:
+              report = results / f"TEST-{suite}.xml"
+              if not report.is_file():
+                  sys.exit(f"{report} is missing")
+              root = ET.parse(report).getroot()
+              tests, skipped = int(root.get("tests")), int(root.get("skipped"))
+              print(f"{suite}: tests={tests} skipped={skipped}")
+              if tests == 0 or skipped != 0:
+                  sys.exit(f"{suite} did not run against the FIPS bridge")
+
+      - name: Upload FIPS test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-fips-tests-${{ matrix.name }}
+          path: jdbc/build/test-results/test/**/*.xml
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
+          retention-days: 14

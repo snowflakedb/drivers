@@ -731,6 +731,24 @@ mod tests {
         assert!(JDBC_BRIDGE.await_result(u64::MAX).is_none());
     }
 
+    #[test]
+    fn fips_status_matches_fips_feature() {
+        assert_eq!(sf_core::tls::fips_status().is_fips, cfg!(feature = "fips"));
+    }
+
+    #[test]
+    fn driver_get_fips_status_rpc_matches_fips_feature() {
+        use sf_core::protobuf::apis::database_driver_v1::{
+            DatabaseDriverClientBlockingExt, database_driver_client,
+        };
+        use sf_core::protobuf::generated::database_driver_v1::DriverGetFipsStatusRequest;
+
+        let status = database_driver_client()
+            .driver_get_fips_status_blocking(DriverGetFipsStatusRequest {})
+            .expect("no-connection status RPC must succeed");
+        assert_eq!(status.is_fips, cfg!(feature = "fips"));
+    }
+
     struct CaptureLayer {
         messages: std::sync::Arc<Mutex<Vec<String>>>,
     }
