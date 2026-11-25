@@ -791,11 +791,20 @@ def configureCommonTestTask = { t ->
 
     t.outputs.upToDateWhen { false }
 
-    def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
-    def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
-                  System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
-                  'libjdbc_bridge.so'
-    t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
+    def nativeJar = project.findProperty('nativeJar')
+    if (nativeJar) {
+        // The jar named by -PnativeJar precedes the build output, so NativeLibraryLoader extracts
+        // the bridge and its companions from the jar as it does for a customer.
+        t.classpath = files(nativeJar) + t.classpath
+        t.environment.remove('CORE_PATH')
+        t.environment 'JDBC_EXPECT_NATIVE_JAR', file(nativeJar).absolutePath
+    } else {
+        def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
+        def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
+                      System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
+                      'libjdbc_bridge.so'
+        t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
+    }
     // PARAMETER_PATH defaults to the checked-in parameters.json but may be overridden by the
     // environment (e.g. tests/auth/auth_browser_jdbc.sh points it at parameters_preprod.json).
     t.environment 'PARAMETER_PATH', System.getenv('PARAMETER_PATH') ?: file('../parameters.json').absolutePath

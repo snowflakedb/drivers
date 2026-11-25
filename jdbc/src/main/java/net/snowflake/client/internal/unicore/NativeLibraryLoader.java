@@ -1,6 +1,7 @@
 package net.snowflake.client.internal.unicore;
 
 import java.io.IOException;
+import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import net.snowflake.client.api.driver.SnowflakeDriver;
@@ -169,7 +170,11 @@ public final class NativeLibraryLoader {
   }
 
   static boolean bundledNativePresent() {
-    return NativeLibraryLoader.class.getResource(bundledResourcePath()) != null;
+    return bundledNativeUrl() != null;
+  }
+
+  static URL bundledNativeUrl() {
+    return NativeLibraryLoader.class.getResource(bundledResourcePath());
   }
 
   private static void loadPath(String path) {

@@ -828,24 +828,40 @@ jobs:
           javac -cp "${jar}${sep}${deps}" -d smoke/classes-thin smoke/FipsSmoke.java
           java -cp "smoke/classes-thin${sep}${jar}${sep}${deps}" FipsSmoke
 
-  # Runs the FIPS-only e2e tests against the exact native each build_native_fips row staged. Gradle
-  # points CORE_PATH at target/release, so the staged files are copied there; macOS and Windows
-  # resolve the AWS-LC companions beside jdbc_bridge (macOS through @loader_path, Windows through
-  # PATH, since CORE_PATH loads one file). JDBC_EXPECT_FIPS_BUILD enables FipsBuildTest.
+  # A fork PR or a snowflakedb run has no secrets, so test_fips cannot run there. This output is the
+  # one place that states the condition; test_fips and fips_release_gate both read it.
+  fips_test_secrets:
+    runs-on: ubuntu-latest
+    name: FIPS test secrets available
+    timeout-minutes: 5
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        shell: bash
+        run: echo "available=$AVAILABLE" >> "$GITHUB_OUTPUT"
+        env:
+          AVAILABLE: ${{ github.repository_owner != 'snowflakedb' && github.event.pull_request.head.repo.fork != true }}
+
+  # Runs the FIPS-only e2e tests against the assembled jars. -PnativeJar puts one jar ahead of the
+  # build output on the test classpath and removes CORE_PATH, so NativeLibraryLoader extracts
+  # jdbc_bridge and its companions from the jar and connects, as it does for a customer. Each row
+  # runs the fat jar and then this platform's thin classifier jar. JDBC_EXPECT_FIPS_BUILD enables
+  # FipsBuildTest.
   test_fips:
-    needs: build_native_fips
-    if: github.repository_owner != 'snowflakedb' && github.event.pull_request.head.repo.fork != true
+    needs: [assemble_fips, assemble_thin_fips, fips_test_secrets]
+    if: needs.fips_test_secrets.outputs.available == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-x64,   os: ubuntu-latest,    native: linux-x86_64-gnu }
-          - { name: linux-arm64, os: ubuntu-24.04-arm, native: linux-aarch64-gnu }
-          - { name: macos-arm64, os: macos-latest,     native: darwin-aarch64 }
-          - { name: macos-intel, os: macos-15-intel,   native: darwin-x86_64 }
-          - { name: windows-x64, os: windows-latest,   native: windows-x86_64 }
+          - { name: linux-x64,   os: ubuntu-latest,    classifier: linux-x86_64 }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, classifier: linux-aarch_64 }
+          - { name: macos-arm64, os: macos-latest,     classifier: osx-aarch_64 }
+          - { name: macos-intel, os: macos-15-intel,   classifier: osx-x86_64 }
+          - { name: windows-x64, os: windows-latest,   classifier: windows-x86_64 }
     runs-on: ${{ matrix.os }}
-    name: test FIPS jdbc_bridge (${{ matrix.name }})
+    name: test FIPS jars (${{ matrix.name }})
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -858,19 +874,17 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Download staged FIPS native
+      - name: Download FIPS fat JAR
         uses: actions/download-artifact@v8
         with:
-          name: jdbc-native-fips-${{ matrix.native }}
-          path: fips-native
+          name: jdbc-fatjar-fips
+          path: fat
 
-      - name: Place FIPS native where Gradle expects jdbc_bridge
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p target/release
-          cp fips-native/*/* target/release/
-          ls -l target/release
+      - name: Download FIPS thin bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-thin-fips
+          path: thin
 
       - name: Decode secrets
         shell: bash
@@ -879,21 +893,39 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
           PARAMETERS_JSON_AWS: ${{ secrets.PARAMETERS_JSON_AWS }}
 
-      - name: Run FIPS e2e tests
+      - name: Run FIPS e2e tests from the jars
         shell: bash
         run: |
           set -euo pipefail
+          workspace="$(pwd)"
           if [ "$RUNNER_OS" = "Windows" ]; then
-            export PARAMETER_PATH="$(cygpath -w "$(pwd)/parameters.json")"
-            export PATH="$(pwd)/target/release:$PATH"
+            export PARAMETER_PATH="$(cygpath -w "$workspace/parameters.json")"
           else
-            export PARAMETER_PATH="$(pwd)/parameters.json"
+            export PARAMETER_PATH="$workspace/parameters.json"
           fi
           unset CORE_PATH
+          fat="$(find fat -name 'snowflake-jdbc-native-all-fips-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar')"
+          thin="$(find thin -name 'snowflake-jdbc-native-fips-*-${{ matrix.classifier }}.jar')"
+          for jar in "$fat" "$thin"; do
+            [ -f "$jar" ] || { echo "expected exactly one jar, found: '$jar'" >&2; exit 1; }
+          done
           cd jdbc
-          bash ./ci/gradlew_with_resolve_retry.sh test \
-            --tests 'net.snowflake.jdbc.e2e.tls.FipsBuildTest' \
-            --tests 'net.snowflake.client.internal.unicore.SnowflakeDriverTlsStatusTest'
+          status=0
+          for kind in fat thin; do
+            jar="$workspace/${!kind}"
+            if [ "$RUNNER_OS" = "Windows" ]; then jar="$(cygpath -w "$jar")"; fi
+            rc=0
+            bash ./ci/gradlew_with_resolve_retry.sh test "-PnativeJar=$jar" \
+              --tests 'net.snowflake.jdbc.e2e.tls.FipsBuildTest' \
+              --tests 'net.snowflake.client.internal.unicore.SnowflakeDriverTlsStatusTest' || rc=$?
+            mkdir -p "$workspace/fips-test-results/$kind"
+            cp build/test-results/test/*.xml "$workspace/fips-test-results/$kind/" || true
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::the FIPS tests failed against the $kind jar (exit $rc)"
+              status=1
+            fi
+          done
+          exit "$status"
         env:
           CLOUD_PROVIDER: aws
           JDBC_EXPECT_FIPS_BUILD: 'true'
@@ -906,23 +938,89 @@ jobs:
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          results = Path("jdbc/build/test-results/test")
           suites = ["net.snowflake.jdbc.e2e.tls.FipsBuildTest", "net.snowflake.client.internal.unicore.SnowflakeDriverTlsStatusTest"]
-          for suite in suites:
-              report = results / f"TEST-{suite}.xml"
-              if not report.is_file():
-                  sys.exit(f"{report} is missing")
-              root = ET.parse(report).getroot()
-              tests, skipped = int(root.get("tests")), int(root.get("skipped"))
-              print(f"{suite}: tests={tests} skipped={skipped}")
-              if tests == 0 or skipped != 0:
-                  sys.exit(f"{suite} did not run against the FIPS bridge")
+          for kind in ("fat", "thin"):
+              for suite in suites:
+                  report = Path("fips-test-results", kind, f"TEST-{suite}.xml")
+                  if not report.is_file():
+                      sys.exit(f"{report} is missing")
+                  root = ET.parse(report).getroot()
+                  tests, skipped = int(root.get("tests")), int(root.get("skipped"))
+                  print(f"{kind} {suite}: tests={tests} skipped={skipped}")
+                  if tests == 0 or skipped != 0:
+                      sys.exit(f"{suite} did not run against the {kind} jar")
 
       - name: Upload FIPS test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: jdbc-fips-tests-${{ matrix.name }}
-          path: jdbc/build/test-results/test/**/*.xml
+          path: fips-test-results/**/*.xml
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}
           retention-days: 14
+
+  # Passes only when the tested FIPS jars are the ones to release. jdbc-fips-release-gate holds the
+  # sha256 of every file in jdbc-fatjar-fips and jdbc-thin-fips, the artifacts smoke_fips and
+  # test_fips downloaded, and exists only when test_fips ran and passed. Without secrets (see
+  # fips_test_secrets) test_fips is skipped; the gate then passes without publishing the artifact,
+  # and elsewhere a skipped test_fips fails the gate.
+  fips_release_gate:
+    needs: [smoke_fips, test_fips, fips_test_secrets]
+    if: always()
+    runs-on: ubuntu-latest
+    name: FIPS release gate
+    timeout-minutes: 10
+    steps:
+      - name: Require the FIPS jar tests to have passed
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ "$SMOKE_RESULT" != success ]; then
+            echo "smoke_fips: $SMOKE_RESULT" >&2
+            status=1
+          fi
+          if [ "$TEST_RESULT" != success ]; then
+            if [ "$TEST_RESULT" = skipped ] && [ "$SECRETS_AVAILABLE" != true ]; then
+              echo "test_fips is skipped here because the run has no secrets"
+            else
+              echo "test_fips: $TEST_RESULT" >&2
+              status=1
+            fi
+          fi
+          exit "$status"
+        env:
+          SMOKE_RESULT: ${{ needs.smoke_fips.result }}
+          TEST_RESULT: ${{ needs.test_fips.result }}
+          SECRETS_AVAILABLE: ${{ needs.fips_test_secrets.outputs.available }}
+
+      - name: Download FIPS fat JAR
+        if: needs.test_fips.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-fatjar-fips
+          path: fat
+
+      - name: Download FIPS thin bundle
+        if: needs.test_fips.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          name: jdbc-thin-fips
+          path: thin
+
+      - name: Record the digests of the tested FIPS jars
+        if: needs.test_fips.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir fips-release-gate
+          find fat thin -type f | sort | xargs sha256sum | tee fips-release-gate/fips-jars.sha256
+
+      - name: Upload the release gate
+        if: needs.test_fips.result == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: jdbc-fips-release-gate
+          path: fips-release-gate/fips-jars.sha256
+          if-no-files-found: error
+          retention-days: 90
