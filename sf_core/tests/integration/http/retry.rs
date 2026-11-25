@@ -85,6 +85,50 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
 }
 
 #[tokio::test]
+async fn should_check_retry_after_against_budget_left_after_slow_response() {
+    // Given a server that answers slowly with a Retry-After that fits the whole budget but not what is left of it
+    let (addr, attempts, _targets, server) = spawn_test_server(1, |_| async move {
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 1\r\nConnection: close\r\n\r\n"
+            .to_vec()
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}", addr);
+    let http_ctx = HttpContext::new(Method::GET, url.clone());
+    let policy = RetryPolicy {
+        max_attempts: 3,
+        max_elapsed: Some(Duration::from_secs(2)),
+        per_request_timeout: None,
+        ..RetryPolicy::default()
+    };
+
+    // When the helper executes the request
+    let err = execute_bytes_with_retry(|| client.get(&url), &http_ctx, &policy)
+        .await
+        .expect_err("the Retry-After does not fit in the budget left");
+
+    // Then it stops before sleeping instead of sleeping past the deadline
+    match err {
+        HttpError::RetryAfterExceeded {
+            retry_after,
+            remaining,
+            ..
+        } => {
+            assert_eq!(retry_after, Duration::from_secs(1));
+            assert!(
+                remaining < retry_after,
+                "remaining {remaining:?} must be measured after the response"
+            );
+        }
+        other => panic!("expected RetryAfterExceeded, got {other:?}"),
+    }
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn should_retry_idempotent_put_after_transient_failure() {
     // Given an idempotent PUT request that fails once then succeeds
     let (addr, attempts, _targets, server) = spawn_test_server(2, |attempt| async move {

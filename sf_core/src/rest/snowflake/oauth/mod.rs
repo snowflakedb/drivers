@@ -14,6 +14,7 @@
 
 mod authorization_code;
 mod client_credentials;
+mod deadline;
 mod error;
 mod http_client;
 mod loopback_server;

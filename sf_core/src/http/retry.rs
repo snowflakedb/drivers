@@ -6,6 +6,59 @@ use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RetryableStatuses {
+    #[default]
+    FromPolicy,
+    TimeoutThrottledOrServerError,
+    ThrottledOrUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RetryableSendErrors {
+    #[default]
+    AnyTransport,
+    TransportExceptDecode,
+    ConnectOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RetryRules {
+    pub statuses: RetryableStatuses,
+    pub send_errors: RetryableSendErrors,
+    pub retry_body_errors: bool,
+    pub return_exhausted_response: bool,
+}
+
+impl RetryRules {
+    fn retries_status(&self, status: StatusCode, extra: &BTreeSet<u16>) -> bool {
+        match self.statuses {
+            RetryableStatuses::FromPolicy => should_retry_status(status, extra),
+            RetryableStatuses::TimeoutThrottledOrServerError => {
+                status == StatusCode::REQUEST_TIMEOUT
+                    || status == StatusCode::TOO_MANY_REQUESTS
+                    || status.is_server_error()
+            }
+            RetryableStatuses::ThrottledOrUnavailable => {
+                status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE
+            }
+        }
+    }
+
+    fn retries_send_error(&self, err: &reqwest::Error) -> bool {
+        is_retryable_transport(err)
+            && match self.send_errors {
+                RetryableSendErrors::AnyTransport => true,
+                RetryableSendErrors::TransportExceptDecode => !err.is_decode(),
+                RetryableSendErrors::ConnectOnly => err.is_connect(),
+            }
+    }
+
+    fn retries_body_error(&self, err: &reqwest::Error) -> bool {
+        self.retry_body_errors && is_retryable_transport(err)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HttpContext {
     pub method: Method,
@@ -18,6 +71,7 @@ pub struct HttpContext {
     /// waits longer is retried like a transport error. Backoff sleeps between
     /// attempts do not count. `None` means no such timer.
     pub response_timeout: Option<Duration>,
+    pub retry_rules: RetryRules,
     dpop: Option<DPoPBinding>,
 }
 
@@ -29,6 +83,7 @@ impl HttpContext {
             idempotent: matches!(method_clone, Method::PUT | Method::DELETE),
             allow_post_retry: false,
             response_timeout: None,
+            retry_rules: RetryRules::default(),
             dpop: None,
             method,
             path: path.into(),
@@ -49,6 +104,11 @@ impl HttpContext {
     /// Allow POST/PATCH retries for this particular request.
     pub fn allow_post_retry(mut self) -> Self {
         self.allow_post_retry = true;
+        self
+    }
+
+    pub fn with_retry_rules(mut self, rules: RetryRules) -> Self {
+        self.retry_rules = rules;
         self
     }
 
@@ -222,21 +282,58 @@ where
     F: Future<Output = Result<T, HttpError>>,
     H: Fn(Response) -> F,
 {
+    try_execute_with_retry_state(
+        |state: &RetryState| Ok::<_, HttpError>(build_request(state)),
+        http_ctx,
+        policy,
+        on_response,
+    )
+    .await
+}
+
+pub async fn try_execute_with_retry_state<T, E, B, F, H>(
+    build_request: B,
+    http_ctx: &HttpContext,
+    policy: &RetryPolicy,
+    on_response: H,
+) -> Result<T, E>
+where
+    B: Fn(&RetryState) -> Result<reqwest::RequestBuilder, E>,
+    E: From<HttpError>,
+    F: Future<Output = Result<T, HttpError>>,
+    H: Fn(Response) -> F,
+{
     let mut sleep_ms: f64 = policy.backoff.base.as_millis() as f64;
     let mut retry_state = RetryState::default();
     let start = Instant::now();
 
     let backoff = &policy.backoff;
     let max_attempts = policy.max_attempts;
+    let log_path = strip_query(&http_ctx.path);
+    let rules = http_ctx.retry_rules;
+    let may_retry = allow_retry(http_ctx, &policy.http);
 
     loop {
         retry_state.attempt += 1;
 
         // When max_elapsed is set, enforce the internal deadline.
-        let remaining = remaining_budget(start, policy.max_elapsed)?;
+        let remaining = if let Some(budget) = policy.max_elapsed {
+            let elapsed = start.elapsed();
+            if elapsed >= budget {
+                return Err(DeadlineExceededSnafu {
+                    configured: budget,
+                    elapsed,
+                }
+                .build()
+                .into());
+            }
+            Some(budget - elapsed)
+        } else {
+            None
+        };
 
         let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
-        let mut req_builder = build_request(&retry_state);
+        let mut req_builder = build_request(&retry_state)?;
         if let Some(t) = timeout {
             tracing::debug!(
                 attempt = retry_state.attempt,
@@ -252,7 +349,6 @@ where
         // full URL for some callers (e.g. chunk downloads), so strip any query
         // string / fragment — those can carry presigned auth tokens and the rule
         // permits only host + path.
-        let log_path = http_ctx.path.split(['?', '#']).next().unwrap_or("");
         tracing::info!(
             method = %http_ctx.method,
             path = %log_path,
@@ -273,11 +369,12 @@ where
                         if !allow_retry(http_ctx, &policy.http)
                             || retry_state.attempt >= max_attempts
                         {
-                            return ResponseTimeoutSnafu {
+                            return Err(ResponseTimeoutSnafu {
                                 timeout: response_timeout,
                                 attempts: retry_state.attempt,
                             }
-                            .fail();
+                            .build()
+                            .into());
                         }
                         tracing::warn!(
                             method = %http_ctx.method,
@@ -290,7 +387,8 @@ where
                         let delay = transport_retry_delay(
                             &mut sleep_ms,
                             backoff,
-                            remaining_budget(start, policy.max_elapsed)?,
+                            start,
+                            policy.max_elapsed,
                         )?;
                         tokio::time::sleep(delay).await;
                         continue;
@@ -302,52 +400,74 @@ where
 
         match result {
             Ok(resp) => {
-                if resp.status().is_success() {
-                    return on_response(resp).await;
-                }
-                if !should_retry_status(resp.status(), &policy.extra_retryable_statuses)
-                    || !allow_retry(http_ctx, &policy.http)
+                let status = resp.status();
+                tracing::info!(status = status.as_u16(), "HTTP response");
+                if status.is_success()
+                    || !(may_retry
+                        && rules.retries_status(status, &policy.extra_retryable_statuses))
                 {
-                    return on_response(resp).await;
+                    match on_response(resp).await {
+                        Ok(value) => return Ok(value),
+                        Err(HttpError::Transport { source, .. })
+                            if may_retry
+                                && rules.retries_body_error(&source)
+                                && retry_state.attempt < max_attempts =>
+                        {
+                            retry_state.last_status = LastStatus::Transport;
+                            let delay = transport_retry_delay(
+                                &mut sleep_ms,
+                                backoff,
+                                start,
+                                policy.max_elapsed,
+                            )?;
+                            log_retry(
+                                http_ctx,
+                                retry_state.attempt,
+                                transport_kind(&source),
+                                delay,
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
                 }
 
                 if retry_state.attempt >= max_attempts {
-                    return MaxAttemptsSnafu {
-                        attempts: retry_state.attempt,
-                        last_status: resp.status(),
+                    if rules.return_exhausted_response {
+                        return on_response(resp).await.map_err(E::from);
                     }
-                    .fail();
+                    return Err(MaxAttemptsSnafu {
+                        attempts: retry_state.attempt,
+                        last_status: status,
+                    }
+                    .build()
+                    .into());
                 }
 
                 let retry_after = parse_retry_after(&resp);
-                retry_state.last_status = LastStatus::Code(resp.status().as_u16());
-                sleep_ms = next_delay_ms(sleep_ms, backoff);
-                let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
-                if let Some(rem) = remaining_budget(start, policy.max_elapsed)?
-                    && delay > rem
-                {
-                    return RetryAfterExceededSnafu {
-                        retry_after: delay,
-                        remaining: rem,
+                retry_state.last_status = LastStatus::Code(status.as_u16());
+                let delay = next_retry_delay(&mut sleep_ms, backoff, retry_after);
+                if let Err(err) = check_delay_fits(delay, start, policy.max_elapsed) {
+                    if rules.return_exhausted_response {
+                        return on_response(resp).await.map_err(E::from);
                     }
-                    .fail();
+                    return Err(err.into());
                 }
+                log_retry(http_ctx, retry_state.attempt, status.as_u16(), delay);
                 tokio::time::sleep(delay).await;
                 continue;
             }
-            Err(e) => {
-                if !is_retryable_transport(&e) || !allow_retry(http_ctx, &policy.http) {
-                    return Err(TransportSnafu.into_error(e));
-                }
-                if retry_state.attempt >= max_attempts {
-                    return Err(TransportSnafu.into_error(e));
+            Err(err) => {
+                if !(may_retry && rules.retries_send_error(&err))
+                    || retry_state.attempt >= max_attempts
+                {
+                    return Err(TransportSnafu.into_error(err).into());
                 }
                 retry_state.last_status = LastStatus::Transport;
-                let delay = transport_retry_delay(
-                    &mut sleep_ms,
-                    backoff,
-                    remaining_budget(start, policy.max_elapsed)?,
-                )?;
+                let delay =
+                    transport_retry_delay(&mut sleep_ms, backoff, start, policy.max_elapsed)?;
+                log_retry(http_ctx, retry_state.attempt, transport_kind(&err), delay);
                 tokio::time::sleep(delay).await;
                 continue;
             }
@@ -355,40 +475,92 @@ where
     }
 }
 
-fn remaining_budget(
+fn strip_query(path: &str) -> &str {
+    path.split(['?', '#']).next().unwrap_or("")
+}
+
+fn transport_kind(err: &reqwest::Error) -> &'static str {
+    if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "connect"
+    } else if err.is_body() {
+        "body"
+    } else if err.is_decode() {
+        "decode"
+    } else if err.is_request() {
+        "request"
+    } else {
+        "other"
+    }
+}
+
+fn log_retry(http_ctx: &HttpContext, attempt: u32, cause: impl std::fmt::Display, delay: Duration) {
+    tracing::warn!(
+        method = %http_ctx.method,
+        path = %strip_query(&http_ctx.path),
+        attempt,
+        cause = %cause,
+        delay_ms = delay.as_millis() as u64,
+        "Retrying HTTP request"
+    );
+}
+
+pub(crate) fn body_error_to_http(err: CappedBodyError) -> HttpError {
+    match err {
+        CappedBodyError::TooLarge { size, max_size } => {
+            ResponseTooLargeSnafu { size, max_size }.build()
+        }
+        CappedBodyError::Transport(source) => TransportSnafu.into_error(source),
+    }
+}
+
+fn next_retry_delay(
+    sleep_ms: &mut f64,
+    backoff: &BackoffConfig,
+    retry_after: Option<Duration>,
+) -> Duration {
+    *sleep_ms = next_delay_ms(*sleep_ms, backoff);
+    retry_after.unwrap_or(Duration::from_millis(*sleep_ms as u64))
+}
+
+fn check_delay_fits(
+    delay: Duration,
     start: Instant,
-    budget: Option<Duration>,
-) -> Result<Option<Duration>, HttpError> {
-    let Some(configured) = budget else {
-        return Ok(None);
+    max_elapsed: Option<Duration>,
+) -> Result<(), HttpError> {
+    let Some(budget) = max_elapsed else {
+        return Ok(());
     };
     let elapsed = start.elapsed();
-    if elapsed >= configured {
-        return DeadlineExceededSnafu {
-            configured,
-            elapsed,
+    let remaining = budget
+        .checked_sub(elapsed)
+        .filter(|left| !left.is_zero())
+        .ok_or_else(|| {
+            DeadlineExceededSnafu {
+                configured: budget,
+                elapsed,
+            }
+            .build()
+        })?;
+    if delay >= remaining {
+        return RetryAfterExceededSnafu {
+            retry_after: delay,
+            remaining,
         }
         .fail();
     }
-    Ok(Some(configured - elapsed))
+    Ok(())
 }
 
 fn transport_retry_delay(
     sleep_ms: &mut f64,
     backoff: &BackoffConfig,
-    remaining: Option<Duration>,
+    start: Instant,
+    max_elapsed: Option<Duration>,
 ) -> Result<Duration, HttpError> {
-    *sleep_ms = next_delay_ms(*sleep_ms, backoff);
-    let delay = Duration::from_millis(*sleep_ms as u64);
-    if let Some(rem) = remaining
-        && delay > rem
-    {
-        return RetryAfterExceededSnafu {
-            retry_after: delay,
-            remaining: rem,
-        }
-        .fail();
-    }
+    let delay = next_retry_delay(sleep_ms, backoff, None);
+    check_delay_fits(delay, start, max_elapsed)?;
     Ok(delay)
 }
 
@@ -965,5 +1137,70 @@ mod capped_body_tests {
             .await
             .expect("within-cap chunked body must be returned");
         assert_eq!(bytes.len(), 100);
+    }
+}
+
+#[cfg(test)]
+mod retry_rules_tests {
+    use super::*;
+
+    fn retried(statuses: RetryableStatuses) -> Vec<u16> {
+        let rules = RetryRules {
+            statuses,
+            ..RetryRules::default()
+        };
+        [400u16, 307, 308, 408, 429, 500, 502, 503, 504]
+            .into_iter()
+            .filter(|code| {
+                rules.retries_status(StatusCode::from_u16(*code).unwrap(), &BTreeSet::new())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn policy_statuses_keep_the_default_set() {
+        assert_eq!(
+            retried(RetryableStatuses::FromPolicy),
+            vec![307, 308, 408, 429, 500, 502, 503, 504]
+        );
+    }
+
+    #[test]
+    fn timeout_throttled_or_server_error_statuses_exclude_redirects() {
+        assert_eq!(
+            retried(RetryableStatuses::TimeoutThrottledOrServerError),
+            vec![408, 429, 500, 502, 503, 504]
+        );
+    }
+
+    #[test]
+    fn throttled_or_unavailable_statuses_are_429_and_503() {
+        assert_eq!(
+            retried(RetryableStatuses::ThrottledOrUnavailable),
+            vec![429, 503]
+        );
+    }
+
+    #[test]
+    fn delay_that_reaches_the_end_of_the_budget_does_not_fit() {
+        let start = Instant::now();
+        let budget = Some(Duration::from_secs(10));
+
+        assert!(check_delay_fits(Duration::from_secs(1), start, budget).is_ok());
+        assert!(matches!(
+            check_delay_fits(Duration::from_secs(10), start, budget),
+            Err(HttpError::RetryAfterExceeded { .. })
+        ));
+        assert!(check_delay_fits(Duration::from_secs(10), start, None).is_ok());
+    }
+
+    #[test]
+    fn spent_budget_is_a_deadline_error_even_for_a_zero_delay() {
+        let start = Instant::now() - Duration::from_secs(5);
+
+        assert!(matches!(
+            check_delay_fits(Duration::ZERO, start, Some(Duration::from_secs(5))),
+            Err(HttpError::DeadlineExceeded { .. })
+        ));
     }
 }

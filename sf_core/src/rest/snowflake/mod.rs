@@ -971,6 +971,7 @@ pub(crate) async fn auth_request_data(
                 token_cache.clone(),
                 login_parameters.disable_parallel_user_prompt,
                 prompt_locks,
+                retry_policy,
             )
             .await
             .context(OAuthFlowSnafu)?;
@@ -989,7 +990,7 @@ pub(crate) async fn auth_request_data(
         // skips the AC eviction step and just replays the flow so the IdP
         // token endpoint is re-hit.
         LoginMethod::OAuthClientCredentials(cfg) => {
-            let acquired = oauth::acquire_client_credentials(client, cfg)
+            let acquired = oauth::acquire_client_credentials(client, cfg, retry_policy)
                 .await
                 .context(OAuthFlowSnafu)?;
             data.login_name = Some(cfg.username.clone());

@@ -23,7 +23,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use oauth2::basic::{BasicClient, BasicErrorResponse, BasicErrorResponseType};
 use oauth2::{
@@ -31,77 +31,27 @@ use oauth2::{
     PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope, StandardErrorResponse,
     TokenResponse, TokenUrl,
 };
-use snafu::{IntoError, OptionExt, ResultExt};
+use snafu::{IntoError, ResultExt};
 use url::Url;
 
+use super::deadline::FlowDeadline;
 use super::error::{
-    AuthenticationTimeoutSnafu, BrowserCallbackSnafu, EndpointUrlParseSnafu, IdpSnafu,
-    MissingAccessTokenSnafu, OAuthError, RedirectInputFailedSnafu, RedirectUriParseSnafu,
-    RefreshTokenExchangeSnafu, StateMismatchSnafu, TokenResponseDecodeSnafu,
+    BrowserCallbackSnafu, EndpointUrlParseSnafu, IdpSnafu, MissingAccessTokenSnafu, OAuthError,
+    RedirectInputFailedSnafu, RedirectUriParseSnafu, RefreshTokenExchangeSnafu, StateMismatchSnafu,
+    TokenResponseDecodeSnafu,
 };
-use super::http_client::make_http_client;
+use super::http_client::{TokenGrant, make_http_client};
 use super::loopback_server::{self, RedirectResult};
 use super::pkce;
 use super::token;
 use crate::config::rest_parameters::{
     OAuthAuthorizationCodeConfig, RedirectInputError, RedirectInputFn, RedirectInputRequest,
 };
+use crate::config::retry::RetryPolicy;
 use crate::crypto::dpop::{self, DPoPKey};
 use crate::crypto::random;
 use crate::sensitive::SensitiveString;
 use crate::token_cache::{CacheKey, TokenCache, TokenType, normalize_identifier, normalize_url};
-
-/// Drift B.3: shared deadline for the AC flow. Tracks the start instant
-/// and the configured `authentication_timeout` budget so that the
-/// loopback wait, the IdP token exchange, and the refresh exchange
-/// all share one end-to-end deadline rather than each getting its own
-/// 120 s window. `remaining()` returns `None` once the budget is
-/// exhausted, at which point [`run_with_deadline`] short-circuits with
-/// [`OAuthError::AuthenticationTimeout`].
-#[derive(Clone, Copy, Debug)]
-struct FlowDeadline {
-    start: Instant,
-    budget: Duration,
-}
-
-impl FlowDeadline {
-    fn new(budget_secs: u64) -> Self {
-        Self {
-            start: Instant::now(),
-            budget: Duration::from_secs(budget_secs),
-        }
-    }
-
-    fn remaining(&self) -> Option<Duration> {
-        self.budget.checked_sub(self.start.elapsed())
-    }
-
-    fn elapsed_secs(&self) -> u64 {
-        self.start.elapsed().as_secs()
-    }
-}
-
-/// Run `fut` under the deadline; on timeout return
-/// [`OAuthError::AuthenticationTimeout`] without dragging the caller's
-/// own error type into the signature.
-async fn run_with_deadline<F, T>(deadline: FlowDeadline, fut: F) -> Result<T, OAuthError>
-where
-    F: Future<Output = Result<T, OAuthError>>,
-{
-    let Some(remaining) = deadline.remaining() else {
-        return AuthenticationTimeoutSnafu {
-            elapsed_secs: deadline.elapsed_secs(),
-        }
-        .fail();
-    };
-    match tokio::time::timeout(remaining, fut).await {
-        Ok(inner) => inner,
-        Err(_) => AuthenticationTimeoutSnafu {
-            elapsed_secs: deadline.elapsed_secs(),
-        }
-        .fail(),
-    }
-}
 
 /// What an OAuth flow returns to the caller (the wiring layer hands
 /// the access token, and optionally the DPoP JWK, to the Snowflake
@@ -255,6 +205,7 @@ async fn await_redirect_without_browser(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip(client, config, token_cache),
     fields(server_url = %server_url, username = %config.username),
@@ -274,6 +225,7 @@ pub(crate) async fn run_oauth_authorization_code(
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     disable_parallel_user_prompt: bool,
     prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
+    retry_policy: &RetryPolicy,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     let server_url_parsed = Url::parse(server_url).context(EndpointUrlParseSnafu {
         url: server_url.to_string(),
@@ -293,6 +245,7 @@ pub(crate) async fn run_oauth_authorization_code(
         launch_browser,
         disable_parallel_user_prompt,
         prompt_locks,
+        retry_policy,
     )
     .await
 }
@@ -319,6 +272,7 @@ async fn run_authorization_code_flow(
     launch_browser: BrowserLaunchFn,
     disable_parallel_user_prompt: bool,
     prompt_locks: Option<&std::sync::Arc<super::super::prompt_lock::PromptLockMap>>,
+    retry_policy: &RetryPolicy,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     tracing::info!("Starting OAuth authorization code flow");
 
@@ -374,6 +328,7 @@ async fn run_authorization_code_flow(
         config,
         token_cache.clone(),
         deadline,
+        retry_policy,
     )
     .await
     {
@@ -388,6 +343,7 @@ async fn run_authorization_code_flow(
         config,
         launch_browser,
         deadline,
+        retry_policy,
     )
     .await?;
 
@@ -422,6 +378,7 @@ async fn try_cache_short_circuit(
     config: &OAuthAuthorizationCodeConfig,
     token_cache: Option<std::sync::Arc<dyn TokenCache>>,
     deadline: FlowDeadline,
+    retry_policy: &RetryPolicy,
 ) -> Option<AcquiredOAuthToken> {
     if !config.client_store_temporary_credential {
         tracing::debug!("OAuth token cache disabled; skipping cache lookup");
@@ -526,6 +483,7 @@ async fn try_cache_short_circuit(
             refresh.reveal(),
             dpop_key.as_ref(),
             deadline,
+            retry_policy,
         )
         .await
         {
@@ -569,6 +527,12 @@ async fn try_cache_short_circuit(
                 }
                 return Some(refreshed);
             }
+            Err(e) if refresh_failure_keeps_token(&e, config.enable_single_use_refresh_tokens) => {
+                tracing::warn!(
+                    error = %e,
+                    "Cached OAuth refresh token failed to exchange; keeping it and falling back to full flow"
+                );
+            }
             Err(e) => {
                 tracing::warn!(
                     error = %e,
@@ -599,6 +563,7 @@ async fn run_interactive_flow(
     config: &OAuthAuthorizationCodeConfig,
     launch_browser: BrowserLaunchFn,
     deadline: FlowDeadline,
+    retry_policy: &RetryPolicy,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     let authorize_url_base = resolve_authorize_url(server_url, config.authorization_url.as_ref())?;
     let binding = loopback_server::bind(config.redirect_uri.as_ref()).await?;
@@ -667,9 +632,7 @@ async fn run_interactive_flow(
     let listener = binding;
     let loopback_budget = deadline
         .remaining()
-        .with_context(|| AuthenticationTimeoutSnafu {
-            elapsed_secs: deadline.elapsed_secs(),
-        })?;
+        .ok_or_else(|| deadline.timeout_error())?;
 
     let authorize_url_text = SensitiveString::from(authorize_url.to_string());
     let redirect: RedirectResult = {
@@ -703,7 +666,14 @@ async fn run_interactive_flow(
     let received = CsrfToken::new(redirect.state.clone());
     snafu::ensure!(received == state, StateMismatchSnafu);
 
-    let http = make_http_client(client, dpop_key.as_ref(), token_url);
+    let http = make_http_client(
+        client,
+        dpop_key.as_ref(),
+        token_url,
+        TokenGrant::AuthorizationCode,
+        retry_policy,
+        deadline,
+    );
 
     let mut exchange =
         oauth_client.exchange_code(AuthorizationCode::new(redirect.code.reveal().to_string()));
@@ -717,14 +687,10 @@ async fn run_interactive_flow(
     }
 
     tracing::debug!("Starting OAuth code exchange");
-    // Drift B.3: token exchange shares the same end-to-end budget.
-    let response = run_with_deadline(deadline, async {
-        exchange
-            .request_async(&http)
-            .await
-            .map_err(map_request_token_error)
-    })
-    .await?;
+    let response = exchange
+        .request_async(&http)
+        .await
+        .map_err(map_request_token_error)?;
 
     let access_token = SensitiveString::from(response.access_token().secret().clone());
     if access_token.reveal().is_empty() {
@@ -752,6 +718,7 @@ async fn refresh_access_token(
     refresh_token: &str,
     dpop_key: Option<&DPoPKey>,
     deadline: FlowDeadline,
+    retry_policy: &RetryPolicy,
 ) -> Result<AcquiredOAuthToken, OAuthError> {
     tracing::debug!("Refreshing OAuth access token");
     // For the refresh leg we don't need authorize_url; reuse the same
@@ -768,7 +735,19 @@ async fn refresh_access_token(
     // Drift B.12: reuse the caller-supplied DPoP key on the refresh hop
     // so the IdP can verify the proof and so the new access token can be
     // rebundled under the same JWK below.
-    let http = make_http_client(client, dpop_key, token_url);
+    // The refresh gets half of what is left of the flow deadline, so the
+    // browser login still has time after a stalled refresh.
+    let refresh_deadline = deadline
+        .half_of_remaining()
+        .ok_or_else(|| deadline.timeout_error())?;
+    let http = make_http_client(
+        client,
+        dpop_key,
+        token_url,
+        TokenGrant::RefreshToken,
+        retry_policy,
+        refresh_deadline,
+    );
 
     let refresh = RefreshToken::new(refresh_token.to_string());
     let mut request = oauth_client.exchange_refresh_token(&refresh);
@@ -776,15 +755,10 @@ async fn refresh_access_token(
         request = request.add_scope(Scope::new(scope.to_string()));
     }
 
-    // Drift B.3: refresh exchange shares the AC flow's end-to-end
-    // deadline.
-    let response = run_with_deadline(deadline, async {
-        request
-            .request_async(&http)
-            .await
-            .map_err(map_refresh_token_error)
-    })
-    .await?;
+    let response = request
+        .request_async(&http)
+        .await
+        .map_err(map_refresh_token_error)?;
 
     let access_token = SensitiveString::from(response.access_token().secret().clone());
     if access_token.reveal().is_empty() {
@@ -922,17 +896,37 @@ where
 }
 
 /// Refresh-leg specialization: surfaces [`OAuthError::RefreshTokenExchange`]
-/// for any failure so cache-eviction logic in
-/// [`run_oauth_authorization_code`] can match on a single variant.
+/// for any failure, carrying the mapped cause so cache-eviction logic in
+/// [`try_cache_short_circuit`] can tell transient failures from rejections.
 pub(super) fn map_refresh_token_error<RE>(
     err: RequestTokenError<RE, StandardErrorResponse<BasicErrorResponseType>>,
 ) -> OAuthError
 where
     RE: std::error::Error + Send + Sync + 'static,
 {
-    tracing::debug!(error = %err, "OAuth refresh-token exchange failed");
-    let _ = err;
-    RefreshTokenExchangeSnafu.build()
+    RefreshTokenExchangeSnafu.into_error(map_request_token_error(err))
+}
+
+/// A refresh token is kept when the IdP most likely never consumed it:
+/// the connection was never established, or the endpoint answered 429/503. Other
+/// transport failures, other 5xx answers, and timeouts are ambiguous; a
+/// single-use refresh token may already be spent, so it is kept only when
+/// single-use tokens are off. IdP rejections and malformed responses evict.
+fn refresh_failure_keeps_token(err: &OAuthError, single_use_refresh_tokens: bool) -> bool {
+    let cause = match err {
+        OAuthError::RefreshTokenExchange { source, .. } => source.as_ref(),
+        other => other,
+    };
+    match cause {
+        OAuthError::Transport { source, .. } if source.is_connect() => true,
+        OAuthError::TokenEndpointStatus {
+            status: 429 | 503, ..
+        } => true,
+        OAuthError::Transport { .. }
+        | OAuthError::TokenEndpointStatus { .. }
+        | OAuthError::AuthenticationTimeout { .. } => !single_use_refresh_tokens,
+        _ => false,
+    }
 }
 
 fn error_type_as_str(err: &BasicErrorResponseType) -> String {
@@ -1075,11 +1069,14 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use crate::config::rest_parameters::{DEFAULT_AUTHENTICATION_TIMEOUT_SECS, OAuthFlowOptions};
+    use crate::config::retry::RetryPolicy;
+    use crate::rest::snowflake::oauth::error::AuthenticationTimeoutSnafu;
     use crate::token_cache::TokenCacheError;
     use base64::Engine as _;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::time::Instant;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1262,6 +1259,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
     }
@@ -1574,6 +1572,7 @@ mod tests {
             late_loopback,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("a loopback redirect after the launcher returned must complete the flow");
@@ -1775,7 +1774,14 @@ mod tests {
             "http://127.0.0.1:8730/".to_string(),
         )
         .expect("client builds");
-        let http = make_http_client(&reqwest::Client::new(), None, &token_url);
+        let http = make_http_client(
+            &reqwest::Client::new(),
+            None,
+            &token_url,
+            TokenGrant::AuthorizationCode,
+            &RetryPolicy::default(),
+            FlowDeadline::new(30),
+        );
         oauth_client
             .exchange_code(AuthorizationCode::new("auth-code".to_string()))
             .request_async(&http)
@@ -1891,6 +1897,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("cache hit");
@@ -1937,6 +1944,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("refresh succeeds");
@@ -2000,6 +2008,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await;
         assert!(result.is_err());
@@ -2015,6 +2024,224 @@ mod tests {
             stored_rt.is_none(),
             "expired refresh token must be evicted from the cache"
         );
+    }
+
+    async fn connect_refused_error() -> reqwest::Error {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+        reqwest::Client::new()
+            .post(format!("http://{addr}/oauth/token"))
+            .send()
+            .await
+            .expect_err("nothing listens on the port")
+    }
+
+    async fn read_timeout_error() -> reqwest::Error {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let _server = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.expect("accept");
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        });
+        reqwest::Client::new()
+            .post(format!("http://{addr}/oauth/token"))
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await
+            .expect_err("the server never answers")
+    }
+
+    #[tokio::test]
+    async fn refresh_failure_keeps_token_only_when_the_idp_likely_did_not_consume_it() {
+        use crate::rest::snowflake::oauth::error::{TokenEndpointStatusSnafu, TransportSnafu};
+        let refresh_failure = |cause: OAuthError| RefreshTokenExchangeSnafu.into_error(cause);
+        let status = |status: u16| refresh_failure(TokenEndpointStatusSnafu { status }.build());
+        let cases: Vec<(&str, OAuthError, bool, bool)> = vec![
+            (
+                "connection refused",
+                refresh_failure(TransportSnafu.into_error(connect_refused_error().await)),
+                true,
+                true,
+            ),
+            ("HTTP 429", status(429), true, true),
+            ("HTTP 503", status(503), true, true),
+            ("HTTP 502", status(502), true, false),
+            ("HTTP 500", status(500), true, false),
+            (
+                "read timeout",
+                refresh_failure(TransportSnafu.into_error(read_timeout_error().await)),
+                true,
+                false,
+            ),
+            (
+                "client deadline",
+                refresh_failure(AuthenticationTimeoutSnafu { elapsed_secs: 1u64 }.build()),
+                true,
+                false,
+            ),
+            (
+                "flow deadline",
+                AuthenticationTimeoutSnafu { elapsed_secs: 1u64 }.build(),
+                true,
+                false,
+            ),
+            (
+                "invalid_grant",
+                refresh_failure(
+                    IdpSnafu {
+                        error: "invalid_grant".to_string(),
+                        description: String::new(),
+                    }
+                    .build(),
+                ),
+                false,
+                false,
+            ),
+            (
+                "missing access token",
+                refresh_failure(MissingAccessTokenSnafu.build()),
+                false,
+                false,
+            ),
+        ];
+        for (name, err, keep_reusable, keep_single_use) in cases {
+            assert_eq!(
+                refresh_failure_keeps_token(&err, false),
+                keep_reusable,
+                "{name} with reusable refresh tokens"
+            );
+            assert_eq!(
+                refresh_failure_keeps_token(&err, true),
+                keep_single_use,
+                "{name} with single-use refresh tokens"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_refresh_failure_keeps_cached_refresh_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-KEEP",
+            Some(cache.clone()),
+        )
+        .await;
+
+        let mut config = cfg_with_token_url(token_url.clone());
+        config.enable_single_use_refresh_tokens = true;
+        config.flow_options.authentication_timeout_secs = 1;
+        let fast_policy = RetryPolicy {
+            max_attempts: 2,
+            backoff: crate::config::retry::BackoffConfig {
+                base: Duration::ZERO,
+                factor: 1.0,
+                cap: Duration::ZERO,
+                jitter: crate::config::retry::Jitter::None,
+            },
+            ..RetryPolicy::default()
+        };
+        let launch: BrowserLaunchFn =
+            Box::new(|_, _| Box::pin(async { Ok(LaunchOutcome::Opened) }));
+        let result = run_authorization_code_flow(
+            &reqwest::Client::new(),
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            Some(cache.clone()),
+            launch,
+            false,
+            None,
+            &fast_policy,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(OAuthError::AuthenticationTimeout { .. } | OAuthError::BrowserTimeout { .. })
+            ),
+            "the browser login is never completed, got {result:?}"
+        );
+        let stored_rt = token::try_get_cached_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            Some(cache.clone()),
+        )
+        .await
+        .map(|s| s.reveal().to_string());
+        assert_eq!(stored_rt.as_deref(), Some("RT-KEEP"));
+    }
+
+    #[tokio::test]
+    async fn stalled_refresh_leaves_time_for_browser_login() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .and(body_string_contains("grant_type=authorization_code"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"access_token":"AT-BROWSER","token_type":"Bearer"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let token_url = Url::parse(&format!("{}/oauth/token", server.uri())).unwrap();
+        let cache: Arc<dyn TokenCache> = Arc::new(StubTokenCache::new());
+        token::store_oauth_refresh_token(
+            token_url.as_str(),
+            server_url().as_str(),
+            "alice",
+            "",
+            "RT-STALLED",
+            Some(cache.clone()),
+        )
+        .await;
+
+        let mut config = cfg_with_token_url(token_url);
+        config.authorization_url =
+            Some(Url::parse("https://idp.example.com/oauth/authorize").unwrap());
+        config.flow_options.authentication_timeout_secs = 4;
+        let acquired = run_authorization_code_flow(
+            &reqwest::Client::new(),
+            &server_url(),
+            server_url().as_str(),
+            &config,
+            "",
+            Some(cache.clone()),
+            loopback_redirect_with("THE-CODE"),
+            false,
+            None,
+            &RetryPolicy::default(),
+        )
+        .await
+        .expect("the browser login runs in the time the refresh left");
+
+        assert_eq!(acquired.access_token.reveal(), "AT-BROWSER");
     }
 
     #[tokio::test]
@@ -2076,6 +2303,7 @@ mod tests {
             loopback_redirect_with(AUTHORIZATION_CODE),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("browser login after refresh failure");
@@ -2162,6 +2390,7 @@ mod tests {
             loopback_redirect_with(AUTHORIZATION_CODE),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect_err("empty HTTP 400 from the token endpoint must fail the code exchange");
@@ -2207,6 +2436,7 @@ mod tests {
             loopback_redirect_with("THE-CODE"),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("interactive flow succeeds");
@@ -2249,6 +2479,7 @@ mod tests {
             loopback_redirect_with("THE-CODE"),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("interactive flow succeeds");
@@ -2345,6 +2576,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("interactive flow succeeds");
@@ -2479,6 +2711,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("interactive flow succeeds");
@@ -2514,6 +2747,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect_err("custom opener Err must fail the flow");
@@ -2576,6 +2810,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect_err("must fail with IdpError");
@@ -2629,6 +2864,7 @@ mod tests {
             launch,
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect_err("must fail with state mismatch");
@@ -2768,6 +3004,7 @@ mod tests {
             loopback_redirect_with("THE-CODE"),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("flow succeeds after one DPoP-nonce retry");
@@ -2844,6 +3081,7 @@ mod tests {
                 loopback_redirect_with("CODE-OK"),
                 false,
                 None,
+                &RetryPolicy::default(),
             )
             .await
             .unwrap_or_else(|e| panic!("enable={enable} flow failed: {e:?}"));
@@ -2900,6 +3138,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("refresh succeeds");
@@ -2956,6 +3195,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("refresh without new RT still succeeds");
@@ -3017,6 +3257,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("refresh without new RT still succeeds");
@@ -3070,6 +3311,7 @@ mod tests {
             loopback_redirect_with("CODE"),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("faulting cache must not abort the flow");
@@ -3114,6 +3356,7 @@ mod tests {
             loopback_redirect_observing("CODE", Some(authorize_url.clone())),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("scope-less AC succeeds");
@@ -3165,6 +3408,7 @@ mod tests {
             Some(cache.clone()),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("refresh without scope succeeds");
@@ -3216,6 +3460,7 @@ mod tests {
             loopback_redirect_with(AUTH_CODE),
             false,
             None,
+            &RetryPolicy::default(),
         )
         .await
         .expect("happy path");

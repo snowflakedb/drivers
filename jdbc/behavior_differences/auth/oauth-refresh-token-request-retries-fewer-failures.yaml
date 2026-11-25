@@ -1,0 +1,24 @@
+name: "OAuth refresh-token request retries fewer failures"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The token request goes through the driver's normal HTTP retry for every grant
+  and retries HTTP 408, 429 and 5xx inside the login or authentication timeout.
+  A refresh token that the IdP already used is sent again.
+new_driver_behavior: |
+  Client credentials and authorization code retry HTTP 408, 429 and 5xx,
+  timeouts, connection errors, and a response body cut off mid-read, on the
+  connection's shared login retry schedule (6 attempts, 250 ms base,
+  decorrelated jitter, 16 s cap) and inside the authentication timeout. A
+  refresh-token request retries only a connection that was never made and HTTP
+  429 and 503; after any other status, a timeout, or a cut-off body the failure
+  is reported at once. When a resent authorization code is rejected with
+  `invalid_grant` after an earlier failure, the error says the first request may
+  have used the code instead of showing the bare `invalid_grant`.
+description: |
+  A rotating refresh token that the IdP already used is rejected when it is
+  replayed, and the IdP may revoke the whole token family, so the new driver does
+  not resend it after a failure where the IdP may have used it.

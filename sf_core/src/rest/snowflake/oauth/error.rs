@@ -5,12 +5,13 @@
 //! Marked `pub(crate)` because the wiring layer translates these into
 //! the driver-facing `RestError` / `AuthError` taxonomy. Crate-internal
 //! callers should match on variants to make eviction / refresh decisions
-//! (e.g. `RefreshTokenExchange` should drop the cached refresh token and
-//! replay the full flow).
+//! (e.g. `RefreshTokenExchange` carries the cause that decides whether the
+//! cached refresh token is dropped before the full flow is replayed).
 
+use crate::http::retry::HttpError;
 use crate::logging::url_for_log;
 use crate::token_cache::TokenCacheError;
-use snafu::{Location, Snafu};
+use snafu::{IntoError, Location, Snafu};
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
@@ -137,10 +138,13 @@ pub enum OAuthError {
         location: Location,
     },
 
-    /// Refresh-token exchange failed. Caller should evict the refresh
-    /// token from cache and replay the full flow.
+    /// Refresh-token exchange failed. The caller replays the full flow and
+    /// uses `source` to decide whether the cached refresh token can still be
+    /// used.
     #[snafu(display("OAuth refresh-token exchange failed"))]
     RefreshTokenExchange {
+        #[snafu(source(from(OAuthError, Box::new)))]
+        source: Box<OAuthError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -204,6 +208,46 @@ pub enum OAuthError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "OAuth token request got {previous}, and its retry was rejected with invalid_grant; the first request may have used the authorization code"
+    ))]
+    AuthorizationCodeRetryRejected {
+        previous: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("OAuth token endpoint responded with HTTP {status}"))]
+    TokenEndpointStatus {
+        status: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+/// Timeouts carry no flow clock, so their `elapsed_secs` is a placeholder that
+/// [`OAuthHttpClient`](super::http_client::OAuthHttpClient) replaces with the
+/// time since the flow started.
+impl From<HttpError> for OAuthError {
+    fn from(err: HttpError) -> Self {
+        match err {
+            HttpError::Transport { source, .. } => TransportSnafu.into_error(source),
+            HttpError::DeadlineExceeded { elapsed, .. } => AuthenticationTimeoutSnafu {
+                elapsed_secs: elapsed.as_secs(),
+            }
+            .build(),
+            HttpError::RetryAfterExceeded { .. } | HttpError::ResponseTimeout { .. } => {
+                AuthenticationTimeoutSnafu { elapsed_secs: 0u64 }.build()
+            }
+            HttpError::ResponseTooLarge { max_size, .. } => ResponseBodyTooLargeSnafu {
+                max_bytes: max_size as u64,
+            }
+            .build(),
+            HttpError::MaxAttempts { last_status, .. } => TokenEndpointStatusSnafu {
+                status: last_status.as_u16(),
+            }
+            .build(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -267,7 +311,13 @@ mod tests {
                 location: mock_loc,
             },
             OAuthError::BrowserTimeout { location: mock_loc },
-            OAuthError::RefreshTokenExchange { location: mock_loc },
+            OAuthError::RefreshTokenExchange {
+                source: Box::new(OAuthError::TokenEndpointStatus {
+                    status: 503,
+                    location: mock_loc,
+                }),
+                location: mock_loc,
+            },
             OAuthError::MissingAccessToken { location: mock_loc },
             OAuthError::DPoPNonceRequired { location: mock_loc },
         ];
