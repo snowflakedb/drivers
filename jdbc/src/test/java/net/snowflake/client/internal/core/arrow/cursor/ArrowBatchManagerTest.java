@@ -66,6 +66,88 @@ public class ArrowBatchManagerTest {
   }
 
   @Test
+  public void shouldTranslateFirstBatchIoExceptionToSfSqlException() {
+    IOException advanceError = new IOException("stream broken");
+    ArrowResources resources =
+        new ArrowResources(
+            new ArrowBatchReader() {
+              @Override
+              public boolean loadNextBatch() throws IOException {
+                throw advanceError;
+              }
+
+              @Override
+              public ColumnBatch getBatch() {
+                throw new AssertionError("batch is never read when advancing fails");
+              }
+
+              @Override
+              public void close() {}
+            });
+    ArrowBatchManager manager = new ArrowBatchManager(new CursorState(), resources);
+
+    SFSQLException thrown = assertThrows(SFSQLException.class, manager::openFirstBatch);
+    assertEquals("Unable to advance Arrow results", thrown.getMessage());
+    assertSame(advanceError, thrown.getCause());
+  }
+
+  @Test
+  public void shouldReadFirstBatchBeforeCursorMoves() throws Exception {
+    try (ArrowCursorTestUtils.TestResources resourcesHolder =
+        ArrowCursorTestUtils.createIntResources(new int[] {10, 20}, new int[] {30})) {
+      ArrowResources resources = resourcesHolder.getResources();
+      CursorState cursor = new CursorState();
+      ArrowBatchManager manager = new ArrowBatchManager(cursor, resources);
+
+      manager.openFirstBatch();
+
+      assertEquals(-1, cursor.getCurrentRowInBatch());
+      assertEquals(2, cursor.getCurrentBatchRowCount());
+      assertFalse(cursor.isAfterLast());
+
+      assertTrue(manager.fetchNextRow());
+      assertEquals(0, cursor.getCurrentRowInBatch());
+      assertEquals(10, resources.getCurrentRoot().column(0).getInt(0));
+
+      assertTrue(manager.fetchNextRow());
+      assertEquals(1, cursor.getCurrentRowInBatch());
+
+      assertTrue(manager.fetchNextRow());
+      assertEquals(0, cursor.getCurrentRowInBatch());
+      assertEquals(1, cursor.getCurrentBatchRowCount());
+    }
+  }
+
+  @Test
+  public void shouldNotReadEmptyReaderAgainAfterOpenFirstBatch() {
+    int[] reads = {0};
+    ArrowResources resources =
+        new ArrowResources(
+            new ArrowBatchReader() {
+              @Override
+              public boolean loadNextBatch() {
+                reads[0]++;
+                return false;
+              }
+
+              @Override
+              public ColumnBatch getBatch() {
+                throw new AssertionError("no batch");
+              }
+
+              @Override
+              public void close() {}
+            });
+    CursorState cursor = new CursorState();
+    ArrowBatchManager manager = new ArrowBatchManager(cursor, resources);
+
+    manager.openFirstBatch();
+    assertFalse(manager.fetchNextRow());
+    assertTrue(cursor.isAfterLast());
+    assertEquals(1, reads[0]);
+  }
+
+  @Test
   public void shouldNotTouchReaderOnceCursorIsAfterLast() {
     ArrowResources resources =
         new ArrowResources(

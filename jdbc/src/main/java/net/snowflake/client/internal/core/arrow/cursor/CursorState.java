@@ -7,6 +7,8 @@ public final class CursorState {
 
   private int currentRowInBatch = -1;
   private int currentBatchRowCount = 0;
+  /** The reader was drained while the cursor was still before the first row. */
+  private boolean drained = false;
 
   public void reset() {
     wasNull = false;
@@ -14,6 +16,7 @@ public final class CursorState {
     afterLast = false;
     currentRowInBatch = -1;
     currentBatchRowCount = 0;
+    drained = false;
   }
 
   public boolean wasNull() {
@@ -61,7 +64,26 @@ public final class CursorState {
     this.currentRowInBatch = 0;
   }
 
+  /**
+   * Keeps a batch that was read before {@code next()} positioned the cursor on it. The cursor stays
+   * before the first row; the next {@code next()} advances into this batch instead of reading
+   * another one.
+   */
+  void holdBatch(int rowCount) {
+    this.currentBatchRowCount = rowCount;
+    this.currentRowInBatch = -1;
+    this.drained = false;
+  }
+
+  void markDrained() {
+    this.drained = true;
+  }
+
+  boolean isDrained() {
+    return drained;
+  }
+
   boolean hasLoadedBatch() {
-    return currentRowInBatch >= 0;
+    return currentBatchRowCount > 0;
   }
 }

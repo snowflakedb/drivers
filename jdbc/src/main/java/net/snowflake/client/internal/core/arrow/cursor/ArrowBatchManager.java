@@ -22,7 +22,30 @@ public final class ArrowBatchManager {
         cursor.incrementRowInBatch();
         return true;
       }
+      if (cursor.isDrained()) {
+        cursor.setAfterLast();
+        return false;
+      }
       return advanceToNextBatch();
+    } catch (IOException e) {
+      throw new SFSQLException("Unable to advance Arrow results", e);
+    }
+  }
+
+  /**
+   * Reads the first non-empty batch now, while the result set is still being built, and leaves the
+   * cursor before the first row. The first {@link #fetchNextRow()} then advances into that batch.
+   * An empty reader is remembered so that {@code next()} does not read it again.
+   */
+  public void openFirstBatch() {
+    try {
+      ColumnBatch first = loadNextNonEmptyBatch();
+      if (first == null) {
+        cursor.markDrained();
+        return;
+      }
+      resources.setCurrentRoot(first);
+      cursor.holdBatch(first.getRowCount());
     } catch (IOException e) {
       throw new SFSQLException("Unable to advance Arrow results", e);
     }

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.core.arrow.converters.DataConversionContext;
+import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchReader;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.ColumnBatchListReader;
 import net.snowflake.client.internal.core.arrow.vector.Column;
@@ -126,6 +128,83 @@ class ArrowRowReaderTest {
       }
     }
     assertTrue(closed);
+  }
+
+  @Test
+  void shouldCloseArrowResourcesWhenFirstBatchReadFails() {
+    Map<String, String> intMeta = new HashMap<>();
+    intMeta.put("logicalType", "FIXED");
+    intMeta.put("precision", "10");
+    intMeta.put("scale", "0");
+    ColumnBatch schemaRoot =
+        ColumnBatch.of(ColumnBuilder.of("id", Column.PhysicalKind.INT32, intMeta));
+    IOException readError = new IOException("stream broken");
+    int[] closes = {0};
+    ArrowResources resources =
+        new ArrowResources(
+            new ArrowBatchReader() {
+              @Override
+              public boolean loadNextBatch() throws IOException {
+                throw readError;
+              }
+
+              @Override
+              public ColumnBatch getBatch() {
+                return schemaRoot;
+              }
+
+              @Override
+              public void close() {
+                closes[0]++;
+              }
+            });
+
+    SFSQLException thrown =
+        assertThrows(
+            SFSQLException.class,
+            () -> new ArrowRowReader(resources, new DataContextStub(), UNKNOWN_ROW_COUNT));
+
+    assertSame(readError, thrown.getCause());
+    assertEquals(1, closes[0]);
+  }
+
+  @Test
+  void shouldKeepFirstBatchFailureWhenCloseAlsoFails() {
+    Map<String, String> intMeta = new HashMap<>();
+    intMeta.put("logicalType", "FIXED");
+    intMeta.put("precision", "10");
+    intMeta.put("scale", "0");
+    ColumnBatch schemaRoot =
+        ColumnBatch.of(ColumnBuilder.of("id", Column.PhysicalKind.INT32, intMeta));
+    IOException readError = new IOException("stream broken");
+    IOException closeError = new IOException("close broken");
+    ArrowResources resources =
+        new ArrowResources(
+            new ArrowBatchReader() {
+              @Override
+              public boolean loadNextBatch() throws IOException {
+                throw readError;
+              }
+
+              @Override
+              public ColumnBatch getBatch() {
+                return schemaRoot;
+              }
+
+              @Override
+              public void close() throws IOException {
+                throw closeError;
+              }
+            });
+
+    SFSQLException thrown =
+        assertThrows(
+            SFSQLException.class,
+            () -> new ArrowRowReader(resources, new DataContextStub(), UNKNOWN_ROW_COUNT));
+
+    assertSame(readError, thrown.getCause());
+    assertEquals(1, thrown.getSuppressed().length);
+    assertSame(closeError, thrown.getSuppressed()[0].getCause());
   }
 
   @Test
