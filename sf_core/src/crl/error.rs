@@ -61,16 +61,6 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Certificate chain is revoked or indeterminate"))]
-    ChainRevoked {
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("End-entity certificate is revoked"))]
-    EndEntityRevoked {
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("Certificate has no CRL distribution points"))]
     NoCrlDistributionPoints {
         #[snafu(implicit)]

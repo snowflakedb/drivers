@@ -1,6 +1,6 @@
 use crate::crl::ConnectionCrl;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-use crate::crl::validator::CrlValidator;
+use crate::crl::validator::{ChainValidationOutcome, CrlValidator, RevokedCert};
 use crate::crl::worker::SharedCrlWorker;
 use crate::tls::RootStoreSnapshot;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -9,12 +9,62 @@ use rustls::crypto::WebPkiSupportedAlgorithms;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::ParsedCertificate;
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 /// Signature algorithms for chain and CRL verification, taken from the
 /// linked crypto module so they match the provider that negotiates the handshake.
 fn default_supported_algs() -> WebPkiSupportedAlgorithms {
     crate::tls::crypto_module::CryptoModule::get().signature_verification_algorithms()
+}
+
+fn resolve(
+    outcome: ChainValidationOutcome,
+    mode: &CertRevocationCheckMode,
+) -> Result<ServerCertVerified, TlsError> {
+    match outcome {
+        ChainValidationOutcome::NotRevoked => Ok(ServerCertVerified::assertion()),
+        ChainValidationOutcome::Revoked(cert) => {
+            let message = match cert {
+                RevokedCert::EndEntity => "CRL validation failed: end-entity certificate revoked",
+                RevokedCert::Intermediate => "CRL validation failed: chain revoked",
+            };
+            tracing::error!(target: "sf_core::crl", "{message}");
+            Err(TlsError::General(message.to_string()))
+        }
+        ChainValidationOutcome::Indeterminate => match mode {
+            CertRevocationCheckMode::Disabled => Ok(ServerCertVerified::assertion()),
+            CertRevocationCheckMode::Advisory => {
+                tracing::warn!(target: "sf_core::crl", "CRL validation errors but no revoked chain; allowing (advisory)");
+                Ok(ServerCertVerified::assertion())
+            }
+            CertRevocationCheckMode::Enabled => {
+                tracing::error!(target: "sf_core::crl", "CRL validation failed");
+                Err(TlsError::General("CRL validation failed".to_string()))
+            }
+        },
+    }
+}
+
+/// Folds one chain's outcome into the outcome of the chains seen so far. A `NotRevoked` chain
+/// or a revoked end-entity certificate ends the search. Otherwise `Indeterminate` absorbs a
+/// revoked intermediate, so the result is `Revoked` only when every chain is revoked. A
+/// revoked intermediate can belong to a single path, and a path that could not be checked is
+/// unverified rather than revoked.
+fn fold_chain_outcome(
+    best: Option<ChainValidationOutcome>,
+    next: ChainValidationOutcome,
+) -> ControlFlow<ChainValidationOutcome, ChainValidationOutcome> {
+    match next {
+        ChainValidationOutcome::NotRevoked
+        | ChainValidationOutcome::Revoked(RevokedCert::EndEntity) => ControlFlow::Break(next),
+        ChainValidationOutcome::Revoked(RevokedCert::Intermediate) => {
+            ControlFlow::Continue(best.unwrap_or(next))
+        }
+        ChainValidationOutcome::Indeterminate => {
+            ControlFlow::Continue(ChainValidationOutcome::Indeterminate)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -118,49 +168,26 @@ impl ServerCertVerifier for CrlServerCertVerifier {
             &inters,
             |inters_der: &[rustls::pki_types::CertificateDer<'_>]| verify_path(inters_der).is_ok(),
         );
-        if chains.is_empty() {
+        let mut validation_outcome = None;
+        for chain in chains.iter() {
+            let next = self
+                .crl_worker
+                .validate(Arc::clone(&self.crl_validator), chain.clone());
+            match fold_chain_outcome(validation_outcome, next) {
+                ControlFlow::Break(outcome) => {
+                    validation_outcome = Some(outcome);
+                    break;
+                }
+                ControlFlow::Continue(outcome) => validation_outcome = Some(outcome),
+            }
+        }
+        let Some(validation_outcome) = validation_outcome else {
             return Err(TlsError::General(
                 "CRL validation failed: no anchored chains".to_string(),
             ));
-        }
+        };
 
-        // CRL-check this anchored chain
-        let mut saw_chain_revoked = false;
-        for chain in chains.iter() {
-            let validation = self
-                .crl_worker
-                .validate(Arc::clone(&self.crl_validator), chain.clone());
-            match validation {
-                Ok(_) => return Ok(ServerCertVerified::assertion()),
-                Err(e) => {
-                    if matches!(e, crate::crl::error::CrlError::EndEntityRevoked { .. }) {
-                        tracing::error!(target: "sf_core::crl", "CRL validation failed: end-entity certificate revoked");
-                        return Err(TlsError::General(
-                            "CRL validation failed: end-entity certificate revoked".to_string(),
-                        ));
-                    }
-                    if matches!(e, crate::crl::error::CrlError::ChainRevoked { .. }) {
-                        saw_chain_revoked = true;
-                    }
-                }
-            }
-        }
-
-        // If we saw a revoked chain, return an error regardless of mode.
-        if saw_chain_revoked {
-            tracing::error!(target: "sf_core::crl", "CRL validation failed: chain revoked");
-            return Err(TlsError::General(
-                "CRL validation failed: chain revoked".to_string(),
-            ));
-        }
-
-        if self.crl_config.check_mode == CertRevocationCheckMode::Advisory {
-            tracing::warn!(target: "sf_core::crl", "CRL validation errors but no revoked chain; allowing (advisory)");
-            return Ok(ServerCertVerified::assertion());
-        }
-
-        tracing::error!(target: "sf_core::crl", "CRL validation failed");
-        Err(TlsError::General("CRL validation failed".to_string()))
+        resolve(validation_outcome, &self.crl_config.check_mode)
     }
 
     fn verify_tls12_signature(
@@ -266,7 +293,7 @@ mod tests {
         let root_store = make_root_store(&root_cert.to_der().unwrap());
 
         let crl = test_crl();
-        th::seed_revoked(&memory_cache(&crl), &ee_cert, &inter_cert, 5);
+        th::seed_revoked(&memory_cache(&crl), &ee_cert, 5);
 
         // Verifier
         let crl_cfg = crate::crl::config::CrlConfig {
@@ -327,11 +354,11 @@ mod tests {
         let ee_cert = th::sign_cert(&ee_req, inter_cert.subject_name(), &inter_key, false);
         let root_store = th::make_root_store(&root_cert.to_der().unwrap());
         let crl = test_crl();
-        th::seed_not_determined(&memory_cache(&crl), &ee_cert, &inter_cert, 5);
+        th::seed_not_determined(&memory_cache(&crl), &ee_cert, 5);
         // Advisory allows
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,
-            allow_certificates_without_crl_url: true,
+            allow_certificates_without_crl_url: false,
             ..Default::default()
         };
         let ver = CrlServerCertVerifier::new_with_root_store(
@@ -374,7 +401,248 @@ mod tests {
             &[],
             UnixTime::now(),
         );
-        assert!(res2.is_err(), "Enabled should fail NotDetermined");
+        assert_eq!(
+            res2.unwrap_err(),
+            TlsError::General("CRL validation failed".to_string()),
+            "Enabled should fail NotDetermined with generic CRL validation error, not chain revoked"
+        );
+    }
+
+    #[test]
+    fn advisory_allows_when_crl_download_returns_not_found_and_enabled_fails() {
+        use rcgen::{
+            BasicConstraints, CertificateParams, CrlDistributionPoint, DistinguishedName, DnType,
+            IsCa, KeyPair, KeyUsagePurpose,
+        };
+        use std::io::{Read, Write};
+
+        th::test_setup();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/ca.crl", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut served = 0usize;
+            while served < 2 && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        let mut buf = [0u8; 1024];
+                        let _ = stream.read(&mut buf);
+                        stream
+                            .write_all(
+                                b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                            )
+                            .unwrap();
+                        served += 1;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(e) => panic!("fake CRL server accept failed: {e}"),
+                }
+            }
+            served
+        });
+
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        let mut ca_dn = DistinguishedName::new();
+        ca_dn.push(DnType::CommonName, "Test Root CA");
+        ca_params.distinguished_name = ca_dn;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_der = ca_cert.der().to_vec();
+
+        let inter_key = KeyPair::generate().unwrap();
+        let mut inter_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        let mut inter_dn = DistinguishedName::new();
+        inter_dn.push(DnType::CommonName, "Test Intermediate CA");
+        inter_params.distinguished_name = inter_dn;
+        inter_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        inter_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let inter_cert = inter_params
+            .signed_by(&inter_key, &ca_cert, &ca_key)
+            .unwrap();
+        let inter_der = CertificateDer::from(inter_cert.der().to_vec());
+
+        let ee_key = KeyPair::generate().unwrap();
+        let mut ee_params = CertificateParams::new(vec!["test.snowflake.com".into()]).unwrap();
+        let mut ee_dn = DistinguishedName::new();
+        ee_dn.push(DnType::CommonName, "test.snowflake.com");
+        ee_params.distinguished_name = ee_dn;
+        ee_params.is_ca = IsCa::NoCa;
+        ee_params.crl_distribution_points = vec![CrlDistributionPoint { uris: vec![url] }];
+        let ee_cert = ee_params
+            .signed_by(&ee_key, &inter_cert, &inter_key)
+            .unwrap();
+        let ee_der = CertificateDer::from(ee_cert.der().to_vec());
+
+        let root_store = Arc::new(make_root_store(&ca_der));
+        let server_name = ServerName::try_from("test.snowflake.com").unwrap();
+
+        let advisory_verifier = CrlServerCertVerifier::new_with_root_store(
+            CrlConfig {
+                check_mode: CertRevocationCheckMode::Advisory,
+                enable_memory_caching: false,
+                enable_disk_caching: false,
+                ..Default::default()
+            },
+            Arc::clone(&root_store),
+            true,
+            test_crl(),
+            &crate::tls::RootStoreProvider::new().snapshot(),
+        )
+        .unwrap();
+        let advisory_res = advisory_verifier.verify_server_cert(
+            &ee_der,
+            std::slice::from_ref(&inter_der),
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+
+        let enabled_verifier = CrlServerCertVerifier::new_with_root_store(
+            CrlConfig {
+                check_mode: CertRevocationCheckMode::Enabled,
+                enable_memory_caching: false,
+                enable_disk_caching: false,
+                ..Default::default()
+            },
+            root_store,
+            true,
+            test_crl(),
+            &crate::tls::RootStoreProvider::new().snapshot(),
+        )
+        .unwrap();
+        let enabled_res = enabled_verifier.verify_server_cert(
+            &ee_der,
+            std::slice::from_ref(&inter_der),
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+
+        let served = server.join().unwrap();
+        assert_eq!(
+            served, 2,
+            "the Advisory and Enabled verifiers each download the CRL once"
+        );
+
+        assert!(
+            advisory_res.is_ok(),
+            "Advisory mode must allow connection on CRL HTTP 404: {advisory_res:?}"
+        );
+        assert_eq!(
+            enabled_res.unwrap_err(),
+            TlsError::General("CRL validation failed".to_string()),
+            "Enabled mode must fail on CRL HTTP 404 with CRL validation failed, not chain revoked"
+        );
+    }
+
+    #[test]
+    fn fold_chain_outcome_is_revoked_only_when_every_chain_is_revoked() {
+        let revoked = ChainValidationOutcome::Revoked(RevokedCert::Intermediate);
+        let indeterminate = ChainValidationOutcome::Indeterminate;
+
+        assert_eq!(
+            fold_chain_outcome(None, revoked),
+            ControlFlow::Continue(revoked)
+        );
+        assert_eq!(
+            fold_chain_outcome(Some(revoked), revoked),
+            ControlFlow::Continue(revoked)
+        );
+        assert_eq!(
+            fold_chain_outcome(Some(revoked), indeterminate),
+            ControlFlow::Continue(indeterminate)
+        );
+        assert_eq!(
+            fold_chain_outcome(Some(indeterminate), revoked),
+            ControlFlow::Continue(indeterminate)
+        );
+    }
+
+    #[test]
+    fn fold_chain_outcome_stops_on_clean_chain_or_revoked_end_entity() {
+        let revoked = ChainValidationOutcome::Revoked(RevokedCert::Intermediate);
+        let end_entity = ChainValidationOutcome::Revoked(RevokedCert::EndEntity);
+
+        assert_eq!(
+            fold_chain_outcome(Some(revoked), ChainValidationOutcome::NotRevoked),
+            ControlFlow::Break(ChainValidationOutcome::NotRevoked)
+        );
+        assert_eq!(
+            fold_chain_outcome(Some(ChainValidationOutcome::Indeterminate), end_entity),
+            ControlFlow::Break(end_entity)
+        );
+    }
+
+    fn fold_all(outcomes: &[ChainValidationOutcome]) -> ChainValidationOutcome {
+        let mut best = None;
+        for next in outcomes {
+            best = Some(match fold_chain_outcome(best, *next) {
+                ControlFlow::Break(outcome) | ControlFlow::Continue(outcome) => outcome,
+            });
+        }
+        best.unwrap()
+    }
+
+    #[test]
+    fn mixed_revoked_and_indeterminate_chains_fail_open_only_in_advisory() {
+        let revoked = ChainValidationOutcome::Revoked(RevokedCert::Intermediate);
+        let indeterminate = ChainValidationOutcome::Indeterminate;
+        for chain_outcomes in [[indeterminate, revoked], [revoked, indeterminate]] {
+            let folded = fold_all(&chain_outcomes);
+            assert!(resolve(folded, &CertRevocationCheckMode::Advisory).is_ok());
+            assert_eq!(
+                resolve(folded, &CertRevocationCheckMode::Enabled).unwrap_err(),
+                TlsError::General("CRL validation failed".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn every_chain_revoked_fails_in_advisory_and_enabled() {
+        let folded = fold_all(&[
+            ChainValidationOutcome::Revoked(RevokedCert::Intermediate),
+            ChainValidationOutcome::Revoked(RevokedCert::Intermediate),
+        ]);
+        for mode in [
+            CertRevocationCheckMode::Advisory,
+            CertRevocationCheckMode::Enabled,
+        ] {
+            assert_eq!(
+                resolve(folded, &mode).unwrap_err(),
+                TlsError::General("CRL validation failed: chain revoked".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_allows_indeterminate_only_in_advisory() {
+        let indeterminate = ChainValidationOutcome::Indeterminate;
+        assert!(resolve(indeterminate, &CertRevocationCheckMode::Advisory).is_ok());
+        assert_eq!(
+            resolve(indeterminate, &CertRevocationCheckMode::Enabled).unwrap_err(),
+            TlsError::General("CRL validation failed".to_string())
+        );
+        for mode in [
+            CertRevocationCheckMode::Advisory,
+            CertRevocationCheckMode::Enabled,
+        ] {
+            assert_eq!(
+                resolve(
+                    ChainValidationOutcome::Revoked(RevokedCert::EndEntity),
+                    &mode
+                )
+                .unwrap_err(),
+                TlsError::General(
+                    "CRL validation failed: end-entity certificate revoked".to_string()
+                )
+            );
+        }
     }
 
     #[test]
@@ -503,7 +771,7 @@ mod tests {
                 .unwrap();
         cache.test_put_outcome(
             &inter_serial,
-            &root.to_der().unwrap(),
+            &inter.to_der().unwrap(),
             RevocationOutcome::Revoked {
                 reason: None,
                 revocation_time: None,
@@ -522,8 +790,9 @@ mod tests {
             &[],
             UnixTime::now(),
         );
-        assert!(
-            res.is_err(),
+        assert_eq!(
+            res.unwrap_err(),
+            TlsError::General("CRL validation failed: chain revoked".to_string()),
             "Advisory should fail when intermediate is revoked"
         );
         // Enabled: fail
@@ -546,8 +815,9 @@ mod tests {
             &[],
             UnixTime::now(),
         );
-        assert!(
-            res2.is_err(),
+        assert_eq!(
+            res2.unwrap_err(),
+            TlsError::General("CRL validation failed: chain revoked".to_string()),
             "Enabled should fail ChainRevoked on intermediate"
         );
     }
@@ -594,9 +864,8 @@ mod tests {
         );
 
         // Seed NotDetermined for both alternative parentings of InterB
-        th::seed_not_determined(&cache, &ee, &inter_b, 5);
-        th::seed_not_determined(&cache, &inter_b, &inter_a_via_a, 5);
-        th::seed_not_determined(&cache, &inter_b, &inter_a_via_b, 5);
+        th::seed_not_determined(&cache, &ee, 5);
+        th::seed_not_determined(&cache, &inter_b, 5);
 
         // Trust store only contains RootA
         let root_store = th::make_root_store(&root_a.to_der().unwrap());
@@ -669,7 +938,6 @@ mod tests {
             false,
         );
 
-        // Seed outcomes: InterB is revoked only under InterA_via_B; clean under InterA_via_A
         let crl = test_crl();
         let cache = memory_cache(&crl);
         let future = Utc::now() + chrono::Duration::days(5);
@@ -679,16 +947,7 @@ mod tests {
         .unwrap();
         cache.test_put_outcome(
             &inter_b_serial,
-            &inter_a_via_b.to_der().unwrap(),
-            RevocationOutcome::Revoked {
-                reason: None,
-                revocation_time: None,
-            },
-            future,
-        );
-        cache.test_put_outcome(
-            &inter_b_serial,
-            &inter_a_via_a.to_der().unwrap(),
+            &inter_b.to_der().unwrap(),
             RevocationOutcome::NotDetermined,
             future,
         );
@@ -751,7 +1010,7 @@ mod tests {
             false,
         );
         let root_store = th::make_root_store(&root_cert.to_der().unwrap());
-        th::seed_not_determined(&cache, &ee_cert, &inter_cert, 5);
+        th::seed_not_determined(&cache, &ee_cert, 5);
 
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Advisory,

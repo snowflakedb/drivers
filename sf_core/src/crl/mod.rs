@@ -18,5 +18,5 @@ pub use certificate_parser::{
 pub use config::{CertRevocationCheckMode, CrlConfig};
 pub use error::CrlError;
 pub use manager::{ConnectionCrl, CrlManager};
-pub use validator::CrlValidator;
+pub use validator::{ChainValidationOutcome, CrlValidator, RevokedCert};
 pub use worker::{CrlWorker, SharedCrlWorker};

@@ -404,11 +404,11 @@ impl CrlCache {
     pub(crate) fn test_put_outcome(
         &self,
         serial: &[u8],
-        issuer_der: &[u8],
+        cert_der: &[u8],
         outcome: crate::tls::revocation::RevocationOutcome,
         expires_at: DateTime<Utc>,
     ) {
-        if let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer_der) {
+        if let Some(issuer_hash) = crate::tls::x509_utils::issuer_der_hash(cert_der) {
             let key = OutcomeKey {
                 serial: serial.to_vec(),
                 issuer_hash,
@@ -635,13 +635,11 @@ impl CrlCache {
     fn record_revocation_outcome(
         &self,
         serial: &[u8],
-        issuer_der: Option<&[u8]>,
+        cert_der: &[u8],
         min_expires: Option<DateTime<Utc>>,
         outcome: &crate::tls::revocation::RevocationOutcome,
     ) {
-        if let Some(issuer) = issuer_der
-            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
-        {
+        if let Some(issuer_hash) = crate::tls::x509_utils::issuer_der_hash(cert_der) {
             let key = OutcomeKey {
                 serial: serial.to_owned(),
                 issuer_hash,
@@ -696,9 +694,7 @@ impl CrlCache {
         // Check outcome cache first for a definitive answer (e.g., EE revoked), regardless of CRLDP presence
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
             .context(crate::tls::revocation::CrlOperationSnafu)?;
-        if let Some(issuer) = issuer_der
-            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
-        {
+        if let Some(issuer_hash) = crate::tls::x509_utils::issuer_der_hash(cert_der) {
             let key = OutcomeKey {
                 serial: serial.clone(),
                 issuer_hash,
@@ -776,7 +772,7 @@ impl CrlCache {
             .await
             {
                 Ok(Some(outcome)) => {
-                    self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
+                    self.record_revocation_outcome(&serial, cert_der, min_expires, &outcome);
                     return Ok(outcome);
                 }
                 Ok(None) => {
@@ -817,7 +813,7 @@ impl CrlCache {
         } else {
             RevocationOutcome::NotDetermined
         };
-        self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
+        self.record_revocation_outcome(&serial, cert_der, min_expires, &outcome);
         Ok(outcome)
     }
 
@@ -2311,6 +2307,63 @@ mod tests {
         assert!(stat["crl_download_time_ms"].is_number());
         assert!(stat["crl_parse_time_ms"].is_number());
         assert!(stat["crl_revoked_certificates"].is_number());
+    }
+
+    #[tokio::test]
+    async fn outcome_cache_keys_a_top_intermediate_by_its_issuer_dn() {
+        use crate::tls::test_helpers::x509 as th;
+        use crate::tls::x509_utils::{issuer_der_hash, subject_der_hash};
+
+        th::test_setup();
+        let root_key = th::gen_key();
+        let root = th::sign_cert(
+            &th::gen_req("Root", &root_key),
+            &th::make_name("Root"),
+            &root_key,
+            true,
+        );
+        let inter_key = th::gen_key();
+        let inter = th::sign_cert(
+            &th::gen_req("Inter", &inter_key),
+            root.subject_name(),
+            &root_key,
+            true,
+        );
+        let root_der = root.to_der().unwrap();
+        let inter_der = inter.to_der().unwrap();
+        assert_eq!(issuer_der_hash(&inter_der), subject_der_hash(&root_der));
+        assert_ne!(issuer_der_hash(&inter_der), subject_der_hash(&inter_der));
+
+        let crl = crate::crl::CrlManager::new();
+        let cache = crl
+            .cache(
+                test_config(),
+                &crate::tls::RootStoreProvider::new().snapshot(),
+            )
+            .unwrap();
+        cache.test_put_outcome(
+            &th::serial_of(&inter),
+            &inter_der,
+            RevocationOutcome::Revoked {
+                reason: None,
+                revocation_time: None,
+            },
+            Utc::now() + chrono::Duration::days(5),
+        );
+
+        let checked = cache
+            .check_revocation(
+                &inter_der,
+                Some(&inter_der),
+                None,
+                Some(Arc::new(th::make_root_store(&root_der))),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(checked, Ok(RevocationOutcome::Revoked { .. })),
+            "a top intermediate whose issuer is in the root store hits the outcome cache, got {checked:?}"
+        );
     }
 
     enum CrlBytes {

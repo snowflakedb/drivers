@@ -127,19 +127,14 @@ pub mod x509 {
 
     // CRL outcome and cache helpers ------------------------------------------
 
-    /// Seed a Revoked outcome for (subject, issuer) with a short TTL.
-    pub fn seed_revoked(
-        cache: &crate::crl::cache::CrlCache,
-        subject: &X509,
-        issuer: &X509,
-        ttl_days: i64,
-    ) {
+    /// Seed a Revoked outcome for `subject`, keyed by its issuer DN, with a short TTL.
+    pub fn seed_revoked(cache: &crate::crl::cache::CrlCache, subject: &X509, ttl_days: i64) {
         use crate::tls::revocation::RevocationOutcome;
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(
             &serial,
-            &issuer.to_der().unwrap(),
+            &subject.to_der().unwrap(),
             RevocationOutcome::Revoked {
                 reason: None,
                 revocation_time: None,
@@ -148,19 +143,14 @@ pub mod x509 {
         );
     }
 
-    /// Seed a NotDetermined outcome for (subject, issuer) with a short TTL.
-    pub fn seed_not_determined(
-        cache: &crate::crl::cache::CrlCache,
-        subject: &X509,
-        issuer: &X509,
-        ttl_days: i64,
-    ) {
+    /// Seed a NotDetermined outcome for `subject`, keyed by its issuer DN, with a short TTL.
+    pub fn seed_not_determined(cache: &crate::crl::cache::CrlCache, subject: &X509, ttl_days: i64) {
         use crate::tls::revocation::RevocationOutcome;
         let until = chrono::Utc::now() + chrono::Duration::days(ttl_days);
         let serial = serial_of(subject);
         cache.test_put_outcome(
             &serial,
-            &issuer.to_der().unwrap(),
+            &subject.to_der().unwrap(),
             RevocationOutcome::NotDetermined,
             until,
         );
@@ -172,10 +162,8 @@ pub mod x509 {
         chain: &[X509],
         ttl_days: i64,
     ) {
-        for win in chain.windows(2) {
-            let subj = &win[0];
-            let iss = &win[1];
-            seed_not_determined(cache, subj, iss, ttl_days);
+        for subject in chain.iter().take(chain.len().saturating_sub(1)) {
+            seed_not_determined(cache, subject, ttl_days);
         }
     }
 }

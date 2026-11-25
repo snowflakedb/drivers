@@ -15,22 +15,19 @@ Related: [tls-handshake.md](tls-handshake.md) · [cert-chain.md](cert-chain.md) 
 | Mode | Value | Behavior |
 |---|---|---|
 | `Disabled` (default) | `0` / `DISABLED` | No CRL fetch; the handshake still validates chain + hostname. |
-| `Enabled` | `1` / `ENABLED` | Any CRL issue (fetch failure, parse error, revocation) fails the connection. |
-| `Advisory` | `2` / `ADVISORY` | Same as `ENABLED` for a failed CRL fetch, an unparseable or expired CRL, and a certificate with no usable CRL URL: the chain is treated as revoked and the connection fails. |
+| `Enabled` | `1` / `ENABLED` | Any CRL issue (fetch failure, parse error, missing CRL URL, or revocation) fails the connection. |
+| `Advisory` | `2` / `ADVISORY` | Fails only on a confirmed revocation (the end-entity certificate, or every candidate chain). A failed CRL fetch, an unparseable or expired CRL, or a certificate with no usable CRL URL logs a warning and allows the connection. |
 
 Values are matched case-sensitively (`DISABLED`, `ENABLED`, `ADVISORY`, `0`, `1`,
 `2`); any other value, including lowercase, is rejected when the connection is
 created. ODBC keys: `CRL_MODE`, `CRL_ENABLED`.
 
-> **Confirmed revocation always fails** — an end-entity or chain revocation is
-> fatal in **every** mode, including `ADVISORY`. There is no setting to accept a
-> revoked certificate.
-
-> **A CRL problem surfaces as "chain revoked".** For any certificate in the chain,
-> a CRL that cannot be fetched, parsed, or verified counts as a failed chain, and the error reads `CRL validation failed: chain revoked`
-> even though nothing was revoked. A certificate without a CRL distribution point
-> fails the same way unless `crl_allow_certificates_without_crl_url=true`. See
-> [CRL-1](#crl-1-revocation-vs-fetch--classify-first).
+> **Confirmed revocation fails in every mode** — a revoked end-entity
+> certificate, or a revoked certificate on every candidate chain, is fatal in
+> **every** mode, including `ADVISORY`. When none of several candidate chains is
+> clean, a mix of revoked chains and chains whose CRL check could not be completed
+> counts as undetermined: `ADVISORY` allows the connection and `ENABLED` fails it.
+> A clean candidate chain always lets the connection through.
 
 ### Validation flow
 
@@ -38,12 +35,16 @@ created. ODBC keys: `CRL_MODE`, `CRL_ENABLED`.
 verify_server_cert()                       crl_verifier.rs
   1. WebPki verify (chain + hostname)
   2. build all anchored candidate chains   x509_utils.rs
-  3. per chain, CRL worker validates → NotRevoked (first clean chain wins)
-                                        Revoked      (always fail)
-                                        fetch/parse error or no CRL URL
-                                                     (reported as "chain revoked";
-                                                      allowed for no-CRL-URL only
-                                                      with crl_allow_certificates_without_crl_url)
+  3. per chain, CRL worker validates → NotRevoked      (first clean chain wins)
+                                        Revoked(EndEntity)
+                                                        (always fails, stops the search)
+                                        Revoked(Intermediate)
+                                                        (fails only when every chain is revoked;
+                                                         a mix with Indeterminate is Indeterminate)
+                                        Indeterminate   (fetch/parse error or no CRL URL:
+                                                         fail in ENABLED; warn and allow in ADVISORY;
+                                                         no-CRL-URL is NotRevoked when
+                                                         crl_allow_certificates_without_crl_url=true)
 ```
 
 ### Cache & short-lived certs
@@ -92,10 +93,9 @@ connections on the warm cache are fast; no error is returned.**
 
 With CRL on, a new TLS connection triggers a fetch when the cached CRL is absent
 or expired. If the CRL distribution point (CDP) is blocked, the fetch waits for
-`crl_http_timeout` (default 10 s) and `crl_connection_timeout` (default 10 s). The
-connection then fails with `CRL validation failed: chain revoked` (see CRL-1), so
-the slowness ends in an error unless the CRL is eventually fetched or CRL checking
-is disabled.
+`crl_http_timeout` (default 10 s) and `crl_connection_timeout` (default 10 s). In
+`ENABLED` mode the connection then fails with `CRL validation failed`; in
+`ADVISORY` mode it logs a warning and connects after the timeout.
 
 **Diagnosis:**
 ```sh
@@ -127,9 +127,10 @@ tls_client https://<account>.snowflakecomputing.com --crl-mode enabled --no-crl-
 | `success:true` | `success:true` | CRL path is healthy |
 | `success:false` | `success:false` | Not a CRL issue → [cert-chain.md](cert-chain.md) or [tls-handshake.md](tls-handshake.md) |
 
-`ADVISORY` gives the same result as `ENABLED` for fetch failures, so the
-`ENABLED` run is sufficient to classify; the error text alone
-(`CRL validation failed: chain revoked`) does not distinguish the two cases.
+`ENABLED` fails with `CRL validation failed` on fetch/parse errors and with
+`CRL validation failed: end-entity certificate revoked` or `CRL validation failed:
+chain revoked` on a confirmed revocation. `ADVISORY` logs a warning and allows the
+connection on fetch/parse errors, and fails only on a confirmed revocation.
 
 `-vv` emits DEBUG logs (target `sf_core::crl`) with each CDP URL and the per-cert
 outcome — the primary tool for pinpointing which cert's CRL failed.
@@ -138,8 +139,10 @@ outcome — the primary tool for pinpointing which cert's CRL failed.
 
 Errors: `"CRL validation failed: end-entity certificate revoked"` (a confirmed
 revocation of the server certificate) and `"CRL validation failed: chain revoked"`
-(an issuer in the chain is revoked, **or** its CRL could not be fetched or
-verified — see CRL-3). Both fail in **all** modes.
+(an issuer in the chain is revoked, and no other candidate chain is clean or
+undetermined). Both fail in **all** modes (`ENABLED` and `ADVISORY`). If another
+candidate chain could not be checked, the result is undetermined instead: it fails
+in `ENABLED` with `CRL validation failed` and is allowed in `ADVISORY`.
 
 ```sh
 # 1. Split the chain into per-cert files:
@@ -164,8 +167,8 @@ the account name and the step-2 output.
 Errors in the logs (target `sf_core::crl`): `"Failed to download CRL from <url>"`
 (URL with the query string stripped), `"HTTP timeout while fetching CRL"`, `"CRL
 download from <url> exceeded max size …"` (limit `crl_max_download_size`, default
-20 MiB). The TLS error the application sees is `CRL validation failed: chain
-revoked`, in `ENABLED` and `ADVISORY` alike.
+20 MiB). In `ENABLED` mode, the TLS error the application sees is `CRL validation
+failed`; in `ADVISORY` mode, the driver logs a warning and allows the connection.
 
 ```sh
 # 1. Identify the failing CDP:
@@ -203,8 +206,8 @@ one (it does not help when a CDP exists but is unreachable); (3) set
 
 Error: `"CRL has expired"`. The driver retries the fetch once on an expired
 cached CRL (`sf_core/src/crl/validator.rs`); if the retry also fails, the
-connection fails with `CRL validation failed: chain revoked` in `ENABLED` and
-`ADVISORY`.
+connection fails with `CRL validation failed` in `ENABLED` mode (and logs a
+warning and connects in `ADVISORY` mode).
 
 ```sh
 tls_client https://<account>.snowflakecomputing.com --crl-mode enabled --no-crl-cache -vv

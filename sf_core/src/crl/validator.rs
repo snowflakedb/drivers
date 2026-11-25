@@ -1,9 +1,21 @@
 use super::config::CrlConfig;
 use crate::crl::cache::CrlCache;
-use crate::crl::error::CrlError;
 use crate::crl::stats_buffer::CrlStatsBuffer;
 use std::sync::Arc;
 use x509_cert::der::{Decode, Encode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevokedCert {
+    EndEntity,
+    Intermediate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChainValidationOutcome {
+    NotRevoked,
+    Revoked(RevokedCert),
+    Indeterminate,
+}
 
 #[derive(Debug)]
 pub struct CrlValidator {
@@ -41,33 +53,37 @@ impl CrlValidator {
         self
     }
 
-    /// Returns true if chain is unrevoked and without errors; errors mark chain invalid
     pub(crate) async fn validate_certificate_chain(
         &self,
         chain: &[Vec<u8>],
-    ) -> Result<bool, CrlError> {
+    ) -> ChainValidationOutcome {
         if chain.is_empty() {
-            return Ok(true);
+            return ChainValidationOutcome::NotRevoked;
         }
 
         if chain.len() == 1 {
             return self.validate_single_certificate(&chain[0], &[], true).await;
         }
 
+        let mut chain_outcome = ChainValidationOutcome::NotRevoked;
         for (idx, pair) in chain.windows(2).enumerate() {
             let [cert, parent] = pair else {
                 continue;
             };
             let issuers = &chain[idx + 1..];
-            if !self
+            match self
                 .validate_single_certificate(cert, issuers, idx == 0)
-                .await?
+                .await
             {
-                return Ok(false);
+                ChainValidationOutcome::NotRevoked => {}
+                outcome @ ChainValidationOutcome::Revoked(_) => return outcome,
+                ChainValidationOutcome::Indeterminate => {
+                    chain_outcome = ChainValidationOutcome::Indeterminate;
+                }
             }
             // This shouldn't be necessary since the chains we pass in are anchored, but let's be safe.
             if self.is_anchor(parent) {
-                return Ok(true);
+                return chain_outcome;
             }
         }
 
@@ -81,9 +97,12 @@ impl CrlValidator {
                 target: "sf_core::crl",
                 "validate_certificate_chain reached the tail with an empty chain (unexpected); failing closed"
             );
-            return Ok(false);
+            return ChainValidationOutcome::Indeterminate;
         };
-        self.validate_single_certificate(top_cert, &[], false).await
+        match self.validate_single_certificate(top_cert, &[], false).await {
+            ChainValidationOutcome::NotRevoked => chain_outcome,
+            outcome => outcome,
+        }
     }
 
     fn is_anchor(&self, cert_der: &[u8]) -> bool {
@@ -107,12 +126,12 @@ impl CrlValidator {
         cert_der: &[u8],
         issuers: &[Vec<u8>],
         is_end_entity: bool,
-    ) -> Result<bool, CrlError> {
+    ) -> ChainValidationOutcome {
         if matches!(
             crate::crl::certificate_parser::is_short_lived_certificate(cert_der),
             Ok(true)
         ) {
-            return Ok(true);
+            return ChainValidationOutcome::NotRevoked;
         }
 
         // For non-top certs, the next certificate(s) act as issuer candidates.
@@ -178,11 +197,10 @@ impl CrlValidator {
         match outcome {
             Ok(crate::tls::revocation::RevocationOutcome::Revoked { .. }) => {
                 if is_end_entity {
-                    return Err(CrlError::EndEntityRevoked {
-                        location: snafu::Location::new(file!(), line!(), 0),
-                    });
+                    ChainValidationOutcome::Revoked(RevokedCert::EndEntity)
+                } else {
+                    ChainValidationOutcome::Revoked(RevokedCert::Intermediate)
                 }
-                Ok(false)
             }
             Ok(crate::tls::revocation::RevocationOutcome::NotDetermined) => {
                 if self.config.allow_certificates_without_crl_url {
@@ -190,15 +208,17 @@ impl CrlValidator {
                         target: "sf_core::crl",
                         "Certificate missing CRL distribution points; allowing due to config"
                     );
-                    Ok(true)
+                    ChainValidationOutcome::NotRevoked
                 } else {
-                    Ok(false)
+                    ChainValidationOutcome::Indeterminate
                 }
             }
-            Ok(crate::tls::revocation::RevocationOutcome::NotRevoked) => Ok(true),
+            Ok(crate::tls::revocation::RevocationOutcome::NotRevoked) => {
+                ChainValidationOutcome::NotRevoked
+            }
             Err(e) => {
                 tracing::warn!(target: "sf_core::crl", error = %e, "CRL check failed for one certificate in the chain");
-                Ok(false)
+                ChainValidationOutcome::Indeterminate
             }
         }
     }
@@ -206,7 +226,10 @@ impl CrlValidator {
 
 #[cfg(test)]
 impl CrlValidator {
-    pub(crate) async fn fetch_crl_with_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
+    pub(crate) async fn fetch_crl_with_cache(
+        &self,
+        url: &str,
+    ) -> Result<Vec<u8>, crate::crl::error::CrlError> {
         self.cache.get(url).await
     }
 }

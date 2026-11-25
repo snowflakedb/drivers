@@ -1,5 +1,4 @@
-use crate::crl::error::CrlError;
-use crate::crl::validator::CrlValidator;
+use crate::crl::validator::{ChainValidationOutcome, CrlValidator};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -9,7 +8,7 @@ use std::thread::JoinHandle;
 pub struct CrlWorkerRequest {
     pub chain: Vec<Vec<u8>>,
     pub validator: Arc<CrlValidator>,
-    pub reply: mpsc::Sender<Result<(), CrlError>>,
+    pub reply: mpsc::Sender<ChainValidationOutcome>,
 }
 
 /// Owns the `"crl-worker"` thread. Dropping it closes the request channel and
@@ -49,13 +48,7 @@ impl CrlWorker {
 
                 rt.block_on(async move {
                     while let Ok(req) = rx.recv() {
-                        let res = match req.validator.validate_certificate_chain(&req.chain).await {
-                            Ok(true) => Ok(()),
-                            Ok(false) => Err(CrlError::ChainRevoked {
-                                location: snafu::Location::new(file!(), line!(), 0),
-                            }),
-                            Err(e) => Err(e),
-                        };
+                        let res = req.validator.validate_certificate_chain(&req.chain).await;
                         let _ = req.reply.send(res);
                     }
                 });
@@ -76,7 +69,7 @@ impl CrlWorker {
         &self,
         validator: Arc<CrlValidator>,
         chain: Vec<Vec<u8>>,
-    ) -> Result<(), CrlError> {
+    ) -> ChainValidationOutcome {
         let (reply_tx, reply_rx) = mpsc::channel();
         let msg = CrlWorkerRequest {
             chain,

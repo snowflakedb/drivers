@@ -56,7 +56,7 @@ nothing matches, use the [deep-dive index](index.md) or
 | Match this | Go to |
 |---|---|
 | slow first connection (10–60 s), fast on subsequent attempts | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-0. Slow first connection" |
-| "CRL validation failed: chain revoked" but nothing is revoked; `ADVISORY` still fails the connection | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-1. Revocation vs fetch" |
+| "CRL validation failed" vs "CRL validation failed: chain revoked" | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-1. Revocation vs fetch" |
 | certificate revoked, "CRL validation failed: end-entity certificate revoked" | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-2. Certificate revoked" |
 | CRL fetch error, network/timeout fetching a CRL, "Failed to download CRL from", `crl_http_timeout` | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-3. Fetch errors" |
 | stale / expired cached CRL | [crl-revocation.md](core/crl-tls/crl-revocation.md) → "CRL-4." |
