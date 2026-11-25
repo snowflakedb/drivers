@@ -213,8 +213,8 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     private static WrapperIdentity BuildWrapperIdentity() => new()
     {
-        DriverName = "Snowflake .NET Driver",
-        DriverVersion = "0.1.0",
+        DriverName = ".NET",
+        DriverVersion = "7.0.0-rc0",
         LanguageRuntime = ".NET",
         LanguageVersion = Environment.Version.ToString(),
     };

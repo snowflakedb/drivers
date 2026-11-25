@@ -63,7 +63,6 @@ public class PutGetAsyncExecuteTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public async Task ShouldDownloadAFileWithGetThroughAsyncReaderExecutionAsync()
     {
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         await connection.OpenAsync().ConfigureAwait(false);

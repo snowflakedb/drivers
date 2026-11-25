@@ -1364,7 +1364,6 @@ public sealed class SFDbCommandAsyncTest : LiveE2ETestBase
         Skip.OnOldDriver(
             "BD#copy-into-table-rows-affected-counts-status-rows",
             "The old driver returns the number of loaded rows");
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
 
         const int NumberOfFiles = 5;
         const int NumberOfRows = 3;
@@ -1403,7 +1402,6 @@ public sealed class SFDbCommandAsyncTest : LiveE2ETestBase
         Skip.OnOldDriver(
             "BD#copy-into-table-rows-affected-counts-status-rows",
             "The old driver returns the number of loaded rows");
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
 
         const int NumberOfFiles = 5;
         const int NumberOfRows = 3;

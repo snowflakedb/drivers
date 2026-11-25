@@ -61,7 +61,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesMatchingAsteriskWildcardAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -78,7 +77,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadOnlyFilesMatchingAsteriskWildcardWithExtensionAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -95,7 +93,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesMatchingQuestionMarkWildcardAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -112,7 +109,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFileFromRelativePathWithoutDirectoryAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -129,7 +125,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await ProvideQueryIdWhenPutSucceedsAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -146,7 +141,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFileFromRelativePathWithDirectoryAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -163,7 +157,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesMatchingRelativePathAsteriskWildcardAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -172,7 +165,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnNewDriver("BD#put-get-compression-type-casing", NewDriverCompressionTypeCasing);
         Skip.OnNewDriver("BD#put-get-error-details-empty-string", NewDriverErrorDetails);
-        Skip.For(SkipCondition.SkipOnCloudGCP, "Test is skipped on GCP.");
         await SkipSecondUploadWithoutOverwriteFlagAsync(PutResultColumns.OldDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -181,7 +173,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.For(SkipCondition.SkipOnCloudGCP, "Test is skipped on GCP.");
         await SkipSecondUploadWithoutOverwriteFlagAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -198,7 +189,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await RunSecondUploadWithOverwriteFlagAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -215,7 +205,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesFromDirectoriesMatchingAsteriskWildcardAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -232,7 +221,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesFromDirectoriesMatchingQuestionMarkWildcardAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 
@@ -249,7 +237,6 @@ public sealed class SFPutGetTest : LiveE2ETestBase
     {
         Skip.OnOldDriver("BD#put-get-compression-type-casing", OldDriverCompressionTypeCasing);
         Skip.OnOldDriver("BD#put-get-error-details-empty-string", OldDriverErrorDetails);
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         await UploadFilesFromDirectoriesMatchingMixedWildcardsAsync(PutResultColumns.NewDriver, TestContext.Current.CancellationToken).ConfigureAwait(false);
     }
 

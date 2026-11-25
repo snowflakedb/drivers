@@ -19,7 +19,6 @@ public sealed class FileUploadDownloadLargeFilesTest : LiveE2ETestBase
     [SnowflakeFact]
     public async Task ShouldDownloadSameLargeFileThatWasUploadedAsync()
     {
-        Skip.FutureMilestone(SkipCondition.SkipOnCloudGCP, "TODO SNOW-4597372: GCP rejects the new driver's PUT as a deprecated pre-signed URL request today; GCS downscoped tokens are not supported yet.");
         var uniqueId = NextAlphaNumeric(6);
         var localFolderName = Path.Combine(Path.GetTempPath(), uniqueId);
         var remoteFolderName = $"files_to_test_put_get_{uniqueId}";

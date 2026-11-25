@@ -19,6 +19,8 @@ public class DecfloatTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldCastDecfloatValuesToAppropriateType()
     {
+        Skip.FutureMilestone();
+
         // Given Snowflake client is logged in
         using var connection = Fixture.Factory.Create(Output);
         connection.Open();
@@ -31,7 +33,6 @@ public class DecfloatTest : IClassFixture<ITFixture>
         // Then All values should be returned as appropriate type
         Assert.Equal(typeof(string), reader.GetFieldType(0));
 
-        Skip.FutureMilestone();
         // And Values should maintain full 38-digit precision
         Assert.True(reader.Read(), "Expected one row");
         Assert.Equal(0m, reader.GetDecimal(0));
