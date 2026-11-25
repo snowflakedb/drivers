@@ -8,15 +8,17 @@ use sf_core::config::retry::RetryPolicy;
 use sf_core::http::retry::{HttpContext, execute_bytes_with_retry};
 // Zero-backoff policy shared with the in-crate unit tests via `internal`, so
 // retry tests inject the real shape with backoff zeroed instead of sleeping.
-use sf_core::file_manager::internal::gcs_test_retry_policy as test_policy;
+use sf_core::file_manager::internal::{
+    CloudSpillTarget, download_from_gcs_streaming, gcs_test_retry_policy as test_policy,
+};
 use sf_core::file_manager::types::ByteSource;
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, GcsDownloadError, GcsUploadError, LocationType,
     MultipartParams, PreparedUpload, RefreshFuture, StageInfo, StageInfoCache, StageInfoRefresher,
-    StageInfoSnapshot, TransferCtx, download_files,
+    StageInfoSnapshot, TransferCtx, TransferOp, download_files,
 };
 use sf_core::sensitive::SensitiveString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -45,6 +47,7 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     }
@@ -70,6 +73,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     }
@@ -121,6 +125,7 @@ async fn gcs_download_401_returns_token_expired() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -163,6 +168,7 @@ async fn gcs_download_403_is_retried_then_succeeds() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -206,6 +212,7 @@ async fn gcs_download_400_with_presigned_url_is_retried() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -239,6 +246,7 @@ async fn gcs_download_400_without_presigned_url_is_not_retried() {
         &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -280,6 +288,7 @@ async fn gcs_download_404_is_not_retried() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -319,6 +328,7 @@ async fn gcs_download_503_is_retried_then_succeeds() {
         &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -383,6 +393,7 @@ async fn gcs_download_content_encoding_gzip_with_non_gzip_body_is_returned_verba
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -437,6 +448,7 @@ async fn gcs_download_content_encoding_gzip_with_gzip_body_is_not_decoded() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect("download must succeed");
@@ -477,6 +489,7 @@ async fn gcs_download_without_content_encoding_header_is_unchanged() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect("happy-path download must still succeed");
@@ -516,6 +529,7 @@ async fn gcs_download_content_length_match_succeeds() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect("matching Content-Length must succeed");
@@ -557,6 +571,7 @@ async fn gcs_download_content_length_mismatch_truncated_body_is_http_error() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -590,6 +605,7 @@ async fn gcs_download_no_content_length_header_succeeds() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -629,6 +645,7 @@ async fn gcs_download_content_encoding_present_skips_length_check() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -663,6 +680,7 @@ async fn gcs_download_zero_byte_file_succeeds() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect("zero-byte file must succeed");
@@ -701,6 +719,7 @@ async fn gcs_download_malformed_content_length_rejected_by_http_layer() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -741,6 +760,7 @@ async fn gcs_download_does_not_advertise_gzip_accept_encoding() {
         &test_policy(true, 0),
         0,
         None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect("download must succeed");
@@ -785,6 +805,7 @@ fn gcs_stage_presigned_only_no_stage_url() -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     }
@@ -839,6 +860,7 @@ async fn gcs_download_files_routes_each_file_to_its_per_file_presigned_url() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     let results = download_files(
@@ -881,6 +903,7 @@ async fn gcs_download_files_fails_with_missing_credentials_when_no_url_and_no_to
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     let err = download_files(
@@ -1045,6 +1068,7 @@ async fn gcs_download_400_triggers_url_refresh_and_succeeds() {
         &test_policy(true, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -1126,6 +1150,7 @@ async fn gcs_download_400_after_url_refresh_returns_presigned_url_expired() {
         &test_policy(true, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect_err("two consecutive 400s must fail fast");
@@ -1209,6 +1234,7 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
         &test_policy(false, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
 
@@ -1228,6 +1254,90 @@ async fn gcs_download_401_triggers_token_refresh_and_succeeds() {
         0,
         "non-coalesced refresh_url() must NOT fire on 401"
     );
+}
+
+#[tokio::test]
+async fn gcs_ranged_download_401_refreshes_token_and_restarts_ranges() {
+    let server = MockServer::start().await;
+    let payload = b"ranged download payload".to_vec();
+    Mock::given(method("HEAD"))
+        .and(path("/test-bucket/prefix/file.csv"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-length", payload.len().to_string().as_str()),
+        )
+        .mount(&server)
+        .await;
+
+    let range_attempts = Arc::new(AtomicUsize::new(0));
+    let observed_attempts = Arc::clone(&range_attempts);
+    let response_payload = payload.clone();
+    Mock::given(method("GET"))
+        .and(path("/test-bucket/prefix/file.csv"))
+        .respond_with(move |request: &Request| {
+            observed_attempts.fetch_add(1, Ordering::SeqCst);
+            let auth = request
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default();
+            if auth.ends_with("stale-token") {
+                ResponseTemplate::new(401).set_body_string("Unauthenticated")
+            } else {
+                assert!(
+                    auth.ends_with("fresh-token"),
+                    "retried range must use the refreshed token; got {auth}"
+                );
+                ResponseTemplate::new(206).set_body_bytes(response_payload.clone())
+            }
+        })
+        .mount(&server)
+        .await;
+
+    let mut stage = gcs_stage_with_token(&server.uri());
+    stage.creds = CloudCredentials::Gcs {
+        gcs_access_token: Some(SensitiveString::from("stale-token")),
+    };
+    let fake = FakeRefresher::new(StageInfoSnapshot {
+        creds: stage.creds.clone(),
+        presigned_url: None,
+        presigned_urls: None,
+    });
+    fake.arm_refresh(StageInfoSnapshot {
+        creds: CloudCredentials::Gcs {
+            gcs_access_token: Some(SensitiveString::from("fresh-token")),
+        },
+        presigned_url: None,
+        presigned_urls: None,
+    });
+
+    let output = tempfile::tempdir().expect("output directory");
+    let part_path = output.path().join("file.csv.part");
+    let download = download_from_gcs_streaming(
+        &stage,
+        "file.csv",
+        None,
+        &test_policy(false, 0),
+        0,
+        MultipartParams::from_server(Some(1), Some(1)),
+        false,
+        CloudSpillTarget::Part(&part_path),
+        TransferCtx::with_refresher(&fake),
+        &TransferOp::isolated_for_tests(),
+    )
+    .await
+    .expect("a ranged GET 401 must refresh and restart the ranged download");
+
+    let mut actual = Vec::new();
+    download
+        .body
+        .into_reader()
+        .expect("spilled reader")
+        .read_to_end(&mut actual)
+        .expect("read ranged result");
+    assert_eq!(actual, payload);
+    assert_eq!(range_attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(fake.refresh_calls.load(Ordering::SeqCst), 1);
 }
 
 /// Gap 2.4 two-strike-equivalent: if the refresher returns the same token
@@ -1272,6 +1382,7 @@ async fn gcs_download_401_with_unchanged_token_returns_token_expired() {
         &test_policy(false, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await
     .expect_err("unchanged token must surface TokenExpired");
@@ -1355,11 +1466,9 @@ async fn assert_gcs_upload_401_then_refresh_then_200(overwrite: bool) {
         /* overwrite */ overwrite,
         /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(
-            /* using_presigned_url */ false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        ),
+        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -1493,11 +1602,9 @@ async fn gcs_upload_400_triggers_url_refresh_and_succeeds() {
         /* overwrite */ true,
         /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(
-            /* using_presigned_url */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        ),
+        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -1577,11 +1684,9 @@ async fn gcs_upload_notifies_dst_file_name_before_url_refresh() {
         /* overwrite */ true,
         /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(
-            /* using_presigned_url */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        ),
+        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -1655,11 +1760,9 @@ async fn gcs_upload_400_after_url_refresh_returns_presigned_url_expired() {
         /* overwrite */ true,
         /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(
-            /* using_presigned_url */ true,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        ),
+        &test_policy(true, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::new(/* refresher */ refresher_opt, /* cleanup */ None),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect_err("two consecutive 400s on PUT must fail fast");
@@ -1763,6 +1866,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         &test_policy(true, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
     assert!(
@@ -1777,6 +1881,7 @@ async fn gcs_per_file_url_refresh_is_not_debounced() {
         &test_policy(true, 0),
         0,
         refresher_opt,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
     )
     .await;
     assert!(
@@ -1875,6 +1980,7 @@ async fn gcs_download_files_batch_rotates_presigned_urls_across_files() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests_with_parallel(1),
     };
 
     let refresher_opt = Some(&fake as &dyn StageInfoRefresher);
@@ -1974,11 +2080,9 @@ async fn gcs_cse_upload_sets_exact_content_length_and_is_not_chunked() {
         /* overwrite */ true,
         /* skip_upload_on_content_match */ false,
         MultipartParams::default(),
-        &test_policy(
-            /* using_presigned_url */ false,
-            DEFAULT_PUT_GET_MAX_ATTEMPTS,
-        ),
+        &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -2051,6 +2155,7 @@ async fn gcs_git_stage_download_succeeds_without_sfc_digest() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     let results = download_files(
@@ -2133,6 +2238,7 @@ async fn gcs_download_decrypts_unloaded_object_without_sfc_digest() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     download_files(

@@ -75,7 +75,7 @@ core:
         - "sf_core/src/rest/snowflake/async_exec.rs"
         - "sf_core/src/apis/**/query.rs"
         - "sf_core/src/apis/**/statement.rs"
-        - "sf_core/src/chunks.rs"
+        - "sf_core/src/chunks/**"
         - "sf_core/src/arrow_utils.rs"
         - "sf_core/src/query_types.rs"
         - "sf_core/tests/e2e/query/**"
@@ -112,6 +112,7 @@ core:
 
     - name: put_get
       paths:
+        - "sf_core/src/governor/**"
         - "sf_core/src/file_manager/**"
         - "sf_core/src/compression.rs"
         - "sf_core/src/compression_types.rs"
@@ -119,6 +120,7 @@ core:
         - "sf_core/tests/integration/put_get/**"
       tests:
         rust:
+          unit: "governor|file_manager"
           integ: "put_get"
           e2e: "put_get"
         odbc:

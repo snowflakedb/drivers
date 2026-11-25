@@ -3,8 +3,8 @@ use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::file_manager::internal::azure_test_retry_policy;
 use sf_core::file_manager::{
     AzureDownloadError, AzureUploadError, CloudCredentials, DownloadData, DownloadResult,
-    FileManagerError, LocationType, SourceCompressionParam, StageInfo, TransferCtx, UploadData,
-    UploadResult, download_files, upload_files,
+    FileManagerError, LocationType, SourceCompressionParam, StageInfo, TransferCtx, TransferOp,
+    UploadData, UploadResult, download_files, upload_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::path::PathBuf;
@@ -52,6 +52,7 @@ fn azure_stage(mock_uri: &str, sas: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: Default::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -129,6 +130,7 @@ fn upload_data_for(stage: StageInfo, src: &str) -> UploadData {
         put_compress_level: 9,
         put_tempdir: None,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     }
 }
 
@@ -146,6 +148,7 @@ fn download_data_for(stage: StageInfo, src_blob: &str, local_dir: &TempDir) -> D
         // See `upload_data_for`'s `put_fastfail` comment: same reasoning.
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     }
 }
 

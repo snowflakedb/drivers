@@ -8,19 +8,22 @@
 //! Only the cloud-agnostic policy lives here — per-cloud limits
 //! ([`MultipartConfig`]), the part-size formula ([`compute_part_size`]), and
 //! the server-resolved knobs ([`MultipartThreshold`] / [`MultipartParams`]).
-//! The streaming part-reader ([`spawn_part_reader`]) and ranged-GET planner
-//! ([`plan_ranges`]) also live here, consumed by the per-cloud transfer
-//! modules. S3 and Azure upload parts concurrently via the part-reader; GCS
-//! uploads as a single PUT and uses this config only to size ranged GETs.
+//! The pull-based part-reader ([`GatedPartReader`] / [`spawn_admitted_parts`])
+//! and ranged-GET planner ([`plan_ranges`]) also live here, consumed by the
+//! per-cloud transfer modules. S3 and Azure upload parts concurrently via the
+//! part-reader; GCS uploads as a single PUT and uses this config only to size
+//! ranged GETs.
 
 use bytes::Bytes;
 use snafu::{Location, Snafu};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
+use std::time::Duration;
 use tempfile::TempPath;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::encryption::Encryptor;
 use super::types::{ByteSource, PreparedUpload};
+use crate::governor::{AcquireWaitError, Deadline, RequestKind, RequestPermit, TransferOp};
 use file_too_large_error::FileTooLargeSnafu;
 
 const KIB: u64 = 1024;
@@ -28,10 +31,11 @@ const MIB: u64 = 1024 * KIB;
 const GIB: u64 = 1024 * MIB;
 const TIB: u64 = 1024 * GIB;
 
-/// Upper bound on the number of parts transferred concurrently for a single
-/// file. The server-resolved `data.parallel` is clamped to this so a runaway
-/// value can't open hundreds of simultaneous connections; uploads are also
-/// memory-bounded at roughly `concurrency * part_size` resident bytes.
+/// Upper bound on the number of parts transferred concurrently for one file.
+/// Only the per-file width derived from server-resolved `data.parallel` is
+/// clamped here; the command-wide transfer width keeps the server value.
+/// This prevents one large file from opening hundreds of simultaneous
+/// connections and bounds upload memory at roughly `concurrency * part_size`.
 pub(super) const MAX_PART_CONCURRENCY: usize = 16;
 
 /// Part-transfer concurrency used when the server omits `data.parallel`.
@@ -172,7 +176,7 @@ pub fn compute_part_size(file_size: u64, cfg: &MultipartConfig) -> Result<u64, F
 
 /// Target upload part size. Smaller parts pay a request round-trip each;
 /// larger ones made both S3 and Azure uploads slower in measurement.
-/// A file holds about `concurrency + 2` parts resident while uploading.
+/// A file holds about `concurrency + 1` parts resident while uploading.
 // TODO(SNOW-4464545): bound resident parts across every file in a PUT with a
 // per-command `MemoryBudget` instead of relying on a fixed part size.
 pub(super) const UPLOAD_PART_SIZE: u64 = 64 * MIB;
@@ -228,9 +232,11 @@ pub(super) fn resolve_part_concurrency(parallel: Option<i64>) -> usize {
 /// Resolves the command-wide transfer width from the server's `data.parallel`,
 /// defaulting to [`DEFAULT_COMMAND_PARALLEL`]. Not clamped to
 /// [`MAX_PART_CONCURRENCY`], which bounds only the parts of a single file.
-pub(super) fn resolve_command_parallel(parallel: Option<i64>) -> usize {
+/// Used at `register_command` time; not stored on [`MultipartParams`] so it
+/// cannot disagree with [`crate::governor::TransferOp::file_fanout`] later.
+pub(crate) fn resolve_command_parallel(parallel: Option<i64>) -> usize {
     match parallel {
-        Some(p) if p > 0 => p as usize,
+        Some(p) if p > 0 => usize::try_from(p).unwrap_or(DEFAULT_COMMAND_PARALLEL),
         _ => DEFAULT_COMMAND_PARALLEL,
     }
 }
@@ -243,9 +249,6 @@ pub struct MultipartParams {
     /// Concurrent part transfers *within one file*, clamped to
     /// `1..=MAX_PART_CONCURRENCY`.
     pub concurrency: usize,
-    /// The command's cloud-request budget and, for a batch, how many files
-    /// transfer at once. Resolved from `data.parallel` without the part clamp.
-    pub command_parallel: usize,
     /// Target S3/Azure upload part size; [`UPLOAD_PART_SIZE`] unless overridden.
     pub upload_part_size: u64,
 }
@@ -257,7 +260,6 @@ impl MultipartParams {
         Self {
             threshold: MultipartThreshold::from_server(threshold),
             concurrency: resolve_part_concurrency(parallel),
-            command_parallel: resolve_command_parallel(parallel),
             upload_part_size: UPLOAD_PART_SIZE,
         }
     }
@@ -338,6 +340,7 @@ pub(super) struct UploadPart {
 /// Read-ahead is one queued part plus the one being filled, so resident memory
 /// is the in-flight parts plus two `chunk_size` buffers. This mirrors
 /// libsnowflakeclient's `StreamSplitter` (serial reads, parallel part uploads).
+#[cfg(test)]
 pub(super) fn spawn_part_reader(
     source: ByteSource,
     encryptor: Option<Encryptor>,
@@ -379,6 +382,155 @@ pub(super) fn spawn_part_reader(
                 Err(e) => {
                     let _ = tx.blocking_send(Err(e));
                     break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+type PartReplyTx = oneshot::Sender<Option<std::io::Result<(UploadPart, bool)>>>;
+
+/// Pull-based part reader: the blocking loop reads the next chunk only when
+/// the async side asks for it, so callers can acquire a permit first.
+pub(super) struct GatedPartReader {
+    req_tx: mpsc::Sender<PartReplyTx>,
+}
+
+impl GatedPartReader {
+    pub(super) fn spawn(
+        source: ByteSource,
+        encryptor: Option<Encryptor>,
+        chunk_size: usize,
+    ) -> Self {
+        let (req_tx, mut req_rx) = mpsc::channel::<PartReplyTx>(1);
+        tokio::task::spawn_blocking(move || {
+            // Open only after the first `next_part` request so the caller can
+            // hold a permit before local part I/O starts.
+            let mut reader: Option<BufReader<Box<dyn Read>>> = None;
+            let mut number: i32 = 0;
+            let mut pending_err: Option<std::io::Error> = None;
+            while let Some(reply) = req_rx.blocking_recv() {
+                let reader = match reader.as_mut() {
+                    Some(reader) => reader,
+                    None => match open_part_source(source.clone(), encryptor.clone()) {
+                        Ok(opened) => reader.insert(BufReader::new(opened)),
+                        Err(e) => {
+                            let _ = reply.send(Some(Err(e)));
+                            return;
+                        }
+                    },
+                };
+                if let Some(err) = pending_err.take() {
+                    let _ = reply.send(Some(Err(err)));
+                    break;
+                }
+                let mut buf = vec![0u8; chunk_size];
+                match fill_chunk(reader, &mut buf) {
+                    Ok(0) => {
+                        let _ = reply.send(None);
+                        break;
+                    }
+                    Ok(n) => {
+                        buf.truncate(n);
+                        number += 1;
+                        let part = UploadPart {
+                            number,
+                            body: Bytes::from(buf),
+                        };
+                        let last = if n < chunk_size {
+                            true
+                        } else {
+                            match reader.fill_buf() {
+                                Ok(peek) => peek.is_empty(),
+                                Err(e) => {
+                                    pending_err = Some(e);
+                                    false
+                                }
+                            }
+                        };
+                        if reply.send(Some(Ok((part, last)))).is_err() {
+                            break;
+                        }
+                        if last {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Some(Err(e)));
+                        break;
+                    }
+                }
+            }
+        });
+        Self { req_tx }
+    }
+
+    pub(super) async fn next_part(&self) -> Option<std::io::Result<(UploadPart, bool)>> {
+        let (tx, rx) = oneshot::channel();
+        self.req_tx.send(tx).await.ok()?;
+        rx.await.ok()?
+    }
+}
+
+/// Failure while producing an admitted part.
+pub(super) enum PartProduceError {
+    Io(std::io::Error),
+    Acquire(AcquireWaitError),
+}
+
+/// One upload part together with the admission permit and deadline that cover
+/// its local read and complete request/retry sequence.
+pub(super) struct AdmittedUploadPart {
+    pub part: UploadPart,
+    pub permit: RequestPermit,
+    pub deadline: Deadline,
+}
+
+/// The producer reserves the single read-ahead slot, then acquires, then
+/// reads. Upload concurrency lives on the consumer side; this queue keeps at
+/// most one additional part resident while ordinary work stays within the
+/// command budget.
+pub(super) fn spawn_admitted_parts(
+    source: ByteSource,
+    encryptor: Option<Encryptor>,
+    chunk_size: usize,
+    transfer: TransferOp,
+    deadline_budget: Option<Duration>,
+    kind: RequestKind,
+) -> mpsc::Receiver<Result<AdmittedUploadPart, PartProduceError>> {
+    let (tx, rx) = mpsc::channel(1);
+    let reader = GatedPartReader::spawn(source, encryptor, chunk_size);
+    tokio::spawn(async move {
+        loop {
+            let slot = match tx.reserve().await {
+                Ok(slot) => slot,
+                Err(_) => break,
+            };
+            let deadline = Deadline::from_budget(deadline_budget);
+            let permit = match deadline.acquire(&transfer, kind).await {
+                Ok(permit) => permit,
+                Err(err) => {
+                    slot.send(Err(PartProduceError::Acquire(err)));
+                    break;
+                }
+            };
+            transfer.on_local_work();
+            match reader.next_part().await {
+                None => break,
+                Some(Err(err)) => {
+                    slot.send(Err(PartProduceError::Io(err)));
+                    break;
+                }
+                Some(Ok((part, eof))) => {
+                    slot.send(Ok(AdmittedUploadPart {
+                        part,
+                        permit,
+                        deadline,
+                    }));
+                    if eof {
+                        break;
+                    }
                 }
             }
         }
@@ -629,18 +781,31 @@ mod tests {
     }
 
     #[test]
+    fn command_parallel_unrepresentable_falls_back_to_default() {
+        let bits = (std::mem::size_of::<usize>() * 8) as u32;
+        if bits >= 63 {
+            return;
+        }
+        let unrepresentable = 1_i64 << bits;
+        assert_eq!(
+            resolve_command_parallel(Some(unrepresentable)),
+            DEFAULT_COMMAND_PARALLEL
+        );
+    }
+
+    #[test]
     fn params_from_server_routes_each_field() {
         // Distinguishable values catch a future threshold/parallel arg swap
         // that the type system can't (both are `Option<i64>`).
         let params = MultipartParams::from_server(Some(100), Some(8));
         assert_eq!(params.threshold.bytes(), 100);
         assert_eq!(params.concurrency, 8);
-        assert_eq!(params.command_parallel, 8);
+        assert_eq!(resolve_command_parallel(Some(8)), 8);
 
         // Above the part ceiling the two views of `data.parallel` diverge.
         let wide = MultipartParams::from_server(None, Some(50));
         assert_eq!(wide.concurrency, MAX_PART_CONCURRENCY);
-        assert_eq!(wide.command_parallel, 50);
+        assert_eq!(resolve_command_parallel(Some(50)), 50);
 
         // Default routes through from_server, so the defaults live in one place.
         assert_eq!(
@@ -652,10 +817,7 @@ mod tests {
             MultipartParams::default().concurrency,
             DEFAULT_PART_CONCURRENCY
         );
-        assert_eq!(
-            MultipartParams::default().command_parallel,
-            DEFAULT_COMMAND_PARALLEL
-        );
+        assert_eq!(resolve_command_parallel(None), DEFAULT_COMMAND_PARALLEL);
     }
 
     /// Collects every part the reader produces, asserting numbering and that
@@ -725,5 +887,75 @@ mod tests {
         let mut buf = [0u8; 6];
         f.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"ABCDEF");
+    }
+
+    #[tokio::test]
+    async fn last_short_part_does_not_acquire_an_eof_permit() {
+        let governor = crate::governor::Governor::new();
+        let op = governor.register_command(8);
+        let source = ByteSource::Bytes(Bytes::from(vec![1u8; 25]));
+        let mut rx = spawn_admitted_parts(source, None, 10, op, None, RequestKind::UploadPart);
+        let mut n = 0;
+        while let Some(item) = rx.recv().await {
+            let AdmittedUploadPart { permit, .. } = item.unwrap_or_else(|_| panic!("part produce"));
+            n += 1;
+            drop(permit);
+        }
+        assert_eq!(
+            n, 3,
+            "25 bytes / 10 must produce three parts, not a fourth EOF acquire"
+        );
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn exact_chunk_boundary_does_not_acquire_an_eof_permit() {
+        let governor = crate::governor::Governor::new();
+        let op = governor.register_command(8);
+        let source = ByteSource::Bytes(Bytes::from(vec![1u8; 20]));
+        let mut rx = spawn_admitted_parts(source, None, 10, op, None, RequestKind::UploadPart);
+        let mut n = 0;
+        while let Some(item) = rx.recv().await {
+            let AdmittedUploadPart { permit, .. } = item.unwrap_or_else(|_| panic!("part produce"));
+            n += 1;
+            drop(permit);
+        }
+        assert_eq!(
+            n, 2,
+            "20 bytes / 10 must produce two parts, not a third EOF acquire"
+        );
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn admitted_part_wait_respects_the_transfer_deadline() {
+        let governor = crate::governor::Governor::new();
+        let op = governor.register_command(1);
+        let hold = op
+            .acquire(RequestKind::UploadPart)
+            .await
+            .expect("hold slot");
+        let source = ByteSource::Bytes(Bytes::from_static(b"part"));
+        let mut rx = spawn_admitted_parts(
+            source,
+            None,
+            4,
+            op.clone(),
+            Some(Duration::from_millis(20)),
+            RequestKind::UploadPart,
+        );
+
+        match rx.recv().await {
+            Some(Err(PartProduceError::Acquire(AcquireWaitError::DeadlineExceeded { .. }))) => {}
+            Some(Err(PartProduceError::Acquire(AcquireWaitError::Acquire(_)))) => {
+                panic!("expected a deadline error, got an admission error")
+            }
+            Some(Err(PartProduceError::Io(_))) => panic!("unexpected source I/O error"),
+            Some(Ok(_)) => panic!("part must not be read without admission"),
+            None => panic!("part producer exited without reporting the deadline"),
+        }
+
+        drop(hold);
+        assert_eq!(governor.in_flight(), 0);
     }
 }

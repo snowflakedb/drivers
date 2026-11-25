@@ -23,7 +23,7 @@ use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, LocationType, MultipartParams, SingleDownloadData, StageInfo,
-    TransferCtx, download_files, download_single_file,
+    TransferCtx, TransferOp, download_files, download_single_file,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -138,6 +138,7 @@ fn presigned_gcs_stage() -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     }
@@ -153,6 +154,7 @@ fn single_download(src: &str, local_location: &str, presigned_url: String) -> Si
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        transfer: TransferOp::isolated_for_tests(),
     }
 }
 
@@ -289,10 +291,11 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
         .mount(&completed)
         .await;
 
-    // Must never be requested. This holds because `MultipartParams::default()`
-    // below resolves `data.parallel` to 1, so the batch's file fan-out is 1 and
-    // file 3 has not started when the cancel lands on file 2. The fan-out=2 case,
-    // where a later file genuinely starts before the cancel lands, is covered by
+    // Must never be requested. This holds because the command is registered
+    // at width 1 (`TransferOp::isolated_for_tests_with_parallel(1)`), so the
+    // batch's file fan-out is 1 and file 3 has not started when the cancel
+    // lands on file 2. The fan-out=2 case, where a later file genuinely
+    // starts before the cancel lands, is covered by
     // `should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_out_two`
     // below.
     let third = third_requests.clone();
@@ -326,6 +329,7 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests_with_parallel(1),
     };
 
     let (reached_mid_body, mid_body) = once_partial_file_exists(partial_path(&dir, "two"));
@@ -365,19 +369,19 @@ async fn should_keep_completed_files_and_skip_the_rest_when_a_batch_is_cancelled
     );
 }
 
-/// The fan-out=1 test above pins `MultipartParams::default()`, so it can only ever
-/// observe one in-flight file at cancel time — cleanup that only aborts the single
-/// file it already knows about would still pass there. This sets `data.parallel`
-/// to exactly 2, the same number as the two [`StallingBodyServer`]s below, so both
-/// are genuinely in flight when the cancel lands.
+/// The fan-out=1 test above registers width 1, so it can only ever observe
+/// one in-flight file at cancel time — cleanup that only aborts the single
+/// file it already knows about would still pass there. This registers
+/// `data.parallel` 2, the same number as the two [`StallingBodyServer`]s
+/// below, so both are genuinely in flight when the cancel lands.
 ///
 /// Files "one" and "two" each get their own [`StallingBodyServer`] instance
 /// because `StallingBodyServer::spawn` accepts a single connection and returns —
 /// it does not loop — so one instance cannot serve two files: the second
 /// connection would sit unaccepted in the backlog and never produce a `.part`.
 /// File "three" stays on wiremock and is asserted unrequested: with a budget of
-/// exactly 2 already held by "one" and "two", "three" blocks on the scheduler's
-/// semaphore before it can even send headers.
+/// exactly 2 already held by "one" and "two", "three" waits on the command
+/// limit before it can even send headers.
 #[tokio::test(flavor = "multi_thread")]
 async fn should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_out_two() {
     let completed = MockServer::start().await;
@@ -416,6 +420,7 @@ async fn should_clean_up_every_in_flight_file_when_a_batch_is_cancelled_at_fan_o
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests_with_parallel(2),
     };
 
     let (reached_one, mid_one) = once_partial_file_exists(partial_path(&dir, "one"));

@@ -1,3 +1,6 @@
+// `azure_multipart` async/type depth exceeds the default after TransferOp plumbing.
+#![recursion_limit = "256"]
+
 #[path = "../common/mod.rs"]
 pub mod common;
 

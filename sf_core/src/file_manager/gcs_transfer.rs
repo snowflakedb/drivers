@@ -1,6 +1,5 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::multipart::{self, MultipartConfig, MultipartParams};
-use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
@@ -8,6 +7,7 @@ use super::types::{
     percent_encode_path,
 };
 use crate::config::retry::RetryPolicy;
+use crate::governor::{AcquireWaitError, Deadline, RequestKind, RequestPermit, TransferOp};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::log_foreign_error;
 use crate::refresh::{Refresher, execute_with_refresh};
@@ -17,7 +17,7 @@ use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // GCS metadata header names
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
@@ -117,8 +117,11 @@ impl<'a> GcsUploadHeaders<'a> {
 /// When `refresher` is `None`, neither recovery fires and the old shape is
 /// preserved (400 stays on the wire-level retry list via `gcs_retry_policy`;
 /// 401 surfaces as `TokenExpired` exactly as before).
+///
+/// Pub so `file_manager::internal` can re-export this to integration tests.
 // One arg over the 7-arg clippy threshold (multipart + the opt-in
 // `skip_upload_on_content_match`); mirrors Azure's `upload_to_azure_or_skip`.
+#[cfg(any(test, feature = "test-utils"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn upload_to_gcs_or_skip(
     prepared: PreparedUpload,
@@ -129,8 +132,43 @@ pub async fn upload_to_gcs_or_skip(
     multipart: MultipartParams,
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
 ) -> Result<UploadStatus, GcsUploadError> {
-    let scheduler = &super::scheduler_for(tx, multipart);
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectPut)
+        .await?;
+    upload_to_gcs_or_skip_admitted(
+        prepared,
+        stage_info,
+        filename,
+        overwrite,
+        skip_upload_on_content_match,
+        multipart,
+        policy,
+        tx,
+        transfer,
+        deadline,
+        &permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn upload_to_gcs_or_skip_admitted(
+    prepared: PreparedUpload,
+    stage_info: &StageInfo,
+    filename: &str,
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    tx: TransferCtx<'_>,
+    _transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: &RequestPermit,
+) -> Result<UploadStatus, GcsUploadError> {
+    let _ = multipart;
     let client = create_gcs_client(
         stage_info,
         tx.http_client
@@ -179,7 +217,9 @@ pub async fn upload_to_gcs_or_skip(
                 // nothing to check, so we go straight to the PUT.
                 let head_needed = !overwrite || skip_upload_on_content_match;
                 let head = if head_needed {
-                    check_file_exists_gcs(&client, &url, token, scheduler).await
+                    check_file_exists_gcs(&client, &url, token, &wire_policy, deadline, file_permit)
+                        .await
+                        .map_err(map_gcs_request_error_for_attempt)?
                 } else {
                     GcsHeadResult::NotFound
                 };
@@ -212,7 +252,8 @@ pub async fn upload_to_gcs_or_skip(
                     prepared,
                     &wire_policy,
                     conditional_create,
-                    scheduler,
+                    deadline,
+                    file_permit,
                 )
                 .await
                 .map_err(map_gcs_request_error_for_attempt);
@@ -339,6 +380,7 @@ pub async fn upload_to_gcs_or_skip(
 /// Returns the successful response (headers available, body not yet consumed);
 /// shared by `download_from_gcs` (buffered) and `download_from_gcs_streaming`
 /// so both download paths get this 401/400 refresh handling.
+#[allow(clippy::too_many_arguments)]
 async fn gcs_get_with_refresh(
     stage_info: &StageInfo,
     filename: &str,
@@ -346,6 +388,8 @@ async fn gcs_get_with_refresh(
     policy: &RetryPolicy,
     per_file_index: usize,
     tx: TransferCtx<'_>,
+    deadline: Deadline,
+    file_permit: &RequestPermit,
 ) -> Result<reqwest::Response, GcsDownloadError> {
     let client = create_gcs_client(
         stage_info,
@@ -394,19 +438,29 @@ async fn gcs_get_with_refresh(
                     resolve_url_and_token(&stage_info, &key, per_file_url.as_deref())
                         .map_err(map_gcs_request_error_for_attempt)?;
 
-                gcs_request_with_retry(
-                    || {
-                        let mut req = client.get(&url);
-                        if let Some(ref t) = token {
-                            req = req.bearer_auth(t);
-                        }
-                        req
-                    },
-                    Method::GET,
+                let response = cloud_http::run_within_deadline(
                     &wire_policy,
+                    deadline,
+                    file_permit,
+                    |elapsed, budget| GcsRequestError::DeadlineExceeded { elapsed, budget },
+                    |remaining_policy| async move {
+                        gcs_request_with_retry(
+                            || {
+                                let mut req = client.get(&url);
+                                if let Some(ref t) = token {
+                                    req = req.bearer_auth(t);
+                                }
+                                req
+                            },
+                            Method::GET,
+                            &remaining_policy,
+                        )
+                        .await
+                    },
                 )
                 .await
-                .map_err(map_gcs_request_error_for_attempt)
+                .map_err(map_gcs_request_error_for_attempt)?;
+                Ok(response)
             }
         }
     };
@@ -476,7 +530,7 @@ async fn gcs_get_with_refresh(
         .await;
 
         match second {
-            Ok(resp) => resp,
+            Ok(response) => response,
             Err(GcsDownloadError::GcsHttp {
                 status_code: 400, ..
             }) => {
@@ -503,7 +557,12 @@ pub async fn download_from_gcs(
     policy: &RetryPolicy,
     per_file_index: usize,
     refresher: Option<&dyn StageInfoRefresher>,
+    transfer: &TransferOp,
 ) -> Result<DownloadResponse, GcsDownloadError> {
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -511,6 +570,8 @@ pub async fn download_from_gcs(
         policy,
         per_file_index,
         TransferCtx::new(refresher, None),
+        deadline,
+        &permit,
     )
     .await?;
 
@@ -558,6 +619,7 @@ pub async fn download_from_gcs(
         .await
         .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
+    drop(permit);
     let actual_len = data.len() as u64;
 
     if let Some(expected) = expected_length {
@@ -608,26 +670,47 @@ enum GcsHeadResult {
 /// through to a PUT. A malformed sfc-digest header yields
 /// `Found { digest: None }`; the digest comparison then misses and the
 /// upload proceeds.
+///
+/// Cloud status and transport failures remain fail-open, but admission failure
+/// is typed and propagated so cancellation/deadline can never fall through to
+/// a PUT.
 async fn check_file_exists_gcs(
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
-    scheduler: &TransferScheduler,
-) -> GcsHeadResult {
-    let mut request = client.head(url);
-    if let Some(t) = token {
-        request = request.bearer_auth(t);
-    }
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
+) -> Result<GcsHeadResult, GcsRequestError> {
+    let response = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| GcsRequestError::DeadlineExceeded { elapsed, budget },
+        |remaining_policy| async move {
+            let mut request = client.head(url);
+            if let Some(t) = token {
+                request = request.bearer_auth(t);
+            }
+            match remaining_policy.max_elapsed {
+                Some(budget) => tokio::time::timeout(budget, request.send())
+                    .await
+                    .map_err(|_| GcsRequestError::DeadlineExceeded {
+                        elapsed: budget,
+                        budget,
+                    }),
+                None => Ok(request.send().await),
+            }
+        },
+    )
+    .await?;
 
-    let _slot = scheduler.acquire_request().await;
-    match request.send().await {
+    Ok(match response {
         Ok(resp) => match resp.status() {
             StatusCode::OK => {
                 let digest = match try_get_header(resp.headers(), GCS_META_SFC_DIGEST) {
                     Ok(value) => value,
                     Err(_) => {
-                        // Header value is not valid UTF-8 — treat as
-                        // "no digest known"; never log the bytes.
                         tracing::warn!(
                             "Non-UTF8 {GCS_META_SFC_DIGEST} header on GCS HEAD response, \
                              ignoring digest"
@@ -659,7 +742,7 @@ async fn check_file_exists_gcs(
             );
             GcsHeadResult::NotFound
         }
-    }
+    })
 }
 
 /// Upload data to GCS with retry logic.
@@ -683,6 +766,7 @@ async fn check_file_exists_gcs(
 /// Returns the internal `GcsRequestError` so the attempt-error mapper can
 /// dispatch `TokenExpired` into `GcsAttemptError::TokenExpired` (handled by
 /// `run_gcs_with_token_refresh`) versus everything else into `Other`.
+#[allow(clippy::too_many_arguments)]
 async fn upload_to_gcs(
     client: &reqwest::Client,
     url: &str,
@@ -690,7 +774,8 @@ async fn upload_to_gcs(
     prepared: PreparedUpload,
     policy: &RetryPolicy,
     conditional_create: bool,
-    scheduler: &TransferScheduler,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<(), GcsRequestError> {
     // `body_for` re-opens the source per retry (a `Path` re-open or an O(1)
     // `Bytes` refcount clone). `prepared` is held until this fn returns, so a
@@ -765,8 +850,6 @@ async fn upload_to_gcs(
     let client = client.clone();
     let url_owned = url.to_string();
     let token = token.map(str::to_string);
-
-    let _slot = scheduler.acquire_request().await;
     gcs_upload_with_retry(
         async move || {
             // CSE → lazy AES-CBC encrypting stream; SSE Path → fresh
@@ -807,6 +890,8 @@ async fn upload_to_gcs(
         &Method::PUT,
         url,
         policy,
+        deadline,
+        permit,
     )
     .await?;
 
@@ -857,6 +942,10 @@ fn without_400(policy: &RetryPolicy) -> RetryPolicy {
 /// Takes the injected `&RetryPolicy` (not a bare `max_attempts`) so the
 /// *backoff* is injectable — production passes `gcs_retry_policy(..)` while
 /// tests pass a zero-backoff variant (`internal::gcs_test_retry_policy`).
+///
+/// Transfer leaves wrap this helper in the scoped or deferred-body admission
+/// seam. This helper itself remains admission-agnostic so the shared
+/// GS-capable retry loop is never globally gated.
 async fn gcs_request_with_retry<F>(
     build_request: F,
     method: Method,
@@ -918,6 +1007,14 @@ impl UploadRetryAdapter for GcsUploadRetry {
             detail: format!("GCS upload {detail}"),
         }
     }
+
+    fn on_deadline_exceeded(
+        &self,
+        elapsed: std::time::Duration,
+        budget: std::time::Duration,
+    ) -> GcsRequestError {
+        GcsRequestError::DeadlineExceeded { elapsed, budget }
+    }
 }
 
 /// Executes a GCS upload with retry, accepting a **fallible** request-builder closure.
@@ -933,22 +1030,46 @@ impl UploadRetryAdapter for GcsUploadRetry {
 ///
 /// Takes the injected `&RetryPolicy` (not a bare `max_attempts`) for the same
 /// reason as `gcs_request_with_retry`: the backoff is injectable for tests.
+///
+/// See `docs/design/transfer-governor.md`.
 async fn gcs_upload_with_retry<F>(
     build_request: F,
     method: &Method,
     url: &str,
     policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<(), GcsRequestError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, GcsRequestError>,
 {
-    cloud_http::upload_with_retry(policy, &GcsUploadRetry, method, url, build_request).await
+    cloud_http::upload_with_retry(
+        policy,
+        &GcsUploadRetry,
+        method,
+        url,
+        build_request,
+        deadline,
+        permit,
+    )
+    .await
 }
 
 fn map_http_error(e: HttpError) -> GcsRequestError {
     match e {
         HttpError::Transport { source, .. } => GcsRequestError::Http { source },
-        other => GcsRequestError::RetryExhausted {
+        HttpError::DeadlineExceeded {
+            configured,
+            elapsed,
+            ..
+        } => GcsRequestError::DeadlineExceeded {
+            elapsed,
+            budget: configured,
+        },
+        other @ HttpError::MaxAttempts { .. }
+        | other @ HttpError::RetryAfterExceeded { .. }
+        | other @ HttpError::ResponseTooLarge { .. }
+        | other @ HttpError::ResponseTimeout { .. } => GcsRequestError::RetryExhausted {
             detail: other.to_string(),
         },
     }
@@ -1127,6 +1248,7 @@ fn try_get_header(
 /// override, retry policy, per-file index for logging, multipart params, the
 /// refresh hook, and where to spill the body) mirroring the other cloud
 /// download entry points' presigned-url + refresh + multipart surface.
+#[cfg(any(test, feature = "test-utils"))]
 #[allow(clippy::too_many_arguments)]
 pub async fn download_from_gcs_streaming(
     stage_info: &StageInfo,
@@ -1134,43 +1256,83 @@ pub async fn download_from_gcs_streaming(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
-    // Ranged (multipart) download applies only on the access-token path — a
-    // presigned URL is signed for one specific GET and can't serve a HEAD/Range
-    // probe. For access-token sessions, probe the size and, when it's at/above
-    // the threshold, fetch the object with parallel ranged GETs into a tempfile.
-    let using_presigned_url =
-        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
-    if !using_presigned_url
-        && let Some(ranged) = gcs_try_ranged_download(
-            stage_info,
-            filename,
-            policy,
-            scheduler,
-            unsafe_file_write,
-            spill_target,
-            tx,
-        )
-        .await?
-    {
-        return Ok(ranged);
-    }
-    // else: presigned session, or object below the threshold / size not
-    // probeable — fall through to the single streamed GET below.
-
-    // Non-ranged fall-through: a single unranged streaming GET.
-    gcs_get_streaming(
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
+    download_from_gcs_streaming_admitted(
         stage_info,
         filename,
         per_file_presigned_url,
         policy,
         per_file_index,
-        scheduler,
+        multipart,
+        unsafe_file_write,
+        spill_target,
         tx,
+        transfer,
+        deadline,
+        permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn download_from_gcs_streaming_admitted(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    per_file_index: usize,
+    multipart: MultipartParams,
+    unsafe_file_write: bool,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
+) -> Result<CloudStreamingDownload, GcsDownloadError> {
+    let using_presigned_url =
+        per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
+    let file_permit = if !using_presigned_url {
+        match gcs_try_ranged_download(
+            stage_info,
+            filename,
+            policy,
+            multipart,
+            unsafe_file_write,
+            spill_target,
+            tx,
+            transfer,
+            deadline,
+            file_permit,
+        )
+        .await?
+        {
+            GcsRangedChoice::Assembled(ranged) => return Ok(ranged),
+            GcsRangedChoice::Fallthrough(permit) => permit,
+        }
+    } else {
+        file_permit
+    };
+    // else: presigned session, or object below the threshold / size not
+    // probeable — fall through to the single streamed GET below.
+
+    gcs_get_streaming_admitted(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        policy,
+        per_file_index,
+        tx,
+        deadline,
+        file_permit,
     )
     .await
 }
@@ -1187,10 +1349,37 @@ pub(super) async fn gcs_get_streaming(
     per_file_presigned_url: Option<&str>,
     policy: &RetryPolicy,
     per_file_index: usize,
-    scheduler: &TransferScheduler,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
 ) -> Result<CloudStreamingDownload, GcsDownloadError> {
-    let slot = scheduler.acquire_request().await;
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
+    gcs_get_streaming_admitted(
+        stage_info,
+        filename,
+        per_file_presigned_url,
+        policy,
+        per_file_index,
+        tx,
+        deadline,
+        permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn gcs_get_streaming_admitted(
+    stage_info: &StageInfo,
+    filename: &str,
+    per_file_presigned_url: Option<&str>,
+    policy: &RetryPolicy,
+    per_file_index: usize,
+    tx: TransferCtx<'_>,
+    deadline: Deadline,
+    file_permit: RequestPermit,
+) -> Result<CloudStreamingDownload, GcsDownloadError> {
     let response = gcs_get_with_refresh(
         stage_info,
         filename,
@@ -1198,6 +1387,8 @@ pub(super) async fn gcs_get_streaming(
         policy,
         per_file_index,
         tx,
+        deadline,
+        &file_permit,
     )
     .await?;
 
@@ -1226,14 +1417,11 @@ pub(super) async fn gcs_get_streaming(
         None => None,
     };
 
-    // Content-Length byte count, git-stage fallback, and spawning the
-    // byte-stream producer are shared with Azure's single-GET path — see
-    // `CloudStreamingDownload::from_reqwest_response`.
-    Ok(CloudStreamingDownload::from_reqwest_response(
+    Ok(CloudStreamingDownload::from_admitted_reqwest_response(
         response,
+        file_permit,
         digest,
         file_metadata,
-        slot,
     ))
 }
 
@@ -1269,22 +1457,35 @@ fn parse_gcs_cse_info(
     }))
 }
 
+enum GcsRangedChoice {
+    Assembled(CloudStreamingDownload),
+    Fallthrough(RequestPermit),
+}
+
+struct GcsRangedHead {
+    content_length: u64,
+    cse_info: Option<CseDownloadInfo>,
+}
+
 /// On the access-token path, probe the object via HEAD and — when it is at/above
 /// the multipart threshold — fetch it with parallel ranged GETs into a tempfile,
 /// returning a [`CloudStreamingDownload`] backed by that tempfile. Returns
-/// `Ok(None)` to mean "fall through to the single streamed GET" (object below
-/// the threshold, or the HEAD couldn't determine a usable size). The whole
-/// probe+fetch runs inside the token-refresh loop, so a 401 at any step rotates
-/// creds and retries from the HEAD.
+/// `Fallthrough` to mean "use the single streamed GET" (object below
+/// the threshold, or the HEAD couldn't determine a usable size). A 401 from
+/// either HEAD or a ranged GET rotates credentials and retries that phase.
+#[allow(clippy::too_many_arguments)]
 async fn gcs_try_ranged_download(
     stage_info: &StageInfo,
     filename: &str,
     policy: &RetryPolicy,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     tx: TransferCtx<'_>,
-) -> Result<Option<CloudStreamingDownload>, GcsDownloadError> {
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
+) -> Result<GcsRangedChoice, GcsDownloadError> {
     let client = create_gcs_client(
         stage_info,
         tx.http_client
@@ -1293,69 +1494,146 @@ async fn gcs_try_ranged_download(
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
-    let make_attempt = |base: &StageInfo| {
-        let base = base.clone();
-        let key = key.clone();
-        let client = client.clone();
-        move |snapshot: super::types::StageInfoSnapshot| {
-            let stage_info = base.with_snapshot(snapshot);
+    let head = {
+        let permit = &file_permit;
+        let make_attempt = |base: &StageInfo| {
+            let base = base.clone();
             let key = key.clone();
             let client = client.clone();
-            async move {
-                let (url, token) = resolve_url_and_token(&stage_info, &key, None)
-                    .map_err(map_gcs_request_error_for_attempt)?;
-                // Access-token path only (the caller already gated on
-                // `!using_presigned_url`); defensively fall through otherwise.
-                let Some(token) = token else {
-                    return Ok(None);
-                };
-                gcs_ranged_download_attempt(
-                    &client,
-                    &url,
-                    token,
-                    scheduler,
-                    policy,
-                    unsafe_file_write,
-                    spill_target,
-                )
-                .await
+            move |snapshot: super::types::StageInfoSnapshot| {
+                let stage_info = base.with_snapshot(snapshot);
+                let key = key.clone();
+                let client = client.clone();
+                async move {
+                    let (url, token) = resolve_url_and_token(&stage_info, &key, None)
+                        .map_err(map_gcs_request_error_for_attempt)?;
+                    let Some(token) = token else {
+                        return Ok(None);
+                    };
+                    let sized = gcs_ranged_head_attempt(
+                        &client, &url, token, multipart, policy, deadline, permit,
+                    )
+                    .await?;
+                    Ok(sized.map(|(content_length, cse_info)| GcsRangedHead {
+                        content_length,
+                        cse_info,
+                    }))
+                }
             }
-        }
+        };
+
+        run_gcs_with_token_refresh(
+            tx.refresher,
+            stage_info,
+            |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
+            make_attempt(stage_info),
+        )
+        .await?
     };
 
-    run_gcs_with_token_refresh(
-        tx.refresher,
-        stage_info,
-        |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
-        make_attempt(stage_info),
-    )
-    .await
+    let Some(head) = head else {
+        return Ok(GcsRangedChoice::Fallthrough(file_permit));
+    };
+
+    let chunk_size = multipart::compute_part_size(head.content_length, &MultipartConfig::GCS)
+        .map_err(|e| {
+            gcs_download_error::FileTooLargeSnafu {
+                detail: e.to_string(),
+            }
+            .build()
+        })?;
+
+    tracing::debug!(
+        "GCS ranged download: content_length={} chunk_size={chunk_size} \
+         concurrency={}",
+        head.content_length,
+        multipart.concurrency
+    );
+    drop(file_permit);
+    let spilled = {
+        let make_attempt = |base: &StageInfo| {
+            let base = base.clone();
+            let key = key.clone();
+            let client = client.clone();
+            move |snapshot: super::types::StageInfoSnapshot| {
+                let stage_info = base.with_snapshot(snapshot);
+                let key = key.clone();
+                let client = client.clone();
+                async move {
+                    let (url, token) = resolve_url_and_token(&stage_info, &key, None)
+                        .map_err(map_gcs_request_error_for_attempt)?;
+                    let token = token
+                        .ok_or(GcsRequestError::MissingGcsCredentials)
+                        .map_err(map_gcs_request_error_for_attempt)?;
+                    gcs_range_download(
+                        &client,
+                        &url,
+                        token,
+                        head.content_length,
+                        chunk_size,
+                        multipart,
+                        policy,
+                        unsafe_file_write,
+                        spill_target,
+                        transfer,
+                    )
+                    .await
+                    .map_err(map_gcs_request_error_for_attempt)
+                }
+            }
+        };
+
+        run_gcs_with_token_refresh(
+            tx.refresher,
+            stage_info,
+            |e| gcs_download_error::StageInfoRefreshSnafu.into_error(e),
+            make_attempt(stage_info),
+        )
+        .await?
+    };
+
+    Ok(GcsRangedChoice::Assembled(CloudStreamingDownload {
+        cloud_byte_count: head.content_length as i64,
+        cse_info: head.cse_info,
+        cloud_bytes_read: Arc::new(AtomicU64::new(0)),
+        body: cloud_http::CloudDownloadBody::Spilled(spilled),
+    }))
 }
 
-/// One ranged-download attempt: HEAD for size + metadata, then parallel ranged
-/// GETs into a tempfile. Returns `Ok(None)` to fall through to the single GET
-/// (sub-threshold, or HEAD couldn't size the object). 401 surfaces as
-/// `GcsAttemptError::TokenExpired` so the refresh loop rotates creds.
-async fn gcs_ranged_download_attempt(
+async fn gcs_ranged_head_attempt(
     client: &reqwest::Client,
     url: &str,
     token: &str,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
-    unsafe_file_write: bool,
-    spill_target: cloud_http::CloudSpillTarget<'_>,
-) -> Result<Option<CloudStreamingDownload>, GcsAttemptError<GcsDownloadError>> {
-    // HEAD probe. A 401 must refresh; any other probe failure degrades to the
-    // proven single-GET path (`Ok(None)`).
-    let head = {
-        let _slot = scheduler.acquire_request().await;
-        match gcs_request_with_retry(|| client.head(url).bearer_auth(token), Method::HEAD, policy)
+    deadline: Deadline,
+    file_permit: &RequestPermit,
+) -> Result<Option<(u64, Option<CseDownloadInfo>)>, GcsAttemptError<GcsDownloadError>> {
+    let head_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        file_permit,
+        |elapsed, budget| GcsRequestError::DeadlineExceeded { elapsed, budget },
+        |remaining_policy| async move {
+            gcs_request_with_retry(
+                || client.head(url).bearer_auth(token),
+                Method::HEAD,
+                &remaining_policy,
+            )
             .await
-        {
-            Ok(resp) => resp,
-            Err(GcsRequestError::TokenExpired) => return Err(GcsAttemptError::TokenExpired),
-            Err(_) => return Ok(None),
+        },
+    )
+    .await;
+    let head = match head_result {
+        Ok(resp) => resp,
+        Err(GcsRequestError::TokenExpired) => {
+            return Err(GcsAttemptError::TokenExpired);
         }
+        Err(err @ GcsRequestError::Admission { .. })
+        | Err(err @ GcsRequestError::DeadlineExceeded { .. }) => {
+            return Err(GcsAttemptError::Other(err.into()));
+        }
+        Err(_) => return Ok(None),
     };
 
     let Some(content_length) = head
@@ -1366,53 +1644,12 @@ async fn gcs_ranged_download_attempt(
     else {
         return Ok(None);
     };
-    if !scheduler.multipart().should_chunk(content_length) {
+    if !multipart.should_chunk(content_length) {
         return Ok(None);
     }
 
     let cse_info = parse_gcs_cse_info(head.headers()).map_err(GcsAttemptError::Other)?;
-    let chunk_size =
-        multipart::compute_part_size(content_length, &MultipartConfig::GCS).map_err(|e| {
-            GcsAttemptError::Other(
-                gcs_download_error::FileTooLargeSnafu {
-                    detail: e.to_string(),
-                }
-                .build(),
-            )
-        })?;
-
-    tracing::debug!(
-        "GCS ranged download: content_length={content_length} chunk_size={chunk_size} \
-         concurrency={}",
-        scheduler.multipart().concurrency
-    );
-    let spilled = gcs_range_download(
-        client,
-        url,
-        token,
-        content_length,
-        chunk_size,
-        scheduler,
-        policy,
-        unsafe_file_write,
-        spill_target,
-    )
-    .await
-    .map_err(map_gcs_request_error_for_attempt)?;
-
-    // Spilled body assembled in the destination dir: a non-encrypted download
-    // wrote straight into `.part` (renamed into place by the caller), while a
-    // CSE/git-stage download wrote ciphertext to a temp. Size is known from the
-    // HEAD `Content-Length`, so the chunked-TE bytes-pulled fallback
-    // (`cloud_bytes_read`) stays 0.
-    Ok(Some(CloudStreamingDownload {
-        cloud_byte_count: content_length as i64,
-        cse_info,
-        cloud_bytes_read: Arc::new(AtomicU64::new(0)),
-        // Ranged/spilled: parallel GETs already finished, no producer task
-        // left to cancel.
-        body: cloud_http::CloudDownloadBody::Spilled(spilled),
-    }))
+    Ok(Some((content_length, cse_info)))
 }
 
 /// Downloads the object with parallel ranged GETs into a pre-allocated file,
@@ -1433,10 +1670,11 @@ async fn gcs_range_download(
     token: &str,
     content_length: u64,
     chunk_size: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
+    transfer: &TransferOp,
 ) -> Result<cloud_http::CloudSpilledBody, GcsRequestError> {
     let mk_temp_err = |detail: String| GcsRequestError::TempFile { detail };
     // Kept distinct from mk_temp_err so a 206-vs-200 truncation surfaces as the
@@ -1448,12 +1686,14 @@ async fn gcs_range_download(
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        scheduler,
+        multipart.concurrency,
         target,
         unsafe_file_write,
         mk_temp_err,
         mk_range_err,
-        move |range| async move { gcs_get_range(client, url, token, &range, policy).await },
+        move |range| async move {
+            gcs_get_range(client, url, token, &range, policy, transfer).await
+        },
     )
     .await
 }
@@ -1466,23 +1706,34 @@ async fn gcs_get_range(
     token: &str,
     range: &multipart::DownloadRange,
     policy: &RetryPolicy,
+    transfer: &TransferOp,
 ) -> Result<Bytes, GcsRequestError> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
-    let resp = gcs_request_with_retry(
-        || {
-            client
-                .get(url)
-                .bearer_auth(token)
-                .header(reqwest::header::RANGE, &range_header)
-        },
-        Method::GET,
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline.acquire(transfer, RequestKind::RangedGet).await?;
+    let bytes = cloud_http::run_within_deadline(
         policy,
+        deadline,
+        &permit,
+        |elapsed, budget| GcsRequestError::DeadlineExceeded { elapsed, budget },
+        |remaining_policy| async move {
+            let resp = gcs_request_with_retry(
+                || {
+                    client
+                        .get(url)
+                        .bearer_auth(token)
+                        .header(reqwest::header::RANGE, &range_header)
+                },
+                Method::GET,
+                &remaining_policy,
+            )
+            .await?;
+            resp.bytes()
+                .await
+                .map_err(|source| GcsRequestError::Http { source })
+        },
     )
     .await?;
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|source| GcsRequestError::Http { source })?;
     // The 206-vs-200 / truncation guard (bytes.len() == expected) lives in the
     // shared cloud_http::assemble_ranged_download, applied uniformly to all clouds.
     Ok(bytes)
@@ -1652,6 +1903,12 @@ enum GcsRequestError {
     RetryExhausted { detail: String },
     #[snafu(display("Object too large to upload to GCS: {detail}"))]
     FileTooLarge { detail: String },
+    #[snafu(display("GCS upload deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded { elapsed: Duration, budget: Duration },
+    #[snafu(display("GCS upload transfer admission refused"))]
+    Admission {
+        source: crate::governor::AcquireError,
+    },
     #[snafu(display("GCS client setup failed: {detail}"))]
     ClientSetup { detail: String },
     #[snafu(display("Failed to serialize GCS metadata"))]
@@ -1660,6 +1917,17 @@ enum GcsRequestError {
     TempFile { detail: String },
     #[snafu(display("GCS endpoint did not honor Range header: {detail}"))]
     RangeNotHonored { detail: String },
+}
+
+impl From<AcquireWaitError> for GcsRequestError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => Self::Admission { source },
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                Self::DeadlineExceeded { elapsed, budget }
+            }
+        }
+    }
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -1687,6 +1955,12 @@ impl From<GcsRequestError> for GcsUploadError {
             }
             GcsRequestError::FileTooLarge { detail } => {
                 gcs_upload_error::FileTooLargeSnafu { detail }.build()
+            }
+            GcsRequestError::DeadlineExceeded { elapsed, budget } => {
+                gcs_upload_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+            GcsRequestError::Admission { source } => {
+                gcs_upload_error::AdmissionSnafu.into_error(source)
             }
             GcsRequestError::ClientSetup { detail } => {
                 gcs_upload_error::ClientSetupFailedSnafu { detail }.build()
@@ -1746,6 +2020,12 @@ impl From<GcsRequestError> for GcsDownloadError {
             GcsRequestError::FileTooLarge { detail } => {
                 gcs_download_error::FileTooLargeSnafu { detail }.build()
             }
+            GcsRequestError::DeadlineExceeded { elapsed, budget } => {
+                gcs_download_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+            GcsRequestError::Admission { source } => {
+                gcs_download_error::AdmissionSnafu.into_error(source)
+            }
             GcsRequestError::ClientSetup { detail } => {
                 gcs_download_error::ClientSetupFailedSnafu { detail }.build()
             }
@@ -1761,6 +2041,18 @@ impl From<GcsRequestError> for GcsDownloadError {
                 gcs_download_error::RangeNotHonoredSnafu { detail }.build()
             }
         }
+    }
+}
+
+impl From<AcquireWaitError> for GcsUploadError {
+    fn from(err: AcquireWaitError) -> Self {
+        GcsRequestError::from(err).into()
+    }
+}
+
+impl From<AcquireWaitError> for GcsDownloadError {
+    fn from(err: AcquireWaitError) -> Self {
+        GcsRequestError::from(err).into()
     }
 }
 
@@ -1820,6 +2112,19 @@ pub enum GcsUploadError {
     #[snafu(display("GCS retry exhausted: {detail}"))]
     RetryExhausted {
         detail: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS upload deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS upload transfer admission refused"))]
+    Admission {
+        source: crate::governor::AcquireError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1901,6 +2206,19 @@ pub enum GcsDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("GCS download deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS download transfer admission refused"))]
+    Admission {
+        source: crate::governor::AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Object too large to download from GCS: {detail}"))]
     FileTooLarge {
         detail: String,
@@ -1947,28 +2265,61 @@ pub enum GcsDownloadError {
 
 #[cfg(test)]
 mod tests {
-    use super::super::internal::test_scheduler;
-    use super::super::multipart::MultipartParams;
+    use super::super::governor_test_util::{
+        notified_soon, start_stalled_206_range_server, wait_until,
+    };
     use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
     use crate::config::retry::Jitter;
+    use crate::file_manager::internal::gcs_test_retry_policy as test_policy;
     use crate::file_manager::types::{StageInfoCache, StageInfoSnapshot};
+    use crate::governor::Governor;
     use crate::sensitive::SensitiveString;
     use bytes::Bytes;
+    use std::io::Read as _;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::sync::Notify;
 
     fn base_policy() -> RetryPolicy {
         use crate::config::param_store::ParamStore;
         RetryPolicy::put_get(&ParamStore::new())
     }
 
+    async fn start_stalled_body_server(
+        body_stalled: Arc<Notify>,
+        release_body: Arc<Notify>,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stalled-body server");
+        let address = listener.local_addr().expect("stalled-body address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept GET");
+            let mut request = vec![0; 4096];
+            let _ = socket.read(&mut request).await.expect("read GET");
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\n",
+                )
+                .await
+                .expect("write stalled response");
+            body_stalled.notify_one();
+            release_body.notified().await;
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .expect("finish stalled response");
+        });
+        format!("http://{address}/object")
+    }
+
     // Zero-backoff test policy lives in `file_manager::internal` so the in-crate
     // and external integration tests share one definition that derives from the
     // production `gcs_retry_policy` (no drift). Aliased so call sites read
     // `test_policy(using_presigned_url, ..)`.
-    use crate::file_manager::internal::gcs_test_retry_policy as test_policy;
-
     fn make_stage_info(overrides: StageInfoOverrides) -> StageInfo {
         StageInfo {
             location_type: super::super::types::LocationType::Gcs,
@@ -1988,6 +2339,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
             storage_account: None,
         }
@@ -2755,6 +3107,21 @@ mod tests {
         policy
     }
 
+    async fn admitted_head(
+        client: &reqwest::Client,
+        url: &str,
+        token: Option<&str>,
+        policy: &RetryPolicy,
+    ) -> Result<GcsHeadResult, GcsRequestError> {
+        let transfer = TransferOp::isolated_for_tests();
+        let deadline = Deadline::from_budget(policy.max_elapsed);
+        let permit = deadline
+            .acquire(&transfer, RequestKind::WholeObjectGet)
+            .await
+            .expect("test HEAD admission");
+        check_file_exists_gcs(client, url, token, policy, deadline, &permit).await
+    }
+
     #[tokio::test]
     async fn check_file_exists_gcs_returns_exists_with_digest_on_200_with_header() {
         let server = MockServer::start().await;
@@ -2768,13 +3135,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         assert_eq!(
             result,
@@ -2797,13 +3160,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         // Older objects (pre-`sfc-digest`-write era, libsfclient-S3-style
         // uploads, etc.) lack the header; the conservative fall-through
@@ -2827,13 +3186,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -2851,13 +3206,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         // 403 indicates limited credentials (e.g. PUT-only); proceed
         // with upload rather than surface a hard error — the worst
@@ -2878,13 +3229,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::NotFound);
     }
@@ -2909,13 +3256,9 @@ mod tests {
             .await
             .unwrap();
         let url = format!("{}/my-bucket/prefix/file.csv", server.uri());
-        let result = check_file_exists_gcs(
-            &client,
-            &url,
-            Some("token"),
-            &test_scheduler(MultipartParams::default()),
-        )
-        .await;
+        let result = admitted_head(&client, &url, Some("token"), &test_policy(false, 1))
+            .await
+            .unwrap();
 
         assert_eq!(result, GcsHeadResult::Found { digest: None });
     }
@@ -3025,11 +3368,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
             always_multipart(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a 9 MiB access-token upload should succeed as a single PUT");
@@ -3097,6 +3438,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("bearer-token GCS PUT should succeed against the mock");
@@ -3164,6 +3506,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect_err("an object past the GCS 5 TiB ceiling must not start a PUT");
@@ -3206,13 +3549,14 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Temp {
                 dir: spill.path(),
                 cleanup: None,
             },
             TransferCtx::default(),
+            &crate::governor::Governor::new().register_command(1),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3257,10 +3601,11 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -3312,10 +3657,11 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             /* per_file_index */ 0,
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             /* unsafe_file_write */ false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -3350,11 +3696,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3386,11 +3730,9 @@ mod tests {
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3417,11 +3759,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3452,11 +3792,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3487,11 +3825,9 @@ mod tests {
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3518,11 +3854,9 @@ mod tests {
             /* overwrite */ false,
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3565,6 +3899,7 @@ mod tests {
             MultipartParams::default(),
             &policy,
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect_err("an unconditional 412 should surface without retry");
@@ -3624,6 +3959,7 @@ mod tests {
             MultipartParams::default(),
             &policy,
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a failed conditional XML PUT is a normal skip");
@@ -3665,6 +4001,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -3709,6 +4046,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("an existing object should skip before signed-header validation");
@@ -3801,6 +4139,7 @@ mod tests {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("signed conditional-create header should permit the upload");
@@ -3832,11 +4171,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3866,11 +4203,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3907,11 +4242,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ true,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3951,11 +4284,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -3991,11 +4322,9 @@ mod tests {
             /* overwrite */ true,
             /* skip_upload_on_content_match */ false,
             MultipartParams::default(),
-            &test_policy(
-                /* using_presigned_url */ false,
-                DEFAULT_PUT_GET_MAX_ATTEMPTS,
-            ),
+            &test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .unwrap();
@@ -4013,5 +4342,566 @@ mod tests {
             !put.headers.contains_key("x-goog-if-generation-match"),
             "overwrite=true must not attach a generation precondition"
         );
+    }
+
+    /// Two command-scoped operations sharing a cap of 1 must not have overlapping
+    /// whole-object GCS PUTs. This is the end-to-end leaf proof that
+    /// `upload_to_gcs` admits through `gcs_upload_with_retry`.
+    ///
+    /// Coordination is async (`Notify` + governor queue) so a single-worker
+    /// runtime cannot false-pass by stalling the second task in a blocking
+    /// mock handler.
+    #[tokio::test(flavor = "current_thread")]
+    async fn two_operations_respect_shared_in_flight_cap() {
+        use crate::governor::Governor;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        use tokio::sync::Notify;
+
+        let server = MockServer::start().await;
+        let first_entered = Arc::new(Notify::new());
+        let first_seen = Arc::new(AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .respond_with({
+                let first_entered = first_entered.clone();
+                let first_seen = first_seen.clone();
+                move |_req: &Request| {
+                    if !first_seen.swap(true, Ordering::SeqCst) {
+                        first_entered.notify_one();
+                        // Async hold on wiremock's server — does not block the
+                        // test worker. Released when the delay elapses after
+                        // the second operation is observed queued.
+                        ResponseTemplate::new(200).set_delay(Duration::from_millis(150))
+                    } else {
+                        ResponseTemplate::new(200)
+                    }
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_for_mock(&server.uri());
+        let policy = test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let upload_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_gcs_or_skip(
+                    prepared_upload_with_digest("cap-a"),
+                    &stage,
+                    "a.csv",
+                    true,
+                    false,
+                    MultipartParams::default(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_a,
+                )
+                .await
+            }
+        });
+        first_entered.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let upload_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_gcs_or_skip(
+                    prepared_upload_with_digest("cap-b"),
+                    &stage,
+                    "b.csv",
+                    true,
+                    false,
+                    MultipartParams::default(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_b,
+                )
+                .await
+            }
+        });
+        let wait_start = tokio::time::Instant::now();
+        while governor.queued() != 1 {
+            assert!(
+                wait_start.elapsed() < Duration::from_secs(2),
+                "second operation must queue before the first mock delay elapses"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "second operation must stay queued until the first attempt is released"
+        );
+
+        upload_a.await.expect("join A").expect("operation A upload");
+        upload_b.await.expect("join B").expect("operation B upload");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    /// Cap-1 concurrent ranged GET: the second range stays queued until the
+    /// first range body is fully consumed.
+    #[tokio::test(flavor = "current_thread")]
+    async fn gcs_ranged_get_respects_shared_in_flight_cap() {
+        let (endpoint, first_headers, release_first_body) = start_stalled_206_range_server().await;
+        let url = format!("{endpoint}/my-bucket/prefix/file.csv");
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_for_mock(&endpoint);
+        let client = create_gcs_client(&stage, None).await.expect("GCS client");
+        let range = multipart::DownloadRange { start: 0, end: 3 };
+        let policy = test_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let get_a = tokio::spawn({
+            let client = client.clone();
+            let url = url.clone();
+            let policy = policy.clone();
+            async move { gcs_get_range(&client, &url, "fake-token", &range, &policy, &op_a).await }
+        });
+        notified_soon(&first_headers).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let get_b = tokio::spawn({
+            let client = client.clone();
+            let url = url.clone();
+            let policy = policy.clone();
+            async move { gcs_get_range(&client, &url, "fake-token", &range, &policy, &op_b).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        release_first_body.notify_one();
+        get_a.await.expect("join A").expect("range A");
+        get_b.await.expect("join B").expect("range B");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    #[test]
+    fn gcs_upload_retry_maps_deadline_and_admission_to_dedicated_variants() {
+        use crate::governor::AcquireError;
+        let elapsed = Duration::from_millis(12);
+        let budget = Duration::from_millis(10);
+        assert!(matches!(
+            GcsUploadRetry.on_deadline_exceeded(elapsed, budget),
+            GcsRequestError::DeadlineExceeded {
+                elapsed: e,
+                budget: b,
+            } if e == elapsed && b == budget
+        ));
+        assert!(matches!(
+            GcsRequestError::from(AcquireWaitError::Acquire(AcquireError::OperationDropped)),
+            GcsRequestError::Admission { .. }
+        ));
+        assert!(matches!(
+            GcsUploadError::from(GcsRequestError::DeadlineExceeded { elapsed, budget }),
+            GcsUploadError::DeadlineExceeded { .. }
+        ));
+        assert!(matches!(
+            GcsUploadError::from(GcsRequestError::Admission {
+                source: AcquireError::OperationDropped,
+            }),
+            GcsUploadError::Admission { .. }
+        ));
+        assert!(matches!(
+            GcsUploadError::from(AcquireWaitError::Acquire(AcquireError::OperationDropped)),
+            GcsUploadError::Admission { .. }
+        ));
+        assert!(matches!(
+            GcsDownloadError::from(AcquireWaitError::DeadlineExceeded { elapsed, budget }),
+            GcsDownloadError::DeadlineExceeded { .. }
+        ));
+    }
+
+    #[test]
+    fn shared_http_deadline_stays_a_gcs_deadline() {
+        let configured = Duration::from_millis(20);
+        let elapsed = Duration::from_millis(21);
+        let mapped = map_http_error(HttpError::DeadlineExceeded {
+            configured,
+            elapsed,
+            location: Location::default(),
+        });
+
+        assert!(matches!(
+            mapped,
+            GcsRequestError::DeadlineExceeded {
+                elapsed: actual_elapsed,
+                budget,
+            } if actual_elapsed == elapsed && budget == configured
+        ));
+    }
+
+    #[tokio::test]
+    async fn gcs_whole_object_put_deadline_is_dedicated_variant() {
+        use crate::governor::{Governor, RequestKind};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let holder = governor.register_command(32);
+        let blocked = governor.register_command(32);
+        let _hold = holder.acquire(RequestKind::WholeObjectPut).await.unwrap();
+
+        let mut policy = test_policy(false, 2);
+        policy.max_elapsed = Some(Duration::from_millis(40));
+        let result = upload_to_gcs_or_skip(
+            prepared_upload_with_digest("deadline"),
+            &make_stage_for_mock(&server.uri()),
+            "deadline.csv",
+            true,
+            false,
+            MultipartParams::default(),
+            &policy,
+            TransferCtx::default(),
+            &blocked,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(GcsUploadError::DeadlineExceeded { .. })),
+            "expected DeadlineExceeded, got {result:?}"
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no outbound PUT when admission waits past max_elapsed"
+        );
+    }
+
+    #[tokio::test]
+    async fn gcs_streaming_get_holds_permit_until_body_eof() {
+        let body_stalled = Arc::new(Notify::new());
+        let release_body = Arc::new(Notify::new());
+        let url = start_stalled_body_server(body_stalled.clone(), release_body.clone()).await;
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let get_op = governor.register_command(32);
+        let waiter_op = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            presigned_url: Some(url),
+            creds: Some(CloudCredentials::Gcs {
+                gcs_access_token: None,
+            }),
+            ..Default::default()
+        });
+
+        let download = gcs_get_streaming(
+            &stage,
+            "object",
+            None,
+            &test_policy(true, 1),
+            0,
+            TransferCtx::default(),
+            &get_op,
+        )
+        .await
+        .expect("open admitted GET");
+        body_stalled.notified().await;
+
+        let waiter = tokio::spawn(async move {
+            waiter_op
+                .acquire(RequestKind::WholeObjectGet)
+                .await
+                .expect("waiter permit")
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        release_body.notify_one();
+        let reader = download.body.into_reader().expect("stream reader");
+        tokio::task::spawn_blocking(move || {
+            let mut reader = reader;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).expect("drain body");
+            bytes
+        })
+        .await
+        .expect("join body drain");
+        let waiter_permit = waiter.await.expect("join waiter");
+        drop(waiter_permit);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn aborting_gcs_streaming_get_releases_permit() {
+        let body_stalled = Arc::new(Notify::new());
+        let release_body = Arc::new(Notify::new());
+        let url = start_stalled_body_server(body_stalled.clone(), release_body.clone()).await;
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let get_op = governor.register_command(32);
+        let waiter_op = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            presigned_url: Some(url),
+            creds: Some(CloudCredentials::Gcs {
+                gcs_access_token: None,
+            }),
+            ..Default::default()
+        });
+
+        let download = gcs_get_streaming(
+            &stage,
+            "object",
+            None,
+            &test_policy(true, 1),
+            0,
+            TransferCtx::default(),
+            &get_op,
+        )
+        .await
+        .expect("open admitted GET");
+        body_stalled.notified().await;
+        let producer_abort = download.body.producer_abort().expect("producer abort");
+
+        let waiter = tokio::spawn(async move {
+            waiter_op
+                .acquire(RequestKind::WholeObjectGet)
+                .await
+                .expect("waiter permit")
+        });
+        wait_until(|| governor.queued() == 1).await;
+        producer_abort.abort();
+        let waiter_permit = waiter.await.expect("join waiter");
+        drop(waiter_permit);
+        release_body.notify_one();
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn gcs_head_and_put_share_one_permit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/PUT server");
+        let address = listener.local_addr().expect("HEAD/PUT address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let put_seen = Arc::new(Notify::new());
+        let release_put = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let put_seen = put_seen.clone();
+            let release_put = release_put.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut put_socket, _) = listener.accept().await.expect("accept PUT");
+                let read = put_socket.read(&mut request).await.expect("read PUT");
+                assert!(request[..read].starts_with(b"PUT "));
+                put_seen.notify_one();
+                release_put.notified().await;
+                put_socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .expect("respond PUT");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let upload_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = make_stage_for_mock(&format!("http://{address}"));
+        let upload = tokio::spawn(async move {
+            upload_to_gcs_or_skip(
+                prepared_upload_with_digest("head-put"),
+                &stage,
+                "file.csv",
+                false,
+                false,
+                MultipartParams::default(),
+                &test_policy(false, 1),
+                TransferCtx::default(),
+                &upload_op,
+            )
+            .await
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectGet)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        release_head.notify_one();
+        put_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and PUT for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_put.notify_one();
+
+        upload
+            .await
+            .expect("join upload")
+            .expect("HEAD then PUT upload");
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn gcs_head_and_get_share_one_permit() {
+        use crate::governor::{Governor, RequestKind};
+
+        const PAYLOAD: &[u8] = b"hello gcs";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/GET server");
+        let address = listener.local_addr().expect("HEAD/GET address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let get_seen = Arc::new(Notify::new());
+        let release_get = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let get_seen = get_seen.clone();
+            let release_get = release_get.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut get_socket, _) = listener.accept().await.expect("accept GET");
+                let read = get_socket.read(&mut request).await.expect("read GET");
+                assert!(request[..read].starts_with(b"GET "));
+                get_seen.notify_one();
+                release_get.notified().await;
+                get_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond GET headers");
+                get_socket
+                    .write_all(PAYLOAD)
+                    .await
+                    .expect("respond GET body");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let download_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = make_stage_for_mock(&format!("http://{address}"));
+        let download = tokio::spawn(async move {
+            let dl = download_from_gcs_streaming(
+                &stage,
+                "file.csv",
+                None,
+                &test_policy(false, 1),
+                0,
+                MultipartParams::default(),
+                false,
+                cloud_http::CloudSpillTarget::Temp {
+                    dir: tempfile::tempdir().unwrap().path(),
+                    cleanup: None,
+                },
+                TransferCtx::default(),
+                &download_op,
+            )
+            .await
+            .expect("HEAD then GET download");
+            let reader = dl.body.into_reader().expect("download reader");
+            tokio::task::spawn_blocking(move || {
+                let mut reader = reader;
+                let mut got = Vec::new();
+                reader.read_to_end(&mut got).expect("drain download");
+                got
+            })
+            .await
+            .expect("join drain download")
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectPut)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        release_head.notify_one();
+        get_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and GET for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_get.notify_one();
+
+        let got = download.await.expect("join download");
+        assert_eq!(got.as_slice(), PAYLOAD);
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
     }
 }

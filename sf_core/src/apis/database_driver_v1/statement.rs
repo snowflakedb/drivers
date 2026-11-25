@@ -387,6 +387,7 @@ impl DatabaseDriverV1 {
             self.root_store_provider.clone(),
             operation_ctx.map(OperationCtx::cleanup_scope),
             xp_backend,
+            self.governor.clone(),
         )
         .await;
         let request_id = uuid::Uuid::new_v4();
@@ -586,6 +587,7 @@ impl DatabaseDriverV1 {
                     put_compress_level,
                     put_tempdir,
                     get_fastfail,
+                    stage_transport,
                     http_client_cache,
                 ) = {
                     let conn = conn.lock().await;
@@ -603,11 +605,15 @@ impl DatabaseDriverV1 {
                         get_fastfail_override
                             .or_else(|| conn.get_fastfail())
                             .unwrap_or(self.wrapper_presets.put_get_fastfail_default),
+                        conn.stage_transport(
+                            &self.crl_manager,
+                            &self.root_store_provider,
+                            self.governor
+                                .register_command(data.resolved_command_parallel()),
+                        ),
                         conn.storage_http_client_cache.clone().unwrap_or_else(|| {
                             debug_assert!(false, "PUT/GET on a connection that never logged in");
-                            crate::file_manager::StorageHttpClientCache::new(
-                                conn.stage_transport(&self.crl_manager, &self.root_store_provider),
-                            )
+                            crate::file_manager::StorageHttpClientCache::new()
                         }),
                     )
                 };
@@ -626,6 +632,7 @@ impl DatabaseDriverV1 {
                     get_fastfail,
                     cwd,
                     unsafe_file_write,
+                    stage_transport,
                     &http_client_cache,
                 )
                 .await

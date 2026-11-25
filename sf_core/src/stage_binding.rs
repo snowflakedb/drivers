@@ -140,6 +140,9 @@ pub struct StageBindingContext<'a> {
     /// a single PUT is discarded by the cloud when the connection is torn down.
     pub cleanup: Option<&'a CleanupScope>,
     pub xp_backend: Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
+    /// Process-wide (or test-injected) transfer governor. Bind-stage CSV
+    /// uploads register one PUT operation on this instance.
+    pub governor: crate::governor::Governor,
 }
 
 impl<'a> StageBindingContext<'a> {
@@ -165,6 +168,7 @@ impl<'a> StageBindingContext<'a> {
         root_store_provider: RootStoreProvider,
         cleanup: Option<&'a CleanupScope>,
         xp_backend: Option<std::sync::Arc<dyn crate::xp_backend::SnowflakeBackend>>,
+        governor: crate::governor::Governor,
     ) -> Self {
         let use_scoped_stage =
             resolve_scoped_stage(wrapper_presets, &*session_parameters.read().await);
@@ -180,6 +184,7 @@ impl<'a> StageBindingContext<'a> {
             root_store_provider,
             cleanup,
             xp_backend,
+            governor,
         }
     }
 }
@@ -324,6 +329,9 @@ async fn upload_blob(
             .clone(),
         crl_manager: stage_binding_ctx.crl_manager.clone(),
         root_store_provider: stage_binding_ctx.root_store_provider.clone(),
+        transfer: stage_binding_ctx
+            .governor
+            .register_command(data.resolved_command_parallel()),
     };
     let single = data
         .to_bind_stage_upload_data(

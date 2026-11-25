@@ -5,13 +5,12 @@ use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::param_registry::DEFAULT_PUT_GET_MAX_ATTEMPTS;
 use sf_core::config::param_store::ParamStore;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::file_manager::MultipartParams;
 use sf_core::file_manager::TransferCtx;
-use sf_core::file_manager::internal::test_scheduler;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, EncryptionMaterial, LocationType,
     MaterialDescription, SingleDownloadData, StageInfo,
 };
+use sf_core::file_manager::{MultipartParams, TransferOp};
 use sf_core::sensitive::SensitiveString;
 use std::io::Read;
 
@@ -244,6 +243,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
                 crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                 root_store_provider: sf_core::tls::RootStoreProvider::new(),
                 proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                transfer: TransferOp::isolated_for_tests(),
             },
             storage_account: None,
         },
@@ -253,6 +253,7 @@ async fn download_single_file_tampered_digest_leaves_no_output() {
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     let result = sf_core::file_manager::download_single_file(
@@ -465,6 +466,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                     root_store_provider: sf_core::tls::RootStoreProvider::new(),
                     proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                    transfer: TransferOp::isolated_for_tests(),
                 },
                 storage_account: None,
             };
@@ -479,13 +481,14 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     DEFAULT_PUT_GET_MAX_ATTEMPTS,
                 ),
                 0,
-                &test_scheduler(MultipartParams::default()),
+                MultipartParams::default(),
                 false,
                 sf_core::file_manager::internal::CloudSpillTarget::Temp {
                     dir: std::env::temp_dir().as_path(),
                     cleanup: None,
                 },
                 TransferCtx::default(),
+                &TransferOp::isolated_for_tests(),
             )
             .await
             .expect("GCS streaming download must succeed")
@@ -511,13 +514,14 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                     root_store_provider: sf_core::tls::RootStoreProvider::new(),
                     proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                    transfer: TransferOp::isolated_for_tests(),
                 },
                 storage_account: Some("mystorageaccount".to_string()),
             };
             sf_core::file_manager::internal::download_from_azure_streaming(
                 &stage,
                 "azure-blob",
-                &test_scheduler(MultipartParams::default()),
+                MultipartParams::default(),
                 // Success-path roundtrip; no retries exercised, so the default
                 // policy is sufficient.
                 &RetryPolicy {
@@ -530,6 +534,7 @@ async fn streaming_roundtrip_for(cloud: Cloud) {
                     cleanup: None,
                 },
                 TransferCtx::default(),
+                &TransferOp::isolated_for_tests(),
             )
             .await
             .expect("Azure streaming download must succeed")
@@ -595,7 +600,7 @@ async fn azure_streaming_bytes_source_encrypt_decrypt_roundtrip() {
 // transport failure mid-body surfaces to the consumer as an `io::Error` with
 // no retry and no Range-resume — a deliberate behaviour change vs. the
 // buffered path (which collected the whole body inside the retry loop). This
-// pins the NOTE on `cloud_http::spawn_byte_stream_producer`.
+// pins the NOTE on `cloud_http::spawn_admitted_byte_stream_producer`.
 //
 // The fixture is a raw TCP server that returns a 200 with a 1 MiB
 // `Content-Length`, writes only 16 body bytes, then closes the socket. reqwest
@@ -666,6 +671,7 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     };
@@ -685,13 +691,14 @@ async fn gcs_streaming_mid_body_disconnect_surfaces_error() {
                 DEFAULT_PUT_GET_MAX_ATTEMPTS,
             ),
             0,
-            &test_scheduler(MultipartParams::default()),
+            MultipartParams::default(),
             false,
             sf_core::file_manager::internal::CloudSpillTarget::Temp {
                 dir: std::env::temp_dir().as_path(),
                 cleanup: None,
             },
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         ),
     )
     .await
@@ -808,6 +815,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
                 crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                 root_store_provider: sf_core::tls::RootStoreProvider::new(),
                 proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                transfer: TransferOp::isolated_for_tests(),
             },
             storage_account: None,
         },
@@ -829,6 +837,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
                 crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                 root_store_provider: sf_core::tls::RootStoreProvider::new(),
                 proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                transfer: TransferOp::isolated_for_tests(),
             },
             storage_account: None,
         },
@@ -850,6 +859,7 @@ fn cloud_stage(cloud: Cloud, uri: String) -> StageInfo {
                 crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
                 root_store_provider: sf_core::tls::RootStoreProvider::new(),
                 proxy_config: sf_core::tls::config::ProxyConfig::default(),
+                transfer: TransferOp::isolated_for_tests(),
             },
             storage_account: Some("mystorageaccount".to_string()),
         },
@@ -929,7 +939,7 @@ async fn open_download_stream_cse_roundtrip_for(cloud: Cloud) {
         None,
         Some(material),
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -988,7 +998,7 @@ async fn open_download_stream_decrypts_without_digest_for(cloud: Cloud) {
         None,
         Some(material),
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -1064,7 +1074,7 @@ async fn open_download_stream_git_stage_wrap_returns_raw_bytes_for(cloud: Cloud)
         None,
         Some(material),
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -1185,7 +1195,7 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
         Some(&refresher as &dyn StageInfoRefresher),
         None,
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("Azure open must succeed after the SAS is refreshed");
@@ -1210,7 +1220,7 @@ async fn open_download_stream_for_stage_azure_refreshes_sas_on_403() {
 async fn s3_open_download_stream_gunzip_only_roundtrip() {
     use flate2::Compression;
     use flate2::write::GzEncoder;
-    use sf_core::file_manager::internal::open_s3_download_stream;
+    use sf_core::file_manager::open_s3_download_stream;
     use std::io::Write as _;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
@@ -1234,7 +1244,7 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
         None,
         None,
         true,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("open_s3_download_stream must succeed");
@@ -1259,7 +1269,7 @@ async fn s3_open_download_stream_gunzip_only_roundtrip() {
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread")]
 async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
-    use sf_core::file_manager::internal::open_s3_download_stream;
+    use sf_core::file_manager::open_s3_download_stream;
 
     let (addr, server) = spawn_truncated_body_server(false).await;
 
@@ -1273,7 +1283,7 @@ async fn s3_open_download_stream_mid_body_disconnect_surfaces_error() {
             None,
             None,
             false,
-            MultipartParams::default(),
+            &TransferOp::isolated_for_tests(),
         ),
     )
     .await
@@ -1323,7 +1333,7 @@ async fn dispatch_raw_roundtrip_for(
         None,
         None,
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("open_download_stream_for_stage must succeed");
@@ -1398,7 +1408,7 @@ async fn open_download_stream_for_stage_dispatches_to_azure() {
 /// the download only succeeds if the per-file URL actually won.
 #[tokio::test]
 async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
-    use sf_core::file_manager::internal::open_gcs_download_stream;
+    use sf_core::file_manager::open_gcs_download_stream;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     let plaintext = b"per-file-presigned-url-wins".to_vec();
@@ -1421,7 +1431,7 @@ async fn open_gcs_download_stream_per_file_presigned_url_takes_precedence() {
         None,
         None,
         false,
-        MultipartParams::default(),
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("per_file_presigned_url must take precedence over stage_info.presigned_url");
@@ -1458,7 +1468,7 @@ async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
             None,
             None,
             false,
-            MultipartParams::default(),
+            &TransferOp::isolated_for_tests(),
         ),
     )
     .await

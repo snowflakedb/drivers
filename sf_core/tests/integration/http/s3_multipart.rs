@@ -21,6 +21,7 @@ use sf_core::config::retry::RetryPolicy;
 use sf_core::file_manager::internal::compute_sha256_digest;
 use sf_core::file_manager::types::{
     ByteSource, CloudCredentials, LocationType, SingleDownloadData, SingleUploadData, StageInfo,
+    TransferOp,
 };
 use sf_core::file_manager::{
     MultipartParams, SourceCompressionParam, TransferCtx, download_single_file, upload_single_file,
@@ -142,6 +143,7 @@ fn s3_stage(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -188,6 +190,7 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         multipart,
         put_compress_level: 9,
         put_tempdir: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
     let upload_result = upload_single_file(
         upload,
@@ -230,6 +233,7 @@ async fn should_upload_and_download_via_s3_multipart_roundtrip() {
         flavor: PutGetResultsetFlavor::Python,
         multipart,
         unsafe_file_write: false,
+        transfer: TransferOp::isolated_for_tests(),
     };
     download_single_file(
         download,

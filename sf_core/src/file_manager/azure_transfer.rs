@@ -1,6 +1,5 @@
 use super::cloud_http::{self, CloudStreamingDownload, CseDownloadInfo, UploadRetryAdapter};
 use super::multipart::{self, MultipartConfig, MultipartParams};
-use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, DownloadResponse, EncryptedFileMetadata, EncryptionData,
     LocationType, MaterialDescription, PreparedUpload, StageInfo, StageInfoRefreshError,
@@ -9,6 +8,9 @@ use super::types::{
 };
 use super::{RemoteHead, skip_upload_decision};
 use crate::config::retry::RetryPolicy;
+use crate::governor::{
+    AcquireError, AcquireWaitError, Deadline, RequestKind, RequestPermit, TransferOp,
+};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::sensitive::SensitiveString;
@@ -19,7 +21,7 @@ use futures::TryStreamExt as _;
 use reqwest::Method;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::marker::PhantomData;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_stream::wrappers::ReceiverStream;
 
 // Azure metadata header names
@@ -99,6 +101,32 @@ fn is_blob_exists_precondition_error(status_code: u16, body: &str) -> bool {
             .is_none_or(|code| matches!(code, "ConditionNotMet" | "BlobAlreadyExists")),
         409 => code.as_deref() == Some("BlobAlreadyExists"),
         _ => false,
+    }
+}
+
+/// Maps a losing conditional create (412 / `BlobAlreadyExists`) to `Skipped`.
+fn skipped_if_blob_exists(
+    overwrite: bool,
+    status_code: u16,
+    body: &str,
+    key: &str,
+) -> Option<UploadStatus> {
+    if !overwrite && is_blob_exists_precondition_error(status_code, body) {
+        let code = parse_azure_error_code(body);
+        tracing::info!(
+            status = status_code,
+            code = code.as_deref().unwrap_or("unknown"),
+            "Azure conditional upload for {key} found an existing blob; treating as Skipped"
+        );
+        Some(UploadStatus::Skipped)
+    } else {
+        None
+    }
+}
+
+fn log_azure_sas_refresh_failure(err: &AzureUploadError) {
+    if let AzureUploadError::StageInfoRefresh { source, .. } = err {
+        tracing::error!(reason = %source, "Azure SAS refresh failed; upload aborted");
     }
 }
 
@@ -321,9 +349,7 @@ fn apply_create_precondition(
 
 /// Runs ONE Azure PUT attempt with in-line retry for non-403 transients.
 /// 403 fast-fails as `AzureAttemptError::SasExpired`.
-///
-/// Takes one request slot from `scheduler` for the whole-blob PUT, so it costs
-/// the batch exactly what one staged block does.
+#[allow(clippy::too_many_arguments)]
 async fn azure_put_attempt(
     client: &reqwest::Client,
     url: &str,
@@ -331,7 +357,8 @@ async fn azure_put_attempt(
     upload: AzurePreparedUpload,
     base: &RetryPolicy,
     overwrite: bool,
-    scheduler: &TransferScheduler,
+    deadline: Deadline,
+    _permit: &RequestPermit,
 ) -> Result<(), AzureAttemptError<AzureUploadError>> {
     let AzurePreparedUpload {
         prepared,
@@ -378,7 +405,6 @@ async fn azure_put_attempt(
     let adapter = AzurePutAttemptRetry {
         url_redacted: url_redacted.clone(),
     };
-    let _slot = scheduler.acquire_request().await;
     cloud_http::upload_with_retry(
         &policy,
         &adapter,
@@ -409,6 +435,8 @@ async fn azure_put_attempt(
             }
             Ok(req)
         },
+        deadline,
+        _permit,
     )
     .await?;
 
@@ -460,44 +488,72 @@ impl UploadRetryAdapter for AzurePutAttemptRetry {
             location: Location::default(),
         })
     }
+
+    fn on_deadline_exceeded(
+        &self,
+        elapsed: std::time::Duration,
+        budget: std::time::Duration,
+    ) -> AzureAttemptError<AzureUploadError> {
+        AzureAttemptError::Other(AzureUploadError::DeadlineExceeded {
+            elapsed,
+            budget,
+            location: Location::default(),
+        })
+    }
 }
 
 /// Runs ONE Azure GET attempt with in-line retry for non-403 transients.
 /// 403 always fast-fails as `AzureAttemptError::SasExpired`.
+///
+/// Admission wraps the shared retry loop so the permit covers opening,
+/// retries/backoff, terminal classification, and subsequent body ownership.
 async fn azure_get_attempt(
     client: &reqwest::Client,
     full_url: &str,
     base: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<reqwest::Response, AzureAttemptError<AzureRequestError>> {
-    let http_ctx = HttpContext::new(Method::GET, "azure-transfer");
-    let policy = azure_403_fastfail_policy(base);
+    let send = |remaining_policy: RetryPolicy| async move {
+        let http_ctx = HttpContext::new(Method::GET, "azure-transfer");
+        let policy = azure_403_fastfail_policy(&remaining_policy);
+        let response = http_execute_with_retry(
+            || client.get(full_url),
+            &http_ctx,
+            &policy,
+            |r| async move { Ok(r) },
+        )
+        .await
+        .map_err(|e| AzureAttemptError::Other(map_http_error(e)))?;
 
-    let response = http_execute_with_retry(
-        || client.get(full_url),
-        &http_ctx,
-        &policy,
-        |r| async move { Ok(r) },
+        if response.status().is_success() {
+            return Ok(response);
+        }
+
+        let status_code = response.status().as_u16();
+        tracing::debug!(
+            status = status_code,
+            url = %url_host_and_path(full_url),
+            "Azure GET attempt returned non-success"
+        );
+        let body = sanitize_sas(cloud_http::read_error_body(response).await);
+        Err(map_http_to_attempt(
+            status_code,
+            body,
+            &url_host_and_path(full_url),
+            |status_code, body| AzureRequestError::AzureHttp { status_code, body },
+        ))
+    };
+    cloud_http::run_within_deadline(
+        base,
+        deadline,
+        permit,
+        |elapsed, budget| {
+            AzureAttemptError::Other(AzureRequestError::DeadlineExceeded { elapsed, budget })
+        },
+        send,
     )
     .await
-    .map_err(|e| AzureAttemptError::Other(map_http_error(e)))?;
-
-    if response.status().is_success() {
-        return Ok(response);
-    }
-
-    let status_code = response.status().as_u16();
-    tracing::debug!(
-        status = status_code,
-        url = %url_host_and_path(full_url),
-        "Azure GET attempt returned non-success"
-    );
-    let body = sanitize_sas(cloud_http::read_error_body(response).await);
-    Err(map_http_to_attempt(
-        status_code,
-        body,
-        &url_host_and_path(full_url),
-        |status_code, body| AzureRequestError::AzureHttp { status_code, body },
-    ))
 }
 
 /// Issues the Azure blob GET under the SAS-refresh-on-403 layer.
@@ -508,20 +564,26 @@ async fn azure_get_with_refresh(
     filename: &str,
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
-) -> Result<reqwest::Response, AzureDownloadError> {
+    transfer: &TransferOp,
+) -> Result<(reqwest::Response, RequestPermit), AzureDownloadError> {
     let client = create_azure_client(stage_info, None).await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
     let attempt = |creds: CloudCredentials| {
         let stage_info = with_creds(stage_info, creds);
         let key = key.clone();
         let client = client.clone();
         let policy = policy.clone();
+        let permit = &permit;
         async move {
             let (url, sas_token) = resolve_url_and_token(&stage_info, &key)
                 .map_err(|e| AzureAttemptError::Other(AzureDownloadError::from(e)))?;
             let full_url = build_sas_url(&url, sas_token.reveal());
 
-            azure_get_attempt(&client, &full_url, &policy)
+            azure_get_attempt(&client, &full_url, &policy, deadline, permit)
                 .await
                 .map_err(|e| e.map_other(AzureDownloadError::from))
         }
@@ -545,7 +607,7 @@ async fn azure_get_with_refresh(
         tracing::error!(reason = %source, "Azure SAS refresh failed; download aborted");
     }
 
-    result
+    Ok((result?, permit))
 }
 
 /// Maps an `AzureUploadError` from an in-closure sub-request (HEAD, block PUT,
@@ -577,6 +639,15 @@ fn sas_expired_or_other(
     }
 }
 
+enum AzureFileUpload {
+    Skipped(UploadStatus),
+    Done,
+    Multipart {
+        creds: CloudCredentials,
+        url: String,
+    },
+}
+
 /// SAS-403 recovery: the pre-upload HEAD and the single-file PUT rotate the SAS
 /// and restart the attempt, while multipart self-heals per-block and per-commit
 /// (Python-parity per-block resume, SNOW-3406384) — a block 403 retries just
@@ -584,6 +655,7 @@ fn sas_expired_or_other(
 ///
 /// Of `tx` this reads the refresher and the request budget; `tx.cleanup` goes
 /// unused, because Azure has no abort to register (see `azure_multipart_upload`).
+#[cfg(test)]
 // One arg over S3/GCS (Azure adds `skip_upload_on_content_match`); a follow-up
 // may bundle {multipart, policy, tx} into an opts struct.
 #[allow(clippy::too_many_arguments)]
@@ -596,8 +668,42 @@ pub(super) async fn upload_to_azure_or_skip(
     multipart: MultipartParams,
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
 ) -> Result<UploadStatus, AzureUploadError> {
-    let scheduler = &super::scheduler_for(tx, multipart);
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let file_permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectPut)
+        .await?;
+    upload_to_azure_or_skip_admitted(
+        prepared,
+        stage_info,
+        filename,
+        overwrite,
+        skip_upload_on_content_match,
+        multipart,
+        policy,
+        tx,
+        transfer,
+        deadline,
+        file_permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn upload_to_azure_or_skip_admitted(
+    prepared: AzurePreparedUpload,
+    stage_info: &StageInfo,
+    filename: &str,
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
+) -> Result<UploadStatus, AzureUploadError> {
     let refresher = tx.refresher;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
@@ -618,10 +724,11 @@ pub(super) async fn upload_to_azure_or_skip(
 
     let attempt = |creds: CloudCredentials| {
         let prepared = prepared.clone();
-        let stage_info = with_creds(stage_info, creds);
+        let stage_info = with_creds(stage_info, creds.clone());
         let key = key.clone();
         let base = policy.clone();
         let client = client.clone();
+        let file_permit = &file_permit;
         async move {
             // One derivation of the SAS from creds — the same helper the block
             // and commit refresh wrappers use — so a creds-variant change lands
@@ -639,8 +746,15 @@ pub(super) async fn upload_to_azure_or_skip(
             // existence/skip probe rotates the SAS and retries, rather than
             // failing closed before the PUT ever runs (mirrors S3/GCS).
             let remote = if head_needed {
-                match send_head_to_azure_blob(&client, &url, &sas_token, scheduler, &attempt_policy)
-                    .await
+                match send_head_to_azure_blob(
+                    &client,
+                    &url,
+                    &sas_token,
+                    &attempt_policy,
+                    deadline,
+                    file_permit,
+                )
+                .await
                 {
                     Ok(remote) => remote,
                     // Expired-SAS 403 on the MANDATORY existence check (!overwrite):
@@ -678,51 +792,43 @@ pub(super) async fn upload_to_azure_or_skip(
                 &prepared.prepared.digest,
                 &key,
             ) {
-                return Ok(status);
+                return Ok(AzureFileUpload::Skipped(status));
             }
 
-            let upload = if scheduler.multipart().should_chunk(body_len) {
-                // Multipart self-heals an expired SAS per-block and per-commit,
-                // so its 403s never bubble up as `SasExpired` — a block 403 no
-                // longer restarts the whole file. Errors are terminal (`Other`).
-                let block_ctx = AzureMultipartCtx {
-                    client: &client,
-                    url: &url,
-                    policy: &attempt_policy,
-                    refresher,
-                    initial_creds: &stage_info.creds,
-                    overwrite,
-                };
-                azure_multipart_upload(block_ctx, prepared, body_len, scheduler)
-                    .await
-                    .map_err(AzureAttemptError::Other)
-            } else {
-                azure_put_attempt(
-                    &client,
-                    &url,
-                    sas_token.reveal(),
-                    prepared,
-                    &base,
-                    overwrite,
-                    scheduler,
-                )
-                .await
-            };
+            if multipart.should_chunk(body_len) {
+                return Ok(AzureFileUpload::Multipart { creds, url });
+            }
+
+            let upload = azure_put_attempt(
+                &client,
+                &url,
+                sas_token.reveal(),
+                prepared,
+                &base,
+                overwrite,
+                deadline,
+                file_permit,
+            )
+            .await;
 
             match upload {
-                Ok(()) => Ok(UploadStatus::Uploaded),
+                Ok(()) => Ok(AzureFileUpload::Done),
                 Err(AzureAttemptError::Other(AzureUploadError::AzureHttp {
                     status_code,
                     body,
-                    ..
-                })) if !overwrite && is_blob_exists_precondition_error(status_code, &body) => {
-                    let code = parse_azure_error_code(&body);
-                    tracing::info!(
-                        status = status_code,
-                        code = code.as_deref().unwrap_or("unknown"),
-                        "Azure conditional upload for {key} found an existing blob; treating as Skipped"
-                    );
-                    Ok(UploadStatus::Skipped)
+                    location,
+                })) => {
+                    if let Some(status) =
+                        skipped_if_blob_exists(overwrite, status_code, &body, &key)
+                    {
+                        Ok(AzureFileUpload::Skipped(status))
+                    } else {
+                        Err(AzureAttemptError::Other(AzureUploadError::AzureHttp {
+                            status_code,
+                            body,
+                            location,
+                        }))
+                    }
                 }
                 Err(e) => Err(e),
             }
@@ -743,11 +849,43 @@ pub(super) async fn upload_to_azure_or_skip(
     )
     .await;
 
-    if let Err(AzureUploadError::StageInfoRefresh { ref source, .. }) = result {
-        tracing::error!(reason = %source, "Azure SAS refresh failed; upload aborted");
+    if let Err(ref err) = result {
+        log_azure_sas_refresh_failure(err);
     }
 
-    result
+    match result? {
+        AzureFileUpload::Skipped(status) => Ok(status),
+        AzureFileUpload::Done => Ok(UploadStatus::Uploaded),
+        AzureFileUpload::Multipart { creds, url } => {
+            drop(file_permit);
+            let stage_info = with_creds(stage_info, creds);
+            let attempt_policy = azure_403_fastfail_policy(policy);
+            let block_ctx = AzureMultipartCtx {
+                client: &client,
+                url: &url,
+                policy: &attempt_policy,
+                refresher,
+                initial_creds: &stage_info.creds,
+                transfer,
+                overwrite,
+            };
+            match azure_multipart_upload(block_ctx, prepared, body_len, multipart).await {
+                Ok(()) => Ok(UploadStatus::Uploaded),
+                Err(e) => {
+                    if let AzureUploadError::AzureHttp {
+                        status_code, body, ..
+                    } = &e
+                        && let Some(status) =
+                            skipped_if_blob_exists(overwrite, *status_code, body, &key)
+                    {
+                        return Ok(status);
+                    }
+                    log_azure_sas_refresh_failure(&e);
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 /// Downloads a file from Azure Blob Storage and returns data with optional encryption metadata.
@@ -759,8 +897,10 @@ pub async fn download_from_azure(
     filename: &str,
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
+    transfer: &TransferOp,
 ) -> Result<DownloadResponse, AzureDownloadError> {
-    let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
+    let (response, _permit) =
+        azure_get_with_refresh(stage_info, filename, policy, refresher, transfer).await?;
 
     // Extract metadata from response headers
     let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
@@ -797,17 +937,26 @@ async fn send_head_to_azure_blob(
     client: &reqwest::Client,
     url: &str,
     sas_token: &SensitiveString,
-    scheduler: &TransferScheduler,
     policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<Option<RemoteBlobHeader>, AzureUploadError> {
-    let _slot = scheduler.acquire_request().await;
-    match azure_request_with_retry(
-        || client.head(build_sas_url(url, sas_token.reveal())),
-        Method::HEAD,
+    let result = cloud_http::run_within_deadline(
         policy,
+        deadline,
+        permit,
+        |elapsed, budget| AzureRequestError::DeadlineExceeded { elapsed, budget },
+        |remaining_policy| async move {
+            azure_request_with_retry(
+                || client.head(build_sas_url(url, sas_token.reveal())),
+                Method::HEAD,
+                &remaining_policy,
+            )
+            .await
+        },
     )
-    .await
-    {
+    .await;
+    match result {
         Ok(response) => {
             let digest = response
                 .headers()
@@ -834,6 +983,7 @@ struct AzureMultipartCtx<'a> {
     policy: &'a RetryPolicy,
     refresher: Option<&'a dyn StageInfoRefresher>,
     initial_creds: &'a CloudCredentials,
+    transfer: &'a TransferOp,
     overwrite: bool,
 }
 
@@ -853,17 +1003,19 @@ async fn azure_multipart_upload(
     multipart_ctx: AzureMultipartCtx<'_>,
     upload: AzurePreparedUpload,
     body_len: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
 ) -> Result<(), AzureUploadError> {
     let AzurePreparedUpload {
         prepared,
         blob_content_md5,
     } = upload;
-    let params = scheduler.multipart();
-    let chunk_size =
-        multipart::upload_part_size(body_len, params.upload_part_size, &MultipartConfig::AZURE)
-            .context(azure_upload_error::FileTooLargeSnafu)?;
-    let concurrency = params.concurrency;
+    let chunk_size = multipart::upload_part_size(
+        body_len,
+        multipart.upload_part_size,
+        &MultipartConfig::AZURE,
+    )
+    .context(azure_upload_error::FileTooLargeSnafu)?;
+    let concurrency = multipart.concurrency;
     // CSE params (cloud metadata + encryptor) are both present or both absent;
     // the metadata + digest ride on the `Put Block List` commit, the encryptor
     // lazily encrypts each block as the part-reader cuts it.
@@ -877,18 +1029,34 @@ async fn azure_multipart_upload(
         azure_encryption_header_strs(encryption_metadata.as_ref())?;
 
     // Blocks read sequentially from the (optionally encrypting) source, staged
-    // concurrently. Each block signs `url` with the current SAS per attempt and
-    // self-heals an expired-SAS 403 (per-block resume) rather than restarting
-    // the whole upload.
-    let parts_rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize);
+    // concurrently. Each block is admitted before it is read so local I/O cannot
+    // run ahead of the command budget. Each block signs `url` with the current
+    // SAS per attempt and self-heals an expired-SAS 403 (per-block resume).
+    let parts_rx = multipart::spawn_admitted_parts(
+        source,
+        encryptor,
+        chunk_size as usize,
+        multipart_ctx.transfer.clone(),
+        multipart_ctx.policy.max_elapsed,
+        RequestKind::PutBlock,
+    );
 
     let mut block_numbers: Vec<i32> = ReceiverStream::new(parts_rx)
-        .map(|part| async move {
-            let part = part.context(azure_upload_error::SourceIoSnafu)?;
-            let number = part.number;
-            // One slot per staged block, shared with the batch's other files.
-            let _slot = scheduler.acquire_request().await;
-            azure_put_block_with_refresh(multipart_ctx, part).await?;
+        .map(|produced| async move {
+            let admitted = produced.map_err(|e| match e {
+                multipart::PartProduceError::Io(e) => {
+                    azure_upload_error::SourceIoSnafu.into_error(e)
+                }
+                multipart::PartProduceError::Acquire(source) => AzureUploadError::from(source),
+            })?;
+            let number = admitted.part.number;
+            azure_put_block_with_refresh(
+                multipart_ctx,
+                admitted.part,
+                admitted.deadline,
+                admitted.permit,
+            )
+            .await?;
             Ok::<i32, AzureUploadError>(number)
         })
         .buffer_unordered(concurrency)
@@ -947,6 +1115,8 @@ async fn azure_put_block(
     full_url: &str,
     part: multipart::UploadPart,
     policy: &RetryPolicy,
+    deadline: Deadline,
+    _permit: &RequestPermit,
 ) -> Result<(), AzureUploadError> {
     let block_id = azure_block_id(part.number);
     let body = part.body;
@@ -964,6 +1134,8 @@ async fn azure_put_block(
         &Method::PUT,
         full_url,
         policy,
+        deadline,
+        _permit,
     )
     .await
 }
@@ -987,6 +1159,8 @@ fn azure_sas_from_creds(creds: &CloudCredentials) -> Result<&SensitiveString, Az
 async fn azure_put_block_with_refresh(
     multipart_ctx: AzureMultipartCtx<'_>,
     part: multipart::UploadPart,
+    deadline: Deadline,
+    permit: RequestPermit,
 ) -> Result<(), AzureUploadError> {
     let number = part.number;
     let body = part.body;
@@ -1005,6 +1179,7 @@ async fn azure_put_block_with_refresh(
             let policy = multipart_ctx.policy.clone();
             let url = multipart_ctx.url.to_string();
             let body = body.clone();
+            let permit = &permit;
             async move {
                 let sas = azure_sas_from_creds(&creds).map_err(AzureAttemptError::Other)?;
                 let full_url = build_sas_url(&url, sas.reveal());
@@ -1013,6 +1188,8 @@ async fn azure_put_block_with_refresh(
                     &full_url,
                     multipart::UploadPart { number, body },
                     &policy,
+                    deadline,
+                    permit,
                 )
                 .await
                 .map_err(|e| sas_expired_or_other(e, &url, sas.reveal()))
@@ -1040,6 +1217,10 @@ async fn azure_put_block_list_with_refresh(
     encryption_data_str: Option<&str>,
     mat_desc_str: Option<&str>,
 ) -> Result<(), AzureUploadError> {
+    let deadline = Deadline::from_budget(multipart_ctx.policy.max_elapsed);
+    let permit = deadline
+        .acquire(multipart_ctx.transfer, RequestKind::PutBlockList)
+        .await?;
     run_azure_with_sas_refresh(
         multipart_ctx.refresher,
         multipart_ctx.initial_creds,
@@ -1059,6 +1240,7 @@ async fn azure_put_block_list_with_refresh(
             let blob_content_md5 = blob_content_md5.to_string();
             let encryption_data_str = encryption_data_str.map(str::to_string);
             let mat_desc_str = mat_desc_str.map(str::to_string);
+            let permit = &permit;
             async move {
                 let sas = azure_sas_from_creds(&creds).map_err(AzureAttemptError::Other)?;
                 let full_url = build_sas_url(&url, sas.reveal());
@@ -1074,6 +1256,8 @@ async fn azure_put_block_list_with_refresh(
                         overwrite: multipart_ctx.overwrite,
                     },
                     &policy,
+                    deadline,
+                    permit,
                 )
                 .await
                 .map_err(|e| sas_expired_or_other(e, &url, sas.reveal()))
@@ -1123,6 +1307,8 @@ async fn azure_put_block_list(
     full_url: &str,
     commit: AzureBlockListCommit<'_>,
     policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<(), AzureUploadError> {
     let body = commit.body();
     let client = client.clone();
@@ -1155,6 +1341,8 @@ async fn azure_put_block_list(
         &Method::PUT,
         full_url,
         policy,
+        deadline,
+        permit,
     )
     .await
 }
@@ -1181,6 +1369,9 @@ fn azure_encryption_header_strs(
 /// Executes an Azure HTTP request with in-line retry for non-403 transients.
 /// Its HEAD/ranged-GET callers pass `azure_403_fastfail_policy`, so a 403 fast-fails
 /// out to the SAS-refresh layer (`run_azure_with_sas_refresh`) instead of retrying.
+///
+/// This low-level helper is admission-agnostic; transfer callers wrap it in a
+/// scoped admission seam so the shared GS-capable retry loop is not gated.
 async fn azure_request_with_retry<F>(
     build_request: F,
     method: Method,
@@ -1246,6 +1437,14 @@ impl UploadRetryAdapter for AzureUploadRetry {
         }
         .build()
     }
+
+    fn on_deadline_exceeded(
+        &self,
+        elapsed: std::time::Duration,
+        budget: std::time::Duration,
+    ) -> AzureUploadError {
+        azure_upload_error::DeadlineExceededSnafu { elapsed, budget }.build()
+    }
 }
 
 /// Executes an Azure upload with retry, accepting a **fallible** request-builder closure.
@@ -1261,17 +1460,36 @@ async fn azure_upload_with_retry<F>(
     method: &reqwest::Method,
     url: &str,
     policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<(), AzureUploadError>
 where
     F: AsyncFn() -> Result<reqwest::RequestBuilder, AzureUploadError>,
 {
-    cloud_http::upload_with_retry(policy, &AzureUploadRetry, method, url, build_request).await
+    cloud_http::upload_with_retry(
+        policy,
+        &AzureUploadRetry,
+        method,
+        url,
+        build_request,
+        deadline,
+        permit,
+    )
+    .await
 }
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
     match e {
         HttpError::Transport { source, .. } => AzureRequestError::Http {
             detail: sanitize_sas(source.to_string()),
+        },
+        HttpError::DeadlineExceeded {
+            configured,
+            elapsed,
+            ..
+        } => AzureRequestError::DeadlineExceeded {
+            elapsed,
+            budget: configured,
         },
         other => AzureRequestError::RetryExhausted {
             detail: sanitize_sas(other.to_string()),
@@ -1435,14 +1653,32 @@ fn parse_azure_file_metadata(
 async fn azure_head_attempt(
     client: &reqwest::Client,
     full_url: &str,
-    scheduler: &TransferScheduler,
     base: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<reqwest::Response, AzureAttemptError<AzureDownloadError>> {
     let policy = azure_403_fastfail_policy(base);
-    let _slot = scheduler.acquire_request().await;
-    match azure_request_with_retry(|| client.head(full_url), Method::HEAD, &policy).await {
+    let result = cloud_http::run_within_deadline(
+        &policy,
+        deadline,
+        permit,
+        |elapsed, budget| AzureDownloadError::DeadlineExceeded {
+            elapsed,
+            budget,
+            location: Location::default(),
+        },
+        |remaining_policy| async move {
+            azure_request_with_retry(|| client.head(full_url), Method::HEAD, &remaining_policy)
+                .await
+                .map_err(AzureDownloadError::from)
+        },
+    )
+    .await;
+    match result {
         Ok(response) => Ok(response),
-        Err(AzureRequestError::AzureHttp { status_code, body }) => Err(map_http_to_attempt(
+        Err(AzureDownloadError::AzureHttp {
+            status_code, body, ..
+        }) => Err(map_http_to_attempt(
             status_code,
             body,
             &url_host_and_path(full_url),
@@ -1452,7 +1688,7 @@ async fn azure_head_attempt(
                 location: Location::default(),
             },
         )),
-        Err(other) => Err(AzureAttemptError::Other(AzureDownloadError::from(other))),
+        Err(other) => Err(AzureAttemptError::Other(other)),
     }
 }
 
@@ -1466,10 +1702,11 @@ async fn azure_range_attempt(
     full_url: &str,
     content_length: u64,
     chunk_size: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     base: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
+    transfer: &TransferOp,
 ) -> Result<cloud_http::CloudSpilledBody, AzureAttemptError<AzureDownloadError>> {
     let policy = azure_403_fastfail_policy(base);
     azure_range_download(
@@ -1477,10 +1714,11 @@ async fn azure_range_attempt(
         full_url,
         content_length,
         chunk_size,
-        scheduler,
+        multipart,
         &policy,
         unsafe_file_write,
         spill_target,
+        transfer,
     )
     .await
     .map_err(|e| match e {
@@ -1506,18 +1744,66 @@ async fn azure_range_attempt(
 /// Downloads a file from Azure and returns a [`CloudStreamingDownload`] whose
 /// `body` yields the ciphertext via a sync `Read`. A HEAD probe (Python /
 /// JDBC / ODBC parity) yields the blob size + metadata: blobs at or above the
-/// scheduler's multipart threshold are fetched with parallel ranged GETs into
+/// multipart's multipart threshold are fetched with parallel ranged GETs into
 /// a tempfile (read back through `SpilledReader`); smaller ones stream a
 /// single GET straight off the network. On a 403 the `refresher` (if any)
 /// rotates the SAS and the HEAD + GET retry with fresh credentials.
+#[cfg(any(test, feature = "test-utils"))]
+#[allow(clippy::too_many_arguments)]
 pub async fn download_from_azure_streaming(
     stage_info: &StageInfo,
     filename: &str,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+) -> Result<CloudStreamingDownload, AzureDownloadError> {
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let file_permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
+    download_from_azure_streaming_admitted(
+        stage_info,
+        filename,
+        multipart,
+        policy,
+        unsafe_file_write,
+        spill_target,
+        tx,
+        transfer,
+        deadline,
+        file_permit,
+    )
+    .await
+}
+
+enum AzureFileDownload {
+    Streamed {
+        response: reqwest::Response,
+        cse_info: Option<CseDownloadInfo>,
+        content_length: u64,
+    },
+    Ranged {
+        cse_info: Option<CseDownloadInfo>,
+        content_length: u64,
+        url: String,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn download_from_azure_streaming_admitted(
+    stage_info: &StageInfo,
+    filename: &str,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    unsafe_file_write: bool,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
     // Build the client once (TLS config is creds-independent); only the SAS in
     // `stage_info.creds` rotates on refresh.
@@ -1529,21 +1815,22 @@ pub async fn download_from_azure_streaming(
     .await?;
     let key = format!("{}{filename}", stage_info.key_prefix);
 
-    // The routing HEAD + the ranged/single GET all run INSIDE the refresh
-    // closure, so an expired-SAS 403 on any of them rotates the SAS and
-    // re-drives the whole download — symmetric with the PUT path.
+    // The routing HEAD and the single GET run INSIDE the refresh closure, so
+    // an expired-SAS 403 rotates the SAS and re-drives. Ranged assembly drops
+    // the file permit first so per-range acquires can run.
     let attempt = |creds: CloudCredentials| {
         let stage_info = with_creds(stage_info, creds);
         let key = key.clone();
         let client = client.clone();
         let base = policy.clone();
+        let file_permit = &file_permit;
         async move {
             let (url, sas_token) = resolve_url_and_token(&stage_info, &key)
                 .map_err(|e| AzureAttemptError::Other(AzureDownloadError::from(e)))?;
             let full_url = build_sas_url(&url, sas_token.reveal());
 
             // Routing HEAD for size + metadata; 403 fast-fails to SasExpired.
-            let head = azure_head_attempt(&client, &full_url, scheduler, &base).await?;
+            let head = azure_head_attempt(&client, &full_url, &base, deadline, file_permit).await?;
             // Read the size from Content-Length rather than reqwest's
             // `content_length()`, unreliable for HEAD (no body). Real Azure always
             // sends Content-Length on Get Blob Properties.
@@ -1557,62 +1844,21 @@ pub async fn download_from_azure_streaming(
                 parse_azure_file_metadata(head.headers()).map_err(AzureAttemptError::Other)?;
             let cse_info = CseDownloadInfo::from_headers(file_metadata, digest);
 
-            // Route on size: parallel ranged GETs into a spill file above the
-            // threshold, a single streamed GET below. Both fast-fail 403.
-            // Only the streamed branch carries a producer task to abort — the
-            // ranged/spilled branch has already finished all its I/O.
-            let (body, cloud_bytes_read) = if scheduler.multipart().should_chunk(content_length) {
-                let chunk_size =
-                    multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
-                        .context(azure_download_error::FileTooLargeSnafu)
-                        .map_err(AzureAttemptError::Other)?;
-                tracing::debug!(
-                    "Azure ranged download: content_length={content_length} \
-                     chunk_size={chunk_size} concurrency={}",
-                    scheduler.multipart().concurrency
-                );
-                let spilled = azure_range_attempt(
-                    &client,
-                    &full_url,
+            if multipart.should_chunk(content_length) {
+                return Ok(AzureFileDownload::Ranged {
+                    cse_info,
                     content_length,
-                    chunk_size,
-                    scheduler,
-                    &base,
-                    unsafe_file_write,
-                    spill_target,
-                )
-                .await?;
-                // Ranged: size came from HEAD, so no byte tracking needed
-                // and no producer task to cancel.
-                (
-                    cloud_http::CloudDownloadBody::Spilled(spilled),
-                    std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-                )
-            } else {
-                // Slot taken before the GET and released by the producer task
-                // once the body is drained — the request is not done when the
-                // headers land.
-                let slot = scheduler.acquire_request().await;
-                let response = azure_get_attempt(&client, &full_url, &base)
-                    .await
-                    .map_err(|e| e.map_other(AzureDownloadError::from))?;
-                let (reader, producer_abort) =
-                    cloud_http::spawn_byte_stream_producer(response, slot);
-                let handle = reader.bytes_read_handle();
-                (
-                    cloud_http::CloudDownloadBody::Streamed {
-                        reader: Box::new(reader),
-                        producer_abort,
-                    },
-                    handle,
-                )
-            };
+                    url,
+                });
+            }
 
-            Ok(CloudStreamingDownload {
-                cloud_byte_count: content_length as i64,
+            let response = azure_get_attempt(&client, &full_url, &base, deadline, file_permit)
+                .await
+                .map_err(|e| e.map_other(AzureDownloadError::from))?;
+            Ok(AzureFileDownload::Streamed {
+                response,
                 cse_info,
-                cloud_bytes_read,
-                body,
+                content_length,
             })
         }
     };
@@ -1635,7 +1881,88 @@ pub async fn download_from_azure_streaming(
         tracing::error!(reason = %source, "Azure SAS refresh failed; streaming download aborted");
     }
 
-    result
+    match result? {
+        AzureFileDownload::Streamed {
+            response,
+            cse_info,
+            content_length,
+        } => {
+            let (reader, producer_abort) =
+                cloud_http::spawn_admitted_byte_stream_producer(response, file_permit);
+            let handle = reader.bytes_read_handle();
+            Ok(CloudStreamingDownload {
+                cloud_byte_count: content_length as i64,
+                cse_info,
+                cloud_bytes_read: handle,
+                body: cloud_http::CloudDownloadBody::Streamed {
+                    reader: Box::new(reader),
+                    producer_abort,
+                },
+            })
+        }
+        AzureFileDownload::Ranged {
+            cse_info,
+            content_length,
+            url,
+        } => {
+            drop(file_permit);
+            let chunk_size = multipart::compute_part_size(content_length, &MultipartConfig::AZURE)
+                .context(azure_download_error::FileTooLargeSnafu)?;
+            tracing::debug!(
+                "Azure ranged download: content_length={content_length} \
+                 chunk_size={chunk_size} concurrency={}",
+                multipart.concurrency
+            );
+            let range_attempt = |creds: CloudCredentials| {
+                let client = client.clone();
+                let url = url.clone();
+                let base = policy.clone();
+                let transfer = transfer.clone();
+                async move {
+                    let sas = match &creds {
+                        CloudCredentials::Azure { sas_token } => sas_token,
+                        _ => {
+                            return Err(AzureAttemptError::Other(AzureDownloadError::from(
+                                AzureRequestError::MissingAzureCredentials,
+                            )));
+                        }
+                    };
+                    let full_url = build_sas_url(&url, sas.reveal());
+                    azure_range_attempt(
+                        &client,
+                        &full_url,
+                        content_length,
+                        chunk_size,
+                        multipart,
+                        &base,
+                        unsafe_file_write,
+                        spill_target,
+                        &transfer,
+                    )
+                    .await
+                }
+            };
+            let spilled = run_azure_with_sas_refresh(
+                tx.refresher,
+                &stage_info.creds,
+                "GET",
+                |e| azure_download_error::StageInfoRefreshSnafu.into_error(e),
+                |status_code, body| AzureDownloadError::AzureHttp {
+                    status_code,
+                    body,
+                    location: Location::default(),
+                },
+                range_attempt,
+            )
+            .await?;
+            Ok(CloudStreamingDownload {
+                cloud_byte_count: content_length as i64,
+                cse_info,
+                cloud_bytes_read: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                body: cloud_http::CloudDownloadBody::Spilled(spilled),
+            })
+        }
+    }
 }
 
 /// Downloads a file from Azure with a single unranged GET, returning a
@@ -1651,30 +1978,23 @@ pub(super) async fn azure_get_streaming(
     filename: &str,
     policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
-    scheduler: &TransferScheduler,
+    transfer: &TransferOp,
 ) -> Result<CloudStreamingDownload, AzureDownloadError> {
-    // Issue the single GET under the SAS-refresh-on-403 layer so an
-    // already-expired SAS is rotated and retried, matching `gcs_get_streaming`
-    // and `download_from_azure_streaming`. Without a `refresher` it runs once
-    // and a 403 surfaces terminally (the prior behaviour).
-    let slot = scheduler.acquire_request().await;
-    let response = azure_get_with_refresh(stage_info, filename, policy, refresher).await?;
+    let (response, permit) =
+        azure_get_with_refresh(stage_info, filename, policy, refresher, transfer).await?;
 
     let (digest, file_metadata) = parse_azure_file_metadata(response.headers())?;
-    // Content-Length byte count, git-stage fallback, and spawning the
-    // byte-stream producer are shared with GCS's single-GET path — see
-    // `CloudStreamingDownload::from_reqwest_response`.
-    Ok(CloudStreamingDownload::from_reqwest_response(
+    Ok(CloudStreamingDownload::from_admitted_reqwest_response(
         response,
+        permit,
         digest,
         file_metadata,
-        slot,
     ))
 }
 
 /// Downloads the blob with parallel ranged GETs into a pre-allocated file,
 /// returning the assembled [`CloudSpilledBody`](cloud_http::CloudSpilledBody).
-/// Ranges are fetched under `scheduler`'s shared request budget and written at
+/// Ranges are fetched under `multipart`'s shared request budget and written at
 /// their absolute offset, so out-of-order completion is fine. Thin wrapper
 /// around the shared [`cloud_http::assemble_ranged_download`] helper.
 #[allow(clippy::too_many_arguments)]
@@ -1683,51 +2003,71 @@ async fn azure_range_download(
     full_url: &str,
     content_length: u64,
     chunk_size: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     policy: &RetryPolicy,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
+    transfer: &TransferOp,
 ) -> Result<cloud_http::CloudSpilledBody, AzureDownloadError> {
     let mk_temp_err = |detail: String| azure_download_error::TempFileSnafu { detail }.build();
 
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        scheduler,
+        multipart.concurrency,
         target,
         unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
-        move |range| async move { azure_get_range(client, full_url, &range, policy).await },
+        move |range| async move {
+            azure_get_range(client, full_url, &range, policy, transfer).await
+        },
     )
     .await
 }
 
 /// Ranged GET of `[range.start, range.end]`, returning the body bytes.
+/// One `RangedGet` permit covers open, retries, and full body collection.
 async fn azure_get_range(
     client: &reqwest::Client,
     full_url: &str,
     range: &multipart::DownloadRange,
     policy: &RetryPolicy,
+    transfer: &TransferOp,
 ) -> Result<Bytes, AzureDownloadError> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
-    let response = azure_request_with_retry(
-        || {
-            client
-                .get(full_url)
-                .header(reqwest::header::RANGE, &range_header)
-        },
-        Method::GET,
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline.acquire(transfer, RequestKind::RangedGet).await?;
+    let bytes = cloud_http::run_within_deadline(
         policy,
+        deadline,
+        &permit,
+        |elapsed, budget| AzureDownloadError::DeadlineExceeded {
+            elapsed,
+            budget,
+            location: Location::default(),
+        },
+        |remaining_policy| async move {
+            let response = azure_request_with_retry(
+                || {
+                    client
+                        .get(full_url)
+                        .header(reqwest::header::RANGE, &range_header)
+                },
+                Method::GET,
+                &remaining_policy,
+            )
+            .await?;
+            // A body-read failure after a successful response maps to the same
+            // SAS-scrubbed transport error the buffered `download_from_azure` uses.
+            response.bytes().await.map_err(|e| {
+                AzureDownloadError::from(AzureRequestError::Http {
+                    detail: sanitize_sas(e.to_string()),
+                })
+            })
+        },
     )
     .await?;
-    // A body-read failure after a successful response maps to the same
-    // SAS-scrubbed transport error the buffered `download_from_azure` uses.
-    let bytes = response.bytes().await.map_err(|e| {
-        AzureDownloadError::from(AzureRequestError::Http {
-            detail: sanitize_sas(e.to_string()),
-        })
-    })?;
     // The 206-vs-200 / truncation guard (bytes.len() == expected) lives in the
     // shared cloud_http::assemble_ranged_download, applied uniformly to all clouds.
     Ok(bytes)
@@ -1777,6 +2117,21 @@ enum AzureRequestError {
     MissingMetadata { field: String },
     #[snafu(display("Azure retry exhausted: {detail}"))]
     RetryExhausted { detail: String },
+    #[snafu(display("Azure request deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded { elapsed: Duration, budget: Duration },
+    #[snafu(display("Azure request transfer admission refused"))]
+    Admission { source: AcquireError },
+}
+
+impl From<AcquireWaitError> for AzureRequestError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => AdmissionSnafu.into_error(source),
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+        }
+    }
 }
 
 impl From<AzureRequestError> for AzureUploadError {
@@ -1794,6 +2149,12 @@ impl From<AzureRequestError> for AzureUploadError {
             }
             AzureRequestError::RetryExhausted { detail } => {
                 azure_upload_error::RetryExhaustedSnafu { detail }.build()
+            }
+            AzureRequestError::DeadlineExceeded { elapsed, budget } => {
+                azure_upload_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+            AzureRequestError::Admission { source } => {
+                azure_upload_error::AdmissionSnafu.into_error(source)
             }
         }
     }
@@ -1816,6 +2177,12 @@ impl From<AzureRequestError> for AzureDownloadError {
             }
             AzureRequestError::RetryExhausted { detail } => {
                 azure_download_error::RetryExhaustedSnafu { detail }.build()
+            }
+            AzureRequestError::DeadlineExceeded { elapsed, budget } => {
+                azure_download_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+            AzureRequestError::Admission { source } => {
+                azure_download_error::AdmissionSnafu.into_error(source)
             }
         }
     }
@@ -1866,6 +2233,19 @@ pub enum AzureUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Azure upload deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Azure upload transfer admission refused"))]
+    Admission {
+        source: AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("File too large for Azure block-blob upload"))]
     FileTooLarge {
         #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
@@ -1880,6 +2260,19 @@ pub enum AzureUploadError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+impl From<AcquireWaitError> for AzureUploadError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => {
+                azure_upload_error::AdmissionSnafu.into_error(source)
+            }
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                azure_upload_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+        }
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -1927,6 +2320,19 @@ pub enum AzureDownloadError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Azure download deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Azure download transfer admission refused"))]
+    Admission {
+        source: AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Object too large to download from Azure"))]
     FileTooLarge {
         #[snafu(source(from(multipart::FileTooLargeError, Box::new)))]
@@ -1949,11 +2355,26 @@ pub enum AzureDownloadError {
     },
 }
 
+impl From<AcquireWaitError> for AzureDownloadError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => {
+                azure_download_error::AdmissionSnafu.into_error(source)
+            }
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                azure_download_error::DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+        }
+    }
+}
+
 // --- Unit tests ---
 
 #[cfg(test)]
 mod tests {
-    use super::super::internal::test_scheduler;
+    use super::super::governor_test_util::{
+        notified_soon, start_stalled_206_range_server, wait_until,
+    };
     use super::super::multipart::MultipartParams;
     use super::super::prepared_upload_with_digest;
     use super::*;
@@ -1994,6 +2415,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
             storage_account: overrides
                 .storage_account
@@ -2317,6 +2739,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
             storage_account: Some("test".to_string()),
         }
@@ -2472,6 +2895,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("default PUT must refresh the expired SAS on the HEAD 403 and upload");
@@ -2518,6 +2942,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -2568,6 +2993,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -2645,7 +3071,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.csv",
-            &test_scheduler(MultipartParams::default()),
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -2653,6 +3079,7 @@ mod tests {
                 cleanup: None,
             },
             TransferCtx::with_refresher(&fake as &dyn StageInfoRefresher),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("streaming GET must refresh on the routing-HEAD 403 and succeed");
@@ -2708,7 +3135,7 @@ mod tests {
         let result = download_from_azure_streaming(
             &stage,
             "file.csv",
-            &test_scheduler(MultipartParams::default()),
+            MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -2716,6 +3143,7 @@ mod tests {
                 cleanup: None,
             },
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
         // `CloudStreamingDownload` is not Debug; assert on the extracted error.
@@ -2759,6 +3187,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2793,6 +3222,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a failed conditional create is a normal skip outcome");
@@ -2828,6 +3258,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("BlobAlreadyExists is a normal conditional-create skip");
@@ -2864,6 +3295,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2925,6 +3357,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -2960,6 +3393,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2992,6 +3426,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3026,6 +3461,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3080,6 +3516,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3139,6 +3576,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
         assert!(
@@ -3188,6 +3626,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3289,6 +3728,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("retry should recover and existence skip should fire");
@@ -3323,6 +3763,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
         assert!(
@@ -3367,6 +3808,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("skip_match 403 HEAD should fail-OPEN to PUT");
@@ -3400,6 +3842,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
         assert!(
@@ -3438,6 +3881,7 @@ mod tests {
             MultipartParams::default(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
         assert!(
@@ -3466,6 +3910,63 @@ mod tests {
             upload_part_size: MultipartConfig::AZURE.default_part,
             ..MultipartParams::from_server(Some(1), Some(4))
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_parts_each_get_a_full_retry_budget() {
+        const PART_COUNT: u64 = 4;
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(ResponseTemplate::new(201).set_delay(Duration::from_millis(350)))
+            .expect(PART_COUNT)
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(mock.uri()),
+            ..Default::default()
+        });
+        let prepared = AzurePreparedUpload::from(PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                4u8;
+                25 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        });
+        let multipart = MultipartParams {
+            upload_part_size: MultipartConfig::AZURE.default_part,
+            ..MultipartParams::from_server(Some(1), Some(1))
+        };
+        let mut policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+        policy.max_elapsed = Some(Duration::from_secs(1));
+        let started = Instant::now();
+
+        upload_to_azure_or_skip(
+            prepared,
+            &stage,
+            "file.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            multipart,
+            &policy,
+            TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
+        )
+        .await
+        .expect("each sequential block should receive its own retry budget");
+
+        assert!(
+            started.elapsed() > policy.max_elapsed.unwrap(),
+            "the aggregate upload must exceed one part's retry budget"
+        );
     }
 
     /// A 9 MiB SSE body splits into two Azure blocks (8 + 1 MiB) at the
@@ -3519,6 +4020,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("block-blob upload should succeed against the mock");
@@ -3592,6 +4094,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a failed conditional block-list commit is a normal skip outcome");
@@ -3655,6 +4158,7 @@ mod tests {
                     // register. The operation context driving the cancel is still real
                     // (`cancelled_by` owns it), so the cancel itself is live.
                     TransferCtx::default(),
+                    &TransferOp::isolated_for_tests(),
                 )
                 .await
             })
@@ -3754,6 +4258,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&coordinator),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("concurrent block 403s must refresh once and upload");
@@ -3779,6 +4284,75 @@ mod tests {
         assert!(
             stale_block_403s >= 2,
             "≥2 blocks must have 403'd concurrently for coalescing to be exercised; got {stale_block_403s}"
+        );
+    }
+
+    /// Put Block 403 refresh must keep the already-held permit. Re-acquiring
+    /// inside the SAS-refresh closure deadlocks when `data.parallel` is 1.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multipart_block_403_refresh_with_command_parallel_one() {
+        const REFRESHED_SIG: &str = "sig=REFRESHED-FRESH";
+        let refreshed_sas = format!("sv=2021-08-06&{REFRESHED_SIG}&se=2099-01-01");
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "block"))
+            .respond_with(move |req: &Request| {
+                if req.url.as_str().contains(REFRESHED_SIG) {
+                    ResponseTemplate::new(201)
+                } else {
+                    ResponseTemplate::new(403)
+                        .set_body_string("Server failed to authenticate the request.")
+                }
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("comp", "blocklist"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            creds: Some(azure_creds("ORIGINAL-EXPIRED")),
+            ..Default::default()
+        });
+        let fake = FakeStageInfoRefresher::new(stage.creds.clone());
+        fake.arm_rotation(CloudCredentials::Azure {
+            sas_token: SensitiveString::from(refreshed_sas.clone()),
+        });
+
+        let prepared = PreparedUpload {
+            source: crate::file_manager::types::PreparedSource::Bytes(Bytes::from(vec![
+                9u8;
+                9 << 20
+            ])),
+            digest: "0".repeat(64),
+            cse: None,
+        };
+
+        let transfer = crate::governor::Governor::new().register_command(1);
+        let result = upload_to_azure_or_skip(
+            prepared.into(),
+            &stage,
+            "parallel-one.dat",
+            /* overwrite */ true,
+            /* skip_upload_on_content_match */ false,
+            always_multipart(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            TransferCtx::with_refresher(&fake),
+            &transfer,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Put Block 403 refresh at command_parallel=1 must succeed without DeadlineExceeded; got {result:?}"
+        );
+        assert!(
+            !matches!(result, Err(AzureUploadError::DeadlineExceeded { .. })),
+            "must not DeadlineExceeded while waiting to re-acquire during SAS refresh"
         );
     }
 
@@ -3839,6 +4413,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a commit 403 must refresh and retry the commit");
@@ -3890,6 +4465,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -3973,6 +4549,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&coordinator),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -4044,6 +4621,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -4101,6 +4679,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -4186,6 +4765,7 @@ mod tests {
             always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a single block 403 must resume just that block");
@@ -4249,7 +4829,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -4257,6 +4837,7 @@ mod tests {
                 cleanup: None,
             },
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4318,7 +4899,7 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Temp {
@@ -4326,6 +4907,7 @@ mod tests {
                 cleanup: None,
             },
             TransferCtx::with_refresher(&fake as &dyn StageInfoRefresher),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a ranged-GET 403 must refresh and re-drive the download");
@@ -4372,11 +4954,12 @@ mod tests {
         let dl = download_from_azure_streaming(
             &stage,
             "file.dat",
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4426,11 +5009,12 @@ mod tests {
         let result = download_from_azure_streaming(
             &stage,
             "file.dat",
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -4439,5 +5023,836 @@ mod tests {
             !part_path.exists(),
             "a failed ranged download must not leave a `.part` file behind"
         );
+    }
+
+    fn policy_with_backoff(max_attempts: u32, backoff: Duration) -> RetryPolicy {
+        use crate::config::retry::BackoffConfig;
+        let mut p = test_policy(max_attempts);
+        p.backoff = BackoffConfig {
+            base: backoff,
+            factor: 1.0,
+            cap: backoff,
+            jitter: Jitter::None,
+        };
+        p
+    }
+
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+
+    async fn start_stalled_body_server(
+        body_stalled: Arc<Notify>,
+        release_body: Arc<Notify>,
+    ) -> StageInfo {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stalled-body server");
+        let address = listener.local_addr().expect("stalled-body address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept GET");
+            let mut request = vec![0; 4096];
+            let _ = socket.read(&mut request).await.expect("read GET");
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\n",
+                )
+                .await
+                .expect("write stalled response");
+            body_stalled.notify_one();
+            release_body.notified().await;
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .expect("finish stalled response");
+        });
+        make_stage_info(StageInfoOverrides {
+            endpoint: Some(format!("http://{address}")),
+            ..Default::default()
+        })
+    }
+
+    /// Cap-1 concurrent ranged GET: the second range stays queued until the
+    /// first range body is fully consumed.
+    #[tokio::test(flavor = "current_thread")]
+    async fn azure_ranged_get_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+
+        let (url, first_headers, release_first_body) = start_stalled_206_range_server().await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let client = reqwest::Client::new();
+        let range = multipart::DownloadRange { start: 0, end: 3 };
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let get_a = tokio::spawn({
+            let client = client.clone();
+            let url = url.clone();
+            let policy = policy.clone();
+            async move { azure_get_range(&client, &url, &range, &policy, &op_a).await }
+        });
+        notified_soon(&first_headers).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let get_b = tokio::spawn({
+            let client = client.clone();
+            let url = url.clone();
+            let policy = policy.clone();
+            async move { azure_get_range(&client, &url, &range, &policy, &op_b).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        release_first_body.notify_one();
+        get_a.await.expect("join A").expect("range A");
+        get_b.await.expect("join B").expect("range B");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    /// Cap-1 concurrent whole-object GET: headers may complete while the body
+    /// is still on the wire; the second command stays queued until the first
+    /// producer reaches EOF (not merely response headers).
+    #[tokio::test(flavor = "current_thread")]
+    async fn azure_whole_object_get_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+        use std::io::Read as _;
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio::sync::Notify;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stalled GET server");
+        let address = listener.local_addr().expect("stalled GET address");
+        let first_headers = Arc::new(Notify::new());
+        let release_first_body = Arc::new(Notify::new());
+        tokio::spawn({
+            let first_headers = first_headers.clone();
+            let release_first_body = release_first_body.clone();
+            async move {
+                let (mut first, _) = listener.accept().await.expect("accept GET A");
+                let mut request = vec![0; 4096];
+                let _ = first.read(&mut request).await.expect("read GET A");
+                first
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\n",
+                    )
+                    .await
+                    .expect("write GET A headers");
+                first_headers.notify_one();
+                release_first_body.notified().await;
+                first
+                    .write_all(b"3\r\nbcd\r\n0\r\n\r\n")
+                    .await
+                    .expect("finish GET A body");
+                drop(first);
+
+                let (mut second, _) = listener.accept().await.expect("accept GET B");
+                let _ = second.read(&mut request).await.expect("read GET B");
+                second
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nabcd",
+                    )
+                    .await
+                    .expect("respond GET B");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(format!("http://{address}")),
+            ..Default::default()
+        });
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let get_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                let dl = azure_get_streaming(&stage, "file.dat", &policy, None, &op_a)
+                    .await
+                    .expect("GET A");
+                let reader = dl.body.into_reader().expect("reader A");
+                tokio::task::spawn_blocking(move || {
+                    let mut reader = reader;
+                    let mut got = Vec::new();
+                    reader.read_to_end(&mut got).expect("drain A");
+                    got
+                })
+                .await
+                .expect("join drain A")
+            }
+        });
+        notified_soon(&first_headers).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let get_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                let dl = azure_get_streaming(&stage, "file.dat", &policy, None, &op_b)
+                    .await
+                    .expect("GET B");
+                let reader = dl.body.into_reader().expect("reader B");
+                tokio::task::spawn_blocking(move || {
+                    let mut reader = reader;
+                    let mut got = Vec::new();
+                    reader.read_to_end(&mut got).expect("drain B");
+                    got
+                })
+                .await
+                .expect("join drain B")
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        release_first_body.notify_one();
+        let got_a = get_a.await.expect("join A");
+        let got_b = get_b.await.expect("join B");
+        assert_eq!(got_a, b"abcd");
+        assert_eq!(got_b, b"abcd");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    /// Cap-1 concurrent whole-object Put Blob: the second command stays queued
+    /// until the first attempt is released.
+    #[tokio::test(flavor = "current_thread")]
+    async fn azure_put_blob_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::sync::Notify;
+
+        let server = MockServer::start().await;
+        let first_entered = Arc::new(Notify::new());
+        let first_seen = Arc::new(AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .respond_with({
+                let first_entered = first_entered.clone();
+                let first_seen = first_seen.clone();
+                move |_req: &Request| {
+                    if !first_seen.swap(true, Ordering::SeqCst) {
+                        first_entered.notify_one();
+                        ResponseTemplate::new(201).set_delay(Duration::from_millis(150))
+                    } else {
+                        ResponseTemplate::new(201)
+                    }
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let upload_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_azure_or_skip(
+                    prepared_upload_with_digest("cap-a").into(),
+                    &stage,
+                    "a.dat",
+                    true,
+                    false,
+                    MultipartParams::default(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_a,
+                )
+                .await
+            }
+        });
+        first_entered.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let upload_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_azure_or_skip(
+                    prepared_upload_with_digest("cap-b").into(),
+                    &stage,
+                    "b.dat",
+                    true,
+                    false,
+                    MultipartParams::default(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_b,
+                )
+                .await
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        upload_a.await.expect("join A").expect("operation A upload");
+        upload_b.await.expect("join B").expect("operation B upload");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    /// Cap-1 concurrent Put Block / Put Block List path.
+    #[tokio::test(flavor = "current_thread")]
+    async fn azure_put_block_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::sync::Notify;
+
+        let server = MockServer::start().await;
+        let first_entered = Arc::new(Notify::new());
+        let first_seen = Arc::new(AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .respond_with({
+                let first_entered = first_entered.clone();
+                let first_seen = first_seen.clone();
+                move |_req: &Request| {
+                    if !first_seen.swap(true, Ordering::SeqCst) {
+                        first_entered.notify_one();
+                        ResponseTemplate::new(201).set_delay(Duration::from_millis(150))
+                    } else {
+                        ResponseTemplate::new(201)
+                    }
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let upload_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_azure_or_skip(
+                    prepared_upload_with_digest("block-a").into(),
+                    &stage,
+                    "a.dat",
+                    true,
+                    false,
+                    always_multipart(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_a,
+                )
+                .await
+            }
+        });
+        first_entered.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let upload_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_azure_or_skip(
+                    prepared_upload_with_digest("block-b").into(),
+                    &stage,
+                    "b.dat",
+                    true,
+                    false,
+                    always_multipart(),
+                    &policy,
+                    TransferCtx::default(),
+                    &op_b,
+                )
+                .await
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        upload_a.await.expect("join A").expect("operation A upload");
+        upload_b.await.expect("join B").expect("operation B upload");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn azure_put_blob_retains_permit_during_backoff() {
+        use crate::governor::{Governor, RequestKind};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("retry"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+        let policy = policy_with_backoff(3, Duration::from_millis(400));
+
+        let upload = upload_to_azure_or_skip(
+            prepared_upload_with_digest("retry").into(),
+            &stage,
+            "retry.dat",
+            true,
+            false,
+            MultipartParams::default(),
+            &policy,
+            TransferCtx::default(),
+            &op_a,
+        );
+        tokio::pin!(upload);
+
+        let wait_start = Instant::now();
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut upload => {
+                    panic!("upload finished before competing acquire: {result:?}");
+                }
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                    if server.received_requests().await.unwrap_or_default().len() == 1
+                        && governor.in_flight() == 1
+                    {
+                        break;
+                    }
+                    assert!(
+                        wait_start.elapsed() < Duration::from_secs(2),
+                        "timed out waiting for first Azure PUT to enter backoff"
+                    );
+                }
+            }
+        }
+
+        let competing = tokio::time::timeout(
+            Duration::from_millis(80),
+            op_b.acquire(RequestKind::WholeObjectPut),
+        )
+        .await;
+        assert!(
+            competing.is_err(),
+            "competing acquire must remain blocked during backoff"
+        );
+        assert_eq!(governor.in_flight(), 1);
+
+        upload.await.expect("upload succeeds on retry");
+        assert_eq!(governor.in_flight(), 0);
+
+        let after = tokio::time::timeout(
+            Duration::from_millis(80),
+            op_b.acquire(RequestKind::WholeObjectPut),
+        )
+        .await
+        .expect("competing acquire must complete after retry sequence")
+        .expect("granted");
+        drop(after);
+    }
+
+    #[tokio::test]
+    async fn azure_put_blob_terminal_error_releases_permit() {
+        use crate::governor::Governor;
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(server.uri()),
+            ..Default::default()
+        });
+
+        let result = upload_to_azure_or_skip(
+            prepared_upload_with_digest("terminal").into(),
+            &stage,
+            "bad.dat",
+            true,
+            false,
+            MultipartParams::default(),
+            &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+            TransferCtx::default(),
+            &op,
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                Err(AzureUploadError::AzureHttp {
+                    status_code: 400,
+                    ..
+                })
+            ),
+            "terminal 400 must surface; got {result:?}"
+        );
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+        let _next = op
+            .acquire(crate::governor::RequestKind::WholeObjectPut)
+            .await
+            .expect("capacity must be free after terminal error");
+    }
+
+    #[test]
+    fn azure_upload_adapters_map_deadline_to_dedicated_variant() {
+        let elapsed = Duration::from_millis(12);
+        let budget = Duration::from_millis(10);
+
+        assert!(matches!(
+            AzureUploadRetry.on_deadline_exceeded(elapsed, budget),
+            AzureUploadError::DeadlineExceeded { .. }
+        ));
+
+        let put = AzurePutAttemptRetry {
+            url_redacted: "https://example.blob.core.windows.net/container".into(),
+        };
+        assert!(matches!(
+            put.on_deadline_exceeded(elapsed, budget),
+            AzureAttemptError::Other(AzureUploadError::DeadlineExceeded { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn azure_put_blob_deadline_is_dedicated_variant() {
+        use crate::governor::{Governor, RequestKind};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let holder = governor.register_command(32);
+        let blocked = governor.register_command(32);
+        let _hold = holder.acquire(RequestKind::WholeObjectPut).await.unwrap();
+
+        let mut policy = test_policy(2);
+        policy.max_elapsed = Some(Duration::from_millis(40));
+        let result = upload_to_azure_or_skip(
+            prepared_upload_with_digest("deadline").into(),
+            &make_stage_info(StageInfoOverrides {
+                endpoint: Some(server.uri()),
+                ..Default::default()
+            }),
+            "deadline.dat",
+            true,
+            false,
+            MultipartParams::default(),
+            &policy,
+            TransferCtx::default(),
+            &blocked,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AzureUploadError::DeadlineExceeded { .. })),
+            "expected DeadlineExceeded, got {result:?}"
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no outbound PUT when admission waits past max_elapsed"
+        );
+    }
+
+    #[tokio::test]
+    async fn azure_head_and_put_share_one_permit() {
+        use crate::governor::{Governor, RequestKind};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio::sync::Notify;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/PUT server");
+        let address = listener.local_addr().expect("HEAD/PUT address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let put_seen = Arc::new(Notify::new());
+        let release_put = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let put_seen = put_seen.clone();
+            let release_put = release_put.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut put_socket, _) = listener.accept().await.expect("accept PUT");
+                let read = put_socket.read(&mut request).await.expect("read PUT");
+                assert!(request[..read].starts_with(b"PUT "));
+                put_seen.notify_one();
+                release_put.notified().await;
+                put_socket
+                    .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .expect("respond PUT");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let upload_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(format!("http://{address}")),
+            ..Default::default()
+        });
+        let upload = tokio::spawn(async move {
+            upload_to_azure_or_skip(
+                prepared_upload_with_digest("head-put").into(),
+                &stage,
+                "file.dat",
+                false,
+                false,
+                MultipartParams::default(),
+                &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+                TransferCtx::default(),
+                &upload_op,
+            )
+            .await
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectGet)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        release_head.notify_one();
+        put_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and PUT for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_put.notify_one();
+
+        upload
+            .await
+            .expect("join upload")
+            .expect("HEAD then PUT upload");
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn azure_head_and_get_share_one_permit() {
+        use crate::governor::{Governor, RequestKind};
+        use std::io::Read as _;
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio::sync::Notify;
+
+        const PAYLOAD: &[u8] = b"hello azure";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/GET server");
+        let address = listener.local_addr().expect("HEAD/GET address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let get_seen = Arc::new(Notify::new());
+        let release_get = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let get_seen = get_seen.clone();
+            let release_get = release_get.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut get_socket, _) = listener.accept().await.expect("accept GET");
+                let read = get_socket.read(&mut request).await.expect("read GET");
+                assert!(request[..read].starts_with(b"GET "));
+                get_seen.notify_one();
+                release_get.notified().await;
+                get_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond GET headers");
+                get_socket
+                    .write_all(PAYLOAD)
+                    .await
+                    .expect("respond GET body");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let download_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = make_stage_info(StageInfoOverrides {
+            endpoint: Some(format!("http://{address}")),
+            ..Default::default()
+        });
+        let download = tokio::spawn(async move {
+            let dl = download_from_azure_streaming(
+                &stage,
+                "file.dat",
+                MultipartParams::default(),
+                &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
+                false,
+                cloud_http::CloudSpillTarget::Temp {
+                    dir: tempfile::tempdir().unwrap().path(),
+                    cleanup: None,
+                },
+                TransferCtx::default(),
+                &download_op,
+            )
+            .await
+            .expect("HEAD then GET download");
+            let reader = dl.body.into_reader().expect("download reader");
+            tokio::task::spawn_blocking(move || {
+                let mut reader = reader;
+                let mut got = Vec::new();
+                reader.read_to_end(&mut got).expect("drain download");
+                got
+            })
+            .await
+            .expect("join drain download")
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectPut)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        release_head.notify_one();
+        get_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and GET for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_get.notify_one();
+
+        let got = download.await.expect("join download");
+        assert_eq!(got.as_slice(), PAYLOAD);
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn aborting_azure_streaming_get_releases_permit() {
+        use crate::governor::{Governor, RequestKind};
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+
+        let body_stalled = Arc::new(Notify::new());
+        let release_body = Arc::new(Notify::new());
+        let stage = start_stalled_body_server(body_stalled.clone(), release_body.clone()).await;
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let get_op = governor.register_command(32);
+        let waiter_op = governor.register_command(32);
+        let policy = test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS);
+
+        let download = azure_get_streaming(&stage, "file.dat", &policy, None, &get_op)
+            .await
+            .expect("open admitted GET");
+        body_stalled.notified().await;
+        let producer_abort = download.body.producer_abort().expect("producer abort");
+
+        let waiter = tokio::spawn(async move {
+            waiter_op
+                .acquire(RequestKind::WholeObjectGet)
+                .await
+                .expect("waiter permit")
+        });
+        wait_until(|| governor.queued() == 1).await;
+        producer_abort.abort();
+        let waiter_permit = waiter.await.expect("join waiter");
+        drop(waiter_permit);
+        release_body.notify_one();
+        assert_eq!(governor.in_flight(), 0);
     }
 }

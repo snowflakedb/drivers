@@ -10,7 +10,9 @@ use sf_core::file_manager::internal::build_encryptor;
 use sf_core::file_manager::types::{
     CloudCredentials, EncryptionMaterial, LocationType, SingleDownloadData, StageInfo,
 };
-use sf_core::file_manager::{FileManagerError, MultipartParams, TransferCtx, download_single_file};
+use sf_core::file_manager::{
+    FileManagerError, MultipartParams, TransferCtx, TransferOp, download_single_file,
+};
 use sf_core::sensitive::SensitiveString;
 use std::io::Read;
 use wiremock::matchers::method;
@@ -38,6 +40,7 @@ fn s3_stage(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -121,6 +124,7 @@ async fn try_download_from_mock(
         flavor: PutGetResultsetFlavor::Python,
         multipart: MultipartParams::default(),
         unsafe_file_write: false,
+        transfer: TransferOp::isolated_for_tests(),
     };
     download_single_file(
         download,

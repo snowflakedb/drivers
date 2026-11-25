@@ -71,6 +71,7 @@ use super::stage_upload::{StageUploadOptions, XpStreamUpload};
 use super::statement::skip_leading_whitespace_and_comments;
 use crate::apis::operation_ctx::OperationCtx;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
+use crate::governor::TransferOp;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{QueryExecutionMode, QueryInput, RestError, query_response};
 
@@ -145,6 +146,10 @@ pub(super) struct DownloadStream {
     pub(super) conn_handle: Handle,
     pub(super) aborter: DownloadAborter,
     session: Mutex<DownloadStreamSession>,
+    /// Stays registered until close/reap/abort so a permit held by the GET
+    /// producer is not unregistered at begin.
+    #[allow(dead_code)]
+    transfer: TransferOp,
 }
 
 impl DatabaseDriverV1 {
@@ -349,6 +354,9 @@ impl DatabaseDriverV1 {
                         proxy_config: conn.proxy_config(),
                         crl_manager: conn.connection_crl_or(&self.crl_manager),
                         root_store_provider: self.root_store_provider.clone(),
+                        transfer: self
+                            .governor
+                            .register_command(gs_data.resolved_command_parallel()),
                     },
                 )
             };
@@ -467,6 +475,7 @@ impl DatabaseDriverV1 {
                     .await?;
             update_caches(&conn_ptr, &get_sql, &response).await;
 
+            let command_parallel = response.data.resolved_command_parallel();
             let (use_s3_regional_url, unsafe_file_write, transport) = {
                 let conn = conn_ptr.lock().await;
                 let unsafe_file_write = conn.unsafe_file_write();
@@ -479,6 +488,7 @@ impl DatabaseDriverV1 {
                         proxy_config: conn.proxy_config(),
                         crl_manager: conn.connection_crl_or(&self.crl_manager),
                         root_store_provider: self.root_store_provider.clone(),
+                        transfer: self.governor.register_command(command_parallel),
                     },
                 )
             };
@@ -520,12 +530,15 @@ impl DatabaseDriverV1 {
                 Some(&refresher as &dyn file_manager::StageInfoRefresher),
                 resolved.encryption_material,
                 decompress,
-                resolved.multipart,
+                &transport.transfer,
             )
             .await
             .map_err(map_open_download_stream_error)?;
 
             let total_len = (opened.cloud_byte_count > 0).then_some(opened.cloud_byte_count);
+            // Keep the command registration on the stream, not `StageTransport`,
+            // so it outlives begin and any later command-scoped work.
+            let transfer = transport.transfer;
             let stream = DownloadStream {
                 conn_handle,
                 aborter: DownloadAborter {
@@ -537,6 +550,7 @@ impl DatabaseDriverV1 {
                     leftover: Bytes::new(),
                     done: false,
                 }),
+                transfer,
             };
             // `opened.task` runs detached: the pipeline drives itself via
             // `rx`/`ChannelWriter`, and is only cancelled through
@@ -697,7 +711,6 @@ struct ResolvedDownload {
     encryption_material: Option<file_manager::EncryptionMaterial>,
     presigned_url: Option<String>,
     initial_snapshot: file_manager::StageInfoSnapshot,
-    multipart: file_manager::MultipartParams,
 }
 
 fn map_open_download_stream_error(error: file_manager::FileManagerError) -> ApiError {
@@ -784,7 +797,6 @@ fn resolve_download_target(
     Ok(ResolvedDownload {
         src_location,
         stage_info: download_data.stage_info,
-        multipart: download_data.multipart,
         encryption_material: download_data
             .encryption_materials
             .into_iter()
@@ -1433,6 +1445,7 @@ mod tests {
                 leftover: Bytes::new(),
                 done: false,
             }),
+            transfer: crate::governor::Governor::new().register_command(32),
         };
         driver.download_streams.add_handle(stream)
     }
@@ -1577,6 +1590,7 @@ mod tests {
                 leftover: Bytes::new(),
                 done: false,
             }),
+            transfer: crate::governor::Governor::new().register_command(32),
         };
         let handle = driver.download_streams.add_handle(stream);
 
@@ -1604,6 +1618,143 @@ mod tests {
         );
         // Closing twice must fail — the session is already gone.
         assert!(driver.download_stream_close(handle).await.is_err());
+    }
+
+    async fn wait_until(mut cond: impl FnMut() -> bool) {
+        let start = tokio::time::Instant::now();
+        while !cond() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(2),
+                "timed out waiting for governor condition"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    fn pending_download_stream(
+        conn_handle: Handle,
+        transfer: TransferOp,
+        producer: tokio::task::AbortHandle,
+        pipeline: tokio::task::AbortHandle,
+    ) -> DownloadStream {
+        let (_tx, rx) =
+            tokio::sync::mpsc::channel::<Result<Vec<u8>, file_manager::FileManagerError>>(8);
+        DownloadStream {
+            conn_handle,
+            aborter: DownloadAborter { producer, pipeline },
+            session: Mutex::new(DownloadStreamSession {
+                rx,
+                leftover: Bytes::new(),
+                done: false,
+            }),
+            transfer,
+        }
+    }
+
+    #[tokio::test]
+    async fn download_stream_close_releases_registration() {
+        use crate::governor::{AcquireError, Governor, RequestKind};
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let driver = DatabaseDriverV1::new();
+        let holder = governor.register_command(32);
+        let stream_op = governor.register_command(32);
+        let _hold = holder.acquire(RequestKind::WholeObjectPut).await.unwrap();
+        let queued = tokio::spawn(stream_op.acquire(RequestKind::WholeObjectPut));
+        wait_until(|| governor.queued() == 1).await;
+
+        let producer = tokio::spawn(std::future::pending::<()>());
+        let pipeline = tokio::spawn(std::future::pending::<()>());
+        let handle = driver.download_streams.add_handle(pending_download_stream(
+            bogus_handle(),
+            stream_op,
+            producer.abort_handle(),
+            pipeline.abort_handle(),
+        ));
+        driver.download_stream_close(handle).await.unwrap();
+
+        assert_eq!(
+            queued.await.expect("join").map(|_| ()),
+            Err(AcquireError::OperationDropped)
+        );
+        assert_eq!(governor.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn download_stream_close_aborts_producer_so_queued_permits_progress() {
+        use crate::governor::{Governor, RequestKind};
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let driver = DatabaseDriverV1::new();
+        let stream_op = governor.register_command(32);
+        let permit = stream_op
+            .acquire(RequestKind::WholeObjectPut)
+            .await
+            .unwrap();
+        let producer = tokio::spawn(async move {
+            let _permit = permit;
+            std::future::pending::<()>().await;
+        });
+        let pipeline = tokio::spawn(std::future::pending::<()>());
+        let other = governor.register_command(32);
+        let queued = tokio::spawn(other.acquire(RequestKind::WholeObjectPut));
+        wait_until(|| governor.queued() == 1).await;
+
+        let handle = driver.download_streams.add_handle(pending_download_stream(
+            bogus_handle(),
+            stream_op,
+            producer.abort_handle(),
+            pipeline.abort_handle(),
+        ));
+        driver.download_stream_close(handle).await.unwrap();
+
+        let granted = tokio::time::timeout(std::time::Duration::from_millis(200), queued)
+            .await
+            .expect("queued acquire must complete after close aborts the producer")
+            .expect("join")
+            .expect("granted");
+        assert_eq!(governor.in_flight(), 1);
+        drop(granted);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn reap_aborts_download_so_queued_permits_progress() {
+        use crate::governor::{Governor, RequestKind};
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let driver = DatabaseDriverV1::new();
+        let conn = bogus_handle();
+        let stream_op = governor.register_command(32);
+        let permit = stream_op
+            .acquire(RequestKind::WholeObjectPut)
+            .await
+            .unwrap();
+        let producer = tokio::spawn(async move {
+            let _permit = permit;
+            std::future::pending::<()>().await;
+        });
+        let pipeline = tokio::spawn(std::future::pending::<()>());
+        let other = governor.register_command(32);
+        let queued = tokio::spawn(other.acquire(RequestKind::WholeObjectPut));
+        wait_until(|| governor.queued() == 1).await;
+
+        let _handle = driver.download_streams.add_handle(pending_download_stream(
+            conn,
+            stream_op,
+            producer.abort_handle(),
+            pipeline.abort_handle(),
+        ));
+        driver.reap_connection_streams(conn);
+
+        let granted = tokio::time::timeout(std::time::Duration::from_millis(200), queued)
+            .await
+            .expect("queued acquire must complete after reap aborts the producer")
+            .expect("join")
+            .expect("granted");
+        assert_eq!(governor.in_flight(), 1);
+        drop(granted);
+        assert_eq!(governor.in_flight(), 0);
     }
 
     #[tokio::test]

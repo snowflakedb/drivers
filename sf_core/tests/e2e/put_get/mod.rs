@@ -6,6 +6,7 @@ mod put_get_basic_operations;
 mod put_get_cwd;
 mod put_get_errors;
 mod put_get_gcs_multi_file;
+mod put_get_governor_baseline;
 mod put_get_multipart_proxy_live_mitm;
 mod put_get_multipart_roundtrip;
 mod put_get_overwrite;

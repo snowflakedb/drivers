@@ -186,6 +186,12 @@ fn calculate_request_timeout(
     }
 }
 
+/// Shared GS / control-plane retry loop (query, login, logout, REST).
+///
+/// Intentionally **not** admitted by the transfer [`crate::governor::Governor`].
+/// Gating this seam would cap Snowflake HTTP as well as cloud transfer.
+/// Transfer reqwest retries use `file_manager::cloud_http::upload_with_retry`
+/// instead. See `docs/design/transfer-governor.md`.
 pub fn execute_with_retry<T, B, F, H>(
     build_request: B,
     http_ctx: &HttpContext,
@@ -227,19 +233,7 @@ where
         retry_state.attempt += 1;
 
         // When max_elapsed is set, enforce the internal deadline.
-        let remaining = if let Some(budget) = policy.max_elapsed {
-            let elapsed = start.elapsed();
-            if elapsed >= budget {
-                return DeadlineExceededSnafu {
-                    configured: budget,
-                    elapsed,
-                }
-                .fail();
-            }
-            Some(budget - elapsed)
-        } else {
-            None
-        };
+        let remaining = remaining_budget(start, policy.max_elapsed)?;
 
         let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
         let mut req_builder = build_request(&retry_state);
@@ -293,7 +287,11 @@ where
                             "No response before the response timeout, retrying"
                         );
                         retry_state.last_status = LastStatus::Transport;
-                        let delay = transport_retry_delay(&mut sleep_ms, backoff, remaining)?;
+                        let delay = transport_retry_delay(
+                            &mut sleep_ms,
+                            backoff,
+                            remaining_budget(start, policy.max_elapsed)?,
+                        )?;
                         tokio::time::sleep(delay).await;
                         continue;
                     }
@@ -325,7 +323,7 @@ where
                 retry_state.last_status = LastStatus::Code(resp.status().as_u16());
                 sleep_ms = next_delay_ms(sleep_ms, backoff);
                 let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
-                if let Some(rem) = remaining
+                if let Some(rem) = remaining_budget(start, policy.max_elapsed)?
                     && delay > rem
                 {
                     return RetryAfterExceededSnafu {
@@ -345,12 +343,34 @@ where
                     return Err(TransportSnafu.into_error(e));
                 }
                 retry_state.last_status = LastStatus::Transport;
-                let delay = transport_retry_delay(&mut sleep_ms, backoff, remaining)?;
+                let delay = transport_retry_delay(
+                    &mut sleep_ms,
+                    backoff,
+                    remaining_budget(start, policy.max_elapsed)?,
+                )?;
                 tokio::time::sleep(delay).await;
                 continue;
             }
         }
     }
+}
+
+fn remaining_budget(
+    start: Instant,
+    budget: Option<Duration>,
+) -> Result<Option<Duration>, HttpError> {
+    let Some(configured) = budget else {
+        return Ok(None);
+    };
+    let elapsed = start.elapsed();
+    if elapsed >= configured {
+        return DeadlineExceededSnafu {
+            configured,
+            elapsed,
+        }
+        .fail();
+    }
+    Ok(Some(configured - elapsed))
 }
 
 fn transport_retry_delay(
@@ -545,6 +565,9 @@ mod retry_state_tests {
 #[cfg(test)]
 mod timeout_tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn no_timeout_when_both_none() {
@@ -575,6 +598,81 @@ mod timeout_tests {
         let result =
             calculate_request_timeout(Some(Duration::from_secs(10)), Some(Duration::from_secs(3)));
         assert_eq!(result, Some(Duration::from_secs(3)));
+    }
+
+    #[tokio::test]
+    async fn retry_sleep_uses_budget_remaining_after_the_attempt() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+        let requests = Arc::new(AtomicUsize::new(0));
+        let server_requests = Arc::clone(&requests);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let attempt = server_requests.fetch_add(1, Ordering::SeqCst) + 1;
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while socket.read_exact(&mut byte).await.is_ok() {
+                        request.push(byte[0]);
+                        if request.ends_with(b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    if attempt == 1 {
+                        tokio::time::sleep(Duration::from_millis(30)).await;
+                        socket
+                            .write_all(
+                                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
+                            )
+                            .await
+                            .expect("write retryable response");
+                    } else {
+                        socket
+                            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                            .await
+                            .expect("write success response");
+                    }
+                });
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/");
+        let policy = RetryPolicy {
+            max_attempts: 2,
+            max_elapsed: Some(Duration::from_millis(50)),
+            backoff: BackoffConfig {
+                base: Duration::from_millis(30),
+                factor: 1.0,
+                cap: Duration::from_millis(30),
+                jitter: Jitter::None,
+            },
+            ..RetryPolicy::default()
+        };
+
+        let err = execute_with_retry(
+            || client.get(&url),
+            &HttpContext::new(Method::GET, &url),
+            &policy,
+            |response| async move { Ok(response) },
+        )
+        .await
+        .expect_err("the post-attempt remaining budget cannot fit the retry delay");
+
+        assert!(
+            matches!(
+                err,
+                HttpError::RetryAfterExceeded { .. } | HttpError::DeadlineExceeded { .. }
+            ),
+            "expected a deadline-related error, got {err:?}"
+        );
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "an attempt that consumes the retry budget must not be followed by another request"
+        );
     }
 }
 

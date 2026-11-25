@@ -1,7 +1,6 @@
 use super::cloud_http;
 use super::encryption::Encryptor;
 use super::multipart::{self, MultipartConfig, MultipartParams};
-use super::scheduler::TransferScheduler;
 use super::types::{
     ByteSource, CloudCredentials, EncryptedFileMetadata, LocationType, MaterialDescription,
     PreparedUpload, StageInfo, StageInfoRefreshError, StageInfoRefresher, TransferCtx,
@@ -9,8 +8,12 @@ use super::types::{
 };
 use crate::apis::operation_ctx::{CleanupScope, with_abort_on_unwind};
 use crate::config::retry::RetryPolicy;
+use crate::governor::{
+    AcquireError, AcquireWaitError, Deadline, RequestKind, RequestPermit, TransferOp,
+};
 use crate::refresh::{Refresher, execute_with_refresh};
 use crate::tls::aws_http_client::AwsSdkReqwestClient;
+use crate::utils::sync::MutexRecoverExt;
 use bytes::Bytes;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
@@ -20,6 +23,7 @@ use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::marker::PhantomData;
+use std::ops::ControlFlow;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
@@ -75,6 +79,13 @@ enum S3WriteProtocol {
     Multipart { body_len: u64 },
 }
 
+/// Result of one conditional write attempt. Multipart Create succeeds
+/// separately from parts so the file permit can drop before part acquires.
+enum S3WriteOutcome {
+    Done(UploadStatus),
+    MultipartStarted { upload_id: String, body_len: u64 },
+}
+
 /// One conditional S3 object write, including the inputs that must be replayed
 /// together after `ConditionalRequestConflict`.
 ///
@@ -97,11 +108,12 @@ struct S3ConditionalWrite<'a> {
     key: &'a str,
     overwrite: bool,
     cleanup: Option<&'a CleanupScope>,
-    scheduler: &'a TransferScheduler,
+    multipart: MultipartParams,
     protocol: S3WriteProtocol,
     refresher: Option<&'a dyn StageInfoRefresher>,
     policy: &'a RetryPolicy,
     http_client: Option<&'a AwsSdkReqwestClient>,
+    transfer: &'a TransferOp,
 }
 
 /// Attempt/backoff state for replaying ambiguous S3 conditional conflicts.
@@ -153,22 +165,70 @@ impl<'a> S3ConflictRetryBudget<'a> {
 }
 
 impl S3ConditionalWrite<'_> {
-    async fn execute_once(&self) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+    async fn execute_once(
+        &self,
+        deadline: Deadline,
+        file_permit: &RequestPermit,
+    ) -> Result<S3WriteOutcome, S3AttemptError<UploadFileError>> {
         match self.protocol {
-            S3WriteProtocol::PutObject => {
-                put_object(
-                    self.prepared.clone(),
+            S3WriteProtocol::PutObject => put_object(
+                self.prepared.clone(),
+                self.client,
+                self.stage_info,
+                self.key,
+                self.overwrite,
+                self.policy,
+                deadline,
+                file_permit,
+            )
+            .await
+            .map(S3WriteOutcome::Done),
+            S3WriteProtocol::Multipart { body_len } => {
+                let upload_id = s3_create_multipart_upload(
+                    self.prepared,
                     self.client,
                     self.stage_info,
                     self.key,
-                    self.overwrite,
-                    self.scheduler,
+                    self.policy,
+                    deadline,
+                    file_permit,
                 )
-                .await
+                .await?;
+                Ok(S3WriteOutcome::MultipartStarted {
+                    upload_id,
+                    body_len,
+                })
             }
-            S3WriteProtocol::Multipart { body_len } => {
-                s3_multipart_upload(
-                    S3MultipartCtx {
+        }
+    }
+
+    /// Replays the object write within the configured PUT/GET retry budget
+    /// when AWS returns `ConditionalRequestConflict`. Parts and Complete stay
+    /// inside this loop so a Complete 409 aborts and restarts from
+    /// `CreateMultipartUpload`. The file permit is dropped after Create so
+    /// parts can acquire; a Complete conflict re-acquires it for the next
+    /// Create.
+    async fn execute_with_conflict_retry(
+        &self,
+        transfer_started: Instant,
+        deadline: Deadline,
+        file_permit: &mut Option<RequestPermit>,
+    ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+        let mut budget = S3ConflictRetryBudget::new(self.policy, transfer_started);
+
+        loop {
+            let permit = take_or_acquire_file_permit(file_permit, self.transfer, deadline).await?;
+            match self.execute_once(deadline, &permit).await {
+                Ok(S3WriteOutcome::Done(status)) => {
+                    *file_permit = Some(permit);
+                    return Ok(status);
+                }
+                Ok(S3WriteOutcome::MultipartStarted {
+                    upload_id,
+                    body_len,
+                }) => {
+                    drop(permit);
+                    let multipart_ctx = S3MultipartCtx {
                         client: self.client,
                         client_cache: self.client_cache,
                         stage_info: self.stage_info,
@@ -178,46 +238,62 @@ impl S3ConditionalWrite<'_> {
                         refresher: self.refresher,
                         policy: self.policy,
                         http_client: self.http_client,
-                    },
-                    self.prepared.clone(),
-                    body_len,
-                    self.scheduler,
-                )
-                .await
+                        transfer: self.transfer,
+                    };
+                    match s3_multipart_upload(
+                        multipart_ctx,
+                        self.prepared.clone(),
+                        body_len,
+                        self.multipart,
+                        upload_id,
+                    )
+                    .await
+                    {
+                        Ok(status) => return Ok(status),
+                        Err(S3AttemptError::ConditionalConflict(error)) => {
+                            self.retry_after_conflict(&mut budget, deadline, error)
+                                .await?;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(S3AttemptError::ConditionalConflict(error)) => {
+                    *file_permit = Some(permit);
+                    self.retry_after_conflict(&mut budget, deadline, error)
+                        .await?;
+                }
+                Err(e) => {
+                    *file_permit = Some(permit);
+                    return Err(e);
+                }
             }
         }
     }
 
-    /// Replays the object write within the configured PUT/GET retry budget
-    /// when AWS returns `ConditionalRequestConflict`.
-    async fn execute_with_conflict_retry(
+    async fn retry_after_conflict(
         &self,
-        transfer_started: Instant,
-    ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
-        let mut budget = S3ConflictRetryBudget::new(self.policy, transfer_started);
+        budget: &mut S3ConflictRetryBudget<'_>,
+        deadline: Deadline,
+        error: UploadFileError,
+    ) -> Result<(), S3AttemptError<UploadFileError>> {
+        let Some(delay) = budget.delay_before_retry() else {
+            // TODO(SNOW-4027883): HEAD the key before giving up and
+            // report Skipped when an object is present. Losing a create
+            // race honours overwrite=false, so it shouldn't surface as
+            // an opaque upload failure.
+            return Err(S3AttemptError::Other(error));
+        };
 
-        loop {
-            match self.execute_once().await {
-                Err(S3AttemptError::ConditionalConflict(error)) => {
-                    let Some(delay) = budget.delay_before_retry() else {
-                        // TODO(SNOW-4027883): HEAD the key before giving up and
-                        // report Skipped when an object is present. Losing a create
-                        // race honours overwrite=false, so it shouldn't surface as
-                        // an opaque upload failure.
-                        return Err(S3AttemptError::Other(error));
-                    };
-
-                    tracing::warn!(
-                        multipart = matches!(self.protocol, S3WriteProtocol::Multipart { .. }),
-                        attempt = budget.attempts,
-                        key = ?self.key,
-                        "S3 conditional request conflict; retrying the write"
-                    );
-                    tokio::time::sleep(delay).await;
-                }
-                other => return other,
-            }
-        }
+        tracing::warn!(
+            multipart = matches!(self.protocol, S3WriteProtocol::Multipart { .. }),
+            attempt = budget.attempts,
+            key = ?self.key,
+            "S3 conditional request conflict; retrying the write"
+        );
+        cloud_http::sleep_within_deadline(deadline, delay, |elapsed, budget| {
+            S3AttemptError::Other(upload_deadline_error(elapsed, budget))
+        })
+        .await
     }
 }
 
@@ -232,7 +308,7 @@ impl S3ConditionalWrite<'_> {
 /// place.
 ///
 /// Files whose on-cloud size (ciphertext length for CSE, source length for SSE)
-/// is at or above the scheduler's multipart threshold take the multipart path
+/// is at or above the multipart's multipart threshold take the multipart path
 /// ([`s3_multipart_upload`]); smaller files take the single `PutObject` path.
 /// The skip check gates both paths identically — a content-match hit skips
 /// the upload regardless of which path would otherwise have run.
@@ -254,6 +330,7 @@ impl S3ConditionalWrite<'_> {
 /// When `refresher` is `Some`, the retry loop is driven by
 /// [`crate::refresh::execute_with_refresh`] via the [`S3StsRefresher`]
 /// implementation in this module.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn upload_to_s3_or_skip(
     prepared: PreparedUpload,
@@ -264,8 +341,42 @@ pub(super) async fn upload_to_s3_or_skip(
     base_policy: &RetryPolicy,
     multipart: MultipartParams,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
 ) -> Result<UploadStatus, UploadFileError> {
-    let scheduler = &super::scheduler_for(tx, multipart);
+    let deadline = Deadline::from_budget(base_policy.max_elapsed);
+    let file_permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectPut)
+        .await?;
+    upload_to_s3_or_skip_admitted(
+        prepared,
+        stage_info,
+        filename,
+        overwrite,
+        skip_upload_on_content_match,
+        base_policy,
+        multipart,
+        tx,
+        transfer,
+        deadline,
+        file_permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn upload_to_s3_or_skip_admitted(
+    prepared: PreparedUpload,
+    stage_info: &StageInfo,
+    filename: &str,
+    overwrite: bool,
+    skip_upload_on_content_match: bool,
+    base_policy: &RetryPolicy,
+    multipart: MultipartParams,
+    tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
+) -> Result<UploadStatus, UploadFileError> {
     let transfer_started = Instant::now();
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
@@ -280,7 +391,7 @@ pub(super) async fn upload_to_s3_or_skip(
         .build()
     })?;
     // `>=` matches the Python connector boundary (`upload_size >= threshold`).
-    let use_multipart = scheduler.multipart().should_chunk(body_len);
+    let use_multipart = multipart.should_chunk(body_len);
 
     // HEAD checks existence (`!overwrite`) or fetches the remote digest for the
     // opt-in content-match skip; elided otherwise so the common `overwrite=true`,
@@ -289,69 +400,97 @@ pub(super) async fn upload_to_s3_or_skip(
     let head_needed = super::head_needed(overwrite, skip_upload_on_content_match);
     let local_s3_client_cache = BatchS3ClientCache::new();
     let s3_client_cache = tx.s3_client_cache.unwrap_or(&local_s3_client_cache);
+    let file_permit_slot = Mutex::new(Some(file_permit));
 
     let attempt = |creds: CloudCredentials| {
         let prepared = prepared.clone();
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         let policy = policy.clone();
+        let transfer = transfer.clone();
+        let slot = &file_permit_slot;
         async move {
-            let s3_client = resolve_s3_client(
-                Some(s3_client_cache),
-                &stage_info,
-                SNOWFLAKE_UPLOAD_PROVIDER,
-                &policy,
-                tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
-            )
-            .await
-            .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
+            let slot_guard = FilePermitSlot::from_slot(slot, &transfer, deadline).await?;
+            let head = async {
+                let permit = slot_guard.permit();
+                let s3_client = resolve_s3_client(
+                    Some(s3_client_cache),
+                    &stage_info,
+                    SNOWFLAKE_UPLOAD_PROVIDER,
+                    &policy,
+                    tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
+                    deadline,
+                    permit,
+                )
+                .await
+                .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
 
-            let remote = if head_needed {
-                probe_remote_object(&s3_client, &stage_info, &s3_key, overwrite)
+                let remote = if head_needed {
+                    probe_remote_object(
+                        &s3_client,
+                        &stage_info,
+                        &s3_key,
+                        overwrite,
+                        &policy,
+                        deadline,
+                        permit,
+                    )
                     .await
                     .map_err(S3AttemptError::Other)?
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
 
-            let remote_head = match &remote {
-                Some(h) => super::RemoteHead::Present {
-                    digest: h.digest.as_deref(),
-                },
-                None => super::RemoteHead::Absent,
-            };
-            if let Some(status) = super::skip_upload_decision(
-                LocationType::S3,
-                overwrite,
-                skip_upload_on_content_match,
-                &remote_head,
-                &prepared.digest,
-                &s3_key,
-            ) {
-                return Ok(status);
-            }
+                let remote_head = match &remote {
+                    Some(h) => super::RemoteHead::Present {
+                        digest: h.digest.as_deref(),
+                    },
+                    None => super::RemoteHead::Absent,
+                };
+                if let Some(status) = super::skip_upload_decision(
+                    LocationType::S3,
+                    overwrite,
+                    skip_upload_on_content_match,
+                    &remote_head,
+                    &prepared.digest,
+                    &s3_key,
+                ) {
+                    return Ok(ControlFlow::Break(status));
+                }
 
-            let protocol = if use_multipart {
-                S3WriteProtocol::Multipart { body_len }
-            } else {
-                S3WriteProtocol::PutObject
-            };
-            S3ConditionalWrite {
-                prepared: &prepared,
-                client: &s3_client,
-                client_cache: s3_client_cache,
-                stage_info: &stage_info,
-                key: &s3_key,
-                overwrite,
-                cleanup: tx.cleanup,
-                scheduler,
-                protocol,
-                refresher: tx.refresher,
-                policy: &policy,
-                http_client: tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
+                let protocol = if use_multipart {
+                    S3WriteProtocol::Multipart { body_len }
+                } else {
+                    S3WriteProtocol::PutObject
+                };
+                Ok(ControlFlow::Continue((s3_client, protocol)))
             }
-            .execute_with_conflict_retry(transfer_started)
-            .await
+            .await;
+
+            let mut write = slot_guard.into_write();
+            match head {
+                Ok(ControlFlow::Break(status)) => Ok(status),
+                Err(e) => Err(e),
+                Ok(ControlFlow::Continue((s3_client, protocol))) => {
+                    S3ConditionalWrite {
+                        prepared: &prepared,
+                        client: &s3_client,
+                        client_cache: s3_client_cache,
+                        stage_info: &stage_info,
+                        key: &s3_key,
+                        overwrite,
+                        cleanup: tx.cleanup,
+                        multipart,
+                        protocol,
+                        refresher: tx.refresher,
+                        policy: &policy,
+                        http_client: tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
+                        transfer: &transfer,
+                    }
+                    .execute_with_conflict_retry(transfer_started, deadline, write.held())
+                    .await
+                }
+            }
         }
     };
 
@@ -359,9 +498,6 @@ pub(super) async fn upload_to_s3_or_skip(
         tx.refresher,
         &stage_info.creds,
         |e| upload_file_error::StageInfoRefreshSnafu.into_error(e),
-        // Refresher declined to rotate (or there was none). Surface the
-        // original AWS error as a normal upload failure — same shape as
-        // any other S3 PUT error.
         |aws_err| upload_file_error::S3UploadSnafu.into_error(aws_err),
         attempt,
     )
@@ -374,9 +510,79 @@ pub(super) async fn upload_to_s3_or_skip(
 /// lives in `Other`. These control-flow signals remain internal.
 #[derive(Debug)]
 enum S3AttemptError<E> {
-    StsExpired(aws_sdk_s3::Error),
+    StsExpired(Box<aws_sdk_s3::Error>),
     ConditionalConflict(E),
     Other(E),
+}
+
+/// Recovers a file-level permit for Create/PutObject, acquiring a new one when
+/// the previous unit dropped it (multipart parts) or an STS retry re-enters
+/// with an empty slot.
+async fn take_or_acquire_file_permit(
+    held: &mut Option<RequestPermit>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+) -> Result<RequestPermit, S3AttemptError<UploadFileError>> {
+    match held.take() {
+        Some(permit) => Ok(permit),
+        None => deadline
+            .acquire(transfer, RequestKind::WholeObjectPut)
+            .await
+            .map_err(UploadFileError::from)
+            .map_err(S3AttemptError::Other),
+    }
+}
+
+/// Holds the file permit through HEAD / client resolution. Convert with
+/// [`Self::into_write`] so skip, error, and write-complete share one put-back.
+#[must_use = "convert with into_write so Drop restores the STS-retry slot"]
+struct FilePermitSlot<'a> {
+    slot: &'a Mutex<Option<RequestPermit>>,
+    permit: RequestPermit,
+}
+
+impl<'a> FilePermitSlot<'a> {
+    async fn from_slot(
+        slot: &'a Mutex<Option<RequestPermit>>,
+        transfer: &TransferOp,
+        deadline: Deadline,
+    ) -> Result<Self, S3AttemptError<UploadFileError>> {
+        let mut held = slot.lock_recover().take();
+        let permit = take_or_acquire_file_permit(&mut held, transfer, deadline).await?;
+        Ok(Self { slot, permit })
+    }
+
+    fn permit(&self) -> &RequestPermit {
+        &self.permit
+    }
+
+    fn into_write(self) -> FilePermitWrite<'a> {
+        FilePermitWrite {
+            slot: self.slot,
+            permit: Some(self.permit),
+        }
+    }
+}
+
+/// Write-phase owner of the file permit. Drop is the only put-back into the
+/// STS-retry slot; skip and error paths drop with the permit still held.
+struct FilePermitWrite<'a> {
+    slot: &'a Mutex<Option<RequestPermit>>,
+    permit: Option<RequestPermit>,
+}
+
+impl FilePermitWrite<'_> {
+    fn held(&mut self) -> &mut Option<RequestPermit> {
+        &mut self.permit
+    }
+}
+
+impl Drop for FilePermitWrite<'_> {
+    fn drop(&mut self) {
+        if let Some(permit) = self.permit.take() {
+            *self.slot.lock_recover() = Some(permit);
+        }
+    }
 }
 
 /// S3 STS implementation of the generic [`Refresher`] trait. Drives the
@@ -487,7 +693,7 @@ where
         execute_s3_with_sts_refresh(refresher, initial_creds, map_refresh_err, attempt).await;
     outcome.map_err(|e| match e {
         S3AttemptError::ConditionalConflict(err) | S3AttemptError::Other(err) => err,
-        S3AttemptError::StsExpired(aws_err) => map_sts_err(aws_err),
+        S3AttemptError::StsExpired(aws_err) => map_sts_err(*aws_err),
     })
 }
 
@@ -549,6 +755,9 @@ async fn probe_remote_object(
     stage_info: &StageInfo,
     s3_key: &str,
     overwrite: bool,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<Option<S3RemoteObject>, UploadFileError> {
     tracing::info!(
         method = "HEAD",
@@ -556,13 +765,24 @@ async fn probe_remote_object(
         key = ?s3_key,
         "S3 probe_remote_object"
     );
-    match s3_client
-        .head_object()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .send()
-        .await
-    {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        upload_deadline_error,
+        |_remaining_policy| async move {
+            Ok::<_, UploadFileError>(
+                s3_client
+                    .head_object()
+                    .bucket(stage_info.bucket.clone())
+                    .key(s3_key)
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    match send_result {
         Ok(out) => {
             tracing::debug!(
                 status = 200,
@@ -747,16 +967,16 @@ fn encrypting_byte_stream(source: ByteSource, encryptor: Encryptor) -> ByteStrea
 
 /// Issues the S3 `PutObject` call and folds `ExpiredToken` into the
 /// `S3AttemptError::StsExpired` arm so the generic refresh helper can catch it.
-///
-/// Takes one request slot from `scheduler` for the duration of the send, so a
-/// whole-file PUT costs the batch exactly what one `UploadPart` does.
+#[allow(clippy::too_many_arguments)]
 async fn put_object(
     prepared: PreparedUpload,
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
     overwrite: bool,
-    scheduler: &TransferScheduler,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     // CSE params (cloud metadata + encryptor) are both present or both absent.
     let (encryption_metadata, encryptor) = prepared.cse.map(|c| (c.metadata, c.encryptor)).unzip();
@@ -815,14 +1035,23 @@ async fn put_object(
     // blob on a multi-file PUT (SNOW-3240509-adjacent; perf 12mx100 exit 137).
     // Log only safe metadata.
     tracing::trace!(bucket = %stage_info.bucket, key = ?s3_key, "Sending S3 PutObject request");
-
-    let _slot = scheduler.acquire_request().await;
-    match put_object_request
-        .customize()
-        .disable_payload_signing()
-        .send()
-        .await
-    {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(upload_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<UploadFileError>>(
+                put_object_request
+                    .customize()
+                    .disable_payload_signing()
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    match send_result {
         Ok(res) => {
             tracing::debug!("S3 upload result: {:?}", res);
             Ok(UploadStatus::Uploaded)
@@ -831,7 +1060,7 @@ async fn put_object(
             let aws_err = aws_sdk_s3::Error::from(sdk_err);
             if is_expired_token_error(&aws_err) {
                 tracing::warn!("S3 upload failed with ExpiredToken");
-                Err(S3AttemptError::StsExpired(aws_err))
+                Err(S3AttemptError::StsExpired(Box::new(aws_err)))
             } else if !overwrite && is_object_exists_precondition_error(&aws_err) {
                 tracing::info!(
                     code = aws_err.code(),
@@ -859,6 +1088,7 @@ async fn put_object(
 /// coordinator; bundled to avoid `too_many_arguments`.
 #[derive(Clone, Copy)]
 struct S3MultipartCtx<'a> {
+    #[allow(dead_code)]
     client: &'a S3Client,
     client_cache: &'a BatchS3ClientCache,
     stage_info: &'a StageInfo,
@@ -868,6 +1098,7 @@ struct S3MultipartCtx<'a> {
     refresher: Option<&'a dyn StageInfoRefresher>,
     policy: &'a RetryPolicy,
     http_client: Option<&'a AwsSdkReqwestClient>,
+    transfer: &'a TransferOp,
 }
 
 /// Uploads `prepared` to S3 with the multipart protocol:
@@ -887,38 +1118,39 @@ struct S3MultipartCtx<'a> {
 /// than returning `Err`, so `with_abort_on_unwind` registers the abort for that path
 /// as well as running it on `Err`. One closure covers both, so a failure path added
 /// here cannot leave the upload un-aborted.
+#[allow(clippy::too_many_arguments)]
 async fn s3_multipart_upload(
     multipart_ctx: S3MultipartCtx<'_>,
     prepared: PreparedUpload,
     body_len: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
+    upload_id: String,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
-    let params = scheduler.multipart();
     let chunk_size =
-        multipart::upload_part_size(body_len, params.upload_part_size, &MultipartConfig::S3)
+        multipart::upload_part_size(body_len, multipart.upload_part_size, &MultipartConfig::S3)
             .context(upload_file_error::FileTooLargeSnafu)
             .map_err(S3AttemptError::Other)?;
-    let concurrency = params.concurrency;
+    let concurrency = multipart.concurrency;
 
-    let upload_id = s3_create_multipart_upload(
-        &prepared,
-        multipart_ctx.client,
-        multipart_ctx.stage_info,
-        multipart_ctx.key,
-    )
-    .await?;
     tracing::debug!(
         "S3 multipart upload started: key={:?} upload_id={upload_id:?} \
          body_len={body_len} chunk_size={chunk_size} concurrency={concurrency}",
         multipart_ctx.key
     );
 
-    // Parts read sequentially from the (optionally encrypting) source, uploaded
-    // concurrently. `prepared.source`'s gzip-tempfile guard (if any) is moved
-    // into the part-reader's `ByteSource`, so the lazily-read body stays valid.
+    // Parts are admitted before they are read so local I/O cannot run ahead
+    // of the command budget. `prepared.source`'s gzip-tempfile guard (if any)
+    // is moved into the part-reader's `ByteSource`.
     let source = prepared.source.byte_source();
     let encryptor = prepared.cse.map(|c| c.encryptor);
-    let parts_rx = multipart::spawn_part_reader(source, encryptor, chunk_size as usize);
+    let parts_rx = multipart::spawn_admitted_parts(
+        source,
+        encryptor,
+        chunk_size as usize,
+        multipart_ctx.transfer.clone(),
+        multipart_ctx.policy.max_elapsed,
+        RequestKind::UploadPart,
+    );
 
     // Built here, not before `CreateMultipartUpload`: until it returns there is no
     // `upload_id` to abort. Re-signs from the credential cache so a leftover
@@ -944,7 +1176,7 @@ async fn s3_multipart_upload(
                     .map(|cache| cache.snapshot().creds)
                     .unwrap_or_else(|| info.creds.clone());
                 let abort_info = with_creds(&info, creds);
-                match resolve_s3_client(
+                match resolve_s3_client_unprobed(
                     Some(&client_cache),
                     &abort_info,
                     SNOWFLAKE_UPLOAD_PROVIDER,
@@ -974,12 +1206,12 @@ async fn s3_multipart_upload(
     let outcome = with_abort_on_unwind(
         multipart_ctx.cleanup,
         move || (*abort_on_unwind)(),
-        // Boxed to keep this large future off the frame — see clippy.toml.
         Box::pin(upload_parts_and_complete(
             multipart_ctx,
             &upload_id,
             parts_rx,
-            scheduler,
+            multipart,
+            multipart_ctx.policy,
         )),
     )
     .await;
@@ -1000,6 +1232,9 @@ async fn s3_create_multipart_upload(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<String, S3AttemptError<UploadFileError>> {
     let mut request = s3_client
         .create_multipart_upload()
@@ -1024,7 +1259,17 @@ async fn s3_create_multipart_upload(
         key = ?s3_key,
         "S3 CreateMultipartUpload"
     );
-    match request.send().await {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(upload_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<UploadFileError>>(request.send().await)
+        },
+    )
+    .await?;
+    match send_result {
         Ok(out) => {
             tracing::debug!(bucket = %stage_info.bucket, key = ?s3_key, "S3 CreateMultipartUpload succeeded");
             out.upload_id().map(str::to_string).ok_or_else(|| {
@@ -1064,23 +1309,36 @@ async fn s3_create_multipart_upload(
 async fn upload_parts_and_complete(
     multipart_ctx: S3MultipartCtx<'_>,
     upload_id: &str,
-    parts_rx: tokio::sync::mpsc::Receiver<std::io::Result<multipart::UploadPart>>,
-    scheduler: &TransferScheduler,
+    parts_rx: tokio::sync::mpsc::Receiver<
+        Result<multipart::AdmittedUploadPart, multipart::PartProduceError>,
+    >,
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let mut completed: Vec<CompletedPart> = ReceiverStream::new(parts_rx)
-        .map(|part| async move {
-            let part = part.map_err(|e| {
-                S3AttemptError::Other(
+        .map(|produced| async move {
+            let admitted = produced.map_err(|e| match e {
+                multipart::PartProduceError::Io(e) => S3AttemptError::Other(
                     upload_file_error::SourceReadSnafu {
                         detail: e.to_string(),
                     }
                     .build(),
-                )
+                ),
+                multipart::PartProduceError::Acquire(source) => {
+                    S3AttemptError::Other(UploadFileError::from(source))
+                }
             })?;
-            let _slot = scheduler.acquire_request().await;
-            s3_upload_part_with_refresh(multipart_ctx, upload_id, part).await
+            s3_upload_part_with_refresh(
+                multipart_ctx,
+                upload_id,
+                admitted.part,
+                policy,
+                admitted.deadline,
+                &admitted.permit,
+            )
+            .await
         })
-        .buffer_unordered(scheduler.multipart().concurrency)
+        .buffer_unordered(multipart.concurrency)
         .try_collect()
         .await?;
 
@@ -1109,6 +1367,8 @@ async fn s3_client_from_creds(
     creds: CloudCredentials,
     policy: &RetryPolicy,
     shared: Option<&AwsSdkReqwestClient>,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<S3Client, S3AttemptError<UploadFileError>> {
     resolve_s3_client(
         Some(cache),
@@ -1116,6 +1376,8 @@ async fn s3_client_from_creds(
         SNOWFLAKE_UPLOAD_PROVIDER,
         policy,
         shared,
+        deadline,
+        permit,
     )
     .await
     .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))
@@ -1130,10 +1392,14 @@ async fn s3_upload_part_with_refresh(
     multipart_ctx: S3MultipartCtx<'_>,
     upload_id: &str,
     part: multipart::UploadPart,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<CompletedPart, S3AttemptError<UploadFileError>> {
     let number = part.number;
     let body = part.body;
     let upload_id = upload_id.to_string();
+    let policy = policy.clone();
     let outcome = execute_s3_with_sts_refresh(
         multipart_ctx.refresher,
         &multipart_ctx.stage_info.creds,
@@ -1141,6 +1407,7 @@ async fn s3_upload_part_with_refresh(
         move |creds| {
             let body = body.clone();
             let upload_id = upload_id.clone();
+            let policy = policy.clone();
             async move {
                 let client = s3_client_from_creds(
                     multipart_ctx.client_cache,
@@ -1148,6 +1415,8 @@ async fn s3_upload_part_with_refresh(
                     creds,
                     multipart_ctx.policy,
                     multipart_ctx.http_client,
+                    deadline,
+                    permit,
                 )
                 .await?;
                 upload_one_part(
@@ -1156,6 +1425,9 @@ async fn s3_upload_part_with_refresh(
                     multipart_ctx.key,
                     &upload_id,
                     multipart::UploadPart { number, body },
+                    &policy,
+                    deadline,
+                    permit,
                 )
                 .await
             }
@@ -1182,6 +1454,12 @@ async fn s3_complete_multipart_upload_with_refresh(
     upload_id: &str,
     completed: Vec<CompletedPart>,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
+    let deadline = Deadline::from_budget(multipart_ctx.policy.max_elapsed);
+    let permit = deadline
+        .acquire(multipart_ctx.transfer, RequestKind::CompleteMultipart)
+        .await
+        .map_err(|e| S3AttemptError::Other(UploadFileError::from(e)))?;
+    let permit_ref = &permit;
     let attempt = |creds: CloudCredentials| {
         let completed = completed.clone();
         let upload_id = upload_id.to_string();
@@ -1192,9 +1470,19 @@ async fn s3_complete_multipart_upload_with_refresh(
                 creds,
                 multipart_ctx.policy,
                 multipart_ctx.http_client,
+                deadline,
+                permit_ref,
             )
             .await?;
-            s3_complete_multipart_upload(&client, multipart_ctx, &upload_id, completed).await
+            s3_complete_multipart_upload(
+                &client,
+                multipart_ctx,
+                &upload_id,
+                completed,
+                deadline,
+                permit_ref,
+            )
+            .await
         }
     };
     let outcome = execute_s3_with_sts_refresh(
@@ -1225,6 +1513,8 @@ async fn s3_complete_multipart_upload(
     multipart_ctx: S3MultipartCtx<'_>,
     upload_id: &str,
     completed: Vec<CompletedPart>,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<UploadStatus, S3AttemptError<UploadFileError>> {
     let stage_info = multipart_ctx.stage_info;
     let s3_key = multipart_ctx.key;
@@ -1241,15 +1531,27 @@ async fn s3_complete_multipart_upload(
         upload_id = ?upload_id,
         "S3 CompleteMultipartUpload"
     );
-    let request = s3_client
-        .complete_multipart_upload()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .upload_id(upload_id)
-        .multipart_upload(completed_upload)
-        .set_if_none_match(if_none_match_for_write(overwrite));
-
-    match request.send().await {
+    let send_result = cloud_http::run_within_deadline(
+        multipart_ctx.policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(upload_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<UploadFileError>>(
+                s3_client
+                    .complete_multipart_upload()
+                    .bucket(stage_info.bucket.clone())
+                    .key(s3_key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed_upload)
+                    .set_if_none_match(if_none_match_for_write(overwrite))
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    match send_result {
         Ok(res) => {
             tracing::debug!("S3 CompleteMultipartUpload succeeded: {:?}", res);
             Ok(UploadStatus::Uploaded)
@@ -1285,12 +1587,16 @@ async fn s3_complete_multipart_upload(
 /// Uploads a single part and returns its `CompletedPart` (etag + number).
 /// Per-part bodies carry no metadata and disable payload signing, mirroring
 /// the single-PUT path and the reference connectors.
+#[allow(clippy::too_many_arguments)]
 async fn upload_one_part(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
     upload_id: &str,
     part: multipart::UploadPart,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<CompletedPart, S3AttemptError<UploadFileError>> {
     let part_number = part.number;
     let content_length = part.body.len() as i64;
@@ -1303,19 +1609,30 @@ async fn upload_one_part(
         part_number,
         "S3 UploadPart"
     );
-    match s3_client
-        .upload_part()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .upload_id(upload_id)
-        .part_number(part_number)
-        .body(body)
-        .set_content_length(Some(content_length))
-        .customize()
-        .disable_payload_signing()
-        .send()
-        .await
-    {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(upload_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<UploadFileError>>(
+                s3_client
+                    .upload_part()
+                    .bucket(stage_info.bucket.clone())
+                    .key(s3_key)
+                    .upload_id(upload_id)
+                    .part_number(part_number)
+                    .body(body)
+                    .set_content_length(Some(content_length))
+                    .customize()
+                    .disable_payload_signing()
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    match send_result {
         Ok(out) => Ok(CompletedPart::builder()
             .set_e_tag(out.e_tag().map(str::to_string))
             .part_number(part_number)
@@ -1341,6 +1658,9 @@ async fn s3_abort_multipart_upload(
     s3_key: &str,
     upload_id: &str,
 ) {
+    // Intentionally ungated progress-safety exception: cleanup must not wait
+    // behind saturated ordinary transfer slots. Admit only after reserved
+    // cleanup capacity or bounded cleanup priority exists.
     tracing::info!(
         method = "DELETE",
         bucket = %stage_info.bucket,
@@ -1381,7 +1701,7 @@ fn map_s3_error<E>(
     wrap: impl FnOnce(aws_sdk_s3::Error) -> E,
 ) -> S3AttemptError<E> {
     if is_expired_token_error(&aws_err) {
-        S3AttemptError::StsExpired(aws_err)
+        S3AttemptError::StsExpired(Box::new(aws_err))
     } else {
         S3AttemptError::Other(wrap(aws_err))
     }
@@ -1432,33 +1752,86 @@ impl S3DownloadBody {
 /// shared `StageInfoCache` rather than returned.
 ///
 /// A HEAD probe runs first (matching Python/JDBC/ODBC) to learn the object
-/// size and metadata: blobs at or above the scheduler's multipart threshold
+/// size and metadata: blobs at or above the multipart's multipart threshold
 /// are fetched with parallel ranged GETs into a tempfile; smaller ones take
 /// a single buffered GET. `cloud_byte_count` reflects the on-cloud
 /// (pre-decryption) byte count from the HEAD `Content-Length`.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
     base_policy: &RetryPolicy,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     unsafe_file_write: bool,
     spill_target: cloud_http::CloudSpillTarget<'_>,
     tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+) -> Result<S3Download, DownloadFileError> {
+    let deadline = Deadline::from_budget(base_policy.max_elapsed);
+    let file_permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
+    download_from_s3_admitted(
+        stage_info,
+        filename,
+        base_policy,
+        multipart,
+        unsafe_file_write,
+        spill_target,
+        tx,
+        transfer,
+        deadline,
+        file_permit,
+    )
+    .await
+}
+
+/// HEAD/whole-object GET vs ranged: ranged drops the file permit before
+/// per-range acquires so files + ranges stay within the command budget.
+enum S3DownloadPlan {
+    Ready(S3Download),
+    Ranged {
+        creds: CloudCredentials,
+        content_length: u64,
+        digest: Option<String>,
+        file_metadata: Option<EncryptedFileMetadata>,
+        chunk_size: u64,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn download_from_s3_admitted(
+    stage_info: &StageInfo,
+    filename: &str,
+    base_policy: &RetryPolicy,
+    multipart: MultipartParams,
+    unsafe_file_write: bool,
+    spill_target: cloud_http::CloudSpillTarget<'_>,
+    tx: TransferCtx<'_>,
+    transfer: &TransferOp,
+    deadline: Deadline,
+    file_permit: RequestPermit,
 ) -> Result<S3Download, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
+    let local_s3_client_cache = BatchS3ClientCache::new();
+    let s3_client_cache = tx.s3_client_cache.unwrap_or(&local_s3_client_cache);
 
     let attempt = |creds: CloudCredentials| {
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         let policy = policy.clone();
+        let file_permit = &file_permit;
         async move {
             let s3_client = resolve_s3_client(
-                tx.s3_client_cache,
+                Some(s3_client_cache),
                 &stage_info,
                 SNOWFLAKE_DOWNLOAD_PROVIDER,
                 &policy,
                 tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
+                deadline,
+                file_permit,
             )
             .await
             .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
@@ -1466,73 +1839,127 @@ pub(super) async fn download_from_s3(
                 &s3_client,
                 &stage_info,
                 &s3_key,
-                scheduler,
-                unsafe_file_write,
-                spill_target,
+                multipart,
+                &policy,
+                deadline,
+                file_permit,
             )
             .await
         }
     };
 
-    run_s3_with_sts_refresh(
+    match run_s3_with_sts_refresh(
         tx.refresher,
         &stage_info.creds,
         |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
         attempt,
     )
-    .await
+    .await?
+    {
+        S3DownloadPlan::Ready(download) => Ok(download),
+        S3DownloadPlan::Ranged {
+            creds,
+            content_length,
+            digest,
+            file_metadata,
+            chunk_size,
+        } => {
+            drop(file_permit);
+            tracing::debug!(
+                "S3 ranged download: key={s3_key:?} content_length={content_length} \
+                 chunk_size={chunk_size} concurrency={}",
+                multipart.concurrency
+            );
+            let spilled = run_s3_with_sts_refresh(
+                tx.refresher,
+                &creds,
+                |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
+                |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
+                |creds: CloudCredentials| {
+                    let stage_info = with_creds(stage_info, creds);
+                    let s3_key = s3_key.clone();
+                    let policy = policy.clone();
+                    let transfer = transfer.clone();
+                    async move {
+                        let s3_client = resolve_s3_client_unprobed(
+                            Some(s3_client_cache),
+                            &stage_info,
+                            SNOWFLAKE_DOWNLOAD_PROVIDER,
+                            &policy,
+                            tx.http_client.and_then(cloud_http::StorageHttpClient::s3),
+                        )
+                        .await
+                        .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+                        s3_range_download(
+                            &s3_client,
+                            &stage_info,
+                            &s3_key,
+                            content_length,
+                            chunk_size,
+                            multipart,
+                            unsafe_file_write,
+                            spill_target,
+                            &policy,
+                            &transfer,
+                        )
+                        .await
+                    }
+                },
+            )
+            .await?;
+            Ok(S3Download {
+                body: S3DownloadBody::Spilled(spilled),
+                digest,
+                file_metadata,
+                cloud_byte_count: content_length as i64,
+            })
+        }
+    }
 }
 
-/// One download attempt: HEAD for size + metadata, then route to a single
-/// buffered GET (small) or parallel ranged GETs into a tempfile (large). Run
-/// inside the STS-refresh loop, so an `ExpiredToken` at any step retries the
-/// whole download with fresh creds.
+/// One download attempt: HEAD for size + metadata, then a single buffered GET
+/// for small objects. Large objects return [`S3DownloadPlan::Ranged`] so the
+/// caller can drop the file permit before per-range acquires. Run inside the
+/// STS-refresh loop, so an `ExpiredToken` on HEAD or the whole GET retries
+/// with fresh creds.
+#[allow(clippy::too_many_arguments)]
 async fn s3_download_attempt(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-    scheduler: &TransferScheduler,
-    unsafe_file_write: bool,
-    spill_target: cloud_http::CloudSpillTarget<'_>,
-) -> Result<S3Download, S3AttemptError<DownloadFileError>> {
-    let head = s3_head_object(s3_client, stage_info, s3_key, scheduler).await?;
+    multipart: MultipartParams,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    file_permit: &RequestPermit,
+) -> Result<S3DownloadPlan, S3AttemptError<DownloadFileError>> {
+    let head = s3_head_object(s3_client, stage_info, s3_key, policy, deadline, file_permit).await?;
     let content_length = head.content_length().unwrap_or(0).max(0) as u64;
     let metadata_map = head.metadata().cloned().unwrap_or_default();
     let (digest, file_metadata) =
         parse_s3_file_metadata(&metadata_map).map_err(S3AttemptError::Other)?;
 
-    let body = if scheduler.multipart().should_chunk(content_length) {
+    if multipart.should_chunk(content_length) {
         let chunk_size = multipart::compute_part_size(content_length, &MultipartConfig::S3)
             .context(download_file_error::FileTooLargeSnafu)
             .map_err(S3AttemptError::Other)?;
-        tracing::debug!(
-            "S3 ranged download: key={s3_key:?} content_length={content_length} \
-             chunk_size={chunk_size} concurrency={}",
-            scheduler.multipart().concurrency
-        );
-        let spilled = s3_range_download(
-            s3_client,
-            stage_info,
-            s3_key,
+        return Ok(S3DownloadPlan::Ranged {
+            creds: stage_info.creds.clone(),
             content_length,
+            digest,
+            file_metadata,
             chunk_size,
-            scheduler,
-            unsafe_file_write,
-            spill_target,
-        )
-        .await?;
-        S3DownloadBody::Spilled(spilled)
-    } else {
-        S3DownloadBody::InMemory(s3_get_whole(s3_client, stage_info, s3_key, scheduler).await?)
-    };
+        });
+    }
 
-    Ok(S3Download {
-        body,
+    Ok(S3DownloadPlan::Ready(S3Download {
+        body: S3DownloadBody::InMemory(
+            s3_get_whole(s3_client, stage_info, s3_key, policy, deadline, file_permit).await?,
+        ),
         digest,
         file_metadata,
         cloud_byte_count: content_length as i64,
-    })
+    }))
 }
 
 /// A streaming S3 GET, opened but not drained: the `ByteStream` body plus
@@ -1543,13 +1970,13 @@ async fn s3_download_attempt(
 /// `content_length`/`metadata`.
 pub(super) struct S3StreamingDownload {
     pub(super) body: ByteStream,
+    pub(super) permit: RequestPermit,
     pub(super) digest: Option<String>,
     pub(super) file_metadata: Option<EncryptedFileMetadata>,
     /// On-cloud byte count from the GET's `Content-Length`. `0` if absent
     /// (chunked transfer-encoding) or the object is empty — indistinguishable
     /// here, but S3 GETs practically always report a length.
     pub(super) cloud_byte_count: i64,
-    pub(super) slot: super::scheduler::RequestTicket,
 }
 
 /// Opens a streaming GET against S3, returning the body as a `ByteStream`
@@ -1564,32 +1991,58 @@ pub(super) async fn download_from_s3_streaming(
     filename: &str,
     base_policy: &RetryPolicy,
     refresher: Option<&dyn StageInfoRefresher>,
-    scheduler: &TransferScheduler,
+    transfer: &TransferOp,
 ) -> Result<S3StreamingDownload, DownloadFileError> {
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
     let policy = s3_retry_policy(base_policy);
+    let deadline = Deadline::from_budget(policy.max_elapsed);
+    let permit = deadline
+        .acquire(transfer, RequestKind::WholeObjectGet)
+        .await?;
+    let permit_ref = &permit;
 
     let attempt = |creds: CloudCredentials| {
         let stage_info = with_creds(stage_info, creds);
         let s3_key = s3_key.clone();
         let policy = policy.clone();
         async move {
-            let s3_client =
-                create_s3_client(&stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER, &policy, None)
-                    .await
-                    .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
-            s3_get_streaming(&s3_client, &stage_info, &s3_key, scheduler).await
+            let s3_client = create_s3_client(
+                &stage_info,
+                SNOWFLAKE_DOWNLOAD_PROVIDER,
+                &policy,
+                None,
+                deadline,
+                permit_ref,
+            )
+            .await
+            .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            s3_get_streaming(
+                &s3_client,
+                &stage_info,
+                &s3_key,
+                &policy,
+                deadline,
+                permit_ref,
+            )
+            .await
         }
     };
 
-    run_s3_with_sts_refresh(
+    let (body, digest, file_metadata, cloud_byte_count) = run_s3_with_sts_refresh(
         refresher,
         &stage_info.creds,
         |e| download_file_error::StageInfoRefreshSnafu.into_error(e),
         |aws_err| download_file_error::S3DownloadSnafu.into_error(aws_err),
         attempt,
     )
-    .await
+    .await?;
+    Ok(S3StreamingDownload {
+        body,
+        permit,
+        digest,
+        file_metadata,
+        cloud_byte_count,
+    })
 }
 
 /// One streaming GET attempt: issues `GetObject`, returns the body stream
@@ -1600,22 +2053,42 @@ async fn s3_get_streaming(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-    scheduler: &TransferScheduler,
-) -> Result<S3StreamingDownload, S3AttemptError<DownloadFileError>> {
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
+) -> Result<
+    (
+        ByteStream,
+        Option<String>,
+        Option<EncryptedFileMetadata>,
+        i64,
+    ),
+    S3AttemptError<DownloadFileError>,
+> {
     tracing::info!(
         method = "GET",
         bucket = %stage_info.bucket,
         key = ?s3_key,
         "S3 GetObject (streaming)"
     );
-    let slot = scheduler.acquire_request().await;
-    let out = match s3_client
-        .get_object()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .send()
-        .await
-    {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(download_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<DownloadFileError>>(
+                s3_client
+                    .get_object()
+                    .bucket(stage_info.bucket.clone())
+                    .key(s3_key)
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    let out = match send_result {
         Ok(out) => out,
         Err(sdk_err) => {
             tracing::warn!(
@@ -1635,13 +2108,7 @@ async fn s3_get_streaming(
     let (digest, file_metadata) =
         parse_s3_file_metadata(&metadata_map).map_err(S3AttemptError::Other)?;
 
-    Ok(S3StreamingDownload {
-        body: out.body,
-        digest,
-        file_metadata,
-        cloud_byte_count,
-        slot,
-    })
+    Ok((out.body, digest, file_metadata, cloud_byte_count))
 }
 
 /// Parses the `sfc-digest` and the CSE metadata headers (`x-amz-matdesc` /
@@ -1684,7 +2151,9 @@ async fn s3_head_object(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-    scheduler: &TransferScheduler,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<aws_sdk_s3::operation::head_object::HeadObjectOutput, S3AttemptError<DownloadFileError>>
 {
     tracing::info!(
@@ -1693,14 +2162,24 @@ async fn s3_head_object(
         key = ?s3_key,
         "S3 HeadObject"
     );
-    let _slot = scheduler.acquire_request().await;
-    match s3_client
-        .head_object()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .send()
-        .await
-    {
+    let send_result = cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(download_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            Ok::<_, S3AttemptError<DownloadFileError>>(
+                s3_client
+                    .head_object()
+                    .bucket(stage_info.bucket.clone())
+                    .key(s3_key)
+                    .send()
+                    .await,
+            )
+        },
+    )
+    .await?;
+    match send_result {
         Ok(out) => Ok(out),
         Err(sdk_err) => {
             tracing::warn!(
@@ -1734,7 +2213,9 @@ async fn s3_get_whole(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
-    scheduler: &TransferScheduler,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     tracing::info!(
         method = "GET",
@@ -1742,29 +2223,36 @@ async fn s3_get_whole(
         key = ?s3_key,
         "S3 GetObject"
     );
-    // A whole-object GET costs the batch one slot, same as one ranged GET.
-    let _slot = scheduler.acquire_request().await;
-    let out = match s3_client
-        .get_object()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .send()
-        .await
-    {
-        Ok(out) => out,
-        Err(sdk_err) => {
-            tracing::warn!(
-                cause = std::any::type_name_of_val(&sdk_err),
-                bucket = %stage_info.bucket,
-                key = ?s3_key,
-                "S3 GetObject failed"
-            );
-            return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
-                download_file_error::S3DownloadSnafu.into_error(e)
-            }));
-        }
-    };
-    collect_s3_body(out).await
+    cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(download_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            let out = match s3_client
+                .get_object()
+                .bucket(stage_info.bucket.clone())
+                .key(s3_key)
+                .send()
+                .await
+            {
+                Ok(out) => out,
+                Err(sdk_err) => {
+                    tracing::warn!(
+                        cause = std::any::type_name_of_val(&sdk_err),
+                        bucket = %stage_info.bucket,
+                        key = ?s3_key,
+                        "S3 GetObject failed"
+                    );
+                    return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
+                        download_file_error::S3DownloadSnafu.into_error(e)
+                    }));
+                }
+            };
+            collect_s3_body(out).await
+        },
+    )
+    .await
 }
 
 /// Downloads the object with parallel ranged GETs into a pre-allocated file,
@@ -1779,9 +2267,11 @@ async fn s3_range_download(
     s3_key: &str,
     content_length: u64,
     chunk_size: u64,
-    scheduler: &TransferScheduler,
+    multipart: MultipartParams,
     unsafe_file_write: bool,
     target: cloud_http::CloudSpillTarget<'_>,
+    policy: &RetryPolicy,
+    transfer: &TransferOp,
 ) -> Result<cloud_http::CloudSpilledBody, S3AttemptError<DownloadFileError>> {
     let mk_temp_err = |detail: String| {
         S3AttemptError::Other(download_file_error::TempFileSnafu { detail }.build())
@@ -1790,12 +2280,22 @@ async fn s3_range_download(
     cloud_http::assemble_ranged_download(
         content_length,
         chunk_size,
-        scheduler,
+        multipart.concurrency,
         target,
         unsafe_file_write,
         mk_temp_err,
         mk_temp_err,
-        move |range| async move { s3_get_range(s3_client, stage_info, s3_key, &range).await },
+        move |range| async move {
+            let deadline = Deadline::from_budget(policy.max_elapsed);
+            let permit = deadline
+                .acquire(transfer, RequestKind::RangedGet)
+                .await
+                .map_err(|e| S3AttemptError::Other(DownloadFileError::from(e)))?;
+            s3_get_range(
+                s3_client, stage_info, s3_key, &range, policy, deadline, &permit,
+            )
+            .await
+        },
     )
     .await
 }
@@ -1807,6 +2307,9 @@ async fn s3_get_range(
     stage_info: &StageInfo,
     s3_key: &str,
     range: &multipart::DownloadRange,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
     tracing::info!(
@@ -1816,28 +2319,37 @@ async fn s3_get_range(
         range = %range_header,
         "S3 GetObject (ranged)"
     );
-    let out = match s3_client
-        .get_object()
-        .bucket(stage_info.bucket.clone())
-        .key(s3_key)
-        .range(range_header)
-        .send()
-        .await
-    {
-        Ok(out) => out,
-        Err(sdk_err) => {
-            tracing::warn!(
-                cause = std::any::type_name_of_val(&sdk_err),
-                bucket = %stage_info.bucket,
-                key = ?s3_key,
-                "S3 GetObject (ranged) failed"
-            );
-            return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
-                download_file_error::S3DownloadSnafu.into_error(e)
-            }));
-        }
-    };
-    collect_s3_body(out).await
+    cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| S3AttemptError::Other(download_deadline_error(elapsed, budget)),
+        |_remaining_policy| async move {
+            let out = match s3_client
+                .get_object()
+                .bucket(stage_info.bucket.clone())
+                .key(s3_key)
+                .range(range_header)
+                .send()
+                .await
+            {
+                Ok(out) => out,
+                Err(sdk_err) => {
+                    tracing::warn!(
+                        cause = std::any::type_name_of_val(&sdk_err),
+                        bucket = %stage_info.bucket,
+                        key = ?s3_key,
+                        "S3 GetObject (ranged) failed"
+                    );
+                    return Err(map_s3_error(aws_sdk_s3::Error::from(sdk_err), |e| {
+                        download_file_error::S3DownloadSnafu.into_error(e)
+                    }));
+                }
+            };
+            collect_s3_body(out).await
+        },
+    )
+    .await
 }
 
 /// Returns a retry policy tuned for S3 file-transfer operations.
@@ -1879,7 +2391,8 @@ fn to_aws_retry_config(policy: &RetryPolicy) -> AwsRetryConfig {
         .with_max_backoff(policy.backoff.cap)
 }
 
-/// Builds the SDK's `TimeoutConfig` from our policy.
+/// Builds the SDK's `TimeoutConfig` from our policy. Applied once on the
+/// shared S3 client — not on per-request `config_override`.
 ///
 /// - `operation_attempt_timeout` bounds a single try (so retries are actually
 ///   triggered on stuck connections rather than hanging forever).
@@ -1945,7 +2458,48 @@ async fn resolve_s3_client(
     provider_name: &'static str,
     policy: &RetryPolicy,
     shared_http: Option<&AwsSdkReqwestClient>,
+    deadline: Deadline,
+    permit: &RequestPermit,
 ) -> Result<S3Client, CreateS3ClientError> {
+    resolve_or_create_s3_client(cache, stage_info, |info| {
+        Box::pin(create_s3_client(
+            info,
+            provider_name,
+            policy,
+            shared_http,
+            deadline,
+            permit,
+        ))
+    })
+    .await
+}
+
+async fn resolve_s3_client_unprobed(
+    cache: Option<&BatchS3ClientCache>,
+    stage_info: &StageInfo,
+    provider_name: &'static str,
+    policy: &RetryPolicy,
+    shared_http: Option<&AwsSdkReqwestClient>,
+) -> Result<S3Client, CreateS3ClientError> {
+    resolve_or_create_s3_client(cache, stage_info, |info| {
+        Box::pin(create_s3_client_unprobed(
+            info,
+            provider_name,
+            policy,
+            shared_http,
+        ))
+    })
+    .await
+}
+
+async fn resolve_or_create_s3_client<'a, F>(
+    cache: Option<&'a BatchS3ClientCache>,
+    stage_info: &'a StageInfo,
+    create: impl FnOnce(&'a StageInfo) -> F,
+) -> Result<S3Client, CreateS3ClientError>
+where
+    F: Future<Output = Result<S3Client, CreateS3ClientError>>,
+{
     if let (Some(cache), Some(fingerprint)) = (cache, s3_creds_fingerprint(&stage_info.creds)) {
         let mut guard = cache.inner.lock().await;
         if let Some(cached) = guard.as_ref()
@@ -1954,7 +2508,7 @@ async fn resolve_s3_client(
             return Ok(cached.client.clone());
         }
 
-        let client = create_s3_client(stage_info, provider_name, policy, shared_http).await?;
+        let client = create(stage_info).await?;
         *guard = Some(CachedS3Client {
             creds_fingerprint: fingerprint,
             client: client.clone(),
@@ -1962,15 +2516,15 @@ async fn resolve_s3_client(
         return Ok(client);
     }
 
-    create_s3_client(stage_info, provider_name, policy, shared_http).await
+    create(stage_info).await
 }
 
-async fn create_s3_client(
+async fn load_s3_sdk_config(
     stage_info: &StageInfo,
     provider_name: &'static str,
     policy: &RetryPolicy,
     shared: Option<&AwsSdkReqwestClient>,
-) -> Result<S3Client, CreateS3ClientError> {
+) -> Result<SdkConfig, CreateS3ClientError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
         ref aws_secret_key,
@@ -2009,15 +2563,41 @@ async fn create_s3_client(
         .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
         .retry_config(to_aws_retry_config(policy))
+        // Client-level only. A per-request TimeoutConfig overlay, especially
+        // `operation_attempt_timeout`, regresses S3 PUT/GET throughput.
         .timeout_config(to_aws_timeout_config(policy))
         .http_client(crate::tls::aws_http_client::reqwest_aws_http_client(
             http_client,
         ));
-    let config = loader.load().await;
+    Ok(loader.load().await)
+}
 
-    let accelerate = resolve_acceleration(stage_info, &config).await;
+async fn create_s3_client(
+    stage_info: &StageInfo,
+    provider_name: &'static str,
+    policy: &RetryPolicy,
+    shared: Option<&AwsSdkReqwestClient>,
+    deadline: Deadline,
+    permit: &RequestPermit,
+) -> Result<S3Client, CreateS3ClientError> {
+    let config = load_s3_sdk_config(stage_info, provider_name, policy, shared).await?;
+    let accelerate = resolve_acceleration(stage_info, &config, policy, deadline, permit).await;
     let endpoint_url = resolve_s3_endpoint(stage_info, accelerate);
     Ok(build_s3_client(&config, endpoint_url))
+}
+
+async fn create_s3_client_unprobed(
+    stage_info: &StageInfo,
+    provider_name: &'static str,
+    policy: &RetryPolicy,
+    shared: Option<&AwsSdkReqwestClient>,
+) -> Result<S3Client, CreateS3ClientError> {
+    let config = load_s3_sdk_config(stage_info, provider_name, policy, shared).await?;
+    let accelerate = cached_acceleration(&stage_info.bucket).unwrap_or(false);
+    Ok(build_s3_client(
+        &config,
+        resolve_s3_endpoint(stage_info, accelerate),
+    ))
 }
 
 /// Builds an `S3Client` from a shared `SdkConfig`, optionally pinning an
@@ -2040,7 +2620,13 @@ fn build_s3_client(config: &SdkConfig, endpoint_url: Option<String>) -> S3Client
 /// global endpoint. Mirrors the Python connector's behaviour: probe the
 /// bucket once, cache the result, never probe internal stages or stages
 /// that already pin a custom endpoint (FIPS / VPCE).
-async fn resolve_acceleration(stage_info: &StageInfo, config: &SdkConfig) -> bool {
+async fn resolve_acceleration(
+    stage_info: &StageInfo,
+    config: &SdkConfig,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
+) -> bool {
     if should_skip_acceleration_probe(stage_info) {
         return false;
     }
@@ -2052,7 +2638,24 @@ async fn resolve_acceleration(stage_info: &StageInfo, config: &SdkConfig) -> boo
     // with the accelerate endpoint instead.
     let probe_endpoint = resolve_s3_endpoint(stage_info, false);
     let probe_client = build_s3_client(config, probe_endpoint);
-    let enabled = probe_acceleration_enabled(&probe_client, &stage_info.bucket).await;
+    let enabled = match probe_acceleration_enabled(
+        &probe_client,
+        &stage_info.bucket,
+        policy,
+        deadline,
+        permit,
+    )
+    .await
+    {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::debug!(
+                "S3 transfer-acceleration probe failed for bucket {}: {error:?}; treating as disabled",
+                stage_info.bucket
+            );
+            false
+        }
+    };
     store_acceleration(&stage_info.bucket, enabled);
     enabled
 }
@@ -2069,21 +2672,39 @@ fn should_skip_acceleration_probe(stage_info: &StageInfo) -> bool {
 /// response) is treated as "disabled" so the caller falls through to the
 /// regular endpoint — acceleration is a throughput optimisation, not a
 /// correctness requirement.
-async fn probe_acceleration_enabled(client: &S3Client, bucket: &str) -> bool {
-    match client
-        .get_bucket_accelerate_configuration()
-        .bucket(bucket)
-        .send()
-        .await
-    {
-        Ok(out) => matches!(out.status(), Some(BucketAccelerateStatus::Enabled)),
-        Err(e) => {
-            tracing::debug!(
-                "S3 transfer-acceleration probe failed for bucket {bucket}: {e}; treating as disabled"
-            );
-            false
-        }
-    }
+async fn probe_acceleration_enabled(
+    client: &S3Client,
+    bucket: &str,
+    policy: &RetryPolicy,
+    deadline: Deadline,
+    permit: &RequestPermit,
+) -> Result<bool, CreateS3ClientError> {
+    cloud_http::run_within_deadline(
+        policy,
+        deadline,
+        permit,
+        |elapsed, budget| CreateS3ClientError::DeadlineExceeded { elapsed, budget },
+        |_remaining_policy| async move {
+            match client
+                .get_bucket_accelerate_configuration()
+                .bucket(bucket)
+                .send()
+                .await
+            {
+                Ok(out) => Ok(matches!(
+                    out.status(),
+                    Some(BucketAccelerateStatus::Enabled)
+                )),
+                Err(e) => {
+                    tracing::debug!(
+                        "S3 transfer-acceleration probe failed for bucket {bucket}: {e}; treating as disabled"
+                    );
+                    Ok(false)
+                }
+            }
+        },
+    )
+    .await
 }
 
 /// Process-wide cache of probe results keyed by bucket name. Buckets very
@@ -2096,17 +2717,12 @@ fn acceleration_cache() -> &'static Mutex<HashMap<String, bool>> {
 }
 
 fn cached_acceleration(bucket: &str) -> Option<bool> {
-    acceleration_cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(bucket)
-        .copied()
+    acceleration_cache().lock_recover().get(bucket).copied()
 }
 
 fn store_acceleration(bucket: &str, enabled: bool) {
     acceleration_cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .lock_recover()
         .insert(bucket.to_string(), enabled);
 }
 
@@ -2158,6 +2774,22 @@ fn regional_s3_endpoint(region: &str) -> String {
     format!("https://s3.{region}.{suffix}")
 }
 
+fn upload_deadline_error(elapsed: Duration, budget: Duration) -> UploadFileError {
+    upload_file_error::DeadlineExceededSnafu { elapsed, budget }.build()
+}
+
+fn upload_admission_error(source: AcquireError) -> UploadFileError {
+    upload_file_error::AdmissionSnafu.into_error(source)
+}
+
+fn download_deadline_error(elapsed: Duration, budget: Duration) -> DownloadFileError {
+    download_file_error::DeadlineExceededSnafu { elapsed, budget }.build()
+}
+
+fn download_admission_error(source: AcquireError) -> DownloadFileError {
+    download_file_error::AdmissionSnafu.into_error(source)
+}
+
 /// Error returned when `create_s3_client` cannot produce an `S3Client`: the stage
 /// carries non-S3 credentials, or the TLS/proxy-configured HTTP client failed to
 /// build (mirroring Azure/GCS, which also surface a
@@ -2166,6 +2798,7 @@ fn regional_s3_endpoint(region: &str) -> String {
 enum CreateS3ClientError {
     MissingCredentials,
     HttpClient(crate::tls::error::TlsError),
+    DeadlineExceeded { elapsed: Duration, budget: Duration },
 }
 
 impl From<CreateS3ClientError> for UploadFileError {
@@ -2176,6 +2809,9 @@ impl From<CreateS3ClientError> for UploadFileError {
             }
             CreateS3ClientError::HttpClient(source) => {
                 upload_file_error::HttpClientBuildSnafu.into_error(source)
+            }
+            CreateS3ClientError::DeadlineExceeded { elapsed, budget } => {
+                upload_deadline_error(elapsed, budget)
             }
         }
     }
@@ -2190,6 +2826,9 @@ impl From<CreateS3ClientError> for DownloadFileError {
             CreateS3ClientError::HttpClient(source) => {
                 download_file_error::HttpClientBuildSnafu.into_error(source)
             }
+            CreateS3ClientError::DeadlineExceeded { elapsed, budget } => {
+                download_deadline_error(elapsed, budget)
+            }
         }
     }
 }
@@ -2199,6 +2838,19 @@ impl From<CreateS3ClientError> for DownloadFileError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum UploadFileError {
+    #[snafu(display("S3 request deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("S3 request admission failed"))]
+    Admission {
+        source: crate::governor::AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to open upload source for S3 PUT: {detail}"))]
     SourceOpen {
         detail: String,
@@ -2283,6 +2935,19 @@ pub enum UploadFileError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum DownloadFileError {
+    #[snafu(display("S3 request deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("S3 request admission failed"))]
+    Admission {
+        source: crate::governor::AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
@@ -2342,16 +3007,43 @@ pub enum DownloadFileError {
     },
 }
 
+impl From<AcquireWaitError> for UploadFileError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => upload_admission_error(source),
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                upload_deadline_error(elapsed, budget)
+            }
+        }
+    }
+}
+
+impl From<AcquireWaitError> for DownloadFileError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => download_admission_error(source),
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                download_deadline_error(elapsed, budget)
+            }
+        }
+    }
+}
+
 // --- Unit tests ---
 
 #[cfg(test)]
 mod tests {
-    use super::super::internal::test_scheduler;
+    use super::super::governor_test_util::{
+        notified_soon, start_stalled_206_range_server, wait_until,
+    };
     use super::super::multipart::MultipartParams;
     use super::super::prepared_upload_with_digest;
     use super::*;
     use crate::config::retry::RetryPolicy;
+    use crate::governor::Governor;
     use bytes::Bytes;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::sync::Notify;
 
     fn base_policy() -> RetryPolicy {
         use crate::config::param_store::ParamStore;
@@ -2369,6 +3061,33 @@ mod tests {
         p.backoff.base = Duration::ZERO;
         p.backoff.cap = Duration::ZERO;
         p
+    }
+
+    #[tokio::test]
+    async fn s3_stream_producer_holds_permit_until_abort() {
+        let governor = Governor::try_with_capacity(1).expect("test governor");
+        let producer_op = governor.register_command(32);
+        let waiter_op = governor.register_command(32);
+        let permit = producer_op
+            .acquire(RequestKind::WholeObjectGet)
+            .await
+            .expect("producer permit");
+        let pending = futures::stream::pending::<Result<Frame<Bytes>, std::io::Error>>();
+        let body = ByteStream::new(SdkBody::from_body_1_x(StreamBody::new(pending)));
+        let (_reader, abort) = cloud_http::spawn_s3_byte_stream_producer(body, permit);
+        let waiter =
+            tokio::spawn(async move { waiter_op.acquire(RequestKind::WholeObjectGet).await });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        abort.abort();
+        let waiter_permit = waiter
+            .await
+            .expect("waiter task join")
+            .expect("waiter permit after abort");
+        assert_eq!(governor.in_flight(), 1);
+        drop(waiter_permit);
+        assert_eq!(governor.in_flight(), 0);
     }
 
     #[test]
@@ -2498,6 +3217,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
         }
     }
@@ -2853,6 +3573,7 @@ mod tests {
 
     async fn assert_put_sends_unsigned_payload(prepared: PreparedUpload) {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
 
         Mock::given(method("PUT"))
             .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
@@ -2871,6 +3592,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2915,6 +3637,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("upload should succeed against the mock");
@@ -2949,6 +3672,7 @@ mod tests {
         use wiremock::Request;
 
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        let transfer = TransferOp::isolated_for_tests();
         tmp.write_all(&vec![b'x'; 100 * 1024]).unwrap(); // >64 KiB → multiple body frames
         tmp.flush().unwrap();
         let path = tmp.path().to_path_buf();
@@ -2996,6 +3720,7 @@ mod tests {
                 &base_policy(),
                 MultipartParams::default(),
                 TransferCtx::default(),
+                &transfer,
             ),
         )
         .await
@@ -3022,6 +3747,7 @@ mod tests {
         use wiremock::Request;
 
         let plaintext = b"client-side-encrypted S3 upload body".to_vec();
+        let transfer = TransferOp::isolated_for_tests();
         let material = crate::file_manager::types::EncryptionMaterial {
             query_stage_master_key: crate::sensitive::SensitiveString::from(
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 32]),
@@ -3084,6 +3810,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("encrypted S3 upload should succeed against the mock");
@@ -3151,6 +3878,7 @@ mod tests {
             &zero_backoff_policy_with_attempts(2),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("the SDK should retry the transient 500 and the upload should succeed");
@@ -3213,6 +3941,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn skip_when_overwrite_false_and_object_exists() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(&mock, ResponseTemplate::new(200), 0).await;
 
         let status = upload_to_s3_or_skip(
@@ -3224,6 +3953,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -3262,6 +3992,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a conditional PutObject conflict is a normal skip");
@@ -3307,6 +4038,7 @@ mod tests {
             &zero_backoff_policy_with_attempts(2),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a transient conditional conflict should retry successfully");
@@ -3354,6 +4086,7 @@ mod tests {
             &zero_backoff_policy_with_attempts(2),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a retry that discovers an existing object should skip");
@@ -3397,6 +4130,7 @@ mod tests {
             &zero_backoff_policy_with_attempts(99),
             MultipartParams::default(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -3418,6 +4152,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn no_head_issued_when_overwrite_true_and_skip_match_false() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         Mock::given(method("HEAD"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
@@ -3438,6 +4173,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3462,6 +4198,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn skip_when_overwrite_true_and_skip_match_true_and_digests_match() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(
             &mock,
             ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "matching-digest"),
@@ -3478,6 +4215,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -3490,6 +4228,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_when_overwrite_true_and_skip_match_true_and_digests_differ() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(
             &mock,
             ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
@@ -3506,6 +4245,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3517,6 +4257,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_when_skip_match_true_and_head_404() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(&mock, ResponseTemplate::new(404), 1).await;
 
         let status = upload_to_s3_or_skip(
@@ -3528,6 +4269,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3541,6 +4283,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_when_skip_match_true_and_head_200_without_sfc_digest_header() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(&mock, ResponseTemplate::new(200), 1).await;
 
         let status = upload_to_s3_or_skip(
@@ -3552,6 +4295,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload should succeed against the mock");
@@ -3567,6 +4311,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn skip_when_overwrite_false_and_object_exists_ignores_digest() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         mount_head_and_put(
             &mock,
             ResponseTemplate::new(200).insert_header("x-amz-meta-sfc-digest", "remote-digest"),
@@ -3586,6 +4331,7 @@ mod tests {
             &base_policy(),
             MultipartParams::default(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -3606,6 +4352,7 @@ mod tests {
         const OBJECT_PATH: &str = "/test-bucket/prefix/skip-mp-content-match.dat";
 
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         Mock::given(method("HEAD"))
             .and(path(OBJECT_PATH))
             .respond_with(
@@ -3647,6 +4394,7 @@ mod tests {
             &base_policy(),
             always_multipart(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("upload-or-skip should succeed");
@@ -3680,6 +4428,22 @@ mod tests {
         build_s3_client(&config, Some(uri.to_string()))
     }
 
+    async fn probe_for_test(client: &S3Client, bucket: &str) -> bool {
+        let transfer = TransferOp::isolated_for_tests();
+        let deadline = Deadline::from_budget(base_policy().max_elapsed);
+        let permit = deadline
+            .acquire(&transfer, RequestKind::WholeObjectPut)
+            .await
+            .expect("probe permit");
+        match probe_acceleration_enabled(client, bucket, &base_policy(), deadline, &permit).await {
+            Ok(enabled) => enabled,
+            Err(error) => {
+                tracing::debug!("probe_for_test treating error as disabled: {error:?}");
+                false
+            }
+        }
+    }
+
     const ACCELERATE_ENABLED_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></AccelerateConfiguration>"#;
 
@@ -3698,7 +4462,7 @@ mod tests {
             .await;
 
         let client = build_probe_client_against(&mock.uri()).await;
-        assert!(probe_acceleration_enabled(&client, "probe-enabled-bkt").await);
+        assert!(probe_for_test(&client, "probe-enabled-bkt").await);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3714,7 +4478,7 @@ mod tests {
             .await;
 
         let client = build_probe_client_against(&mock.uri()).await;
-        assert!(!probe_acceleration_enabled(&client, "probe-suspended-bkt").await);
+        assert!(!probe_for_test(&client, "probe-suspended-bkt").await);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3729,7 +4493,7 @@ mod tests {
             .await;
 
         let client = build_probe_client_against(&mock.uri()).await;
-        assert!(!probe_acceleration_enabled(&client, "probe-denied-bkt").await);
+        assert!(!probe_for_test(&client, "probe-denied-bkt").await);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3751,7 +4515,7 @@ mod tests {
         let bucket = "probe-cache-bkt-isolated";
 
         let client = build_probe_client_against(&mock.uri()).await;
-        let probed = probe_acceleration_enabled(&client, bucket).await;
+        let probed = probe_for_test(&client, bucket).await;
         store_acceleration(bucket, probed);
 
         // Subsequent resolutions read the cache and never reach the mock.
@@ -3797,6 +4561,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
         }
     }
@@ -3859,6 +4624,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_runs_create_parts_complete() {
         let mock = MockServer::start().await;
+        let transfer = crate::governor::Governor::new().register_command(1);
 
         Mock::given(method("POST"))
             .and(query_param("uploads", ""))
@@ -3903,6 +4669,7 @@ mod tests {
             &base_policy_with_attempts(1),
             always_multipart(),
             TransferCtx::default(),
+            &transfer,
         )
         .await
         .expect("multipart upload should succeed against the mock");
@@ -3997,6 +4764,7 @@ mod tests {
             &base_policy_with_attempts(1),
             always_multipart(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("a conditional multipart completion conflict is a normal skip");
@@ -4065,6 +4833,7 @@ mod tests {
             &zero_backoff_policy_with_attempts(2),
             always_multipart(),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("multipart conflict should abort and restart successfully");
@@ -4079,6 +4848,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn s3_multipart_upload_aborts_on_part_failure() {
         let mock = MockServer::start().await;
+        let transfer = TransferOp::isolated_for_tests();
         let aborts = Arc::new(AtomicUsize::new(0));
 
         Mock::given(method("POST"))
@@ -4122,6 +4892,7 @@ mod tests {
             &base_policy_with_attempts(1), // single attempt: fail fast, no SDK retry storm
             always_multipart(),
             TransferCtx::default(),
+            &transfer,
         )
         .await;
 
@@ -4189,6 +4960,7 @@ mod tests {
             &base_policy_with_attempts(1),
             always_multipart(),
             TransferCtx::with_refresher(&fake),
+            &crate::governor::Governor::new().register_command(1),
         )
         .await
         .expect("an expired token on one part must resume that part");
@@ -4290,6 +5062,7 @@ mod tests {
             &base_policy_with_attempts(1),
             always_multipart(),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect_err("a leftover complete expiry with no further rotation is terminal");
@@ -4365,6 +5138,7 @@ mod tests {
             &base_policy_with_attempts(1),
             always_multipart(),
             TransferCtx::with_refresher(&fake),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("an expired token on create must restart the upload");
@@ -4458,6 +5232,7 @@ mod tests {
                     &policy,
                     always_multipart(),
                     TransferCtx::new(None, Some(&scope)),
+                    &TransferOp::isolated_for_tests(),
                 )
                 .await
             })
@@ -4506,13 +5281,14 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy(),
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             false,
             cloud_http::CloudSpillTarget::Temp {
                 dir: spill.path(),
                 cleanup: None,
             },
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4530,6 +5306,56 @@ mod tests {
         let mut got = Vec::new();
         reader.read_to_end(&mut got).unwrap();
         assert_eq!(got, payload, "reassembled ciphertext must match the object");
+    }
+
+    /// `PARALLEL=1` holds one file permit for HEAD; ranged GETs must not wait
+    /// on that same slot. Times out if the file permit is still held.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s3_ranged_download_with_command_parallel_one_does_not_stall() {
+        let payload = b"ranged under spawn-gate size 1".to_vec();
+        let mock = MockServer::start().await;
+
+        Mock::given(method("HEAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-length", payload.len().to_string()),
+            )
+            .mount(&mock)
+            .await;
+        let body = payload.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_: &Request| {
+                ResponseTemplate::new(206).set_body_bytes(body.clone())
+            })
+            .mount(&mock)
+            .await;
+
+        let spill = tempfile::tempdir().unwrap();
+        let transfer = Governor::new().register_command(1);
+        let download = tokio::time::timeout(
+            Duration::from_secs(5),
+            download_from_s3(
+                &mp_stage(mock.uri()),
+                "f.dat",
+                &base_policy(),
+                always_multipart(),
+                false,
+                cloud_http::CloudSpillTarget::Temp {
+                    dir: spill.path(),
+                    cleanup: None,
+                },
+                TransferCtx::default(),
+                &transfer,
+            ),
+        )
+        .await
+        .expect("ranged GET must not wait for a file permit the caller still holds")
+        .expect("ranged download should succeed against the mock");
+
+        assert!(matches!(
+            download.body,
+            S3DownloadBody::Spilled(cloud_http::CloudSpilledBody::Temp(_))
+        ));
     }
 
     /// A non-encrypted ranged download assembles straight into the caller's
@@ -4562,10 +5388,11 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy(),
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await
         .expect("ranged download should succeed against the mock");
@@ -4612,10 +5439,11 @@ mod tests {
             &mp_stage(mock.uri()),
             "f.dat",
             &base_policy_with_attempts(1), // single attempt: fail fast
-            &test_scheduler(always_multipart()),
+            always_multipart(),
             false,
             cloud_http::CloudSpillTarget::Part(&part_path),
             TransferCtx::default(),
+            &TransferOp::isolated_for_tests(),
         )
         .await;
 
@@ -4624,5 +5452,599 @@ mod tests {
             !part_path.exists(),
             "a failed ranged download must not leave a `.part` file behind"
         );
+    }
+
+    async fn start_stalled_s3_head_get_server(
+        payload: &[u8],
+    ) -> (String, Arc<Notify>, Arc<Notify>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stalled HEAD/GET server");
+        let address = listener.local_addr().expect("stalled HEAD/GET address");
+        let get_headers = Arc::new(Notify::new());
+        let release_get_body = Arc::new(Notify::new());
+        let payload = payload.to_vec();
+        tokio::spawn({
+            let get_headers = get_headers.clone();
+            let release_get_body = release_get_body.clone();
+            let payload = payload.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            payload.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut get_socket, _) = listener.accept().await.expect("accept GET");
+                let read = get_socket.read(&mut request).await.expect("read GET");
+                assert!(request[..read].starts_with(b"GET "));
+                get_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            payload.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond GET headers");
+                get_headers.notify_one();
+                release_get_body.notified().await;
+                get_socket
+                    .write_all(&payload)
+                    .await
+                    .expect("respond GET body");
+            }
+        });
+        (format!("http://{address}"), get_headers, release_get_body)
+    }
+
+    /// Cap-1 concurrent PutObject: the second command stays queued until the
+    /// first attempt is released.
+    #[tokio::test(flavor = "current_thread")]
+    async fn s3_put_object_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::sync::Notify;
+
+        let server = MockServer::start().await;
+        let first_entered = Arc::new(Notify::new());
+        let first_seen = Arc::new(AtomicBool::new(false));
+        Mock::given(method("PUT"))
+            .respond_with({
+                let first_entered = first_entered.clone();
+                let first_seen = first_seen.clone();
+                move |_req: &Request| {
+                    if !first_seen.swap(true, Ordering::SeqCst) {
+                        first_entered.notify_one();
+                        ResponseTemplate::new(200).set_delay(Duration::from_millis(150))
+                    } else {
+                        ResponseTemplate::new(200)
+                    }
+                }
+            })
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = mp_stage(server.uri());
+        let policy = base_policy();
+
+        let upload_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_s3_or_skip(
+                    prepared_upload_with_digest("cap-a"),
+                    &stage,
+                    "a.dat",
+                    true,
+                    false,
+                    &policy,
+                    MultipartParams::default(),
+                    TransferCtx::default(),
+                    &op_a,
+                )
+                .await
+            }
+        });
+        first_entered.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let upload_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            async move {
+                upload_to_s3_or_skip(
+                    prepared_upload_with_digest("cap-b"),
+                    &stage,
+                    "b.dat",
+                    true,
+                    false,
+                    &policy,
+                    MultipartParams::default(),
+                    TransferCtx::default(),
+                    &op_b,
+                )
+                .await
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        upload_a.await.expect("join A").expect("operation A upload");
+        upload_b.await.expect("join B").expect("operation B upload");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn s3_put_object_deadline_is_dedicated_variant() {
+        use crate::governor::RequestKind;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let holder = governor.register_command(32);
+        let blocked = governor.register_command(32);
+        let _hold = holder.acquire(RequestKind::WholeObjectPut).await.unwrap();
+
+        let mut policy = base_policy_with_attempts(2);
+        policy.max_elapsed = Some(Duration::from_millis(40));
+        let result = upload_to_s3_or_skip(
+            prepared_upload_with_digest("deadline"),
+            &mp_stage(server.uri()),
+            "deadline.dat",
+            true,
+            false,
+            &policy,
+            MultipartParams::default(),
+            TransferCtx::default(),
+            &blocked,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(UploadFileError::DeadlineExceeded { .. })),
+            "expected DeadlineExceeded, got {result:?}"
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no outbound PUT when admission waits past max_elapsed"
+        );
+    }
+
+    /// Cap-1 concurrent ranged GetObject: the second range stays queued until
+    /// the first range body is fully consumed.
+    #[tokio::test(flavor = "current_thread")]
+    async fn s3_ranged_get_respects_shared_in_flight_cap() {
+        use crate::governor::Governor;
+
+        let (endpoint, first_headers, release_first_body) = start_stalled_206_range_server().await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let op_a = governor.register_command(32);
+        let op_b = governor.register_command(32);
+        let stage = mp_stage(endpoint);
+        let policy = s3_retry_policy(&base_policy());
+        let s3_key = format!("{}f.dat", stage.key_prefix);
+        let range = multipart::DownloadRange { start: 0, end: 3 };
+
+        let client_a = {
+            let deadline = Deadline::from_budget(policy.max_elapsed);
+            let permit = deadline
+                .acquire(&op_a, RequestKind::RangedGet)
+                .await
+                .expect("client A permit");
+            create_s3_client(
+                &stage,
+                SNOWFLAKE_DOWNLOAD_PROVIDER,
+                &policy,
+                None,
+                deadline,
+                &permit,
+            )
+            .await
+            .expect("S3 client A")
+        };
+        let client_b = {
+            let deadline = Deadline::from_budget(policy.max_elapsed);
+            let permit = deadline
+                .acquire(&op_b, RequestKind::RangedGet)
+                .await
+                .expect("client B permit");
+            create_s3_client(
+                &stage,
+                SNOWFLAKE_DOWNLOAD_PROVIDER,
+                &policy,
+                None,
+                deadline,
+                &permit,
+            )
+            .await
+            .expect("S3 client B")
+        };
+
+        let get_a = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            let s3_key = s3_key.clone();
+            async move {
+                let deadline = Deadline::from_budget(policy.max_elapsed);
+                let permit = deadline
+                    .acquire(&op_a, RequestKind::RangedGet)
+                    .await
+                    .expect("range A permit");
+                s3_get_range(
+                    &client_a, &stage, &s3_key, &range, &policy, deadline, &permit,
+                )
+                .await
+            }
+        });
+        notified_soon(&first_headers).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let get_b = tokio::spawn({
+            let stage = stage.clone();
+            let policy = policy.clone();
+            let s3_key = s3_key.clone();
+            async move {
+                let deadline = Deadline::from_budget(policy.max_elapsed);
+                let permit = deadline
+                    .acquire(&op_b, RequestKind::RangedGet)
+                    .await
+                    .expect("range B permit");
+                s3_get_range(
+                    &client_b, &stage, &s3_key, &range, &policy, deadline, &permit,
+                )
+                .await
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+
+        release_first_body.notify_one();
+        get_a.await.expect("join A").expect("range A");
+        get_b.await.expect("join B").expect("range B");
+        assert_eq!(governor.in_flight(), 0);
+        assert_eq!(governor.queued(), 0);
+    }
+
+    #[tokio::test]
+    async fn s3_head_and_put_share_one_permit() {
+        use crate::governor::{Governor, RequestKind};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/PUT server");
+        let address = listener.local_addr().expect("HEAD/PUT address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let put_seen = Arc::new(Notify::new());
+        let release_put = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let put_seen = put_seen.clone();
+            let release_put = release_put.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut put_socket, _) = listener.accept().await.expect("accept PUT");
+                let read = put_socket.read(&mut request).await.expect("read PUT");
+                assert!(request[..read].starts_with(b"PUT "));
+                put_seen.notify_one();
+                release_put.notified().await;
+                put_socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .expect("respond PUT");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let upload_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = mp_stage(format!("http://{address}"));
+        let upload = tokio::spawn(async move {
+            upload_to_s3_or_skip(
+                prepared_upload_with_digest("head-put"),
+                &stage,
+                "f.dat",
+                false,
+                false,
+                &base_policy(),
+                MultipartParams::default(),
+                TransferCtx::default(),
+                &upload_op,
+            )
+            .await
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectGet)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        assert_eq!(governor.in_flight(), 1);
+        release_head.notify_one();
+        put_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and PUT for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_put.notify_one();
+
+        upload
+            .await
+            .expect("join upload")
+            .expect("HEAD then PUT upload");
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn s3_head_and_get_share_one_permit() {
+        use crate::governor::{Governor, RequestKind};
+        use std::io::Read as _;
+
+        const PAYLOAD: &[u8] = b"hello s3";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind HEAD/GET server");
+        let address = listener.local_addr().expect("HEAD/GET address");
+        let head_seen = Arc::new(Notify::new());
+        let release_head = Arc::new(Notify::new());
+        let get_seen = Arc::new(Notify::new());
+        let release_get = Arc::new(Notify::new());
+        tokio::spawn({
+            let head_seen = head_seen.clone();
+            let release_head = release_head.clone();
+            let get_seen = get_seen.clone();
+            let release_get = release_get.clone();
+            async move {
+                let (mut head_socket, _) = listener.accept().await.expect("accept HEAD");
+                let mut request = vec![0; 4096];
+                let read = head_socket.read(&mut request).await.expect("read HEAD");
+                assert!(request[..read].starts_with(b"HEAD "));
+                head_seen.notify_one();
+                release_head.notified().await;
+                head_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond HEAD");
+                drop(head_socket);
+
+                let (mut get_socket, _) = listener.accept().await.expect("accept GET");
+                let read = get_socket.read(&mut request).await.expect("read GET");
+                assert!(request[..read].starts_with(b"GET "));
+                get_seen.notify_one();
+                release_get.notified().await;
+                get_socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                            PAYLOAD.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("respond GET headers");
+                get_socket
+                    .write_all(PAYLOAD)
+                    .await
+                    .expect("respond GET body");
+            }
+        });
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let download_op = governor.register_command(32);
+        let interposed_op = governor.register_command(32);
+        let stage = mp_stage(format!("http://{address}"));
+        let download = tokio::spawn(async move {
+            let dl = download_from_s3(
+                &stage,
+                "f.dat",
+                &base_policy(),
+                MultipartParams::default(),
+                false,
+                cloud_http::CloudSpillTarget::Temp {
+                    dir: tempfile::tempdir().unwrap().path(),
+                    cleanup: None,
+                },
+                TransferCtx::default(),
+                &download_op,
+            )
+            .await
+            .expect("HEAD then GET download");
+            let mut got = Vec::new();
+            dl.body
+                .into_reader()
+                .expect("download reader")
+                .read_to_end(&mut got)
+                .expect("drain download");
+            got
+        });
+        head_seen.notified().await;
+        assert_eq!(governor.in_flight(), 1);
+
+        let interposed_acquired = Arc::new(Notify::new());
+        let release_interposed = Arc::new(Notify::new());
+        let interposed = tokio::spawn({
+            let interposed_acquired = interposed_acquired.clone();
+            let release_interposed = release_interposed.clone();
+            async move {
+                let permit = interposed_op
+                    .acquire(RequestKind::WholeObjectPut)
+                    .await
+                    .expect("interposed permit");
+                interposed_acquired.notify_one();
+                release_interposed.notified().await;
+                drop(permit);
+            }
+        });
+        wait_until(|| governor.queued() == 1).await;
+        release_head.notify_one();
+        get_seen.notified().await;
+        assert_eq!(
+            governor.in_flight(),
+            1,
+            "HEAD and GET for the same file share one ordinary permit"
+        );
+        assert_eq!(governor.queued(), 1);
+        release_get.notify_one();
+
+        let got = download.await.expect("join download");
+        assert_eq!(got, PAYLOAD);
+        interposed_acquired.notified().await;
+        release_interposed.notify_one();
+        interposed.await.expect("join interposed");
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn aborting_s3_collected_get_releases_permit() {
+        use crate::governor::{Governor, RequestKind};
+
+        const PAYLOAD: &[u8] = b"hello s3";
+        let (endpoint, get_headers, release_get_body) =
+            start_stalled_s3_head_get_server(PAYLOAD).await;
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let download_op = governor.register_command(32);
+        let waiter_op = governor.register_command(32);
+        let stage = mp_stage(endpoint);
+
+        let download = tokio::spawn(async move {
+            download_from_s3(
+                &stage,
+                "f.dat",
+                &base_policy(),
+                MultipartParams::default(),
+                false,
+                cloud_http::CloudSpillTarget::Temp {
+                    dir: tempfile::tempdir().unwrap().path(),
+                    cleanup: None,
+                },
+                TransferCtx::default(),
+                &download_op,
+            )
+            .await
+        });
+        get_headers.notified().await;
+
+        let waiter = tokio::spawn(async move {
+            waiter_op
+                .acquire(RequestKind::WholeObjectGet)
+                .await
+                .expect("waiter permit")
+        });
+        wait_until(|| governor.queued() == 1).await;
+        download.abort();
+        let waiter_permit = waiter.await.expect("join waiter");
+        drop(waiter_permit);
+        release_get_body.notify_one();
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn s3_collected_get_body_respects_the_absolute_deadline() {
+        const PAYLOAD: &[u8] = b"hello s3";
+        let (endpoint, get_headers, release_get_body) =
+            start_stalled_s3_head_get_server(PAYLOAD).await;
+        let stage = mp_stage(endpoint);
+        let mut policy = base_policy();
+        policy.max_elapsed = Some(Duration::from_secs(2));
+        let tempdir = tempfile::tempdir().expect("temp directory");
+        let transfer = TransferOp::isolated_for_tests();
+
+        let result = download_from_s3(
+            &stage,
+            "f.dat",
+            &policy,
+            MultipartParams::default(),
+            false,
+            cloud_http::CloudSpillTarget::Temp {
+                dir: tempdir.path(),
+                cleanup: None,
+            },
+            TransferCtx::default(),
+            &transfer,
+        );
+        tokio::pin!(result);
+        tokio::select! {
+            outcome = &mut result => {
+                match outcome {
+                    Ok(_) => panic!("download succeeded before the server stalled its body"),
+                    Err(error) => {
+                        panic!("download failed before the server stalled its body: {error:?}")
+                    }
+                }
+            }
+            () = get_headers.notified() => {}
+        }
+
+        let error = match result.await {
+            Ok(_) => panic!("a body that outlives max_elapsed must not succeed"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, DownloadFileError::DeadlineExceeded { .. }),
+            "expected DeadlineExceeded, got {error:?}"
+        );
+        release_get_body.notify_one();
     }
 }

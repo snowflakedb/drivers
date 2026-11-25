@@ -265,12 +265,13 @@ struct XpTransferSettings {
 impl DatabaseDriverV1 {
     async fn xp_transfer_settings(&self, conn: &Arc<Mutex<Connection>>) -> XpTransferSettings {
         let conn = conn.lock().await;
+        let transfer = self.governor.register_command(1);
         XpTransferSettings {
             retry_policy: RetryPolicy::put_get(&conn.effective_settings()),
             put_compress_level: conn
                 .put_compress_level(self.wrapper_presets.put_compress_level_default),
             put_tempdir: conn.put_tempdir(),
-            transport: conn.stage_transport(&self.crl_manager, &self.root_store_provider),
+            transport: conn.stage_transport(&self.crl_manager, &self.root_store_provider, transfer),
         }
     }
 
@@ -342,6 +343,7 @@ impl DatabaseDriverV1 {
                 put_compress_level: settings.put_compress_level,
                 put_tempdir: settings.put_tempdir,
                 cwd: None,
+                transfer: settings.transport.transfer.clone(),
             };
             let rowset_data = upload_files_via_xp_backend(
                 &upload_data,
@@ -417,6 +419,7 @@ impl DatabaseDriverV1 {
             multipart: MultipartParams::from_server(None, Some(1)),
             put_compress_level: settings.put_compress_level,
             put_tempdir: settings.put_tempdir,
+            transfer: settings.transport.transfer.clone(),
         };
         let rowset_data = upload_stream_via_xp_backend(
             source,

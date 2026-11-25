@@ -364,6 +364,18 @@ impl Data {
         }
     }
 
+    pub(crate) fn resolved_multipart_params(&self) -> file_manager::MultipartParams {
+        file_manager::MultipartParams::from_server(self.threshold, self.parallel)
+    }
+
+    /// Command width for [`crate::governor::Governor::register_command`].
+    /// Resolved from `data.parallel` and not stored on
+    /// [`file_manager::MultipartParams`], so it cannot disagree with the
+    /// registered [`crate::governor::TransferOp`] later.
+    pub(crate) fn resolved_command_parallel(&self) -> usize {
+        file_manager::resolve_command_parallel(self.parallel)
+    }
+
     /// Returns the full `StageInfoSnapshot` (creds + `presignedUrl` +
     /// `presignedUrls[]`) embedded in the response's `stageInfo`, or `None`
     /// if the response carries no `stageInfo` block (non-PUT/GET). Used by
@@ -495,11 +507,12 @@ impl Data {
             flavor,
             legacy_odbc_compression_autodetect,
             skip_upload_on_content_match,
-            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
+            multipart: self.resolved_multipart_params(),
             put_fastfail,
             put_compress_level,
             put_tempdir,
             cwd,
+            transfer: transport.transfer.clone(),
         })
     }
 
@@ -565,9 +578,10 @@ impl Data {
             flavor: PutGetResultsetFlavor::default(),
             legacy_odbc_compression_autodetect: false,
             skip_upload_on_content_match: false,
-            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
+            multipart: self.resolved_multipart_params(),
             put_compress_level: 9,
             put_tempdir: None,
+            transfer: transport.transfer.clone(),
         })
     }
 
@@ -661,10 +675,11 @@ impl Data {
             encryption_materials,
             presigned_urls,
             flavor: flavor.clone(),
-            multipart: file_manager::MultipartParams::from_server(self.threshold, self.parallel),
+            multipart: self.resolved_multipart_params(),
             unsafe_file_write,
             get_fastfail,
             cwd,
+            transfer: transport.transfer.clone(),
         })
     }
 

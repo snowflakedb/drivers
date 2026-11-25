@@ -39,8 +39,48 @@ impl SnowflakeTestClient {
     /// Creates a client with default parameters (no authentication parameters set)
     pub fn with_default_params() -> Self {
         setup_logging();
+        Self::with_default_params_and_client(database_driver_client())
+    }
+
+    /// Creates a client with default parameters and JWT authentication configured
+    pub fn with_default_jwt_auth_params() -> Self {
+        setup_logging();
+        let mut client = Self::with_default_params();
+
+        client.setup_jwt_auth();
+        client
+    }
+
+    pub fn connect_with_default_auth() -> Self {
+        Self::connect_with_default_auth_using(DriverProviders::default())
+    }
+
+    /// Creates a live-account client with explicitly supplied driver providers.
+    ///
+    /// This is the end-to-end counterpart to [`Self::with_int_tests_params_using`]:
+    /// tests can inject one shared governor across independent driver roots while
+    /// retaining the production login, query, and cloud-stage paths.
+    pub fn connect_with_default_auth_using(providers: DriverProviders) -> Self {
+        setup_logging();
+        let mut test_client =
+            Self::with_default_params_and_client(database_driver_client_with(providers));
+
+        test_client.setup_jwt_auth();
+
+        test_client
+            .client
+            .connection_init_blocking(ConnectionInitRequest {
+                conn_handle: Some(test_client.conn_handle),
+                db_handle: Some(test_client.db_handle),
+                ..Default::default()
+            })
+            .unwrap();
+
+        test_client
+    }
+
+    fn with_default_params_and_client(client: DatabaseDriverClient) -> Self {
         let parameters = get_parameters();
-        let client = database_driver_client();
         let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
         let db_handle = db_response.db_handle.unwrap();
 
@@ -66,33 +106,8 @@ impl SnowflakeTestClient {
         };
 
         test_client.set_options_from_parameters();
-        test_client
-    }
-
-    /// Creates a client with default parameters and JWT authentication configured
-    pub fn with_default_jwt_auth_params() -> Self {
-        setup_logging();
-        let mut client = Self::with_default_params();
-
-        client.setup_jwt_auth();
-        client
-    }
-
-    pub fn connect_with_default_auth() -> Self {
-        setup_logging();
-        let mut test_client = Self::with_default_params();
-
-        test_client.setup_jwt_auth();
-
-        test_client
-            .client
-            .connection_init_blocking(ConnectionInitRequest {
-                conn_handle: Some(test_client.conn_handle),
-                db_handle: Some(test_client.db_handle),
-                ..Default::default()
-            })
-            .unwrap();
-
+        test_client.set_connection_option("client_app_id", "PythonConnector");
+        test_client.set_connection_option("client_app_version", "5.0.0");
         test_client
     }
 

@@ -1,7 +1,9 @@
-use super::scheduler::TransferScheduler;
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
 use crate::apis::operation_ctx::CleanupScope;
 use crate::compression_types::CompressionType;
+#[cfg(test)]
+use crate::governor::Governor;
+pub use crate::governor::TransferOp;
 use crate::sensitive::SensitiveString;
 use crate::tls::RootStoreProvider;
 use crate::tls::config::TlsConfig;
@@ -128,6 +130,9 @@ pub struct UploadData {
     /// Directory used to resolve a relative `src_location_pattern`. Absolute
     /// `src_location_pattern` is left unchanged.
     pub cwd: Option<PathBuf>,
+    /// Command-scoped transfer admission handle. Not stored on [`StageInfo`]
+    /// (credential snapshots would pin the RAII registration).
+    pub transfer: TransferOp,
 }
 
 // TODO: SNOW-3643409 - decouple large bindings and PUT/GET interfaces
@@ -145,6 +150,8 @@ pub struct SingleUploadData {
     pub multipart: MultipartParams,
     pub put_compress_level: u32,
     pub put_tempdir: Option<PathBuf>,
+    /// Command-scoped transfer admission handle. Cloned per file in a PUT.
+    pub transfer: TransferOp,
 }
 
 #[derive(Debug)]
@@ -187,6 +194,8 @@ pub struct DownloadData {
     /// Directory used to resolve a relative `local_location`. Absolute
     /// `local_location` is left unchanged.
     pub cwd: Option<PathBuf>,
+    /// Command-scoped transfer admission handle. Cloned once per file.
+    pub transfer: TransferOp,
 }
 
 #[derive(Debug)]
@@ -206,6 +215,8 @@ pub struct SingleDownloadData {
     /// Forwarded from `DownloadData.unsafe_file_write`; see that field for
     /// semantics.
     pub unsafe_file_write: bool,
+    /// Command-scoped transfer admission handle for this file.
+    pub transfer: TransferOp,
 }
 
 /// Bytes plus metadata returned by the cloud transfer layer for a single
@@ -374,34 +385,32 @@ impl StageInfo {
 }
 
 /// Bundles the storage-transport settings that a GS PUT/GET response knows
-/// nothing about: TLS configuration, proxy configuration, the CRL manager, and
-/// the driver's root-store provider. Every `StageInfo` carries one, but the
-/// wire-decoded response (parsed in `rest::snowflake::query_response`) only
-/// ever carries bucket/creds/region — the transport settings live on the
-/// connection, one layer up.
+/// nothing about: TLS configuration, proxy configuration, the CRL manager, the
+/// driver's root-store provider, and the command's [`TransferOp`].
 ///
-/// Before this type existed, `query_response::Data::to_file_upload_data` /
-/// `to_bind_stage_upload_data` / `to_file_download_data` returned a
-/// `StageInfo` with the transport fields left at their defaults, and every
-/// caller had to remember to overwrite them afterward. Three call sites
-/// forgot at various points (fixed ad hoc). Requiring `&StageTransport` as a
-/// parameter on those converters closes the gap structurally: a caller can no
-/// longer obtain an `UploadData` / `DownloadData` / `SingleUploadData` without
-/// supplying every transport setting — the compiler enforces it instead of a
-/// code reviewer.
+/// `StageInfo` needs TLS/proxy/CRL/root-store configuration, but the
+/// wire-decoded response only carries bucket/credentials/region. The transport
+/// settings live on the connection, one layer up.
+///
+/// Requiring `&StageTransport` on the converters closes the gap structurally:
+/// a caller can no longer obtain an `UploadData` / `DownloadData` /
+/// `SingleUploadData` without supplying every transport setting and a
+/// registered transfer operation. The resulting [`StageInfo`] and transfer
+/// data share clones of that command-scoped operation.
 #[derive(Debug, Clone)]
 pub struct StageTransport {
     pub tls_config: TlsConfig,
     pub proxy_config: crate::tls::config::ProxyConfig,
     pub crl_manager: crate::crl::ConnectionCrl,
     pub root_store_provider: RootStoreProvider,
+    pub transfer: TransferOp,
 }
 
 impl StageTransport {
     /// Default transport bundle for `query_response` unit tests that don't
-    /// exercise TLS/proxy/CRL behavior and only need some value to satisfy
-    /// the required parameter. Not reachable outside the crate's own test
-    /// build — production code always threads real connection settings.
+    /// exercise TLS/proxy/CRL/governor behavior and only need some value to
+    /// satisfy the required parameter. Not reachable outside the crate's own
+    /// test build — production code always threads real connection settings.
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
         Self {
@@ -409,6 +418,7 @@ impl StageTransport {
             proxy_config: crate::tls::config::ProxyConfig::default(),
             crl_manager: crate::crl::CrlManager::new().connection_crl(),
             root_store_provider: RootStoreProvider::new(),
+            transfer: Governor::new().register_command(1),
         }
     }
 }
@@ -844,8 +854,7 @@ pub trait StageInfoRefresher: Send + Sync {
 }
 
 /// Per-transfer capabilities threaded down the PUT/GET spine: how to refresh
-/// expiring stage credentials, where to register cancellation cleanup, and which
-/// budget the transfer's cloud requests draw on.
+/// expiring stage credentials and where to register cancellation cleanup.
 ///
 /// Bundled for the reason [`StageTransport`] is (see its doc comment) — loose
 /// optional parameters on this chain get forgotten at a call site.
@@ -868,15 +877,6 @@ pub struct TransferCtx<'a> {
     /// this transfer — an internal caller, a test, or an RPC not marked
     /// `async_first` — so nothing is registered.
     pub cleanup: Option<&'a CleanupScope>,
-    /// The budget every cloud request of the transfer draws on, shared across the
-    /// batch's files. The multipart control requests (create/complete/abort)
-    /// and the cancellation abort path are the exceptions.
-    ///
-    /// `None` means the caller has no batch to share with — an internal
-    /// single-file caller or a test — and the callee builds a batch-of-one
-    /// scheduler sized from its own `MultipartParams`
-    /// (`file_manager::scheduler_for`).
-    pub(crate) scheduler: Option<&'a TransferScheduler>,
     /// The batch HTTP client when this transfer joined a `BatchTransport`.
     /// `None` means a single-file caller or test; the callee builds its own.
     pub(crate) http_client: Option<&'a super::cloud_http::StorageHttpClient>,
@@ -893,8 +893,7 @@ pub struct TransferCtx<'a> {
 }
 
 impl<'a> TransferCtx<'a> {
-    /// Credential refresh only — for a transfer that cannot be cancelled and has
-    /// no batch budget to join.
+    /// Credential refresh only — for a transfer that cannot be cancelled.
     pub fn with_refresher(refresher: &'a dyn StageInfoRefresher) -> Self {
         Self {
             refresher: Some(refresher),
@@ -903,8 +902,9 @@ impl<'a> TransferCtx<'a> {
     }
 
     /// Refresh + cleanup, from the optional handles the callers hold. Leaves
-    /// `scheduler`/`http_client`/`http_client_cache` unset; chain
-    /// [`Self::with_scheduler`] to join a batch budget.
+    /// the batch HTTP and S3 clients unset; [`super::BatchTransport`] supplies
+    /// them. The connection HTTP-client cache is also unset; chain
+    /// [`Self::with_http_client_cache`] when one is available.
     pub fn new(
         refresher: Option<&'a dyn StageInfoRefresher>,
         cleanup: Option<&'a CleanupScope>,
@@ -912,7 +912,6 @@ impl<'a> TransferCtx<'a> {
         Self {
             refresher,
             cleanup,
-            scheduler: None,
             http_client: None,
             s3_client_cache: None,
             http_client_cache: None,
@@ -924,18 +923,6 @@ impl<'a> TransferCtx<'a> {
     pub(crate) fn with_backend(self, backend: &'a dyn crate::xp_backend::SnowflakeBackend) -> Self {
         Self {
             backend: Some(backend),
-            ..self
-        }
-    }
-
-    /// Joins `scheduler`'s budget, so this transfer's cloud requests are counted
-    /// against the same ceiling as the rest of its batch.
-    ///
-    /// Crate-internal alongside the field it sets: [`TransferScheduler`] is not
-    /// on the public surface, so an external caller has nothing to pass here.
-    pub(crate) fn with_scheduler(self, scheduler: &'a TransferScheduler) -> Self {
-        Self {
-            scheduler: Some(scheduler),
             ..self
         }
     }

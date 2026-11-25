@@ -2,9 +2,12 @@ mod azure_transfer;
 mod cloud_http;
 mod encryption;
 mod gcs_transfer;
+#[cfg(test)]
+mod governor_batch_leaf_tests;
+#[cfg(test)]
+mod governor_test_util;
 mod multipart;
 mod s3_transfer;
-mod scheduler;
 mod spool;
 
 mod path_expansion;
@@ -27,22 +30,17 @@ pub mod internal {
     // part/range count from it instead of mirroring constants.
     pub use super::multipart::{MultipartConfig, compute_part_size};
     pub use crate::compression::compress_to_tempfile;
+    pub use crate::governor::TransferOp;
 
-    pub use super::scheduler::TransferScheduler;
     pub use super::{
         open_azure_download_stream, open_gcs_download_stream, open_s3_download_stream,
     };
 
     use super::{
-        CloudCredentials, MultipartParams, RefreshFuture, StageInfoCache, StageInfoRefreshError,
-        StageInfoRefresher, StageInfoSnapshot,
+        CloudCredentials, RefreshFuture, StageInfoCache, StageInfoRefreshError, StageInfoRefresher,
+        StageInfoSnapshot,
     };
 
-    /// [`TransferScheduler`] for tests that call a cloud transfer function
-    /// directly instead of going through `upload_files` / `download_files`.
-    pub fn test_scheduler(multipart: MultipartParams) -> TransferScheduler {
-        TransferScheduler::for_command(multipart)
-    }
     use crate::utils::sync::MutexRecoverExt;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
@@ -67,6 +65,18 @@ pub mod internal {
     /// 403 from the retryable set); tests pass this as the transfer `base`.
     pub fn azure_test_retry_policy(max_attempts: u32) -> crate::config::retry::RetryPolicy {
         base_policy(max_attempts)
+    }
+
+    /// Isolated command registration for integration tests.
+    ///
+    /// Rust integration tests compile as an external crate, so they cannot
+    /// construct a [`TransferOp`] through crate-private APIs. Gated
+    /// with this module (`cfg(any(test, feature = "test-utils"))`). Registers
+    /// against a private [`crate::governor::Governor`], not
+    /// [`crate::governor::process_governor`]. The operation is still admitted
+    /// — this is not a production capacity bypass.
+    pub fn isolated_transfer_operation() -> TransferOp {
+        TransferOp::isolated_for_tests()
     }
 
     /// Zero-backoff variant of the production GCS retry policy, for tests.
@@ -181,13 +191,13 @@ pub mod internal {
 pub use self::types::*;
 pub use azure_transfer::{AzureDownloadError, AzureUploadError, download_from_azure};
 pub use gcs_transfer::{GcsDownloadError, GcsUploadError, download_from_gcs};
+pub(crate) use multipart::resolve_command_parallel;
 pub use multipart::{FileTooLargeError, MultipartParams, MultipartThreshold};
 // Mirrors the Azure/GCS `pub use` above: `FileManagerError::S3Upload`/
 // `S3Download` carry a `pub source: UploadFileError`/`DownloadFileError`, so
 // the type must be reachable for external callers (including tests) to
 // pattern-match on it.
 pub use s3_transfer::{DownloadFileError, UploadFileError};
-pub(crate) use scheduler::TransferScheduler;
 pub(crate) use spool::{SPOOL_MEM_THRESHOLD, SpooledBuffer};
 
 use crate::apis::database_driver_v1::PutGetResultsetFlavor;
@@ -198,8 +208,8 @@ use crate::config::retry::RetryPolicy;
 use crate::tls::error::TlsError;
 use crate::xp_backend::BackendError;
 use azure_transfer::{
-    AzurePreparedUpload, azure_get_streaming, download_from_azure_streaming,
-    upload_to_azure_or_skip,
+    AzurePreparedUpload, azure_get_streaming, download_from_azure_streaming_admitted,
+    upload_to_azure_or_skip_admitted,
 };
 use cloud_http::{
     CloudDownloadBody, CloudSpillTarget, CloudSpilledBody, CseDownloadInfo,
@@ -212,20 +222,24 @@ use encryption::{
 use flate2::write::GzDecoder;
 use futures::StreamExt as _;
 use gcs_transfer::{
-    download_from_gcs_streaming, gcs_get_streaming, gcs_retry_policy, upload_to_gcs_or_skip,
+    download_from_gcs_streaming_admitted, gcs_get_streaming, gcs_retry_policy,
+    upload_to_gcs_or_skip_admitted,
 };
 use path_expansion::{PathExpansionError, expand_filenames, resolve_against_cwd};
 use s3_transfer::{
-    S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3, download_from_s3_streaming,
-    upload_to_s3_or_skip,
+    S3Download, S3DownloadBody, S3StreamingDownload, download_from_s3_admitted,
+    download_from_s3_streaming, upload_to_s3_or_skip_admitted,
 };
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use crate::governor::{AcquireWaitError, Deadline, RequestKind, RequestPermit};
 
 /// Message string emitted in the PUT result's `message` column when the
 /// upload outcome is `Skipped` under `PutGetResultsetFlavor::Odbc`. Mirrors
@@ -414,16 +428,13 @@ impl BatchAbort {
 }
 
 /// Uploads every file matching `data.src_location_pattern`, transferring up to
-/// [`TransferScheduler::file_fanout`] of them concurrently.
+/// [`TransferOp::file_fanout`] of them concurrently.
 ///
 /// On cancellation, files that have not started never begin; the ones in flight
 /// (at most the fan-out) are aborted by the cleanup each registered further down;
 /// files already uploaded stay on the stage, complete and valid but unreported —
 /// the caller sees only `ApiError::Cancelled`, never partial result rows.
 ///
-/// `tx.scheduler` carries the batch's cloud-request budget when the caller built
-/// one; otherwise [`scheduler_for`] mints one here. Every file draws its cloud
-/// requests from it.
 pub async fn upload_files(
     data: &UploadData,
     policy: &RetryPolicy,
@@ -451,7 +462,7 @@ pub async fn upload_files(
     // See `BatchAbort` for why a flag rather than dropping the stream.
     let abort = BatchAbort::new(data.put_fastfail);
 
-    let batch = BatchTransport::for_command(tx, data.multipart, &data.stage_info).await?;
+    let batch = BatchTransport::for_command(&data.stage_info, tx).await?;
     let tx = batch.join(tx);
 
     // The refresher owns the latest stage info (creds + presigned URLs) for
@@ -467,8 +478,7 @@ pub async fn upload_files(
     // has several files hit `refresh()` at once, which the coalescing window
     // collapses into one GS round-trip. A per-file presigned-URL expiry
     // (`refresh_url`, GCS PUT only) deliberately bypasses that window, so up to
-    // `file_fanout()` URL refreshes can be in flight together where the
-    // sequential loop issued them one after another. Bounded by the fan-out and
+    // `file_fanout()` URL refreshes can be in flight together. Bounded by the fan-out and
     // by the two-strike `PresignedUrlExpired` guard at the call site, so it
     // cannot loop — but it is a burst GS did not previously see.
     let mut outcomes = futures::stream::iter(file_locations.into_iter().enumerate())
@@ -498,6 +508,7 @@ pub async fn upload_files(
                     multipart: data.multipart,
                     put_compress_level: data.put_compress_level,
                     put_tempdir: data.put_tempdir.clone(),
+                    transfer: data.transfer.clone(),
                 };
                 let outcome = upload_single_file(single_upload_data, policy, tx).await;
                 if outcome.is_err() {
@@ -510,7 +521,7 @@ pub async fn upload_files(
         // `buffered` would hold every slot until the oldest file is done. PUT
         // results are one row per input file and callers read them
         // positionally, so the outcomes are sorted back into input order.
-        .buffer_unordered(batch.scheduler.file_fanout())
+        .buffer_unordered(data.transfer.file_fanout())
         .collect::<Vec<_>>()
         .await;
     outcomes.sort_unstable_by_key(|(index, _, _)| *index);
@@ -547,21 +558,22 @@ pub async fn upload_files(
 }
 
 struct BatchTransport {
-    scheduler: TransferScheduler,
     http_client: cloud_http::StorageHttpClient,
     s3_client_cache: Option<s3_transfer::BatchS3ClientCache>,
 }
 
 impl BatchTransport {
     async fn for_command(
-        tx: TransferCtx<'_>,
-        multipart: MultipartParams,
         stage_info: &StageInfo,
+        tx: TransferCtx<'_>,
     ) -> Result<Self, FileManagerError> {
         Ok(Self {
-            scheduler: scheduler_for(tx, multipart),
             http_client: match tx.http_client_cache {
-                Some(cache) => cache.get(stage_info.location_type).await,
+                Some(cache) => {
+                    cache
+                        .get(stage_info.location_type, &stage_info.transport)
+                        .await
+                }
                 None => cloud_http::StorageHttpClient::for_stage(stage_info).await,
             }
             .context(BatchHttpClientSnafu)?,
@@ -571,7 +583,6 @@ impl BatchTransport {
     }
 
     fn join<'a>(&'a self, tx: TransferCtx<'a>) -> TransferCtx<'a> {
-        let tx = tx.with_scheduler(&self.scheduler);
         let tx = TransferCtx {
             http_client: Some(&self.http_client),
             ..tx
@@ -581,19 +592,6 @@ impl BatchTransport {
             .map(|cache| tx.with_s3_client_cache(cache))
             .unwrap_or(tx)
     }
-}
-
-/// The scheduler a transfer should run under: the batch budget the caller
-/// joined via [`TransferCtx::with_scheduler`], or a fresh batch-of-one for a
-/// caller that supplied none (an internal single-file caller, or a test).
-///
-/// Cloning a `Some` is an `Arc` bump, not a new budget — the returned scheduler
-/// shares the caller's semaphores, so resolving again in a nested layer is free
-/// and cannot accidentally mint a second budget.
-fn scheduler_for(tx: TransferCtx<'_>, multipart: MultipartParams) -> TransferScheduler {
-    tx.scheduler
-        .cloned()
-        .unwrap_or_else(|| TransferScheduler::for_command(multipart))
 }
 
 /// Returns a copy of `base` with `creds` and `presigned_url` overlaid from
@@ -650,6 +648,27 @@ pub async fn upload_in_memory_file(
     upload_prepared_source(ByteSource::Bytes(buffer.into()), data, policy, tx).await
 }
 
+/// Acquires one file-level permit and starts the single deadline used for
+/// that file. The clock starts before the acquire waits, so queue time,
+/// local preprocess (compress/encrypt/digest), HEAD, and the whole-object
+/// send share `RetryPolicy.max_elapsed`. Multipart and ranged paths drop
+/// this permit after setup; each part or range then takes its own permit
+/// and typically its own deadline from the same `max_elapsed` budget.
+fn admit_file_work(
+    transfer: &crate::governor::TransferOp,
+    kind: RequestKind,
+    max_elapsed: Option<Duration>,
+) -> impl std::future::Future<Output = Result<(RequestPermit, Deadline), FileManagerError>>
++ Send
++ 'static {
+    let transfer = transfer.clone();
+    async move {
+        let deadline = Deadline::from_budget(max_elapsed);
+        let permit = deadline.acquire(&transfer, kind).await?;
+        Ok((permit, deadline))
+    }
+}
+
 /// Shared core of the upload path used by `upload_single_file` (file
 /// source), `upload_in_memory_file` (in-memory source), and the chunked
 /// upload stream path (`build_and_upload_stream`, which may pass either a
@@ -662,6 +681,16 @@ pub(crate) async fn upload_prepared_source(
     policy: &RetryPolicy,
     tx: TransferCtx<'_>,
 ) -> Result<UploadResult, FileManagerError> {
+    // Admit before local preprocess (open/compress/encrypt/digest) so extra
+    // files wait in `.buffered` rather than doing I/O ahead of the command
+    // budget. The same permit covers HEAD + PUT for this file.
+    let (file_permit, deadline) = admit_file_work(
+        &data.transfer,
+        RequestKind::WholeObjectPut,
+        policy.max_elapsed,
+    )
+    .await?;
+    data.transfer.on_local_work();
     // `preprocess_file_before_upload` reads the source file from disk and
     // AES-encrypts it (blocking I/O + CPU-bound); run it off the async executor
     // via `spawn_blocking`, including JDBC ERROR-row `stat`. `data` is moved
@@ -680,7 +709,7 @@ pub(crate) async fn upload_prepared_source(
     };
 
     let status = match prepared {
-        CloudPreparedUpload::S3(prepared) => upload_to_s3_or_skip(
+        CloudPreparedUpload::S3(prepared) => upload_to_s3_or_skip_admitted(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -689,10 +718,13 @@ pub(crate) async fn upload_prepared_source(
             policy,
             data.multipart,
             tx,
+            &data.transfer,
+            deadline,
+            file_permit,
         )
         .await
         .context(S3UploadSnafu)?,
-        CloudPreparedUpload::Gcs(prepared) => upload_to_gcs_or_skip(
+        CloudPreparedUpload::Gcs(prepared) => upload_to_gcs_or_skip_admitted(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -703,10 +735,13 @@ pub(crate) async fn upload_prepared_source(
             // pass it by reference so the test seam can inject zero backoff.
             &gcs_retry_policy(data.stage_info.presigned_url.is_some(), policy),
             tx,
+            &data.transfer,
+            deadline,
+            &file_permit,
         )
         .await
         .context(GcsUploadSnafu)?,
-        CloudPreparedUpload::Azure(prepared) => upload_to_azure_or_skip(
+        CloudPreparedUpload::Azure(prepared) => upload_to_azure_or_skip_admitted(
             prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
@@ -715,6 +750,9 @@ pub(crate) async fn upload_prepared_source(
             data.multipart,
             policy,
             tx,
+            &data.transfer,
+            deadline,
+            file_permit,
         )
         .await
         .context(AzureUploadSnafu)?,
@@ -1132,7 +1170,7 @@ fn auto_detect_source_compression(
 }
 
 /// Downloads every file listed in `data.src_locations`, transferring up to
-/// [`TransferScheduler::file_fanout`] of them concurrently.
+/// [`TransferOp::file_fanout`] of them concurrently.
 ///
 /// On cancellation, files that have not started never begin; the ones in flight
 /// (at most the fan-out) are stopped and their `.part` removed by the cleanup
@@ -1159,7 +1197,7 @@ pub async fn download_files(
     // allowed to finish rather than being dropped.
     let abort = BatchAbort::new(data.get_fastfail);
 
-    let batch = BatchTransport::for_command(tx, data.multipart, &data.stage_info).await?;
+    let batch = BatchTransport::for_command(&data.stage_info, tx).await?;
     let tx = batch.join(tx);
 
     // Three-way zip: src_locations / encryption_materials / presigned_urls.
@@ -1186,9 +1224,6 @@ pub async fn download_files(
             |(index, ((file_location, encryption_material), presigned_url))| {
                 let abort = &abort;
                 async move {
-                    // Retained for the collect-all ERROR row: `file_location`
-                    // moves into `SingleDownloadData` below, but a failed
-                    // transfer still needs a `file` column to report.
                     let name = file_location.clone();
                     if abort.is_aborted() {
                         return (index, name, None);
@@ -1204,6 +1239,7 @@ pub async fn download_files(
                         flavor: data.flavor.clone(),
                         multipart: data.multipart,
                         unsafe_file_write: data.unsafe_file_write,
+                        transfer: data.transfer.clone(),
                     };
                     let outcome =
                         download_single_file(single_download_data, policy, index, tx).await;
@@ -1218,7 +1254,7 @@ pub async fn download_files(
         // oldest file finishes. GET emits one result row per requested file and
         // callers read them positionally, so the outcomes are sorted back into
         // input order.
-        .buffer_unordered(batch.scheduler.file_fanout())
+        .buffer_unordered(data.transfer.file_fanout())
         .collect::<Vec<_>>()
         .await;
     outcomes.sort_unstable_by_key(|(index, _, _)| *index);
@@ -1326,9 +1362,9 @@ fn safe_download_file_name(src_location: &str) -> Result<&str, FileManagerError>
 
 /// Basenames that occur more than once among a GET batch's `src_locations`,
 /// in the order each basename first appears. `download_files` processes
-/// files sequentially and each publishes its output via an atomic rename to
-/// `local_location`/basename, so a later file with a colliding basename
-/// overwrites an earlier one's output with no indication anything was lost.
+/// files concurrently and each publishes its output via an atomic rename to
+/// `local_location`/basename, so whichever colliding file finishes last remains
+/// at that path with no indication that another result was overwritten.
 /// An entry `safe_download_file_name` rejects is skipped: it never reaches
 /// the filesystem, so it cannot collide with anything.
 fn duplicate_download_basenames(src_locations: &[String]) -> Vec<&str> {
@@ -1467,6 +1503,16 @@ pub async fn download_single_file(
     per_file_index: usize,
     tx: TransferCtx<'_>,
 ) -> Result<DownloadResult, FileManagerError> {
+    // Admit before dest-path I/O so extra files wait in `.buffered` rather
+    // than mkdir/open ahead of the command budget. The same permit covers
+    // HEAD + whole-object GET; ranged GETs drop it and take per-range permits.
+    let (file_permit, deadline) = admit_file_work(
+        &data.transfer,
+        RequestKind::WholeObjectGet,
+        policy.max_elapsed,
+    )
+    .await?;
+    data.transfer.on_local_work();
     // Blocking FS syscalls (create_dir_all/canonicalize); keep off the async executor.
     let (output_path, partial_path) = {
         let local_location = data.local_location.clone();
@@ -1497,6 +1543,8 @@ pub async fn download_single_file(
             tx,
             output_path,
             partial_path,
+            deadline,
+            file_permit,
         )),
     )
     .await
@@ -1504,6 +1552,7 @@ pub async fn download_single_file(
 
 /// Body of [`download_single_file`], with the destination paths already resolved
 /// so the caller can arm cleanup for `partial_path` before any transfer begins.
+#[allow(clippy::too_many_arguments)]
 async fn download_single_file_to(
     mut data: SingleDownloadData,
     policy: &RetryPolicy,
@@ -1511,10 +1560,9 @@ async fn download_single_file_to(
     tx: TransferCtx<'_>,
     output_path: PathBuf,
     partial_path: PathBuf,
+    deadline: Deadline,
+    file_permit: RequestPermit,
 ) -> Result<DownloadResult, FileManagerError> {
-    // A batch caller already resolved this and joined it to `tx`; a single-file
-    // caller gets a batch-of-one here.
-    let scheduler = scheduler_for(tx, data.multipart);
     // CSE downloads decrypt the ciphertext through a blocking `Read`; SSE
     // downloads skip decryption and write the raw bytes. S3 buffers small blobs
     // in memory and spills large ranged downloads to a tempfile (renamed into
@@ -1564,14 +1612,17 @@ async fn download_single_file_to(
                 digest,
                 file_metadata,
                 cloud_byte_count,
-            } = download_from_s3(
+            } = download_from_s3_admitted(
                 &data.stage_info,
                 data.src_location.as_str(),
                 policy,
-                &scheduler,
+                data.multipart,
                 unsafe_file_write,
                 spill_target,
                 tx,
+                &data.transfer,
+                deadline,
+                file_permit,
             )
             .await
             .context(S3DownloadSnafu)?;
@@ -1703,7 +1754,7 @@ async fn download_single_file_to(
             } else {
                 CloudSpillTarget::Part(&partial_path)
             };
-            let dl = download_from_gcs_streaming(
+            let dl = download_from_gcs_streaming_admitted(
                 &data.stage_info,
                 data.src_location.as_str(),
                 data.presigned_url.as_deref(),
@@ -1715,10 +1766,13 @@ async fn download_single_file_to(
                     policy,
                 ),
                 per_file_index,
-                &scheduler,
+                data.multipart,
                 unsafe_file_write,
                 spill_target,
                 tx,
+                &data.transfer,
+                deadline,
+                file_permit,
             )
             .await
             .context(GcsDownloadSnafu)?;
@@ -1737,7 +1791,7 @@ async fn download_single_file_to(
             // Rename happens after the `.await` (see below), so a cancelled/
             // dropped outer future cannot publish a file written by a detached
             // blocking task. The `.await` itself is the cancellation point.
-            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+            let write_result = tokio::task::spawn_blocking(move || {
                 write_cloud_download(
                     body,
                     cse_info,
@@ -1750,6 +1804,7 @@ async fn download_single_file_to(
             .await
             .context(BlockingTaskSnafu)??;
             producer_guard.disarm();
+            let (output_byte_len, spilled_temp) = write_result;
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -1814,14 +1869,17 @@ async fn download_single_file_to(
             } else {
                 CloudSpillTarget::Part(&partial_path)
             };
-            let dl = download_from_azure_streaming(
+            let dl = download_from_azure_streaming_admitted(
                 &data.stage_info,
                 data.src_location.as_str(),
-                &scheduler,
+                data.multipart,
                 policy,
                 unsafe_file_write,
                 spill_target,
                 tx,
+                &data.transfer,
+                deadline,
+                file_permit,
             )
             .await
             .context(AzureDownloadSnafu)?;
@@ -1835,7 +1893,7 @@ async fn download_single_file_to(
             let partial_path2 = partial_path.clone();
             // Write to `<dst>.part` but do NOT rename inside spawn_blocking;
             // same cancellation-safety rationale as the GCS arm above.
-            let (output_byte_len, spilled_temp) = tokio::task::spawn_blocking(move || {
+            let write_result = tokio::task::spawn_blocking(move || {
                 write_cloud_download(
                     body,
                     cse_info,
@@ -1848,6 +1906,7 @@ async fn download_single_file_to(
             .await
             .context(BlockingTaskSnafu)??;
             producer_guard.disarm();
+            let (output_byte_len, spilled_temp) = write_result;
 
             // Atomic publish — runs after .await so a dropped future cannot publish.
             match spilled_temp {
@@ -1916,7 +1975,7 @@ pub struct DownloadStreamOpen {
     pub task: tokio::task::JoinHandle<()>,
     /// Abort handle for the *inner* producer task reading the cloud body
     /// (see `cloud_http::spawn_s3_byte_stream_producer` /
-    /// `spawn_byte_stream_producer`). Aborting `task` alone stops the
+    /// `spawn_admitted_byte_stream_producer`). Aborting `task` alone stops the
     /// decrypt/gunzip pipeline but leaves this parked on `body.next()` if
     /// the connection stalled — abort both.
     pub producer_abort: tokio::task::AbortHandle,
@@ -1939,16 +1998,15 @@ pub async fn open_s3_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
-    multipart: MultipartParams,
+    transfer: &TransferOp,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
-    let scheduler = TransferScheduler::for_command(multipart);
     let S3StreamingDownload {
         body,
+        permit,
         digest,
         file_metadata,
         cloud_byte_count,
-        slot,
-    } = download_from_s3_streaming(stage_info, src_location, policy, refresher, &scheduler)
+    } = download_from_s3_streaming(stage_info, src_location, policy, refresher, transfer)
         .await
         .context(S3DownloadSnafu)?;
 
@@ -1956,7 +2014,7 @@ pub async fn open_s3_download_stream(
         CseDownloadInfo::from_headers(file_metadata, digest),
         encryption_material.as_ref(),
     )?;
-    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, slot);
+    let (reader, producer_abort) = spawn_s3_byte_stream_producer(body, permit);
 
     Ok(spawn_download_stream_pipeline(
         reader,
@@ -1980,9 +2038,8 @@ pub async fn open_gcs_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
-    multipart: MultipartParams,
+    transfer: &TransferOp,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
-    let scheduler = TransferScheduler::for_command(multipart);
     let using_presigned_url =
         per_file_presigned_url.is_some() || stage_info.presigned_url.is_some();
     // Zero-disk needs a single unranged, abortable GET. Call
@@ -1995,8 +2052,8 @@ pub async fn open_gcs_download_stream(
         per_file_presigned_url,
         &gcs_retry_policy(using_presigned_url, policy),
         0,
-        &scheduler,
         TransferCtx::new(refresher, None),
+        transfer,
     )
     .await
     .context(GcsDownloadSnafu)?;
@@ -2014,10 +2071,9 @@ pub async fn open_azure_download_stream(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
-    multipart: MultipartParams,
+    transfer: &TransferOp,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
-    let scheduler = TransferScheduler::for_command(multipart);
-    let dl = azure_get_streaming(stage_info, src_location, policy, refresher, &scheduler)
+    let dl = azure_get_streaming(stage_info, src_location, policy, refresher, transfer)
         .await
         .context(AzureDownloadSnafu)?;
 
@@ -2080,8 +2136,7 @@ fn open_cloud_download_stream(
 /// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure),
 /// so this `match` needs no fallback arm.
 ///
-/// `multipart` sizes the request budget the opened stream's GET draws on; the
-/// ticket is held until the consumer closes the stream.
+/// The opened stream's GET holds a governor permit until the consumer closes it.
 #[allow(clippy::too_many_arguments)]
 pub async fn open_download_stream_for_stage(
     stage_info: &StageInfo,
@@ -2091,7 +2146,7 @@ pub async fn open_download_stream_for_stage(
     refresher: Option<&dyn StageInfoRefresher>,
     encryption_material: Option<EncryptionMaterial>,
     decompress: bool,
-    multipart: MultipartParams,
+    transfer: &TransferOp,
 ) -> Result<DownloadStreamOpen, FileManagerError> {
     match stage_info.location_type {
         LocationType::S3 => {
@@ -2102,7 +2157,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
-                multipart,
+                transfer,
             )
             .await
         }
@@ -2115,7 +2170,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
-                multipart,
+                transfer,
             )
             .await
         }
@@ -2127,7 +2182,7 @@ pub async fn open_download_stream_for_stage(
                 refresher,
                 encryption_material,
                 decompress,
-                multipart,
+                transfer,
             )
             .await
         }
@@ -2741,6 +2796,30 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("transfer admission refused"))]
+    Admission {
+        source: crate::governor::AcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("transfer deadline exceeded after {elapsed:?} (budget {budget:?})"))]
+    DeadlineExceeded {
+        elapsed: Duration,
+        budget: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl From<AcquireWaitError> for FileManagerError {
+    fn from(err: AcquireWaitError) -> Self {
+        match err {
+            AcquireWaitError::Acquire(source) => AdmissionSnafu.into_error(source),
+            AcquireWaitError::DeadlineExceeded { elapsed, budget } => {
+                DeadlineExceededSnafu { elapsed, budget }.build()
+            }
+        }
+    }
 }
 
 impl FileManagerError {
@@ -2783,8 +2862,13 @@ impl FileManagerError {
 
 #[cfg(test)]
 mod tests {
+    use super::governor_test_util::{
+        wait_for_arrival_peak, wait_for_arrival_peak_with_commands, wait_for_arrivals,
+    };
     use super::*;
+    use crate::governor::{Governor, RequestKind};
     use bytes::Bytes;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     // ---------------------------------------------------------------
@@ -3156,6 +3240,7 @@ mod tests {
                     crl_manager: crate::crl::CrlManager::new().connection_crl(),
                     root_store_provider: crate::tls::RootStoreProvider::new(),
                     proxy_config: crate::tls::config::ProxyConfig::default(),
+                    transfer: crate::governor::Governor::new().register_command(1),
                 },
                 storage_account: None,
             },
@@ -3171,7 +3256,18 @@ mod tests {
             put_compress_level: 9,
             put_tempdir: None,
             cwd: None,
+            transfer: TransferOp::isolated_for_tests(),
         }
+    }
+
+    fn transfer_for_parallel(parallel: i64) -> TransferOp {
+        crate::governor::Governor::new().register_command(resolve_command_parallel(Some(parallel)))
+    }
+
+    /// Registers one command on a shared [`Governor`] so multiple PUT/GET batches
+    /// exercise the same process-wide cap.
+    fn register_transfer_on_governor(governor: &Governor, parallel: i64) -> TransferOp {
+        governor.register_command(resolve_command_parallel(Some(parallel)))
     }
 
     /// [`batch_upload_data_for`] with `data.parallel` set, so the batch fans out
@@ -3184,6 +3280,23 @@ mod tests {
     ) -> UploadData {
         UploadData {
             multipart: MultipartParams::from_server(None, Some(parallel)),
+            transfer: transfer_for_parallel(parallel),
+            ..batch_upload_data_for(dir, mock_uri, put_fastfail)
+        }
+    }
+
+    /// Like [`parallel_batch_upload_data_for`], but registers on `governor` so
+    /// hermetic tests can tighten the process cap independently of `parallel`.
+    fn capped_parallel_batch_upload_data_for(
+        dir: &std::path::Path,
+        mock_uri: &str,
+        put_fastfail: bool,
+        parallel: i64,
+        governor: &Governor,
+    ) -> UploadData {
+        UploadData {
+            multipart: MultipartParams::from_server(None, Some(parallel)),
+            transfer: register_transfer_on_governor(governor, parallel),
             ..batch_upload_data_for(dir, mock_uri, put_fastfail)
         }
     }
@@ -3257,13 +3370,9 @@ mod tests {
             &crate::config::param_store::ParamStore::new(),
         );
 
-        let err = upload_files(
-            &data,
-            &policy,
-            TransferCtx::default().with_scheduler(&internal::test_scheduler(data.multipart)),
-        )
-        .await
-        .expect_err("fail-fast must surface the first per-file error");
+        let err = upload_files(&data, &policy, TransferCtx::default())
+            .await
+            .expect_err("fail-fast must surface the first per-file error");
         assert!(
             !matches!(err, FileManagerError::UploadBatch { .. }),
             "fail-fast must abort with the raw per-file error, not the collect-all aggregate: {err}"
@@ -3307,13 +3416,9 @@ mod tests {
             &crate::config::param_store::ParamStore::new(),
         );
 
-        let results = upload_files(
-            &data,
-            &policy,
-            TransferCtx::default().with_scheduler(&internal::test_scheduler(data.multipart)),
-        )
-        .await
-        .expect("all four uploads should succeed");
+        let results = upload_files(&data, &policy, TransferCtx::default())
+            .await
+            .expect("all four uploads should succeed");
 
         let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
         assert_eq!(
@@ -3353,10 +3458,9 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
 
         tokio::select! {
-            _ = upload_files(&data, &policy, TransferCtx::default().with_scheduler(&scheduler)) => {
+            _ = upload_files(&data, &policy, TransferCtx::default()) => {
                 panic!("the stuck first file must not let the batch finish")
             }
             _ = wait_for_arrivals(&fast_arrivals, names.len() - 1) => {}
@@ -3367,7 +3471,7 @@ mod tests {
     /// how many requests have arrived. Because no response completes inside the
     /// observation window, the arrival count *is* the number of uploads in
     /// flight — which is what lets the tests below assert on file-level
-    /// concurrency without reaching inside the scheduler.
+    /// concurrency without reaching inside the governor.
     #[derive(Clone)]
     struct CountingSlowPut {
         arrivals: Arc<std::sync::atomic::AtomicUsize>,
@@ -3409,29 +3513,87 @@ mod tests {
         (mock, data, arrivals)
     }
 
-    /// Polls `arrivals` until it reaches `want`, returning the value observed.
-    /// Polling (rather than sleeping a fixed time) keeps the test fast when the
-    /// condition is already met and non-flaky on a loaded runner: extra load
-    /// makes requests arrive *later*, never sooner, so it cannot cause a false
-    /// pass.
-    async fn wait_for_arrivals(arrivals: &std::sync::atomic::AtomicUsize, want: usize) -> usize {
-        let deadline = std::time::Duration::from_secs(10);
-        tokio::time::timeout(deadline, async {
-            loop {
-                let seen = arrivals.load(Ordering::SeqCst);
-                if seen >= want {
-                    return seen;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap_or_else(|_| {
-            panic!(
-                "expected at least {want} concurrent transfers within {deadline:?}, saw {}",
-                arrivals.load(Ordering::SeqCst)
-            )
-        })
+    /// Like [`setup_slow_upload_batch`], but binds the batch to a governor with
+    /// an explicit process cap instead of the unlimited process default.
+    async fn setup_slow_upload_batch_with_governor(
+        tmp: &tempfile::TempDir,
+        count: usize,
+        process_cap: usize,
+        parallel: i64,
+    ) -> (
+        wiremock::MockServer,
+        UploadData,
+        Governor,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let governor =
+            Governor::try_with_capacity(process_cap).expect("test capacity must be nonzero");
+        for i in 0..count {
+            std::fs::write(tmp.path().join(format!("f{i:02}.dat")), format!("body-{i}")).unwrap();
+        }
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(CountingSlowPut {
+                arrivals: Arc::clone(&arrivals),
+                delay: std::time::Duration::from_secs(30),
+            })
+            .mount(&mock)
+            .await;
+        let data = capped_parallel_batch_upload_data_for(
+            tmp.path(),
+            &mock.uri(),
+            false,
+            parallel,
+            &governor,
+        );
+        (mock, data, governor, arrivals)
+    }
+
+    struct TwoCommandSlowPutSetup {
+        governor: Governor,
+        arrivals: Arc<std::sync::atomic::AtomicUsize>,
+        mock: wiremock::MockServer,
+    }
+
+    async fn setup_two_command_slow_put_batch(
+        tmp: &tempfile::TempDir,
+        file_count: usize,
+        process_cap: usize,
+    ) -> TwoCommandSlowPutSetup {
+        for i in 0..file_count {
+            std::fs::write(tmp.path().join(format!("f{i:02}.dat")), format!("body-{i}")).unwrap();
+        }
+        let governor =
+            Governor::try_with_capacity(process_cap).expect("test capacity must be nonzero");
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(CountingSlowPut {
+                arrivals: Arc::clone(&arrivals),
+                delay: std::time::Duration::from_secs(30),
+            })
+            .mount(&mock)
+            .await;
+        TwoCommandSlowPutSetup {
+            governor,
+            arrivals,
+            mock,
+        }
+    }
+
+    fn capped_upload_for_two_command_setup(
+        setup: &TwoCommandSlowPutSetup,
+        dir: &std::path::Path,
+        parallel: i64,
+    ) -> UploadData {
+        capped_parallel_batch_upload_data_for(
+            dir,
+            &setup.mock.uri(),
+            false,
+            parallel,
+            &setup.governor,
+        )
     }
 
     /// The point of the change: files no longer transfer one at a time. With
@@ -3444,16 +3606,7 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
-
-        let upload = async {
-            upload_files(
-                &data,
-                &policy,
-                TransferCtx::default().with_scheduler(&scheduler),
-            )
-            .await
-        };
+        let upload = async { upload_files(&data, &policy, TransferCtx::default()).await };
         let observe = async {
             // Reaching 4 is the fan-out's doing: a sequential loop, or a fan-out
             // pinned to 1, tops out at one arrival however many tickets exist.
@@ -3480,25 +3633,17 @@ mod tests {
 
     /// `data.parallel = 1` (the fallback when the server omits the field) must
     /// keep uploads one-at-a-time on the wire, so the knob is honoured in both
-    /// directions. The single ticket is what enforces this; the fan-out of 1
-    /// additionally keeps the batch from preparing files ahead.
+    /// directions. The single permit is what enforces this; acquire-before-
+    /// preprocess plus the command limit keep the batch from preparing files ahead.
     #[tokio::test(flavor = "multi_thread")]
     async fn upload_stays_sequential_when_parallel_is_one() {
         let tmp = tempfile::TempDir::new().unwrap();
         let (_mock, data, arrivals) = setup_slow_upload_batch(&tmp, 6, 1).await;
+        let transfer = data.transfer.clone();
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
-
-        let upload = async {
-            upload_files(
-                &data,
-                &policy,
-                TransferCtx::default().with_scheduler(&scheduler),
-            )
-            .await
-        };
+        let upload = async { upload_files(&data, &policy, TransferCtx::default()).await };
         let observe = async {
             // Wait for the first upload to be on the wire, then give the batch
             // room to (incorrectly) start more. The second wait is a deliberate
@@ -3511,10 +3656,222 @@ mod tests {
                 1,
                 "data.parallel=1 must keep exactly one upload on the wire at a time"
             );
+            assert_eq!(
+                transfer.local_work_started(),
+                1,
+                "file 2 must not enter preprocess while file 1 holds the only permit"
+            );
         };
 
         tokio::select! {
             _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn queue_wait_alone_exhausts_file_deadline_without_sending() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("b.dat"), b"payload").unwrap();
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&mock)
+            .await;
+
+        let governor = Governor::try_with_capacity(1).expect("test capacity");
+        let holder = governor.register_command(32);
+        let _hold = holder.acquire(RequestKind::WholeObjectPut).await.unwrap();
+
+        let data =
+            capped_parallel_batch_upload_data_for(tmp.path(), &mock.uri(), true, 1, &governor);
+        let mut policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        policy.max_elapsed = Some(std::time::Duration::from_millis(40));
+
+        let result = upload_files(&data, &policy, TransferCtx::default()).await;
+        assert!(
+            matches!(result, Err(FileManagerError::DeadlineExceeded { .. })),
+            "queue wait past max_elapsed must be DeadlineExceeded, got {result:?}"
+        );
+        assert!(
+            mock.received_requests().await.unwrap().is_empty(),
+            "no outbound PUT when admission waits past max_elapsed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_respects_process_cap_when_lower_than_parallel() {
+        const FILES: usize = 12;
+        const PROCESS_CAP: usize = 1;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data, governor, arrivals) =
+            setup_slow_upload_batch_with_governor(&tmp, FILES, PROCESS_CAP, PARALLEL).await;
+        let transfer = data.transfer.clone();
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let upload = async { upload_files(&data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PROCESS_CAP).await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "process cap must bound governed PUT leaves even when data.parallel is higher"
+            );
+            assert_eq!(
+                peak_in_flight, PROCESS_CAP,
+                "governor in_flight must match the single granted leaf"
+            );
+            assert_eq!(
+                transfer.local_work_started(),
+                1,
+                "second file must not preprocess until the first process-cap permit is released"
+            );
+        };
+
+        tokio::select! {
+            _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_respects_command_cap_when_process_cap_is_higher() {
+        const FILES: usize = 12;
+        const PROCESS_CAP: usize = 8;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data, governor, arrivals) =
+            setup_slow_upload_batch_with_governor(&tmp, FILES, PROCESS_CAP, PARALLEL).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let upload = async { upload_files(&data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PARALLEL as usize).await;
+            assert_eq!(
+                peak_arrivals, PARALLEL as usize,
+                "one command must fill up to data.parallel when spare process slots exist"
+            );
+            assert_eq!(
+                peak_in_flight, PARALLEL as usize,
+                "governor in_flight must track the command-local cap, not MAX_PART_CONCURRENCY"
+            );
+        };
+
+        tokio::select! {
+            _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn upload_reaches_command_parallel_without_part_ceiling_truncation() {
+        const FILES: usize = 32;
+        const PROCESS_CAP: usize = 32;
+        const PARALLEL: i64 = 24;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (_mock, data, governor, arrivals) =
+            setup_slow_upload_batch_with_governor(&tmp, FILES, PROCESS_CAP, PARALLEL).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let upload = async { upload_files(&data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PARALLEL as usize).await;
+            assert_eq!(
+                peak_arrivals, PARALLEL as usize,
+                "data.parallel=24 must fan out past MAX_PART_CONCURRENCY (16); \
+                 that clamp is per-file part width only"
+            );
+            assert_eq!(peak_in_flight, PARALLEL as usize);
+        };
+
+        tokio::select! {
+            _ = upload => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_concurrent_upload_batches_share_process_cap() {
+        const FILES: usize = 8;
+        const PROCESS_CAP: usize = 1;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let setup = setup_two_command_slow_put_batch(&tmp, FILES, PROCESS_CAP).await;
+        let data_a = capped_upload_for_two_command_setup(&setup, tmp.path(), PARALLEL);
+        let data_b = capped_upload_for_two_command_setup(&setup, tmp.path(), PARALLEL);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let upload_a = async { upload_files(&data_a, &policy, TransferCtx::default()).await };
+        let upload_b = async { upload_files(&data_b, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&setup.arrivals, &setup.governor, PROCESS_CAP).await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "two concurrent PUT commands must not overlap governed leaves when the \
+                 process cap is one"
+            );
+            assert_eq!(peak_in_flight, PROCESS_CAP);
+        };
+
+        tokio::select! {
+            _ = async { tokio::join!(upload_a, upload_b) } => {
+                panic!("slow mock must not let either batch finish")
+            }
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_concurrent_upload_batches_respect_per_command_cap() {
+        const FILES: usize = 8;
+        const PROCESS_CAP: usize = 8;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let setup = setup_two_command_slow_put_batch(&tmp, FILES, PROCESS_CAP).await;
+        let data_a = capped_upload_for_two_command_setup(&setup, tmp.path(), PARALLEL);
+        let data_b = capped_upload_for_two_command_setup(&setup, tmp.path(), PARALLEL);
+        let transfer_a = data_a.transfer.clone();
+        let transfer_b = data_b.transfer.clone();
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let upload_a = async { upload_files(&data_a, &policy, TransferCtx::default()).await };
+        let upload_b = async { upload_files(&data_b, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let ((peak_arrivals, peak_in_flight), peak_command) =
+                wait_for_arrival_peak_with_commands(
+                    &setup.arrivals,
+                    &setup.governor,
+                    PROCESS_CAP,
+                    &[transfer_a, transfer_b],
+                )
+                .await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "two commands with spare process slots must fill the process cap"
+            );
+            assert_eq!(peak_in_flight, PROCESS_CAP);
+            assert_eq!(
+                peak_command[0], PARALLEL as usize,
+                "each command must stay within its own data.parallel"
+            );
+            assert_eq!(peak_command[1], PARALLEL as usize);
+        };
+
+        tokio::select! {
+            _ = async { tokio::join!(upload_a, upload_b) } => {
+                panic!("slow mock must not let either batch finish")
+            }
             () = observe => {}
         }
     }
@@ -3595,6 +3952,32 @@ mod tests {
             unsafe_file_write: false,
             get_fastfail,
             cwd: None,
+            transfer: upload.transfer,
+        }
+    }
+
+    fn capped_batch_download_data_for(
+        names: &[&str],
+        local_dir: &std::path::Path,
+        mock_uri: &str,
+        get_fastfail: bool,
+        parallel: i64,
+        governor: &Governor,
+    ) -> DownloadData {
+        let upload =
+            capped_parallel_batch_upload_data_for(local_dir, mock_uri, false, parallel, governor);
+        DownloadData {
+            src_locations: names.iter().map(|n| (*n).to_string()).collect(),
+            local_location: local_dir.to_string_lossy().into_owned(),
+            stage_info: upload.stage_info,
+            encryption_materials: names.iter().map(|_| None).collect(),
+            presigned_urls: names.iter().map(|_| None).collect(),
+            flavor: PutGetResultsetFlavor::Python,
+            multipart: upload.multipart,
+            unsafe_file_write: false,
+            get_fastfail,
+            cwd: None,
+            transfer: upload.transfer,
         }
     }
 
@@ -3635,15 +4018,9 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
-
-        let results = download_files(
-            data,
-            &policy,
-            TransferCtx::default().with_scheduler(&scheduler),
-        )
-        .await
-        .expect("all four downloads should succeed");
+        let results = download_files(data, &policy, TransferCtx::default())
+            .await
+            .expect("all four downloads should succeed");
 
         let files: Vec<&str> = results.iter().map(|r| r.file.as_str()).collect();
         assert_eq!(
@@ -3680,6 +4057,87 @@ mod tests {
         }
     }
 
+    async fn mount_counting_slow_get(
+        mock: &wiremock::MockServer,
+        arrivals: &Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        wiremock::Mock::given(|req: &wiremock::Request| {
+            matches!(req.method.as_str(), "GET" | "HEAD")
+        })
+        .respond_with(CountingSlowGet {
+            arrivals: Arc::clone(arrivals),
+            body_len: 8,
+            delay: std::time::Duration::from_secs(30),
+        })
+        .mount(mock)
+        .await;
+    }
+
+    async fn setup_slow_get_batch_with_governor(
+        file_count: usize,
+        process_cap: usize,
+        parallel: i64,
+    ) -> (
+        tempfile::TempDir,
+        wiremock::MockServer,
+        DownloadData,
+        Governor,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names: Vec<String> = (0..file_count).map(|i| format!("d{i:02}.csv")).collect();
+        let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let governor =
+            Governor::try_with_capacity(process_cap).expect("test capacity must be nonzero");
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        mount_counting_slow_get(&mock, &arrivals).await;
+        let data = capped_batch_download_data_for(
+            &name_refs,
+            tmp.path(),
+            &mock.uri(),
+            false,
+            parallel,
+            &governor,
+        );
+        (tmp, mock, data, governor, arrivals)
+    }
+
+    struct TwoCommandSlowGetSetup {
+        governor: Governor,
+        arrivals: Arc<std::sync::atomic::AtomicUsize>,
+        mock: wiremock::MockServer,
+    }
+
+    async fn setup_two_command_slow_get_batch(process_cap: usize) -> TwoCommandSlowGetSetup {
+        let governor =
+            Governor::try_with_capacity(process_cap).expect("test capacity must be nonzero");
+        let arrivals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mock = wiremock::MockServer::start().await;
+        mount_counting_slow_get(&mock, &arrivals).await;
+        TwoCommandSlowGetSetup {
+            governor,
+            arrivals,
+            mock,
+        }
+    }
+
+    fn capped_download_for_two_command_setup(
+        setup: &TwoCommandSlowGetSetup,
+        names: &[&str],
+        local_dir: &std::path::Path,
+        parallel: i64,
+    ) -> DownloadData {
+        capped_batch_download_data_for(
+            names,
+            local_dir,
+            &setup.mock.uri(),
+            false,
+            parallel,
+            &setup.governor,
+        )
+    }
+
     /// Mirror of `upload_transfers_files_concurrently_up_to_the_fanout` for the
     /// GET direction: `download_files` got the same `buffered` treatment, so a
     /// regression to one-at-a-time must fail here too.
@@ -3708,16 +4166,7 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
-
-        let download = async {
-            download_files(
-                data,
-                &policy,
-                TransferCtx::default().with_scheduler(&scheduler),
-            )
-            .await
-        };
+        let download = async { download_files(data, &policy, TransferCtx::default()).await };
         let observe = async {
             // Fails with "saw 1" if the batch is sequential again.
             let seen = wait_for_arrivals(&arrivals, PARALLEL as usize).await;
@@ -3730,6 +4179,219 @@ mod tests {
 
         tokio::select! {
             _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_stays_sequential_when_parallel_is_one() {
+        const FILES: usize = 6;
+        let (_tmp, _mock, data, governor, arrivals) =
+            setup_slow_get_batch_with_governor(FILES, 32, 1).await;
+        let transfer = data.transfer.clone();
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download = async { download_files(data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            wait_for_arrivals(&arrivals, 1).await;
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            assert_eq!(
+                arrivals.load(Ordering::SeqCst),
+                1,
+                "data.parallel=1 must keep exactly one GET on the wire at a time"
+            );
+            assert_eq!(
+                governor.in_flight(),
+                1,
+                "one GET on the wire must hold exactly one governor permit"
+            );
+            assert_eq!(
+                transfer.local_work_started(),
+                1,
+                "file 2 must not open dest paths while file 1 holds the only permit"
+            );
+        };
+
+        tokio::select! {
+            _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_respects_process_cap_when_lower_than_parallel() {
+        const FILES: usize = 12;
+        const PROCESS_CAP: usize = 1;
+        const PARALLEL: i64 = 4;
+        let (_tmp, _mock, data, governor, arrivals) =
+            setup_slow_get_batch_with_governor(FILES, PROCESS_CAP, PARALLEL).await;
+        let transfer = data.transfer.clone();
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download = async { download_files(data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PROCESS_CAP).await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "process cap must bound governed GET leaves even when data.parallel is higher"
+            );
+            assert_eq!(peak_in_flight, PROCESS_CAP);
+            assert_eq!(
+                transfer.local_work_started(),
+                1,
+                "second file must not open dest paths until the first process-cap permit is released"
+            );
+        };
+
+        tokio::select! {
+            _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_respects_command_cap_when_process_cap_is_higher() {
+        const FILES: usize = 12;
+        const PROCESS_CAP: usize = 8;
+        const PARALLEL: i64 = 4;
+        let (_tmp, _mock, data, governor, arrivals) =
+            setup_slow_get_batch_with_governor(FILES, PROCESS_CAP, PARALLEL).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download = async { download_files(data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PARALLEL as usize).await;
+            assert_eq!(
+                peak_arrivals, PARALLEL as usize,
+                "one command must fill up to data.parallel when spare process slots exist"
+            );
+            assert_eq!(
+                peak_in_flight, PARALLEL as usize,
+                "governor in_flight must track the command-local cap, not MAX_PART_CONCURRENCY"
+            );
+        };
+
+        tokio::select! {
+            _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn download_reaches_command_parallel_without_part_ceiling_truncation() {
+        const FILES: usize = 32;
+        const PROCESS_CAP: usize = 32;
+        const PARALLEL: i64 = 24;
+        let (_tmp, _mock, data, governor, arrivals) =
+            setup_slow_get_batch_with_governor(FILES, PROCESS_CAP, PARALLEL).await;
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download = async { download_files(data, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&arrivals, &governor, PARALLEL as usize).await;
+            assert_eq!(
+                peak_arrivals, PARALLEL as usize,
+                "data.parallel=24 must fan out past MAX_PART_CONCURRENCY (16); \
+                 that clamp is per-file part width only"
+            );
+            assert_eq!(peak_in_flight, PARALLEL as usize);
+        };
+
+        tokio::select! {
+            _ = download => panic!("slow mock must not let the batch finish"),
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_concurrent_download_batches_share_process_cap() {
+        const FILES: usize = 8;
+        const PROCESS_CAP: usize = 1;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names_a: Vec<String> = (0..FILES).map(|i| format!("a{i:02}.csv")).collect();
+        let names_b: Vec<String> = (0..FILES).map(|i| format!("b{i:02}.csv")).collect();
+        let refs_a: Vec<&str> = names_a.iter().map(String::as_str).collect();
+        let refs_b: Vec<&str> = names_b.iter().map(String::as_str).collect();
+        let setup = setup_two_command_slow_get_batch(PROCESS_CAP).await;
+        let data_a = capped_download_for_two_command_setup(&setup, &refs_a, tmp.path(), PARALLEL);
+        let data_b = capped_download_for_two_command_setup(&setup, &refs_b, tmp.path(), PARALLEL);
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download_a = async { download_files(data_a, &policy, TransferCtx::default()).await };
+        let download_b = async { download_files(data_b, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let (peak_arrivals, peak_in_flight) =
+                wait_for_arrival_peak(&setup.arrivals, &setup.governor, PROCESS_CAP).await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "two concurrent GET commands must not overlap governed leaves when the \
+                 process cap is one"
+            );
+            assert_eq!(peak_in_flight, PROCESS_CAP);
+        };
+
+        tokio::select! {
+            _ = async { tokio::join!(download_a, download_b) } => {
+                panic!("slow mock must not let either batch finish")
+            }
+            () = observe => {}
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_concurrent_download_batches_respect_per_command_cap() {
+        const FILES: usize = 8;
+        const PROCESS_CAP: usize = 8;
+        const PARALLEL: i64 = 4;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let names_a: Vec<String> = (0..FILES).map(|i| format!("a{i:02}.csv")).collect();
+        let names_b: Vec<String> = (0..FILES).map(|i| format!("b{i:02}.csv")).collect();
+        let refs_a: Vec<&str> = names_a.iter().map(String::as_str).collect();
+        let refs_b: Vec<&str> = names_b.iter().map(String::as_str).collect();
+        let setup = setup_two_command_slow_get_batch(PROCESS_CAP).await;
+        let data_a = capped_download_for_two_command_setup(&setup, &refs_a, tmp.path(), PARALLEL);
+        let data_b = capped_download_for_two_command_setup(&setup, &refs_b, tmp.path(), PARALLEL);
+        let transfer_a = data_a.transfer.clone();
+        let transfer_b = data_b.transfer.clone();
+        let policy = crate::config::retry::RetryPolicy::put_get(
+            &crate::config::param_store::ParamStore::new(),
+        );
+        let download_a = async { download_files(data_a, &policy, TransferCtx::default()).await };
+        let download_b = async { download_files(data_b, &policy, TransferCtx::default()).await };
+        let observe = async {
+            let ((peak_arrivals, peak_in_flight), peak_command) =
+                wait_for_arrival_peak_with_commands(
+                    &setup.arrivals,
+                    &setup.governor,
+                    PROCESS_CAP,
+                    &[transfer_a, transfer_b],
+                )
+                .await;
+            assert_eq!(
+                peak_arrivals, PROCESS_CAP,
+                "two commands with spare process slots must fill the process cap"
+            );
+            assert_eq!(peak_in_flight, PROCESS_CAP);
+            assert_eq!(
+                peak_command[0], PARALLEL as usize,
+                "each command must stay within its own data.parallel"
+            );
+            assert_eq!(peak_command[1], PARALLEL as usize);
+        };
+
+        tokio::select! {
+            _ = async { tokio::join!(download_a, download_b) } => {
+                panic!("slow mock must not let either batch finish")
+            }
             () = observe => {}
         }
     }
@@ -3750,15 +4412,9 @@ mod tests {
         let policy = crate::config::retry::RetryPolicy::put_get(
             &crate::config::param_store::ParamStore::new(),
         );
-        let scheduler = internal::test_scheduler(data.multipart);
-
-        let results = download_files(
-            data,
-            &policy,
-            TransferCtx::default().with_scheduler(&scheduler),
-        )
-        .await
-        .expect("collect-all must not abort the batch");
+        let results = download_files(data, &policy, TransferCtx::default())
+            .await
+            .expect("collect-all must not abort the batch");
 
         let rows: Vec<(&str, &str)> = results
             .iter()
@@ -4845,6 +5501,7 @@ mod tests {
             multipart: MultipartParams::default(),
             put_compress_level: 9,
             put_tempdir: None,
+            transfer: TransferOp::isolated_for_tests(),
         }
     }
 
@@ -4869,6 +5526,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
             storage_account: None,
         }
@@ -4950,6 +5608,7 @@ mod tests {
                 crl_manager: crate::crl::CrlManager::new().connection_crl(),
                 root_store_provider: crate::tls::RootStoreProvider::new(),
                 proxy_config: crate::tls::config::ProxyConfig::default(),
+                transfer: crate::governor::Governor::new().register_command(1),
             },
             storage_account: Some("test".to_string()),
         };
@@ -4968,6 +5627,7 @@ mod tests {
             multipart: MultipartParams::default(),
             put_compress_level: 9,
             put_tempdir: None,
+            transfer: TransferOp::isolated_for_tests(),
         };
 
         let refresher: Option<&dyn StageInfoRefresher> = None;
@@ -5065,6 +5725,7 @@ mod tests {
                     crl_manager: crate::crl::CrlManager::new().connection_crl(),
                     root_store_provider: crate::tls::RootStoreProvider::new(),
                     proxy_config: crate::tls::config::ProxyConfig::default(),
+                    transfer: crate::governor::Governor::new().register_command(1),
                 },
                 storage_account: None,
             },
@@ -5078,6 +5739,7 @@ mod tests {
             multipart: MultipartParams::default(),
             put_compress_level: 9,
             put_tempdir: None,
+            transfer: TransferOp::isolated_for_tests(),
         }
     }
 

@@ -734,9 +734,7 @@ impl DatabaseDriverV1 {
                     conn.telemetry_id = Some(telemetry_id);
                     conn.connection_crl = Some(connection_crl.clone());
                     conn.storage_http_client_cache =
-                        Some(crate::file_manager::StorageHttpClientCache::new(
-                            conn.stage_transport(&self.crl_manager, &self.root_store_provider),
-                        ));
+                        Some(crate::file_manager::StorageHttpClientCache::new());
 
                     // Telemetry setup: check if the server has opted this session
                     // into in-band telemetry and a session registry is configured,
@@ -1605,12 +1603,14 @@ impl Connection {
         &self,
         crl_manager: &crate::crl::CrlManager,
         root_store_provider: &crate::tls::RootStoreProvider,
+        transfer: crate::governor::TransferOp,
     ) -> crate::file_manager::StageTransport {
         crate::file_manager::StageTransport {
             tls_config: self.tls_config(),
             proxy_config: self.proxy_config(),
             crl_manager: self.connection_crl_or(crl_manager),
             root_store_provider: root_store_provider.clone(),
+            transfer,
         }
     }
 

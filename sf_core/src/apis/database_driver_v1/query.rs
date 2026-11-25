@@ -86,6 +86,7 @@ pub(super) async fn perform_put_get_transfer(
     get_fastfail: bool,
     cwd: Option<std::path::PathBuf>,
     unsafe_file_write: bool,
+    transport: file_manager::StageTransport,
     http_client_cache: &file_manager::StorageHttpClientCache,
 ) -> Result<RowsetData, QueryResponseProcessingError> {
     // Seed the refresher's cache with the initial snapshot.
@@ -106,7 +107,6 @@ pub(super) async fn perform_put_get_transfer(
         operation_ctx.map(OperationCtx::cleanup_scope),
     )
     .with_http_client_cache(http_client_cache);
-    let transport = http_client_cache.transport();
 
     match command {
         "UPLOAD" => {
@@ -120,7 +120,7 @@ pub(super) async fn perform_put_get_transfer(
                     put_compress_level,
                     put_tempdir,
                     cwd,
-                    transport,
+                    &transport,
                 )
                 .context(FileTransferPreparationSnafu)?;
             let upload_results = upload_files(&file_upload_data, retry_policy, transfer_ctx)
@@ -134,7 +134,7 @@ pub(super) async fn perform_put_get_transfer(
             unsafe_file_write,
             get_fastfail,
             cwd,
-            transport,
+            &transport,
         ) {
             Ok(file_download_data) => {
                 let download_results =
@@ -249,6 +249,7 @@ pub(super) async fn build_and_upload_stream(
         multipart: upload_data.multipart,
         put_compress_level: upload_data.put_compress_level,
         put_tempdir: upload_data.put_tempdir,
+        transfer: upload_data.transfer,
     };
 
     // No cleanup scope, and no cancellation coverage on this path at all — stated
@@ -267,8 +268,6 @@ pub(super) async fn build_and_upload_stream(
     // marking those RPCs `async_first` and threading `operation_ctx` through them.
     // TODO: needs a tracking ticket before this PR merges — see the PR discussion.
 
-    // No scheduler joined: a streamed PUT is a batch of one, so the cloud upload
-    // leaf sizes its own budget (see `file_manager::scheduler_for`).
     let transfer_ctx = match refresher_handle {
         Some(refresher) => file_manager::TransferCtx::with_refresher(refresher),
         None => file_manager::TransferCtx::default(),

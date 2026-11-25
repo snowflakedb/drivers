@@ -12,7 +12,7 @@ use sf_core::file_manager::internal::{
 };
 use sf_core::file_manager::{
     AzureDownloadError, CloudCredentials, DownloadData, EncryptionMaterial, LocationType,
-    MultipartParams, StageInfo, StageInfoRefresher, TransferCtx, download_files,
+    MultipartParams, StageInfo, StageInfoRefresher, TransferCtx, TransferOp, download_files,
 };
 use sf_core::sensitive::SensitiveString;
 use std::io::Write;
@@ -45,6 +45,7 @@ fn azure_stage(mock_uri: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: Some("test".to_string()),
     }
@@ -91,6 +92,7 @@ async fn azure_download_success_returns_data_and_metadata() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -144,6 +146,7 @@ async fn azure_download_does_not_auto_decompress_gzip_content_encoding() {
         "file.csv.gz",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -186,6 +189,7 @@ async fn azure_download_content_encoding_gzip_with_non_gzip_body_is_returned_ver
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -225,6 +229,7 @@ async fn azure_download_does_not_advertise_gzip_accept_encoding() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await
     .expect("download must succeed");
@@ -269,6 +274,7 @@ async fn azure_download_403_is_not_inline_retried() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -314,6 +320,7 @@ async fn azure_download_404_is_not_retried() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -350,6 +357,7 @@ async fn azure_download_503_is_retried_then_succeeds() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -385,6 +393,7 @@ async fn azure_error_response_redacts_sas_token() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -431,6 +440,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: TransferOp::isolated_for_tests(),
         },
         storage_account: Some("test".to_string()),
     };
@@ -440,6 +450,7 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -474,6 +485,7 @@ async fn azure_download_with_wrong_creds_type_fails() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -498,6 +510,7 @@ async fn azure_download_with_missing_storage_account_fails() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -536,6 +549,7 @@ async fn azure_download_persistent_403_with_no_refresher_terminates() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         None,
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -588,6 +602,7 @@ async fn azure_download_403_refreshes_sas_and_redrives_the_get() {
         "file.csv",
         &test_policy(DEFAULT_PUT_GET_MAX_ATTEMPTS),
         Some(&refresher as &dyn StageInfoRefresher),
+        &TransferOp::isolated_for_tests(),
     )
     .await;
 
@@ -669,6 +684,7 @@ async fn azure_git_stage_download_succeeds_without_sfcdigest() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     let results = download_files(
@@ -758,6 +774,7 @@ async fn azure_download_decrypts_unloaded_object_without_sfcdigest() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: TransferOp::isolated_for_tests(),
     };
 
     download_files(

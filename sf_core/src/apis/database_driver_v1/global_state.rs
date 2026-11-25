@@ -15,6 +15,7 @@ use crate::config::ParamStore;
 use crate::config::param_registry::{DEFAULT_CHUNK_DOWNLOAD_READ_TIMEOUT_SECS, Wrapper};
 use crate::crl::CrlManager;
 use crate::fs_adapter::{FsAdapter, RealFs};
+use crate::governor::{Governor, process_governor};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::logging::{LogManager, TraceEncoding};
 use crate::rest::snowflake::prompt_lock::PromptLockMap;
@@ -272,6 +273,11 @@ pub struct DriverProviders {
     /// keyring. Production code uses `None` and lazily constructs
     /// [`KeyringTokenCache`] on first [`DatabaseDriverV1::token_cache`] call.
     pub token_cache: Option<Arc<dyn TokenCache>>,
+    /// Inject a [`Governor`] so tests can use a private capacity and assert
+    /// cross-driver sharing. Production (`None`) uses [`process_governor`].
+    /// An explicit override isolates that driver from the default pool of
+    /// this loaded `sf_core` image.
+    pub governor: Option<Governor>,
 }
 
 pub struct DatabaseDriverV1 {
@@ -302,6 +308,9 @@ pub struct DatabaseDriverV1 {
     pub(crate) crl_manager: CrlManager,
     pub(crate) root_store_provider: RootStoreProvider,
     pub(crate) xp_slot: Arc<XpSlot>,
+    /// Process-wide (or test-injected) transfer admission scheduler. Default
+    /// construction shares [`process_governor`] across all driver roots.
+    pub(crate) governor: Governor,
 }
 
 impl Default for DatabaseDriverV1 {
@@ -351,6 +360,7 @@ impl DatabaseDriverV1 {
             crl_manager: providers.crl_manager.unwrap_or_default(),
             root_store_provider,
             xp_slot,
+            governor: providers.governor.unwrap_or_else(process_governor),
         }
     }
 
@@ -934,5 +944,32 @@ mod tests {
             Err(err) => panic!("connection should see the driver backend: {err}"),
         };
         assert!(Arc::ptr_eq(active, &backend));
+    }
+
+    #[test]
+    fn default_drivers_share_process_governor() {
+        let a = DatabaseDriverV1::new();
+        let b = DatabaseDriverV1::new();
+        assert!(
+            Governor::ptr_eq(&a.governor, &b.governor),
+            "default DatabaseDriverV1 roots must share process_governor()"
+        );
+        assert!(Governor::ptr_eq(&a.governor, &process_governor()));
+    }
+
+    #[test]
+    fn injected_governor_is_shared_across_driver_roots() {
+        let governor = Governor::try_with_capacity(3).expect("test capacity");
+        let a = DatabaseDriverV1::with_providers(DriverProviders {
+            governor: Some(governor.clone()),
+            ..DriverProviders::default()
+        });
+        let b = DatabaseDriverV1::with_providers(DriverProviders {
+            governor: Some(governor.clone()),
+            ..DriverProviders::default()
+        });
+        assert!(Governor::ptr_eq(&a.governor, &governor));
+        assert!(Governor::ptr_eq(&a.governor, &b.governor));
+        assert_eq!(a.governor.capacity(), Some(3));
     }
 }

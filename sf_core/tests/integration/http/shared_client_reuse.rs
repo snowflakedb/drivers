@@ -26,8 +26,8 @@ use sf_core::file_manager::internal::{
 };
 use sf_core::file_manager::{
     CloudCredentials, DownloadData, FileManagerError, LocationType, MultipartParams,
-    SourceCompressionParam, StageInfo, TransferCtx, UploadData, download_files, download_from_gcs,
-    upload_files,
+    SourceCompressionParam, StageInfo, TransferCtx, TransferOp, UploadData, download_files,
+    download_from_gcs, upload_files,
 };
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::error::TlsError;
@@ -56,6 +56,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
         storage_account: None,
     }
@@ -83,6 +84,7 @@ fn s3_stage_with_creds(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -107,20 +109,22 @@ fn azure_stage_with_sas(endpoint: &str) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config: sf_core::tls::config::ProxyConfig::default(),
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
 
-/// `command_parallel = 1`: file 2 cannot start until file 1's whole GET
+/// `data.parallel = 1`: file 2 cannot start until file 1's whole GET
 /// (headers + body) completes, so the shared client's connection is idle —
 /// not mid-request — when file 2's request goes out. That is the only
 /// configuration in which "reused the same connection" and "raced a second
 /// connection because both files were in flight" are actually distinguishable.
 fn sequential_multipart() -> MultipartParams {
-    MultipartParams {
-        command_parallel: 1,
-        ..MultipartParams::from_server(None, Some(1))
-    }
+    MultipartParams::from_server(None, Some(1))
+}
+
+fn sequential_transfer() -> TransferOp {
+    TransferOp::isolated_for_tests_with_parallel(1)
 }
 
 /// Sequential two-file batches share one `reqwest::Client`. HTTP/1.1
@@ -168,6 +172,7 @@ async fn gcs_download_files_batch_shares_one_connection_across_files() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: sequential_transfer(),
     };
 
     let results = download_files(
@@ -203,12 +208,28 @@ async fn gcs_single_file_downloads_do_not_share_a_connection() {
     // Two sequential calls through the single-file API — no `TransferCtx`
     // carrying a batch client, exactly the "single-file callers still
     // succeed" acceptance criterion.
-    download_from_gcs(&stage, "a", None, &policy, 0, None)
-        .await
-        .expect("first single-file download must succeed");
-    download_from_gcs(&stage, "b", None, &policy, 0, None)
-        .await
-        .expect("second single-file download must succeed");
+    download_from_gcs(
+        &stage,
+        "a",
+        None,
+        &policy,
+        0,
+        None,
+        &TransferOp::isolated_for_tests(),
+    )
+    .await
+    .expect("first single-file download must succeed");
+    download_from_gcs(
+        &stage,
+        "b",
+        None,
+        &policy,
+        0,
+        None,
+        &TransferOp::isolated_for_tests(),
+    )
+    .await
+    .expect("second single-file download must succeed");
 
     assert_eq!(
         proxy.accept_count(),
@@ -249,6 +270,7 @@ async fn s3_upload_files_batch_shares_one_connection_across_files() {
         put_compress_level: 9,
         put_tempdir: None,
         cwd: None,
+        transfer: sequential_transfer(),
     };
 
     let results = upload_files(
@@ -303,6 +325,7 @@ async fn azure_download_files_batch_shares_one_connection_across_files() {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: sequential_transfer(),
     };
 
     let results = download_files(
@@ -335,6 +358,7 @@ fn two_file_download(stage: StageInfo, local_location: String) -> DownloadData {
         unsafe_file_write: false,
         get_fastfail: true,
         cwd: None,
+        transfer: sequential_transfer(),
     }
 }
 
@@ -451,6 +475,7 @@ async fn download_files_fails_the_batch_when_the_http_client_cannot_build() {
             unsafe_file_write: false,
             get_fastfail: true,
             cwd: None,
+            transfer: sequential_transfer(),
         },
         &gcs_test_retry_policy(false, DEFAULT_PUT_GET_MAX_ATTEMPTS),
         TransferCtx::default(),

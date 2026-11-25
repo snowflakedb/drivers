@@ -24,6 +24,7 @@
 use aws_sdk_s3::error::ProvideErrorMetadata;
 use sf_core::apis::database_driver_v1::PutGetResultsetFlavor;
 use sf_core::config::retry::RetryPolicy;
+use sf_core::file_manager::TransferOp;
 use sf_core::file_manager::internal::{
     azure_test_retry_policy, gcs_test_retry_policy, test_params,
 };
@@ -116,6 +117,7 @@ fn azure_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config,
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -141,6 +143,7 @@ fn gcs_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config,
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -170,6 +173,7 @@ fn s3_stage(tls_config: TlsConfig, proxy_config: ProxyConfig) -> StageInfo {
             crl_manager: sf_core::crl::CrlManager::new().connection_crl(),
             root_store_provider: sf_core::tls::RootStoreProvider::new(),
             proxy_config,
+            transfer: sf_core::governor::TransferOp::isolated_for_tests(),
         },
     }
 }
@@ -190,6 +194,7 @@ fn s3_single_upload(stage: StageInfo) -> SingleUploadData {
         multipart: MultipartParams::from_server(None, None),
         put_compress_level: 9,
         put_tempdir: None,
+        transfer: TransferOp::isolated_for_tests(),
     }
 }
 
@@ -239,7 +244,14 @@ async fn should_route_azure_download_through_proxy() {
         proxy_via(connect_proxy.port(), None),
     );
 
-    let result = download_from_azure(&stage, "file.csv", &azure_policy(3), None).await;
+    let result = download_from_azure(
+        &stage,
+        "file.csv",
+        &azure_policy(3),
+        None,
+        &TransferOp::isolated_for_tests(),
+    )
+    .await;
 
     // (a) the transfer genuinely succeeded through the tunnel...
     let response = result.expect("azure download via proxy should succeed");
@@ -256,9 +268,15 @@ async fn should_fail_azure_download_when_proxy_port_dead() {
     let port = dead_loopback_port();
     let stage = azure_stage(TlsConfig::default(), proxy_via(port, None));
 
-    let err = download_from_azure(&stage, "file.csv", &azure_policy(1), None)
-        .await
-        .expect_err("dead proxy must fail the transfer");
+    let err = download_from_azure(
+        &stage,
+        "file.csv",
+        &azure_policy(1),
+        None,
+        &TransferOp::isolated_for_tests(),
+    )
+    .await
+    .expect_err("dead proxy must fail the transfer");
 
     // A dead port yields a transport-layer failure (`Http`/`RetryExhausted`),
     // never an `AzureHttp { status_code }` — no server ever answered. Azure's
@@ -283,9 +301,15 @@ async fn should_bypass_proxy_for_azure_no_proxy_host() {
         proxy_via(connect_proxy.port(), Some(AZURE_HOST)),
     );
 
-    let err = download_from_azure(&stage, "file.csv", &azure_policy(1), None)
-        .await
-        .expect_err("bypassed proxy + unresolvable host must fail");
+    let err = download_from_azure(
+        &stage,
+        "file.csv",
+        &azure_policy(1),
+        None,
+        &TransferOp::isolated_for_tests(),
+    )
+    .await
+    .expect_err("bypassed proxy + unresolvable host must fail");
 
     assert!(
         matches!(
@@ -321,7 +345,16 @@ async fn should_route_gcs_download_through_proxy() {
         proxy_via(connect_proxy.port(), None),
     );
 
-    let result = download_from_gcs(&stage, "file.csv", None, &gcs_policy(3), 0, None).await;
+    let result = download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        &gcs_policy(3),
+        0,
+        None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
+    )
+    .await;
 
     let response = result.expect("gcs download via proxy should succeed");
     assert_eq!(response.data, b"encrypted-data");
@@ -336,9 +369,17 @@ async fn should_fail_gcs_download_when_proxy_port_dead() {
     let port = dead_loopback_port();
     let stage = gcs_stage(TlsConfig::default(), proxy_via(port, None));
 
-    let err = download_from_gcs(&stage, "file.csv", None, &gcs_policy(1), 0, None)
-        .await
-        .expect_err("dead proxy must fail the transfer");
+    let err = download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        &gcs_policy(1),
+        0,
+        None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
+    )
+    .await
+    .expect_err("dead proxy must fail the transfer");
 
     // GCS preserves the typed `reqwest::Error`, so we can assert the failure is
     // specifically a connect error (not a timeout or an HTTP-status error).
@@ -360,9 +401,17 @@ async fn should_bypass_proxy_for_gcs_no_proxy_host() {
         proxy_via(connect_proxy.port(), Some(GCS_HOST)),
     );
 
-    let err = download_from_gcs(&stage, "file.csv", None, &gcs_policy(1), 0, None)
-        .await
-        .expect_err("bypassed proxy + unresolvable host must fail");
+    let err = download_from_gcs(
+        &stage,
+        "file.csv",
+        None,
+        &gcs_policy(1),
+        0,
+        None,
+        &sf_core::file_manager::internal::isolated_transfer_operation(),
+    )
+    .await
+    .expect_err("bypassed proxy + unresolvable host must fail");
 
     assert!(
         matches!(
