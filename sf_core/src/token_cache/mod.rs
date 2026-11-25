@@ -89,7 +89,7 @@ impl std::fmt::Display for TokenType {
 /// **OAuth flows** (`OauthAccessToken`, `OauthRefreshToken`,
 /// `DpopBundledAccessToken`): populate `idp` with the full token-endpoint URL,
 /// `role` with the role name (or empty string if none), `snowflake` with the
-/// Snowflake server URL, and `username`.
+/// Snowflake server URL, and `username` (or empty string if no user is configured).
 ///
 /// **MFA and ID token flows** (`MfaToken`, `IdToken`): set `idp` and `role` to
 /// empty string. Only `snowflake` and `username` are included in the key hash for
@@ -261,11 +261,13 @@ fn serialize_cache_key(key: &CacheKey) -> String {
     serde_json::to_string(&map).expect("BTreeMap<&str, &str> serialization is infallible")
 }
 
-/// Validates that `snowflake` and `username` are non-empty.
+/// Validates that `snowflake` is non-empty, and `username` for MFA and ID tokens.
 ///
 /// `idp` must be non-empty for OAuth flows; empty is allowed for MFA/ID (absent by
 /// spec). `role` is allowed to be empty — absent for MFA/ID and when no role is
-/// configured for OAuth.
+/// configured for OAuth. `username` is allowed to be empty for OAuth flows: the
+/// user is not needed to sign in (the IdP decides who signs in), and the token
+/// is still keyed by IdP, Snowflake URL and role.
 pub(super) fn validate_key_components(key: &CacheKey) -> Result<(), TokenCacheError> {
     if key.snowflake.is_empty() {
         return InvalidKeyFormatSnafu {
@@ -273,7 +275,7 @@ pub(super) fn validate_key_components(key: &CacheKey) -> Result<(), TokenCacheEr
         }
         .fail();
     }
-    if key.username.is_empty() {
+    if key.username.is_empty() && !is_oauth_type(key.token_type) {
         return InvalidKeyFormatSnafu {
             key: format!("snowflake={}, username=<empty>", key.snowflake),
         }
@@ -770,6 +772,57 @@ mod tests {
                 ),
                 "Expected InvalidKeyFormat for empty username"
             );
+        }
+
+        #[test]
+        fn validate_key_components_rejects_empty_username_for_mfa() {
+            let key = CacheKey {
+                token_type: TokenType::MfaToken,
+                username: String::new(),
+                ..valid_key()
+            };
+
+            assert!(
+                matches!(
+                    validate_key_components(&key),
+                    Err(TokenCacheError::InvalidKeyFormat { .. })
+                ),
+                "Expected InvalidKeyFormat for empty username on an MFA token"
+            );
+        }
+
+        #[test]
+        fn validate_key_components_accepts_empty_username_for_oauth() {
+            for token_type in [
+                TokenType::OAuthAccessToken,
+                TokenType::OAuthRefreshToken,
+                TokenType::DpopBundledAccessToken,
+            ] {
+                let key = CacheKey {
+                    token_type,
+                    username: String::new(),
+                    ..valid_key()
+                };
+
+                assert!(
+                    validate_key_components(&key).is_ok(),
+                    "Expected empty username to be accepted for {token_type:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn oauth_keys_with_and_without_username_differ() {
+            let with_user = CacheKey {
+                token_type: TokenType::OAuthAccessToken,
+                ..valid_key()
+            };
+            let without_user = CacheKey {
+                username: String::new(),
+                ..with_user.clone()
+            };
+
+            assert_ne!(build_cache_key(&with_user), build_cache_key(&without_user));
         }
 
         #[test]
