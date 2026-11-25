@@ -8,9 +8,9 @@ using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbCon
 
 namespace Snowflake.Data.Tests.E2E.Legacy;
 
-sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
+public sealed class LegacySnowflakeConnection : ISnowflakeDbConnection
 {
-    private readonly OldSnowflakeDbConnection _inner;
+    public readonly OldSnowflakeDbConnection _inner;
 
     public LegacySnowflakeConnection(string connectionString)
     {

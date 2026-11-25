@@ -1,51 +1,40 @@
 using System.Data;
 using System.Data.Common;
 
-// ReSharper disable UnusedMember.Global
-// ReSharper disable UnusedParameter.Local
-
 namespace Snowflake.Data.Client;
 
 public class SnowflakeDbDataAdapter : DbDataAdapter, IDbDataAdapter
 {
+    private SnowflakeDbCommand? _selectCommand;
+
     public SnowflakeDbDataAdapter()
     {
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
     }
 
     public SnowflakeDbDataAdapter(SnowflakeDbCommand selectCommand) : this()
     {
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        _selectCommand = selectCommand;
     }
 
     public SnowflakeDbDataAdapter(string selectCommandText, SnowflakeDbConnection selectConnection) : this()
     {
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        _selectCommand = new SnowflakeDbCommand(selectConnection, selectCommandText);
     }
 
     IDbCommand? IDbDataAdapter.DeleteCommand { get; set; }
 
     IDbCommand? IDbDataAdapter.InsertCommand { get; set; }
 
-    new public SnowflakeDbCommand SelectCommand
+    public new SnowflakeDbCommand? SelectCommand
     {
-        get =>
-            throw new NotImplementedException(
-                "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
-
-        set => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        get => _selectCommand;
+        set => _selectCommand = value;
     }
 
     IDbCommand? IDbDataAdapter.SelectCommand
     {
-        get => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
-        set => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        get => _selectCommand;
+        set => _selectCommand = (SnowflakeDbCommand)value!;
     }
 
     IDbCommand? IDbDataAdapter.UpdateCommand { get; set; }

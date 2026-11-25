@@ -131,13 +131,12 @@ public sealed class NumberOverflowAsStringTest : LiveE2ETestBase
     [InlineData("ARROW")]
     public async Task ShouldThrowOverflowFromDataAdapterFillWhenFlagIsNotSetAsync(string resultFormat)
     {
+        Skip.FutureMilestone("TODO(SNOW-4483010) future milestone: return a value outside the decimal range");
         if (resultFormat == "JSON")
         {
             // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected
             Skip.FutureMilestone();
         }
-        // TODO(SNOW-4382584): SnowflakeDbDataAdapter is a stub
-        Skip.FutureMilestone();
 
         using var conn = OpenConnectionWithoutFlag(resultFormat);
         var tableName = UniqueTableName();
@@ -165,13 +164,12 @@ public sealed class NumberOverflowAsStringTest : LiveE2ETestBase
     [InlineData("ARROW")]
     public async Task ShouldStoreOverflowAsStringInPreTypedColumnOnDataAdapterFillAsync(string resultFormat)
     {
+        Skip.FutureMilestone("TODO(SNOW-4483010) future milestone: return a value outside the decimal range");
         if (resultFormat == "JSON")
         {
             // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected
             Skip.FutureMilestone();
         }
-        // TODO(SNOW-4382584): SnowflakeDbDataAdapter is a stub
-        Skip.FutureMilestone();
 
         using var conn = OpenConnectionWithFlag(resultFormat);
         var tableName = UniqueTableName();
