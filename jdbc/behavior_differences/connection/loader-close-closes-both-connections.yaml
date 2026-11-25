@@ -1,0 +1,14 @@
+name: "Loader close() closes both connections when closing the first one fails"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  When closing the processing connection throws `SQLException`, the upload connection is left
+  open and `close()` throws `Loader.ConnectionError`.
+new_driver_behavior: |
+  `close()` always closes both connections and throws `Loader.ConnectionError` for the first
+  failure. A second failure is attached to it as a suppressed exception.
+description: |
+  The exception type and the cause of a single failure are unchanged.

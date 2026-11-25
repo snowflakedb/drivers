@@ -1,0 +1,18 @@
+name: "Loader API local staging directory stays under the staging base for '.', '..' and, on Windows, '/' in table names"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  CSV files are staged under `<java.io.tmpdir>/snowflake/stage/<table>/<operation>/`. Only the
+  platform file separator in the table name is replaced. For a table named `.` or `..`, or on
+  Windows one containing `/`, the batch directory is elsewhere in the file system.
+new_driver_behavior: |
+  `/` is also mapped to `_` on Windows, `.` to `_` and `..` to `__`, so the batch directory is
+  always under `<java.io.tmpdir>/snowflake/stage/`. A path that still resolves outside it fails
+  with the same "Could not initialize the local staging area" error as a directory that cannot
+  be created.
+description: |
+  Only the local directory changes. The remote stage location, the staging table name and the
+  loaded data are unchanged.

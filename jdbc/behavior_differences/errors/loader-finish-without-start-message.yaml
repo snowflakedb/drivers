@@ -1,0 +1,15 @@
+name: "Loader finish() before start() reports that the loader was never started"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `finish()` on a loader that was never started throws `Loader.DataError` with the message
+  `"Failed to join StreamLoader queue: "` plus the message of an internal
+  `NullPointerException`, which is also the cause. That message depends on the JVM.
+new_driver_behavior: |
+  `finish()` throws `Loader.DataError` with the message
+  `"Failed to join StreamLoader queue: the loader was never started"` and no cause.
+description: |
+  The exception type and the message prefix are unchanged.

@@ -1,0 +1,16 @@
+name: "Loader API local staging directories are mode 0700 on POSIX instead of following the process umask"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  The batch directory under `<java.io.tmpdir>/snowflake/stage/<table>/<operation>/` is created
+  with the mode the process umask produces, for example `0755`.
+new_driver_behavior: |
+  The batch directory is created with mode `0700` on file systems that support POSIX
+  permissions. Its parents keep the umask-derived mode. On other file systems, such as
+  Windows, nothing changes.
+description: |
+  The location, file names and the error raised when the directory cannot be created are
+  unchanged.

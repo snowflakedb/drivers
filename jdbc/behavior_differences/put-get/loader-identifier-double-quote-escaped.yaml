@@ -1,0 +1,14 @@
+name: "Loader API loads tables, columns and keys whose names contain a double quote"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A table, schema, database, column or key name containing `"` fails to load with
+  `Loader.ConnectionError` and a SQL syntax error.
+new_driver_behavior: |
+  Embedded double quotes in these names are doubled, so `A"B` is sent as `"A""B"` and the load
+  succeeds.
+description: |
+  Names without a double quote produce the same statements as before.
