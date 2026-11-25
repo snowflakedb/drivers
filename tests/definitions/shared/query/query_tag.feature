@@ -12,19 +12,17 @@ Feature: Query tag
     When Query "SELECT CURRENT_QUERY_TAG()" is executed
     Then the result should contain value "conn_tag_e2e"
 
-  # dotnet wrapper has no support for statement-level query tags
   # ODBC forwards QUERY_TAG only as a connection-string session parameter at
   # login. There is no per-statement QUERY_TAG attribute.
-  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e @dotnet_not_needed
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e @dotnet_e2e
   Scenario: should tag a single query via statement-level query tag
     Given Snowflake client is logged in
     When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt_tag_e2e"
     Then the result should contain value "stmt_tag_e2e"
 
-  # dotnet wrapper has no support for statement-level query tags  
   # ODBC has no per-statement QUERY_TAG, so there is no statement tag that
   # could leak into session state.
-  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e @dotnet_not_needed
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e @dotnet_e2e
   Scenario: should not leak statement-level query tag into session state
     Given Snowflake client is logged in
     When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt_tag_e2e"
@@ -33,7 +31,7 @@ Feature: Query tag
 
   # ODBC has no per-statement QUERY_TAG, so a statement tag cannot override
   # the connection tag.
-  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e
+  @core_e2e @python_e2e @jdbc_e2e @odbc_not_needed @nodejs_e2e @dotnet_e2e
   Scenario: should let a statement QUERY_TAG override the connection QUERY_TAG
     Given Snowflake client is logged in with connection option QUERY_TAG set to "conn"
     When Query "SELECT CURRENT_QUERY_TAG()" is executed with statement-level QUERY_TAG "stmt"
