@@ -115,7 +115,6 @@ public class PatTest : IClassFixture<ITFixture>
     [SnowflakeFact]
     public void ShouldAuthenticateUsingPatTokenFromTokenFilePath()
     {
-        Skip.FutureMilestone("TODO SNOW-4483010 next milestone");
         Skip.OnOldDriver("BD#pat-token-file-path", "The old driver ignores token_file_path in the connection string");
 
         // Given Authentication is set to Programmatic Access Token and a valid PAT token is stored in a file
