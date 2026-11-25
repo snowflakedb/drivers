@@ -13,15 +13,12 @@ public sealed class ConnectionPoolChangedSessionTestCollection
 }
 
 [Collection(nameof(ConnectionPoolChangedSessionTestCollection))]
-public sealed class ConnectionPoolChangedSessionTest : LiveE2ETestBase, IDisposable
+public sealed class ConnectionPoolChangedSessionTest : LiveE2ETestBase
 {
     public ConnectionPoolChangedSessionTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
-        ClearAllPoolsOnOldDriver();
     }
-
-    public void Dispose() => ClearAllPoolsOnOldDriver();
 
     [SnowflakeFact]
     public async Task ShouldDestroyPooledConnectionWhenSessionPropertiesChangeAsync()
@@ -226,13 +223,7 @@ public sealed class ConnectionPoolChangedSessionTest : LiveE2ETestBase, IDisposa
     private string AppendPoolSettings(string settings)
     {
         using var probe = Fixture.Factory.Create(Output);
-        return $"{probe.ConnectionString};{settings}";
-    }
-
-    private static void ClearAllPoolsOnOldDriver()
-    {
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            OldSnowflakeDbConnectionPool.ClearAllPools();
+        return PoolConnectionString.Wrap(probe.ConnectionString, settings);
     }
 
     private static int GetOldPoolSize(string connectionString) =>

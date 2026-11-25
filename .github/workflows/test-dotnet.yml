@@ -57,7 +57,15 @@ jobs:
         run: |
           FULL='${{ steps.matrix.outputs.matrix }}'
           echo "unit_matrix=$(echo "$FULL" | jq -c '[.[] | select(.mode == "unit")]')" >> "$GITHUB_OUTPUT"
-          echo "e2e_matrix=$(echo "$FULL" | jq -c '[.[] | select(.mode == "e2e" or .mode == "e2e_old")]')" >> "$GITHUB_OUTPUT"
+          # The old-driver cell runs E2E, Wiremock and E2E JSON as three jobs: in one
+          # runner they exceed the wall-clock budget, and running them together
+          # exhausts the runner.
+          echo "e2e_matrix=$(echo "$FULL" | jq -c '[.[]
+            | select(.mode == "e2e" or .mode == "e2e_old")
+            | if .mode == "e2e_old"
+              then . as $cell | ["e2e", "wiremock", "e2e-json"][] | $cell + {suite: ., name: ($cell.name + "-" + .)}
+              else . + {suite: "all"}
+              end]')" >> "$GITHUB_OUTPUT"
 
   dotnet_tests:
     needs: load-dotnet-matrix
@@ -364,6 +372,7 @@ jobs:
         run: echo "snowflake_cloud_env=$(printf '%s' "$CLOUD_PROVIDER" | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
 
       - name: Run E2E tests
+        if: ${{ matrix.suite == 'all' || matrix.suite == 'e2e' }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
@@ -373,7 +382,7 @@ jobs:
           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-e2e.xml
 
       - name: Run Wiremock tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (matrix.suite == 'all' || matrix.suite == 'wiremock') }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }}
         working-directory: dotnet/tests/Snowflake.Data.Tests.Wiremock
         env:
@@ -383,7 +392,7 @@ jobs:
           SNOWFLAKE_JUNIT_PATH: ${{ github.workspace }}/dotnet-junit-wiremock.xml
 
       - name: Upload E2E + Wiremock test results
-        if: always()
+        if: ${{ always() && matrix.suite != 'e2e-json' }}
         uses: actions/upload-artifact@v7
         with:
           name: dotnet-tests-e2e-${{ matrix.name }}
@@ -393,7 +402,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Run E2E tests (JSON)
-        if: ${{ !cancelled() && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu') }}
+        if: ${{ !cancelled() && (matrix.suite == 'all' || matrix.suite == 'e2e-json') && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu') }}
         run: dotnet run --no-build --framework ${{ matrix.dotnet_version }} -- -trait "Category=Conversion"
         working-directory: dotnet/tests/Snowflake.Data.Tests.E2E
         env:
@@ -404,7 +413,7 @@ jobs:
           QUERY_RESULT_FORMAT: JSON
 
       - name: Upload E2E JSON test results
-        if: always() && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu')
+        if: ${{ always() && (matrix.suite == 'all' || matrix.suite == 'e2e-json') && matrix.dotnet_version == 'net11.0' && startsWith(matrix.os, 'ubuntu') }}
         uses: actions/upload-artifact@v7
         with:
           name: dotnet-tests-e2e-json-${{ matrix.name }}
@@ -412,7 +421,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Check formatting
-        if: ${{ !cancelled() && matrix.mode == 'e2e_old' }}
+        if: ${{ !cancelled() && matrix.mode == 'e2e_old' && matrix.suite == 'e2e' }}
         run: dotnet format Snowflake.Data.sln --verify-no-changes
         working-directory: dotnet
 

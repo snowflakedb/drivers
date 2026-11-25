@@ -1,12 +1,10 @@
 extern alias OldDriver;
 using System.Data.Common;
 using System.Diagnostics;
-using System.Reflection;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E;
 using Snowflake.Data.Tests.E2E.Fixtures;
 using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
-using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
 using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbException;
 
 namespace Snowflake.Data.Tests.Wiremock;
@@ -18,29 +16,14 @@ public sealed class SFConnectionIsolatedTestCollection
 
 [Collection(nameof(SFConnectionIsolatedTestCollection))]
 [Trait("Category", "Wiremock")]
-public sealed class SFConnectionIsolatedTest : E2ETestBase, IDisposable
+public sealed class SFConnectionIsolatedTest : E2ETestBase
 {
     private const string DelayedLoginUser = "wiremock_login_delayed";
     private const int RequestTimeoutErrorCode = 270007;
 
-    private readonly object? _originalOldDriverMinRetryTimeout;
-
-    // The old driver raises any retry_timeout below SFSessionHttpClientProperties.DefaultRetryTimeout
-    // (300 s) to that value, so the floor is lowered to 1 s for the duration of each test.
     public SFConnectionIsolatedTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
-        if (TestDriver.Current != TestDriver.Kind.Old)
-            return;
-        var property = GetOldDriverMinRetryTimeoutProperty();
-        _originalOldDriverMinRetryTimeout = property.GetValue(null);
-        property.SetValue(null, TimeSpan.FromSeconds(1));
-    }
-
-    public void Dispose()
-    {
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            GetOldDriverMinRetryTimeoutProperty().SetValue(null, _originalOldDriverMinRetryTimeout);
     }
 
     [SnowflakeFact]
@@ -55,7 +38,7 @@ public sealed class SFConnectionIsolatedTest : E2ETestBase, IDisposable
             ct, "auth/login_delayed.json", "auth/login_success_any.json").ConfigureAwait(false);
         var connectionTimeout = 5;
         var retryTimeout = 1;
-        string[] timeoutSettings = [$"{LoginTimeoutKey()}={connectionTimeout}", $"retry_timeout={retryTimeout}", MaxHttpRetriesSetting(0)];
+        string[] timeoutSettings = [$"{LoginTimeoutKey()}={connectionTimeout}", $"retry_timeout={retryTimeout}", MaxHttpRetriesSetting(0), "poolingEnabled=false"];
         using var conn = Fixture.Factory.Create(
             Output,
             E2EWiremock.BuildHttpConnectionString(wiremock, [$"user={DelayedLoginUser}", .. timeoutSettings]));
@@ -74,17 +57,6 @@ public sealed class SFConnectionIsolatedTest : E2ETestBase, IDisposable
             E2EWiremock.BuildHttpConnectionString(wiremock, timeoutSettings));
         openedConn.Open();
         Assert.Equal(retryTimeout, openedConn.ConnectionTimeout);
-    }
-
-    private static PropertyInfo GetOldDriverMinRetryTimeoutProperty()
-    {
-        var propertiesType = typeof(OldSnowflakeDbConnection).Assembly.GetType("Snowflake.Data.Core.SFSessionHttpClientProperties");
-        Assert.NotNull(propertiesType);
-        var property = propertiesType.GetProperty(
-            "DefaultRetryTimeout",
-            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-        Assert.NotNull(property);
-        return property;
     }
 
     private static string LoginTimeoutKey() =>

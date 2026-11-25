@@ -24,18 +24,15 @@ public sealed class ConnectionMultiplePoolsAsyncWiremockTest : E2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            OldSnowflakeDbConnectionPool.ClearAllPools();
-
         using var wiremock = await E2EWiremock.StartWithMappingsAsync(
             ct,
             "auth/login_success_any.json",
             "query/begin_success.json",
             "query/rollback_fails.json",
             "session/logout_success.json").ConfigureAwait(false);
-        var connectionString = E2EWiremock.BuildHttpConnectionString(
-            wiremock,
-            "minPoolSize=0;poolingEnabled=true");
+        var connectionString = PoolConnectionString.Wrap(
+            E2EWiremock.BuildHttpConnectionString(wiremock),
+            "minPoolSize=0;poolingEnabled=true;" + PoolConnectionString.OldDriverOnly("COMMAND_TIMEOUT=5"));
         Assert.Equal(0, OldSnowflakeDbConnectionPool.GetPool(connectionString).GetCurrentPoolSize());
         using var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);

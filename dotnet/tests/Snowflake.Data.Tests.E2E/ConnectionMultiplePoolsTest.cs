@@ -38,7 +38,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings(
             "application=TestWaitForMaxSize1;waitingForIdleSessionTimeout=1s;maxPoolSize=2;minPoolSize=1;poolingEnabled=true");
         Assert.Equal(0, GetOldPoolSize(connectionString));
@@ -82,7 +81,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         const long measurementTolerance = 25;
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings(
             "application=TestWaitForMaxSize3;waitingForIdleSessionTimeout=15s;maxPoolSize=2;minPoolSize=0;poolingEnabled=true");
         Assert.Equal(0, GetOldPoolSize(connectionString));
@@ -121,7 +119,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
     [SnowflakeFact]
     public void ShouldThrowWhenDisablingPoolingForAllPools()
     {
-        ClearAllPoolsOnOldDriver();
         var thrown = Assert.Throws<Exception>(SetPoolingDisabled);
         Assert.Equal(
             "You cannot change connection pool parameters for all the pools. Instead you can change it on a particular pool",
@@ -135,7 +132,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("application=TestMinPoolSize;minPoolSize=3;poolingEnabled=true");
         using var connection = Fixture.Factory.Create(Output, connectionString);
         connection.Open();
@@ -154,7 +150,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         // TODO(SNOW-4382598): real connection pooling
         Skip.FutureMilestone();
 
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("minPoolSize=0;poolingEnabled=true");
         using var connection = await OpenConnectionAsync(connectionString, TestContext.Current.CancellationToken)
             .ConfigureAwait(false);
@@ -173,9 +168,8 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings(
-            "minPoolSize=0;maxPoolSize=2;application=TestReturningCancelledSessionsToThePool;poolingEnabled=true");
+            $"minPoolSize=0;maxPoolSize=2;application=CancelSess{(cancelAsync ? "Async" : "Sync")};poolingEnabled=true");
         Assert.Equal(0, GetOldPoolSize(connectionString));
 
         using var cts = new CancellationTokenSource();
@@ -214,7 +208,7 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
     private string AppendPoolSettings(string settings)
     {
         using var probe = Fixture.Factory.Create(Output);
-        return $"{probe.ConnectionString};{settings}";
+        return PoolConnectionString.Wrap(probe.ConnectionString, settings);
     }
 
     private ISnowflakeDbConnection OpenConnection(string connectionString)
@@ -298,12 +292,6 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
         var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         return connection;
-    }
-
-    private static void ClearAllPoolsOnOldDriver()
-    {
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            OldSnowflakeDbConnectionPool.ClearAllPools();
     }
 
     private static int GetOldPoolSize(string connectionString) =>

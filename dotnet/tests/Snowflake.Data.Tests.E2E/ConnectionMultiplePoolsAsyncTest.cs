@@ -35,7 +35,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("minPoolSize=1;poolingEnabled=true");
         using var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -50,7 +49,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         // TODO(SNOW-4382598): real connection pooling
         Skip.FutureMilestone();
 
-        ClearAllPoolsOnOldDriver();
         const string invalidConnectionString = ";connection_timeout=123";
         using var connection = Fixture.Factory.Create(Output, invalidConnectionString);
 
@@ -68,7 +66,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connStr = AppendPoolSettings(
             "minPoolSize=0;maxPoolSize=10;application=conn_pool_test_invalid_openasync2;poolingEnabled=true");
         using (var connection = Fixture.Factory.Create(Output, connStr))
@@ -93,7 +90,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("application=TestMinPoolSizeAsync;minPoolSize=3;poolingEnabled=true");
         using var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -113,7 +109,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("minPoolSize=0;poolingEnabled=true");
         using var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -130,7 +125,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         // TODO(SNOW-4382598): real connection pooling
         Skip.FutureMilestone();
 
-        ClearAllPoolsOnOldDriver();
         var connStr = AppendPoolSettings(
             "application=TestConcurrentConnectionPoolingAsync2;ExpirationTimeout=3;poolingEnabled=true");
         await ConcurrentPoolingHelperAsync(connStr, true, 5, 5, 3, TestContext.Current.CancellationToken)
@@ -143,7 +137,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         // TODO(SNOW-4382598): real connection pooling
         Skip.FutureMilestone();
 
-        ClearAllPoolsOnOldDriver();
         var connStr = AppendPoolSettings(
             "application=TestConcurrentConnectionPoolingDisposeAsync2;ExpirationTimeout=3;poolingEnabled=true");
         await ConcurrentPoolingHelperAsync(connStr, false, 5, 5, 3, TestContext.Current.CancellationToken)
@@ -157,7 +150,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("minPoolSize=0;maxPoolSize=1;poolingEnabled=true");
         using var conn1 = Fixture.Factory.Create(Output, connectionString);
         await conn1.OpenAsync(ct).ConfigureAwait(false);
@@ -176,7 +168,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("minPoolSize=1;poolingEnabled=true");
         using var conn1 = Fixture.Factory.Create(Output, connectionString);
         await conn1.OpenAsync(ct).ConfigureAwait(false);
@@ -202,7 +193,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("maxPoolSize=2;minPoolSize=1;poolingEnabled=true");
         using var conn1 = Fixture.Factory.Create(Output, connectionString);
         await conn1.OpenAsync(ct).ConfigureAwait(false);
@@ -243,7 +233,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings(
             "application=TestWaitForMaxSize2;waitingForIdleSessionTimeout=1s;maxPoolSize=2;minPoolSize=1;poolingEnabled=true");
         Assert.Equal(0, GetOldPoolSize(connectionString));
@@ -269,7 +258,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("maxPoolSize=2;minPoolSize=1;poolingEnabled=true");
         using var connection = Fixture.Factory.Create(Output, connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -285,7 +273,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var disabledPoolString = AppendPoolSettings("poolingEnabled=false");
         using var conn1 = Fixture.Factory.Create(Output);
         await conn1.OpenAsync(ct).ConfigureAwait(false);
@@ -303,17 +290,16 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         Skip.FutureMilestone();
 
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings("maxPoolSize=2;minPoolSize=1;poolingEnabled=true;");
         using var conn1 = Fixture.Factory.Create(Output, connectionString);
         await conn1.OpenAsync(ct).ConfigureAwait(false);
         Assert.Equal(ConnectionState.Open, conn1.State);
 
-        using var conn2 = Fixture.Factory.Create(Output, connectionString + "retryCount=1");
+        using var conn2 = Fixture.Factory.Create(Output, connectionString + "retryCount=1;");
         await conn2.OpenAsync(ct).ConfigureAwait(false);
         Assert.Equal(ConnectionState.Open, conn2.State);
 
-        using var conn3 = Fixture.Factory.Create(Output, connectionString + "retryCount=2");
+        using var conn3 = Fixture.Factory.Create(Output, connectionString + "retryCount=2;");
         await conn3.OpenAsync(ct).ConfigureAwait(false);
         Assert.Equal(ConnectionState.Open, conn3.State);
 
@@ -321,7 +307,7 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
         await conn2.CloseAsync(ct).ConfigureAwait(false);
         Assert.Equal(1, GetOldPoolSize(conn1.ConnectionString));
         Assert.Equal(1, GetOldPoolSize(conn2.ConnectionString));
-        ClearAllPoolsOnOldDriver();
+        OldSnowflakeDbConnectionPool.ClearAllPools();
         Assert.Equal(0, GetOldPoolSize(conn1.ConnectionString));
         Assert.Equal(0, GetOldPoolSize(conn2.ConnectionString));
         await conn3.CloseAsync(ct).ConfigureAwait(false);
@@ -340,7 +326,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
 
         const int expirationTimeoutInSeconds = 10;
         var ct = TestContext.Current.CancellationToken;
-        ClearAllPoolsOnOldDriver();
         var connectionString = AppendPoolSettings(
             $"expirationTimeout={expirationTimeoutInSeconds};maxPoolSize=4;minPoolSize=2;poolingEnabled=true");
         Assert.Equal(0, GetOldPoolSize(connectionString));
@@ -379,7 +364,7 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
     private string AppendPoolSettings(string settings)
     {
         using var probe = Fixture.Factory.Create(Output);
-        return $"{probe.ConnectionString};{settings}";
+        return PoolConnectionString.Wrap(probe.ConnectionString, settings);
     }
 
     private async Task<ISnowflakeDbConnection> OpenConnectionAsync(
@@ -455,12 +440,6 @@ public sealed class ConnectionMultiplePoolsAsyncTest : LiveE2ETestBase
                 _ = conn.OpenAsync(CancellationToken.None);
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private static void ClearAllPoolsOnOldDriver()
-    {
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            OldSnowflakeDbConnectionPool.ClearAllPools();
     }
 
     private static int GetOldPoolSize(string connectionString) =>

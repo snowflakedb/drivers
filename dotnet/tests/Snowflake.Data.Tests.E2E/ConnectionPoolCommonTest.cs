@@ -14,17 +14,14 @@ using OldSnowflakeDbException = OldDriver::Snowflake.Data.Client.SnowflakeDbExce
 namespace Snowflake.Data.Tests.E2E;
 
 [Collection(nameof(ConnectionPoolCommonTest))]
-public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
+public sealed class ConnectionPoolCommonTest : LiveE2ETestBase
 {
     private const int InvalidConnectionStringErrorCode = 270008;
 
     public ConnectionPoolCommonTest(E2EITFixture fixture, ITestOutputHelper output)
         : base(fixture, output)
     {
-        ClearAllPoolsOnOldDriver();
     }
-
-    public void Dispose() => ClearAllPoolsOnOldDriver();
 
     [SnowflakeFact]
     public async Task ShouldOpenAndQueryPooledConnectionsFromMultipleThreadsAsync()
@@ -113,7 +110,7 @@ public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
             Assert.Equal(DBNull.Value, await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false));
         }
 
-        Assert.Equal(1, GetCurrentPoolSize());
+        Assert.Equal(1, GetPoolCurrentPoolSize(connectionString));
     }
 
     [SnowflakeFact]
@@ -138,13 +135,13 @@ public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
         Skip.FutureMilestone();
         var ct = TestContext.Current.CancellationToken;
         var connectionString = SetPoolWithOneElement();
-        Assert.Equal(0, GetCurrentPoolSize());
+        Assert.Equal(0, GetPoolCurrentPoolSize(connectionString));
 
         string firstOpenedSessionId;
         using (var connection1 = CreateRawConnection(connectionString))
         {
             await connection1.OpenAsync(ct).ConfigureAwait(false);
-            Assert.Equal(1, GetCurrentPoolSize());
+            Assert.Equal(1, GetPoolCurrentPoolSize(connectionString));
             connection1.BeginTransaction();
             Assert.True(HasActiveExplicitTransaction(connection1));
             firstOpenedSessionId = CurrentSessionId(connection1);
@@ -152,19 +149,19 @@ public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
             command.CommandText = "SELECT CURRENT_TRANSACTION()";
             Assert.NotEqual(DBNull.Value, await command.ExecuteScalarAsync(ct).ConfigureAwait(false));
         }
-        Assert.Equal(1, GetCurrentPoolSize());
+        Assert.Equal(1, GetPoolCurrentPoolSize(connectionString));
 
         using (var connection2 = CreateRawConnection(connectionString))
         {
             await connection2.OpenAsync(ct).ConfigureAwait(false);
-            Assert.Equal(1, GetCurrentPoolSize());
+            Assert.Equal(1, GetPoolCurrentPoolSize(connectionString));
             Assert.False(HasActiveExplicitTransaction(connection2));
             Assert.Equal(firstOpenedSessionId, CurrentSessionId(connection2));
             using var command = connection2.CreateCommand();
             command.CommandText = "SELECT CURRENT_TRANSACTION()";
             Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync(ct).ConfigureAwait(false));
         }
-        Assert.Equal(1, GetCurrentPoolSize());
+        Assert.Equal(1, GetPoolCurrentPoolSize(connectionString));
     }
 
     private async Task OpenAndCloseConnectionAsync(string connectionString, CancellationToken ct)
@@ -199,7 +196,9 @@ public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
     }
 
     private string SetPoolWithOneElement() =>
-        BaseConnectionString() + ";maxPoolSize=1;minPoolSize=0;poolingEnabled=true";
+        PoolConnectionString.Wrap(
+            BaseConnectionString(),
+            "maxPoolSize=1;minPoolSize=0;poolingEnabled=true");
 
     private static string CurrentSessionId(IDbConnection connection)
     {
@@ -231,17 +230,6 @@ public sealed class ConnectionPoolCommonTest : LiveE2ETestBase, IDisposable
         TestDriver.Current == TestDriver.Kind.Old
             ? new OldSnowflakeDbConnection(connectionString)
             : new NewSnowflakeDbConnection(connectionString);
-
-    private static void ClearAllPoolsOnOldDriver()
-    {
-        if (TestDriver.Current == TestDriver.Kind.Old)
-            OldSnowflakeDbConnectionPool.ClearAllPools();
-    }
-
-    private static int GetCurrentPoolSize() =>
-        TestDriver.Current == TestDriver.Kind.Old
-            ? OldSnowflakeDbConnectionPool.GetCurrentPoolSize()
-            : NewSnowflakeDbConnectionPool.GetCurrentPoolSize();
 
     private static int GetPoolCurrentPoolSize(string connectionString) =>
         TestDriver.Current == TestDriver.Kind.Old

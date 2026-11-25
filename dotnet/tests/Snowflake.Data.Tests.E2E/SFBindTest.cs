@@ -3,7 +3,6 @@ using System.Data.Common;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
-using Newtonsoft.Json;
 using Snowflake.Data.Interfaces;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
@@ -14,7 +13,6 @@ using OldSnowflakeDbParameter = OldDriver::Snowflake.Data.Client.SnowflakeDbPara
 
 namespace Snowflake.Data.Tests.E2E;
 
-[Collection(nameof(IsolatedCollection))]
 [Trait("Category", "Conversion")]
 public sealed class SFBindTest : LiveE2ETestBase
 {
@@ -558,65 +556,6 @@ public sealed class SFBindTest : LiveE2ETestBase
     }
 
     [SnowflakeFact]
-    public async Task ShouldBindArraysWhenJsonTypeNameHandlingIsAutoAsync()
-    {
-        // TODO(SNOW-4382583): parameter bindings
-        Skip.FutureMilestone();
-
-        var restoreJsonDefaultSettings = SetJsonDefaultSettingsWithTypeNameHandlingAuto();
-
-        var tableName = UniqueTableName();
-        try
-        {
-            using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
-            try
-            {
-                CreateOrReplaceTable(conn, tableName, "cola REAL", "colb TEXT", "colc NUMBER(38,0)");
-
-                using var cmd = CreateCommand(conn, $"insert into {tableName} values (?, ?, ?)");
-                const int total = 250;
-
-                var arrdouble = new List<double>();
-                var arrstring = new List<string>();
-                var arrint = new List<int>();
-                for (var i = 0; i < total; i++)
-                {
-                    arrdouble.Add(i * 10 + 1);
-                    arrdouble.Add(i * 10 + 2);
-                    arrdouble.Add(i * 10 + 3);
-
-                    arrstring.Add("stra" + i.ToString(CultureInfo.InvariantCulture));
-                    arrstring.Add("strb" + i.ToString(CultureInfo.InvariantCulture));
-                    arrstring.Add("strc" + i.ToString(CultureInfo.InvariantCulture));
-
-                    arrint.Add(i * 10 + 1);
-                    arrint.Add(i * 10 + 2);
-                    arrint.Add(i * 10 + 3);
-                }
-
-                AddParameter(cmd, "1", DbType.Double, arrdouble.ToArray());
-                AddParameter(cmd, "2", DbType.String, arrstring.ToArray());
-                AddParameter(cmd, "3", DbType.Int32, arrint.ToArray());
-
-                var rowsCount = await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-                Assert.Equal(total * 3, rowsCount);
-
-                cmd.CommandText = $"SELECT * FROM {tableName}";
-                using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
-                Assert.True(reader.Read());
-            }
-            finally
-            {
-                DropTableIfExists(conn, tableName);
-            }
-        }
-        finally
-        {
-            restoreJsonDefaultSettings.Dispose();
-        }
-    }
-
-    [SnowflakeFact]
     public async Task ShouldInsertIntegersUsingStageArrayBindingAsync()
     {
         // TODO(SNOW-4382583): parameter bindings
@@ -880,16 +819,6 @@ public sealed class SFBindTest : LiveE2ETestBase
         return conn;
     }
 
-    private static IDisposable SetJsonDefaultSettingsWithTypeNameHandlingAuto()
-    {
-        var restorer = new JsonDefaultSettingsRestorer(JsonConvert.DefaultSettings);
-        JsonConvert.DefaultSettings = CreateTypeNameHandlingAutoSettings;
-        return restorer;
-    }
-
-    private static JsonSerializerSettings CreateTypeNameHandlingAutoSettings() =>
-        new() { TypeNameHandling = TypeNameHandling.Auto };
-
     private static string UniqueTableName() => $"{TablePrefix}_{Guid.NewGuid():N}";
 
     private static string ParameterName(int index) => index.ToString(CultureInfo.InvariantCulture);
@@ -1005,20 +934,6 @@ public sealed class SFBindTest : LiveE2ETestBase
             var current = Assert.IsType<NewSnowflakeDbException>(thrown);
             Assert.Equal(errorCode, current.ErrorCode);
         }
-    }
-
-    [CollectionDefinition(nameof(IsolatedCollection), DisableParallelization = true)]
-    public sealed class IsolatedCollection
-    {
-    }
-
-    private sealed class JsonDefaultSettingsRestorer : IDisposable
-    {
-        private readonly object? _original;
-
-        public JsonDefaultSettingsRestorer(object? original) => _original = original;
-
-        public void Dispose() => JsonConvert.DefaultSettings = (Func<JsonSerializerSettings>?)_original;
     }
 
     private sealed class ExpectedTimestamps

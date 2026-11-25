@@ -40,15 +40,24 @@ public sealed class TestConnectionFactory : ITestConnectionFactory
         if (!string.IsNullOrEmpty(pat))
         {
             var authBuilder = builder.WithPat(pat);
-            return authBuilder.Build();
+            return AppendOldDriverDefaults(authBuilder.Build());
         }
 
         if (string.IsNullOrEmpty(pat) && RsaKeyUtils.TryDiscoverRsaKeyFile(out var path))
         {
             var authBuilder = builder.WithKeyFile(path);
-            return authBuilder.Build();
+            return AppendOldDriverDefaults(authBuilder.Build());
         }
 
-        return builder.Build();
+        return AppendOldDriverDefaults(builder.Build());
+    }
+
+    private static string AppendOldDriverDefaults(string connectionString)
+    {
+        if (!GlobalState.UseOldDriver)
+            return connectionString;
+
+        return connectionString.TrimEnd(';')
+            + ";poolingEnabled=false;waitingForIdleSessionTimeout=1s";
     }
 }
