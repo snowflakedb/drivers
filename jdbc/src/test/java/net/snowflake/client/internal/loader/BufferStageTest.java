@@ -126,6 +126,13 @@ class BufferStageTest {
     assertEquals("Table 1", BufferStage.localTableDirectory("Table 1"));
   }
 
+  @Test
+  void shouldReplaceCharactersInvalidInWindowsFileNamesOnWindows() {
+    assumeTrue(File.separatorChar == '\\');
+    assertEquals("a_b_c_d_e_f_g_h", BufferStage.localTableDirectory("a/b<c>d:e\"f|g?h"));
+    assertEquals("_", BufferStage.localTableDirectory("*"));
+  }
+
   private static void deleteRecursively(Path root) throws IOException {
     if (!Files.exists(root)) {
       return;

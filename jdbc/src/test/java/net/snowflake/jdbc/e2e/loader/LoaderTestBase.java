@@ -53,6 +53,18 @@ abstract class LoaderTestBase extends SnowflakeIntegrationTestBase {
     }
   }
 
+  void createTable(String table, String columnsDdl) throws SQLException {
+    try (Statement statement = getDefaultConnection().createStatement()) {
+      statement.execute("CREATE OR REPLACE TABLE \"" + table + "\" (" + columnsDdl + ")");
+    }
+  }
+
+  void dropTable(String table) throws SQLException {
+    try (Statement statement = getDefaultConnection().createStatement()) {
+      statement.execute("DROP TABLE IF EXISTS \"" + table + "\"");
+    }
+  }
+
   static String uniqueName(String prefix) {
     return prefix + "_" + UUID.randomUUID().toString().replace("-", "").toUpperCase();
   }

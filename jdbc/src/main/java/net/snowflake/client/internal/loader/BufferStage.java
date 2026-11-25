@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 import net.snowflake.client.api.loader.Loader;
 import net.snowflake.client.api.loader.Operation;
@@ -46,6 +47,8 @@ public class BufferStage {
     CLEANED,
     REMOVED
   };
+
+  private static final Pattern WINDOWS_INVALID_FILE_NAME_CHARS = Pattern.compile("[/<>:\"|?*]");
 
   private static final FileAttribute<Set<PosixFilePermission>> OWNER_ONLY_DIRECTORY =
       PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
@@ -349,13 +352,14 @@ public class BufferStage {
 
   /**
    * Returns the local directory name for a table. Unlike the remote location, it also replaces
-   * {@code /} on Windows, where it is a separator too, and maps {@code .} and {@code ..} to {@code
-   * _} and {@code __}, so the directory is always a child of the base directory.
+   * {@code /} and the characters Windows does not allow in file names on Windows, and maps {@code
+   * .} and {@code ..} to {@code _} and {@code __}, so the directory is always a child of the base
+   * directory.
    */
   static String localTableDirectory(String table) {
     String directory = escapeFileSeparatorChar(table);
     if (File.separatorChar == '\\') {
-      directory = directory.replace('/', '_');
+      directory = WINDOWS_INVALID_FILE_NAME_CHARS.matcher(directory).replaceAll("_");
     }
     if (directory.equals(".") || directory.equals("..")) {
       directory = directory.replace('.', '_');
