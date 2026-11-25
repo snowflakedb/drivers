@@ -12,6 +12,9 @@ using Snowflake.Data.Tests.ArchitectureInvariantTests.Metadata;
 using Snowflake.Data.Tests.ArchitectureInvariantTests.Utils;
 using Snowflake.Data.Tests.Assertions;
 
+// GetPool and SnowflakeDbSessionPool are obsolete. This file reflects over them.
+#pragma warning disable CS0618
+
 namespace Snowflake.Data.Tests.ArchitectureInvariantTests;
 
 [Trait("Category", "Architecture")]
@@ -255,7 +258,6 @@ public sealed class PublicApiTest
 
     private static readonly HashSet<string> SnowflakeDbConnectionPoolPublicApi =
     [
-        "C:()",
         $"M:{nameof(SnowflakeDbConnectionPool.ClearAllPools)}()",
         $"M:{nameof(SnowflakeDbConnectionPool.SetMaxPoolSize)}({nameof(Int32)})",
         $"M:{nameof(SnowflakeDbConnectionPool.GetMaxPoolSize)}()",
@@ -273,6 +275,32 @@ public sealed class PublicApiTest
         $"M:{nameof(SnowflakeDbConnectionPool.GetWaitForIdleSessionTimeout)}({PoolKeyParams})",
         $"M:{nameof(SnowflakeDbConnectionPool.ClearPool)}({PoolKeyParams})",
         $"M:{nameof(SnowflakeDbConnectionPool.GetChangedSession)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPool)}({nameof(String)})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPool)}({PoolKeyParams})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPoolPartition)}({nameof(String)})",
+        $"M:{nameof(SnowflakeDbConnectionPool.GetPoolPartition)}({PoolKeyParams})",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.MaxPoolSize)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.MinPoolSize)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.CurrentPoolSize)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.PoolingEnabled)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.ExpirationTimeout)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.ConnectionTimeout)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.WaitingForIdleSessionTimeout)}()",
+        $"P:get_{nameof(SnowflakeDbConnectionPool.ChangedSession)}()",
+        $"M:{nameof(SnowflakeDbConnectionPool.Clear)}()",
+    ];
+
+    private static readonly HashSet<string> SnowflakeDbSessionPoolPublicApi =
+    [
+        $"M:{nameof(SnowflakeDbSessionPool.GetPooling)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetMinPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetMaxPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetCurrentPoolSize)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetExpirationTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetConnectionTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetWaitForIdleSessionTimeout)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.ClearPool)}()",
+        $"M:{nameof(SnowflakeDbSessionPool.GetChangedSession)}()",
     ];
 
     private static readonly HashSet<string> SnowflakeDbDriverPublicApi =
@@ -314,6 +342,7 @@ public sealed class PublicApiTest
         [typeof(SnowflakeDbParameter)] = SnowflakeDbParameterPublicApi,
         [typeof(SnowflakeDbParameterCollection)] = SnowflakeDbParameterCollectionPublicApi,
         [typeof(SnowflakeDbConnectionPool)] = SnowflakeDbConnectionPoolPublicApi,
+        [typeof(SnowflakeDbSessionPool)] = SnowflakeDbSessionPoolPublicApi,
         [typeof(SnowflakeDbTransaction)] = SnowflakeDbTransactionPublicApi,
         [typeof(SnowflakeActivityStarter)] = SnowflakeActivityStarterPublicApi,
         [typeof(ChangedSessionBehavior)] = ChangedSessionBehaviorPublicApi,
@@ -340,6 +369,7 @@ public sealed class PublicApiTest
             typeof(SnowflakeDbParameter).FullName!,
             typeof(SnowflakeDbParameterCollection).FullName!,
             typeof(SnowflakeDbConnectionPool).FullName!,
+            typeof(SnowflakeDbSessionPool).FullName!,
             typeof(SnowflakeDbTransaction).FullName!,
             typeof(SnowflakeActivityStarter).FullName!,
             typeof(ChangedSessionBehavior).FullName!,
@@ -384,12 +414,51 @@ public sealed class PublicApiTest
     }
 
     [SnowflakeFact]
-    public void TestSnowflakeDbConnectionPool_IsNonStaticClassWithPublicParameterlessConstructor()
+    public void TestSnowflakeDbConnectionPool_IsNonStaticClassWithNoPublicConstructor()
     {
         var type = typeof(SnowflakeDbConnectionPool);
 
-        Assert.False(type.IsAbstract && type.IsSealed, $"{type.Name} must not be a static class");
-        Assert.NotNull(type.GetConstructor(Type.EmptyTypes));
+        Assert.True(type.IsClass);
+        Assert.False(type.IsAbstract);
+        Assert.False(type.IsSealed);
+        Assert.Empty(type.GetConstructors());
+        Assert.NotNull(type.GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            [typeof(PoolKey), typeof(ConnectionPoolConfig)],
+            null));
+    }
+
+    [SnowflakeFact]
+    public void TestGetPoolAndSnowflakeDbSessionPool_AreObsoleteWarnings()
+    {
+        const string message =
+            "Use GetPoolPartition and its properties. SnowflakeDbSessionPool will be removed in the next major version.";
+
+        AssertObsoleteWarning(typeof(SnowflakeDbSessionPool), message);
+        AssertObsoleteWarning(PoolMethod(nameof(SnowflakeDbConnectionPool.GetPool), typeof(string)), message);
+        AssertObsoleteWarning(
+            PoolMethod(
+                nameof(SnowflakeDbConnectionPool.GetPool),
+                typeof(string),
+                typeof(SecureString),
+                typeof(SecureString),
+                typeof(SecureString)),
+            message);
+    }
+
+    [SnowflakeFact]
+    public void TestGetPoolPartition_IsNotObsolete()
+    {
+        Assert.Null(PoolMethod(nameof(SnowflakeDbConnectionPool.GetPoolPartition), typeof(string))
+            .GetCustomAttribute<ObsoleteAttribute>());
+        Assert.Null(PoolMethod(
+                nameof(SnowflakeDbConnectionPool.GetPoolPartition),
+                typeof(string),
+                typeof(SecureString),
+                typeof(SecureString),
+                typeof(SecureString))
+            .GetCustomAttribute<ObsoleteAttribute>());
     }
 
     [SnowflakeTheory]
@@ -465,6 +534,21 @@ public sealed class PublicApiTest
         return $"{name}<{args}>";
     }
 
+    private static void AssertObsoleteWarning(MemberInfo member, string message)
+    {
+        var obsolete = member.GetCustomAttribute<ObsoleteAttribute>();
+        Assert.NotNull(obsolete);
+        Assert.False(obsolete.IsError);
+        Assert.Equal(message, obsolete.Message);
+    }
+
+    private static MethodInfo PoolMethod(string name, params Type[] types)
+    {
+        var method = typeof(SnowflakeDbConnectionPool).GetMethod(name, types);
+        Assert.NotNull(method);
+        return method;
+    }
+
     private static IEnumerable<Type> GetReferencedTypes(MemberInfo member)
     {
         switch (member)
@@ -490,3 +574,4 @@ public sealed class PublicApiTest
         }
     }
 }
+#pragma warning restore CS0618

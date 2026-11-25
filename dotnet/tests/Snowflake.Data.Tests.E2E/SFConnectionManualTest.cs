@@ -8,7 +8,7 @@ using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
 using Snowflake.Data.Tests.Utilities;
 using NewSnowflakeDbConnection = Snowflake.Data.Client.SnowflakeDbConnection;
-using NewSnowflakeDbConnectionPool = Snowflake.Data.SnowflakeDbConnectionPool;
+using NewSnowflakeDbConnectionPool = Snowflake.Data.Client.SnowflakeDbConnectionPool;
 using NewSnowflakeDbException = Snowflake.Data.Client.SnowflakeDbException;
 using OldSnowflakeDbConnection = OldDriver::Snowflake.Data.Client.SnowflakeDbConnection;
 using OldSnowflakeDbConnectionPool = OldDriver::Snowflake.Data.Client.SnowflakeDbConnectionPool;

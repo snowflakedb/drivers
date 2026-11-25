@@ -1,0 +1,22 @@
+name: "GetPool and SnowflakeDbSessionPool are obsolete"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  GetPoolPartition returns the pool partition directly. GetPool and
+  SnowflakeDbSessionPool remain so existing callers still compile, and they are
+  marked obsolete. Removing them is planned for the next major version. A project
+  that treats warnings as errors fails on CS0618 until it migrates or suppresses
+  the warning. ObsoleteAttribute.DiagnosticId is not available on net472, so the
+  warning id is CS0618 on every target.
+old_driver_behavior: |
+  SnowflakeDbConnectionPool.GetPool(connectionString) and
+  GetPool(connectionString, password, oauthClientSecret, token) return a
+  SnowflakeDbSessionPool, and both the methods and the type compile without a
+  warning.
+new_driver_behavior: |
+  GetPool and SnowflakeDbSessionPool are marked obsolete, so referencing them
+  raises warning CS0618. GetPoolPartition returns the same partition as a
+  SnowflakeDbConnectionPool.

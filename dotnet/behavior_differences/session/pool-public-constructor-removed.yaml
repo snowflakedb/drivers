@@ -1,0 +1,20 @@
+name: "SnowflakeDbConnectionPool has no public constructor"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  A SnowflakeDbConnectionPool instance is a pool partition created by the
+  driver's registry. The legacy public parameterless constructor created an
+  instance that had no members, so the new driver does not expose a public
+  constructor.
+old_driver_behavior: |
+  SnowflakeDbConnectionPool has a public parameterless constructor.
+  new SnowflakeDbConnectionPool() compiles, and the instance has no members.
+  A class that derives from SnowflakeDbConnectionPool compiles.
+new_driver_behavior: |
+  SnowflakeDbConnectionPool has no public constructor.
+  new SnowflakeDbConnectionPool() does not compile. A class that derives from
+  SnowflakeDbConnectionPool does not compile, because no base constructor is
+  accessible.

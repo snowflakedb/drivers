@@ -1,0 +1,17 @@
+name: "Pool lookup does not validate the connection string"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  Pool lookup is keyed by the exact connection string. Parsing and validation
+  are not done at lookup in the new driver.
+old_driver_behavior: |
+  GetPool parses the connection string and throws SnowflakeDbException when a
+  required property such as account is missing. GetPool(null) throws
+  NullReferenceException.
+new_driver_behavior: |
+  GetPool and GetPoolPartition throw ArgumentNullException when the connection
+  string is null. Any other string, including one that omits account, selects a
+  partition and does not throw.
