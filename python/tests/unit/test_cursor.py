@@ -1073,6 +1073,69 @@ class TestSfqidOnFailedQuery:
         assert cursor.request_id is None
 
 
+class TestQueryOnFailedQuery:
+    """The sent SQL is recorded on the error and the cursor when execute or describe raises."""
+
+    @pytest.fixture
+    def mock_connection(self, mock_core_client):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        mock_core_client.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture
+    def mock_async_core_client(self):
+        mock = MagicMock()
+        mock.statement_new = AsyncMock(return_value=MagicMock(stmt_handle=StatementHandle(id=1)))
+        mock.statement_set_sql_query = AsyncMock()
+        mock.statement_release = AsyncMock()
+        old = async_core_driver._client
+        async_core_driver.client = mock
+        yield mock
+        async_core_driver.client = old
+
+    def test_query_set_from_sent_sql_on_failed_execute(self, cursor, mock_core_client):
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error")
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.execute("  SELEC 1\n")
+
+        assert excinfo.value.query == "SELEC 1"
+        assert cursor.query == "SELEC 1"
+
+    def test_query_set_from_sent_sql_on_failed_describe(self, cursor, mock_core_client):
+        mock_core_client.statement_prepare.side_effect = ProgrammingError("error")
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.describe("SELEC 1")
+
+        assert excinfo.value.query == "SELEC 1"
+        assert cursor.query == "SELEC 1"
+
+    def test_query_from_error_is_kept(self, cursor, mock_core_client):
+        mock_core_client.statement_execute_query.side_effect = ProgrammingError("error", query="SELECT 'other'")
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.execute("SELEC 1")
+
+        assert excinfo.value.query == "SELECT 'other'"
+
+    def test_async_query_set_from_sent_sql_on_failed_execute(self, mock_connection, mock_async_core_client):
+        mock_async_core_client.statement_execute_query = AsyncMock(side_effect=ProgrammingError("error"))
+        cursor = AsyncSnowflakeCursor(mock_connection)
+
+        with pytest.raises(ProgrammingError) as excinfo:
+            asyncio.run(cursor.execute("SELEC 1"))
+
+        assert excinfo.value.query == "SELEC 1"
+        assert cursor.query == "SELEC 1"
+
+
 _EMPTY_STATEMENTS = ["", " ", " \t\n\r ", None]
 
 

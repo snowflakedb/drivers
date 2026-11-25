@@ -54,7 +54,7 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from ..._internal.statement_utils import async_statement
-from ..._internal.utils import _coerce_executemany_params, _resolve_alias
+from ..._internal.utils import _attach_query, _coerce_executemany_params, _resolve_alias
 from ...errors import InterfaceError, OperationalError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
@@ -254,12 +254,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
 
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
             try:
-                response = await self._execute_query(stmt_handle, bindings)
+                response = await self._execute_query(stmt_handle, bindings, query)
             except OperationalError as exc:
                 if not self._should_retry_with_inline_json(bindings, exc):
                     raise
                 bindings = self._build_query_bindings(cast(Sequence[Any], binding_params), query, force_json=True)
-                response = await self._execute_query(stmt_handle, bindings)
+                response = await self._execute_query(stmt_handle, bindings, query)
             request_id = response.request_id or None
 
             if response.HasField("multi"):
@@ -298,12 +298,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         self._apply_result_set(finish_response, query)  # type: ignore[arg-type]
 
     async def _execute_query(
-        self, stmt_handle: StatementHandle, bindings: QueryBindings | None
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None, query: str
     ) -> ExecuteQueryResponse:
         """Execute query and return ExecuteQueryResponse (single or multi)."""
         try:
             return await async_core_driver.statement_execute_query(stmt_handle=stmt_handle, bindings=bindings)
         except ProgrammingError as exc:
+            _attach_query(exc, query)
             self._query_result = QueryResult.from_programming_error(exc)
             raise
 
@@ -340,10 +341,13 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
                 raise
             raise ProgrammingError(msg=f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
 
-    async def _prepare(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> PrepareResult | None:
+    async def _prepare(
+        self, stmt_handle: StatementHandle, bindings: QueryBindings | None, query: str
+    ) -> PrepareResult | None:
         try:
             return (await async_core_driver.statement_prepare(stmt_handle=stmt_handle, bindings=bindings)).result
         except ProgrammingError as exc:
+            _attach_query(exc, query)
             self._query_result = QueryResult.from_programming_error(exc)
             raise
 
@@ -481,7 +485,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         # Ask the server whether array binding is supported for this statement.
         # Mirrors JDBC (describeSqlIfNotTried) and the C/ODBC driver describe-only request.
         async with async_statement(self._connection.conn_handle, operation) as stmt_handle:  # type: ignore[arg-type]
-            prepare_result = await self._prepare(stmt_handle, None)
+            prepare_result = await self._prepare(stmt_handle, None, operation)
 
         if prepare_result is None or not prepare_result.array_bind_supported:
             # Per-row fallback: server does not support array binding for this
@@ -533,7 +537,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         prepare_result: PrepareResult | None = None
         async with async_statement(self.connection.conn_handle, query) as stmt_handle:  # type: ignore[arg-type]
             bindings = self._build_query_bindings(binding_params, query) if binding_params is not None else None
-            prepare_result = await self._prepare(stmt_handle, bindings)
+            prepare_result = await self._prepare(stmt_handle, bindings, query)
 
         self._query_result = QueryResult.from_prepare_result(prepare_result)
 

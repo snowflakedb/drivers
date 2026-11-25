@@ -203,6 +203,12 @@ class TestErrorAttributes:
             cursor.execute("SELEC 1")
         assert excinfo.value.sqlstate == "42000"
 
+    def test_error_has_query(self, cursor):
+        """Test that errors from the server carry the SQL that was sent."""
+        with pytest.raises(Error) as excinfo:
+            cursor.execute("SELEC 1")
+        assert excinfo.value.query == "SELEC 1"
+
     def test_error_does_not_leak_internal_cause(self, cursor):
         """Test that server errors do not expose internal proto exceptions via __cause__."""
         if is_old_driver():

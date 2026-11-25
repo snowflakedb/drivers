@@ -41,6 +41,17 @@ def _resolve_alias(
     return alias if alias is not None else canonical
 
 
+def _attach_query(exc: ProgrammingError, query: str) -> None:
+    """Record the SQL that was sent on a query error that does not carry it.
+
+    The core driver does not return the query text with an error. The old
+    driver set ``query`` on every server error, and callers such as Snowpark
+    use it to tell which statement failed.
+    """
+    if exc.query is None:
+        exc.query = query
+
+
 def _coerce_executemany_params(seq_of_parameters: object) -> Sequence[_ExecutemanyRow]:
     """Return a random-access sequence of ``executemany`` parameter rows.
 
