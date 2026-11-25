@@ -10,7 +10,6 @@ use crate::tls::RootStoreProvider;
 use crate::utils::sync::MutexRecoverExt;
 use aws_lc_rs::digest;
 use chrono::{DateTime, Utc};
-use fs2::FileExt;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, global};
 use reqwest::Method;
@@ -124,7 +123,7 @@ pub(crate) fn write_crl_atomic(dir: &Path, file_name: &str, data: &[u8]) -> std:
         .prefix(TEMP_PREFIX)
         .suffix(TEMP_SUFFIX)
         .tempfile_in(dir)?;
-    if let Err(e) = tmp.as_file().try_lock_exclusive() {
+    if let Err(e) = crate::fs_lock::try_lock_exclusive(tmp.as_file()) {
         tracing::debug!(
             target: "sf_core::crl",
             error = %e,
@@ -268,7 +267,7 @@ pub(crate) fn sweep_orphan_temp_files(dir: &Path, budget: usize) -> usize {
         let Ok(file) = crate::fs_lock::open_read_nofollow_nonblock(&path) else {
             continue;
         };
-        let lock = match file.try_lock_exclusive() {
+        let lock = match crate::fs_lock::try_lock_exclusive(&file) {
             Ok(()) => LockOutcome::Free,
             Err(ref e) if crate::fs_lock::is_lock_contention(e) => LockOutcome::Contended,
             Err(e) => {

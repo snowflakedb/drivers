@@ -6,7 +6,6 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use fs2::FileExt;
 use rand::Rng;
 
 use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersistence};
@@ -101,7 +100,7 @@ fn resolve_cache_file_name() -> String {
 }
 
 /// RAII file lock guard using OS-level file locking (`flock` on Unix,
-/// `LockFileEx` on Windows) via the `fs2` crate.
+/// `LockFileEx` on Windows) via [`crate::fs_lock::try_lock_exclusive`].
 ///
 /// The lock is released when the guard is dropped (closing the file
 /// descriptor). The `.lck` file persists on disk but holds no lock once
@@ -133,7 +132,7 @@ impl FileLock {
         let mut sleep_ms = base_ms;
 
         for attempt in 0..retry_count {
-            match file.try_lock_exclusive() {
+            match crate::fs_lock::try_lock_exclusive(&file) {
                 Ok(()) => return Ok(FileLock { _file: file }),
                 Err(ref e) if crate::fs_lock::is_lock_contention(e) => {
                     if attempt < retry_count - 1 {
@@ -868,7 +867,7 @@ mod tests {
                 .write(true)
                 .open(&lock_path)
                 .expect("Failed to open lock file");
-            file.try_lock_exclusive()
+            crate::fs_lock::try_lock_exclusive(&file)
                 .expect("Lock should be released after operation");
         }
 

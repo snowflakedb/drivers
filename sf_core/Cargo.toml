@@ -192,7 +192,6 @@ aws-smithy-runtime-api = { version = "1.9", features = ["client", "http-1x"] }
 snafu = "0.8.7"
 error_trace = { path = "../error_trace" }
 sf_params_spec = { path = "../sf_params_spec" }
-fs2 = "0.4"
 glob = "0.3.3"
 
 # CRL and TLS dependencies

@@ -1,7 +1,7 @@
 //! Shared hardened [`OpenOptions`] builders and lock-contention detection
-//! for advisory file locking via the `fs2` crate.
+//! for advisory file locking via [`File::try_lock`].
 
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::Path;
 use std::time::SystemTime;
@@ -9,25 +9,19 @@ use std::time::SystemTime;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
+/// Takes a non-blocking exclusive advisory lock, reporting contention as
+/// [`io::ErrorKind::WouldBlock`].
+pub(crate) fn try_lock_exclusive(file: &File) -> io::Result<()> {
+    file.try_lock().map_err(|e| match e {
+        TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
+        TryLockError::Error(e) => e,
+    })
+}
+
 /// Returns `true` when the error indicates the lock is held by another
 /// handle/process and the caller should retry.
-///
-/// On Unix, `flock` returns `EWOULDBLOCK` (`ErrorKind::WouldBlock`).
-/// On Windows, `LockFileEx` with `LOCKFILE_FAIL_IMMEDIATELY` returns
-/// `ERROR_LOCK_VIOLATION` (code 33) which Rust maps to
-/// `ErrorKind::Uncategorized` rather than `WouldBlock`.
 pub(crate) fn is_lock_contention(e: &io::Error) -> bool {
-    if e.kind() == io::ErrorKind::WouldBlock {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        const ERROR_LOCK_VIOLATION: i32 = 33;
-        if e.raw_os_error() == Some(ERROR_LOCK_VIOLATION) {
-            return true;
-        }
-    }
-    false
+    e.kind() == io::ErrorKind::WouldBlock
 }
 
 /// Opens an existing path read-only for advisory locking.

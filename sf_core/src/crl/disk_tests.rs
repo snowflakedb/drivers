@@ -5,7 +5,6 @@ mod disk_crl_tests {
     };
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::crl::validator::CrlValidator;
-    use fs2::FileExt;
     use std::fs;
     use std::io::Write;
     use std::sync::{Arc, Barrier};
@@ -272,7 +271,7 @@ mod disk_crl_tests {
             .write(true)
             .open(&path)
             .unwrap();
-        file.try_lock_exclusive().unwrap();
+        crate::fs_lock::try_lock_exclusive(&file).unwrap();
 
         let removed = crate::crl::cache::sweep_orphan_temp_files(temp_dir.path(), 100);
         assert_eq!(removed, 0);
