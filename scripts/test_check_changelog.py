@@ -1,4 +1,4 @@
-"""Unit tests for the behavior-difference checks in scripts/check_changelog.py.
+"""Unit tests for the behavior-difference and PR-link checks in scripts/check_changelog.py.
 
 Run with:
     python3 -m unittest scripts/test_check_changelog.py -v
@@ -6,10 +6,15 @@ Run with:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +225,150 @@ class ValidateBdCitationsTests(unittest.TestCase):
             (self.root / "dotnet" / "CHANGELOG.md").read_text(encoding="utf-8"),
             UPCOMING + "\n## v1.0.0\n\nBreaking changes:\n\n- Changed X. (snowflakedb/drivers#1)\n",
         )
+
+
+def _bugfix(*bullets: str) -> str:
+    return "---\ncategory: bugfix\n---\n\n" + "".join(f"{b}\n" for b in bullets)
+
+
+class CheckBulletLinksTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.mod = _load()
+
+    def _check(self, text: str, *, added: bool = True, pr_number: int | None = None, strict: bool = False):
+        findings = self.mod.check_bullet_links(
+            "c/changelog/unreleased/x.md", text, added=added, pr_number=pr_number, strict=strict
+        )
+        return findings.errors, findings.warnings
+
+    def test_well_formed_bullet_passes_in_every_mode(self) -> None:
+        text = _bugfix("- Fixed X. (snowflakedb/drivers#7)")
+        for pr_number, strict in ((None, False), (None, True), (7, False)):
+            with self.subTest(pr_number=pr_number, strict=strict):
+                self.assertEqual(self._check(text, pr_number=pr_number, strict=strict), ([], []))
+
+    def test_missing_link_warns_locally(self) -> None:
+        self.assertEqual(
+            self._check(_bugfix("- Fixed X.")),
+            ([], ["c/changelog/unreleased/x.md:5: bullet has no (snowflakedb/drivers#N) link at the end; CI rejects it"]),
+        )
+
+    def test_tbd_warns_locally_and_fails_when_strict(self) -> None:
+        text = _bugfix("- Fixed X. (snowflakedb/drivers#TBD)")
+        message = "c/changelog/unreleased/x.md:5: bullet cites #TBD instead of a pull request number"
+
+        self.assertEqual(self._check(text), ([], [f"{message}; CI rejects it"]))
+        self.assertEqual(self._check(text, strict=True), ([message], []))
+        self.assertEqual(self._check(text, pr_number=3), ([message], []))
+
+    def test_public_repository_link_is_always_an_error(self) -> None:
+        self.assertEqual(
+            self._check(_bugfix("- Fixed X. (snowflakedb/drivers#7)")),
+            (
+                [
+                    "c/changelog/unreleased/x.md:5: cites snowflakedb/drivers#7; cite "
+                    "snowflakedb/drivers#N, the pull request number in this repository"
+                ],
+                [],
+            ),
+        )
+
+    def test_text_after_the_link_is_an_error(self) -> None:
+        self.assertEqual(
+            self._check(_bugfix("- Fixed X (snowflakedb/drivers#7).")),
+            (["c/changelog/unreleased/x.md:5: bullet must end with its (snowflakedb/drivers#N) link"], []),
+        )
+
+    def test_added_fragment_must_cite_this_pull_request(self) -> None:
+        text = _bugfix("- Fixed X. (snowflakedb/drivers#7)")
+
+        self.assertEqual(
+            self._check(text, pr_number=8),
+            (["c/changelog/unreleased/x.md:5: cites snowflakedb/drivers#7, but this pull request is #8"], []),
+        )
+        self.assertEqual(self._check(text, added=False, pr_number=8), ([], []))
+
+    def test_link_on_a_wrapped_line_counts_but_not_on_a_sub_bullet(self) -> None:
+        wrapped = _bugfix("- Fixed X when the session", "  expires. (snowflakedb/drivers#7)")
+        sub_bullet = _bugfix("- Fixed X:", "  - in Y. (snowflakedb/drivers#7)")
+
+        self.assertEqual(self._check(wrapped, strict=True), ([], []))
+        self.assertEqual(
+            self._check(sub_bullet, strict=True),
+            (["c/changelog/unreleased/x.md:5: bullet has no (snowflakedb/drivers#N) link at the end"], []),
+        )
+
+    def test_bullet_without_a_past_tense_verb_only_warns(self) -> None:
+        self.assertEqual(
+            self._check(_bugfix("- `Execute` now retries. (snowflakedb/drivers#7)"), strict=True),
+            (
+                [],
+                [
+                    "c/changelog/unreleased/x.md:5: bullet starts with '`Execute`'; changelog "
+                    "bullets start with a past-tense verb such as Added or Fixed"
+                ],
+            ),
+        )
+        for verb in ("Bumped", "Kept", "Built", "Rewrote"):
+            with self.subTest(verb=verb):
+                self.assertEqual(
+                    self._check(_bugfix(f"- {verb} X. (snowflakedb/drivers#7)")), ([], [])
+                )
+
+
+class ValidatePrLinksTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.mod = _load()
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        env_patch = unittest.mock.patch.dict(os.environ, env, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        self._git("init", "-q", "-b", "main")
+        self._write("python/changelog/unreleased/old.md", _bugfix("- Fixed old. (snowflakedb/drivers#1)"))
+        self._write("python/changelog/unreleased/edited.md", _bugfix("- Fixed edited. (snowflakedb/drivers#2)"))
+        self._git("add", "-A")
+        self._git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "base")
+
+    def _git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+    def _write(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_checks_only_added_and_modified_fragments(self) -> None:
+        self._write("python/changelog/unreleased/new.md", _bugfix("- Fixed new. (snowflakedb/drivers#5)"))
+        self._write(
+            "python/changelog/unreleased/edited.md",
+            _bugfix("- Fixed edited wording. (snowflakedb/drivers#2)", "- Fixed more."),
+        )
+
+        findings = self.mod.validate_pr_links(self.root, "main", pr_number=6, strict=False)
+
+        self.assertEqual(
+            sorted(findings.errors),
+            [
+                "python/changelog/unreleased/edited.md:6: bullet has no (snowflakedb/drivers#N) link at the end",
+                "python/changelog/unreleased/new.md:5: cites snowflakedb/drivers#5, but this pull request is #6",
+            ],
+        )
+        self.assertEqual(findings.warnings, [])
+
+    def test_rejects_a_non_numeric_pr_number(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = self.mod.main(["--root", str(self.root), "--base", "main", "--pr-number", "abc"])
+
+        self.assertEqual((code, stderr.getvalue()), (2, "--pr-number must be a number, got 'abc'\n"))
 
 
 if __name__ == "__main__":

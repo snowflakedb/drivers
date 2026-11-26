@@ -41,7 +41,14 @@ Validate the result locally. The pre-commit hook runs the same command:
 python3 scripts/check_changelog.py --base origin/main
 ```
 
-That comparison rejects edits to released sections and released version
+For fragments the change adds or modifies, every bullet has to end with its
+link. Locally, a missing link or `(snowflakedb/drivers#TBD)` is a warning,
+so a fragment can be committed before the pull request exists. CI rejects
+both, and on a pull request it also rejects an added fragment that cites a
+different pull request number. A bullet that does not start with a past-tense
+verb is only a warning.
+
+The comparison also rejects edits to released sections and released version
 folders. It also rejects `internal-improvements`, `test-improvements`, and
 `known-issues` under `changelog/unreleased/`. Those categories are valid only
 in a version folder that already shipped them. CI passes the pull request's

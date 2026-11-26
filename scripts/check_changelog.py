@@ -14,11 +14,17 @@ Notes that already shipped stay in ``<component>/CHANGELOG.md`` under their
 edit those sections. Cutting a release moves fragments from ``unreleased/``
 into a new ``<component>/changelog/<version>/`` directory. A version
 directory that already exists on the comparison base is frozen.
+
+With ``--base``, every bullet in an unreleased fragment the change adds or
+modifies ends with ``(snowflakedb/drivers#N)``. A missing link or ``#TBD``
+is only a warning unless ``--strict-links`` or ``--pr-number`` is given; with
+``--pr-number``, added fragments also cite that number.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -904,6 +910,134 @@ def validate_against_base(root: Path, base: str) -> list[str]:
     return errors
 
 
+_PR_LINK_END_RE = re.compile(r"\(snowflakedb/drivers#(?P<number>\d+)\)\s*$")
+_PR_LINK_RE = re.compile(r"\(snowflakedb/drivers#\d+\)")
+_PUBLIC_LINK_RE = re.compile(r"snowflakedb/drivers#\d+")
+_TBD_LINK_RE = re.compile(r"#TBD\b", re.I)
+_IRREGULAR_PAST_TENSE: frozenset[str] = frozenset(
+    {
+        "began", "bound", "brought", "built", "cut", "did", "drew", "fed", "fell",
+        "felt", "found", "froze", "gave", "got", "held", "hid", "kept", "led",
+        "left", "let", "lost", "made", "met", "overrode", "put", "ran", "read",
+        "rebuilt", "reset", "rewrote", "sent", "set", "shut", "sold", "split",
+        "spent", "struck", "took", "told", "undid", "upheld", "won", "wrote",
+    }
+)
+
+
+@dataclass(frozen=True)
+class LinkFindings:
+    errors: list[str]
+    warnings: list[str]
+
+
+def _fragment_bullets(text: str) -> list[tuple[int, str]]:
+    """``(line number, text)`` of each top-level bullet, joined with its wrapped lines.
+
+    Indented sub-bullets are not part of the parent text, so the PR link sits on
+    the parent bullet or on its wrapped continuation lines.
+    """
+    lines = text.splitlines()
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                start = index + 1
+                break
+    bullets: list[tuple[int, list[str]]] = []
+    in_sub_bullet = False
+    for index in range(start, len(lines)):
+        line = lines[index]
+        if line.startswith("- "):
+            bullets.append((index + 1, [line[2:].strip()]))
+            in_sub_bullet = False
+        elif bullets and line.startswith((" ", "\t")):
+            stripped = line.strip()
+            if stripped.startswith(("- ", "* ")):
+                in_sub_bullet = True
+            elif stripped and not in_sub_bullet:
+                bullets[-1][1].append(stripped)
+    return [(number, " ".join(parts)) for number, parts in bullets]
+
+
+def check_bullet_links(
+    rel: str, text: str, *, added: bool, pr_number: int | None, strict: bool
+) -> LinkFindings:
+    errors: list[str] = []
+    warnings: list[str] = []
+    strict = strict or pr_number is not None
+    for line_number, bullet in _fragment_bullets(text):
+        where = f"{rel}:{line_number}"
+        word = re.match(r"[A-Za-z]+", bullet)
+        if word is None or not (
+            word.group().lower().endswith("ed") or word.group().lower() in _IRREGULAR_PAST_TENSE
+        ):
+            first = bullet.split(" ", 1)[0]
+            warnings.append(
+                f"{where}: bullet starts with {first!r}; changelog bullets start with "
+                "a past-tense verb such as Added or Fixed"
+            )
+        public = _PUBLIC_LINK_RE.search(bullet)
+        if public is not None:
+            errors.append(
+                f"{where}: cites {public.group()}; cite snowflakedb/drivers#N, "
+                "the pull request number in this repository"
+            )
+            continue
+        match = _PR_LINK_END_RE.search(bullet)
+        if match is None:
+            if _PR_LINK_RE.search(bullet):
+                errors.append(f"{where}: bullet must end with its (snowflakedb/drivers#N) link")
+                continue
+            reason = (
+                "cites #TBD instead of a pull request number"
+                if _TBD_LINK_RE.search(bullet)
+                else "has no (snowflakedb/drivers#N) link at the end"
+            )
+            if strict:
+                errors.append(f"{where}: bullet {reason}")
+            else:
+                warnings.append(f"{where}: bullet {reason}; CI rejects it")
+            continue
+        cited = int(match.group("number"))
+        if added and pr_number is not None and cited != pr_number:
+            errors.append(
+                f"{where}: cites snowflakedb/drivers#{cited}, "
+                f"but this pull request is #{pr_number}"
+            )
+    return LinkFindings(errors, warnings)
+
+
+def validate_pr_links(
+    root: Path, base: str, *, pr_number: int | None, strict: bool
+) -> LinkFindings:
+    """Check bullets of unreleased fragments added or modified since ``base``."""
+    resolved = _git(root, "rev-parse", "--verify", f"{base}^{{commit}}")
+    if resolved.returncode != 0:
+        return LinkFindings([], [])
+    errors: list[str] = []
+    warnings: list[str] = []
+    for entry in _diff_entries(root, resolved.stdout.strip()):
+        if entry.status.startswith("D"):
+            continue
+        classified = _classify(entry.path)
+        if classified is None or classified[1] != "unreleased":
+            continue
+        path = root / entry.path
+        if path.suffix != ".md" or not path.is_file():
+            continue
+        findings = check_bullet_links(
+            entry.path,
+            path.read_text(encoding="utf-8"),
+            added=entry.status.startswith("A"),
+            pr_number=pr_number,
+            strict=strict,
+        )
+        errors.extend(findings.errors)
+        warnings.extend(findings.warnings)
+    return LinkFindings(errors, warnings)
+
+
 def _freeze_shipped_sections(root: Path, base_commit: str) -> list[str]:
     """Shipped ``## <version>`` prose stays byte-for-byte until a later migration."""
     errors: list[str] = []
@@ -1142,12 +1276,26 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="move Upcoming Release bullets into changelog/unreleased/ fragment files",
     )
+    parser.add_argument(
+        "--pr-number",
+        default=os.environ.get("CHANGELOG_PR_NUMBER") or None,
+        help="fragments added since --base must cite this pull request "
+        "(default: $CHANGELOG_PR_NUMBER); implies --strict-links",
+    )
+    parser.add_argument(
+        "--strict-links",
+        action="store_true",
+        default=os.environ.get("CHANGELOG_STRICT_LINKS") == "1",
+        help="a missing PR link or #TBD is an error, not a warning "
+        "(default: on when $CHANGELOG_STRICT_LINKS is 1)",
+    )
     args = parser.parse_args(argv)
+    if args.pr_number is not None and not str(args.pr_number).isdigit():
+        print(f"--pr-number must be a number, got {args.pr_number!r}", file=sys.stderr)
+        return 2
+    pr_number = int(args.pr_number) if args.pr_number is not None else None
     root = args.root.resolve()
-    base = _resolve_base(root, args.base)
-    if base is None:
-        printf(f"unknown git revision {args.base!r}")
-        return
+    base = _resolve_base(root, args.base) if args.base is not None else None
     if args.materialize and args.render:
         print("pass only one of --materialize and --render", file=sys.stderr)
         return 2
@@ -1158,6 +1306,11 @@ def main(argv: list[str] | None = None) -> int:
         errors = []
     else:
         errors = validate(root, base=base)
+        if base is not None:
+            links = validate_pr_links(root, base, pr_number=pr_number, strict=args.strict_links)
+            errors.extend(links.errors)
+            for warning in links.warnings:
+                print(f"warning: {warning}", file=sys.stderr)
     for error in errors:
         print(error, file=sys.stderr)
     return 1 if errors else 0

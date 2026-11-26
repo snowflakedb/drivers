@@ -162,8 +162,13 @@ jobs:
         # that merge against the event's base SHA counts those commits as
         # part of this change. The file list comes from the event's base and
         # head SHAs instead. A push to main still checks the whole tree.
+        # The changelog hook warns about a missing PR link or #TBD locally;
+        # CHANGELOG_STRICT_LINKS makes that an error here, and on a pull request
+        # CHANGELOG_PR_NUMBER also requires added fragments to cite this PR.
         env:
           SKIP: generate-connection-config,generate-xp-providers-header
+          CHANGELOG_STRICT_LINKS: "1"
+          CHANGELOG_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then

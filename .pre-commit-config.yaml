@@ -185,6 +185,20 @@ repos:
         pass_filenames: false
         files: ^scripts/(check_changelog\.py|test_check_changelog\.py)$
         language: system
+    -   id: python-version-matrix
+        name: Python version matrix consistency
+        description: Every list of supported CPython versions agrees with PARAMS["PyVersion"]
+        entry: python3 scripts/check_python_versions.py
+        pass_filenames: false
+        files: ^(ci/test_matrix/(models|mappings)/python\.py|\.github/workflows/(_build-python-wheels|test-python)\.yml|python/pyproject\.toml|python/README\.md|scripts/check_python_versions\.py)$
+        language: system
+    -   id: python-version-matrix-test
+        name: Python version matrix check tests
+        description: Unit tests for scripts/check_python_versions.py
+        entry: python3 -m unittest scripts/test_check_python_versions.py
+        pass_filenames: false
+        files: ^scripts/(check_python_versions\.py|test_check_python_versions\.py)$
+        language: system
     -   id: mirror-config-consistency
         name: Mirror config generation consistency
         description: Ensure committed mirror infrastructure matches its generator
