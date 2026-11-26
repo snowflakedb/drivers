@@ -152,8 +152,8 @@ governor queue. Call structure keeps that queue bounded:
 - ranges: at most `concurrency` per file
 
 A spawn-gate semaphore sized to the same limit was removed because it
-duplicated `op.limit` and would have blocked the upcoming cleanup
-reserve (which must bypass the command ceiling) and future
+duplicated `op.limit` and would have blocked the cleanup reserve
+(which must bypass the command ceiling) and future
 kind/priority/byte-weighted admission, all of which need the decision
 in the scheduler.
 
@@ -165,6 +165,15 @@ file's inner pipeline. It does not truncate the command limit stored
 on `TransferOp`, and it does not multiply it. When a file uses inner
 part concurrency, in-flight files drop so that files and parts together
 stay at or under `data.parallel`.
+
+### Cleanup reserve
+
+Cleanup kinds (`AbortMultipart`) skip the command limit. When an
+ordinary process slot is free they take it without incrementing
+`op.in_flight`. When every ordinary slot is held they use one reserved
+slot beyond an injected cap. The reserve is unused while process
+capacity is unlimited. S3 `AbortMultipartUpload` skips the abort if
+that acquire fails, rather than blocking behind ordinary work.
 
 ### Acquire and hold
 
@@ -220,7 +229,7 @@ work waits in the stream (`.buffered` / `buffer_unordered`) and, once
 polled, in the governor waiter queue; it is not a failed upload.
 
 `acquire` waits until a permit is granted, the acquire future is
-cancelled, the command handle is dropped (`OperationDropped`), or the
+cancelled, the command handle is dropped (`AcquireError`), or the
 request deadline expires.
 
 ### Command handle

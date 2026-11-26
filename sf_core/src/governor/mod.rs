@@ -39,6 +39,11 @@ pub use deadline::{AcquireWaitError, Deadline};
 pub use transfer::{AcquireError, CommandParallelism, TransferOp};
 pub(crate) use transfer::{RequestKind, RequestPermit};
 
+/// Reserved cleanup slots beyond an explicit ordinary process cap so
+/// abort/delete can make progress when every ordinary slot is held.
+/// Unused while process capacity is unlimited (the default).
+pub(crate) const DEFAULT_CLEANUP_RESERVE: usize = 1;
+
 static PROCESS_GOVERNOR: OnceLock<Governor> = OnceLock::new();
 
 /// Default [`Governor`] for this loaded `sf_core` image.
@@ -78,7 +83,7 @@ impl Governor {
     /// `data.parallel` / [`CommandParallelism`].
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Arc::new(transfer::Inner::new(None)),
+            inner: std::sync::Arc::new(transfer::Inner::new(None, DEFAULT_CLEANUP_RESERVE)),
         }
     }
 
@@ -89,7 +94,7 @@ impl Governor {
     pub fn try_with_capacity(max_in_flight: usize) -> Result<Self, ZeroCapacityError> {
         let max = NonZeroUsize::new(max_in_flight).ok_or(ZeroCapacityError)?;
         Ok(Self {
-            inner: std::sync::Arc::new(transfer::Inner::new(Some(max))),
+            inner: std::sync::Arc::new(transfer::Inner::new(Some(max), DEFAULT_CLEANUP_RESERVE)),
         })
     }
 
@@ -99,13 +104,20 @@ impl Governor {
     }
 
     /// Ordinary process cap when one was set (`None` = unlimited).
+    /// Does not include reserved cleanup slots.
     pub fn capacity(&self) -> Option<usize> {
         self.inner.capacity()
     }
 
-    /// Currently granted permits. Test/telemetry aid.
+    /// Currently granted permits (ordinary + reserved cleanup). Test/telemetry aid.
     pub fn in_flight(&self) -> usize {
         self.inner.in_flight()
+    }
+
+    /// Granted reserved cleanup permits. Test/telemetry aid.
+    #[cfg(test)]
+    pub(crate) fn cleanup_reserved_in_flight(&self) -> usize {
+        self.inner.cleanup_reserved_in_flight()
     }
 
     /// Waiters queued across all live operations. Test/telemetry aid.

@@ -4500,7 +4500,7 @@ mod tests {
             } if e == elapsed && b == budget
         ));
         assert!(matches!(
-            GcsRequestError::from(AcquireWaitError::Acquire(AcquireError::OperationDropped)),
+            GcsRequestError::from(AcquireWaitError::Acquire(AcquireError)),
             GcsRequestError::Admission { .. }
         ));
         assert!(matches!(
@@ -4509,12 +4509,12 @@ mod tests {
         ));
         assert!(matches!(
             GcsUploadError::from(GcsRequestError::Admission {
-                source: AcquireError::OperationDropped,
+                source: AcquireError,
             }),
             GcsUploadError::Admission { .. }
         ));
         assert!(matches!(
-            GcsUploadError::from(AcquireWaitError::Acquire(AcquireError::OperationDropped)),
+            GcsUploadError::from(AcquireWaitError::Acquire(AcquireError)),
             GcsUploadError::Admission { .. }
         ));
         assert!(matches!(

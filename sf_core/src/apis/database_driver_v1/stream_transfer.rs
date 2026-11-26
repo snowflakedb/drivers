@@ -1673,10 +1673,7 @@ mod tests {
         ));
         driver.download_stream_close(handle).await.unwrap();
 
-        assert_eq!(
-            queued.await.expect("join").map(|_| ()),
-            Err(AcquireError::OperationDropped)
-        );
+        assert_eq!(queued.await.expect("join").map(|_| ()), Err(AcquireError));
         assert_eq!(governor.queued(), 0);
     }
 

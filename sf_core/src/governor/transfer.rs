@@ -35,6 +35,7 @@ impl CommandParallelism {
 /// Crate-scoped; add variants with the integrations that use them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RequestKind {
+    AbortMultipart,
     CompleteMultipart,
     RangedGet,
     UploadPart,
@@ -44,19 +45,29 @@ pub(crate) enum RequestKind {
     PutBlockList,
 }
 
-/// Why [`TransferOp::acquire`] failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcquireError {
-    /// The [`TransferOp`] was dropped, or the waiter was otherwise
-    /// removed before a permit was granted.
-    OperationDropped,
+impl RequestKind {
+    fn is_cleanup(self) -> bool {
+        match self {
+            Self::AbortMultipart => true,
+            Self::CompleteMultipart => false,
+            Self::RangedGet => false,
+            Self::UploadPart => false,
+            Self::WholeObjectGet => false,
+            Self::WholeObjectPut => false,
+            Self::PutBlock => false,
+            Self::PutBlockList => false,
+        }
+    }
 }
+
+/// [`TransferOp::acquire`] failed because the operation was dropped or the
+/// waiter was removed before a permit was granted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcquireError;
 
 impl fmt::Display for AcquireError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::OperationDropped => f.write_str("transfer operation dropped"),
-        }
+        f.write_str("transfer operation dropped")
     }
 }
 
@@ -170,14 +181,15 @@ impl TransferOp {
     /// Queue this command and wait for a slot.
     ///
     /// The command ceiling is the registered `data.parallel` (`op.limit`):
-    /// extra acquires wait in this command's governor waiter queue. Call
-    /// structure bounds that queue (file `.buffered(file_fanout())`, one
+    /// extra ordinary acquires wait in this command's governor waiter queue.
+    /// Call structure bounds that queue (file `.buffered(file_fanout())`, one
     /// pending multipart-producer acquire per file, ranges ≤ per-file
-    /// concurrency).
+    /// concurrency). Cleanup does not count toward `op.limit` and can use
+    /// reserved process capacity when ordinary slots are full.
     ///
     /// The returned future does **not** keep this handle alive: dropping the
     /// last [`TransferOp`] clone unregisters the command and fails
-    /// queued acquires with [`AcquireError::OperationDropped`]. Dropping the
+    /// queued acquires with [`AcquireError`]. Dropping the
     /// future removes only that waiter (`QueueGuard`). There is no separate
     /// cancellation token.
     ///
@@ -208,17 +220,25 @@ async fn queue_and_wait(
     };
     match rx.await {
         Ok(permit) => Ok(permit),
-        Err(_) => Err(AcquireError::OperationDropped),
+        Err(_) => Err(AcquireError),
     }
 }
 
 /// RAII permit for one active-or-retrying logical cloud request. Release
 /// happens on drop, including when the owning retry/producer task ends or is
 /// aborted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PermitSlot {
+    Command,
+    Cleanup,
+    ReservedCleanup,
+}
+
 #[must_use = "dropping RequestPermit releases process-wide transfer capacity"]
 pub(crate) struct RequestPermit {
     state: Arc<Inner>,
     op_id: OpId,
+    slot: PermitSlot,
 }
 
 impl fmt::Debug for RequestPermit {
@@ -229,7 +249,7 @@ impl fmt::Debug for RequestPermit {
 
 impl Drop for RequestPermit {
     fn drop(&mut self) {
-        Inner::release(&self.state, self.op_id);
+        Inner::release(&self.state, self.op_id, self.slot);
     }
 }
 
@@ -260,7 +280,9 @@ struct OpState {
 struct State {
     /// Ordinary process cap. `None` is unlimited (production default).
     max_in_flight: Option<NonZeroUsize>,
-    in_flight: usize,
+    cleanup_reserve: usize,
+    ordinary_in_flight: usize,
+    cleanup_reserved_in_flight: usize,
     ops: HashMap<OpId, OpState>,
     /// Live operations in registration order; round-robin walks this list.
     op_order: Vec<OpId>,
@@ -270,12 +292,25 @@ struct State {
 }
 
 impl State {
-    fn process_has_room(&self) -> bool {
+    fn total_in_flight(&self) -> usize {
+        self.ordinary_in_flight + self.cleanup_reserved_in_flight
+    }
+
+    fn queued(&self) -> usize {
+        self.ops.values().map(|op| op.queued.len()).sum()
+    }
+
+    fn ordinary_process_has_room(&self) -> bool {
         match self.max_in_flight {
             None => true,
-            Some(cap) => self.in_flight < cap.get(),
+            Some(cap) => self.ordinary_in_flight < cap.get(),
         }
     }
+}
+
+enum WaiterSelection {
+    CleanupOnly,
+    Any,
 }
 
 struct PendingGrant {
@@ -293,26 +328,34 @@ impl fmt::Debug for Inner {
         let queued: usize = state.ops.values().map(|o| o.queued.len()).sum();
         f.debug_struct("Inner")
             .field("max_in_flight", &state.max_in_flight)
-            .field("in_flight", &state.in_flight)
+            .field("cleanup_reserve", &state.cleanup_reserve)
+            .field("ordinary_in_flight", &state.ordinary_in_flight)
+            .field(
+                "cleanup_reserved_in_flight",
+                &state.cleanup_reserved_in_flight,
+            )
             .field("queued", &queued)
             .finish()
     }
 }
 
 impl Inner {
-    pub(super) fn new(max_in_flight: Option<NonZeroUsize>) -> Self {
-        Self::with_next_ids(max_in_flight, 1, 1)
+    pub(super) fn new(max_in_flight: Option<NonZeroUsize>, cleanup_reserve: usize) -> Self {
+        Self::with_next_ids(max_in_flight, cleanup_reserve, 1, 1)
     }
 
     pub(super) fn with_next_ids(
         max_in_flight: Option<NonZeroUsize>,
+        cleanup_reserve: usize,
         next_op_id: OpId,
         next_waiter_id: WaiterId,
     ) -> Self {
         Self {
             state: Mutex::new(State {
                 max_in_flight,
-                in_flight: 0,
+                cleanup_reserve,
+                ordinary_in_flight: 0,
+                cleanup_reserved_in_flight: 0,
                 ops: HashMap::new(),
                 op_order: Vec::new(),
                 rr_index: 0,
@@ -330,16 +373,16 @@ impl Inner {
     }
 
     pub(super) fn in_flight(&self) -> usize {
-        self.state.lock_recover().in_flight
+        self.state.lock_recover().total_in_flight()
+    }
+
+    #[cfg(test)]
+    pub(super) fn cleanup_reserved_in_flight(&self) -> usize {
+        self.state.lock_recover().cleanup_reserved_in_flight
     }
 
     pub(super) fn queued(&self) -> usize {
-        self.state
-            .lock_recover()
-            .ops
-            .values()
-            .map(|op| op.queued.len())
-            .sum()
+        self.state.lock_recover().queued()
     }
 
     fn next_id(current: u64) -> u64 {
@@ -408,10 +451,7 @@ impl Inner {
             let waiter_id = state.next_waiter_id;
             state.next_waiter_id = Self::next_id(state.next_waiter_id);
             {
-                let op = state
-                    .ops
-                    .get_mut(&op_id)
-                    .ok_or(AcquireError::OperationDropped)?;
+                let op = state.ops.get_mut(&op_id).ok_or(AcquireError)?;
                 op.queued.push_back(Waiter {
                     id: waiter_id,
                     kind,
@@ -431,20 +471,31 @@ impl Inner {
         }
     }
 
-    fn release(this: &Arc<Self>, op_id: OpId) {
+    fn release(this: &Arc<Self>, op_id: OpId, slot: PermitSlot) {
         let pending = {
             let mut state = this.state.lock_recover();
             debug_assert!(
-                state.in_flight > 0,
+                state.total_in_flight() > 0,
                 "RequestPermit drop underflowed in_flight"
             );
-            state.in_flight = state.in_flight.saturating_sub(1);
-            if let Some(op) = state.ops.get_mut(&op_id) {
-                debug_assert!(
-                    op.in_flight > 0,
-                    "RequestPermit drop underflowed operation in_flight"
-                );
-                op.in_flight = op.in_flight.saturating_sub(1);
+            match slot {
+                PermitSlot::Command => {
+                    state.ordinary_in_flight = state.ordinary_in_flight.saturating_sub(1);
+                    if let Some(op) = state.ops.get_mut(&op_id) {
+                        debug_assert!(
+                            op.in_flight > 0,
+                            "RequestPermit drop underflowed operation in_flight"
+                        );
+                        op.in_flight = op.in_flight.saturating_sub(1);
+                    }
+                }
+                PermitSlot::Cleanup => {
+                    state.ordinary_in_flight = state.ordinary_in_flight.saturating_sub(1);
+                }
+                PermitSlot::ReservedCleanup => {
+                    state.cleanup_reserved_in_flight =
+                        state.cleanup_reserved_in_flight.saturating_sub(1);
+                }
             }
             try_grant(this, &mut state)
         };
@@ -454,39 +505,95 @@ impl Inner {
 
 fn try_grant(inner: &Arc<Inner>, state: &mut State) -> Vec<PendingGrant> {
     let mut pending = Vec::new();
-    while state.process_has_room() {
-        let Some((op_idx, op_id, waiter)) = pop_next_waiter(state) else {
-            break;
-        };
-        tracing::debug!(waiter_id = waiter.id, kind = ?waiter.kind, "granted transfer permit");
-        if !state.op_order.is_empty() {
-            state.rr_index = (op_idx + 1) % state.op_order.len();
-        }
-        state.in_flight = state.in_flight.checked_add(1).expect("in_flight overflow");
-        if let Some(op) = state.ops.get_mut(&op_id) {
-            op.in_flight = op
-                .in_flight
-                .checked_add(1)
-                .expect("operation in_flight overflow");
-        }
-        pending.push(PendingGrant {
-            tx: waiter.tx,
-            permit: RequestPermit {
-                state: Arc::clone(inner),
-                op_id,
-            },
-        });
+    while let Some(grant) = try_grant_one(inner, state) {
+        pending.push(grant);
     }
     pending
 }
 
+fn try_grant_one(inner: &Arc<Inner>, state: &mut State) -> Option<PendingGrant> {
+    if state.ordinary_process_has_room()
+        && let Some((op_idx, op_id, waiter)) = pop_next_waiter(state, WaiterSelection::Any)
+    {
+        let slot = if waiter.kind.is_cleanup() {
+            PermitSlot::Cleanup
+        } else {
+            PermitSlot::Command
+        };
+        return Some(build_grant(inner, state, op_idx, op_id, waiter, slot));
+    }
+    if state.cleanup_reserved_in_flight < state.cleanup_reserve
+        && let Some((op_idx, op_id, waiter)) = pop_next_waiter(state, WaiterSelection::CleanupOnly)
+    {
+        return Some(build_grant(
+            inner,
+            state,
+            op_idx,
+            op_id,
+            waiter,
+            PermitSlot::ReservedCleanup,
+        ));
+    }
+    None
+}
+
+fn build_grant(
+    inner: &Arc<Inner>,
+    state: &mut State,
+    op_idx: usize,
+    op_id: OpId,
+    waiter: Waiter,
+    slot: PermitSlot,
+) -> PendingGrant {
+    tracing::debug!(waiter_id = waiter.id, kind = ?waiter.kind, ?slot, "granted transfer permit");
+    if !state.op_order.is_empty() {
+        state.rr_index = (op_idx + 1) % state.op_order.len();
+    }
+    match slot {
+        PermitSlot::Command => {
+            state.ordinary_in_flight = state
+                .ordinary_in_flight
+                .checked_add(1)
+                .expect("ordinary_in_flight overflow");
+            if let Some(op) = state.ops.get_mut(&op_id) {
+                op.in_flight = op
+                    .in_flight
+                    .checked_add(1)
+                    .expect("operation in_flight overflow");
+            }
+        }
+        PermitSlot::Cleanup => {
+            state.ordinary_in_flight = state
+                .ordinary_in_flight
+                .checked_add(1)
+                .expect("ordinary_in_flight overflow");
+        }
+        PermitSlot::ReservedCleanup => {
+            state.cleanup_reserved_in_flight = state
+                .cleanup_reserved_in_flight
+                .checked_add(1)
+                .expect("cleanup_reserved_in_flight overflow");
+        }
+    }
+    PendingGrant {
+        tx: waiter.tx,
+        permit: RequestPermit {
+            state: Arc::clone(inner),
+            op_id,
+            slot,
+        },
+    }
+}
+
 fn deliver(pending: Vec<PendingGrant>) {
     for grant in pending {
+        // Failed delivery drops the permit outside the state mutex so
+        // `RequestPermit::drop` can lock and release without deadlock.
         let _ = grant.tx.send(grant.permit);
     }
 }
 
-fn pop_next_waiter(state: &mut State) -> Option<(usize, OpId, Waiter)> {
+fn pop_next_waiter(state: &mut State, selection: WaiterSelection) -> Option<(usize, OpId, Waiter)> {
     let n = state.op_order.len();
     if n == 0 {
         return None;
@@ -495,12 +602,29 @@ fn pop_next_waiter(state: &mut State) -> Option<(usize, OpId, Waiter)> {
     for step in 0..n {
         let idx = (start + step) % n;
         let op_id = state.op_order[idx];
-        if let Some(op) = state.ops.get_mut(&op_id) {
-            if op.in_flight >= op.limit {
-                continue;
+        let Some(op) = state.ops.get_mut(&op_id) else {
+            continue;
+        };
+        match selection {
+            WaiterSelection::CleanupOnly => {
+                if let Some(position) = op.queued.iter().position(|w| w.kind.is_cleanup())
+                    && let Some(waiter) = op.queued.remove(position)
+                {
+                    return Some((idx, op_id, waiter));
+                }
             }
-            if let Some(waiter) = op.queued.pop_front() {
-                return Some((idx, op_id, waiter));
+            WaiterSelection::Any => {
+                let take_front = op
+                    .queued
+                    .front()
+                    .is_some_and(|front| front.kind.is_cleanup() || op.in_flight < op.limit);
+                if take_front && let Some(waiter) = op.queued.pop_front() {
+                    return Some((idx, op_id, waiter));
+                } else if let Some(position) = op.queued.iter().position(|w| w.kind.is_cleanup())
+                    && let Some(waiter) = op.queued.remove(position)
+                {
+                    return Some((idx, op_id, waiter));
+                }
             }
         }
     }
@@ -770,10 +894,7 @@ mod tests {
         let queued = tokio::spawn(op_b.acquire(RequestKind::WholeObjectPut));
         wait_until(|| governor.queued() == 1).await;
         drop(op_b);
-        assert_eq!(
-            queued.await.expect("join").map(|_| ()),
-            Err(AcquireError::OperationDropped)
-        );
+        assert_eq!(queued.await.expect("join").map(|_| ()), Err(AcquireError));
         assert_eq!(governor.queued(), 0);
         assert_eq!(governor.in_flight(), 1);
     }
@@ -885,6 +1006,7 @@ mod tests {
             2,
             "op_b is at its command cap so extra b waiters sit in the governor queue with op_a"
         );
+        assert!(!b3_blocked.is_finished());
 
         drop(b1);
         let a1 = a_blocked
@@ -923,6 +1045,7 @@ mod tests {
             1,
             "op_a is at its command cap so extra a waiters sit in the governor queue"
         );
+        assert!(!a2_blocked.is_finished());
         assert_eq!(op_a.command_in_flight(), 1, "op_a stays at its limit of 1");
 
         drop(a1);
@@ -955,6 +1078,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_makes_progress_while_ordinary_cap_is_full() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(1));
+        let ordinary = op.acquire(RequestKind::WholeObjectPut).await.unwrap();
+        assert_eq!(governor.in_flight(), 1);
+
+        let cleanup_join = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::AbortMultipart).await }
+        });
+        wait_until(|| governor.cleanup_reserved_in_flight() == 1).await;
+        let cleanup = cleanup_join.await.expect("join").expect("cleanup granted");
+        assert_eq!(governor.in_flight(), 2);
+        assert_eq!(governor.cleanup_reserved_in_flight(), 1);
+
+        drop(cleanup);
+        wait_until(|| governor.cleanup_reserved_in_flight() == 0).await;
+        assert_eq!(governor.in_flight(), 1);
+        drop(ordinary);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_permit_drop_releases_capacity() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(1));
+        {
+            let _cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+            assert_eq!(governor.in_flight(), 1);
+            assert_eq!(governor.cleanup_reserved_in_flight(), 0);
+            assert_eq!(op.command_in_flight(), 0);
+        }
+        assert_eq!(governor.cleanup_reserved_in_flight(), 0);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn unregister_cancels_queued_cleanup_waiters() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(2));
+        let _ordinary = op.acquire(RequestKind::WholeObjectPut).await.unwrap();
+        let _cleanup_hold = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+
+        let queued = tokio::spawn(op.acquire(RequestKind::AbortMultipart));
+        wait_until(|| governor.queued() == 1).await;
+
+        drop(op);
+        assert_eq!(queued.await.expect("join").map(|_| ()), Err(AcquireError));
+        assert_eq!(governor.queued(), 0);
+        drop(_cleanup_hold);
+        drop(_ordinary);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
     async fn extra_acquire_waits_in_the_governor_queue() {
         let governor = test_governor(8);
         let op = register(&governor, test_parallel(2));
@@ -973,6 +1151,7 @@ mod tests {
             1,
             "command-limit extras wait in the governor queue"
         );
+        assert!(!extra.is_finished());
         extra.abort();
         let _ = extra.await;
     }
@@ -986,10 +1165,7 @@ mod tests {
         // command must fail this waiter instead of hanging.
         let pending = op.acquire(RequestKind::WholeObjectPut);
         drop(op);
-        assert_eq!(
-            pending.await.map(|_| ()),
-            Err(AcquireError::OperationDropped)
-        );
+        assert_eq!(pending.await.map(|_| ()), Err(AcquireError));
     }
 
     #[tokio::test]
@@ -1023,5 +1199,221 @@ mod tests {
             extra.abort();
             let _ = extra.await;
         }
+    }
+
+    #[tokio::test]
+    async fn ordinary_waiters_well_beyond_command_limit_wait() {
+        let governor = Governor::new();
+        let op = register(&governor, test_parallel(20));
+        let mut holds = Vec::new();
+        for _ in 0..20 {
+            holds.push(op.acquire(RequestKind::WholeObjectGet).await.unwrap());
+        }
+        let extras: Vec<_> = (0..300)
+            .map(|_| {
+                let op = op.clone();
+                tokio::spawn(async move { op.acquire(RequestKind::WholeObjectGet).await })
+            })
+            .collect();
+        wait_until(|| governor.queued() == 300).await;
+        assert_eq!(governor.in_flight(), 20);
+        assert!(extras.iter().all(|task| !task.is_finished()));
+        for extra in extras {
+            extra.abort();
+            let _ = extra.await;
+        }
+        drop(holds);
+    }
+
+    #[tokio::test]
+    async fn second_command_acquires_while_another_has_a_long_queue() {
+        let governor = Governor::new();
+        let busy = register(&governor, test_parallel(20));
+        let other = register(&governor, test_parallel(4));
+        let mut holds = Vec::new();
+        for _ in 0..20 {
+            holds.push(busy.acquire(RequestKind::WholeObjectGet).await.unwrap());
+        }
+        let extras: Vec<_> = (0..300)
+            .map(|_| {
+                let busy = busy.clone();
+                tokio::spawn(async move { busy.acquire(RequestKind::WholeObjectGet).await })
+            })
+            .collect();
+        wait_until(|| governor.queued() == 300).await;
+        let other_permit = other.acquire(RequestKind::WholeObjectGet).await.unwrap();
+        assert_eq!(other.command_in_flight(), 1);
+        drop(other_permit);
+        for extra in extras {
+            extra.abort();
+            let _ = extra.await;
+        }
+        drop(holds);
+    }
+
+    #[tokio::test]
+    async fn cleanup_at_command_limit_uses_reserve() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(1));
+        let _ordinary = op.acquire(RequestKind::UploadPart).await.unwrap();
+        assert_eq!(op.command_in_flight(), 1);
+
+        let cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+        assert_eq!(governor.cleanup_reserved_in_flight(), 1);
+        assert_eq!(op.command_in_flight(), 1);
+        drop(cleanup);
+    }
+
+    #[tokio::test]
+    async fn cleanup_grants_ahead_of_queued_ordinary_on_same_operation() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(2));
+        let ordinary_hold = op.acquire(RequestKind::WholeObjectPut).await.unwrap();
+        assert_eq!(governor.in_flight(), 1);
+
+        let ordinary_blocked = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::WholeObjectPut).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+
+        let cleanup_join = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::AbortMultipart).await }
+        });
+        wait_until(|| governor.cleanup_reserved_in_flight() == 1).await;
+        let cleanup = cleanup_join.await.expect("join").expect("cleanup granted");
+        assert_eq!(governor.in_flight(), 2);
+        assert_eq!(governor.queued(), 1);
+        assert!(!ordinary_blocked.is_finished());
+
+        drop(cleanup);
+        drop(ordinary_hold);
+        let _ordinary = ordinary_blocked
+            .await
+            .expect("join")
+            .expect("ordinary granted after release");
+    }
+
+    #[tokio::test]
+    async fn cleanup_scans_past_ops_that_only_have_ordinary_waiters() {
+        let governor = test_governor(1);
+        let op_a = register(&governor, test_parallel(2));
+        let op_b = register(&governor, test_parallel(2));
+        let ordinary_hold = op_a.acquire(RequestKind::WholeObjectPut).await.unwrap();
+
+        let a_blocked = tokio::spawn({
+            let op_a = op_a.clone();
+            async move { op_a.acquire(RequestKind::WholeObjectPut).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+
+        let cleanup_join = tokio::spawn({
+            let op_b = op_b.clone();
+            async move { op_b.acquire(RequestKind::AbortMultipart).await }
+        });
+        wait_until(|| governor.cleanup_reserved_in_flight() == 1).await;
+        let cleanup = cleanup_join.await.expect("join").expect("cleanup granted");
+        assert_eq!(governor.in_flight(), 2);
+        assert!(!a_blocked.is_finished());
+
+        drop(cleanup);
+        drop(ordinary_hold);
+        let _ordinary = a_blocked
+            .await
+            .expect("join")
+            .expect("ordinary granted after release");
+    }
+
+    #[tokio::test]
+    async fn cleanup_uses_reserve_when_ordinary_capacity_is_full() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(2));
+        let first_cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+        assert_eq!(governor.cleanup_reserved_in_flight(), 0);
+        assert_eq!(governor.in_flight(), 1);
+        assert_eq!(op.command_in_flight(), 0);
+
+        let second_join = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::AbortMultipart).await }
+        });
+        wait_until(|| governor.in_flight() == 2).await;
+        let second = second_join.await.expect("join").expect("second cleanup");
+        assert_eq!(governor.cleanup_reserved_in_flight(), 1);
+        assert_eq!(governor.in_flight(), 2);
+        assert_eq!(op.command_in_flight(), 0);
+
+        drop(second);
+        drop(first_cleanup);
+        assert_eq!(governor.in_flight(), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_admits_while_ordinary_waiters_are_queued() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(2));
+        let ordinary = op.acquire(RequestKind::WholeObjectPut).await.unwrap();
+        let blocked = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::WholeObjectPut).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+
+        let cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+        assert_eq!(governor.cleanup_reserved_in_flight(), 1);
+        assert_eq!(governor.in_flight(), 2);
+        drop(cleanup);
+        drop(ordinary);
+        blocked.abort();
+        let _ = blocked.await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_waiters_beyond_the_reserve_wait() {
+        let governor = test_governor(1);
+        let op = register(&governor, test_parallel(1));
+        let _ordinary = op.acquire(RequestKind::UploadPart).await.unwrap();
+        let _cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+        assert_eq!(governor.cleanup_reserved_in_flight(), 1);
+        let extras: Vec<_> = (0..40)
+            .map(|_| {
+                let op = op.clone();
+                tokio::spawn(async move { op.acquire(RequestKind::AbortMultipart).await })
+            })
+            .collect();
+        wait_until(|| governor.queued() == 40).await;
+        assert!(extras.iter().all(|task| !task.is_finished()));
+        for extra in extras {
+            extra.abort();
+            let _ = extra.await;
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_grants_behind_command_capped_ordinary_waiter() {
+        let governor = test_governor(2);
+        let op = register(&governor, test_parallel(1));
+        let ordinary = op.acquire(RequestKind::UploadPart).await.unwrap();
+        assert_eq!(op.command_in_flight(), 1);
+
+        let blocked_part = tokio::spawn({
+            let op = op.clone();
+            async move { op.acquire(RequestKind::UploadPart).await }
+        });
+        wait_until(|| governor.queued() == 1).await;
+
+        let cleanup = op.acquire(RequestKind::AbortMultipart).await.unwrap();
+        assert_eq!(governor.in_flight(), 2);
+        assert_eq!(op.command_in_flight(), 1);
+        assert_eq!(governor.queued(), 1);
+        assert!(!blocked_part.is_finished());
+
+        drop(cleanup);
+        drop(ordinary);
+        let _part = blocked_part
+            .await
+            .expect("join")
+            .expect("part granted after release");
     }
 }

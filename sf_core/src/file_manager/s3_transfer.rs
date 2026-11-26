@@ -1163,6 +1163,7 @@ async fn s3_multipart_upload(
         let creds_cache = multipart_ctx.refresher.map(|r| r.cache().clone());
         let policy = multipart_ctx.policy.clone();
         let shared = multipart_ctx.http_client.cloned();
+        let transfer = multipart_ctx.transfer.clone();
         move || {
             let client_cache = client_cache.clone();
             let info = info.clone();
@@ -1171,6 +1172,7 @@ async fn s3_multipart_upload(
             let creds_cache = creds_cache.clone();
             let policy = policy.clone();
             let shared = shared.clone();
+            let transfer = transfer.clone();
             async move {
                 let creds = creds_cache
                     .map(|cache| cache.snapshot().creds)
@@ -1185,7 +1187,9 @@ async fn s3_multipart_upload(
                 )
                 .await
                 {
-                    Ok(client) => s3_abort_multipart_upload(&client, &abort_info, &key, &id).await,
+                    Ok(client) => {
+                        s3_abort_multipart_upload(&client, &abort_info, &key, &id, &transfer).await
+                    }
                     Err(error) => {
                         tracing::error!(
                             cause = std::any::type_name_of_val(&error),
@@ -1657,10 +1661,20 @@ async fn s3_abort_multipart_upload(
     stage_info: &StageInfo,
     s3_key: &str,
     upload_id: &str,
+    transfer: &TransferOp,
 ) {
-    // Intentionally ungated progress-safety exception: cleanup must not wait
-    // behind saturated ordinary transfer slots. Admit only after reserved
-    // cleanup capacity or bounded cleanup priority exists.
+    let _permit = match transfer.acquire(RequestKind::AbortMultipart).await {
+        Ok(permit) => permit,
+        Err(source) => {
+            tracing::warn!(
+                key = ?s3_key,
+                upload_id = ?upload_id,
+                %source,
+                "Skipping S3 AbortMultipartUpload after admission failure"
+            );
+            return;
+        }
+    };
     tracing::info!(
         method = "DELETE",
         bucket = %stage_info.bucket,
