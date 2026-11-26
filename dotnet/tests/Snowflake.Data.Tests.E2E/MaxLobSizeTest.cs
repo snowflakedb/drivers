@@ -51,17 +51,20 @@ public sealed class MaxLobSizeTest : LiveE2ETestBase
     }
 
     [SnowflakeTheory]
-    [InlineData("ARROW", MaxLobSize)]
-    [InlineData("ARROW", MediumSize)]
-    [InlineData("ARROW", OriginSize)]
-    [InlineData("JSON", MaxLobSize)]
-    [InlineData("JSON", MediumSize)]
-    [InlineData("JSON", OriginSize)]
-    public async Task ShouldInsertLobValuesUsingLiteralsAsync(string resultFormat, int lobSize)
+    [InlineData("ARROW", MaxLobSize, SkipCondition.SkipOn32Bit)]
+    [InlineData("ARROW", MediumSize, SkipCondition.None)]
+    [InlineData("ARROW", OriginSize, SkipCondition.None)]
+    [InlineData("JSON", MaxLobSize, SkipCondition.SkipOn32Bit)]
+    [InlineData("JSON", MediumSize, SkipCondition.None)]
+    [InlineData("JSON", OriginSize, SkipCondition.None)]
+    public async Task ShouldInsertLobValuesUsingLiteralsAsync(string resultFormat, int lobSize, SkipCondition skipCondition)
     {
         Skip.When(
             !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("JENKINS_HOME")),
             "Test is skipped on Jenkins.");
+        Skip.For(
+            skipCondition,
+            "Two max-size literals make a 32 MiB SQL text that a 32-bit process cannot reliably allocate under parallel E2E load.");
         if (resultFormat == "JSON")
         {
             // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected
