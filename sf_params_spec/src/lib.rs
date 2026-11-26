@@ -449,16 +449,42 @@ pub enum Wrapper {
     DotNet,
 }
 
+impl Wrapper {
+    /// When true, connection options from this wrapper that do not resolve to a
+    /// registered parameter are dropped instead of forwarded.
+    pub const fn drops_unknown_options(self) -> bool {
+        match self {
+            Wrapper::NodeJs => true,
+            Wrapper::Odbc | Wrapper::Jdbc | Wrapper::Python | Wrapper::DotNet => false,
+        }
+    }
+}
+
+/// The unit a value supplied under an [`Alias`] is expressed in.
+///
+/// Core converts [`AliasUnit::Milliseconds`] values to the parameter's native
+/// seconds before validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AliasUnit {
+    #[default]
+    Native,
+    Milliseconds,
+}
+
 /// Which wrappers may resolve a parameter's canonical name.
 ///
 /// Shared core settings use [`VisibleTo::All`] so a newly added [`Wrapper`]
 /// inherits them. Wrapper-owned settings use [`VisibleTo::Only`] so other
 /// wrappers cannot resolve the canonical name — the same rule already applied
-/// to scoped aliases.
+/// to scoped aliases. [`VisibleTo::AllExcept`] hides a shared setting from the
+/// listed wrappers, for wrappers whose old driver never had it. `Only(&[])` is
+/// a setting no wrapper resolves by name; a wrapper
+/// sets it through internal options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisibleTo {
     All,
     Only(&'static [Wrapper]),
+    AllExcept(&'static [Wrapper]),
 }
 
 /// An alternative accepted name for a parameter.
@@ -469,6 +495,11 @@ pub enum VisibleTo {
 pub struct Alias {
     pub name: &'static str,
     pub wrapper: Option<Wrapper>,
+    pub unit: AliasUnit,
+    /// When true, the alias replaces the canonical name for its wrapper:
+    /// [`ParamRegistry::resolve_connection_option_for`] does not resolve the canonical
+    /// name for that wrapper.
+    pub exclusive: bool,
 }
 
 impl Alias {
@@ -476,6 +507,8 @@ impl Alias {
         Self {
             name,
             wrapper: None,
+            unit: AliasUnit::Native,
+            exclusive: false,
         }
     }
 
@@ -483,8 +516,30 @@ impl Alias {
         Self {
             name,
             wrapper: Some(wrapper),
+            unit: AliasUnit::Native,
+            exclusive: false,
         }
     }
+
+    pub const fn scoped_millis(wrapper: Wrapper, name: &'static str) -> Self {
+        Self {
+            name,
+            wrapper: Some(wrapper),
+            unit: AliasUnit::Milliseconds,
+            exclusive: false,
+        }
+    }
+
+    pub const fn exclusive(mut self) -> Self {
+        self.exclusive = true;
+        self
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ResolvedOption<'a> {
+    pub def: &'a ParamDef,
+    pub unit: AliasUnit,
 }
 
 /// Builds the `aliases:` slice for a [`ParamDef`], in either global or
@@ -522,7 +577,8 @@ impl Alias {
 ///   `Python`-scoped spelling is a legacy `snowflake-connector-python` kwarg from
 ///   its `DEFAULT_CONFIGURATION`.
 /// * `NodeJs` spellings are legacy snowflake-connector-nodejs connection options
-///   (`lib/connection/connection_config.js`).
+///   (`lib/connection/connection_config.js`). They are [`Alias::exclusive`], so
+///   Node.js does not accept the canonical name in their place.
 ///
 /// A spelling that matches the canonical name case-insensitively (legacy ODBC's
 /// `NO_PROXY`, legacy Python's `no_proxy`) needs no alias at all.
@@ -550,6 +606,8 @@ macro_rules! aliases {
 ///
 /// * `visible_to!(All)` — every wrapper (the common case).
 /// * `visible_to!(Odbc)` / `visible_to!(Odbc, Jdbc)` — listed wrappers only.
+///
+/// [`all_except!`] is the counterpart: every wrapper except the listed ones.
 #[macro_export]
 macro_rules! visible_to {
     (All) => {
@@ -557,6 +615,14 @@ macro_rules! visible_to {
     };
     ($($wrapper:ident),+ $(,)?) => {
         $crate::VisibleTo::Only(&[$($crate::Wrapper::$wrapper),+])
+    };
+}
+
+/// `all_except!(NodeJs)` == `VisibleTo::AllExcept(&[Wrapper::NodeJs])`.
+#[macro_export]
+macro_rules! all_except {
+    ($($wrapper:ident),+ $(,)?) => {
+        $crate::VisibleTo::AllExcept(&[$($crate::Wrapper::$wrapper),+])
     };
 }
 
@@ -756,6 +822,7 @@ impl ParamDef {
         match self.visible_to {
             VisibleTo::All => true,
             VisibleTo::Only(wrappers) => wrappers.contains(&wrapper),
+            VisibleTo::AllExcept(wrappers) => !wrappers.contains(&wrapper),
         }
     }
 }
@@ -935,7 +1002,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // `SERVER` is the ODBC DSN spelling (`Snowflake.h` `SF_HOST_KEY`) and is
         // ODBC-only: the legacy Python connector has no `server` kwarg, and JDBC
         // carries the host in the JDBC URL.
-        .aliases(aliases![Odbc; "SERVER"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "SERVER")])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -963,6 +1030,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SSL.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -973,6 +1041,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SERVER_URL.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "accessUrl").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -997,8 +1066,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str())
+        .visible_to(all_except!(NodeJs))
         // JDBC-only `allowUnderscoresInHost` property (case-insensitive).
-        .aliases(aliases![Jdbc; "allowUnderscoresInHost"])
+        .aliases(&[Alias::scoped(Wrapper::Jdbc, "allowUnderscoresInHost")])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1012,7 +1082,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .canonical_name(param_names::USER.as_str())
         // ODBC DSN `UID` (`Snowflake.h`). ODBC-only: the legacy Python connector
         // has no `uid` kwarg.
-        .aliases(aliases![Odbc; "UID"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "UID"), Alias::scoped(Wrapper::NodeJs, "username").exclusive()])
         .value_type(ValueType::String)
         .required(Required::Always)
         .sensitive(false)
@@ -1025,7 +1095,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .canonical_name(param_names::PASSWORD.as_str())
         // ODBC DSN `PWD` (`Snowflake.h`). ODBC-only: the legacy Python connector
         // has no `pwd` kwarg.
-        .aliases(aliases![Odbc; "PWD"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "PWD")])
         .value_type(ValueType::String)
         .required(Required::WhenAuthMethod("SNOWFLAKE_PASSWORD"))
         .sensitive(true)
@@ -1053,6 +1123,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .aliases(&[
             Alias::scoped(Wrapper::Odbc, "PRIV_KEY_BASE64"),
             Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_BASE64"),
+            Alias::scoped(Wrapper::NodeJs, "privateKey").exclusive(),
         ])
         .value_type(ValueType::String)
         .additional_value_type(ValueType::Bytes)
@@ -1068,7 +1139,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     ParamDef::builder()
         .canonical_name(param_names::PRIVATE_KEY_FILE.as_str())
         // ODBC DSN `PRIV_KEY_FILE`.
-        .aliases(aliases![Odbc; "PRIV_KEY_FILE"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "PRIV_KEY_FILE"),
+            Alias::scoped(Wrapper::NodeJs, "privateKeyPath").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -1091,6 +1165,7 @@ static PARAM_DEFS: &[ParamDef] = &[
             Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_PWD"),
             Alias::scoped(Wrapper::Jdbc, "PRIVATE_KEY_FILE_PWD"),
             Alias::scoped(Wrapper::Python, "PRIVATE_KEY_FILE_PWD"),
+            Alias::scoped(Wrapper::NodeJs, "privateKeyPass").exclusive(),
         ])
         .value_type(ValueType::String)
         .sensitive(true)
@@ -1117,7 +1192,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // case-insensitively and so needs no alias. This alias is inert for any
         // wrapper that takes the `Default` presets — see
         // `WrapperPresets::default`.
-        .aliases(aliases![NodeJs; "tokenFilePath"])
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "tokenFilePath").exclusive()])
         .value_type(ValueType::String)
         // The path is not itself a credential, but supplying it is how the
         // caller presents one — a bad path is an auth failure, not a bad
@@ -1130,6 +1205,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::EXTERNAL_SESSION_ID.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .required(Required::WhenAuthMethod("PAT_WITH_EXTERNAL_SESSION"))
         .sensitive(true)
@@ -1140,6 +1216,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SESSION_TOKEN.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(true)
         .auth(false)
@@ -1149,6 +1226,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::MASTER_TOKEN.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(true)
         .auth(false)
@@ -1158,6 +1236,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::MASTER_VALIDITY_IN_SECONDS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -1184,7 +1263,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         // canonicalize. Legacy ODBC's DSN key is `PASSCODEINPASSWORD` (no
         // separators) and is rewritten wrapper-side in
         // `odbc/src/api/connection.rs`, so no ODBC alias belongs here.
-        .aliases(aliases![Python; "PASSCODE_IN_PASSWORD"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Python, "PASSCODE_IN_PASSWORD")
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1196,7 +1277,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str())
         // JDBC-only camelCase property.
-        .aliases(aliases![Jdbc; "clientStoreTemporaryCredential"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "clientStoreTemporaryCredential"),
+            Alias::scoped(Wrapper::NodeJs, "clientStoreTemporaryCredential").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
         .sensitive(false)
@@ -1225,6 +1309,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::DISABLE_PARALLEL_USER_PROMPT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
         .sensitive(false)
@@ -1249,7 +1334,7 @@ static PARAM_DEFS: &[ParamDef] = &[
             Alias::scoped(Wrapper::Odbc, "DISABLEQUERYCONTEXTCACHE"),
             Alias::scoped(Wrapper::DotNet, "DISABLEQUERYCONTEXTCACHE"),
             Alias::scoped(Wrapper::Jdbc, "disableQueryContextCache"),
-            Alias::scoped(Wrapper::NodeJs, "disableQueryContextCache"),
+            Alias::scoped(Wrapper::NodeJs, "disableQueryContextCache").exclusive(),
         ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
@@ -1262,6 +1347,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SERIALIZE_SESSION_OPERATIONS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1278,7 +1364,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .aliases(&[
             Alias::scoped(Wrapper::Odbc, "includeRetryReason"),
             Alias::scoped(Wrapper::DotNet, "INCLUDERETRYREASON"),
-            Alias::scoped(Wrapper::NodeJs, "includeRetryReason"),
+            Alias::scoped(Wrapper::NodeJs, "includeRetryReason").exclusive(),
             Alias::scoped(Wrapper::Python, "enable_retry_reason_in_query_response"),
         ])
         .value_type(ValueType::Bool)
@@ -1293,6 +1379,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::JWT_TIMEOUT.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "jwtTimeout").exclusive()])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_JWT_TIMEOUT_SECS))
         .sensitive(false)
@@ -1312,6 +1399,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .description(
             "Bind the session to a DPoP key (RFC 9449) generated at login, so every request carries a proof from that key (SNOWFLAKE_JWT and WORKLOAD_IDENTITY only)",
         )
+        .visible_to(all_except!(NodeJs))
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),
@@ -1323,9 +1411,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // below, case-insensitively.
         .aliases(&[
             Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT"),
-            // Legacy Node.js option. The wrapper converts milliseconds to seconds
-            // before forwarding this spelling.
-            Alias::scoped(Wrapper::NodeJs, "browserActionTimeout"),
+            Alias::scoped_millis(Wrapper::NodeJs, "browserActionTimeout").exclusive(),
         ])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(120))
@@ -1337,6 +1423,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::BROWSER_REDIRECT_PORT.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "browserRedirectPort").exclusive()])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(true)
@@ -1349,6 +1436,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OKTA_USERNAME.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1358,6 +1446,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::DISABLE_SAML_URL_CHECK.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "disableSamlURLCheck").exclusive()])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1386,7 +1475,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .canonical_name(param_names::OAUTH_CLIENT_ID.as_str())
         // `OAUTH_CLIENT_ID` is the canonical spelling (case-insensitive match);
         // the camelCase form is the JDBC-only `SFSessionProperty` key.
-        .aliases(aliases![Jdbc; "oauthClientId"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthClientId"),
+            Alias::scoped(Wrapper::NodeJs, "oauthClientId").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -1396,7 +1488,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_CLIENT_SECRET.as_str())
-        .aliases(aliases![Jdbc; "oauthClientSecret"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthClientSecret"),
+            Alias::scoped(Wrapper::NodeJs, "oauthClientSecret").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(true)
         .auth(true)
@@ -1406,7 +1501,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_AUTHORIZATION_URL.as_str())
-        .aliases(aliases![Jdbc; "oauthAuthorizationUrl"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthAuthorizationUrl"),
+            Alias::scoped(Wrapper::NodeJs, "oauthAuthorizationUrl").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -1422,7 +1520,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         // (`Snowflake.h` `SF_OAUTH_TOKEN_REQUEST_URL_KEY`). Only the camelCase
         // JDBC property needs an alias; the shorter `OAUTH_TOKEN_URL` was UD-only
         // leniency (no such kwarg in the legacy connector) and is gone.
-        .aliases(aliases![Jdbc; "oauthTokenRequestUrl"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthTokenRequestUrl"),
+            Alias::scoped(Wrapper::NodeJs, "oauthTokenRequestUrl").exclusive(),
+        ])
         .value_type(ValueType::String)
         .required(Required::WhenAuthMethod("OAUTH_CLIENT_CREDENTIALS"))
         .sensitive(false)
@@ -1434,7 +1535,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_REDIRECT_URI.as_str())
-        .aliases(aliases![Jdbc; "oauthRedirectUri"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthRedirectUri"),
+            Alias::scoped(Wrapper::NodeJs, "oauthRedirectUri").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -1445,7 +1549,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_SCOPE.as_str())
-        .aliases(aliases![Jdbc; "oauthScope"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthScope"),
+            Alias::scoped(Wrapper::NodeJs, "oauthScope").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -1455,7 +1562,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_ENABLE_SINGLE_USE_REFRESH_TOKENS.as_str())
-        .aliases(aliases![Jdbc; "oauthEnableSingleUseRefreshTokens"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "oauthEnableSingleUseRefreshTokens"),
+            Alias::scoped(Wrapper::NodeJs, "oauthEnableSingleUseRefreshTokens").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1466,6 +1576,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_DISABLE_PKCE.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1476,6 +1587,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_ENABLE_DPOP.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1486,6 +1598,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::OAUTH_CREDENTIALS_IN_BODY.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1544,6 +1657,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::AUTOCOMMIT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1554,6 +1668,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_TIMESTAMP_TYPE_MAPPING.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1564,6 +1679,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_METADATA_REQUEST_USE_CONNECTION_CTX.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1574,6 +1690,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SERVICE_NAME.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1584,6 +1701,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::GCS_USE_DOWNSCOPED_CREDENTIAL.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1594,6 +1712,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_OUT_OF_BAND_TELEMETRY_ENABLED.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1615,11 +1734,12 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SECONDARY_ROLES.as_str())
+        .visible_to(all_except!(NodeJs))
         // Legacy ODBC's `SecondaryRoles` connection attribute has no separator,
         // so the connection-string parser uppercases it to `SECONDARYROLES`
         // (not `SECONDARY_ROLES`); scope that spelling to ODBC so the wrapper
         // canonicalizes it to `secondary_roles`.
-        .aliases(aliases![Odbc; "SECONDARYROLES"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "SECONDARYROLES")])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1630,6 +1750,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::CUSTOM_ROOT_STORE_PATH.as_str())
+        .visible_to(all_except!(NodeJs))
         // No alias: legacy ODBC had no custom-root-store DSN key (only `SSL`), and
         // the `TLS_`-prefixed spelling had no users — the canonical name resolves
         // for every wrapper case-insensitively.
@@ -1648,10 +1769,11 @@ static PARAM_DEFS: &[ParamDef] = &[
         .description("Path to root certificates added to the default root store")
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
-        .visible_to(visible_to!(NodeJs))
+        .visible_to(VisibleTo::Only(&[]))
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::VERIFY_HOSTNAME.as_str())
+        .visible_to(all_except!(NodeJs))
         // No alias: no legacy TLS-verification DSN key existed, and the
         // `TLS_VERIFY_HOSTNAME` spelling had no users.
         .value_type(ValueType::Bool)
@@ -1664,6 +1786,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::VERIFY_CERTIFICATES.as_str())
+        .visible_to(all_except!(NodeJs))
         // No alias: see `verify_hostname` above.
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
@@ -1675,6 +1798,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::TLS_SKIP_VERIFY.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1686,6 +1810,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // TLS protocol-version window.
     ParamDef::builder()
         .canonical_name(param_names::MIN_TLS_VERSION.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .default(DefaultValue::String("tls12"))
         .sensitive(false)
@@ -1696,6 +1821,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::MAX_TLS_VERSION.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .default(DefaultValue::String("tls13"))
         .sensitive(false)
@@ -1711,6 +1837,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .sensitive(false)
         .auth(false)
         .description("Prefer the post-quantum X25519MLKEM768 key exchange over a classical group (X25519, or P-256 in FIPS builds), in FIPS builds too. The preferred group is listed first and its key share is sent in the ClientHello; servers that honor the client's order negotiate it, others pick their own. Applies to the connection's clients: login, queries, stage transfers and workload identity during login. CRL downloads, platform detection and the standalone workload identity attestation call prefer a classical group")
+        .visible_to(all_except!(NodeJs))
         .scopes(&[ParamScope::Connection])
         .mutable_after_connect(false)
         .build(),
@@ -1722,7 +1849,11 @@ static PARAM_DEFS: &[ParamDef] = &[
         // ODBC-only deprecated params the driver accepts and does not apply.
         // Python uses the `cert_revocation_check_mode` legacy kwarg, rewritten
         // wrapper-side by `_LEGACY_REWRITES`.
-        .aliases(aliases![Odbc; "CRL_MODE", "CRL_ENABLED"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "CRL_MODE"),
+            Alias::scoped(Wrapper::Odbc, "CRL_ENABLED"),
+            Alias::scoped(Wrapper::NodeJs, "certRevocationCheckMode").exclusive(),
+        ])
         // Free-form string in core: the ODBC wrapper maps its `CRL_MODE` /
         // `CRL_ENABLED` wire spellings to the `DISABLED` / `ENABLED` / `ADVISORY`
         // tokens that `CrlConfig::from_settings` accepts before the value
@@ -1737,7 +1868,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_ENABLE_DISK_CACHING.as_str())
-        .aliases(aliases![Odbc; "CRL_DISK_CACHING"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "CRL_DISK_CACHING"),
+            Alias::scoped(Wrapper::NodeJs, "crlOnDiskCache").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
         .sensitive(false)
@@ -1748,7 +1882,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_ENABLE_MEMORY_CACHING.as_str())
-        .aliases(aliases![Odbc; "CRL_MEMORY_CACHING"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "CRL_MEMORY_CACHING"),
+            Alias::scoped(Wrapper::NodeJs, "crlInMemoryCache").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
         .sensitive(false)
@@ -1759,6 +1896,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_CACHE_DIR.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "crlCacheDir").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1768,6 +1906,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_MAX_DOWNLOAD_SIZE.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "crlDownloadMaxSize").exclusive()])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(20 * 1024 * 1024))
         .sensitive(false)
@@ -1778,6 +1917,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_VALIDITY_TIME.as_str())
+        .aliases(&[Alias::scoped_millis(Wrapper::NodeJs, "crlCacheValidityTime").exclusive()])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(86400))
         .sensitive(false)
@@ -1788,6 +1928,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_ON_DISK_CACHE_REMOVAL_DELAY.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(604800))
         .sensitive(false)
@@ -1798,6 +1939,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_CACHE_CLEANUP_INTERVAL.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(3600))
         .sensitive(false)
@@ -1808,6 +1950,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_CACHE_START_CLEANUP.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1818,6 +1961,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_UNSAFE_SKIP_FILE_PERMISSIONS_CHECK.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1828,7 +1972,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL.as_str())
-        .aliases(aliases![Odbc; "CRL_ALLOW_NO_CRL"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "CRL_ALLOW_NO_CRL"),
+            Alias::scoped(Wrapper::NodeJs, "crlAllowCertificatesWithoutCrlURL").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -1839,7 +1986,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_HTTP_TIMEOUT.as_str())
-        .aliases(aliases![Odbc; "CRL_DOWNLOAD_TIMEOUT"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "CRL_DOWNLOAD_TIMEOUT"),
+            Alias::scoped_millis(Wrapper::NodeJs, "crlDownloadTimeout").exclusive(),
+        ])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(10))
         .sensitive(false)
@@ -1850,6 +2000,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CRL_CONNECTION_TIMEOUT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(10))
         .sensitive(false)
@@ -1861,6 +2012,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Client ──────────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::CONNECTION_NAME.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "connectionName").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1870,6 +2022,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOG_MAX_QUERY_LENGTH.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(80))
         .sensitive(false)
@@ -1880,6 +2033,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOG_QUERY_TEXT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .additional_value_type(ValueType::String)
         .default(DefaultValue::Bool(false))
@@ -1891,6 +2045,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOG_QUERY_PARAMETERS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .additional_value_type(ValueType::String)
         .default(DefaultValue::Bool(false))
@@ -1903,6 +2058,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Logout ────────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::SERVER_SESSION_KEEP_ALIVE.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "serverSessionKeepAlive").exclusive()])
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1912,6 +2068,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -1921,6 +2078,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOGOUT_ERROR_STRATEGY.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1930,6 +2088,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOGOUT_TOTAL_TIMEOUT_SECONDS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -1939,6 +2098,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOGOUT_MAX_ATTEMPTS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -1948,6 +2108,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::LOGOUT_REQUEST_TIMEOUT_SECONDS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -1957,7 +2118,8 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_MAX_ATTEMPTS.as_str())
-        .aliases(aliases![Odbc; "MaxHttpRetries"])
+        .visible_to(all_except!(NodeJs))
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "MaxHttpRetries")])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_RETRY_MAX_ATTEMPTS as i64))
         .sensitive(false)
@@ -1968,6 +2130,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_EXTRA_STATUS_CODES.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -1977,10 +2140,11 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PUT_GET_MAX_ATTEMPTS.as_str())
+        .visible_to(all_except!(NodeJs))
         // ODBC-only 3.x spellings (`Snowflake.h`). The ODBC wrapper resolves conflicts:
         // `PUT_GET_MAX_ATTEMPTS` wins when present; otherwise the maximum of any
         // supplied legacy alias values is used.
-        .aliases(aliases![Odbc; "PUT_MAXRETRIES", "GET_MAXRETRIES"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "PUT_MAXRETRIES"), Alias::scoped(Wrapper::Odbc, "GET_MAXRETRIES")])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_PUT_GET_MAX_ATTEMPTS as i64))
         .sensitive(false)
@@ -1992,6 +2156,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Retry backoff curve (shared by HTTP and PUT/GET pipelines) ──────
     ParamDef::builder()
         .canonical_name(param_names::RETRY_BACKOFF_BASE_MS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_BASE_MS as i64))
         .sensitive(false)
@@ -2002,6 +2167,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_BACKOFF_CAP_MS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_RETRY_BACKOFF_CAP_MS as i64))
         .sensitive(false)
@@ -2012,6 +2178,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_BACKOFF_FACTOR.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Double)
         .default(DefaultValue::Double(DEFAULT_RETRY_BACKOFF_FACTOR))
         .sensitive(false)
@@ -2022,6 +2189,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::RETRY_BACKOFF_JITTER.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .default(DefaultValue::String(DEFAULT_RETRY_BACKOFF_JITTER))
         .sensitive(false)
@@ -2038,7 +2206,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         // (see that param's `Alias::scoped(Wrapper::Odbc, "LOGIN_TIMEOUT")`).
         // `retryTimeout` is the legacy Node.js option for this same clock, not
         // for `retry_timeout`.
-        .aliases(aliases![NodeJs; "retryTimeout"])
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "retryTimeout").exclusive()])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_LOGIN_TIMEOUT_SECS as i64))
         .sensitive(false)
@@ -2049,6 +2217,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::QUERY_TIMEOUT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_QUERY_TIMEOUT_SECS as i64))
         .sensitive(false)
@@ -2059,7 +2228,8 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::REQUEST_TIMEOUT.as_str())
-        .aliases(aliases![Jdbc; "networkTimeout"])
+        .visible_to(all_except!(NodeJs))
+        .aliases(&[Alias::scoped(Wrapper::Jdbc, "networkTimeout")])
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(DEFAULT_REQUEST_TIMEOUT_SECS as i64))
         .sensitive(false)
@@ -2071,7 +2241,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     ParamDef::builder()
         .canonical_name(param_names::RETRY_TIMEOUT.as_str())
         .aliases(&[
-            Alias::scoped(Wrapper::NodeJs, "timeout"),
+            Alias::scoped_millis(Wrapper::NodeJs, "timeout").exclusive(),
             Alias::scoped(Wrapper::Jdbc, "HTTP_CLIENT_SOCKET_TIMEOUT"),
         ])
         .value_type(ValueType::Int)
@@ -2083,7 +2253,8 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CONNECT_TIMEOUT.as_str())
-        .aliases(aliases![Jdbc; "HTTP_CLIENT_CONNECTION_TIMEOUT"])
+        .visible_to(all_except!(NodeJs))
+        .aliases(&[Alias::scoped(Wrapper::Jdbc, "HTTP_CLIENT_CONNECTION_TIMEOUT")])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -2158,6 +2329,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::UNSAFE_SKIP_CONFIG_FILE_PERMISSIONS_CHECK.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2170,6 +2342,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::UNSAFE_FILE_WRITE.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2181,6 +2354,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_APP_ID.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2190,6 +2364,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_APP_VERSION.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2209,6 +2384,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Statement ──────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::ASYNC_EXECUTION.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2229,6 +2405,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::QUERY_TAG.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "queryTag").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2243,6 +2420,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::SKIP_UPLOAD_ON_CONTENT_MATCH.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2253,6 +2431,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CWD.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2319,6 +2498,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Prefetch ───────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_PREFETCH_THREADS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -2329,6 +2509,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_MEMORY_LIMIT.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Int)
         .default(DefaultValue::Int(1536))
         .sensitive(false)
@@ -2340,6 +2521,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Session keep-alive ─────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_SESSION_KEEP_ALIVE.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "clientSessionKeepAlive").exclusive()])
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -2350,6 +2532,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "clientSessionKeepAliveHeartbeatFrequency").exclusive()])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -2372,7 +2555,8 @@ static PARAM_DEFS: &[ParamDef] = &[
     // the Python wrapper additionally rewrites it via `_DEPRECATED_REWRITES`.
     ParamDef::builder()
         .canonical_name(param_names::USE_S3_REGIONAL_URL.as_str())
-        .aliases(aliases![Python; "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1"])
+        .visible_to(all_except!(NodeJs))
+        .aliases(&[Alias::scoped(Wrapper::Python, "ENABLE_STAGE_S3_PRIVATELINK_FOR_US_EAST_1")])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2383,6 +2567,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::VALIDATE_DEFAULT_PARAMETERS.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         .sensitive(false)
         .auth(false)
@@ -2407,6 +2592,7 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Proxy ──────────────────────────────────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::PROXY_HOST.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "proxyHost").exclusive()])
         // The legacy ODBC `PROXY` DSN key uses a different *format* (full URL
         // with embedded creds), so it is registered as a distinct canonical
         // param `proxy` rather than aliased here. `build_proxy_config` parses
@@ -2420,6 +2606,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PROXY_PORT.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "proxyPort").exclusive()])
         .value_type(ValueType::Int)
         .sensitive(false)
         .auth(false)
@@ -2429,6 +2616,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PROXY_SCHEME.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "proxyProtocol").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2438,6 +2626,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PROXY_USER.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "proxyUser").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2447,6 +2636,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::PROXY_PASSWORD.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "proxyPassword").exclusive()])
         .value_type(ValueType::String)
         .sensitive(true)
         .auth(false)
@@ -2456,6 +2646,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::NO_PROXY.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "noProxy").exclusive()])
         // No alias: legacy ODBC's DSN key is `NO_PROXY` (`Snowflake.h`
         // `SF_NO_PROXY_KEY`) and legacy Python's kwarg is `no_proxy`, both of
         // which match the canonical name case-insensitively. The separator-less
@@ -2470,7 +2661,10 @@ static PARAM_DEFS: &[ParamDef] = &[
     // ── Workload Identity Federation (WIF) ────────────────────────────
     ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_PROVIDER.as_str())
-        .aliases(aliases![Jdbc; "workloadIdentityProvider"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "workloadIdentityProvider"),
+            Alias::scoped(Wrapper::NodeJs, "workloadIdentityProvider").exclusive(),
+        ])
         .value_type(ValueType::String)
         .required(Required::WhenAuthMethod("WORKLOAD_IDENTITY"))
         .sensitive(false)
@@ -2481,7 +2675,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_ENTRA_RESOURCE.as_str())
-        .aliases(aliases![Jdbc; "workloadIdentityEntraResource"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "workloadIdentityEntraResource"),
+            Alias::scoped(Wrapper::NodeJs, "workloadIdentityAzureEntraIdResource").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -2492,6 +2689,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_AZURE_CLIENT_ID.as_str())
+        .aliases(&[Alias::scoped(Wrapper::NodeJs, "workloadIdentityAzureClientId").exclusive()])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -2502,7 +2700,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_IMPERSONATION_PATH.as_str())
-        .aliases(aliases![Jdbc; "workloadIdentityImpersonationPath"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "workloadIdentityImpersonationPath"),
+            Alias::scoped(Wrapper::NodeJs, "workloadIdentityImpersonationPath").exclusive(),
+        ])
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(true)
@@ -2512,7 +2713,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::WORKLOAD_IDENTITY_AWS_USE_OUTBOUND_TOKEN.as_str())
-        .aliases(aliases![Jdbc; "workloadIdentityAwsUseOutboundToken"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Jdbc, "workloadIdentityAwsUseOutboundToken"),
+            Alias::scoped(Wrapper::NodeJs, "workloadIdentityAwsUseOutboundToken").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2528,7 +2732,8 @@ static PARAM_DEFS: &[ParamDef] = &[
             Alias::scoped(Wrapper::Jdbc, "workloadIdentityHost"),
             Alias::scoped(Wrapper::Jdbc, "workload_identity_host"),
             Alias::scoped(Wrapper::Python, "workload_identity_host"),
-            Alias::scoped(Wrapper::NodeJs, "wifHost"),
+            Alias::scoped(Wrapper::NodeJs, "wifHost").exclusive(),
+            Alias::scoped(Wrapper::NodeJs, "workloadIdentityHost").exclusive(),
         ])
         .value_type(ValueType::String)
         .sensitive(false)
@@ -2552,7 +2757,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .canonical_name(param_names::USE_PROXY_ENV.as_str())
         // Legacy ODBC DSN `ProxyWithEnv` (`Snowflake.h`), uppercased by the
         // connection-string parser.
-        .aliases(aliases![Odbc; "PROXYWITHENV"])
+        .aliases(&[
+            Alias::scoped(Wrapper::Odbc, "PROXYWITHENV"),
+            Alias::scoped(Wrapper::NodeJs, "useEnvProxy").exclusive(),
+        ])
         .value_type(ValueType::Bool)
         // No registry default: unset must stay absent so connection init can
         // apply `WrapperPresets::use_proxy_env_default`. A stored false would
@@ -2570,9 +2778,10 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::ALLOW_EMPTY_PROXY.as_str())
+        .visible_to(all_except!(NodeJs))
         // Legacy ODBC DSN `AllowEmptyProxy` (`Snowflake.h`), uppercased by the
         // connection-string parser. ODBC-only: no legacy Python equivalent.
-        .aliases(aliases![Odbc; "ALLOWEMPTYPROXY"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "ALLOWEMPTYPROXY")])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(true))
         .sensitive(false)
@@ -2583,10 +2792,11 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::USE_CURRENT_CATALOG.as_str())
+        .visible_to(all_except!(NodeJs))
         // Legacy ODBC DSN `UseCurrentCatalog` (`Snowflake.h`), uppercased by
         // the connection-string parser. ODBC-only: JDBC/Python/Node have no
         // equivalent client property.
-        .aliases(aliases![Odbc; "USECURRENTCATALOG"])
+        .aliases(&[Alias::scoped(Wrapper::Odbc, "USECURRENTCATALOG")])
         .value_type(ValueType::Bool)
         .default(DefaultValue::Bool(false))
         .sensitive(false)
@@ -2655,6 +2865,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::ENABLE_CONNECTION_DIAG.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::Bool)
         // No registry default: the consumer uses `.unwrap_or(false)`.  Omitting
         // the default keeps the Python dataclass field at `None` so that a
@@ -2669,6 +2880,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CONNECTION_DIAG_LOG_PATH.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2678,6 +2890,7 @@ static PARAM_DEFS: &[ParamDef] = &[
         .build(),
     ParamDef::builder()
         .canonical_name(param_names::CONNECTION_DIAG_ALLOWLIST_PATH.as_str())
+        .visible_to(all_except!(NodeJs))
         .value_type(ValueType::String)
         .sensitive(false)
         .auth(false)
@@ -2904,8 +3117,9 @@ pub struct ParamRegistry {
     /// alias → index into `params`.
     alias_index: HashMap<String, usize>,
     /// Case-insensitive map: (wrapper, lowercased scoped alias or restricted
-    /// canonical) → index into `params`.
-    wrapper_alias_index: HashMap<(Wrapper, String), usize>,
+    /// canonical) → index into `params` and, for an alias, its unit.
+    /// Restricted canonicals map to `None`.
+    wrapper_alias_index: HashMap<(Wrapper, String), (usize, Option<AliasUnit>)>,
     /// Lowercased canonical names of every registered parameter, including
     /// wrapper-restricted ones. Backs [`Self::is_known`].
     canonicals: HashSet<String>,
@@ -2920,12 +3134,12 @@ impl ParamRegistry {
             let canonical = param.canonical_name.to_ascii_lowercase();
             canonicals.insert(canonical.clone());
             match param.visible_to {
-                VisibleTo::All => {
+                VisibleTo::All | VisibleTo::AllExcept(_) => {
                     alias_index.insert(canonical, i);
                 }
                 VisibleTo::Only(wrappers) => {
                     for wrapper in wrappers {
-                        wrapper_alias_index.insert((*wrapper, canonical.clone()), i);
+                        wrapper_alias_index.insert((*wrapper, canonical.clone()), (i, None));
                     }
                 }
             }
@@ -2936,7 +3150,7 @@ impl ParamRegistry {
                         alias_index.insert(key, i);
                     }
                     Some(wrapper) => {
-                        wrapper_alias_index.insert((wrapper, key), i);
+                        wrapper_alias_index.insert((wrapper, key), (i, Some(alias.unit)));
                     }
                 }
             }
@@ -2963,14 +3177,47 @@ impl ParamRegistry {
             .map(|&i| &self.params[i])
     }
 
-    /// Wrapper-scoped alias wins; else fall back to global [`Self::resolve`].
+    /// Resolve a setting key supplied by `wrapper` (session and statement
+    /// parameters, parameter reads). Wrapper-scoped alias wins; else fall back
+    /// to global [`Self::resolve`] for parameters visible to `wrapper`.
     /// Case-insensitive.
     pub fn resolve_for(&self, wrapper: Wrapper, key: impl AsRef<str>) -> Option<&ParamDef> {
         let k = key.as_ref().to_ascii_lowercase();
-        if let Some(&i) = self.wrapper_alias_index.get(&(wrapper, k)) {
+        if let Some(&(i, _)) = self.wrapper_alias_index.get(&(wrapper, k)) {
             return Some(&self.params[i]);
         }
-        self.resolve(key)
+        self.resolve(key).filter(|def| def.is_visible_to(wrapper))
+    }
+
+    /// Resolve a connection option supplied by `wrapper`.
+    ///
+    /// Resolves as [`Self::resolve_for`], except that a canonical name does not
+    /// resolve when the parameter has an [`Alias::exclusive`] alias for
+    /// `wrapper`. Case-insensitive.
+    pub fn resolve_connection_option_for(
+        &self,
+        wrapper: Wrapper,
+        key: impl AsRef<str>,
+    ) -> Option<ResolvedOption<'_>> {
+        let k = key.as_ref().to_ascii_lowercase();
+        if let Some(&(i, Some(unit))) = self.wrapper_alias_index.get(&(wrapper, k)) {
+            return Some(ResolvedOption {
+                def: &self.params[i],
+                unit,
+            });
+        }
+        let def = self.resolve_for(wrapper, key)?;
+        if def
+            .aliases
+            .iter()
+            .any(|a| a.exclusive && a.wrapper == Some(wrapper))
+        {
+            return None;
+        }
+        Some(ResolvedOption {
+            def,
+            unit: AliasUnit::Native,
+        })
     }
 
     /// Canonical name for a key under wrapper-scoped resolution.
@@ -3104,10 +3351,9 @@ mod tests {
             let def = r
                 .resolve(expected_canonical)
                 .unwrap_or_else(|| panic!("{expected_canonical:?} should resolve globally"));
-            assert_eq!(
-                def.visible_to,
-                VisibleTo::All,
-                "{expected_canonical:?} is listed as resolving for every wrapper"
+            assert!(
+                !matches!(def.visible_to, VisibleTo::Only(_)),
+                "{expected_canonical:?} is listed as resolving for ODBC, JDBC and Python"
             );
             for wrapper in [Wrapper::Odbc, Wrapper::Jdbc, Wrapper::Python] {
                 let def = r
@@ -3218,21 +3464,29 @@ mod tests {
             ("PUT_TEMPDIR", "put_tempdir", &[Odbc]),
             ("MaxHttpRetries", "retry_max_attempts", &[Odbc]),
             // JDBC-only camelCase properties.
-            ("oauthClientId", "oauth_client_id", &[Jdbc]),
-            ("oauthClientSecret", "oauth_client_secret", &[Jdbc]),
-            ("oauthAuthorizationUrl", "oauth_authorization_url", &[Jdbc]),
-            ("oauthTokenRequestUrl", "oauth_token_request_url", &[Jdbc]),
-            ("oauthRedirectUri", "oauth_redirect_uri", &[Jdbc]),
-            ("oauthScope", "oauth_scope", &[Jdbc]),
+            ("oauthClientId", "oauth_client_id", &[Jdbc, NodeJs]),
+            ("oauthClientSecret", "oauth_client_secret", &[Jdbc, NodeJs]),
+            (
+                "oauthAuthorizationUrl",
+                "oauth_authorization_url",
+                &[Jdbc, NodeJs],
+            ),
+            (
+                "oauthTokenRequestUrl",
+                "oauth_token_request_url",
+                &[Jdbc, NodeJs],
+            ),
+            ("oauthRedirectUri", "oauth_redirect_uri", &[Jdbc, NodeJs]),
+            ("oauthScope", "oauth_scope", &[Jdbc, NodeJs]),
             (
                 "oauthEnableSingleUseRefreshTokens",
                 "oauth_enable_single_use_refresh_tokens",
-                &[Jdbc],
+                &[Jdbc, NodeJs],
             ),
             (
                 "clientStoreTemporaryCredential",
                 "client_store_temporary_credential",
-                &[Jdbc],
+                &[Jdbc, NodeJs],
             ),
             (
                 "allowUnderscoresInHost",
@@ -3253,7 +3507,7 @@ mod tests {
             (
                 "workloadIdentityProvider",
                 "workload_identity_provider",
-                &[Jdbc],
+                &[Jdbc, NodeJs],
             ),
             (
                 "workloadIdentityEntraResource",
@@ -3263,12 +3517,12 @@ mod tests {
             (
                 "workloadIdentityImpersonationPath",
                 "workload_identity_impersonation_path",
-                &[Jdbc],
+                &[Jdbc, NodeJs],
             ),
             (
                 "workloadIdentityAwsUseOutboundToken",
                 "workload_identity_aws_use_outbound_token",
-                &[Jdbc],
+                &[Jdbc, NodeJs],
             ),
             // Python-only legacy kwarg.
             (
@@ -3292,7 +3546,7 @@ mod tests {
             ),
             ("networkTimeout", "request_timeout", &[Jdbc]),
             ("wifHost", "wif_host", &[Jdbc, NodeJs]),
-            ("workloadIdentityHost", "wif_host", &[Jdbc]),
+            ("workloadIdentityHost", "wif_host", &[Jdbc, NodeJs]),
             ("workload_identity_host", "wif_host", &[Jdbc, Python]),
         ];
         for (alias, expected_canonical, owners) in scoped_cases {
@@ -3748,7 +4002,7 @@ mod tests {
         let restricted: Vec<_> = r
             .all_params()
             .iter()
-            .filter(|p| p.visible_to != VisibleTo::All)
+            .filter(|p| matches!(p.visible_to, VisibleTo::Only(_)))
             .collect();
         assert!(
             !restricted.is_empty(),
@@ -3798,16 +4052,6 @@ mod tests {
     #[test]
     fn aliases_are_subset_of_visible_to() {
         for param in registry().all_params() {
-            match param.visible_to {
-                VisibleTo::Only(wrappers) => {
-                    assert!(
-                        !wrappers.is_empty(),
-                        "parameter {:?} has VisibleTo::Only(&[])",
-                        param.canonical_name
-                    );
-                }
-                VisibleTo::All => {}
-            }
             for alias in param.aliases {
                 let Some(wrapper) = alias.wrapper else {
                     continue;
@@ -4033,6 +4277,238 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn every_old_nodejs_option_resolves_under_nodejs() {
+        use AliasUnit::{Milliseconds, Native};
+        let cases: &[(&str, &str, AliasUnit)] = &[
+            ("account", "account", Native),
+            ("accessUrl", "server_url", Native),
+            ("host", "host", Native),
+            ("username", "user", Native),
+            ("password", "password", Native),
+            ("authenticator", "authenticator", Native),
+            ("token", "token", Native),
+            ("tokenFilePath", "token_file_path", Native),
+            (
+                "clientStoreTemporaryCredential",
+                "client_store_temporary_credential",
+                Native,
+            ),
+            ("oauthClientId", "oauth_client_id", Native),
+            ("oauthClientSecret", "oauth_client_secret", Native),
+            ("oauthRedirectUri", "oauth_redirect_uri", Native),
+            ("oauthAuthorizationUrl", "oauth_authorization_url", Native),
+            ("oauthTokenRequestUrl", "oauth_token_request_url", Native),
+            ("oauthScope", "oauth_scope", Native),
+            (
+                "oauthEnableSingleUseRefreshTokens",
+                "oauth_enable_single_use_refresh_tokens",
+                Native,
+            ),
+            ("disableSamlURLCheck", "disable_saml_url_check", Native),
+            ("privateKey", "private_key", Native),
+            ("privateKeyPath", "private_key_file", Native),
+            ("privateKeyPass", "private_key_password", Native),
+            ("jwtTimeout", "jwt_timeout", Native),
+            (
+                "workloadIdentityProvider",
+                "workload_identity_provider",
+                Native,
+            ),
+            (
+                "workloadIdentityAzureClientId",
+                "workload_identity_azure_client_id",
+                Native,
+            ),
+            (
+                "workloadIdentityAzureEntraIdResource",
+                "workload_identity_entra_resource",
+                Native,
+            ),
+            ("workloadIdentityHost", "wif_host", Native),
+            (
+                "workloadIdentityImpersonationPath",
+                "workload_identity_impersonation_path",
+                Native,
+            ),
+            (
+                "workloadIdentityAwsUseOutboundToken",
+                "workload_identity_aws_use_outbound_token",
+                Native,
+            ),
+            ("passcode", "passcode", Native),
+            ("passcodeInPassword", "passcodeInPassword", Native),
+            ("database", "database", Native),
+            ("schema", "schema", Native),
+            ("warehouse", "warehouse", Native),
+            ("role", "role", Native),
+            ("retryTimeout", "login_timeout", Native),
+            (
+                "browserActionTimeout",
+                "authentication_timeout",
+                Milliseconds,
+            ),
+            ("browserRedirectPort", "browser_redirect_port", Native),
+            ("timeout", "retry_timeout", Milliseconds),
+            ("useEnvProxy", "use_proxy_env", Native),
+            ("proxy", "proxy", Native),
+            ("proxyHost", "proxy_host", Native),
+            ("proxyPort", "proxy_port", Native),
+            ("proxyUser", "proxy_user", Native),
+            ("proxyPassword", "proxy_password", Native),
+            ("proxyProtocol", "proxy_scheme", Native),
+            ("noProxy", "no_proxy", Native),
+            ("port", "port", Native),
+            ("protocol", "protocol", Native),
+            ("queryTag", "query_tag", Native),
+            ("application", "application", Native),
+            (
+                "clientSessionKeepAlive",
+                "CLIENT_SESSION_KEEP_ALIVE",
+                Native,
+            ),
+            (
+                "clientSessionKeepAliveHeartbeatFrequency",
+                "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY",
+                Native,
+            ),
+            (
+                "serverSessionKeepAlive",
+                "server_session_keep_alive",
+                Native,
+            ),
+            (
+                "disableQueryContextCache",
+                "disable_query_context_cache",
+                Native,
+            ),
+            ("certRevocationCheckMode", "crl_check_mode", Native),
+            (
+                "crlAllowCertificatesWithoutCrlURL",
+                "crl_allow_certificates_without_crl_url",
+                Native,
+            ),
+            ("crlInMemoryCache", "crl_enable_memory_caching", Native),
+            ("crlOnDiskCache", "crl_enable_disk_caching", Native),
+            ("connectionName", "connection_name", Native),
+            ("crlDownloadTimeout", "crl_http_timeout", Milliseconds),
+            ("crlDownloadMaxSize", "crl_max_download_size", Native),
+            ("crlCacheValidityTime", "crl_validity_time", Milliseconds),
+            ("crlCacheDir", "crl_cache_dir", Native),
+        ];
+        let r = registry();
+        for (spelling, canonical, unit) in cases {
+            let Some(resolved) = r.resolve_connection_option_for(Wrapper::NodeJs, spelling) else {
+                panic!("{spelling:?} does not resolve under NodeJs");
+            };
+            assert_eq!(resolved.def.canonical_name, *canonical, "{spelling:?}");
+            assert_eq!(resolved.unit, *unit, "{spelling:?}");
+        }
+    }
+
+    #[test]
+    fn nodejs_resolves_only_old_driver_option_names() {
+        const OLD_DRIVER_CANONICAL_SPELLINGS: &[&str] = &[
+            "account",
+            "host",
+            "port",
+            "protocol",
+            "password",
+            "authenticator",
+            "token",
+            "passcode",
+            "passcodeInPassword",
+            "database",
+            "schema",
+            "warehouse",
+            "role",
+            "application",
+            "proxy",
+        ];
+        const ACCEPTED_BEYOND_OLD_DRIVER: &[&str] = &["timezone"];
+        for param in registry().all_params() {
+            if !param.is_visible_to(Wrapper::NodeJs)
+                || param.is_statement_only()
+                || ACCEPTED_BEYOND_OLD_DRIVER.contains(&param.canonical_name)
+            {
+                continue;
+            }
+            let mut nodejs_aliases = param
+                .aliases
+                .iter()
+                .filter(|a| a.wrapper == Some(Wrapper::NodeJs))
+                .peekable();
+            let has_nodejs_alias = nodejs_aliases.peek().is_some();
+            for alias in nodejs_aliases {
+                assert!(
+                    alias.exclusive,
+                    "NodeJs alias {:?} of {:?} is not exclusive, so NodeJs also accepts \
+                     the canonical name, which the old Node.js driver did not have",
+                    alias.name, param.canonical_name
+                );
+            }
+            assert!(
+                has_nodejs_alias || OLD_DRIVER_CANONICAL_SPELLINGS.contains(&param.canonical_name),
+                "{:?} is visible to NodeJs but the old Node.js driver had no such option; \
+                 add a NodeJs alias for its old spelling or `.visible_to(all_except!(NodeJs))`",
+                param.canonical_name
+            );
+        }
+    }
+
+    #[test]
+    fn nodejs_options_resolve_only_under_old_driver_spellings() {
+        let r = registry();
+        for canonical in ["account", "password", "database"] {
+            assert!(
+                r.resolve_connection_option_for(Wrapper::NodeJs, canonical)
+                    .is_some(),
+                "{canonical:?} is an old Node.js driver spelling and must resolve"
+            );
+        }
+        for blocked in [
+            "tls_skip_verify",
+            "session_token",
+            "master_token",
+            "extra_root_store_path",
+        ] {
+            assert!(
+                r.resolve_connection_option_for(Wrapper::NodeJs, blocked)
+                    .is_none(),
+                "{blocked:?} is hidden from NodeJs and must not resolve"
+            );
+        }
+        assert_eq!(
+            r.resolve_for(Wrapper::NodeJs, "TIMEZONE")
+                .map(|d| d.canonical_name),
+            Some("timezone"),
+            "TIMEZONE resolves as a NodeJs statement parameter"
+        );
+        assert!(
+            r.resolve_connection_option_for(Wrapper::NodeJs, "browser_redirect_port")
+                .is_none(),
+            "a NodeJs-only canonical with an exclusive alias must not resolve"
+        );
+        for canonical in [
+            "jwt_timeout",
+            "server_url",
+            "private_key_file",
+            "login_timeout",
+            "user",
+        ] {
+            assert!(
+                r.resolve_connection_option_for(Wrapper::NodeJs, canonical)
+                    .is_none(),
+                "{canonical:?} must not resolve as a NodeJs option"
+            );
+            assert!(
+                r.resolve_connection_option_for(Wrapper::Python, canonical)
+                    .is_some(),
+                "{canonical:?} resolves for a wrapper without an exclusive alias"
+            );
         }
     }
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
 use crate::config::param_registry::{
-    self, SendAsSessionParameter, ValueType, Wrapper, param_names,
+    self, AliasUnit, ResolvedOption, SendAsSessionParameter, ValueType, Wrapper, param_names,
 };
 use crate::config::settings::{Setting, Settings};
 
@@ -127,19 +127,86 @@ fn push_conflict_error(
 /// any warnings or errors encountered.
 ///
 /// `wrapper` selects which scoped aliases are visible (see
-/// [`param_registry::ParamRegistry::resolve_for`]).
+/// [`param_registry::ParamRegistry::resolve_for`]). Unknown keys are kept
+/// under their original spelling.
 pub fn resolve_options(
     wrapper: Wrapper,
     options: HashMap<String, Setting>,
 ) -> (HashMap<String, Setting>, Vec<ValidationIssue>) {
     let registry = param_registry::registry();
+    resolve_options_with(wrapper, options, true, |key| {
+        registry
+            .resolve_for(wrapper, key)
+            .map(|def| ResolvedOption {
+                def,
+                unit: AliasUnit::Native,
+            })
+    })
+}
+
+/// Like [`resolve_options`], for connection options: keys resolve through
+/// [`param_registry::ParamRegistry::resolve_connection_option_for`], values given under a
+/// millisecond alias are converted to seconds, and unknown keys are reported.
+/// Unknown keys are dropped for a wrapper that
+/// [`Wrapper::drops_unknown_options`] and kept otherwise.
+pub fn resolve_connection_options(
+    wrapper: Wrapper,
+    options: HashMap<String, Setting>,
+) -> (HashMap<String, Setting>, Vec<ValidationIssue>) {
+    let registry = param_registry::registry();
+    resolve_options_with(wrapper, options, !wrapper.drops_unknown_options(), |key| {
+        registry.resolve_connection_option_for(wrapper, key)
+    })
+}
+
+/// Converts a value given in `unit` to the parameter's native unit.
+///
+/// Milliseconds become whole seconds rounded down, and a positive value below
+/// one second becomes 1. A value that is not a finite number is returned
+/// unchanged, so type validation reports it.
+pub(crate) fn convert_alias_unit(unit: AliasUnit, value: Setting) -> Setting {
+    if unit == AliasUnit::Native {
+        return value;
+    }
+    let millis = match &value {
+        Setting::Int(v) => *v as f64,
+        Setting::Double(v) => *v,
+        Setting::String(s) => match s.trim().parse::<f64>() {
+            Ok(v) => v,
+            Err(_) => return value,
+        },
+        Setting::Bool(_) | Setting::Bytes(_) => return value,
+    };
+    if !millis.is_finite() {
+        return value;
+    }
+    let mut seconds = (millis / 1000.0).floor() as i64;
+    if millis > 0.0 && seconds == 0 {
+        seconds = 1;
+    }
+    match value {
+        Setting::String(_) => Setting::String(seconds.to_string()),
+        _ => Setting::Int(seconds),
+    }
+}
+
+fn resolve_options_with(
+    wrapper: Wrapper,
+    options: HashMap<String, Setting>,
+    keep_unknown: bool,
+    lookup: impl Fn(&str) -> Option<ResolvedOption<'static>>,
+) -> (HashMap<String, Setting>, Vec<ValidationIssue>) {
     let mut resolved = HashMap::new();
     let mut issues = Vec::new();
     let mut canonical_sources: HashMap<String, String> = HashMap::new();
 
     for (key, value) in options {
-        match registry.resolve_for(wrapper, &key) {
-            Some(param_def) => {
+        match lookup(&key) {
+            Some(ResolvedOption {
+                def: param_def,
+                unit,
+            }) => {
+                let value = convert_alias_unit(unit, value);
                 let canonical_name = param_def.canonical_name.to_string();
                 if let Some(existing_key) = canonical_sources.get(&canonical_name) {
                     // TODO: Move this to the ODBC-specific code.
@@ -213,18 +280,24 @@ pub fn resolve_options(
                 resolved.insert(canonical_name, final_value);
             }
             None => {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Warning,
-                    parameter: key.clone(),
-                    message: format!("Unknown parameter '{key}'"),
-                    code: ValidationCode::UnknownParameter,
-                });
-                resolved.insert(key, value);
+                issues.push(unknown_parameter_warning(&key));
+                if keep_unknown {
+                    resolved.insert(key, value);
+                }
             }
         }
     }
 
     (resolved, issues)
+}
+
+pub(crate) fn unknown_parameter_warning(key: &str) -> ValidationIssue {
+    ValidationIssue {
+        severity: ValidationSeverity::Warning,
+        parameter: key.to_string(),
+        message: format!("Unknown parameter '{key}'"),
+        code: ValidationCode::UnknownParameter,
+    }
 }
 
 /// Underscores are not valid in DNS labels (RFC 952/1123), but Snowflake account
@@ -1115,6 +1188,63 @@ mod tests {
         assert_eq!(unknown.len(), 1);
         assert_eq!(unknown.get("SOME_STRING_KEY"), Some(&"my_val".to_string()));
         assert!(!unknown.contains_key("PUT_FASTFAIL"));
+    }
+
+    #[test]
+    fn nodejs_unknown_connection_options_are_dropped() {
+        let options = HashMap::from([
+            (
+                "some_string_key".to_string(),
+                Setting::String("my_val".to_string()),
+            ),
+            (
+                "host".to_string(),
+                Setting::String("example.com".to_string()),
+            ),
+        ]);
+
+        let (resolved, issues) = resolve_connection_options(Wrapper::NodeJs, options);
+
+        assert!(!resolved.contains_key("some_string_key"));
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].parameter, "some_string_key");
+        assert_eq!(issues[0].code, ValidationCode::UnknownParameter);
+    }
+
+    #[test]
+    fn nodejs_connection_options_resolve_only_through_nodejs_spellings() {
+        let options = HashMap::from([
+            ("jwtTimeout".to_string(), Setting::String("600".to_string())),
+            ("jwt_timeout".to_string(), Setting::String("30".to_string())),
+        ]);
+
+        let (resolved, issues) = resolve_connection_options(Wrapper::NodeJs, options);
+
+        assert_eq!(resolved.get("jwt_timeout"), Some(&Setting::Int(600)));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].parameter, "jwt_timeout");
+        assert_eq!(issues[0].code, ValidationCode::UnknownParameter);
+    }
+
+    #[test_case(Setting::String("120000".into()), Setting::Int(120) ; "string")]
+    #[test_case(Setting::Int(1500), Setting::Int(1) ; "int rounds down")]
+    #[test_case(Setting::Double(1.5), Setting::Int(1) ; "positive below a second")]
+    #[test_case(Setting::Int(0), Setting::Int(0) ; "zero")]
+    #[test_case(Setting::Int(-500), Setting::Int(-1) ; "negative")]
+    #[test_case(Setting::String("soon".into()), Setting::String("soon".into()) ; "not a number")]
+    fn millisecond_alias_values_become_seconds(input: Setting, expected: Setting) {
+        let options = HashMap::from([("browserActionTimeout".to_string(), input)]);
+
+        let (resolved, issues) = resolve_connection_options(Wrapper::NodeJs, options);
+
+        match expected {
+            Setting::String(_) => {
+                assert!(resolved.is_empty());
+                assert_eq!(issues[0].code, ValidationCode::InvalidType);
+            }
+            _ => assert_eq!(resolved.get("authentication_timeout"), Some(&expected)),
+        }
     }
 
     #[test]

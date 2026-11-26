@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { toCoreConnectionOptions } from '../../src/connection-option-aliases.js';
 import { isRunningNewDriverWithBD, snowflake } from './utils/index.js';
 
 const FAKE_CONNECTION_OPTIONS = {
@@ -10,11 +9,6 @@ const FAKE_CONNECTION_OPTIONS = {
 
 describe('retryTimeout', () => {
   it.each([0, 2, 400, -1])('should accept retryTimeout %s', (retryTimeout) => {
-    if (isRunningNewDriverWithBD('BD#91')) {
-      expect(toCoreConnectionOptions({ retryTimeout })).toEqual({
-        retryTimeout: String(retryTimeout),
-      });
-    }
     snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, retryTimeout });
   });
 

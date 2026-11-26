@@ -10,6 +10,7 @@ use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use sf_core::apis::database_driver_v1::connection::WrapperIdentity as CoreWrapperIdentity;
 use sf_core::config::param_names;
+use sf_core::config::param_registry::ParamKey;
 use sf_core::config::rest_parameters::{BrowserOpenFn, BrowserResponseRenderFn};
 use sf_core::config::settings::Setting;
 use std::collections::HashMap;
@@ -71,40 +72,27 @@ pub struct ConnectionParams<'a> {
 }
 
 impl ConnectionParams<'_> {
-    fn build_connection_options(&self) -> HashMap<String, Setting> {
-        let mut core_options: HashMap<String, Setting> = self
-            .options
-            .iter()
-            .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
-            .collect();
-
+    fn build_internal_options(&self) -> HashMap<ParamKey, Setting> {
+        let mut internal = HashMap::new();
         if std::env::var(NODE_TLS_REJECT_UNAUTHORIZED).as_deref() == Ok("0") {
-            core_options.insert(
-                param_names::TLS_SKIP_VERIFY.as_str().to_string(),
-                Setting::String("true".to_string()),
-            );
+            internal.insert(param_names::TLS_SKIP_VERIFY, Setting::Bool(true));
         }
         if let Ok(ca_path) = std::env::var(NODE_EXTRA_CA_CERTS)
             && !ca_path.is_empty()
         {
-            core_options.insert(
-                param_names::EXTRA_ROOT_STORE_PATH.as_str().to_string(),
-                Setting::String(ca_path),
-            );
+            internal.insert(param_names::EXTRA_ROOT_STORE_PATH, Setting::String(ca_path));
         }
-
         if let Some(token_info) = &self.token_info {
-            core_options.insert(
-                param_names::SESSION_TOKEN.as_str().to_string(),
+            internal.insert(
+                param_names::SESSION_TOKEN,
                 Setting::String(token_info.session_token.clone()),
             );
-            core_options.insert(
-                param_names::MASTER_TOKEN.as_str().to_string(),
+            internal.insert(
+                param_names::MASTER_TOKEN,
                 Setting::String(token_info.master_token.clone()),
             );
         }
-
-        core_options
+        internal
     }
 }
 
@@ -118,7 +106,12 @@ pub struct Connection {
 impl Connection {
     #[napi(constructor)]
     pub fn new(env: &Env, params: ConnectionParams) -> Result<Self> {
-        let options = params.build_connection_options();
+        let internal_options = params.build_internal_options();
+        let options = params
+            .options
+            .iter()
+            .map(|(k, v)| (k.clone(), Setting::String(v.clone())))
+            .collect();
         let browser_opener = params
             .open_external_browser_callback
             .map(browser_opener_from_js)
@@ -129,6 +122,7 @@ impl Connection {
             .transpose()?;
         let session = block_on(Session::open(SessionConfig {
             options,
+            internal_options,
             no_connection_details: params.no_connection_details.unwrap_or(false),
             session_parameters: params.session_parameters,
             browser_opener,

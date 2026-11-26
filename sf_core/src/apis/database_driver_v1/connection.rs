@@ -14,8 +14,9 @@ use super::query_submit::{
 use super::spcs_token::read_spcs_token;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key,
-    collect_login_session_parameters, normalize_host_underscores, resolve_options,
-    validate_connection_seed_write, validate_session_override_write,
+    collect_login_session_parameters, convert_alias_unit, normalize_host_underscores,
+    resolve_connection_options, unknown_parameter_warning, validate_connection_seed_write,
+    validate_session_override_write,
 };
 use super::{Setting, WrapperPresets, logout};
 use crate::apis::operation_ctx::{OperationCtx, run_opt};
@@ -859,16 +860,32 @@ impl DatabaseDriverV1 {
         handle: Handle,
         key: String,
         value: Setting,
-    ) -> Result<(), ApiError> {
+    ) -> Result<Vec<ValidationIssue>, ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 let post = conn.is_post_connect();
-                let (canonical, def) =
-                    canonicalize_setting_key(self.wrapper_presets.configuration_flavor, &key);
-                validate_connection_seed_write(post, def)?;
-                conn.connection_seed.insert(canonical, value);
-                Ok(())
+                let flavor = self.wrapper_presets.configuration_flavor;
+                match crate::config::param_registry::registry()
+                    .resolve_connection_option_for(flavor, &key)
+                {
+                    Some(option) => {
+                        validate_connection_seed_write(post, Some(option.def))?;
+                        conn.connection_seed.insert(
+                            option.def.canonical_name.to_string(),
+                            convert_alias_unit(option.unit, value),
+                        );
+                        Ok(Vec::new())
+                    }
+                    None => {
+                        let warning = unknown_parameter_warning(&key);
+                        if !flavor.drops_unknown_options() {
+                            validate_connection_seed_write(post, None)?;
+                            conn.connection_seed.insert(key, value);
+                        }
+                        Ok(vec![warning])
+                    }
+                }
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -898,7 +915,7 @@ impl DatabaseDriverV1 {
                     conn.connections_file_path = Some(connections_file_path);
                 }
                 let (resolved, issues) =
-                    resolve_options(self.wrapper_presets.configuration_flavor, options);
+                    resolve_connection_options(self.wrapper_presets.configuration_flavor, options);
                 let error_messages: Vec<String> = issues
                     .iter()
                     .filter(|i| i.severity == ValidationSeverity::Error)
@@ -921,6 +938,36 @@ impl DatabaseDriverV1 {
                     .into_iter()
                     .filter(|i| i.severity == ValidationSeverity::Warning)
                     .collect())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Sets options the wrapper computes itself (TLS settings, injected session
+    /// tokens) rather than ones the user typed. They bypass the user-facing
+    /// setters because these parameters are not visible to Node.js
+    /// ([`sf_params_spec::VisibleTo::AllExcept`]), so users cannot set them.
+    pub async fn connection_set_internal_options(
+        &self,
+        handle: Handle,
+        options: HashMap<ParamKey, Setting>,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                let post = conn.is_post_connect();
+                let params = crate::config::param_registry::registry().all_params();
+                for key in options.keys() {
+                    let def = params.iter().find(|d| d.canonical_name == key.as_str());
+                    validate_connection_seed_write(post, def)?;
+                }
+                for (key, value) in options {
+                    conn.connection_seed.insert(key.as_str().to_string(), value);
+                }
+                Ok(())
             }
             None => InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -3845,6 +3892,96 @@ mod tests {
             unknown.get("CUSTOM_SESSION_PARAMETER"),
             Some(&"connection-value".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn nodejs_connection_set_options_drops_unknown_options_with_a_warning() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::nodejs(),
+            ..Default::default()
+        });
+        let handle = ds.connection_new();
+
+        let warnings = ds
+            .connection_set_options(
+                handle,
+                HashMap::from([(
+                    "custom_session_parameter".to_string(),
+                    Setting::String("value".into()),
+                )]),
+                false,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].parameter, "custom_session_parameter");
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(
+            conn.connection_seed
+                .get_any("custom_session_parameter")
+                .is_none()
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn nodejs_connection_set_option_drops_an_unknown_option_with_a_warning() {
+        let ds = DatabaseDriverV1::with_providers(DriverProviders {
+            wrapper_presets: WrapperPresets::nodejs(),
+            ..Default::default()
+        });
+        let handle = ds.connection_new();
+
+        let warnings = ds
+            .connection_set_option(
+                handle,
+                "custom_session_parameter".to_string(),
+                Setting::String("value".into()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].parameter, "custom_session_parameter");
+        assert_eq!(
+            warnings[0].code,
+            crate::config::connection_config::ValidationCode::UnknownParameter
+        );
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert!(
+            conn.connection_seed
+                .get_any("custom_session_parameter")
+                .is_none()
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_set_internal_options_stores_canonical_keys_without_resolution() {
+        let ds = DatabaseDriverV1::new();
+        let handle = ds.connection_new();
+
+        ds.connection_set_internal_options(
+            handle,
+            HashMap::from([(param_names::TLS_SKIP_VERIFY, Setting::Bool(true))]),
+        )
+        .await
+        .unwrap();
+
+        let conn_ptr = ds.connections.get_obj(handle).unwrap();
+        let conn = conn_ptr.lock().await;
+        assert_eq!(
+            conn.connection_seed.get_bool(param_names::TLS_SKIP_VERIFY),
+            Some(true)
+        );
+        drop(conn);
+        ds.connection_release(handle).unwrap();
     }
 
     #[test]

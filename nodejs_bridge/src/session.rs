@@ -6,6 +6,7 @@ use sf_core::apis::database_driver_v1::{
     ApiError, ConnectionInfo, ConnectionUsability, WrapperTelemetry,
 };
 use sf_core::config::param_names;
+use sf_core::config::param_registry::ParamKey;
 use sf_core::config::rest_parameters::{BrowserOpenFn, BrowserResponseRenderFn};
 use sf_core::config::settings::Setting;
 use sf_core::handle_manager::Handle;
@@ -62,6 +63,7 @@ pub(crate) struct Session {
 
 pub(crate) struct SessionConfig {
     pub(crate) options: HashMap<String, Setting>,
+    pub(crate) internal_options: HashMap<ParamKey, Setting>,
     pub(crate) no_connection_details: bool,
     pub(crate) session_parameters: HashMap<String, String>,
     pub(crate) browser_opener: Option<BrowserOpenFn>,
@@ -83,11 +85,11 @@ impl Session {
         let connection = BRIDGE.driver.connection_new();
         let session = Self::new(connection, database);
         let adopts_tokens = config
-            .options
-            .contains_key(param_names::SESSION_TOKEN.as_str());
+            .internal_options
+            .contains_key(&param_names::SESSION_TOKEN);
 
         BRIDGE.driver.database_init(database)?;
-        BRIDGE
+        let warnings = BRIDGE
             .driver
             .connection_set_options(
                 connection,
@@ -95,6 +97,13 @@ impl Session {
                 config.no_connection_details,
                 None,
             )
+            .await?;
+        for warning in warnings {
+            tracing::warn!("{}", warning.message);
+        }
+        BRIDGE
+            .driver
+            .connection_set_internal_options(connection, config.internal_options)
             .await?;
         if !config.session_parameters.is_empty() {
             BRIDGE
@@ -280,22 +289,23 @@ mod tests {
     }
 
     async fn session_that_adopted_tokens() -> Session {
-        let options = HashMap::from([
+        let internal_options = HashMap::from([
             (
-                param_names::ACCOUNT.as_str().to_string(),
+                param_names::ACCOUNT,
                 Setting::String("adopting-account".to_string()),
             ),
             (
-                param_names::SESSION_TOKEN.as_str().to_string(),
+                param_names::SESSION_TOKEN,
                 Setting::String("handed-over-session".to_string()),
             ),
             (
-                param_names::MASTER_TOKEN.as_str().to_string(),
+                param_names::MASTER_TOKEN,
                 Setting::String("handed-over-master".to_string()),
             ),
         ]);
         Session::open(SessionConfig {
-            options,
+            options: HashMap::new(),
+            internal_options,
             no_connection_details: false,
             session_parameters: HashMap::new(),
             browser_opener: None,

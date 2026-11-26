@@ -7,7 +7,7 @@ import type {
   StatementOption,
 } from './public-types/index.js';
 import type { StatementCallback, RowOptions, QueryStatus } from './query-result/types.js';
-import { toCoreConnectionOptions } from './connection-option-aliases.js';
+import { toCoreConnectionOptions } from './connection-options.js';
 import { serializeTokenInfo, deserializeTokenInfo } from './connection-serialization.js';
 import {
   CoreConnection,
@@ -79,12 +79,12 @@ export class ConnectionImpl implements Connection {
 
     this.#core = new CoreConnection({
       options: toCoreConnectionOptions({
+        ...coreOptions,
+        useEnvProxy: GlobalConfig.useEnvProxy,
         crlDownloadTimeout: GlobalConfig.crlDownloadTimeout,
         crlDownloadMaxSize: GlobalConfig.crlDownloadMaxSize,
         crlCacheValidityTime: GlobalConfig.crlCacheValidityTime,
         crlCacheDir: GlobalConfig.crlCacheDir,
-        ...coreOptions,
-        useEnvProxy: GlobalConfig.useEnvProxy,
       }),
       sessionParameters,
       openExternalBrowserCallback,
@@ -171,7 +171,9 @@ export class ConnectionImpl implements Connection {
         rowOptions: {
           ...this.#defaultRowOptions,
           ...(options.rowMode && { rowMode: options.rowMode }),
-          ...(options.fetchAsString && { fetchAsString: options.fetchAsString }),
+          ...(options.fetchAsString && {
+            fetchAsString: options.fetchAsString,
+          }),
         },
       },
     );

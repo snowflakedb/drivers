@@ -1407,7 +1407,8 @@ behavior_differences:
       gone. Negatives round down too: -1 ms is -1 seconds, -1500 ms is -2 seconds.
       A negative number of seconds is accepted. The budget used is the 120 second
       default.
-      A non-number or a non-finite value fails with "Expected type Int for parameter
+      A numeric string such as '5000' is accepted and read as that many milliseconds.
+      A non-numeric or non-finite value fails with "Expected type Int for parameter
       'browserActionTimeout'".
       The budget covers native Okta and the OAuth authorization-code flow from start
       to finish, not only the browser wait. For EXTERNALBROWSER the clock starts
@@ -2354,7 +2355,7 @@ behavior_differences:
       set it also logs "'<key>' is an unknown connection parameter. Did you mean '<name>'?".
     new_driver_behavior: |
       createConnection ignores an option it does not know and always logs the warning
-      "Unknown option <key> is ignored". This includes old-driver options the new driver does
+      "Unknown parameter '<key>'". This includes old-driver options the new driver does
       not support, and validateDefaultParameters itself. A connections.toml or config.toml
       profile also ignores keys it does not know.
     status_rationale: |
@@ -2735,12 +2736,8 @@ behavior_differences:
          loaded, otherwise ~/Library/Caches/snowflake/crls on macOS, $XDG_CACHE_HOME/snowflake/crls
          or ~/.cache/snowflake/crls on Linux, and %LOCALAPPDATA%\snowflake\crls on Windows. CRLs
          cached by the old driver are not reused.
-      4. The four options are not part of the ConnectionOptions type. Passed as connection options
-         anyway, for example through a TypeScript cast, they are accepted and override the
-         configure() value for that connection. This is a hidden bug in the driver design:
-         configure() values and connection options are merged into one object and pass the same
-         check of accepted keys, so connection options can set these keys too. It needs a fix
-         when the driver gets a whitelist of accepted connection options.
+      4. None of these options is accepted as a connection option. Passed as one anyway, for
+         example through a TypeScript cast, it is ignored.
     status_rationale: |
       The options stay global and are set through configure(), as in the old driver, so no code
       needs to change. Reading them when a connection is created, the rounding to seconds and the

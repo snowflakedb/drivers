@@ -146,47 +146,31 @@ mod tests {
         BRIDGE.driver.connection_release(handle).unwrap();
     }
 
-    #[tokio::test]
-    async fn a_value_core_knows_wins_over_the_client_default() {
-        let handle = BRIDGE.driver.connection_new();
-        BRIDGE
-            .driver
-            .connection_set_options(
-                handle,
-                HashMap::from([
-                    (
-                        "DATE_OUTPUT_FORMAT".to_string(),
-                        Setting::String("DD-MON-YYYY".to_string()),
-                    ),
-                    (
-                        "TIME_OUTPUT_FORMAT".to_string(),
-                        Setting::String("HH24:MI:SS.FF3".to_string()),
-                    ),
-                    (
-                        "JS_TREAT_INTEGER_AS_BIGINT".to_string(),
-                        Setting::String("true".to_string()),
-                    ),
-                    (
-                        "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD".to_string(),
-                        Setting::String("64".to_string()),
-                    ),
-                ]),
-                false,
-                None,
-            )
-            .await
-            .unwrap();
-
-        let Ok(params) = KnownSessionParameters::from_connection(handle).await else {
-            panic!("options are visible on the parameter map");
-        };
+    #[test]
+    fn a_value_core_knows_wins_over_the_client_default() {
+        let params = KnownSessionParameters::from_parameters(&HashMap::from([
+            (
+                "DATE_OUTPUT_FORMAT".to_string(),
+                Setting::String("DD-MON-YYYY".to_string()),
+            ),
+            (
+                "TIME_OUTPUT_FORMAT".to_string(),
+                Setting::String("HH24:MI:SS.FF3".to_string()),
+            ),
+            (
+                "JS_TREAT_INTEGER_AS_BIGINT".to_string(),
+                Setting::String("true".to_string()),
+            ),
+            (
+                "CLIENT_STAGE_ARRAY_BINDING_THRESHOLD".to_string(),
+                Setting::String("64".to_string()),
+            ),
+        ]));
 
         assert_eq!(params.date_output_format, "DD-MON-YYYY");
         assert_eq!(params.time_output_format, "HH24:MI:SS.FF3");
         assert!(params.js_treat_integer_as_big_int);
         assert_eq!(params.client_stage_array_binding_threshold, 64);
-
-        BRIDGE.driver.connection_release(handle).unwrap();
     }
 
     #[tokio::test]

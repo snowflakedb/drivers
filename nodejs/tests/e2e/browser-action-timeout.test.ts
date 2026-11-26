@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { toCoreConnectionOptions } from '../../src/connection-option-aliases.js';
 import { isRunningNewDriverWithBD, snowflake } from './utils/index.js';
 
 const FAKE_CONNECTION_OPTIONS = {
@@ -9,42 +8,15 @@ const FAKE_CONNECTION_OPTIONS = {
 };
 
 describe('browserActionTimeout', () => {
-  it('should accept browserActionTimeout 120000', () => {
-    if (isRunningNewDriverWithBD('BD#59')) {
-      expect(toCoreConnectionOptions({ browserActionTimeout: 120000 })).toEqual({
-        browserActionTimeout: '120',
-      });
-    }
-    snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout: 120000 });
-  });
-
-  it.each([1500, 999])('should accept browserActionTimeout %s', (browserActionTimeout) => {
-    if (isRunningNewDriverWithBD('BD#59')) {
-      expect(toCoreConnectionOptions({ browserActionTimeout })).toEqual({
-        browserActionTimeout: '1',
-      });
-    }
-    snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout });
-  });
-
-  it.each([
-    [1700, '1'],
-    [12500, '12'],
-    [314200, '314'],
-  ])('should accept browserActionTimeout %s as %s seconds', (browserActionTimeout, seconds) => {
-    if (isRunningNewDriverWithBD('BD#59')) {
-      expect(toCoreConnectionOptions({ browserActionTimeout })).toEqual({
-        browserActionTimeout: seconds,
-      });
-    }
-    snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout });
-  });
+  it.each([120000, 1500, 999, 1700, 12500, 314200])(
+    'should accept browserActionTimeout %s',
+    (browserActionTimeout) => {
+      snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout });
+    },
+  );
 
   it.each([0, -1])('should handle browserActionTimeout %s', (browserActionTimeout) => {
     if (isRunningNewDriverWithBD('BD#59')) {
-      expect(toCoreConnectionOptions({ browserActionTimeout })).toEqual({
-        browserActionTimeout: String(browserActionTimeout),
-      });
       snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout });
     } else {
       expect(() =>
@@ -61,9 +33,6 @@ describe('browserActionTimeout', () => {
 
   it('should handle a fractional browserActionTimeout', () => {
     if (isRunningNewDriverWithBD('BD#59')) {
-      expect(toCoreConnectionOptions({ browserActionTimeout: 1.5 })).toEqual({
-        browserActionTimeout: '1',
-      });
       snowflake.createConnection({ ...FAKE_CONNECTION_OPTIONS, browserActionTimeout: 1.5 });
     } else {
       expect(() =>

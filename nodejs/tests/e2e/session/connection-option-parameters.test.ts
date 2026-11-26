@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createConsoleCapture } from '../../utils/fixtures.js';
 import { createConnection, createLiveConnection } from '../utils/fixtures.js';
 import {
   baseConnectionOptions,
@@ -234,10 +235,16 @@ describe('accessUrl parameter', () => {
 });
 
 it('should ignore an unknown option', async () => {
+  const stdout = createConsoleCapture();
   const connection = await createLiveConnection({
     // @ts-expect-error test overwrite
     notARealOption: 'value',
   });
   const { rows } = await executeAsync(connection, 'SELECT 1');
   expect(Object.values(rows[0])).toEqual([1]);
+  if (isRunningNewDriverWithBD('BD#102')) {
+    await vi.waitUntil(() => stdout.join('').includes("Unknown parameter 'notARealOption'"), {
+      timeout: 2000,
+    });
+  }
 });
