@@ -60,6 +60,18 @@ impl MemoryBudget {
 
         MemoryTicket(Some(permit))
     }
+
+    /// Like [`acquire`](Self::acquire), but returns `None` instead of waiting.
+    pub(crate) fn try_acquire(&self, mb: u32) -> Option<MemoryTicket> {
+        if self.limit_mb == 0 {
+            return Some(MemoryTicket(None));
+        }
+        self.semaphore
+            .clone()
+            .try_acquire_many_owned(mb.min(self.limit_mb))
+            .ok()
+            .map(|permit| MemoryTicket(Some(permit)))
+    }
 }
 
 #[cfg(test)]

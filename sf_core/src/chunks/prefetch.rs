@@ -13,6 +13,7 @@ use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use futures::Stream;
 use snafu::{OptionExt, ResultExt};
+use tokio::sync::Semaphore;
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::{AbortHandle, JoinHandle};
 use tracing::instrument::WithSubscriber;
@@ -101,7 +102,7 @@ impl PrefetchChunkReader {
     /// fetcher keeps the handle and aborts it on drop.
     pub async fn open<D: DownloadChunk, P: ParseChunk>(
         initial: Option<InitialChunkTask>,
-        mut chunks: VecDeque<ChunkDownloadData>,
+        chunks: VecDeque<ChunkDownloadData>,
         downloader: D,
         parser: P,
         config: &PrefetchConfig,
@@ -109,18 +110,14 @@ impl PrefetchChunkReader {
         let initial = initial.map(AbortOnDrop::new);
         let prefetch_concurrency = config.prefetch_threads.max(1);
         let (tx, rx) = tokio::sync::mpsc::channel(prefetch_concurrency);
-        let memory_budget = MemoryBudget::new(config.memory_limit_mb);
-
-        let mut tasks = ChunkTasks::new();
-        fill_window(
-            &downloader,
-            &parser,
-            &mut chunks,
-            &mut tasks,
-            &memory_budget,
+        let mut pipeline = ChunkPipeline::new(
+            downloader,
+            parser,
+            chunks,
             prefetch_concurrency,
-        )
-        .await;
+            config.memory_limit_mb,
+        );
+        pipeline.fill().await;
 
         let (schema, head_chunk) = match initial {
             Some(initial_chunk_task) => {
@@ -136,7 +133,7 @@ impl PrefetchChunkReader {
                 (schema, chunk)
             }
             None => {
-                let task = tasks.pop_front().context(MissingInitialChunkSnafu)?;
+                let task = pipeline.next_task().context(MissingInitialChunkSnafu)?;
                 let chunk = task
                     .await
                     .context(SpawnBlockingSnafu)?
@@ -155,15 +152,7 @@ impl PrefetchChunkReader {
                 if let Some(chunk) = head_chunk {
                     send_result(&tx, Ok(chunk)).await?;
                 }
-                drain_window(
-                    &downloader,
-                    &parser,
-                    &mut chunks,
-                    &mut tasks,
-                    &memory_budget,
-                    &tx,
-                )
-                .await
+                pipeline.drain(&tx).await
             }
             .with_current_subscriber(),
         );
@@ -198,73 +187,94 @@ async fn send_result(
     Ok(())
 }
 
-struct ChunkTasks(VecDeque<ChunkTask>);
-
-impl ChunkTasks {
-    fn new() -> Self {
-        Self(VecDeque::new())
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn push_back(&mut self, task: ChunkTask) {
-        self.0.push_back(task);
-    }
-
-    fn pop_front(&mut self) -> Option<ChunkTask> {
-        self.0.pop_front()
-    }
+struct ChunkPipeline<D, P> {
+    downloader: D,
+    parser: P,
+    pending: VecDeque<ChunkDownloadData>,
+    tasks: VecDeque<ChunkTask>,
+    /// Twice the download concurrency, so a freed download slot goes to the
+    /// next queued chunk without waiting for the head.
+    window: usize,
+    budget: MemoryBudget,
+    /// Slots go to tasks in the order they first poll, not spawn order, so on a
+    /// multi-threaded runtime a later chunk can occasionally start before the
+    /// head, delaying it by at most one download round.
+    downloads: Arc<Semaphore>,
 }
 
-/// Spawn up to `concurrency` download+parse tasks from the front of `chunks`.
-async fn fill_window(
-    downloader: &impl DownloadChunk,
-    parser: &impl ParseChunk,
-    chunks: &mut VecDeque<ChunkDownloadData>,
-    tasks: &mut ChunkTasks,
-    budget: &MemoryBudget,
-    concurrency: usize,
-) {
-    while tasks.len() < concurrency {
-        let Some(data) = chunks.pop_front() else {
-            break;
-        };
-        let ticket = budget.acquire(data.estimated_memory_mb()).await;
-        tasks.push_back(AbortOnDrop::new(tokio::spawn(
-            get_chunk(downloader.clone(), parser.clone(), data, ticket).with_current_subscriber(),
-        )));
-    }
-}
-
-/// Await tasks in order, send results, and refill the window after each completion.
-async fn drain_window(
-    downloader: &impl DownloadChunk,
-    parser: &impl ParseChunk,
-    chunks: &mut VecDeque<ChunkDownloadData>,
-    tasks: &mut ChunkTasks,
-    budget: &MemoryBudget,
-    tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
-) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
-    while let Some(task) = tasks.pop_front() {
-        let result = task
-            .await
-            .unwrap_or_else(|e| Err(ArrowError::ExternalError(Box::new(e))));
-        let is_err = result.is_err();
-        send_result(tx, result).await?;
-        if is_err {
-            return Ok(());
+impl<D: DownloadChunk, P: ParseChunk> ChunkPipeline<D, P> {
+    fn new(
+        downloader: D,
+        parser: P,
+        pending: VecDeque<ChunkDownloadData>,
+        concurrency: usize,
+        memory_limit_mb: u32,
+    ) -> Self {
+        Self {
+            downloader,
+            parser,
+            pending,
+            tasks: VecDeque::new(),
+            window: concurrency * 2,
+            budget: MemoryBudget::new(memory_limit_mb),
+            downloads: Arc::new(Semaphore::new(concurrency)),
         }
-        if let Some(data) = chunks.pop_front() {
-            let ticket = budget.acquire(data.estimated_memory_mb()).await;
-            tasks.push_back(AbortOnDrop::new(tokio::spawn(
-                get_chunk(downloader.clone(), parser.clone(), data, ticket)
-                    .with_current_subscriber(),
+    }
+
+    fn next_task(&mut self) -> Option<ChunkTask> {
+        self.tasks.pop_front()
+    }
+
+    /// Spawn download+parse tasks from the front of `pending` until the window is full.
+    ///
+    /// Budget is awaited only when no task is queued: queued tasks may hold
+    /// tickets that are released only after they are sent, so waiting behind
+    /// them would deadlock.
+    async fn fill(&mut self) {
+        while self.tasks.len() < self.window {
+            let Some(data) = self.pending.pop_front() else {
+                break;
+            };
+            let mb = data.estimated_memory_mb();
+            let ticket = if self.tasks.is_empty() {
+                self.budget.acquire(mb).await
+            } else if let Some(ticket) = self.budget.try_acquire(mb) {
+                ticket
+            } else {
+                self.pending.push_front(data);
+                break;
+            };
+            self.tasks.push_back(AbortOnDrop::new(tokio::spawn(
+                get_chunk(
+                    self.downloader.clone(),
+                    self.parser.clone(),
+                    data,
+                    ticket,
+                    self.downloads.clone(),
+                )
+                .with_current_subscriber(),
             )));
         }
     }
-    Ok(())
+
+    /// Await tasks in order, send results, and refill the window after each completion.
+    async fn drain(
+        &mut self,
+        tx: &tokio::sync::mpsc::Sender<Result<Chunk, ArrowError>>,
+    ) -> Result<(), SendError<Result<Chunk, ArrowError>>> {
+        while let Some(task) = self.next_task() {
+            let result = task
+                .await
+                .unwrap_or_else(|e| Err(ArrowError::ExternalError(Box::new(e))));
+            let is_err = result.is_err();
+            send_result(tx, result).await?;
+            if is_err {
+                return Ok(());
+            }
+            self.fill().await;
+        }
+        Ok(())
+    }
 }
 
 async fn get_chunk(
@@ -272,8 +282,14 @@ async fn get_chunk(
     parser: impl ParseChunk,
     data: ChunkDownloadData,
     ticket: MemoryTicket,
+    downloads: Arc<Semaphore>,
 ) -> Result<Chunk, ArrowError> {
+    let permit = downloads
+        .acquire_owned()
+        .await
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
     let bytes = downloader.download_chunk(data).await?;
+    drop(permit);
     // Arrow IPC / JSON→Arrow decode is CPU-bound; run it on the blocking pool so
     // it doesn't occupy this runtime worker (result chunks are routinely multi-MB).
     let batches = tokio::task::spawn_blocking(move || parser.parse_chunk(bytes))
@@ -352,5 +368,126 @@ fn take_channel_chunk(msg: Option<Result<Chunk, ArrowError>>) -> Result<Option<C
         Some(Ok(chunk)) => Ok(Some(chunk)),
         Some(Err(e)) => Err(e),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct DelayedDownloader {
+        state: Arc<Mutex<DownloadState>>,
+    }
+
+    #[derive(Default)]
+    struct DownloadState {
+        active: usize,
+        max_active: usize,
+        finished: Vec<usize>,
+    }
+
+    impl DownloadChunk for DelayedDownloader {
+        async fn download_chunk(&self, chunk: ChunkDownloadData) -> Result<Vec<u8>, ArrowError> {
+            let index: usize = chunk.url.parse().unwrap();
+            {
+                let mut state = self.state.lock().unwrap();
+                state.active += 1;
+                state.max_active = state.max_active.max(state.active);
+            }
+            let delay = if index == 0 { 100 } else { 10 };
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            let mut state = self.state.lock().unwrap();
+            state.active -= 1;
+            state.finished.push(index);
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Clone)]
+    struct EmptyParser;
+
+    impl ParseChunk for EmptyParser {
+        fn parse_chunk(&self, _data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn chunk(index: usize) -> ChunkDownloadData {
+        ChunkDownloadData {
+            url: index.to_string(),
+            row_count: 1,
+            uncompressed_size: 1,
+            compressed_size: 1,
+            headers: HashMap::new(),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_head_chunk_does_not_idle_the_other_download_slots() {
+        let downloader = DelayedDownloader::default();
+        let config = PrefetchConfig {
+            prefetch_threads: 2,
+            memory_limit_mb: 0,
+            ..PrefetchConfig::default()
+        };
+
+        let (reader, _abort) = PrefetchChunkReader::open(
+            None,
+            (0..6).map(chunk).collect(),
+            downloader.clone(),
+            EmptyParser,
+            &config,
+        )
+        .await
+        .unwrap();
+        drop(reader);
+
+        let state = downloader.state.lock().unwrap();
+        assert_eq!(state.finished.first(), Some(&1));
+        let head = state.finished.iter().position(|&i| i == 0).unwrap();
+        assert!(
+            head >= 3,
+            "chunks 1..=3 download while chunk 0 is in flight: {:?}",
+            state.finished
+        );
+        assert_eq!(state.max_active, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn window_deeper_than_memory_budget_respects_budget() {
+        let downloader = DelayedDownloader::default();
+        let config = PrefetchConfig {
+            prefetch_threads: 2,
+            memory_limit_mb: 2,
+            ..PrefetchConfig::default()
+        };
+
+        let (mut reader, _abort) = tokio::time::timeout(
+            Duration::from_secs(10),
+            PrefetchChunkReader::open(
+                None,
+                (0..6).map(chunk).collect(),
+                downloader.clone(),
+                EmptyParser,
+                &config,
+            ),
+        )
+        .await
+        .expect("open must not wait for budget held by unconsumed chunks")
+        .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(downloader.state.lock().unwrap().finished.len(), 2);
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while futures::StreamExt::next(&mut reader).await.is_some() {}
+        })
+        .await
+        .expect("all chunks arrive once consumed");
+        assert_eq!(downloader.state.lock().unwrap().finished.len(), 6);
     }
 }
