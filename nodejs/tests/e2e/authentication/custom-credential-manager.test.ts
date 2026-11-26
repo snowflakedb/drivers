@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { CustomCredentialManager } from '../../../src/index.js';
 import type { ConnectionOptions } from '../../types/sdk-types.js';
+import { createLiveConnection } from '../utils/fixtures.js';
 import {
-  destroyConnectionAsync,
   IS_RUNNING_FOR_OLD_DRIVER,
+  isRunningNewDriverWithBD,
   resetGlobalConfig,
   snowflake,
 } from '../utils/index.js';
@@ -14,7 +15,7 @@ import {
   WiremockServer,
 } from '../utils/wiremock/index.js';
 
-describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('customCredentialManager', () => {
+describe('customCredentialManager', () => {
   let wiremock: WiremockServer;
 
   beforeAll(async () => {
@@ -32,20 +33,16 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('customCredentialManager', () => {
     await wiremock.destroy();
   });
 
-  async function createConnectedMfaConnection(options: Partial<ConnectionOptions> = {}) {
-    const connection = snowflake.createConnection({
+  function createConnectedMfaConnection(options: Partial<ConnectionOptions> = {}) {
+    return createLiveConnection({
       ...wiremock.connectionOptions,
       account: 'test_account',
       username: 'test_user',
       password: 'test_password',
       authenticator: 'USERNAME_PASSWORD_MFA',
+      ...(isRunningNewDriverWithBD('BD#117') ? {} : { clientRequestMFAToken: true }),
       ...options,
     });
-    await connection.connectAsync();
-    onTestFinished(async () => {
-      await destroyConnectionAsync(connection);
-    });
-    return connection;
   }
 
   it('should delegate token storage to synchronous callbacks', async () => {
@@ -71,7 +68,7 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('customCredentialManager', () => {
     ]);
   });
 
-  it('should not call callbacks when clientStoreTemporaryCredential is false', async () => {
+  it('should not call callbacks when token caching is disabled', async () => {
     const calls: string[] = [];
     snowflake.configure({
       customCredentialManager: {
@@ -89,7 +86,11 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('customCredentialManager', () => {
     });
     await wiremock.stub(loginSuccess({ mfaToken: 'unstored_mfa_token' }));
 
-    await createConnectedMfaConnection({ clientStoreTemporaryCredential: false });
+    await createConnectedMfaConnection(
+      isRunningNewDriverWithBD('BD#117')
+        ? { clientStoreTemporaryCredential: false }
+        : { clientRequestMFAToken: false },
+    );
 
     expect(calls).toEqual([]);
   });
@@ -145,53 +146,90 @@ describe.skipIf(IS_RUNNING_FOR_OLD_DRIVER)('customCredentialManager', () => {
     });
     await wiremock.stub(loginSuccess({ mfaToken: 'new_mfa_token' }));
 
-    await createConnectedMfaConnection();
-
-    const [loginRequest] = await wiremock.findRequests('/session/v1/login-request.*');
-    expect(JSON.parse(loginRequest.body).data).not.toHaveProperty('TOKEN');
-    expect(writtenToken).toBe('new_mfa_token');
+    if (isRunningNewDriverWithBD('BD#92')) {
+      await createConnectedMfaConnection();
+      const [loginRequest] = await wiremock.findRequests('/session/v1/login-request.*');
+      expect(JSON.parse(loginRequest.body).data).not.toHaveProperty('TOKEN');
+      expect(writtenToken).toBe('new_mfa_token');
+    } else {
+      await expect(createConnectedMfaConnection()).rejects.toThrow('cache read failed');
+      expect(await wiremock.findRequests('/session/v1/login-request.*')).toEqual([]);
+    }
   });
 
-  it('should remove a rejected cached token before retrying login', async () => {
-    let firstRead = true;
-    let removedKey: string | undefined;
+  it('should connect when a cache write throws', async () => {
     snowflake.configure({
       customCredentialManager: {
-        read: () => {
-          if (firstRead) {
-            firstRead = false;
-            return 'stale_mfa_token';
-          }
-          return null;
+        read: () => null,
+        write: () => {
+          throw new Error('cache write failed');
         },
-        write: () => undefined,
-        remove: (key) => {
-          removedKey = key;
-        },
+        remove: () => undefined,
       },
     });
-    await wiremock.stub({
-      scenarioName: 'cached token retry',
-      requiredScenarioState: 'Started',
-      newScenarioState: 'cached token rejected',
-      request: { method: 'POST', urlPathPattern: '/session/v1/login-request.*' },
-      response: jsonResponse(200, {
-        success: false,
-        code: '390120',
-        message: 'cached token rejected',
-      }),
-    });
-    await wiremock.stub({
-      ...loginSuccess(),
-      scenarioName: 'cached token retry',
-      requiredScenarioState: 'cached token rejected',
-    });
+    await wiremock.stub(loginSuccess({ mfaToken: 'new_mfa_token' }));
 
-    await createConnectedMfaConnection();
-
-    expect(removedKey).toMatch(/^SnowflakeTokenCache\.v2\.MfaToken\./);
-    const loginRequests = await wiremock.findRequests('/session/v1/login-request.*');
-    expect(loginRequests).toHaveLength(2);
-    expect(JSON.parse(loginRequests[1].body).data).not.toHaveProperty('TOKEN');
+    if (isRunningNewDriverWithBD('BD#92')) {
+      const connection = await createConnectedMfaConnection();
+      expect(connection.isUp()).toBe(true);
+    } else {
+      const connecting = createConnectedMfaConnection();
+      connecting.catch(() => undefined);
+      // The old driver never settles connect() here; the timeout is only the observation window.
+      const outcome = await Promise.race([
+        connecting.then(() => 'connected'),
+        new Promise((resolve) => setTimeout(() => resolve('pending'), 5000)),
+      ]);
+      expect(outcome).toBe('pending');
+    }
   });
+
+  it.skipIf(IS_RUNNING_FOR_OLD_DRIVER)(
+    'should remove a rejected cached token before retrying login',
+    async () => {
+      let firstRead = true;
+      let removedKey: string | undefined;
+      snowflake.configure({
+        customCredentialManager: {
+          read: () => {
+            if (firstRead) {
+              firstRead = false;
+              return 'stale_mfa_token';
+            }
+            return null;
+          },
+          write: () => undefined,
+          remove: (key) => {
+            removedKey = key;
+          },
+        },
+      });
+      await wiremock.stub({
+        scenarioName: 'cached token retry',
+        requiredScenarioState: 'Started',
+        newScenarioState: 'cached token rejected',
+        request: {
+          method: 'POST',
+          urlPathPattern: '/session/v1/login-request.*',
+        },
+        response: jsonResponse(200, {
+          success: false,
+          code: '390120',
+          message: 'cached token rejected',
+        }),
+      });
+      await wiremock.stub({
+        ...loginSuccess(),
+        scenarioName: 'cached token retry',
+        requiredScenarioState: 'cached token rejected',
+      });
+
+      await createConnectedMfaConnection();
+
+      expect(removedKey).toMatch(/^SnowflakeTokenCache\.v2\.MfaToken\./);
+      const loginRequests = await wiremock.findRequests('/session/v1/login-request.*');
+      expect(loginRequests).toHaveLength(2);
+      expect(JSON.parse(loginRequests[1].body).data).not.toHaveProperty('TOKEN');
+    },
+  );
 });

@@ -114,6 +114,13 @@ export interface ConnectionTokenInfo {
   masterTokenExpiresAtMs?: number
 }
 
+/** Token store; methods may return a value or a Promise that settles within 30 seconds. */
+export interface CustomCredentialManager {
+  read: (key: string) => string | null | undefined | Promise<string | null | undefined>
+  write: (key: string, token: string) => unknown
+  remove: (key: string) => unknown
+}
+
 export interface ExecuteParams {
   query: string
   bindings?: QueryBindings
@@ -224,7 +231,7 @@ export interface RowOptions {
   representNullAsStringNull: boolean
 }
 
-export declare function setCustomCredentialManager(manager: { read: (key: string) => Promise<string | null | undefined>, write: (key: string, token: string) => Promise<void>, remove: (key: string) => Promise<void> } | null): void
+export declare function setCustomCredentialManager(manager: CustomCredentialManager | null): void
 
 export declare function setLogLevel(level: number): void
 

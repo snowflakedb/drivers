@@ -296,60 +296,6 @@ behavior_differences:
       validation: "Expected type Int for parameter 'retryTimeout'". The deadline
       covers the whole login, including retries, rather than one request.
 
-  92:
-    name: 'Custom credential manager failures do not fail authentication'
-    status: unknown
-    type: enhancement
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      A custom credential manager method that throws, rejects its Promise, or never settles
-      prevents the connection attempt from completing successfully.
-    new_driver_behavior: |
-      A method that throws or rejects is treated as a cache miss or a failed best-effort cache
-      update, so authentication can continue. A Promise that does not settle within 30 seconds
-      is treated as a failed cache operation.
-    description: |
-      The shared token-cache contract treats credential persistence as best effort so a storage
-      problem does not prevent authentication. The timeout also prevents an unresolved callback
-      from permanently occupying a runtime blocking thread.
-
-  93:
-    name: 'Custom credential manager receives cross-driver cache keys'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      Callback keys hash the old driver's raw `snowflakeHost` and `oauthIdpUrl` field names and
-      values.
-    new_driver_behavior: |
-      Callback keys use the normalized cross-driver token-cache format, so their hashes differ
-      from old-driver keys even though both use the `SnowflakeTokenCache.v2` prefix.
-    description: |
-      A custom manager that retains tokens across a driver upgrade does not find entries written
-      under the old hash and reauthenticates once before storing the token under the new key.
-
-  94:
-    name: 'Unusable default credential store does not fail connect'
-    status: unknown
-    type: enhancement
-    reviewed: false
-    is_breaking_change: false
-    impact: low
-    old_driver_behavior: |
-      With no custom credential manager and token caching enabled, connect() fails when the
-      default JSON credential store has no usable cache directory ("Temporary credential cache
-      directory is invalid...").
-    new_driver_behavior: |
-      With no custom credential manager, a default credential store that cannot be initialized
-      is logged as a warning on each cache operation, and login continues without the cache.
-    description: |
-      The default store is initialized on first use rather than at connect, so its failure is
-      handled like any other best-effort cache failure.
-
   106:
     name: 'WIF validation and OIDC-impersonation error messages use snake_case core wording'
     status: todo
@@ -372,24 +318,6 @@ behavior_differences:
       TODO(SNOW-4232907): report these names in the invoking wrapper's dialect.
       Core accepts the Node camelCase aliases, then these messages cite the
       canonical snake_case keys.
-
-  121:
-    name: 'credentialCacheDir is not a connection option; the system keyring is used when present'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      credentialCacheDir selects the first directory for the JSON credential
-      file on every platform. The file is the credential store.
-    new_driver_behavior: |
-      credentialCacheDir is ignored, like any other unknown connection option (BD#102).
-      Tokens are stored in the system keyring when that store keeps credentials
-      until they are deleted (macOS, Windows, and Linux with a keyring). The
-      JSON file is used only when no such keyring is available. Its directory
-      comes from SF_TEMPORARY_CREDENTIAL_CACHE_DIR when that variable names an
-      existing directory, then the usual platform cache locations.
 
   112:
     name: 'Uppercase proxy environment variables win over lowercase ones'

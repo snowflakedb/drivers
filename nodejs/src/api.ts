@@ -28,12 +28,7 @@ export type {
   SessionState,
   StatementStatus,
 } from './query-result/types.js';
-export type {
-  CustomCredentialManager,
-  CustomParser,
-  XMlParserConfigOption,
-  ConfigureOptions,
-} from './global-config.js';
+export type { CustomParser, XMlParserConfigOption, ConfigureOptions } from './global-config.js';
 export type { LogLevel, SnowflakeLogger } from './logging/index.js';
 export type { Pool, PoolOptions } from './create-pool.js';
-export type { FipsStatus } from './core/index.js';
+export type { CustomCredentialManager, FipsStatus } from './core/index.js';

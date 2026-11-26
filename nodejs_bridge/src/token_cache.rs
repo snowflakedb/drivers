@@ -1,6 +1,8 @@
 use napi::bindgen_prelude::{
-    FnArgs, FromNapiValue, Function, JsObjectValue, JsValuesTupleIntoVec, Object, Promise, block_on,
+    Either, FnArgs, FromNapiValue, Function, JsObjectValue, JsValuesTupleIntoVec, Object, Promise,
+    TypeName, ValidateNapiValue, ValueType, block_on,
 };
+use napi::sys;
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 use sf_core::token_cache::{
@@ -16,41 +18,63 @@ use std::time::Duration;
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 type JsCallback<Args, Ret> =
-    ThreadsafeFunction<Args, Promise<Ret>, Args, napi::Status, false, true>;
+    ThreadsafeFunction<Args, Either<Promise<Ret>, Ret>, Args, napi::Status, false, true>;
+
+struct Ignored;
+
+impl TypeName for Ignored {
+    fn type_name() -> &'static str {
+        "unknown"
+    }
+
+    fn value_type() -> ValueType {
+        ValueType::Unknown
+    }
+}
+
+impl ValidateNapiValue for Ignored {
+    unsafe fn validate(_: sys::napi_env, _: sys::napi_value) -> napi::Result<sys::napi_value> {
+        Ok(std::ptr::null_mut())
+    }
+}
+
+impl FromNapiValue for Ignored {
+    unsafe fn from_napi_value(_: sys::napi_env, _: sys::napi_value) -> napi::Result<Self> {
+        Ok(Ignored)
+    }
+}
 
 struct CredentialManagerCallbacks {
     read: JsCallback<FnArgs<(String,)>, Option<String>>,
-    write: JsCallback<FnArgs<(String, String)>, ()>,
-    remove: JsCallback<FnArgs<(String,)>, ()>,
+    write: JsCallback<FnArgs<(String, String)>, Ignored>,
+    remove: JsCallback<FnArgs<(String,)>, Ignored>,
 }
 
 impl CredentialManagerCallbacks {
     fn read(&self, key: String) -> napi::Result<Option<String>> {
-        wait_for_callback(async {
-            self.read
-                .call_async_catch(FnArgs::from((key,)))
-                .await?
-                .await
-        })
+        call(&self.read, FnArgs::from((key,)))
     }
 
     fn write(&self, key: String, token: String) -> napi::Result<()> {
-        wait_for_callback(async {
-            self.write
-                .call_async_catch(FnArgs::from((key, token)))
-                .await?
-                .await
-        })
+        call(&self.write, FnArgs::from((key, token))).map(drop)
     }
 
     fn remove(&self, key: String) -> napi::Result<()> {
-        wait_for_callback(async {
-            self.remove
-                .call_async_catch(FnArgs::from((key,)))
-                .await?
-                .await
-        })
+        call(&self.remove, FnArgs::from((key,))).map(drop)
     }
+}
+
+fn call<Args, Ret>(callback: &JsCallback<Args, Ret>, args: Args) -> napi::Result<Ret>
+where
+    Args: JsValuesTupleIntoVec + 'static,
+    Ret: FromNapiValue + TypeName + ValidateNapiValue + 'static,
+{
+    wait_for_callback(async {
+        match callback.call_async_catch(args).await? {
+            Either::A(promise) => promise.await,
+            Either::B(value) => Ok(value),
+        }
+    })
 }
 
 fn wait_for_callback<T>(future: impl Future<Output = napi::Result<T>>) -> napi::Result<T> {
@@ -133,16 +157,27 @@ impl TokenCache for NodeTokenCache {
     }
 }
 
-#[napi(
-    ts_args_type = "manager: { read: (key: string) => Promise<string | null | undefined>, write: (key: string, token: string) => Promise<void>, remove: (key: string) => Promise<void> } | null"
-)]
+/// Token store; methods may return a value or a Promise that settles within 30 seconds.
+#[napi(object, object_to_js = false)]
+pub struct CustomCredentialManager {
+    #[napi(
+        ts_type = "(key: string) => string | null | undefined | Promise<string | null | undefined>"
+    )]
+    pub read: (),
+    #[napi(ts_type = "(key: string, token: string) => unknown")]
+    pub write: (),
+    #[napi(ts_type = "(key: string) => unknown")]
+    pub remove: (),
+}
+
+#[napi(ts_args_type = "manager: CustomCredentialManager | null")]
 pub fn set_custom_credential_manager(manager: Option<Object>) -> napi::Result<()> {
     let callbacks = manager
         .map(|manager| -> napi::Result<_> {
             Ok(CredentialManagerCallbacks {
-                read: threadsafe(manager.get_named_property("read")?)?,
-                write: threadsafe(manager.get_named_property("write")?)?,
-                remove: threadsafe(manager.get_named_property("remove")?)?,
+                read: threadsafe(manager, "read")?,
+                write: threadsafe(manager, "write")?,
+                remove: threadsafe(manager, "remove")?,
             })
         })
         .transpose()?;
@@ -150,8 +185,16 @@ pub fn set_custom_credential_manager(manager: Option<Object>) -> napi::Result<()
     Ok(())
 }
 
-fn threadsafe<Args: JsValuesTupleIntoVec + 'static, Ret: FromNapiValue + 'static>(
-    function: Function<'_, Args, Promise<Ret>>,
-) -> napi::Result<JsCallback<Args, Ret>> {
-    function.build_threadsafe_function().weak::<true>().build()
+fn threadsafe<Args, Ret>(manager: Object<'_>, method: &str) -> napi::Result<JsCallback<Args, Ret>>
+where
+    Args: JsValuesTupleIntoVec + 'static,
+    Ret: FromNapiValue + TypeName + ValidateNapiValue + 'static,
+{
+    let function: Function<'_, Args, Either<Promise<Ret>, Ret>> =
+        manager.get_named_property(method)?;
+    function
+        .bind(manager)?
+        .build_threadsafe_function()
+        .weak::<true>()
+        .build()
 }

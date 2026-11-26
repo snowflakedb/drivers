@@ -1,7 +1,7 @@
 import { XMLParser, XMLValidator, X2jOptions } from 'fast-xml-parser';
 import ErrorCode from './constants/ErrorCode.js';
 import ErrorMessage from './constants/ErrorMessage.js';
-import { coreSetCustomCredentialManager } from './core/index.js';
+import { coreSetCustomCredentialManager, type CustomCredentialManager } from './core/index.js';
 import { invalidParameterError } from './error.js';
 import { defaultLogger } from './logging/default-logger.js';
 import { parseLogLevel, type LogLevel } from './logging/log-level.js';
@@ -9,13 +9,6 @@ import { logger, logRouter, type SnowflakeLogger } from './logging/logger.js';
 
 export type CustomParser = (rawColumnValue: string) => any;
 export type XMlParserConfigOption = X2jOptions;
-
-/** Token store; methods may return a value or a Promise that settles within 30 seconds. */
-export interface CustomCredentialManager {
-  read(key: string): string | null | undefined | Promise<string | null | undefined>;
-  write(key: string, token: string): unknown | Promise<unknown>;
-  remove(key: string): unknown | Promise<unknown>;
-}
 
 export interface ConfigureOptions {
   /**
@@ -214,28 +207,13 @@ function applyLoggingOptions() {
   );
 }
 
-// TODO:
-// - entire thing can live in nodejs_bridge including CustomCredentialManager
-// - remove validation and trust TypeScript
 function setCustomCredentialManager(manager: CustomCredentialManager) {
-  const isValid =
-    typeof manager === 'object' &&
-    (['read', 'write', 'remove'] as const).every(
-      (method) => Object.hasOwn(manager, method) && typeof manager[method] === 'function',
-    );
-  if (!isValid) {
+  try {
+    coreSetCustomCredentialManager(manager);
+  } catch (cause) {
     const code = ErrorCode.ERR_GLOBAL_CONFIGURE_INVALID_CUSTOM_CREDENTIAL_MANAGER;
-    throw invalidParameterError(ErrorMessage[code], code);
+    throw Object.assign(invalidParameterError(ErrorMessage[code], code), { cause });
   }
-  coreSetCustomCredentialManager({
-    read: async (key) => manager.read(key),
-    write: async (key, token) => {
-      await manager.write(key, token);
-    },
-    remove: async (key) => {
-      await manager.remove(key);
-    },
-  });
 }
 
 export const resetGlobalConfig = () => {

@@ -35,7 +35,7 @@ pub use date_format::format_snowflake_date;
 pub use session_params::KnownSessionParameters;
 pub use session_state::SessionState;
 pub use statement::{Column, Statement};
-pub use token_cache::set_custom_credential_manager;
+pub use token_cache::{CustomCredentialManager, set_custom_credential_manager};
 
 use logging::JsLogging;
 use napi::bindgen_prelude::{Function, Object};

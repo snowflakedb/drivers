@@ -64,6 +64,7 @@ export const coreFormatSnowflakeDate = core.formatSnowflakeDate;
 export const CoreSessionState = core.SessionState;
 export const CoreQueryBindingFormat = core.QueryBindingFormat;
 export const coreSetCustomCredentialManager = core.setCustomCredentialManager;
+export type CustomCredentialManager = CoreBinary.CustomCredentialManager;
 export const coreLogEvent = core.logEvent;
 export const coreSetLogLevel = core.setLogLevel;
 

@@ -2131,29 +2131,38 @@ behavior_differences:
       covers the whole login, including retries, rather than one request.
 
   92:
-    name: 'Custom credential manager failures do not fail authentication'
-    status: unknown
+    name: 'Token cache failures do not fail connect'
+    status: allowed
     type: enhancement
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
-      A custom credential manager method that throws, rejects its Promise, or never settles
-      prevents the connection attempt from completing successfully.
+      A custom credential manager method that throws or rejects its Promise makes connect()
+      reject, and one that never settles, including a write that throws, leaves connect()
+      pending forever. With no custom credential manager and token caching enabled, connect()
+      fails when the default JSON credential store has no usable cache directory ("Temporary
+      credential cache directory is invalid...").
     new_driver_behavior: |
-      A method that throws or rejects is treated as a cache miss or a failed best-effort cache
-      update, so authentication can continue. A Promise that does not settle within 30 seconds
-      is treated as a failed cache operation.
+      A failed token cache operation is logged as a warning, and connect() continues. A failed
+      read is treated as a cache miss, and a failed write or removal is ignored. This holds for
+      a custom credential manager and for the default store (the system keyring or the JSON
+      file). A custom credential manager Promise that does not settle within 30 seconds counts
+      as a failed operation.
     description: |
-      The shared token-cache contract treats credential persistence as best effort so a storage
-      problem does not prevent authentication. The timeout also prevents an unresolved callback
-      from permanently occupying a runtime blocking thread.
+      The timeout also prevents an unresolved callback from permanently occupying a runtime
+      blocking thread.
+    status_rationale: |
+      All Snowflake drivers treat the token cache as best effort: a failed cache operation never
+      fails the connection. The old driver's behavior deviated from that contract. The new
+      driver also caches tokens by default, so failing connect() on a local keyring or file
+      problem would break logins for users who never configured caching.
 
   93:
     name: 'Custom credential manager receives cross-driver cache keys'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -2165,24 +2174,17 @@ behavior_differences:
     description: |
       A custom manager that retains tokens across a driver upgrade does not find entries written
       under the old hash and reauthenticates once before storing the token under the new key.
+    status_rationale: |
+      The Python, JDBC, ODBC and .NET drivers use the same cache key format, so tokens are
+      shared between them. The cost is one extra login per user after the upgrade.
 
   94:
+    # Duplicate of BD#92. Kept only because the pre-commit validator does not allow removing Node.js entries.
     name: 'Unusable default credential store does not fail connect'
-    status: unknown
+    status: allowed
     type: enhancement
-    reviewed: false
-    is_breaking_change: false
     impact: low
-    old_driver_behavior: |
-      With no custom credential manager and token caching enabled, connect() fails when the
-      default JSON credential store has no usable cache directory ("Temporary credential cache
-      directory is invalid...").
-    new_driver_behavior: |
-      With no custom credential manager, a default credential store that cannot be initialized
-      is logged as a warning on each cache operation, and login continues without the cache.
-    description: |
-      The default store is initialized on first use rather than at connect, so its failure is
-      handled like any other best-effort cache failure.
+    is_breaking_change: false
 
   95:
     name: 'OAuth authorization-code loopback timeout error wording'
@@ -2478,9 +2480,9 @@ behavior_differences:
 
   121:
     name: 'credentialCacheDir is not a connection option; the system keyring is used when present'
-    status: unknown
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: medium
     old_driver_behavior: |
@@ -2493,6 +2495,10 @@ behavior_differences:
       JSON file is used only when no such keyring is available. Its directory
       comes from SF_TEMPORARY_CREDENTIAL_CACHE_DIR when that variable names an
       existing directory, then the usual platform cache locations.
+    status_rationale: |
+      Tokens are now stored in the system keyring in most cases. The keyring is a much better
+      and safer solution than the old driver's plain JSON file, which stays only as the fallback
+      where no keyring exists.
 
   109:
     name: 'Azure WIF accepts a single-hop impersonation path'
