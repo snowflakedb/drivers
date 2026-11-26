@@ -15,8 +15,9 @@ class TestQueryTagViaConnectionOption:
             assert row[0] == "conn_tag_e2e"
 
 
-# Statement-level QUERY_TAG via the `_statement_params` execute() kwarg — the
-# same API the reference driver exposes, so this runs against both drivers.
+# Statement-level QUERY_TAG. The reference driver only accepts `_statement_params`,
+# so this shared scenario uses that name. The universal driver also accepts it and
+# warns; `statement_parameters` is the public name.
 class TestQueryTagViaStatementParameters:
     def test_should_tag_a_single_query_via_statement_level_query_tag(self, connection_factory):
         # Given Snowflake client is logged in

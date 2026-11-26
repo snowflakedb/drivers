@@ -3183,9 +3183,10 @@ class TestExecuteSkipUploadOnContentMatch:
 
 
 class TestExecuteStatementParams:
-    """`_statement_params` is applied per-call (parity with the legacy connector):
+    """`statement_parameters` is applied per-call (parity with the legacy connector):
     caller-supplied keys reach the statement-parameters channel, never persist on
     the cursor, and driver fold-ins (num_statements) win on key collision.
+    `_statement_params` is the deprecated alias.
     """
 
     @pytest.fixture
@@ -3215,7 +3216,7 @@ class TestExecuteStatementParams:
             patch.object(cursor, "_execute", side_effect=side_effect),
             patch.object(cursor, "reset"),
         ):
-            cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+            cursor.execute("SELECT 1", statement_parameters={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
         assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
         # Never persisted on the cursor.
         assert "DATE_INPUT_FORMAT" not in cursor._statement_parameters
@@ -3225,7 +3226,7 @@ class TestExecuteStatementParams:
             patch.object(cursor, "_execute"),
             patch.object(cursor, "reset"),
         ):
-            cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+            cursor.execute("SELECT 1", statement_parameters={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
 
         captured, side_effect = self._capture_per_call(cursor)
         with (
@@ -3246,9 +3247,65 @@ class TestExecuteStatementParams:
             cursor.execute(
                 "SELECT 1; SELECT 2",
                 num_statements=2,
-                _statement_params={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
+                statement_parameters={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
             )
         assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2
+
+    def test_legacy_statement_params_warns_and_is_used(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            pytest.warns(DeprecationWarning, match="statement_parameters") as caught,
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+        assert "DATE_INPUT_FORMAT" not in cursor._statement_parameters
+        assert caught[0].filename == __file__
+
+    def test_statement_parameters_wins_when_both_are_passed(self, cursor):
+        captured, side_effect = self._capture_per_call(cursor)
+        with (
+            pytest.warns(DeprecationWarning, match="_statement_params"),
+            patch.object(cursor, "_execute", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute(
+                "SELECT 1",
+                statement_parameters={"DATE_INPUT_FORMAT": "YYYY-MM-DD"},
+                _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"},
+            )
+        assert captured.get("DATE_INPUT_FORMAT") == "YYYY-MM-DD"
+
+    def test_execute_async_statement_parameters_forwarded(self, cursor):
+        captured = {}
+
+        def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return {"queryId": "q"}
+
+        with (
+            patch.object(cursor, "_execute_async", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute_async("SELECT 1", statement_parameters={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+
+    def test_execute_async_legacy_kwarg_warns(self, cursor):
+        captured = {}
+
+        def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return {"queryId": "q"}
+
+        with (
+            pytest.warns(DeprecationWarning, match="statement_parameters") as caught,
+            patch.object(cursor, "_execute_async", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            cursor.execute_async("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+        assert caught[0].filename == __file__
 
 
 class TestExecuteNumStatements:
@@ -4662,7 +4719,7 @@ class TestAsyncExecutemanyIterators:
 
 
 class TestAsyncExecuteStatementParams:
-    """Async parity: execute() threads `_statement_params` into the per-call
+    """Async parity: execute() threads `statement_parameters` into the per-call
     statement-parameters channel (shared `_collect_statement_params`).
     """
 
@@ -4687,8 +4744,27 @@ class TestAsyncExecuteStatementParams:
             patch.object(cursor, "_execute", new=AsyncMock(side_effect=side_effect)),
             patch.object(cursor, "reset", new=AsyncMock()),
         ):
-            asyncio.run(cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"}))
+            asyncio.run(cursor.execute("SELECT 1", statement_parameters={"DATE_INPUT_FORMAT": "MM-DD-YYYY"}))
         assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+
+    def test_legacy_statement_params_warns(self, cursor):
+        captured = {}
+
+        async def side_effect(*args, **kwargs):
+            captured.update(kwargs.get("statement_parameters") or {})
+            return MagicMock()
+
+        async def call() -> None:
+            await cursor.execute("SELECT 1", _statement_params={"DATE_INPUT_FORMAT": "MM-DD-YYYY"})
+
+        with (
+            pytest.warns(DeprecationWarning, match="statement_parameters") as caught,
+            patch.object(cursor, "_execute", new=AsyncMock(side_effect=side_effect)),
+            patch.object(cursor, "reset", new=AsyncMock()),
+        ):
+            asyncio.run(call())
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
+        assert caught[0].filename == __file__
 
     def test_num_statements_wins_over_statement_params_collision(self, cursor):
         # Driver fold-in (num_statements) must override a caller-supplied
@@ -4707,7 +4783,7 @@ class TestAsyncExecuteStatementParams:
                 cursor.execute(
                     "SELECT 1; SELECT 2",
                     num_statements=2,
-                    _statement_params={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
+                    statement_parameters={StatementParameterName.MULTI_STATEMENT_COUNT: 5},
                 )
             )
         assert captured.get(StatementParameterName.MULTI_STATEMENT_COUNT) == 2
@@ -4731,6 +4807,15 @@ class TestAsyncCursorExecuteAsync:
             return {"queryId": "fake-id"}
 
         return captured, side_effect
+
+    def test_statement_parameters_forwarded(self, cursor):
+        captured, side_effect = self._capture_per_call()
+        with (
+            patch.object(cursor, "_execute_async", side_effect=side_effect),
+            patch.object(cursor, "reset"),
+        ):
+            asyncio.run(cursor.execute_async("SELECT 1", statement_parameters={"DATE_INPUT_FORMAT": "MM-DD-YYYY"}))
+        assert captured.get("DATE_INPUT_FORMAT") == "MM-DD-YYYY"
 
     def test_num_statements_plumbed_as_multi_statement_count(self, cursor):
         """execute_async forwards num_statements as MULTI_STATEMENT_COUNT."""

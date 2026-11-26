@@ -54,7 +54,12 @@ from ..._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from ..._internal.statement_utils import async_statement
-from ..._internal.utils import _attach_query, _coerce_executemany_params, _resolve_alias
+from ..._internal.utils import (
+    _attach_query,
+    _coerce_executemany_params,
+    _resolve_alias,
+    _resolve_statement_parameters_arg,
+)
 from ...errors import InterfaceError, OperationalError, ProgrammingError
 from ..result_batch import ResultBatch
 from ._result_set_wrapper import _ResultSetWrapper
@@ -165,6 +170,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _skip_upload_on_content_match: bool = False,
         *,
         _force_qmark_paramstyle: bool = False,
+        statement_parameters: dict[str, Any] | None = None,
         _statement_params: dict[str, Any] | None = None,
         file_stream: BinaryIO | None = None,
         **kwargs: Any,
@@ -190,10 +196,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             _force_qmark_paramstyle: If True, bind as qmark (``?``) even when
                 the connection's paramstyle is pyformat/format. Used by
                 callers that emit ``?`` placeholders unconditionally.
-            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
-                sent to Snowflake with this query only. Never persisted on the
-                cursor; forwarded as query-request parameters, so they tag only
-                this query without mutating session state.
+            statement_parameters: Extra per-query parameters (for example
+                ``QUERY_TAG`` or ``CLIENT_RESULT_CHUNK_SIZE``) sent to Snowflake
+                with this query only. Never persisted on the cursor. A per-call
+                value overrides the same key set with ``set_statement_parameter``.
+                ``_statement_params`` is the deprecated name; it warns, and
+                ``statement_parameters`` wins when both are passed.
             file_stream: When set, ``operation`` must be a PUT statement with
                 a ``file://`` path (only the basename is used as the
                 destination filename). Its contents come from this stream
@@ -205,7 +213,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=_skip_upload_on_content_match,
             num_statements=num_statements,
-            statement_params=_statement_params,
+            statement_params=_resolve_statement_parameters_arg(statement_parameters, _statement_params),
         )
 
         self.reset()
@@ -985,6 +993,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         params: Sequence[Any] | dict[str, Any] | None = None,
         num_statements: int | None = None,
         *,
+        statement_parameters: dict[str, Any] | None = None,
         _statement_params: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, str | None]:
@@ -1006,8 +1015,12 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             command: SQL statement to execute.
             params: Parameters for the operation (sequence or dict).
             num_statements: Number of statements in a multistatement query.
-            _statement_params: Extra per-statement parameters (e.g. ``QUERY_TAG``)
-                sent to Snowflake with this query only. Never persisted on the cursor.
+            statement_parameters: Extra per-query parameters (for example
+                ``QUERY_TAG`` or ``CLIENT_RESULT_CHUNK_SIZE``) sent with this
+                query only. Never persisted on the cursor. A per-call value
+                overrides the same key set with ``set_statement_parameter``.
+                ``_statement_params`` is the deprecated name; it warns, and
+                ``statement_parameters`` wins when both are passed.
 
         Returns:
             dict with a ``queryId`` key containing the Snowflake Query ID.
@@ -1015,7 +1028,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         statement_parameters = self._collect_statement_params(
             skip_upload_on_content_match=False,
             num_statements=num_statements,
-            statement_params=_statement_params,
+            statement_params=_resolve_statement_parameters_arg(statement_parameters, _statement_params),
         )
         # TODO: deprecate returning the dict, return just the sfqid itself
         self.reset()

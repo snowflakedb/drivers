@@ -431,8 +431,7 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
         """Set a sticky statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
 
         Persists across `execute()` calls on this cursor until explicitly
-        changed. For per-call kwargs (one execute, no bleed across calls),
-        use the `statement_parameters` channel in `execute()` instead.
+        changed. For one execute, pass `statement_parameters=` instead.
 
         This must be called before execute() to take effect.
 
@@ -517,7 +516,7 @@ class CursorBaseMixin(ErrorHandlerMixin, abc.ABC):
     ) -> dict[str, Any]:
         """Collect per-call statement parameters for a single execute().
 
-        Merges the caller-supplied ``_statement_params`` bag (opaque passthrough,
+        Merges the caller-supplied ``statement_parameters`` bag (opaque passthrough,
         e.g. ``DATE_INPUT_FORMAT``) with the driver's known per-call fold-ins
         (``num_statements`` → MULTI_STATEMENT_COUNT, ``skip_upload_on_content_match``
         → SKIP_UPLOAD_ON_CONTENT_MATCH). Scoped to one call and never written to

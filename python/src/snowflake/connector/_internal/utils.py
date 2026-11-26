@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import inspect
+import os
+import sys
+import warnings
 
 from collections.abc import Iterable, Sequence
+from types import FrameType
 from typing import Any, cast
 
 from ..errors import ProgrammingError
 from .errorcode import ER_INVALID_VALUE
+
+
+_CONNECTOR_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LEGACY_STATEMENT_PARAMS_WARNING = "'_statement_params' is deprecated; use 'statement_parameters' instead."
 
 
 _ExecutemanyRow = Sequence[Any] | dict[str, Any]
@@ -50,6 +58,49 @@ def _attach_query(exc: ProgrammingError, query: str) -> None:
     """
     if exc.query is None:
         exc.query = query
+
+
+def _warning_stacklevel_outside_connector() -> int:
+    connector_prefix = _CONNECTOR_DIR + os.sep
+    level = 1
+    frame: FrameType | None = sys._getframe(1)
+    while frame is not None:
+        filename = frame.f_code.co_filename
+        if filename and not filename.startswith("<") and not os.path.abspath(filename).startswith(connector_prefix):
+            return level
+        level += 1
+        frame = frame.f_back
+    return level
+
+
+def _resolve_statement_parameters_arg(
+    statement_parameters: dict[str, Any] | None,
+    legacy_statement_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the per-call statement-parameter bag from the public argument.
+
+    ``_statement_params`` is the legacy name. It warns, and it is used only
+    when ``statement_parameters`` was not passed.
+    """
+    if legacy_statement_params is not None:
+        warnings.warn(
+            _LEGACY_STATEMENT_PARAMS_WARNING,
+            DeprecationWarning,
+            stacklevel=_warning_stacklevel_outside_connector(),
+        )
+        if statement_parameters is None:
+            return legacy_statement_params
+    return statement_parameters
+
+
+def _rewrite_legacy_statement_params_kwargs(kwargs: dict[str, Any]) -> None:
+    """Rewrites ``_statement_params`` in ``kwargs`` to ``statement_parameters``."""
+    resolved = _resolve_statement_parameters_arg(
+        kwargs.pop("statement_parameters", None),
+        kwargs.pop("_statement_params", None),
+    )
+    if resolved is not None:
+        kwargs["statement_parameters"] = resolved
 
 
 def _coerce_executemany_params(seq_of_parameters: object) -> Sequence[_ExecutemanyRow]:

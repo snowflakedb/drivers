@@ -51,7 +51,7 @@ from .._internal.protobuf_gen.database_driver_v1_services import (
 from .._internal.query_status import parse_query_status, query_status_info_from_response
 from .._internal.snowflake_restful import SnowflakeRestful
 from .._internal.text_utils import split_statements
-from .._internal.utils import get_application_path
+from .._internal.utils import _rewrite_legacy_statement_params_kwargs, get_application_path
 from ..connection_config import ConnectionConfig
 from ..constants import QueryStatus
 from ..cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor, SnowflakeCursorBase
@@ -551,6 +551,7 @@ class Connection(ConnectionMixin):
         **kwargs: Any,
     ) -> Iterable[CursorInstance]:
         """Execute a SQL text including multiple statements. This is a non-standard convenience method."""
+        _rewrite_legacy_statement_params_kwargs(kwargs)
         stream = StringIO(sql_text)
         stream_generator = self.execute_stream(
             stream,
@@ -573,6 +574,7 @@ class Connection(ConnectionMixin):
         **kwargs: Any,
     ) -> Generator[CursorInstance, None, None]:
         """Execute a stream of SQL statements. This is a non-standard convenient method."""
+        _rewrite_legacy_statement_params_kwargs(kwargs)
         for sql, is_put_or_get in split_statements(stream, remove_comments=remove_comments):
             if not sql:
                 continue
