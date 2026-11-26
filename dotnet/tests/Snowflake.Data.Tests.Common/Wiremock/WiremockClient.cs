@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Snowflake.Data.Tests.Compatibility;
 
 #if NETFRAMEWORK
@@ -21,15 +22,21 @@ public sealed class WiremockClient : IDisposable
     private const string WiremockJarRelative = "tests/wiremock/wiremock_standalone/wiremock-standalone-3.13.2.jar";
     private const string WiremockKeystore = "wiremock-keystore.p12";
     private const string WiremockKeystorePassword = "password";
+    private const int OutputTailLines = 50;
     private static readonly TimeSpan DefaultHealthTimeout = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan DefaultHealthPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan OutputDrainTimeout = TimeSpan.FromSeconds(5);
+    private static readonly Regex HttpPortLine = new(@"^port:\s+(\d+)$");
+    private static readonly Regex HttpsPortLine = new(@"^https-port:\s+(\d+)$");
 
     private readonly string? _tlsVersion;
     private readonly string _workspaceRoot;
     private readonly string _wiremockDir;
     private readonly string _wiremockJar;
+    private readonly ConcurrentQueue<string> _outputTail = new();
     private Process? _process;
-    private int _httpPort = -1;
+    private volatile int _httpPort = -1;
+    private volatile int _httpsPort = -1;
     private string? _securityPropsFile;
     private HttpClient? _httpClient;
 
@@ -57,7 +64,7 @@ public sealed class WiremockClient : IDisposable
 
     public int HttpPort => _httpPort;
 
-    public int HttpsPort { get; private set; } = -1;
+    public int HttpsPort => _httpsPort;
 
     public async Task<WiremockClient> StartAsync(DataReceivedEventHandler? onDataReceived = null,
         DataReceivedEventHandler? onErrReceived = null, CancellationToken cancellationToken = default)
@@ -65,23 +72,22 @@ public sealed class WiremockClient : IDisposable
         if (_process is not null)
             return this;
 
-        _httpPort = FindFreePort();
-
         var args = new List<string>();
 
         if (_tlsVersion is not null)
         {
-            HttpsPort = FindFreePort();
             _securityPropsFile = await GetTlsSecurityPropertiesFileAsync(_tlsVersion, cancellationToken).ConfigureAwait(false);
             args.Add($"-Djava.security.properties={_securityPropsFile}");
         }
 
+        // Port 0 lets WireMock bind a free port itself and print it on stdout. A port probed here
+        // and passed in can be taken by another process before the JVM binds it.
         args.AddRange([
             "-jar", _wiremockJar,
             "--root-dir", _wiremockDir,
             "--enable-browser-proxying",
             "--proxy-pass-through", "false",
-            "--port", _httpPort.ToString(),
+            "--port", "0",
             "--disable-banner"
         ]);
 
@@ -89,7 +95,7 @@ public sealed class WiremockClient : IDisposable
         {
             var keystorePath = Path.Combine(_wiremockDir, WiremockKeystore);
             args.AddRange([
-                "--https-port", HttpsPort.ToString(),
+                "--https-port", "0",
                 "--https-keystore", keystorePath,
                 "--keystore-type", "PKCS12",
                 "--keystore-password", WiremockKeystorePassword
@@ -116,8 +122,12 @@ public sealed class WiremockClient : IDisposable
 
         try
         {
-            _process.OutputDataReceived += onDataReceived ?? ((_, _) => { });
-            _process.ErrorDataReceived += onErrReceived ?? ((_, _) => { });
+            _process.OutputDataReceived += OnProcessOutput;
+            _process.ErrorDataReceived += OnProcessOutput;
+            if (onDataReceived is not null)
+                _process.OutputDataReceived += onDataReceived;
+            if (onErrReceived is not null)
+                _process.ErrorDataReceived += onErrReceived;
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
 
@@ -126,6 +136,7 @@ public sealed class WiremockClient : IDisposable
                 ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
             };
             _httpClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+            await WaitForPortsAsync(DefaultHealthTimeout, DefaultHealthPollInterval, cancellationToken).ConfigureAwait(false);
             await WaitForHealthAsync(DefaultHealthTimeout, DefaultHealthPollInterval, $"http://localhost:{_httpPort}", cancellationToken).ConfigureAwait(false);
 
             if (_tlsVersion is not null)
@@ -191,7 +202,9 @@ public sealed class WiremockClient : IDisposable
             _process.Dispose();
             _process = null;
             _httpPort = -1;
-            HttpsPort = -1;
+            _httpsPort = -1;
+            while (_outputTail.TryDequeue(out _))
+            { }
 
             if (_securityPropsFile is not null)
             {
@@ -225,6 +238,61 @@ public sealed class WiremockClient : IDisposable
         throw new InvalidOperationException($"Failed to register mapping: {(int)response.StatusCode} {body} (payload={mappingJson})");
     }
 
+    private void OnProcessOutput(object sender, DataReceivedEventArgs e)
+    {
+        if (e.Data is null || !ReferenceEquals(sender, _process))
+            return;
+
+        _outputTail.Enqueue(e.Data);
+        while (_outputTail.Count > OutputTailLines)
+            _outputTail.TryDequeue(out _);
+
+        var line = e.Data.Trim();
+        var https = HttpsPortLine.Match(line);
+        if (https.Success)
+        {
+            _httpsPort = int.Parse(https.Groups[1].Value, CultureInfo.InvariantCulture);
+            return;
+        }
+
+        var http = HttpPortLine.Match(line);
+        if (http.Success)
+            _httpPort = int.Parse(http.Groups[1].Value, CultureInfo.InvariantCulture);
+    }
+
+    private async Task WaitForPortsAsync(TimeSpan timeout, TimeSpan pollInterval, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (_httpPort > 0 && (_tlsVersion is null || _httpsPort > 0))
+                return;
+            if (_process is { HasExited: true })
+                throw ExitedPrematurely(_process);
+
+            await Task.Delay(pollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new InvalidOperationException($"WireMock did not report its listening ports within {timeout}{FormatOutputTail()}");
+    }
+
+    private InvalidOperationException ExitedPrematurely(Process process)
+    {
+        // The parameterless overload also waits for the redirected output to be drained. It blocks
+        // until the output pipes close, so the wait is bounded.
+        Task.Run(() => process.WaitForExit()).Wait(OutputDrainTimeout);
+        return new InvalidOperationException(
+            $"WireMock process exited prematurely with code {process.ExitCode}{FormatOutputTail()}");
+    }
+
+    private string FormatOutputTail()
+    {
+        var lines = _outputTail.ToArray();
+        return lines.Length == 0
+            ? string.Empty
+            : $"{Environment.NewLine}WireMock output:{Environment.NewLine}{string.Join(Environment.NewLine, lines)}";
+    }
+
     private async Task WaitForHealthAsync(TimeSpan timeout, TimeSpan pollInterval, string basePath, CancellationToken cancellationToken)
     {
         var deadline = DateTime.UtcNow + timeout;
@@ -232,8 +300,7 @@ public sealed class WiremockClient : IDisposable
         while (DateTime.UtcNow < deadline)
         {
             if (_process is { HasExited: true })
-                throw new InvalidOperationException(
-                    $"WireMock process exited prematurely with code {_process.ExitCode}");
+                throw ExitedPrematurely(_process);
 
             try
             {
@@ -254,7 +321,7 @@ public sealed class WiremockClient : IDisposable
         }
 
         var suffix = (lastError is not null ? $" (last error: {lastError.Message})" : "");
-        throw new InvalidOperationException($"WireMock did not become healthy within {timeout}{suffix}");
+        throw new InvalidOperationException($"WireMock did not become healthy within {timeout}{suffix}{FormatOutputTail()}");
     }
 
     private static async Task<string> GetTlsSecurityPropertiesFileAsync(string tlsVersion, CancellationToken _ = default)
@@ -264,15 +331,6 @@ public sealed class WiremockClient : IDisposable
         var path = Path.Combine(Path.GetTempPath(), $"wiremock-tls-{Guid.NewGuid():N}.properties");
         await FileShims.WriteAllTextAsync(path, content).ConfigureAwait(false);
         return path;
-    }
-
-    private static int FindFreePort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     private static string FindJava()
