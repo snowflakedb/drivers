@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,10 +12,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.notNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +36,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.api.exception.ErrorCode;
@@ -41,6 +47,9 @@ import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.decorator.Telemetry;
 import net.snowflake.client.internal.api.implementation.connection.InternalSnowflakeConnection;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
+import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
+import net.snowflake.client.internal.api.implementation.parameters.Parameter;
+import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
 import net.snowflake.client.internal.api.implementation.resultset.ResultSetFactory;
 import net.snowflake.client.internal.api.implementation.resultset.metadata.SnowflakeResultSetMetaDataImpl;
@@ -168,7 +177,8 @@ public class SnowflakeStatementImplTest {
 
   @Test
   void shouldNotRetainPreviousResultSetDroppedByCallerWhileStatementStaysOpen() throws Exception {
-    when(mockCoreApi.statementExecuteQuery(any(), isNull())).thenReturn(insertResponse(1L));
+    when(mockCoreApi.statementExecuteQuery(any(), isNull()))
+        .thenReturn(completedFuture(insertResponse(1L)));
     SnowflakeResultSetMetaDataImpl metaData = mock(SnowflakeResultSetMetaDataImpl.class);
     when(metaData.getColumnNames()).thenReturn(Collections.emptyList());
     SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi);
@@ -245,7 +255,10 @@ public class SnowflakeStatementImplTest {
   void executeBatchReturnsUpdateCountsForEachAddedSql() throws Exception {
     Statement stmt = createStatement();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L), insertResponse(2L), insertResponse(3L));
+        .thenReturn(
+            completedFuture(insertResponse(1L)),
+            completedFuture(insertResponse(2L)),
+            completedFuture(insertResponse(3L)));
 
     stmt.addBatch("INSERT INTO t VALUES (1)");
     stmt.addBatch("INSERT INTO t VALUES (2), (3)");
@@ -277,7 +290,7 @@ public class SnowflakeStatementImplTest {
     // the only type StatementBatch catches.
     Statement stmt = createDecoratedStatement();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-ok-1"))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-ok-1")))
         .thenThrow(
             new CoreException(
                 DriverException.newBuilder()
@@ -286,7 +299,7 @@ public class SnowflakeStatementImplTest {
                     .setVendorCode(1234)
                     .build(),
                 null))
-        .thenReturn(insertResponse(3L, "qid-ok-3"));
+        .thenReturn(completedFuture(insertResponse(3L, "qid-ok-3")));
 
     stmt.addBatch("INSERT INTO t VALUES (1)");
     stmt.addBatch("INSERT INTO t VALUES (2)");
@@ -315,7 +328,10 @@ public class SnowflakeStatementImplTest {
   void executeLargeBatchReturnsExactLongCountsForEachAddedSql() throws Exception {
     Statement stmt = createStatement();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L), insertResponse(2L), insertResponse(3L));
+        .thenReturn(
+            completedFuture(insertResponse(1L)),
+            completedFuture(insertResponse(2L)),
+            completedFuture(insertResponse(3L)));
 
     stmt.addBatch("INSERT INTO t VALUES (1)");
     stmt.addBatch("INSERT INTO t VALUES (2), (3)");
@@ -335,7 +351,9 @@ public class SnowflakeStatementImplTest {
     Statement stmt = createStatement();
     long largeCount = (long) Integer.MAX_VALUE + 1L;
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(largeCount), insertResponse(Integer.MAX_VALUE));
+        .thenReturn(
+            completedFuture(insertResponse(largeCount)),
+            completedFuture(insertResponse(Integer.MAX_VALUE)));
 
     stmt.addBatch("INSERT INTO t SELECT * FROM big");
     stmt.addBatch("INSERT INTO t SELECT * FROM max_int");
@@ -349,7 +367,9 @@ public class SnowflakeStatementImplTest {
     stmt.addBatch("INSERT INTO t SELECT * FROM big");
     stmt.addBatch("INSERT INTO t SELECT * FROM max_int");
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(largeCount), insertResponse(Integer.MAX_VALUE));
+        .thenReturn(
+            completedFuture(insertResponse(largeCount)),
+            completedFuture(insertResponse(Integer.MAX_VALUE)));
 
     int[] intCounts = stmt.executeBatch();
     assertArrayEquals(
@@ -363,7 +383,7 @@ public class SnowflakeStatementImplTest {
     Statement stmt = createDecoratedStatement();
     long largeCount = (long) Integer.MAX_VALUE + 1L;
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(largeCount, "qid-ok-1"))
+        .thenReturn(completedFuture(insertResponse(largeCount, "qid-ok-1")))
         .thenThrow(
             new CoreException(
                 DriverException.newBuilder()
@@ -372,7 +392,7 @@ public class SnowflakeStatementImplTest {
                     .setVendorCode(1234)
                     .build(),
                 null))
-        .thenReturn(insertResponse(3L, "qid-ok-3"));
+        .thenReturn(completedFuture(insertResponse(3L, "qid-ok-3")));
 
     stmt.addBatch("INSERT INTO t SELECT * FROM big");
     stmt.addBatch("INSERT INTO t VALUES (2)");
@@ -418,8 +438,8 @@ public class SnowflakeStatementImplTest {
   void getQueryIdReflectsLastSuccessfulExecute() throws Exception {
     Statement stmt = createStatement();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-A"))
-        .thenReturn(insertResponse(1L, "qid-B"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-A")))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-B")));
 
     stmt.executeUpdate("INSERT INTO t VALUES (1)");
     assertEquals("qid-A", ((SnowflakeStatement) stmt).getQueryID());
@@ -439,7 +459,7 @@ public class SnowflakeStatementImplTest {
     // CoreException (what the real CoreDriverApi facade surfaces), carrying the server-side query
     // id.
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-prior-success"))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-prior-success")))
         .thenThrow(driverExceptionWithQueryId("qid-failed"));
 
     stmt.executeUpdate("INSERT INTO t VALUES (1)");
@@ -457,7 +477,7 @@ public class SnowflakeStatementImplTest {
     Statement stmt = createStatement();
     // First a successful execute populates the field.
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-stale"))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-stale")))
         .thenThrow(
             new CoreException(
                 DriverException.newBuilder().setMessage("transport error").build(), null));
@@ -555,7 +575,7 @@ public class SnowflakeStatementImplTest {
   @Test
   void shouldExecuteLargeUpdateWhenGeneratedKeysFlagIsNone() throws Exception {
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-no-keys"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-no-keys")));
 
     try (Statement decorated = createDecoratedStatement()) {
       assertEquals(
@@ -569,7 +589,7 @@ public class SnowflakeStatementImplTest {
   void shouldDelegateExecuteQueryInternalToUnboundQueryWhenParametersAreNullOrEmpty()
       throws Exception {
     when(mockCoreApi.statementExecuteQuery(eq(stmtHandle), isNull()))
-        .thenReturn(insertResponse(0L, "qid-unbound"));
+        .thenReturn(completedFuture(insertResponse(0L, "qid-unbound")));
     when(mockCoreApi.resultSetGetStream(any()))
         .thenReturn(ResultSetGetStreamResponse.getDefaultInstance());
 
@@ -601,7 +621,7 @@ public class SnowflakeStatementImplTest {
               byte[] copy = new byte[view.remaining()];
               view.get(copy);
               capturedJson.set(new String(copy, StandardCharsets.UTF_8));
-              return insertResponse(0L, "qid-bound");
+              return completedFuture(insertResponse(0L, "qid-bound"));
             })
         .thenThrow(driverExceptionWithQueryId("qid-bound-failed"));
 
@@ -713,7 +733,7 @@ public class SnowflakeStatementImplTest {
       throws Exception {
     long overflowCount = (long) Integer.MAX_VALUE + 5L;
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(overflowCount, "qid-overflow"));
+        .thenReturn(completedFuture(insertResponse(overflowCount, "qid-overflow")));
 
     try (Statement decorated = createDecoratedStatement()) {
       SnowflakeSQLException updateEx =
@@ -744,8 +764,8 @@ public class SnowflakeStatementImplTest {
   void shouldReturnRowsAffectedFromExecuteLargeUpdateAndGetLargeUpdateCount() throws Exception {
     long overflowCount = (long) Integer.MAX_VALUE + 5L;
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(insertResponse(1L, "qid-insert"))
-        .thenReturn(insertResponse(overflowCount, "qid-overflow"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-insert")))
+        .thenReturn(completedFuture(insertResponse(overflowCount, "qid-overflow")));
 
     try (Statement decorated = createDecoratedStatement()) {
       assertEquals(1L, decorated.executeLargeUpdate("INSERT INTO t VALUES (1)"));
@@ -788,8 +808,8 @@ public class SnowflakeStatementImplTest {
                     .build())
             .build();
     when(mockCoreApi.statementExecuteQuery(any(), isNull()))
-        .thenReturn(emptyMulti)
-        .thenReturn(twoChildMulti);
+        .thenReturn(completedFuture(emptyMulti))
+        .thenReturn(completedFuture(twoChildMulti));
     when(mockCoreApi.connectionGetResultSet(connHandle, "qid-c1"))
         .thenReturn(insertResponse(2L, "qid-c1").getSingle());
     when(mockCoreApi.connectionGetResultSet(connHandle, "qid-c2"))
@@ -862,6 +882,116 @@ public class SnowflakeStatementImplTest {
       assertNull(asyncTimeoutEx.getSQLState());
       assertEquals(0, asyncTimeoutEx.getErrorCode());
     }
+  }
+
+  @Test
+  void shouldCancelTheInFlightQuery() throws Exception {
+    CountDownLatch executing = new CountDownLatch(1);
+    CountDownLatch cancelled = new CountDownLatch(1);
+    @SuppressWarnings("unchecked")
+    Future<ExecuteQueryResponse> query = mock(Future.class);
+    when(query.get())
+        .thenAnswer(
+            invocation -> {
+              executing.countDown();
+              cancelled.await(10, TimeUnit.SECONDS);
+              return insertResponse(1L);
+            });
+    when(query.cancel(true))
+        .thenAnswer(
+            invocation -> {
+              cancelled.countDown();
+              return true;
+            });
+    when(mockCoreApi.statementExecuteQuery(any(), isNull())).thenReturn(query);
+    Statement stmt = createStatement();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      Future<Boolean> running = executor.submit(() -> stmt.execute("INSERT INTO t VALUES (1)"));
+      assertTrue(executing.await(10, TimeUnit.SECONDS));
+
+      stmt.cancel();
+
+      running.get(10, TimeUnit.SECONDS);
+      verify(query).cancel(true);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void shouldIgnoreCancelWhenNoQueryIsRunning() throws Exception {
+    @SuppressWarnings("unchecked")
+    Future<ExecuteQueryResponse> query = mock(Future.class);
+    when(query.get()).thenReturn(insertResponse(1L));
+    when(mockCoreApi.statementExecuteQuery(any(), isNull())).thenReturn(query);
+    Statement stmt = createStatement();
+
+    stmt.cancel();
+    stmt.execute("INSERT INTO t VALUES (1)");
+    stmt.cancel();
+
+    verify(query, never()).cancel(anyBoolean());
+  }
+
+  @Test
+  void shouldRejectCancelOnClosedStatement() throws Exception {
+    Statement stmt = createStatement();
+    stmt.close();
+
+    SFSQLException ex = assertThrows(SFSQLException.class, stmt::cancel);
+
+    assertEquals("Statement is closed", ex.getMessage());
+  }
+
+  @Test
+  void shouldReportMaxCharLiteralLengthAsMaxFieldSize() throws Exception {
+    ParametersRegistry parameters = mock(ParametersRegistry.class);
+    when(parameters.getInt(Parameter.VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT)).thenReturn(16777216);
+    when(mockConnection.getParameters()).thenReturn(parameters);
+
+    assertEquals(16777216, createStatement().getMaxFieldSize());
+  }
+
+  @Test
+  void shouldRejectSettingMaxFieldSize() throws Exception {
+    SQLFeatureNotSupportedException ex =
+        assertThrows(
+            SQLFeatureNotSupportedException.class,
+            () -> createDecoratedStatement().setMaxFieldSize(10));
+
+    assertNotSupported("setMaxFieldSize not supported", ex);
+  }
+
+  @Test
+  void shouldAcceptNonPoolableAndRejectPoolable() throws Exception {
+    Statement stmt = createDecoratedStatement();
+
+    stmt.setPoolable(false);
+
+    assertFalse(stmt.isPoolable());
+    SQLFeatureNotSupportedException ex =
+        assertThrows(SQLFeatureNotSupportedException.class, () -> stmt.setPoolable(true));
+    assertNotSupported("setPoolable(true) not supported", ex);
+  }
+
+  @Test
+  void shouldRejectCloseOnCompletion() throws Exception {
+    Statement stmt = createDecoratedStatement();
+
+    SQLFeatureNotSupportedException closeEx =
+        assertThrows(SQLFeatureNotSupportedException.class, stmt::closeOnCompletion);
+    SQLFeatureNotSupportedException isCloseEx =
+        assertThrows(SQLFeatureNotSupportedException.class, stmt::isCloseOnCompletion);
+
+    assertNotSupported("closeOnCompletion not supported", closeEx);
+    assertNotSupported("isCloseOnCompletion not supported", isCloseEx);
+  }
+
+  private static void assertNotSupported(String message, SQLFeatureNotSupportedException ex) {
+    assertEquals(message, ex.getMessage());
+    assertNull(ex.getSQLState());
+    assertEquals(0, ex.getErrorCode());
   }
 
   private static CoreException driverExceptionWithQueryId(String queryId) {

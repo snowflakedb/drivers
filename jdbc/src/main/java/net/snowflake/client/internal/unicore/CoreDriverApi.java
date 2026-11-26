@@ -2,6 +2,7 @@ package net.snowflake.client.internal.unicore;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionAbortQueryResponse;
@@ -147,7 +148,12 @@ public interface CoreDriverApi {
   StatementSetOptionsResponse statementSetOptions(
       StatementHandle stmtHandle, Map<String, ConfigSetting> options);
 
-  ExecuteQueryResponse statementExecuteQuery(StatementHandle stmtHandle, QueryBindings bindings);
+  /**
+   * Starts the query and returns its in-flight future. Block on it with {@link
+   * CoreFutures#await(Future)}; cancelling it makes the core abort the running query.
+   */
+  Future<ExecuteQueryResponse> statementExecuteQuery(
+      StatementHandle stmtHandle, QueryBindings bindings);
 
   StatementExecuteAsyncResponse statementExecuteAsync(
       StatementHandle stmtHandle, QueryBindings bindings);

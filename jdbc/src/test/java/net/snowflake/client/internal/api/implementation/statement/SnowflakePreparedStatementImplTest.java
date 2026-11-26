@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -114,7 +115,7 @@ public class SnowflakePreparedStatementImplTest {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
         .thenThrow(new CoreException(stageBindingDisabledError(), null))
-        .thenReturn(insertResponse(1L));
+        .thenReturn(completedFuture(insertResponse(1L)));
 
     ps.setInt(1, 42);
     ps.addBatch();
@@ -165,7 +166,7 @@ public class SnowflakePreparedStatementImplTest {
   void executeBatchSendsSingleQueryAndExpandsAggregateUpdateCount() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(3L));
+        .thenReturn(completedFuture(insertResponse(3L)));
 
     ps.setInt(1, 1);
     ps.addBatch();
@@ -184,7 +185,7 @@ public class SnowflakePreparedStatementImplTest {
   void executeBatchReturnsSuccessNoInfoWhenServerCountDiffersFromBatchSize() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(7L));
+        .thenReturn(completedFuture(insertResponse(7L)));
 
     ps.setInt(1, 1);
     ps.addBatch();
@@ -204,9 +205,9 @@ public class SnowflakePreparedStatementImplTest {
         createPreparedStatement("UPDATE t SET value = ? WHERE id = ?");
     when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(false));
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L, "qid-update-1"))
-        .thenReturn(insertResponse(2L, "qid-update-2"))
-        .thenReturn(insertResponse(3L, "qid-update-3"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-update-1")))
+        .thenReturn(completedFuture(insertResponse(2L, "qid-update-2")))
+        .thenReturn(completedFuture(insertResponse(3L, "qid-update-3")));
 
     for (int row = 1; row <= 3; row++) {
       ps.setInt(1, row * 10);
@@ -228,7 +229,7 @@ public class SnowflakePreparedStatementImplTest {
     PreparedStatement ps = new DecoratedSnowflakePreparedStatementImpl(impl, Telemetry.NOOP);
     when(mockCoreApi.statementPrepare(any())).thenReturn(prepareResponse(false));
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L, "qid-update-1"))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-update-1")))
         .thenThrow(
             new CoreException(
                 DriverException.newBuilder()
@@ -237,7 +238,7 @@ public class SnowflakePreparedStatementImplTest {
                     .setVendorCode(7)
                     .build(),
                 null))
-        .thenReturn(insertResponse(3L, "qid-update-3"));
+        .thenReturn(completedFuture(insertResponse(3L, "qid-update-3")));
 
     for (int row = 1; row <= 3; row++) {
       ps.setInt(1, row * 10);
@@ -293,7 +294,7 @@ public class SnowflakePreparedStatementImplTest {
   void executeLargeBatchReturnsLongCountsExpandedFromAggregate() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(2L));
+        .thenReturn(completedFuture(insertResponse(2L)));
 
     ps.setInt(1, 1);
     ps.addBatch();
@@ -352,7 +353,7 @@ public class SnowflakePreparedStatementImplTest {
   void executeBatchPopulatesAndResetsBatchQueryIds() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L));
+        .thenReturn(completedFuture(insertResponse(1L)));
 
     ps.setInt(1, 1);
     ps.addBatch();
@@ -372,7 +373,7 @@ public class SnowflakePreparedStatementImplTest {
   void getQueryIdReflectsLastSuccessfulExecuteQuery() throws Exception {
     SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)");
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L, "qid-prepared"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-prepared")));
 
     ps.setInt(1, 1);
     ps.executeUpdate();
@@ -384,8 +385,8 @@ public class SnowflakePreparedStatementImplTest {
   void shouldReturnRowsAffectedFromPreparedExecuteLargeUpdate() throws Exception {
     long overflowCount = (long) Integer.MAX_VALUE + 5L;
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L, "qid-prepared"))
-        .thenReturn(insertResponse(overflowCount, "qid-overflow"));
+        .thenReturn(completedFuture(insertResponse(1L, "qid-prepared")))
+        .thenReturn(completedFuture(insertResponse(overflowCount, "qid-overflow")));
 
     try (PreparedStatement decorated =
         createDecoratedPreparedStatement("INSERT INTO t VALUES (?)")) {
@@ -443,7 +444,7 @@ public class SnowflakePreparedStatementImplTest {
     // the transport-layer ServiceException, preserving the server-side query id) and the type the
     // impl's execute path catches to capture that id.
     when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-        .thenReturn(insertResponse(1L, "qid-prior"))
+        .thenReturn(completedFuture(insertResponse(1L, "qid-prior")))
         .thenThrow(driverExceptionWithQueryId("qid-prepared-failed"));
 
     ps.setInt(1, 1);
@@ -574,7 +575,7 @@ public class SnowflakePreparedStatementImplTest {
     try (SnowflakePreparedStatementImpl ps =
         spy(createPreparedStatement("INSERT INTO t VALUES (?)"))) {
       when(mockCoreApi.statementExecuteQuery(any(), notNull(QueryBindings.class)))
-          .thenReturn(insertResponse(1L));
+          .thenReturn(completedFuture(insertResponse(1L)));
       Clob clob = new SnowflakeClob("pooling clob");
 
       ps.setClob(1, clob);
@@ -600,7 +601,7 @@ public class SnowflakePreparedStatementImplTest {
         .thenAnswer(
             invocation -> {
               json.set(utf8Json(invocation.getArgument(1)));
-              return insertResponse(1L);
+              return completedFuture(insertResponse(1L));
             });
 
     try (SnowflakePreparedStatementImpl ps = createPreparedStatement("INSERT INTO t VALUES (?)")) {

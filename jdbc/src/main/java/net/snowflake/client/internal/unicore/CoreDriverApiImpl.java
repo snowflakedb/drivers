@@ -3,10 +3,8 @@ package net.snowflake.client.internal.unicore;
 import com.google.protobuf.UnsafeByteOperations;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import lombok.RequiredArgsConstructor;
-import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
@@ -77,7 +75,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseReleaseResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DownloadStreamHandle;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetFipsStatusRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverGetFipsStatusResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteQueryResponse;
@@ -386,7 +383,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
     return invoke(() -> client.statementSetOptions(request));
   }
 
-  public ExecuteQueryResponse statementExecuteQuery(
+  public Future<ExecuteQueryResponse> statementExecuteQuery(
       StatementHandle stmtHandle, QueryBindings bindings) {
     StatementExecuteQueryRequest.Builder builder =
         StatementExecuteQueryRequest.newBuilder().setStmtHandle(stmtHandle);
@@ -394,7 +391,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
       builder.setBindings(bindings);
     }
     StatementExecuteQueryRequest request = builder.build();
-    return await(client.statementExecuteQuery(request));
+    return client.statementExecuteQuery(request);
   }
 
   public StatementExecuteAsyncResponse statementExecuteAsync(
@@ -559,47 +556,11 @@ class CoreDriverApiImpl implements CoreDriverApi {
     try {
       return callable.call();
     } catch (ServiceException | TransportException e) {
-      throw toCoreException(e);
+      throw CoreFutures.toCoreException(e);
     }
   }
 
-  /**
-   * Block on an async-first RPC future, mapping its failure to a {@link CoreException} runtime
-   * carrier. {@link CoreFuture#get()} wraps the decoder's {@code ServiceException} / {@code
-   * TransportException} in an {@link ExecutionException}, so unwrap the cause here.
-   */
   private <T> T await(Future<T> future) {
-    try {
-      return future.get();
-    } catch (ExecutionException e) {
-      Throwable cause = e.getCause();
-      if (cause instanceof ServiceException || cause instanceof TransportException) {
-        throw toCoreException((RuntimeException) cause);
-      }
-      throw new CoreException(
-          "Driver error: " + (cause != null ? cause.getMessage() : "unknown"),
-          cause != null ? cause : e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new CoreException("Interrupted while waiting for the core operation to complete", e);
-    }
-  }
-
-  /**
-   * Map an RPC failure — thrown directly by a blocking call or unwrapped from an {@link
-   * ExecutionException} on the async path — to a {@link CoreException} runtime carrier. Any {@link
-   * DriverException} payload is preserved verbatim so the decorator boundary can reconstruct the
-   * core-reported SQLState / vendor code / query id.
-   */
-  private static CoreException toCoreException(RuntimeException e) {
-    if (e instanceof ServiceException) {
-      Object error = ((ServiceException) e).error;
-      if (error instanceof DriverException) {
-        return new CoreException((DriverException) error, e);
-      }
-      return new CoreException(e.getMessage(), e);
-    }
-    // TransportException
-    return new CoreException("Driver communication error: " + e.getMessage(), e);
+    return CoreFutures.await(future);
   }
 }

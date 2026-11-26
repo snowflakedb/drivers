@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.resultset.SnowflakeType;
@@ -22,6 +23,7 @@ import net.snowflake.client.internal.api.implementation.exception.CoreException;
 import net.snowflake.client.internal.api.implementation.exception.SFBatchUpdateException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLException;
 import net.snowflake.client.internal.api.implementation.exception.SFSQLFeatureNotSupportedException;
+import net.snowflake.client.internal.api.implementation.metadata.capabilities.MetaDataLimits;
 import net.snowflake.client.internal.api.implementation.parameters.Parameter;
 import net.snowflake.client.internal.api.implementation.parameters.ParametersRegistry;
 import net.snowflake.client.internal.api.implementation.resultset.InternalResultSet;
@@ -30,6 +32,7 @@ import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.CoreDriverApi;
+import net.snowflake.client.internal.unicore.CoreFutures;
 import net.snowflake.client.internal.unicore.CoreHandleCleaner;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DriverException;
@@ -73,6 +76,8 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   private final List<String> batchQueryIds = new ArrayList<>();
   /** Non-null only while navigating a multi-statement result set sequence. */
   private MultiStatementState multiState;
+
+  private volatile Future<ExecuteQueryResponse> runningQuery;
 
   public SnowflakeStatementImpl(
       InternalSnowflakeConnection connection, CoreDriverApi coreDriverApi) {
@@ -211,12 +216,17 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
     // the embedded native pointer remains valid across the synchronous RPC (JLS §12.6.1).
     ExecuteQueryResponse response;
     try {
-      response = coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+      Future<ExecuteQueryResponse> query =
+          coreDriverApi.statementExecuteQuery(statementHandle, bindings);
+      runningQuery = query;
+      response = CoreFutures.await(query);
     } catch (CoreException e) {
       // Mirror snowflake-jdbc: surface the server-side queryId on a failed execute so callers
       // can correlate the error with a Snowflake history entry.
       captureQueryIdFromException(e);
       throw e;
+    } finally {
+      runningQuery = null;
     }
     logger.debug("statementExecuteQuery succeeded: hasBindings={}", hasBindings);
     return response;
@@ -399,13 +409,12 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public int getMaxFieldSize() {
     checkClosed();
-    return 0; // No limit in stub implementation
+    return new MetaDataLimits(connection).getMaxCharLiteralLength();
   }
 
   @Override
   public void setMaxFieldSize(int max) {
-    checkClosed();
-    // Stub implementation - ignore
+    throw new SFSQLFeatureNotSupportedException("setMaxFieldSize not supported");
   }
 
   @Override
@@ -423,7 +432,7 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public void setEscapeProcessing(boolean enable) {
     checkClosed();
-    // Stub implementation - ignore
+    // Intentionally a no-op, as in snowflake-jdbc.
   }
 
   @Override
@@ -441,7 +450,10 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public void cancel() {
     checkClosed();
-    // Stub implementation - no cancellation logic
+    Future<ExecuteQueryResponse> query = runningQuery;
+    if (query != null) {
+      query.cancel(true);
+    }
   }
 
   @Override
@@ -453,7 +465,7 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public void clearWarnings() {
     checkClosed();
-    // Stub implementation - no warnings to clear
+    // Intentionally a no-op, as in snowflake-jdbc: getWarnings() always returns null.
   }
 
   @Override
@@ -759,7 +771,9 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public void setPoolable(boolean poolable) {
     checkClosed();
-    // Stub implementation - ignore
+    if (poolable) {
+      throw new SFSQLFeatureNotSupportedException("setPoolable(true) not supported");
+    }
   }
 
   @Override
@@ -770,14 +784,12 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
 
   @Override
   public void closeOnCompletion() {
-    checkClosed();
-    // Stub implementation - ignore
+    throw new SFSQLFeatureNotSupportedException("closeOnCompletion not supported");
   }
 
   @Override
   public boolean isCloseOnCompletion() {
-    checkClosed();
-    return false;
+    throw new SFSQLFeatureNotSupportedException("isCloseOnCompletion not supported");
   }
 
   protected void checkClosed() {
