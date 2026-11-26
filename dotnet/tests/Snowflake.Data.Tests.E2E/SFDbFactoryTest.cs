@@ -1,5 +1,6 @@
 extern alias OldDriver;
 using System.Data.Common;
+using Snowflake.Data.Client;
 using Snowflake.Data.Tests.Compatibility;
 using Snowflake.Data.Tests.E2E.Fixtures;
 using OldSnowflakeDbFactory = OldDriver::Snowflake.Data.Client.SnowflakeDbFactory;
@@ -16,10 +17,7 @@ public sealed class SFDbFactoryTest : LiveE2ETestBase
     [SnowflakeFact]
     public async Task ShouldExecuteCommandCreatedByDbFactoryAsync()
     {
-        // TODO(SNOW-4382584): SnowflakeDbFactory (DbProviderFactory) in the new driver
-        Skip.FutureMilestone();
-
-        var factory = CreateFactory();
+        var factory = GetFactory();
         using var command = factory.CreateCommand()!;
         using var connection = OpenConnection(factory);
         command.Connection = connection;
@@ -33,12 +31,11 @@ public sealed class SFDbFactoryTest : LiveE2ETestBase
     [SnowflakeFact]
     public async Task ShouldBindParameterCreatedByDbFactoryAsync()
     {
-        // TODO(SNOW-4382584): SnowflakeDbFactory (DbProviderFactory) in the new driver
         // TODO(SNOW-4382583): parameter bindings
         Skip.FutureMilestone();
 
         var expectedIntValue = 1;
-        var factory = CreateFactory();
+        var factory = GetFactory();
         using var command = factory.CreateCommand()!;
         using var connection = OpenConnection(factory);
 
@@ -59,10 +56,7 @@ public sealed class SFDbFactoryTest : LiveE2ETestBase
     [SnowflakeFact]
     public async Task ShouldOpenConnectionWithDbFactoryConnectionStringBuilderAsync()
     {
-        // TODO(SNOW-4382584): SnowflakeDbFactory (DbProviderFactory) in the new driver
-        Skip.FutureMilestone();
-
-        var factory = CreateFactory();
+        var factory = GetFactory();
         using var command = factory.CreateCommand()!;
         using var connection = OpenConnection(factory);
         var builder = factory.CreateConnectionStringBuilder()!;
@@ -82,10 +76,7 @@ public sealed class SFDbFactoryTest : LiveE2ETestBase
     [SnowflakeFact]
     public void ShouldFillDataSetWithDbFactoryDataAdapter()
     {
-        // TODO(SNOW-4382584): SnowflakeDbFactory (DbProviderFactory) in the new driver
-        Skip.FutureMilestone();
-
-        var factory = CreateFactory();
+        var factory = GetFactory();
         using var command = factory.CreateCommand()!;
         using var connection = OpenConnection(factory);
         command.Connection = connection;
@@ -102,10 +93,10 @@ public sealed class SFDbFactoryTest : LiveE2ETestBase
         Assert.Equal(1L, ds.Tables[0].Rows[0].ItemArray[0]);
     }
 
-    private static DbProviderFactory CreateFactory() =>
+    private static DbProviderFactory GetFactory() =>
         TestDriver.Current == TestDriver.Kind.Old
             ? OldSnowflakeDbFactory.Instance
-            : throw new NotSupportedException("The new driver has no DbProviderFactory");
+            : SnowflakeDbFactory.Instance;
 
     private DbConnection OpenConnection(DbProviderFactory factory)
     {

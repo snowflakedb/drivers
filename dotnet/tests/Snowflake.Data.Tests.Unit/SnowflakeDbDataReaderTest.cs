@@ -332,13 +332,9 @@ public sealed class SnowflakeDbDataReaderTest
         _ = Record.Exception(() => _reader.Read());
         _ = await Record.ExceptionAsync(() => _reader.ReadAsync(CancellationToken.None)).ConfigureAwait(false);
 
-        Assert.Equal(
-            [
-                (LogLevel.Debug, $"The reader GetInt32 failed for query {QueryId}.", carrier),
-                (LogLevel.Debug, $"The reader Read failed for query {QueryId}.", carrier),
-                (LogLevel.Debug, $"The reader ReadAsync failed for query {QueryId}.", carrier),
-            ],
-            _logger.Entries);
+        Assert.Equal(_logger.Entries[1], (LogLevel.Debug, $"The reader GetInt32 failed for query {QueryId}.", carrier));
+        Assert.Equal(_logger.Entries[3], (LogLevel.Debug, $"The reader Read failed for query {QueryId}.", carrier));
+        Assert.Equal(_logger.Entries[5], (LogLevel.Debug, $"The reader ReadAsync failed for query {QueryId}.", carrier));
     }
 
     private static void AssertNotACarrier(Exception? exception)

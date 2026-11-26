@@ -1,55 +1,107 @@
 using System.Data;
 using System.Data.Common;
+using System.Globalization;
 
-// ReSharper disable UnusedType.Global
-// ReSharper disable UnusedParameter.Local
 #pragma warning disable CS8765 // Nullability of type of parameter doesn't match overridden member (possibly because of nullability attributes).
 
 namespace Snowflake.Data.Client;
 
 public class SnowflakeDbCommandBuilder : DbCommandBuilder
 {
+    private const string DefaultQuotePrefix = "\"";
+    private const string DefaultQuoteSuffix = "\"";
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SnowflakeDbCommandBuilder"/> class.
+    /// </summary>
     public SnowflakeDbCommandBuilder()
         : this(null)
     {
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SnowflakeDbCommandBuilder"/> class.
+    /// </summary>
+    /// <param name="adapter">The adapter.</param>
     public SnowflakeDbCommandBuilder(SnowflakeDbDataAdapter? adapter)
     {
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        DataAdapter = adapter;
+        QuotePrefix = DefaultQuotePrefix;
+        QuoteSuffix = DefaultQuoteSuffix;
     }
 
-    public override string QuotePrefix
+    /// <summary>
+    /// Gets or sets the beginning character or characters to use when specifying database objects (for example, tables or columns) whose names contain characters such as spaces or reserved tokens.
+    /// </summary>
+    /// <returns>
+    /// The beginning character or characters to use. The default is an empty string.
+    ///   </returns>
+    ///   <PermissionSet>
+    ///   <IPermission class="System.Security.Permissions.FileIOPermission, mscorlib, Version=2.0.3600.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" version="1" PathDiscovery="*AllFiles*" />
+    ///   </PermissionSet>
+    public sealed override string QuotePrefix
     {
-        get => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
-        set => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        get => base.QuotePrefix;
+        set => base.QuotePrefix = string.IsNullOrEmpty(value) ? DefaultQuotePrefix : value;
     }
 
-    public override string QuoteSuffix
+    /// <summary>
+    /// Gets or sets the ending character or characters to use when specifying database objects (for example, tables or columns) whose names contain characters such as spaces or reserved tokens.
+    /// </summary>
+    /// <returns>
+    /// The ending character or characters to use. The default is an empty string.
+    ///   </returns>
+    ///   <PermissionSet>
+    ///   <IPermission class="System.Security.Permissions.FileIOPermission, mscorlib, Version=2.0.3600.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" version="1" PathDiscovery="*AllFiles*" />
+    ///   </PermissionSet>
+    public sealed override string QuoteSuffix
     {
-        get => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
-        set => throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+        get => base.QuoteSuffix;
+        set => base.QuoteSuffix = string.IsNullOrEmpty(value) ? DefaultQuoteSuffix : value;
     }
 
-    protected override void ApplyParameterInfo(DbParameter p, DataRow row, StatementType statementType, bool whereClause) =>
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <summary>
+    /// Applies the parameter information.
+    /// </summary>
+    /// <param name="p">The parameter.</param>
+    /// <param name="row">The row.</param>
+    /// <param name="statementType">Type of the statement.</param>
+    /// <param name="whereClause">if set to <c>true</c> [where clause].</param>
+    protected override void ApplyParameterInfo(DbParameter p, DataRow row, StatementType statementType, bool whereClause)
+    {
+        var param = (SnowflakeDbParameter)p;
+        param.DbType = (DbType)row[SchemaTableColumn.ProviderType];
+    }
 
-    protected override string GetParameterName(int parameterOrdinal) => throw new NotImplementedException(
-        "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <summary>
+    /// Returns the name of the specified parameter in the format of #.
+    /// </summary>
+    /// <param name="parameterOrdinal">The number to be included as part of the parameter's name..</param>
+    /// <returns>
+    /// The name of the parameter with the specified number appended as part of the parameter name.
+    /// </returns>
+    protected override string GetParameterName(int parameterOrdinal) => string.Format(CultureInfo.InvariantCulture, "{0}", parameterOrdinal);
 
-    protected override string GetParameterName(string parameterName) => throw new NotImplementedException(
-        "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <summary>
+    /// Returns the full parameter name, given the partial parameter name.
+    /// </summary>
+    /// <param name="parameterName">The partial name of the parameter.</param>
+    /// <returns>
+    /// The full parameter name corresponding to the partial parameter name requested.
+    /// </returns>
+    protected override string GetParameterName(string parameterName) => string.Format(CultureInfo.InvariantCulture, "{0}", parameterName);
 
-    protected override string GetParameterPlaceholder(int parameterOrdinal) => throw new NotImplementedException(
-        "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <summary>
+    /// Returns the placeholder for the parameter in the associated SQL statement.
+    /// </summary>
+    /// <param name="parameterOrdinal">The number to be included as part of the parameter's name.</param>
+    /// <returns>
+    /// The name of the parameter with the specified number appended.
+    /// </returns>
+    protected override string GetParameterPlaceholder(int parameterOrdinal) => GetParameterName(parameterOrdinal);
 
-    protected override void SetRowUpdatingHandler(DbDataAdapter adapter) =>
-        throw new NotImplementedException(
-            "TODO this implementation is a stub for now. It awaits implementation (or dropping if applicable)");
+    /// <inheritdoc />
+    protected override void SetRowUpdatingHandler(DbDataAdapter adapter)
+    {
+    }
 }

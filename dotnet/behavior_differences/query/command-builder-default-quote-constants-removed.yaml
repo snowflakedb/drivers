@@ -1,0 +1,17 @@
+name: "SnowflakeDbCommandBuilder default quote constants are not public"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  The new driver does not carry over the old-driver constants. The default quote
+  characters are an implementation detail of the builder, which applies them whenever
+  `QuotePrefix` or `QuoteSuffix` is set to null or an empty string.
+old_driver_behavior: |
+  `SnowflakeDbCommandBuilder` exposes the public constants `DEFAULT_QUOTE_PREFIX` and
+  `DEFAULT_QUOTE_SUFFIX`, both `"`, which an application can reference.
+new_driver_behavior: |
+  `SnowflakeDbCommandBuilder` has no public `DEFAULT_QUOTE_PREFIX` or `DEFAULT_QUOTE_SUFFIX`.
+  An application that references them fails to compile. `QuotePrefix` and `QuoteSuffix`
+  still default to `"`.

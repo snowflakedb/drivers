@@ -72,6 +72,8 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
 
     internal DatabaseHandle? DbHandle => _dbHandle;
 
+    protected override DbProviderFactory DbProviderFactory => new SnowflakeDbFactory();
+
     public override void ChangeDatabase(string databaseName) =>
         throw new NotSupportedException();
 
@@ -113,9 +115,7 @@ public sealed class SnowflakeDbConnection : DbConnection, ISnowflakeDbConnection
     public override async Task OpenAsync(CancellationToken cancellationToken)
     {
         if (_state == ConnectionState.Open)
-        {
-            throw new InvalidOperationException("Connection is already open.");
-        }
+            return;
 
         _state = ConnectionState.Connecting;
 

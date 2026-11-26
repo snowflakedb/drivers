@@ -221,6 +221,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader, ISnowflakeDbDataReader
         }
         catch (SnowflakeException exception)
         {
+            _logger.LogDebug(exception, "{Operation} failed", nameof(ReadNextBatchAsync));
             throw ToPublicException(exception, nameof(ReadAsync));
         }
     }
@@ -233,6 +234,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader, ISnowflakeDbDataReader
         }
         catch (SnowflakeException exception)
         {
+            _logger.LogDebug(exception, "{Operation} failed when running {Method}", nameof(Run), method);
             throw ToPublicException(exception, method);
         }
     }
@@ -245,6 +247,7 @@ public sealed class SnowflakeDbDataReader : DbDataReader, ISnowflakeDbDataReader
         }
         catch (SnowflakeException exception)
         {
+            _logger.LogDebug(exception, "{Operation} failed when running {Method}", nameof(Run), method);
             throw ToPublicException(exception, method);
         }
     }

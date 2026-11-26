@@ -54,6 +54,11 @@ public sealed class PublicApiTest
         $"M:{nameof(ISnowflakeDbConnection.IsAnError)}({nameof(QueryStatus)})",
     ];
 
+    private static readonly HashSet<string> SnowflakeDbConnectionStringBuilderPublicApi =
+    [
+        "C:()",
+    ];
+
     private static readonly HashSet<string> ISnowflakeDbConnectionPublicApi =
     [
         $"P:get_{nameof(ISnowflakeDbConnection.Password)}()",
@@ -254,6 +259,17 @@ public sealed class PublicApiTest
         $"P:set_SelectCommand({nameof(SnowflakeDbCommand)})",
     ];
 
+    private static readonly HashSet<string> SnowflakeDbFactoryPublicApi =
+    [
+        "C:()",
+        $"M:{nameof(DbProviderFactory.CreateCommand)}()",
+        $"M:{nameof(DbProviderFactory.CreateConnection)}()",
+        $"M:{nameof(DbProviderFactory.CreateParameter)}()",
+        $"M:{nameof(DbProviderFactory.CreateConnectionStringBuilder)}()",
+        $"M:{nameof(DbProviderFactory.CreateCommandBuilder)}()",
+        $"M:{nameof(DbProviderFactory.CreateDataAdapter)}()",
+    ];
+
     private static readonly HashSet<string> SnowflakeDbLoggerConfigPublicApi =
     [
         "C:()",
@@ -337,12 +353,14 @@ public sealed class PublicApiTest
     private static readonly Dictionary<Type, HashSet<string>> PublicApiSurface = new()
     {
         [typeof(SnowflakeDbConnection)] = SnowflakeDbConnectionPublicApi,
+        [typeof(SnowflakeDbConnectionStringBuilder)] = SnowflakeDbConnectionStringBuilderPublicApi,
         [typeof(ISnowflakeDbConnection)] = ISnowflakeDbConnectionPublicApi,
         [typeof(QueryStatus)] = QueryStatusPublicApi,
         [typeof(SnowflakeDbCommand)] = SnowflakeDbCommandPublicApi,
         [typeof(SnowflakeDbCommandBuilder)] = SnowflakeDbCommandBuilderPublicApi,
         [typeof(SnowflakeDbDataAdapter)] = SnowflakeDbDataAdapterPublicApi,
         [typeof(SnowflakeDbDataReader)] = SnowflakeDbDataReaderPublicApi,
+        [typeof(SnowflakeDbFactory)] = SnowflakeDbFactoryPublicApi,
         [typeof(SnowflakeDbLoggerConfig)] = SnowflakeDbLoggerConfigPublicApi,
         [typeof(SnowflakeDbParameter)] = SnowflakeDbParameterPublicApi,
         [typeof(SnowflakeDbParameterCollection)] = SnowflakeDbParameterCollectionPublicApi,
@@ -366,10 +384,12 @@ public sealed class PublicApiTest
         var allowedPublicTypes = new HashSet<string>
         {
             typeof(SnowflakeDbConnection).FullName!,
+            typeof(SnowflakeDbConnectionStringBuilder).FullName!,
             typeof(SnowflakeDbCommand).FullName!,
             typeof(SnowflakeDbCommandBuilder).FullName!,
             typeof(SnowflakeDbDataAdapter).FullName!,
             typeof(SnowflakeDbDataReader).FullName!,
+            typeof(SnowflakeDbFactory).FullName!,
             typeof(SnowflakeDbLoggerConfig).FullName!,
             typeof(SnowflakeDbParameter).FullName!,
             typeof(SnowflakeDbParameterCollection).FullName!,
