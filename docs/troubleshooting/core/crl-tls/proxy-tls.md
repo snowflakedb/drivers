@@ -95,7 +95,8 @@ tls_client <URL> -vv --result-file r.json
    [cert-chain.md](cert-chain.md#b2-custom-trust-store-empty-or-malformed).
 3. With CRL checking on, the proxy must also let the CRL distribution points
    through (HTTP port 80); an unreachable CRL fails the connection in `ENABLED`
-   mode and delays it in `ADVISORY` mode ([crl-revocation.md](crl-revocation.md#crl-3-fetch-errors--network--timeout)).
+   mode; in `ADVISORY` mode the driver logs a warning and connects, after the
+   fetch timeout if the CDP is blackholed ([crl-revocation.md](crl-revocation.md#crl-3-fetch-errors--network--timeout)).
    Otherwise leave `crl_check_mode=DISABLED`.
 
 ### C5. Credential special characters

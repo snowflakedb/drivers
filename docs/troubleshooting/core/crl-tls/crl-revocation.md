@@ -15,19 +15,25 @@ Related: [tls-handshake.md](tls-handshake.md) · [cert-chain.md](cert-chain.md) 
 | Mode | Value | Behavior |
 |---|---|---|
 | `Disabled` (default) | `0` / `DISABLED` | No CRL fetch; the handshake still validates chain + hostname. |
-| `Enabled` | `1` / `ENABLED` | Any CRL issue (fetch failure, parse error, missing CRL URL, or revocation) fails the connection. |
+| `Enabled` | `1` / `ENABLED` | Any CRL issue (fetch failure, parse error, missing CRL URL unless `crl_allow_certificates_without_crl_url=true`, or revocation) fails the connection. |
 | `Advisory` | `2` / `ADVISORY` | Fails only on a confirmed revocation (the end-entity certificate, or every candidate chain). A failed CRL fetch, an unparseable or expired CRL, or a certificate with no usable CRL URL logs a warning and allows the connection. |
 
 Values are matched case-sensitively (`DISABLED`, `ENABLED`, `ADVISORY`, `0`, `1`,
 `2`); any other value, including lowercase, is rejected when the connection is
 created. ODBC keys: `CRL_MODE`, `CRL_ENABLED`.
 
-> **Confirmed revocation fails in every mode** — a revoked end-entity
-> certificate, or a revoked certificate on every candidate chain, is fatal in
-> **every** mode, including `ADVISORY`. When none of several candidate chains is
-> clean, a mix of revoked chains and chains whose CRL check could not be completed
-> counts as undetermined: `ADVISORY` allows the connection and `ENABLED` fails it.
+> **Confirmed revocation fails whenever CRL checking is on** — a revoked
+> end-entity certificate, or a revoked certificate on every candidate chain, is
+> fatal in both `ENABLED` and `ADVISORY` (`DISABLED` fetches no CRL, so it never
+> sees one). When none of several candidate chains is clean, a mix of revoked
+> chains and chains whose CRL check could not be completed counts as
+> undetermined: `ADVISORY` allows the connection and `ENABLED` fails it.
 > A clean candidate chain always lets the connection through.
+>
+> Within one chain, a certificate whose CRL could not be checked does not stop
+> the walk: the driver still checks the issuers above it. A revoked intermediate
+> higher in the same chain therefore still fails the connection in `ADVISORY`,
+> even when the leaf's CRL fetch failed.
 
 ### Validation flow
 
@@ -41,9 +47,10 @@ verify_server_cert()                       crl_verifier.rs
                                         Revoked(Intermediate)
                                                         (fails only when every chain is revoked;
                                                          a mix with Indeterminate is Indeterminate)
-                                        Indeterminate   (fetch/parse error or no CRL URL:
+                                        Indeterminate   (fetch/parse/verify error, no CRL URL, or no
+                                                         applicable full-coverage CRL:
                                                          fail in ENABLED; warn and allow in ADVISORY;
-                                                         no-CRL-URL is NotRevoked when
+                                                         the last two are NotRevoked when
                                                          crl_allow_certificates_without_crl_url=true)
 ```
 
@@ -95,7 +102,12 @@ With CRL on, a new TLS connection triggers a fetch when the cached CRL is absent
 or expired. If the CRL distribution point (CDP) is blocked, the fetch waits for
 `crl_http_timeout` (default 10 s) and `crl_connection_timeout` (default 10 s). In
 `ENABLED` mode the connection then fails with `CRL validation failed`; in
-`ADVISORY` mode it logs a warning and connects after the timeout.
+`ADVISORY` mode it logs a warning and connects after the timeout. A failed fetch
+is not cached, so every new connection on a cold cache retries it and waits
+again. Each failure for the same URL also delays the next try, counted from the
+last failure: 200 ms after the first, doubling to 3.2 s from the fifth on, plus
+up to 100 ms of jitter. Short-lived compute that starts with an empty
+`crl_cache_dir` (for example AWS Lambda) pays this delay on every cold start.
 
 **Diagnosis:**
 ```sh
@@ -140,7 +152,7 @@ outcome — the primary tool for pinpointing which cert's CRL failed.
 Errors: `"CRL validation failed: end-entity certificate revoked"` (a confirmed
 revocation of the server certificate) and `"CRL validation failed: chain revoked"`
 (an issuer in the chain is revoked, and no other candidate chain is clean or
-undetermined). Both fail in **all** modes (`ENABLED` and `ADVISORY`). If another
+undetermined). Both fail in `ENABLED` **and** `ADVISORY`. If another
 candidate chain could not be checked, the result is undetermined instead: it fails
 in `ENABLED` with `CRL validation failed` and is allowed in `ADVISORY`.
 
