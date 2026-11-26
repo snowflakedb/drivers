@@ -1,0 +1,17 @@
+name: "SnowflakeDbParameter.DbType of a value with an unknown CLR type is Object"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  A property getter does not throw for a value the setter accepted. The parameter still
+  fails to bind, with the error the driver reports for any `DbType` that has no Snowflake
+  counterpart.
+old_driver_behavior: |
+  Reading `DbType` of a parameter whose `DbType` was never set and whose value has a CLR
+  type the driver does not map throws `KeyNotFoundException`, and so does executing a
+  command with that parameter.
+new_driver_behavior: |
+  `DbType` returns `DbType.Object` for such a value. Executing a command with that
+  parameter fails with `UNSUPPORTED_DOTNET_TYPE` (270053).

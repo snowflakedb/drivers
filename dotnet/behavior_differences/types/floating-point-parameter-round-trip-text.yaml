@@ -1,0 +1,20 @@
+name: "A double or float parameter binds as text that parses back to the same value"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The text the driver sends for a value is the same on every target framework, and the
+  server receives the exact value the application bound.
+old_driver_behavior: |
+  A `double` or `float` parameter sends its default invariant-culture `ToString()`, which
+  depends on the target framework. On .NET Framework a `double` keeps 15 significant
+  digits, so `0.1 + 0.2` binds as `0.3` and `double.MaxValue` binds as
+  `1.79769313486232E+308`, which is beyond the largest double. On .NET Core 3.0 and later
+  the text is the shortest that round-trips.
+new_driver_behavior: |
+  A `double` or `float` parameter sends the shortest text, with up to 17 (`double`) or 9
+  (`float`) significant digits, that parses back to the same value, the same on every
+  target framework: `0.1 + 0.2` binds as `0.30000000000000004` and `double.MaxValue` as
+  `1.7976931348623157E+308`.

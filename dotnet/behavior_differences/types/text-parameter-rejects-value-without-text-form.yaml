@@ -1,0 +1,19 @@
+name: "FIXED, BOOLEAN, REAL and TEXT parameters reject a value without a text form"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  For an object that defines no text form of its own, `ToString()` returns the CLR type
+  name. Binding that name stores data the application never supplied, for example a
+  `SecureString` password bound as `System.Security.SecureString`.
+old_driver_behavior: |
+  A parameter that binds as FIXED, BOOLEAN, REAL or TEXT sends the invariant-culture
+  `ToString()` of any value, so a `byte[]`, a `SecureString` or a plain object binds as
+  its type name.
+new_driver_behavior: |
+  A parameter that binds as FIXED, BOOLEAN, REAL or TEXT accepts a value that is
+  `IFormattable` or `IConvertible` (numbers, strings, `bool`, `char`, `Guid`, dates and
+  times, enums) or a `char[]`. Any other value fails with `INVALID_DATA_CONVERSION`
+  (270003).

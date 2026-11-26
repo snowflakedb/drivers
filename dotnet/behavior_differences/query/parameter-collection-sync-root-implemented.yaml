@@ -1,0 +1,15 @@
+name: "SnowflakeDbParameterCollection.SyncRoot returns a lock object instead of throwing"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  The new driver's parameter collection is backed by a list and implements every
+  `DbParameterCollection` member by delegating to that list; `SyncRoot` is the list's own
+  `SyncRoot`.
+old_driver_behavior: |
+  `SnowflakeDbParameterCollection.SyncRoot` throws `NotImplementedException`.
+new_driver_behavior: |
+  `SnowflakeDbParameterCollection.SyncRoot` returns a non-null lock object that is the same
+  on every call.

@@ -155,6 +155,10 @@ public sealed class PublicApiTest
     private static readonly HashSet<string> SnowflakeDbParameterPublicApi =
     [
         "C:()",
+        $"C:({nameof(String)}, {nameof(SFDataType)})",
+        $"C:({nameof(Int32)}, {nameof(SFDataType)})",
+        $"P:get_{nameof(SnowflakeDbParameter.SFDataType)}()",
+        $"P:set_{nameof(SnowflakeDbParameter.SFDataType)}({nameof(SFDataType)})",
         $"P:get_{nameof(DbParameter.DbType)}()",
         $"P:set_{nameof(DbParameter.DbType)}({nameof(DbType)})",
         $"P:get_{nameof(DbParameter.Direction)}()",
@@ -180,6 +184,7 @@ public sealed class PublicApiTest
         $"P:get_{nameof(DbParameterCollection.Count)}()",
         $"P:get_{nameof(DbParameterCollection.SyncRoot)}()",
         $"M:{nameof(DbParameterCollection.Add)}({nameof(Object)})",
+        $"M:{nameof(SnowflakeDbParameterCollection.Add)}({nameof(String)}, {nameof(SFDataType)})",
         $"M:{nameof(DbParameterCollection.AddRange)}({nameof(Array)})",
         $"M:{nameof(DbParameterCollection.Clear)}()",
         $"M:{nameof(DbParameterCollection.Contains)}({nameof(Object)})",

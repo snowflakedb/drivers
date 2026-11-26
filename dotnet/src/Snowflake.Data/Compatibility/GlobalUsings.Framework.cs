@@ -6,5 +6,7 @@ global using System.Linq;
 global using System.Threading;
 global using System.Threading.Tasks;
 
+global using Snowflake.Data.Compatibility;
+
 global using LockObject = object;
 #endif

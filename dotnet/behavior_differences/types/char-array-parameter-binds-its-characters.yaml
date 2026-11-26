@@ -1,0 +1,15 @@
+name: "A char[] parameter binds the string of its characters"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  A `char[]` is not an array binding, so the only useful text for it is its characters.
+  Binding the CLR type name stores data the application never supplied.
+old_driver_behavior: |
+  A `char[]` value binds as a single text value whose text is its type name,
+  `System.Char[]`.
+new_driver_behavior: |
+  A `char[]` value binds as a single text value whose text is its characters, so
+  `new[] { 'a', 'b' }` binds as `ab`.

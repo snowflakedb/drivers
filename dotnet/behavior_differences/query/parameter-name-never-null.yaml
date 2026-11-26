@@ -1,0 +1,16 @@
+name: "SnowflakeDbParameter.ParameterName reads as an empty string instead of null"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  `DbParameter.ParameterName` is declared non-nullable, and other ADO.NET providers such as
+  `SqlParameter` read an unset or null name as an empty string. A parameter without a name
+  no longer makes the command fail with a framework exception when it builds its bindings.
+old_driver_behavior: |
+  `SnowflakeDbParameter.ParameterName` reads as null when it is not set or is set to null,
+  and executing a command with such a parameter throws `ArgumentNullException`.
+new_driver_behavior: |
+  `SnowflakeDbParameter.ParameterName` reads as an empty string when it is not set or is set
+  to null, and such a parameter is bound under an empty name.

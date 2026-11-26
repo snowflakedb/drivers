@@ -1,0 +1,17 @@
+name: "A TIME parameter accepts a TimeSpan time of day"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  `SnowflakeDbParameter` infers `DbType.Time` for a `TimeSpan` value, so a parameter set
+  only through `Value` binds as TIME. The new driver accepts the value its own inference
+  picks, so such a parameter can be bound.
+old_driver_behavior: |
+  A TIME parameter accepts only a `DateTime`. A `TimeSpan` value, including one whose
+  `DbType` the driver inferred as `Time`, fails with `INVALID_DATA_CONVERSION` (270003).
+new_driver_behavior: |
+  A TIME parameter accepts a `DateTime`, whose time of day is bound, or a `TimeSpan` from
+  zero up to, but not including, one day. A negative `TimeSpan` or one of a day or more
+  fails with `INVALID_DATA_CONVERSION` (270003).

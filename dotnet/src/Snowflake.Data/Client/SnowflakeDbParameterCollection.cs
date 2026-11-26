@@ -1,11 +1,12 @@
 using System.Collections;
 using System.Data.Common;
+using Snowflake.Data.Core;
 
 namespace Snowflake.Data.Client;
 
-public sealed class SnowflakeDbParameterCollection : DbParameterCollection
+public sealed class SnowflakeDbParameterCollection : DbParameterCollection, IEnumerable<SnowflakeDbParameter>
 {
-    private readonly List<DbParameter> _parameters = [];
+    private readonly List<SnowflakeDbParameter> _parameters = [];
 
     public override int Count => _parameters.Count;
 
@@ -13,19 +14,26 @@ public sealed class SnowflakeDbParameterCollection : DbParameterCollection
 
     public override int Add(object value)
     {
-        _parameters.Add((DbParameter)value);
+        _parameters.Add(ToSnowflakeParameter(value));
         return _parameters.Count - 1;
+    }
+
+    public SnowflakeDbParameter Add(string parameterName, SFDataType dataType)
+    {
+        var parameter = new SnowflakeDbParameter(parameterName, dataType);
+        _parameters.Add(parameter);
+        return parameter;
     }
 
     public override void AddRange(Array values)
     {
-        foreach (DbParameter p in values)
-            _parameters.Add(p);
+        foreach (var value in values)
+            _parameters.Add(ToSnowflakeParameter(value));
     }
 
     public override void Clear() => _parameters.Clear();
 
-    public override bool Contains(object value) => _parameters.Contains((DbParameter)value);
+    public override bool Contains(object value) => value is SnowflakeDbParameter parameter && _parameters.Contains(parameter);
 
     public override bool Contains(string value) =>
         _parameters.Exists(p => p.ParameterName == value);
@@ -35,15 +43,17 @@ public sealed class SnowflakeDbParameterCollection : DbParameterCollection
 
     public override IEnumerator GetEnumerator() => _parameters.GetEnumerator();
 
-    public override int IndexOf(object value) => _parameters.IndexOf((DbParameter)value);
+    IEnumerator<SnowflakeDbParameter> IEnumerable<SnowflakeDbParameter>.GetEnumerator() => _parameters.GetEnumerator();
+
+    public override int IndexOf(object value) => value is SnowflakeDbParameter parameter ? _parameters.IndexOf(parameter) : -1;
 
     public override int IndexOf(string parameterName) =>
         _parameters.FindIndex(p => p.ParameterName == parameterName);
 
     public override void Insert(int index, object value) =>
-        _parameters.Insert(index, (DbParameter)value);
+        _parameters.Insert(index, ToSnowflakeParameter(value));
 
-    public override void Remove(object value) => _parameters.Remove((DbParameter)value);
+    public override void Remove(object value) => _parameters.Remove(ToSnowflakeParameter(value));
 
     public override void RemoveAt(int index) => _parameters.RemoveAt(index);
 
@@ -60,8 +70,11 @@ public sealed class SnowflakeDbParameterCollection : DbParameterCollection
         _parameters[IndexOf(parameterName)];
 
     protected override void SetParameter(int index, DbParameter value) =>
-        _parameters[index] = value;
+        _parameters[index] = ToSnowflakeParameter(value);
 
     protected override void SetParameter(string parameterName, DbParameter value) =>
-        _parameters[IndexOf(parameterName)] = value;
+        _parameters[IndexOf(parameterName)] = ToSnowflakeParameter(value);
+
+    private static SnowflakeDbParameter ToSnowflakeParameter(object value) =>
+        value as SnowflakeDbParameter ?? throw new SnowflakeDbException(SFError.UNSUPPORTED_FEATURE);
 }

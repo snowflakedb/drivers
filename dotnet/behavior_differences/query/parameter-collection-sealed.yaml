@@ -1,0 +1,14 @@
+name: "SnowflakeDbParameterCollection is sealed"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+rationale: |
+  The collection is created only by the driver, through `SnowflakeDbCommand.Parameters`,
+  and its constructor is internal, so a subclass could never be handed to a command.
+old_driver_behavior: |
+  `SnowflakeDbParameterCollection` is a public, unsealed class with an internal
+  constructor.
+new_driver_behavior: |
+  `SnowflakeDbParameterCollection` is sealed.

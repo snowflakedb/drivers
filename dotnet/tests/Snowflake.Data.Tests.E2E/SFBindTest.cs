@@ -1,5 +1,6 @@
 extern alias OldDriver;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -18,6 +19,7 @@ public sealed class SFBindTest : LiveE2ETestBase
 {
     private const string TablePrefix = "DOTNET_TEST_SFBIND";
     private const int UnsupportedSnowflakeTypeErrorCode = 270054;
+    private const int UnsupportedFeatureErrorCode = 270009;
     private const string FormatYmd = "yyyy/MM/dd";
     private const string FormatHms = "HH\\:mm\\:ss";
     private const string FormatHmsf = "HH\\:mm\\:ss\\.fff";
@@ -735,6 +737,217 @@ public sealed class SFBindTest : LiveE2ETestBase
         }
     }
 
+    [SnowflakeTheory]
+    [InlineData(ParameterDirection.Output)]
+    [InlineData(ParameterDirection.InputOutput)]
+    [InlineData(ParameterDirection.ReturnValue)]
+    public async Task ShouldRejectParameterDirectionOtherThanInputAsync(ParameterDirection direction)
+    {
+        // TODO(SNOW-4382591): the new driver accepts any direction and binds the value as input
+        Skip.FutureMilestone();
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var parameter = command.CreateParameter();
+
+        // When
+        var thrown = Assert.ThrowsAny<DbException>(() => parameter.Direction = direction);
+
+        // Then
+        AssertSnowflakeDbException(thrown, UnsupportedFeatureErrorCode);
+        Assert.Equal(ParameterDirection.Input, parameter.Direction);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldRejectParameterOfAnotherProviderAsync()
+    {
+        Skip.UntilPublicExceptionsExist();
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var otherProviderParameter = new OtherProviderParameter();
+
+        // When
+        var thrown = Assert.ThrowsAny<DbException>(() => command.Parameters.Add(otherProviderParameter));
+
+        // Then
+        AssertSnowflakeDbException(thrown, UnsupportedFeatureErrorCode);
+        Assert.Empty(command.Parameters);
+        Assert.False(command.Parameters.Contains(otherProviderParameter));
+        Assert.Equal(-1, command.Parameters.IndexOf(otherProviderParameter));
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldThrowFromParameterCollectionSyncRootAsync()
+    {
+        Skip.OnNewDriver("BD#parameter-collection-sync-root-implemented", "the new driver returns a lock object from SyncRoot");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+
+        // When
+        var syncRoot = () => command.Parameters.SyncRoot;
+
+        // Then
+        Assert.Throws<NotImplementedException>(syncRoot);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldReturnParameterCollectionSyncRootAsync()
+    {
+        Skip.OnOldDriver("BD#parameter-collection-sync-root-implemented", "the old driver throws NotImplementedException from SyncRoot");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+
+        // When
+        var syncRoot = command.Parameters.SyncRoot;
+
+        // Then
+        Assert.NotNull(syncRoot);
+        Assert.Same(syncRoot, command.Parameters.SyncRoot);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldReadNullParameterNameAsNullAsync()
+    {
+        Skip.OnNewDriver("BD#parameter-name-never-null", "the new driver reads a null parameter name as an empty string");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var parameter = command.CreateParameter();
+
+        // When
+        parameter.ParameterName = null;
+
+        // Then
+        Assert.Null(parameter.ParameterName);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldReadNullParameterNameAsEmptyAsync()
+    {
+        Skip.OnOldDriver("BD#parameter-name-never-null", "the old driver reads a null parameter name as null");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var parameter = command.CreateParameter();
+
+        // When
+        parameter.ParameterName = null;
+
+        // Then
+        Assert.Equal(string.Empty, parameter.ParameterName);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldThrowWhenRemovingParameterNameNotInCollectionAsync()
+    {
+        Skip.OnNewDriver("BD#parameter-collection-remove-at-unknown-name-ignored", "the new driver leaves the collection unchanged");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        AddParameter(command, "1", DbType.Int32, 1);
+
+        // When
+        var removeAt = () => command.Parameters.RemoveAt("2");
+
+        // Then
+        Assert.Throws<ArgumentOutOfRangeException>(removeAt);
+        Assert.Single(command.Parameters);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldIgnoreParameterNameNotInCollectionOnRemoveAsync()
+    {
+        Skip.OnOldDriver("BD#parameter-collection-remove-at-unknown-name-ignored", "the old driver throws ArgumentOutOfRangeException");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        AddParameter(command, "1", DbType.Int32, 1);
+
+        // When
+        command.Parameters.RemoveAt("2");
+
+        // Then
+        Assert.Single(command.Parameters);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldExposeParameterCollectionThatCanBeSubclassedAsync()
+    {
+        Skip.OnNewDriver("BD#parameter-collection-sealed", "the new driver's parameter collection is sealed");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+
+        // When
+        var collectionType = command.Parameters.GetType();
+
+        // Then
+        Assert.False(collectionType.IsSealed);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldExposeSealedParameterCollectionAsync()
+    {
+        Skip.OnOldDriver("BD#parameter-collection-sealed", "the old driver's parameter collection is not sealed");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+
+        // When
+        var collectionType = command.Parameters.GetType();
+
+        // Then
+        Assert.True(collectionType.IsSealed);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldThrowFromDbTypeOfValueWithUnmappedClrTypeAsync()
+    {
+        Skip.OnNewDriver("BD#parameter-db-type-of-unknown-clr-type-is-object", "the new driver infers DbType.Object");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var parameter = command.CreateParameter();
+        parameter.Value = new List<int> { 1 };
+
+        // When
+        Action readDbType = () => _ = parameter.DbType;
+
+        // Then
+        Assert.Throws<KeyNotFoundException>(readDbType);
+    }
+
+    [SnowflakeFact]
+    public async Task ShouldInferObjectDbTypeOfValueWithUnmappedClrTypeAsync()
+    {
+        Skip.OnOldDriver("BD#parameter-db-type-of-unknown-clr-type-is-object", "the old driver throws KeyNotFoundException");
+
+        // Given
+        using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
+        using var command = conn.CreateCommand();
+        var parameter = command.CreateParameter();
+
+        // When
+        parameter.Value = new List<int> { 1 };
+
+        // Then
+        Assert.Equal(DbType.Object, parameter.DbType);
+    }
+
     private static void InsertSingleRecord(
         ISnowflakeDbConnection conn,
         string sqlInsert,
@@ -1001,6 +1214,31 @@ public sealed class SFBindTest : LiveE2ETestBase
         {
             Assert.NotNull(_expectedDateTimeOffsets);
             return _expectedDateTimeOffsets;
+        }
+    }
+
+    private sealed class OtherProviderParameter : DbParameter
+    {
+        public override DbType DbType { get; set; }
+
+        public override ParameterDirection Direction { get; set; }
+
+        public override bool IsNullable { get; set; }
+
+        [AllowNull]
+        public override string ParameterName { get; set; } = string.Empty;
+
+        public override int Size { get; set; }
+
+        [AllowNull]
+        public override string SourceColumn { get; set; } = string.Empty;
+
+        public override bool SourceColumnNullMapping { get; set; }
+
+        public override object? Value { get; set; }
+
+        public override void ResetDbType()
+        {
         }
     }
 }

@@ -1,0 +1,16 @@
+name: "SnowflakeDbParameterCollection.RemoveAt ignores a name it does not contain"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  Removing a parameter that is not in the collection leaves the collection as the caller
+  asked for it, the same way `Remove(object)` already does for a parameter it does not
+  contain.
+old_driver_behavior: |
+  `SnowflakeDbParameterCollection.RemoveAt(string)` with a name no parameter has throws
+  `ArgumentOutOfRangeException`.
+new_driver_behavior: |
+  `SnowflakeDbParameterCollection.RemoveAt(string)` with a name no parameter has leaves the
+  collection unchanged.
