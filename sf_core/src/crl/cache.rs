@@ -6,6 +6,7 @@ use crate::crl::error::{
 };
 use crate::crl::stats_buffer::CrlStatsBuffer;
 use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry_capped};
+#[cfg(any(test, feature = "test-utils"))]
 use crate::tls::RootStoreProvider;
 use crate::utils::sync::MutexRecoverExt;
 use aws_lc_rs::digest;
@@ -16,7 +17,7 @@ use reqwest::Method;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio_stream::StreamExt;
 use tracing::instrument::WithSubscriber;
@@ -441,11 +442,7 @@ impl CrlCache {
     pub(crate) fn spawn_background_refresher(this: Arc<Self>) -> Option<BackgroundRefresher> {
         use tokio_util::time::DelayQueue;
 
-        let disk_cache_dir = if this.config.enable_disk_caching {
-            this.config.get_cache_dir()
-        } else {
-            None
-        };
+        let disk_cache_dir = this.config.cache_dir.clone();
         if this.memory_cache.is_none() && disk_cache_dir.is_none() {
             return None;
         }
@@ -595,13 +592,14 @@ impl CrlCache {
 
     pub(crate) fn open_cache(
         config: CrlConfig,
+        default_cache_dir: Option<PathBuf>,
         roots: &crate::tls::RootStoreSnapshot<'_>,
     ) -> Result<Arc<CrlCache>, CrlError> {
-        let cache = match CrlCache::from_snapshot(config, roots) {
+        let cache = match CrlCache::from_snapshot(config, default_cache_dir.clone(), roots) {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!(target: "sf_core::crl", "Failed to initialize CRL cache: {e}. Falling back to default config");
-                CrlCache::from_snapshot(CrlConfig::default(), roots).map_err(|e2| {
+                CrlCache::from_snapshot(CrlConfig::default(), default_cache_dir, roots).map_err(|e2| {
                     tracing::error!(target: "sf_core::crl", "Failed to initialize fallback CRL cache: {e2}");
                     e2
                 })?
@@ -911,14 +909,18 @@ impl CrlCache {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn new(config: CrlConfig, roots: &RootStoreProvider) -> Result<Self, CrlError> {
-        Self::from_snapshot(config, &roots.snapshot())
+        Self::from_snapshot(config, CrlConfig::default_cache_dir(), &roots.snapshot())
     }
 
     pub(crate) fn from_snapshot(
         config: CrlConfig,
+        default_cache_dir: Option<PathBuf>,
         roots: &crate::tls::RootStoreSnapshot<'_>,
     ) -> Result<Self, CrlError> {
+        // The CRL worker and refresh threads must not read the environment.
+        let config = config.with_resolved_cache_dir(default_cache_dir);
         let memory_cache = if config.enable_memory_caching {
             Some(Arc::new(Mutex::new(HashMap::new())))
         } else {
@@ -1059,9 +1061,7 @@ impl CrlCache {
     }
 
     async fn get_from_disk_cache(&self, url: &str) -> Result<Option<Vec<u8>>, CrlError> {
-        if self.config.enable_disk_caching
-            && let Some(dir) = self.config.get_cache_dir()
-        {
+        if let Some(dir) = self.config.cache_dir.as_deref() {
             let verify_perms = !self.config.unsafe_skip_file_permissions_check;
             if !verify_perms {
                 tracing::warn!(
@@ -1073,7 +1073,7 @@ impl CrlCache {
             // dir lets another user swap cache files even when the files are
             // 0600. Matches the old Python driver's directory check.
             if verify_perms
-                && let Ok(dir_meta) = tokio::fs::metadata(&dir).await
+                && let Ok(dir_meta) = tokio::fs::metadata(dir).await
                 && !permissions_owner_only(&dir_meta)
             {
                 tracing::warn!(
@@ -1152,10 +1152,8 @@ impl CrlCache {
 
     async fn fetch_from_network_and_cache(&self, url: &str) -> Result<(Vec<u8>, u64), CrlError> {
         let (fetched, download_ms) = self.fetch(url).await?;
-        if self.config.enable_disk_caching
-            && let Some(dir) = self.config.get_cache_dir()
-        {
-            if let Err(e) = create_cache_dir(&dir) {
+        if let Some(dir) = self.config.cache_dir.as_deref() {
+            if let Err(e) = create_cache_dir(dir) {
                 let error_type = std::any::type_name_of_val(&e);
                 tracing::warn!(
                     target: "sf_core::crl",
@@ -1172,7 +1170,7 @@ impl CrlCache {
             }
             let file_name = Self::url_digest(url);
             let data = fetched.clone();
-            let dir_for_write = dir.clone();
+            let dir_for_write = dir.to_path_buf();
             let name_for_write = file_name.clone();
             match tokio::task::spawn_blocking(move || {
                 write_crl_atomic(&dir_for_write, &name_for_write, &data)
@@ -1423,16 +1421,13 @@ impl CrlCache {
     /// `on_disk_cache_removal_delay` ago. Expired files are kept for that delay
     /// to aid debugging. Failures are logged, never fatal.
     async fn cleanup_on_disk_cache(&self) {
-        if !self.config.enable_disk_caching {
-            return;
-        }
-        let Some(dir) = self.config.get_cache_dir() else {
+        let Some(dir) = self.config.cache_dir.as_deref() else {
             return;
         };
         let removal_delay = self.config.on_disk_cache_removal_delay;
         let now = Utc::now();
 
-        let mut entries = match tokio::fs::read_dir(&dir).await {
+        let mut entries = match tokio::fs::read_dir(dir).await {
             Ok(e) => e,
             Err(e) => {
                 tracing::debug!(
@@ -1971,6 +1966,153 @@ mod tests {
                 CrlError::DownloadSizeExceeded { max_size, .. } if max_size == max_download_size
             ),
             "expected DownloadSizeExceeded with max_size={max_download_size}, got: {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    struct HomeChangeRun {
+        home_at_creation: tempfile::TempDir,
+        home_later: tempfile::TempDir,
+        default_dir: PathBuf,
+        url: String,
+        from_disk: Option<Vec<u8>>,
+    }
+
+    #[cfg(unix)]
+    async fn fetch_after_home_changes(cache_dir: Option<PathBuf>) -> HomeChangeRun {
+        use crate::crl::CrlManager;
+        use crate::env_vars::{HOME, XDG_CACHE_HOME};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"crl".to_vec()))
+            .mount(&server)
+            .await;
+        let home_at_creation = tempfile::tempdir().unwrap();
+        let home_later = tempfile::tempdir().unwrap();
+
+        let (manager, default_dir) = temp_env::with_vars(
+            [
+                (HOME, Some(home_at_creation.path())),
+                (XDG_CACHE_HOME, None),
+            ],
+            || {
+                (
+                    CrlManager::new(),
+                    CrlConfig::default_cache_dir().expect("default dir"),
+                )
+            },
+        );
+
+        let url = format!("{}/some.crl", server.uri());
+        let from_disk = temp_env::async_with_vars(
+            [(HOME, Some(home_later.path())), (XDG_CACHE_HOME, None)],
+            async {
+                let cache = manager
+                    .cache(
+                        CrlConfig {
+                            enable_disk_caching: true,
+                            cache_dir,
+                            ..test_config()
+                        },
+                        &RootStoreProvider::new().snapshot(),
+                    )
+                    .expect("cache");
+                cache
+                    .fetch_from_network_and_cache(&url)
+                    .await
+                    .expect("fetch");
+                cache.get_from_disk_cache(&url).await.expect("disk read")
+            },
+        )
+        .await;
+
+        HomeChangeRun {
+            home_at_creation,
+            home_later,
+            default_dir,
+            url,
+            from_disk,
+        }
+    }
+
+    #[cfg(unix)]
+    fn dir_is_empty(dir: &Path) -> bool {
+        std::fs::read_dir(dir).unwrap().next().is_none()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn should_use_the_default_disk_cache_dir_resolved_at_manager_creation() {
+        let run = fetch_after_home_changes(None).await;
+
+        assert!(
+            run.default_dir
+                .join(CrlCache::url_digest(&run.url))
+                .exists(),
+            "CRL should be written under the directory resolved at manager creation"
+        );
+        assert_eq!(run.from_disk.as_deref(), Some(b"crl".as_slice()));
+        assert!(
+            dir_is_empty(run.home_later.path()),
+            "nothing should be written under the HOME set after manager creation"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn should_prefer_an_explicit_disk_cache_dir_over_the_default() {
+        let explicit_parent = tempfile::tempdir().unwrap();
+        let explicit = explicit_parent.path().join("crl");
+
+        let run = fetch_after_home_changes(Some(explicit.clone())).await;
+
+        assert!(
+            explicit.join(CrlCache::url_digest(&run.url)).exists(),
+            "CRL should be written under the explicit cache_dir"
+        );
+        assert_eq!(run.from_disk.as_deref(), Some(b"crl".as_slice()));
+        assert!(
+            dir_is_empty(run.home_at_creation.path()),
+            "nothing should be written under the HOME set at manager creation"
+        );
+        assert!(
+            dir_is_empty(run.home_later.path()),
+            "nothing should be written under the HOME set after manager creation"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_not_write_to_disk_when_disk_caching_is_disabled() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"crl".to_vec()))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CrlCache::new(
+            CrlConfig {
+                enable_disk_caching: false,
+                cache_dir: Some(dir.path().to_path_buf()),
+                ..test_config()
+            },
+            &RootStoreProvider::new(),
+        )
+        .expect("cache");
+
+        cache
+            .fetch_from_network_and_cache(&format!("{}/some.crl", server.uri()))
+            .await
+            .expect("fetch");
+
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+            "disabled disk caching must not write to the configured cache_dir"
         );
     }
 

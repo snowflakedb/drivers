@@ -126,7 +126,7 @@ impl AwsSdkReqwestClient {
         Self::build_prepared(
             &TlsConfig::default(),
             None,
-            crate::crl::CrlManager::new().connection_crl(),
+            crate::crl::CrlManager::without_default_cache_dir().connection_crl(),
             roots,
         )
         .await

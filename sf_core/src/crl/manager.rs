@@ -8,6 +8,7 @@ use crate::tls::RootStoreSnapshot;
 use crate::utils::sync::MutexRecoverExt;
 use once_cell::sync::OnceCell;
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// Owns the CRL worker, the cache, and the `crl-refresh` thread for one driver.
@@ -21,14 +22,28 @@ struct ManagerInner {
     worker: SharedCrlWorker,
     cache: OnceCell<Arc<CrlCache>>,
     refresher: Mutex<Option<BackgroundRefresher>>,
+    default_cache_dir: Option<PathBuf>,
 }
 
 impl CrlManager {
+    /// Reads `XDG_CACHE_HOME`/`HOME` to resolve the default CRL cache directory.
+    /// Call on an application thread, never from async code or a driver thread.
     pub fn new() -> Self {
+        Self::with_default_cache_dir(CrlConfig::default_cache_dir())
+    }
+
+    /// Does not read the environment; a cache opened from it has no default
+    /// disk directory. For clients whose TLS config never enables CRL checks.
+    pub(crate) fn without_default_cache_dir() -> Self {
+        Self::with_default_cache_dir(None)
+    }
+
+    fn with_default_cache_dir(default_cache_dir: Option<PathBuf>) -> Self {
         Self(Arc::new(ManagerInner {
             worker: CrlWorker::new_lazy(),
             cache: OnceCell::new(),
             refresher: Mutex::new(None),
+            default_cache_dir,
         }))
     }
 
@@ -47,10 +62,9 @@ impl CrlManager {
         config: CrlConfig,
         roots: &RootStoreSnapshot<'_>,
     ) -> Result<Arc<CrlCache>, CrlError> {
-        let cache = self
-            .0
-            .cache
-            .get_or_try_init(|| CrlCache::open_cache(config, roots))?;
+        let cache = self.0.cache.get_or_try_init(|| {
+            CrlCache::open_cache(config, self.0.default_cache_dir.clone(), roots)
+        })?;
         let mut slot = self.0.refresher.lock_recover();
         if slot.is_none() {
             *slot = CrlCache::spawn_background_refresher(Arc::clone(cache));

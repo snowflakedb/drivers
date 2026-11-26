@@ -34,6 +34,8 @@ pub struct CrlConfig {
     pub check_mode: CertRevocationCheckMode,
     pub enable_disk_caching: bool,
     pub enable_memory_caching: bool,
+    /// On-disk CRL cache directory. `None` means [`CrlConfig::default_cache_dir`].
+    /// Inside a `CrlCache` this is the resolved directory and `None` means no disk cache.
     pub cache_dir: Option<PathBuf>,
     pub allow_certificates_without_crl_url: bool,
     /// Maximum number of bytes to download for a single CRL before aborting.
@@ -84,8 +86,16 @@ impl CrlConfig {
             p
         })
     }
-    pub fn get_cache_dir(&self) -> Option<PathBuf> {
-        self.cache_dir.clone().or_else(Self::default_cache_dir)
+
+    /// Uses `default` only when disk caching is on and no `cache_dir` is set.
+    pub(crate) fn with_resolved_cache_dir(mut self, default: Option<PathBuf>) -> Self {
+        self.cache_dir = if self.enable_disk_caching {
+            self.cache_dir.take().or(default)
+        } else {
+            None
+        };
+        self.enable_disk_caching = self.cache_dir.is_some();
+        self
     }
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
