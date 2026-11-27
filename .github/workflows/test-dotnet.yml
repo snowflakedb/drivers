@@ -175,12 +175,17 @@ jobs:
           mkdir -p target/debug
           cp "target/${{ matrix.cargo_target }}/debug/${{ matrix.sf_core_lib }}" target/debug/
 
-      # The Interop project builds its stub for the host architecture. A
-      # cross-compiled cell rebuilds the stub for the matrix target and
-      # replaces the copies the project placed in the output directory.
+      # The Interop project builds its stub for the host architecture into
+      # sf_core_stub/target/debug, which is where StubFixture loads it from. A
+      # cross-compiled cell rebuilds the stub for the matrix target and stages
+      # it over that host build; Framework TFMs also need the copies below.
       - name: Build sf_core_stub
         if: matrix.cargo_target && matrix.interop_dotnet_version
-        run: cargo build --target ${{ matrix.cargo_target }}
+        shell: bash
+        run: |
+          cargo build --target ${{ matrix.cargo_target }}
+          mkdir -p target/debug
+          cp "target/${{ matrix.cargo_target }}/debug/sf_core_stub.dll" target/debug/
         working-directory: dotnet/tests/Snowflake.Data.Tests.Interop/sf_core_stub
         env:
           RUSTFLAGS: -C linker=rust-lld
