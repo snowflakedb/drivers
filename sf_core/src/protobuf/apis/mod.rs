@@ -472,6 +472,10 @@ mod tests {
             "connection_download_stream_begin is marked async_first in the proto"
         );
         assert!(
+            observes_cancellation("connection_download_stream_chunk"),
+            "connection_download_stream_chunk is marked async_first in the proto"
+        );
+        assert!(
             observes_cancellation("result_set_get_stream"),
             "result_set_get_stream is marked async_first in the proto"
         );

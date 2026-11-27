@@ -20,7 +20,9 @@ use sf_core::protobuf::apis::RustTransport;
 use sf_core::protobuf::generated::database_driver_v1::{
     CancellationAbortOutcome, ChunkFormat, ConfigSetting, ConnectionAbortQueryRequest,
     ConnectionCloseRequest, ConnectionCloseResponse, ConnectionCommitRequest,
-    ConnectionDownloadStreamBeginRequest, ConnectionGetObjectsRequest,
+    ConnectionDownloadStreamBeginRequest, ConnectionDownloadStreamBeginResponse,
+    ConnectionDownloadStreamChunkRequest, ConnectionDownloadStreamCloseRequest,
+    ConnectionDownloadStreamCloseResponse, ConnectionGetObjectsRequest,
     ConnectionGetQueryResultRequest, ConnectionGetQueryStatusRequest,
     ConnectionGetResultSetRequest, ConnectionHandle, ConnectionHeartbeatRequest,
     ConnectionInitRequest, ConnectionInitResponse, ConnectionIsClosedRequest,
@@ -177,6 +179,10 @@ enum HangOn {
     Heartbeat,
     /// `GET /chunk-hang` — the remote chunk `database_fetch_chunk` downloads.
     ChunkDownload,
+    /// `GET /chunk-hang`, answered with headers and [`PARTIAL_BODY`] of a
+    /// longer body and then held, so a download stream opens and its reader
+    /// parks waiting for the rest.
+    ChunkBody,
     /// `POST /session?delete=true` — `connection_close`. The first one parks; a
     /// later one is answered so a retried close can finish.
     Logout,
@@ -428,8 +434,12 @@ async fn spawn_hanging_server(
                     }
                     CATCH_ALL_OK.to_string()
                 } else if target.starts_with("/chunk-hang") {
-                    if hang_on == HangOn::ChunkDownload {
+                    if hang_on == HangOn::ChunkDownload || hang_on == HangOn::ChunkBody {
                         *state.hung_target.lock().unwrap() = Some(target.clone());
+                    }
+                    if hang_on == HangOn::ChunkBody {
+                        write_partial_body(&mut stream).await;
+                        std::future::pending::<()>().await;
                     }
                     let _ = state.request_received.lock().unwrap().try_send(());
                     if hang_on == HangOn::ChunkDownload {
@@ -461,6 +471,19 @@ async fn write_headers_only(stream: &mut TcpStream, content_length: usize) {
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
     );
     let _ = stream.write_all(head.as_bytes()).await;
+    let _ = stream.flush().await;
+}
+
+/// The part of a [`FULL_BODY_LEN`]-byte body that [`HangOn::ChunkBody`] sends.
+const PARTIAL_BODY: &[u8] = b"first part";
+const FULL_BODY_LEN: usize = 64;
+
+async fn write_partial_body(stream: &mut TcpStream) {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {FULL_BODY_LEN}\r\n\r\n"
+    );
+    let _ = stream.write_all(head.as_bytes()).await;
+    let _ = stream.write_all(PARTIAL_BODY).await;
     let _ = stream.flush().await;
 }
 
@@ -1539,6 +1562,105 @@ async fn cancelling_a_download_stream_begin_while_the_cloud_get_opens_reports_ca
     assert_cancelled_with_abort(result, None);
     assert_hung_on(&state, "/chunk-hang");
     assert_no_abort_requests(&state);
+}
+
+/// How long the canceller waits after dispatching a `connection_download_stream_chunk`
+/// call before cancelling it. The cloud body arrives during `begin`, so the mock
+/// has no request to signal once the chunk call is waiting; this delay stands in.
+/// Cancelling too early would leave the stream readable, and the follow-up read
+/// would then hang past [`BOUND`] instead of failing, so a short delay fails the
+/// test rather than passing it.
+const CHUNK_CALL_SETTLE: Duration = Duration::from_millis(200);
+
+/// Cancelling a `connection_download_stream_chunk` that waits on a stalled cloud
+/// body reports `ERROR_KIND_CANCELLED` and ends the stream: the bytes the call had
+/// already taken are lost, so the next read fails instead of skipping them. Close
+/// still releases the session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_a_download_stream_chunk_ends_the_stream() {
+    let (state, _request_received) = hanging_server_state();
+    state.gcs_download_result.store(true, Ordering::SeqCst);
+    let (addr, _server) = spawn_hanging_server(state.clone(), HangOn::ChunkBody).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+    let begin = transport
+        .handle_message(
+            "DatabaseDriver",
+            "connection_download_stream_begin",
+            download_stream_begin_request(conn),
+        )
+        .await
+        .expect("the stream should open once the cloud headers arrive");
+    let download_handle = ConnectionDownloadStreamBeginResponse::decode(&begin[..])
+        .expect("response decodes")
+        .download_handle;
+    let chunk_request = || {
+        ConnectionDownloadStreamChunkRequest {
+            download_handle,
+            max_len: FULL_BODY_LEN as i64,
+        }
+        .encode_to_vec()
+    };
+
+    let (operation, _token) = transport.register();
+    let canceller = std::thread::spawn({
+        let transport = transport.clone();
+        move || {
+            std::thread::sleep(CHUNK_CALL_SETTLE);
+            transport.cancel(operation);
+        }
+    });
+    let result = tokio::time::timeout(
+        BOUND,
+        transport.handle_message_cancellable(
+            "DatabaseDriver",
+            "connection_download_stream_chunk",
+            chunk_request(),
+            operation,
+        ),
+    )
+    .await
+    .expect("cancelling must unblock connection_download_stream_chunk well inside the bound");
+    canceller.join().expect("canceller thread panicked");
+
+    assert_cancelled(result);
+    assert_hung_on(&state, "/chunk-hang");
+    assert_no_abort_requests(&state);
+
+    let next = tokio::time::timeout(
+        BOUND,
+        transport.handle_message(
+            "DatabaseDriver",
+            "connection_download_stream_chunk",
+            chunk_request(),
+        ),
+    )
+    .await
+    .expect("a read after a cancelled one must fail, not wait for the stalled body");
+    let ex = match next {
+        Err(ProtoError::Application(bytes)) => {
+            DriverException::decode(&bytes[..]).expect("decodes as DriverException")
+        }
+        other => panic!("a read after a cancelled one must fail, got {other:?}"),
+    };
+    assert_eq!(
+        ex.kind,
+        ErrorKind::InvalidArgument as i32,
+        "unexpected error: {ex:?}"
+    );
+    assert!(
+        ex.message
+            .contains("an earlier read stopped before it finished"),
+        "unexpected error: {ex:?}"
+    );
+
+    let _: ConnectionDownloadStreamCloseResponse = call(
+        &transport,
+        "connection_download_stream_close",
+        ConnectionDownloadStreamCloseRequest { download_handle },
+    )
+    .await;
 }
 
 /// `connection_send_http` forwards a caller-chosen request on the connection's

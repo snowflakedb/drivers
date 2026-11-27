@@ -752,6 +752,9 @@ message ConnectionDownloadStreamBeginResponse {
 // not just advisory guidance — to keep its bounded-memory guarantee a real
 // guarantee. eof is true once the producer has finished and no more bytes
 // remain.
+// Cancelling the operation ends the whole stream, not just this call: the
+// call reports CANCELLED, the download is aborted, and every later chunk call
+// on the session fails. ConnectionDownloadStreamClose still releases it.
 message ConnectionDownloadStreamChunkRequest {
   DownloadStreamHandle download_handle = 1;
   int64 max_len = 2;
@@ -1296,7 +1299,9 @@ service DatabaseDriver {
   rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse) {
     option (async_first) = true;
   }
-  rpc ConnectionDownloadStreamChunk(ConnectionDownloadStreamChunkRequest) returns (ConnectionDownloadStreamChunkResponse);
+  rpc ConnectionDownloadStreamChunk(ConnectionDownloadStreamChunkRequest) returns (ConnectionDownloadStreamChunkResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionDownloadStreamClose(ConnectionDownloadStreamCloseRequest) returns (ConnectionDownloadStreamCloseResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse) {

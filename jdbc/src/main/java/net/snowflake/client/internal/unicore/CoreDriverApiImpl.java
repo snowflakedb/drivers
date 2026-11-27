@@ -544,7 +544,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setDownloadHandle(downloadHandle)
             .setMaxLen(maxLen)
             .build();
-    return invoke(() -> client.connectionDownloadStreamChunk(request));
+    return await(client.connectionDownloadStreamChunk(request));
   }
 
   @Override

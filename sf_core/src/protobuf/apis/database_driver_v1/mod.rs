@@ -845,19 +845,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_download_stream_chunk",
-        skip(self, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_download_stream_chunk(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionDownloadStreamChunkRequest,
     ) -> Result<ConnectionDownloadStreamChunkResponse, DriverException> {
         let download_handle =
             required(input.download_handle, "Download stream handle is required")?;
-        let (data, eof) = self
-            .driver
-            .download_stream_chunk(download_handle.into(), input.max_len)
-            .await
-            .to_protobuf()?;
+        let (data, eof) = run_opt(
+            operation_ctx,
+            "connection_download_stream_chunk",
+            self.driver
+                .download_stream_chunk(download_handle.into(), input.max_len),
+        )
+        .await
+        .to_protobuf()?;
         Ok(ConnectionDownloadStreamChunkResponse { data, eof })
     }
 

@@ -35,7 +35,9 @@
 //! storage (S3/GCS/Azure, dispatched on the stage's `location_type` via
 //! `open_download_stream_for_stage`); `download_stream_chunk` drains its
 //! plaintext channel on demand, capped at `DOWNLOAD_STREAM_MAX_CHUNK_LEN` per
-//! call so only a few chunks are ever buffered.
+//! call so only a few chunks are ever buffered. A `download_stream_chunk`
+//! call dropped while it holds the session ends the stream, because the bytes
+//! it had taken are lost.
 //!
 //! Integrity tradeoff vs. whole-file: plaintext reaches the channel as each
 //! chunk decrypts, before the end-of-stream digest check
@@ -50,6 +52,7 @@
 //! `statement.rs` so the retry/refresh plumbing lives in one place.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use snafu::{IntoError, OptionExt, ResultExt};
@@ -150,6 +153,78 @@ pub(super) struct DownloadStream {
     /// producer is not unregistered at begin.
     #[allow(dead_code)]
     transfer: TransferOp,
+    /// Set when a `download_stream_chunk` call stopped after taking bytes off
+    /// the session but before returning them. Those bytes are gone, so every
+    /// later read fails instead of returning the stream with a gap.
+    interrupted: AtomicBool,
+}
+
+impl DownloadStream {
+    fn new(
+        conn_handle: Handle,
+        aborter: DownloadAborter,
+        rx: tokio::sync::mpsc::Receiver<Result<Vec<u8>, file_manager::FileManagerError>>,
+        transfer: TransferOp,
+    ) -> Self {
+        Self {
+            conn_handle,
+            aborter,
+            session: Mutex::new(DownloadStreamSession {
+                rx,
+                leftover: Bytes::new(),
+                done: false,
+            }),
+            transfer,
+            interrupted: AtomicBool::new(false),
+        }
+    }
+}
+
+/// Ends the stream if a read is dropped while it holds the session: aborts
+/// both background tasks and marks the stream interrupted. Created after the
+/// session lock guard, so it drops first and the flag is set before the lock
+/// is released.
+struct EndStreamUnlessFinished<'a> {
+    stream: &'a DownloadStream,
+    finished: bool,
+}
+
+impl Drop for EndStreamUnlessFinished<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.stream.interrupted.store(true, Ordering::Relaxed);
+            self.stream.aborter.abort();
+        }
+    }
+}
+
+impl DownloadStreamSession {
+    async fn read_up_to(&mut self, max_len: usize) -> Result<(Vec<u8>, bool), ApiError> {
+        let mut out = Vec::with_capacity(max_len);
+        loop {
+            if !self.leftover.is_empty() {
+                let n = self.leftover.len().min(max_len.saturating_sub(out.len()));
+                out.extend_from_slice(&self.leftover[..n]);
+                self.leftover = self.leftover.slice(n..);
+            }
+            if out.len() >= max_len || self.done {
+                break;
+            }
+            match self.rx.recv().await {
+                Some(Ok(chunk)) => self.leftover = Bytes::from(chunk),
+                Some(Err(e)) => {
+                    self.done = true;
+                    return InvalidArgumentSnafu {
+                        argument: format!("Download stream failed: {e}"),
+                    }
+                    .fail();
+                }
+                None => self.done = true,
+            }
+        }
+        let eof = self.done && self.leftover.is_empty();
+        Ok((out, eof))
+    }
 }
 
 impl DatabaseDriverV1 {
@@ -539,19 +614,15 @@ impl DatabaseDriverV1 {
             // Keep the command registration on the stream, not `StageTransport`,
             // so it outlives begin and any later command-scoped work.
             let transfer = transport.transfer;
-            let stream = DownloadStream {
+            let stream = DownloadStream::new(
                 conn_handle,
-                aborter: DownloadAborter {
+                DownloadAborter {
                     producer: opened.producer_abort,
                     pipeline: opened.task.abort_handle(),
                 },
-                session: Mutex::new(DownloadStreamSession {
-                    rx: opened.chunks,
-                    leftover: Bytes::new(),
-                    done: false,
-                }),
+                opened.chunks,
                 transfer,
-            };
+            );
             // `opened.task` runs detached: the pipeline drives itself via
             // `rx`/`ChannelWriter`, and is only cancelled through
             // `stream.aborter`'s `AbortHandle` (not this `JoinHandle`).
@@ -571,6 +642,11 @@ impl DatabaseDriverV1 {
     /// done and every byte has been returned. `max_len <= 0` is a no-op
     /// peek — nothing is consumed. Always clamped to
     /// [`DOWNLOAD_STREAM_MAX_CHUNK_LEN`].
+    ///
+    /// A call dropped while it holds the session — cancelled, or abandoned by
+    /// the caller — ends the stream: the download is aborted and every later
+    /// call fails. A call dropped while still waiting for the session leaves
+    /// the stream readable.
     pub async fn download_stream_chunk(
         &self,
         download_handle: Handle,
@@ -584,37 +660,23 @@ impl DatabaseDriverV1 {
                         argument: "Download stream handle not found",
                     })?;
             let mut session = stream.session.lock().await;
+            if stream.interrupted.load(Ordering::Relaxed) {
+                return InvalidArgumentSnafu {
+                    argument: "Download stream is no longer readable: an earlier read stopped before it finished",
+                }
+                .fail();
+            }
+            let mut end_stream = EndStreamUnlessFinished {
+                stream: &stream,
+                finished: false,
+            };
 
             let max_len = usize::try_from(max_len)
                 .unwrap_or(0)
                 .min(DOWNLOAD_STREAM_MAX_CHUNK_LEN);
-            let mut out = Vec::with_capacity(max_len);
-            loop {
-                if !session.leftover.is_empty() {
-                    let n = session
-                        .leftover
-                        .len()
-                        .min(max_len.saturating_sub(out.len()));
-                    out.extend_from_slice(&session.leftover[..n]);
-                    session.leftover = session.leftover.slice(n..);
-                }
-                if out.len() >= max_len || session.done {
-                    break;
-                }
-                match session.rx.recv().await {
-                    Some(Ok(chunk)) => session.leftover = Bytes::from(chunk),
-                    Some(Err(e)) => {
-                        session.done = true;
-                        return InvalidArgumentSnafu {
-                            argument: format!("Download stream failed: {e}"),
-                        }
-                        .fail();
-                    }
-                    None => session.done = true,
-                }
-            }
-            let eof = session.done && session.leftover.is_empty();
-            Ok((out, eof))
+            let result = session.read_up_to(max_len).await;
+            end_stream.finished = true;
+            result
         }
         .instrument(tracing::debug_span!(
             "download_stream_chunk",
@@ -1434,19 +1496,15 @@ mod tests {
     ) -> Handle {
         let (rx, task) = spawn_fake_download_producer(items);
         let abort_handle = task.abort_handle();
-        let stream = DownloadStream {
+        let stream = DownloadStream::new(
             conn_handle,
-            aborter: DownloadAborter {
+            DownloadAborter {
                 producer: abort_handle.clone(),
                 pipeline: abort_handle,
             },
-            session: Mutex::new(DownloadStreamSession {
-                rx,
-                leftover: Bytes::new(),
-                done: false,
-            }),
-            transfer: crate::governor::Governor::new().register_command(32),
-        };
+            rx,
+            crate::governor::Governor::new().register_command(32),
+        );
         driver.download_streams.add_handle(stream)
     }
 
@@ -1579,19 +1637,15 @@ mod tests {
         });
         let producer_abort = producer_task.abort_handle();
         let pipeline_abort = pipeline_task.abort_handle();
-        let stream = DownloadStream {
-            conn_handle: bogus_handle(),
-            aborter: DownloadAborter {
+        let stream = DownloadStream::new(
+            bogus_handle(),
+            DownloadAborter {
                 producer: producer_abort.clone(),
                 pipeline: pipeline_abort.clone(),
             },
-            session: Mutex::new(DownloadStreamSession {
-                rx,
-                leftover: Bytes::new(),
-                done: false,
-            }),
-            transfer: crate::governor::Governor::new().register_command(32),
-        };
+            rx,
+            crate::governor::Governor::new().register_command(32),
+        );
         let handle = driver.download_streams.add_handle(stream);
 
         driver.download_stream_close(handle).await.unwrap();
@@ -1639,16 +1693,12 @@ mod tests {
     ) -> DownloadStream {
         let (_tx, rx) =
             tokio::sync::mpsc::channel::<Result<Vec<u8>, file_manager::FileManagerError>>(8);
-        DownloadStream {
+        DownloadStream::new(
             conn_handle,
-            aborter: DownloadAborter { producer, pipeline },
-            session: Mutex::new(DownloadStreamSession {
-                rx,
-                leftover: Bytes::new(),
-                done: false,
-            }),
+            DownloadAborter { producer, pipeline },
+            rx,
             transfer,
-        }
+        )
     }
 
     #[tokio::test]
@@ -1752,6 +1802,91 @@ mod tests {
         assert_eq!(governor.in_flight(), 1);
         drop(granted);
         assert_eq!(governor.in_flight(), 0);
+    }
+
+    type ChunkSender = tokio::sync::mpsc::Sender<Result<Vec<u8>, file_manager::FileManagerError>>;
+
+    /// Registers a session whose producer and pipeline never finish on their
+    /// own, returning the handle, the sender feeding it, and the pipeline's
+    /// abort handle.
+    fn register_open_download_session(
+        driver: &DatabaseDriverV1,
+    ) -> (Handle, ChunkSender, tokio::task::AbortHandle) {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let producer = tokio::spawn(std::future::pending::<()>()).abort_handle();
+        let pipeline = tokio::spawn(std::future::pending::<()>()).abort_handle();
+        let stream = DownloadStream::new(
+            bogus_handle(),
+            DownloadAborter {
+                producer,
+                pipeline: pipeline.clone(),
+            },
+            rx,
+            crate::governor::Governor::new().register_command(32),
+        );
+        (driver.download_streams.add_handle(stream), tx, pipeline)
+    }
+
+    #[tokio::test]
+    async fn a_read_dropped_while_holding_the_session_ends_the_stream() {
+        let driver = DatabaseDriverV1::new();
+        let (handle, tx, pipeline) = register_open_download_session(&driver);
+        tx.send(Ok(b"lost".to_vec())).await.unwrap();
+
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            driver.download_stream_chunk(handle, 100),
+        )
+        .await;
+        assert!(
+            dropped.is_err(),
+            "the read must still be waiting for more bytes when it is dropped"
+        );
+
+        tx.send(Ok(b"after".to_vec())).await.unwrap();
+        let error = driver
+            .download_stream_chunk(handle, 100)
+            .await
+            .expect_err("a read after an interrupted one must fail rather than skip bytes");
+        assert!(
+            error
+                .to_string()
+                .contains("an earlier read stopped before it finished"),
+            "unexpected error: {error}"
+        );
+        for _ in 0..1000 {
+            if pipeline.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            pipeline.is_finished(),
+            "an interrupted read must abort the download"
+        );
+        driver.download_stream_close(handle).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_read_dropped_while_waiting_for_the_session_leaves_the_stream_readable() {
+        let driver = DatabaseDriverV1::new();
+        let (handle, tx, _pipeline) = register_open_download_session(&driver);
+        let stream = driver.download_streams.get_obj(handle).unwrap();
+
+        let held = stream.session.lock().await;
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            driver.download_stream_chunk(handle, 100),
+        )
+        .await;
+        assert!(dropped.is_err(), "the read must be waiting for the session");
+        drop(held);
+
+        tx.send(Ok(b"intact".to_vec())).await.unwrap();
+        drop(tx);
+        let (data, eof) = driver.download_stream_chunk(handle, 100).await.unwrap();
+        assert_eq!(data, b"intact");
+        assert!(eof);
     }
 
     #[tokio::test]
