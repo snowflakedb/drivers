@@ -11,6 +11,8 @@ public static class AssemblyUtil
 {
     internal static string SolutionRoot { get; } = FindSolutionRoot();
 
+    private static string OutputSubdirectory { get; } = FindOutputSubdirectory();
+
     internal static IEnumerable<(string RelativePath, SyntaxNode Root)> GetSyntaxRoots(Metadata.AssemblyMetadata assemblyMetadata)
     {
         var assemblyName = assemblyMetadata.ProjectName;
@@ -58,16 +60,23 @@ public static class AssemblyUtil
             return false;
         }
 
-        var path = Path.Combine(SolutionRoot, $"tests{Path.DirectorySeparatorChar}{asTarget}");
-        var files = Directory.GetFiles(path, $"{asTarget}.dll", SearchOption.AllDirectories);
-        var platform = Environment.Version.Major.ToString();
-        var dllFile = files.FirstOrDefault(x => x.Contains(platform));
+        var dllFile = Path.Combine(SolutionRoot, "tests", asTarget.ProjectName, OutputSubdirectory, $"{asTarget.Name}.dll");
 
-        if (dllFile == null)
-            Skip.When(true, $"Assembly {asTarget} does not target the current runtime (net{Environment.Version.Major}.0)");
+        if (!File.Exists(dllFile))
+            Skip.When(true, $"Assembly {asTarget} has no build output in {OutputSubdirectory}");
 
-        result = Assembly.LoadFrom(dllFile!);
+        result = Assembly.LoadFrom(dllFile);
         return true;
+    }
+
+    private static string FindOutputSubdirectory()
+    {
+        var projectDirectory = Path.Combine(SolutionRoot, "tests", AssembliesMetadata.TestsAssembly.ProjectName) + Path.DirectorySeparatorChar;
+        var baseDirectory = AppContext.BaseDirectory;
+        if (!baseDirectory.StartsWith(projectDirectory, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Test output directory '{baseDirectory}' is not under '{projectDirectory}'");
+
+        return baseDirectory.Substring(projectDirectory.Length).TrimEnd(Path.DirectorySeparatorChar);
     }
 
     private static string FindSolutionRoot()
