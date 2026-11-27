@@ -671,6 +671,58 @@ public class SnowflakeStatementImplTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void shouldSendMaxRowsAsRowsPerResultsetStatementOption() throws Exception {
+    when(mockCoreApi.statementSetOptions(eq(stmtHandle), any()))
+        .thenReturn(StatementSetOptionsResponse.getDefaultInstance());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      stmt.setMaxRows(30);
+      assertEquals(30, stmt.getMaxRows());
+      stmt.setMaxRows(0);
+      assertEquals(0, stmt.getMaxRows());
+    }
+
+    ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(mockCoreApi, times(2)).statementSetOptions(eq(stmtHandle), optionsCaptor.capture());
+    List<Map<String, ConfigSetting>> calls = optionsCaptor.getAllValues();
+    assertEquals(
+        Collections.singletonMap(
+            "ROWS_PER_RESULTSET", ConfigSetting.newBuilder().setIntValue(30L).build()),
+        calls.get(0));
+    assertEquals(
+        Collections.singletonMap(
+            "ROWS_PER_RESULTSET", ConfigSetting.newBuilder().setIntValue(0L).build()),
+        calls.get(1));
+  }
+
+  @Test
+  void shouldKeepPreviousMaxRowsWhenCoreRejectsTheOption() throws Exception {
+    when(mockCoreApi.statementSetOptions(eq(stmtHandle), any()))
+        .thenReturn(StatementSetOptionsResponse.getDefaultInstance())
+        .thenThrow(new CoreException(DriverException.getDefaultInstance(), null));
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      stmt.setMaxRows(30);
+
+      assertThrows(CoreException.class, () -> stmt.setMaxRows(10));
+
+      assertEquals(30, stmt.getMaxRows());
+    }
+  }
+
+  @Test
+  void shouldRejectSetMaxRowsOnClosedStatementWithoutSendingTheOption() throws Exception {
+    Statement stmt = createStatement();
+    stmt.close();
+
+    SFSQLException ex = assertThrows(SFSQLException.class, () -> stmt.setMaxRows(10));
+
+    assertEquals("Statement is closed", ex.getMessage());
+    verify(mockCoreApi, never()).statementSetOptions(any(), any());
+  }
+
+  @Test
   void shouldExecuteAsyncQueryAndCacheDecoratedResultSetWhileParkingPreviousOpenResultSet()
       throws Exception {
     when(mockCoreApi.statementExecuteAsync(eq(stmtHandle), isNull()))

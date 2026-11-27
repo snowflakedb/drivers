@@ -426,6 +426,7 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
   @Override
   public void setMaxRows(int max) {
     checkClosed();
+    setParameter("ROWS_PER_RESULTSET", max);
     this.maxRows = max;
   }
 
