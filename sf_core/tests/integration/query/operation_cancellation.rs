@@ -29,12 +29,15 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionIsClosedResponse, ConnectionNewRequest, ConnectionNewResponse,
     ConnectionRollbackRequest, ConnectionSendHttpRequest, ConnectionSetAutocommitRequest,
     ConnectionSetOptionsRequest, ConnectionSetOptionsResponse, ConnectionTokenRequest,
-    ConnectionUseDatabaseRequest, ConnectionUseSchemaRequest, DatabaseFetchChunkRequest,
-    DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest, DatabaseNewResponse,
-    DriverException, ErrorKind, ExecuteQueryResponse, RemoteChunk, ResultChunk,
-    ResultSetGetStreamRequest, StatementExecuteAsyncRequest, StatementExecuteQueryRequest,
-    StatementHandle, StatementNewRequest, StatementNewResponse, StatementPrepareRequest,
-    StatementSetSqlQueryRequest, StatementSetSqlQueryResponse, TokenRequestType, config_setting,
+    ConnectionUploadStreamBeginRequest, ConnectionUploadStreamBeginResponse,
+    ConnectionUploadStreamChunkRequest, ConnectionUploadStreamChunkResponse,
+    ConnectionUploadStreamFinishRequest, ConnectionUseDatabaseRequest, ConnectionUseSchemaRequest,
+    DatabaseFetchChunkRequest, DatabaseInitRequest, DatabaseInitResponse, DatabaseNewRequest,
+    DatabaseNewResponse, DriverException, ErrorKind, ExecuteQueryResponse, RemoteChunk,
+    ResultChunk, ResultSetGetStreamRequest, StatementExecuteAsyncRequest,
+    StatementExecuteQueryRequest, StatementHandle, StatementNewRequest, StatementNewResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest, StatementSetSqlQueryResponse,
+    TokenRequestType, UploadStreamHandle, config_setting, connection_upload_stream_begin_request,
     execute_query_response, result_chunk,
 };
 use std::collections::HashMap;
@@ -146,6 +149,22 @@ fn gcs_download_result(addr: SocketAddr) -> String {
 }
 const DOWNLOAD_STAGE: &str = "@cancel_stage";
 const DOWNLOAD_FILE: &str = "data.csv";
+
+const UPLOAD_FILE: &str = "data.bin";
+const UPLOAD_SQL: &str =
+    "PUT file:///tmp/data.bin @cancel_stage AUTO_COMPRESS=FALSE OVERWRITE=TRUE";
+/// Bucket of [`s3_upload_result`]'s stage. The S3 client addresses the IP
+/// endpoint path-style, so every S3 request target starts with this segment.
+const UPLOAD_BUCKET: &str = "cancel-bucket";
+const S3_CREATE_MULTIPART_OK: &str = r#"<?xml version="1.0" encoding="UTF-8"?><InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>cancel-bucket</Bucket><Key>data.bin</Key><UploadId>cancel-upload-id</UploadId></InitiateMultipartUploadResult>"#;
+
+/// A PUT answer for an unencrypted S3 stage whose endpoint is this mock. The
+/// one-byte `threshold` sends any non-empty upload down the multipart path.
+fn s3_upload_result(addr: SocketAddr) -> String {
+    format!(
+        r#"{{"success":true,"data":{{"command":"UPLOAD","src_locations":["{UPLOAD_FILE}"],"stageInfo":{{"locationType":"S3","location":"{UPLOAD_BUCKET}/","path":"","region":"us-east-1","endPoint":"http://{addr}","isClientSideEncrypted":false,"creds":{{"AWS_KEY_ID":"AKIAIOSFODNN7EXAMPLE","AWS_SECRET_KEY":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY","AWS_TOKEN":""}}}},"autoCompress":false,"overwrite":true,"sourceCompression":"NONE","threshold":1}}}}"#
+    )
+}
 /// Query id for the finished-query lookups (`connection_get_result_set`,
 /// `connection_get_query_status`, `connection_get_query_result`). Must be a
 /// syntactically valid UUID: `snowflake_get_query_result` parses it with
@@ -183,6 +202,8 @@ enum HangOn {
     /// longer body and then held, so a download stream opens and its reader
     /// parks waiting for the rest.
     ChunkBody,
+    /// S3 `UploadPart` — a `PUT` carrying `uploadId` to [`UPLOAD_BUCKET`].
+    UploadPart,
     /// `POST /session?delete=true` — `connection_close`. The first one parks; a
     /// later one is answered so a retried close can finish.
     Logout,
@@ -237,6 +258,11 @@ struct HangingServer {
     /// presigned URL is `/chunk-hang` on this mock. Takes precedence over
     /// [`Self::remote_chunk_result`].
     gcs_download_result: AtomicBool,
+    /// Answer the query-request with [`s3_upload_result`]. Takes precedence over
+    /// [`Self::gcs_download_result`].
+    s3_upload_result: AtomicBool,
+    /// Targets of every S3 `AbortMultipartUpload` (`DELETE` with `uploadId`).
+    s3_multipart_aborts: Mutex<Vec<String>>,
     /// Request target the mock actually parked on. `HangOn::FinishedQueryLookup`
     /// matches two different endpoints, so without recording this a test could
     /// pass having hung the wrong one.
@@ -364,7 +390,9 @@ async fn spawn_hanging_server(
                         // is cancellation.
                         std::future::pending::<()>().await;
                     }
-                    if state.gcs_download_result.load(Ordering::SeqCst) {
+                    if state.s3_upload_result.load(Ordering::SeqCst) {
+                        s3_upload_result(addr)
+                    } else if state.gcs_download_result.load(Ordering::SeqCst) {
                         gcs_download_result(addr)
                     } else if state.remote_chunk_result.load(Ordering::SeqCst) {
                         remote_chunk_result(addr)
@@ -446,6 +474,31 @@ async fn spawn_hanging_server(
                         std::future::pending::<()>().await;
                     }
                     CATCH_ALL_OK.to_string()
+                } else if target.starts_with(&format!("/{UPLOAD_BUCKET}/")) {
+                    let method = request_method(&head);
+                    if method == "POST" && target.contains("uploads") {
+                        write_response(&mut stream, "application/xml", S3_CREATE_MULTIPART_OK)
+                            .await;
+                        return;
+                    }
+                    if method == "PUT" && target.contains("uploadId=") {
+                        if hang_on == HangOn::UploadPart {
+                            *state.hung_target.lock().unwrap() = Some(target.clone());
+                        }
+                        let _ = state.request_received.lock().unwrap().try_send(());
+                        if hang_on == HangOn::UploadPart {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                    if method == "DELETE" && target.contains("uploadId=") {
+                        state
+                            .s3_multipart_aborts
+                            .lock()
+                            .unwrap()
+                            .push(target.clone());
+                    }
+                    write_response(&mut stream, "application/xml", "").await;
+                    return;
                 } else {
                     CATCH_ALL_OK.to_string()
                 };
@@ -488,8 +541,12 @@ async fn write_partial_body(stream: &mut TcpStream) {
 }
 
 async fn write_json_response(stream: &mut TcpStream, body: &str) {
+    write_response(stream, "application/json", body).await;
+}
+
+async fn write_response(stream: &mut TcpStream, content_type: &str, body: &str) {
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
         body
     );
@@ -532,6 +589,10 @@ async fn read_http_request(stream: &mut TcpStream) -> (String, String) {
     }
 
     (head, String::from_utf8_lossy(&body).into_owned())
+}
+
+fn request_method(head: &str) -> &str {
+    head.split_whitespace().next().unwrap_or("")
 }
 
 /// Extract the request target (path + query) from the request line.
@@ -704,6 +765,8 @@ fn hanging_server_state() -> (Arc<HangingServer>, Receiver<()>) {
             omit_query_id: AtomicBool::new(false),
             remote_chunk_result: AtomicBool::new(false),
             gcs_download_result: AtomicBool::new(false),
+            s3_upload_result: AtomicBool::new(false),
+            s3_multipart_aborts: Mutex::new(Vec::new()),
             hung_target: Mutex::new(None),
             logout_seen: AtomicUsize::new(0),
             connections: Mutex::new(Vec::new()),
@@ -1661,6 +1724,135 @@ async fn cancelling_a_download_stream_chunk_ends_the_stream() {
         ConnectionDownloadStreamCloseRequest { download_handle },
     )
     .await;
+}
+
+/// Open an upload stream for [`UPLOAD_SQL`] and buffer a few bytes into it.
+/// Neither call reaches the network.
+async fn upload_stream_with_data(
+    transport: &RustTransport,
+    conn: ConnectionHandle,
+) -> Option<UploadStreamHandle> {
+    let upload_handle = call::<_, ConnectionUploadStreamBeginResponse>(
+        transport,
+        "connection_upload_stream_begin",
+        ConnectionUploadStreamBeginRequest {
+            conn_handle: Some(conn),
+            target: Some(connection_upload_stream_begin_request::Target::Sql(
+                UPLOAD_SQL.to_string(),
+            )),
+        },
+    )
+    .await
+    .upload_handle;
+    let _: ConnectionUploadStreamChunkResponse = call(
+        transport,
+        "connection_upload_stream_chunk",
+        ConnectionUploadStreamChunkRequest {
+            upload_handle,
+            data: b"payload".to_vec(),
+        },
+    )
+    .await;
+    upload_handle
+}
+
+fn upload_stream_finish_request(upload_handle: Option<UploadStreamHandle>) -> Vec<u8> {
+    ConnectionUploadStreamFinishRequest { upload_handle }.encode_to_vec()
+}
+
+/// A cancelled finish has already consumed its session, so finishing it again
+/// fails instead of uploading.
+async fn assert_upload_session_is_gone(
+    transport: &RustTransport,
+    upload_handle: Option<UploadStreamHandle>,
+) {
+    let retry = transport
+        .handle_message(
+            "DatabaseDriver",
+            "connection_upload_stream_finish",
+            upload_stream_finish_request(upload_handle),
+        )
+        .await;
+    let ex = match retry {
+        Err(ProtoError::Application(bytes)) => {
+            DriverException::decode(&bytes[..]).expect("decodes as DriverException")
+        }
+        other => panic!("finishing a cancelled upload again must fail, got {other:?}"),
+    };
+    assert_eq!(
+        ex.kind,
+        ErrorKind::InvalidArgument as i32,
+        "unexpected error: {ex:?}"
+    );
+    assert!(
+        ex.message.contains("Upload stream handle not found"),
+        "unexpected error: {ex:?}"
+    );
+}
+
+/// `connection_upload_stream_finish` first runs the PUT on the server.
+/// Cancelling while that PUT is in flight aborts it there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_upload_stream_finish_while_its_put_runs_aborts_the_put() {
+    let (state, request_received) = hanging_server_state();
+    let (addr, _server) = spawn_hanging_query(state.clone()).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+    let upload_handle = upload_stream_with_data(&transport, conn).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_upload_stream_finish",
+        "query-request",
+        upload_stream_finish_request(upload_handle),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, Some(CancellationAbortOutcome::Aborted));
+    assert_hung_on(&state, "/queries/v1/query-request");
+    assert_aborted_sql(&state, UPLOAD_SQL);
+    assert_upload_session_is_gone(&transport, upload_handle).await;
+}
+
+/// Once the PUT has answered, `connection_upload_stream_finish` uploads to the
+/// cloud. Cancelling during an S3 multipart upload aborts that upload, so its
+/// parts are not left behind, and sends no abort-request because the PUT has
+/// already finished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelling_an_upload_stream_finish_during_an_s3_multipart_upload_aborts_the_upload() {
+    let (state, request_received) = hanging_server_state();
+    state.s3_upload_result.store(true, Ordering::SeqCst);
+    let (addr, _server) = spawn_hanging_server(state.clone(), HangOn::UploadPart).await;
+
+    let transport = Arc::new(RustTransport::new());
+    let conn = open_connection(&transport, addr).await;
+    let upload_handle = upload_stream_with_data(&transport, conn).await;
+
+    let result = cancel_once_the_request_is_on_the_wire(
+        &transport,
+        request_received,
+        "connection_upload_stream_finish",
+        "S3 UploadPart",
+        upload_stream_finish_request(upload_handle),
+    )
+    .await;
+
+    assert_cancelled_with_abort(result, None);
+    assert_hung_on(&state, &format!("/{UPLOAD_BUCKET}/{UPLOAD_FILE}"));
+    assert_no_abort_requests(&state);
+    let multipart_aborts = state.s3_multipart_aborts.lock().unwrap().clone();
+    assert_eq!(
+        multipart_aborts.len(),
+        1,
+        "cancelling must abort the multipart upload once; got {multipart_aborts:?}"
+    );
+    assert!(
+        multipart_aborts[0].contains("uploadId=cancel-upload-id"),
+        "the abort must name the upload that was created; got {multipart_aborts:?}"
+    );
+    assert_upload_session_is_gone(&transport, upload_handle).await;
 }
 
 /// `connection_send_http` forwards a caller-chosen request on the connection's

@@ -782,16 +782,17 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_upload_stream_finish",
-        skip(self, input)
+        skip(self, operation_ctx, input)
     )]
     async fn connection_upload_stream_finish(
         &self,
+        operation_ctx: Option<&OperationCtx>,
         input: ConnectionUploadStreamFinishRequest,
     ) -> Result<ConnectionUploadStreamFinishResponse, DriverException> {
         let upload_handle = required(input.upload_handle, "Upload stream handle is required")?;
         let rs_info = self
             .driver
-            .connection_upload_stream_finish(upload_handle.into())
+            .connection_upload_stream_finish(operation_ctx, upload_handle.into())
             .await
             .to_protobuf()?;
         Ok(ConnectionUploadStreamFinishResponse {

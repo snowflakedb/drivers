@@ -512,7 +512,7 @@ class CoreDriverApiImpl implements CoreDriverApi {
       UploadStreamHandle uploadHandle) {
     ConnectionUploadStreamFinishRequest request =
         ConnectionUploadStreamFinishRequest.newBuilder().setUploadHandle(uploadHandle).build();
-    return invoke(() -> client.connectionUploadStreamFinish(request));
+    return await(client.connectionUploadStreamFinish(request));
   }
 
   @Override

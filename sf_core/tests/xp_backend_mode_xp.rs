@@ -776,7 +776,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .await
         .expect("append second chunk");
     let stream_put = driver
-        .connection_upload_stream_finish(upload_handle)
+        .connection_upload_stream_finish(None, upload_handle)
         .await
         .expect("finish should route the assembled body through the backend");
     let (chunked_bytes, _) = host
@@ -809,7 +809,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .await
         .expect("append raw bytes");
     driver
-        .connection_upload_stream_finish(raw_handle)
+        .connection_upload_stream_finish(None, raw_handle)
         .await
         .expect("finish the raw upload");
     let (stored_raw, _) = host

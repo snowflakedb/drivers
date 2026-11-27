@@ -672,6 +672,11 @@ message ConnectionUploadStreamChunkResponse {}
 // buffered chunks into a re-readable source, and runs the PUT. Mirrors
 // `ResultSetResponse`: a PUT-shaped result set (handle + descriptor), so the
 // caller can read the standard 8-column PUT rowset.
+// Cancelling the operation reports CANCELLED and consumes the session either
+// way, so the caller starts a new upload. A cancel while the server runs the
+// PUT aborts it there; a cancel during the cloud upload stops it without
+// leaving a partial file on the stage. A cancel that lands after the cloud has
+// accepted the file still reports CANCELLED, with the file already staged.
 message ConnectionUploadStreamFinishRequest {
   UploadStreamHandle upload_handle = 1;
 }
@@ -1288,7 +1293,9 @@ service DatabaseDriver {
   // abort). Bounds wrapper memory to ~one chunk regardless of source size.
   rpc ConnectionUploadStreamBegin(ConnectionUploadStreamBeginRequest) returns (ConnectionUploadStreamBeginResponse);
   rpc ConnectionUploadStreamChunk(ConnectionUploadStreamChunkRequest) returns (ConnectionUploadStreamChunkResponse);
-  rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse);
+  rpc ConnectionUploadStreamFinish(ConnectionUploadStreamFinishRequest) returns (ConnectionUploadStreamFinishResponse) {
+    option (async_first) = true;
+  }
   rpc ConnectionUploadStreamAbort(ConnectionUploadStreamAbortRequest) returns (ConnectionUploadStreamAbortResponse);
   rpc ConnectionStageUpload(ConnectionStageUploadRequest) returns (ConnectionStageUploadResponse) {
     option (async_first) = true;

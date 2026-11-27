@@ -314,8 +314,32 @@ impl DatabaseDriverV1 {
     /// `delete_handle` is first-caller-wins: if two callers race, only one
     /// gets `true`. The loser must bail with "handle not found" (like
     /// `abort`'s loser) instead of draining an already-taken, now-empty buffer.
+    ///
+    /// Cancelling through `operation_ctx` while GS runs the PUT aborts it on the
+    /// server; cancelling during the cloud upload aborts an S3 multipart upload.
+    /// Either way the session is already gone, because it is deregistered before
+    /// any await.
     pub async fn connection_upload_stream_finish(
         &self,
+        operation_ctx: Option<&OperationCtx>,
+        upload_handle: Handle,
+    ) -> Result<ResultSetInfo, ApiError> {
+        let report = AbortReport::default();
+        run_reporting_abort(
+            operation_ctx,
+            "connection_upload_stream_finish",
+            &report,
+            Box::pin(self.finish_upload_stream(
+                operation_ctx.map(|operation_ctx| (operation_ctx, &report)),
+                upload_handle,
+            )),
+        )
+        .await
+    }
+
+    async fn finish_upload_stream(
+        &self,
+        cancellation: Option<(&OperationCtx, &AbortReport)>,
         upload_handle: Handle,
     ) -> Result<ResultSetInfo, ApiError> {
         let session = self
@@ -341,7 +365,7 @@ impl DatabaseDriverV1 {
         // drop, and the upload streams the PUT body from its path.
         let result = match &session.target {
             UploadStreamTarget::Sql(sql) => {
-                self.run_put_stream_via_gs(session.conn_handle, sql.clone(), source)
+                self.run_put_stream_via_gs(cancellation, session.conn_handle, sql.clone(), source)
                     .await
             }
             UploadStreamTarget::Xp(upload) => {
@@ -376,6 +400,7 @@ impl DatabaseDriverV1 {
     /// `connection_upload_stream_finish`.
     pub(super) async fn run_put_stream_via_gs(
         &self,
+        cancellation: Option<(&OperationCtx, &AbortReport)>,
         conn_handle: Handle,
         sql: String,
         source: ByteSource,
@@ -401,7 +426,7 @@ impl DatabaseDriverV1 {
             let query_transport = query_context(&conn_ptr).await?;
 
             let response =
-                run_sql_against_gs(None, &conn_ptr, &query_transport, sql.clone()).await?;
+                run_sql_against_gs(cancellation, &conn_ptr, &query_transport, sql.clone()).await?;
             update_caches(&conn_ptr, &sql, &response).await;
 
             let gs_data = response.data;
@@ -444,6 +469,7 @@ impl DatabaseDriverV1 {
             }
 
             let rowset_data = build_and_upload_stream(
+                cancellation.map(|(operation_ctx, _)| operation_ctx),
                 &gs_data,
                 &self.wrapper_presets,
                 Some(refresh_ctx),
@@ -1337,7 +1363,9 @@ mod tests {
     #[tokio::test]
     async fn upload_stream_finish_rejects_unknown_handle() {
         let driver = DatabaseDriverV1::new();
-        let result = driver.connection_upload_stream_finish(bogus_handle()).await;
+        let result = driver
+            .connection_upload_stream_finish(None, bogus_handle())
+            .await;
         assert!(result.is_err(), "unknown upload handle must be rejected");
     }
 
@@ -1359,7 +1387,9 @@ mod tests {
             .await
             .unwrap();
 
-        let result = driver.connection_upload_stream_finish(upload_handle).await;
+        let result = driver
+            .connection_upload_stream_finish(None, upload_handle)
+            .await;
         assert!(
             result.is_err(),
             "a never-connected Connection cannot complete the GS round trip"
@@ -1387,9 +1417,13 @@ mod tests {
             .unwrap();
 
         // Fails for lack of transport, but still deregisters the session.
-        let _ = driver.connection_upload_stream_finish(upload_handle).await;
+        let _ = driver
+            .connection_upload_stream_finish(None, upload_handle)
+            .await;
 
-        let second = driver.connection_upload_stream_finish(upload_handle).await;
+        let second = driver
+            .connection_upload_stream_finish(None, upload_handle)
+            .await;
         // `ResultSetInfo` (the `Ok` type) isn't `Debug`, so match rather than
         // `expect_err`.
         let err = match second {
@@ -1435,7 +1469,9 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             tasks.push(tokio::spawn(async move {
                 barrier.wait().await;
-                driver.connection_upload_stream_finish(upload_handle).await
+                driver
+                    .connection_upload_stream_finish(None, upload_handle)
+                    .await
             }));
         }
 

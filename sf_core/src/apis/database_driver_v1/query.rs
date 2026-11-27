@@ -171,8 +171,12 @@ pub(super) async fn perform_put_get_transfer(
 /// token (echoed back by GS as `src_location_pattern`); auto-compress,
 /// overwrite, and encryption all follow the GS response, exactly as a normal
 /// file-path PUT.
+///
+/// `operation_ctx` is what the upload registers its cancellation cleanup against; `None`
+/// makes it uncancellable.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn build_and_upload_stream(
+    operation_ctx: Option<&OperationCtx>,
     data: &query_response::Data,
     wrapper_presets: &WrapperPresets,
     stage_info_refresh_context: Option<StageInfoRefreshContext>,
@@ -252,26 +256,10 @@ pub(super) async fn build_and_upload_stream(
         transfer: upload_data.transfer,
     };
 
-    // No cleanup scope, and no cancellation coverage on this path at all — stated
-    // plainly because the shape invites the opposite assumption.
-    //
-    // None of the `ConnectionUploadStream*` RPCs are marked `async_first`, so no
-    // operation token reaches this layer and there is nothing to register against.
-    // `connection_upload_stream_abort` is not a substitute: it only deletes local
-    // handle state (and unlinks the spool file), issues no cloud-side abort, and
-    // structurally cannot — `connection_upload_stream_finish` deletes the handle
-    // before the upload starts, so by the time a multipart upload is in flight there
-    // is no handle left for it to act on.
-    //
-    // So a cancelled *streaming* PUT can still orphan the S3/GCS debris that the
-    // file-path PUT now aborts. Deliberately out of scope here; closing it means
-    // marking those RPCs `async_first` and threading `operation_ctx` through them.
-    // TODO: needs a tracking ticket before this PR merges — see the PR discussion.
-
-    let transfer_ctx = match refresher_handle {
-        Some(refresher) => file_manager::TransferCtx::with_refresher(refresher),
-        None => file_manager::TransferCtx::default(),
-    };
+    let transfer_ctx = file_manager::TransferCtx::new(
+        refresher_handle,
+        operation_ctx.map(OperationCtx::cleanup_scope),
+    );
     let result = upload_prepared_source(payload, single, put_get_policy, transfer_ctx)
         .await
         .context(FileUploadSnafu)?;
