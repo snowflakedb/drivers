@@ -576,6 +576,7 @@ impl DatabaseDriverV1 {
                         sql,
                         query_parameters,
                         conn: conn.clone(),
+                        query_tag: None,
                     });
                 // Late-bind connection params so post-init `set_option`
                 // overrides take effect (mirrors `LogoutConfig`).
