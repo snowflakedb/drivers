@@ -178,6 +178,9 @@ public interface CoreDriverApi {
   TelemetrySendResponse telemetrySendWrapperError(
       ConnectionHandle connHandle, String exceptionType, String errorSource);
 
+  TelemetrySendResponse telemetrySendLog(
+      ConnectionHandle connHandle, String messageJson, long timestampMs);
+
   // Stream-based file transfer (gap 4)
 
   /**

@@ -11,6 +11,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.internal.api.implementation.Decorators;
+import net.snowflake.client.internal.api.implementation.connection.AutoConnectionUrl;
 import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.exception.AutoConnectionExceptionMapper;
@@ -21,6 +22,7 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.NativeLibraryLoader;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
+import net.snowflake.client.internal.util.UnmodifiableProperties;
 
 /**
  * Snowflake JDBC Driver implementation
@@ -31,6 +33,14 @@ import net.snowflake.client.internal.util.DriverPropertyInfoUtil;
 public class SnowflakeDriver implements Driver {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeDriver.class);
   private final ConnectionFactory connectionFactory;
+
+  /** The driver instance registered with {@link DriverManager}. */
+  public static final SnowflakeDriver INSTANCE;
+
+  /**
+   * Empty connection properties. Every mutating call throws {@link UnsupportedOperationException}.
+   */
+  public static final Properties EMPTY_PROPERTIES = new UnmodifiableProperties();
 
   public SnowflakeDriver() {
     this(SnowflakeConnectionImpl::new);
@@ -68,6 +78,16 @@ public class SnowflakeDriver implements Driver {
     return DRIVER_VERSION;
   }
 
+  /** Returns the driver version, the same value as {@link #getDriverVersion()}. */
+  public static String getImplementationVersion() {
+    return DRIVER_VERSION;
+  }
+
+  /** Returns the patch component of the driver version, or {@code 0} when it is non-numeric. */
+  public long getPatchVersion() {
+    return parseVersionComponent(DRIVER_VERSION, 2);
+  }
+
   public FipsStatus getFipsStatus() throws SQLException {
     return SqlExceptionMapper.call(
         () -> new FipsStatus(ProtobufApis.coreDriverApi.driverGetFipsStatus().getIsFips()));
@@ -77,7 +97,7 @@ public class SnowflakeDriver implements Driver {
 
   public static void registerDriver() {
     try {
-      DriverManager.registerDriver(new SnowflakeDriver());
+      DriverManager.registerDriver(INSTANCE);
     } catch (SQLException e) {
       throw new RuntimeException("Failed to register Snowflake JDBC driver", e);
     }
@@ -85,6 +105,7 @@ public class SnowflakeDriver implements Driver {
 
   static {
     NativeLibraryLoader.loadIfPresent();
+    INSTANCE = new SnowflakeDriver();
     registerDriver();
   }
 
@@ -103,6 +124,11 @@ public class SnowflakeDriver implements Driver {
     }
     SnowflakeConnectionImpl connection = createConnection(url, info, autoConnectionUrl);
     return Decorators.connection(connection, connection.getTelemetry());
+  }
+
+  /** Connects using the {@code jdbc:snowflake:auto} profile resolution. */
+  public Connection connect() throws SQLException {
+    return connect(AutoConnectionUrl.PREFIX, new Properties());
   }
 
   private SnowflakeConnectionImpl createConnection(

@@ -73,6 +73,7 @@ import net.snowflake.client.internal.api.implementation.statement.DecoratedSnowf
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeCallableStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.api.implementation.telemetry.ApplicationTelemetry;
 import net.snowflake.client.internal.api.implementation.telemetry.CoreTelemetry;
 import net.snowflake.client.internal.codegen.JdbcBoundary;
 import net.snowflake.client.internal.log.Jdk14LoggerBootstrap;
@@ -121,6 +122,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
   private final CoreHandleCleaner.Cleanable handleCleaner;
   private final ParametersRegistry parametersRegistry;
   private final Telemetry telemetry;
+  private final ApplicationTelemetry applicationTelemetry;
 
   private boolean autoCommit;
   private String catalog;
@@ -181,6 +183,7 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       this.databaseHandle = dbHandle;
       this.connectionHandle = connHandle;
       this.telemetry = new CoreTelemetry(coreDriverApi, connHandle);
+      this.applicationTelemetry = new ApplicationTelemetry(coreDriverApi, connHandle);
       this.sqlWarnings = sqlWarnings;
       this.parametersRegistry = new CoreParametersRegistry(coreDriverApi, connHandle);
       this.autoCommit = parametersRegistry.getBool(Parameter.AUTOCOMMIT);
@@ -952,6 +955,15 @@ public class SnowflakeConnectionImpl implements InternalSnowflakeConnection, Del
       return null;
     }
     return Long.toString(info.getSessionId());
+  }
+
+  @Override
+  public void submitTelemetry(String jsonPayload) {
+    checkClosed();
+    if (jsonPayload == null) {
+      throw new SFSQLException("jsonPayload must not be null");
+    }
+    applicationTelemetry.submit(jsonPayload);
   }
 
   @Override

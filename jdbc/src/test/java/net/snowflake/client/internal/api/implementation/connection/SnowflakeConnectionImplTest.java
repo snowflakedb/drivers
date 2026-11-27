@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
@@ -58,6 +59,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Drive
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementReleaseResponse;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.WrapperIdentity;
 import net.snowflake.client.internal.util.NotImplementedException;
 import org.junit.jupiter.api.BeforeEach;
@@ -1871,6 +1873,40 @@ class SnowflakeConnectionImplTest {
 
       assertTrue(identity.hasApplicationPath());
       assertTrue(new File(identity.getApplicationPath()).exists());
+    }
+  }
+
+  @Nested
+  class SubmitTelemetry extends MockCoreApiConnectionSupport {
+
+    @Test
+    void shouldForwardSubmittedTelemetryToCore() throws Exception {
+      when(mockCoreApi.telemetrySendLog(any(), any(), anyLong()))
+          .thenReturn(TelemetrySendResponse.getDefaultInstance());
+      try (SnowflakeConnectionImpl conn = createConnection()) {
+        conn.submitTelemetry("{\"type\":\"custom\"}");
+      }
+
+      ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+      verify(mockCoreApi).telemetrySendLog(any(), message.capture(), anyLong());
+      assertEquals(
+          "{\"type\":\"custom\",\"source\":\"SnowflakeConnection.submitTelemetry\"}",
+          message.getValue());
+    }
+
+    @Test
+    void shouldRejectNullTelemetryPayload() throws Exception {
+      try (SnowflakeConnectionImpl conn = createConnection()) {
+        assertThrows(SFSQLException.class, () -> conn.submitTelemetry(null));
+      }
+    }
+
+    @Test
+    void shouldThrowOnSubmitTelemetryAfterClose() throws Exception {
+      SnowflakeConnectionImpl conn = createConnection();
+      conn.close();
+      assertConnectionClosedException(
+          assertThrows(SFSQLException.class, () -> conn.submitTelemetry("{}")));
     }
   }
 

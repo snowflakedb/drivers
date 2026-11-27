@@ -1,0 +1,14 @@
+name: "SnowflakeDriver.EMPTY_PROPERTIES is read-only"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: low
+old_driver_behavior: |
+  `SnowflakeDriver.EMPTY_PROPERTIES` is an ordinary mutable `Properties` instance. A caller
+  can add entries to it.
+new_driver_behavior: |
+  `SnowflakeDriver.EMPTY_PROPERTIES` is empty and every mutating call throws
+  `UnsupportedOperationException`.
+description: |
+  Code that passes the constant to `connect` is unaffected. Code that writes to it fails.

@@ -853,6 +853,8 @@ public class SnowflakeStatementImpl implements InternalStatement, DelegatingWrap
 
   @Override
   public void setAsyncQueryTimeout(int seconds) {
-    throw new SFSQLFeatureNotSupportedException("setAsyncQueryTimeout not supported");
+    checkClosed();
+    setParameter("STATEMENT_TIMEOUT_IN_SECONDS", seconds);
+    setQueryTimeout(0);
   }
 }

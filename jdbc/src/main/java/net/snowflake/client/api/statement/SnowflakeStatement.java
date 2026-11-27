@@ -58,7 +58,9 @@ public interface SnowflakeStatement {
   ResultSet executeAsyncQuery(String sql) throws SQLException;
 
   /**
-   * Sets the query timeout when running an async query.
+   * Sets the query timeout when running an async query. Sets {@code STATEMENT_TIMEOUT_IN_SECONDS}
+   * on the statement and resets the statement query timeout to 0, so that a previous {@link
+   * #setQueryTimeout(int)} does not override it.
    *
    * @param seconds The number of seconds until timeout.
    * @throws SQLException if an error is encountered

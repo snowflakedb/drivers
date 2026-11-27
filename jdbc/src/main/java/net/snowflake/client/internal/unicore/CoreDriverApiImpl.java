@@ -103,6 +103,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendApiUsageRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendLogRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TelemetrySendWrapperErrorRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.TokenRequestType;
@@ -467,6 +468,17 @@ class CoreDriverApiImpl implements CoreDriverApi {
             .setErrorSource(errorSource)
             .build();
     return invoke(() -> client.telemetrySendWrapperError(request));
+  }
+
+  public TelemetrySendResponse telemetrySendLog(
+      ConnectionHandle connHandle, String messageJson, long timestampMs) {
+    TelemetrySendLogRequest request =
+        TelemetrySendLogRequest.newBuilder()
+            .setConnHandle(connHandle)
+            .setMessageJson(messageJson)
+            .setTimestampMs(timestampMs)
+            .build();
+    return invoke(() -> client.telemetrySendLog(request));
   }
 
   // =========================================================================

@@ -3,6 +3,7 @@ package net.snowflake.client.api.connection;
 import java.io.InputStream;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import net.snowflake.client.api.resultset.QueryStatus;
 
 /** This interface defines Snowflake specific APIs for Connection */
@@ -164,4 +165,25 @@ public interface SnowflakeConnection {
    * @throws SQLException if the connection is closed or an error occurs
    */
   String getDatabase() throws SQLException;
+
+  /**
+   * Submits a JSON object as a best-effort telemetry event. The driver sets the {@code "source"}
+   * key on the event. The event is dropped, without an error, when it is not a JSON object, is
+   * longer than 64 KiB (UTF-16 code units), or in-band telemetry is disabled for the session. Send
+   * failures are not reported.
+   *
+   * <p>The default implementation throws {@link SQLFeatureNotSupportedException}.
+   *
+   * @param jsonPayload a JSON object; must not be {@code null}
+   * @throws SQLFeatureNotSupportedException if the implementation does not override this method
+   * @throws SQLException if the connection is closed or {@code jsonPayload} is {@code null}
+   */
+  default void submitTelemetry(String jsonPayload) throws SQLException {
+    if (jsonPayload == null) {
+      throw new IllegalArgumentException("jsonPayload must not be null");
+    }
+    throw new SQLFeatureNotSupportedException(
+        "submitTelemetry is not supported by this SnowflakeConnection implementation."
+            + " Override this method to submit telemetry through the session telemetry client.");
+  }
 }

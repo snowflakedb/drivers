@@ -873,15 +873,38 @@ public class SnowflakeStatementImplTest {
       try (ResultSet keys = stmt.getGeneratedKeys()) {
         assertFalse(keys.next());
       }
-
-      SQLFeatureNotSupportedException asyncTimeoutEx =
-          assertThrows(
-              SQLFeatureNotSupportedException.class,
-              () -> ((SnowflakeStatement) stmt).setAsyncQueryTimeout(30));
-      assertEquals("setAsyncQueryTimeout not supported", asyncTimeoutEx.getMessage());
-      assertNull(asyncTimeoutEx.getSQLState());
-      assertEquals(0, asyncTimeoutEx.getErrorCode());
     }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void shouldSetStatementTimeoutParameterAndResetQueryTimeoutOnSetAsyncQueryTimeout()
+      throws Exception {
+    when(mockCoreApi.statementSetOptions(eq(stmtHandle), any()))
+        .thenReturn(StatementSetOptionsResponse.getDefaultInstance());
+
+    try (SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi)) {
+      stmt.setQueryTimeout(10);
+      stmt.setAsyncQueryTimeout(30);
+
+      assertEquals(0, stmt.getQueryTimeout());
+    }
+
+    ArgumentCaptor<Map<String, ConfigSetting>> optionsCaptor = ArgumentCaptor.forClass(Map.class);
+    verify(mockCoreApi).statementSetOptions(eq(stmtHandle), optionsCaptor.capture());
+    assertEquals(
+        ConfigSetting.newBuilder().setIntValue(30L).build(),
+        optionsCaptor.getValue().get("STATEMENT_TIMEOUT_IN_SECONDS"));
+  }
+
+  @Test
+  void shouldThrowOnSetAsyncQueryTimeoutAfterClose() throws Exception {
+    SnowflakeStatementImpl stmt = new SnowflakeStatementImpl(mockConnection, mockCoreApi);
+    stmt.close();
+
+    SFSQLException ex = assertThrows(SFSQLException.class, () -> stmt.setAsyncQueryTimeout(30));
+
+    assertEquals("Statement is closed", ex.getMessage());
   }
 
   @Test

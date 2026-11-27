@@ -1,0 +1,14 @@
+name: "SnowflakeSQLException with a vendor code that matches no ErrorCode renders the bare code"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A `SnowflakeSQLException` built from a vendor code that matches no `ErrorCode` looks the
+  message up in a resource bundle.
+new_driver_behavior: |
+  The message is the vendor code, followed by `: [params]` when parameters are given. There
+  is no message bundle.
+description: |
+  Only applies to exceptions constructed by application code with an arbitrary vendor code.

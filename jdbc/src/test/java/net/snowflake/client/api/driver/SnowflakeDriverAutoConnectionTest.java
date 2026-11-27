@@ -14,6 +14,7 @@ import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.exception.CoreException;
@@ -40,6 +41,23 @@ public class SnowflakeDriverAutoConnectionTest {
 
     assertSame(
         decorated, driver.connect("jdbc:snowflake:auto?connectionName=readOnly", new Properties()));
+  }
+
+  @Test
+  public void shouldConnectWithTheAutoUrlWhenConnectHasNoArguments() throws SQLException {
+    SnowflakeConnectionImpl impl = mock(SnowflakeConnectionImpl.class);
+    Connection decorated = mock(Connection.class);
+    when(impl.decoratedSelf(any())).thenReturn(decorated);
+    AtomicReference<String> seenUrl = new AtomicReference<>();
+    SnowflakeDriver driver =
+        new SnowflakeDriver(
+            (url, info) -> {
+              seenUrl.set(url);
+              return impl;
+            });
+
+    assertSame(decorated, driver.connect());
+    assertEquals("jdbc:snowflake:auto", seenUrl.get());
   }
 
   @Test

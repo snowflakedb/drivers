@@ -1,0 +1,14 @@
+name: "submitTelemetry(null) throws SQLException instead of IllegalArgumentException"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  `SnowflakeConnection.submitTelemetry(null)` throws `IllegalArgumentException`.
+new_driver_behavior: |
+  `SnowflakeConnection.submitTelemetry(null)` throws `SQLException`, because the generated
+  connection decorator wraps every runtime exception.
+description: |
+  Code that catches `IllegalArgumentException` around `submitTelemetry` does not see the
+  failure. Code that already catches `SQLException` is unaffected.

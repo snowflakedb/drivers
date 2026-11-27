@@ -1,8 +1,6 @@
 package net.snowflake.client.internal.api.implementation.exception;
 
 import java.sql.SQLException;
-import java.text.MessageFormat;
-import java.util.Arrays;
 import lombok.Getter;
 import net.snowflake.client.api.exception.ErrorCode;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
@@ -90,19 +88,7 @@ public class SFSQLException extends SnowflakeSQLExceptionCarrier {
 
   /** Renders the message through the {@link ErrorCode} template (with null-template fallback). */
   public static SFSQLException fromErrorCode(ErrorCode errorCode, Object... params) {
-    return new SFSQLException(errorCode, buildMessage(errorCode, params));
-  }
-
-  private static String buildMessage(ErrorCode errorCode, Object... params) {
-    Object[] args = params == null ? new Object[0] : params;
-    String template = errorCode.getMessageTemplate();
-    if (template != null) {
-      return MessageFormat.format(template, args);
-    }
-    if (args.length == 0) {
-      return String.valueOf(errorCode);
-    }
-    return String.format("%s: %s", errorCode, Arrays.toString(args));
+    return new SFSQLException(errorCode, ErrorMessageRenderer.render(errorCode, params));
   }
 
   @Override

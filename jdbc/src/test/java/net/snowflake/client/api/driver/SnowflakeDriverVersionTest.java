@@ -3,7 +3,12 @@ package net.snowflake.client.api.driver;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.DriverManager;
+import java.util.Collections;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -40,6 +45,37 @@ public class SnowflakeDriverVersionTest {
     assertEquals(SnowflakeDriver.MAJOR_VERSION, driver.getMajorVersion());
     assertEquals(SnowflakeDriver.MINOR_VERSION, driver.getMinorVersion());
     assertEquals(SnowflakeDriver.DRIVER_VERSION, SnowflakeDriver.getDriverVersion());
+  }
+
+  @Test
+  public void implementationVersionAndPatchVersionAgreeWithDriverVersion() {
+    assertEquals(SnowflakeDriver.DRIVER_VERSION, SnowflakeDriver.getImplementationVersion());
+    assertEquals(
+        SnowflakeDriver.parseVersionComponent(SnowflakeDriver.DRIVER_VERSION, 2),
+        new SnowflakeDriver().getPatchVersion());
+  }
+
+  @Test
+  public void shouldRegisterTheSingletonInstanceWithDriverManager() throws Exception {
+    assertSame(SnowflakeDriver.INSTANCE, DriverManager.getDriver("jdbc:snowflake://host"));
+    SnowflakeDriver.registerDriver();
+    long registered =
+        Collections.list(DriverManager.getDrivers()).stream()
+            .filter(d -> d == SnowflakeDriver.INSTANCE)
+            .count();
+    assertEquals(1, registered);
+  }
+
+  @Test
+  public void shouldExposeReadOnlyEmptyPropertiesConstant() {
+    assertTrue(SnowflakeDriver.EMPTY_PROPERTIES.isEmpty());
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> SnowflakeDriver.EMPTY_PROPERTIES.setProperty("user", "u"));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> SnowflakeDriver.EMPTY_PROPERTIES.put("user", "u"));
+    assertTrue(SnowflakeDriver.EMPTY_PROPERTIES.isEmpty());
   }
 
   @Test
