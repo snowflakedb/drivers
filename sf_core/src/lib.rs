@@ -7,6 +7,7 @@ pub mod env_vars;
 
 pub mod arrow_utils;
 mod auth;
+pub mod bindings;
 pub mod c_api;
 pub mod chunks;
 mod compression;
