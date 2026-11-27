@@ -27,6 +27,7 @@ pub(crate) trait ToJsError {
 #[derive(Clone, Debug)]
 pub(crate) enum BridgeError {
     Core(Arc<ApiError>),
+    ConnectFailed(Arc<ApiError>),
     UnusableConnection(ConnectionOperation, UnusableConnection),
     InvalidQueryId(String),
     InvalidRequestId(String),
@@ -58,7 +59,9 @@ impl BridgeError {
 
     pub(crate) fn error_source(&self) -> &'static str {
         match self {
-            BridgeError::Core(error) => core_error_source(error),
+            BridgeError::Core(error) | BridgeError::ConnectFailed(error) => {
+                core_error_source(error)
+            }
             BridgeError::UnusableConnection(..)
             | BridgeError::AlreadyConnected
             | BridgeError::AlreadyConnecting
@@ -159,6 +162,10 @@ impl ClientError {
     fn of_bridge(error: &BridgeError) -> Self {
         match error {
             BridgeError::Core(error) => Self::of(error),
+            BridgeError::ConnectFailed(error) => Self {
+                is_fatal: true,
+                ..Self::of(error)
+            },
             BridgeError::UnusableConnection(operation, connection) => {
                 Self::of_unusable_connection(*operation, *connection)
             }
@@ -270,6 +277,7 @@ impl ClientError {
             message: "Connection already terminated. Cannot connect again.".to_string(),
             code: Some(ErrorCode::Driver(405503)),
             sql_state: Some("08003".to_string()),
+            is_fatal: true,
             ..Default::default()
         }
     }
@@ -333,7 +341,6 @@ impl ClientError {
                 "Cannot retrieve data. No information returned from server for query {query_id}"
             ),
             code: Some(ErrorCode::Driver(460002)),
-            is_fatal: true,
             ..Default::default()
         }
     }
@@ -343,7 +350,6 @@ impl ClientError {
             name: Some("ClientError"),
             message: format!("Status of query {query_id} is {status}, results are unavailable"),
             code: Some(ErrorCode::Driver(460003)),
-            is_fatal: true,
             ..Default::default()
         }
     }
@@ -839,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn connecting_a_terminated_connection_is_not_fatal() {
+    fn connecting_a_terminated_connection_is_fatal() {
         let error = ClientError::of_connection_terminated();
 
         assert_eq!(error.name, Some("ClientError"));
@@ -849,11 +855,31 @@ mod tests {
             "Connection already terminated. Cannot connect again."
         );
         assert_eq!(error.sql_state.as_deref(), Some("08003"));
-        assert!(!error.is_fatal);
+        assert!(error.is_fatal);
     }
 
     #[test]
-    fn no_data_for_a_query_id_is_a_fatal_client_error() {
+    fn a_failed_login_is_fatal_and_keeps_the_core_error() {
+        let login_error = Arc::new(ApiError::invalid_argument("account"));
+        let core = ClientError::of_bridge(&BridgeError::Core(login_error.clone()));
+        let error = ClientError::of_bridge(&BridgeError::ConnectFailed(login_error));
+
+        assert_eq!(error.name, core.name);
+        assert_eq!(code_of(&error), code_of(&core));
+        assert_eq!(error.message, core.message);
+        assert!(error.is_fatal);
+        assert!(!core.is_fatal);
+    }
+
+    #[test]
+    fn a_failed_login_reports_the_core_error_source() {
+        let error = BridgeError::ConnectFailed(Arc::new(ApiError::invalid_argument("account")));
+
+        assert_eq!(error.telemetry(), Some(("Error", "api_misuse")));
+    }
+
+    #[test]
+    fn no_data_for_a_query_id_is_not_fatal() {
         let error = ClientError::of_query_id_no_data("qid");
 
         assert_eq!(error.name, Some("ClientError"));
@@ -863,11 +889,11 @@ mod tests {
             "Cannot retrieve data. No information returned from server for query qid"
         );
         assert_eq!(error.sql_state, None);
-        assert!(error.is_fatal);
+        assert!(!error.is_fatal);
     }
 
     #[test]
-    fn a_non_success_terminal_status_is_a_fatal_client_error() {
+    fn a_non_success_terminal_status_is_not_fatal() {
         let error = ClientError::of_query_id_not_success("qid", "RESTARTED");
 
         assert_eq!(error.name, Some("ClientError"));
@@ -877,6 +903,6 @@ mod tests {
             "Status of query qid is RESTARTED, results are unavailable"
         );
         assert_eq!(error.sql_state, None);
-        assert!(error.is_fatal);
+        assert!(!error.is_fatal);
     }
 }

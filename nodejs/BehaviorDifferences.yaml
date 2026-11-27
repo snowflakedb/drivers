@@ -4245,3 +4245,43 @@ behavior_differences:
       - What the old driver does with a body that is not JSON and has no JSON content
         type. It does not parse such a body, so it takes a different path.
       No test covers this case yet.
+
+  188:
+    name: 'isFatal is set only when the connection can no longer be used'
+    status: allowed
+    type: bugfix
+    reviewed: true
+    is_breaking_change: false
+    impact: low
+    old_driver_behavior: |
+      isFatal is true on:
+      - ClientError 407002, a request on a connection that was destroyed, whose login failed, or
+        whose session Snowflake ended.
+      - ClientError 405505 and 405506 from connect(), when the clientConfigFile or the
+        authenticator cannot be set up.
+      - ClientError 460002 and 460003 from getResultsFromQueryId(), when the results of the query
+        cannot be retrieved. The connection still works after these errors.
+      A failed login and ClientError 405503 (connect() on a terminated connection) do not set
+      isFatal, although the connection can't be used after them.
+    new_driver_behavior: |
+      isFatal is true exactly when the connection can't be used anymore:
+      - any error from a connect() whose login ran and failed.
+      - ClientError 405503, connect() on a connection that can't be used anymore.
+      - ClientError 407002, a request on a connection that was destroyed, whose login failed, or
+        whose session ended.
+      - an error for which Snowflake ended the session (BD#72, BD#115).
+      ClientError 405501 and 405502 (connect() while a login is running or after it succeeded),
+      and ClientError 460002 and 460003 from getResultsFromQueryId(), do not set isFatal, because
+      the connection still works after them.
+    description: |
+      An application uses isFatal to decide whether to create a new connection. With the old
+      driver, code that retried connect() on the same object after a failed login got 405503,
+      which is not fatal either, and code that recreated the connection on isFatal did so after
+      getResultsFromQueryId() errors that leave the connection working.
+      The new driver has no 405505 or 405506. clientConfigFile is rejected by createConnection()
+      (BD#159).
+    status_rationale: |
+      One meaning for isFatal is easier to act on: create a new connection when it is set, and keep
+      using the connection when it is not. Code that branches on the flag keeps working. A failed
+      connect() needs a new connection in both drivers, and the connection still works after
+      460002 and 460003, so dropping the flag there only saves an unneeded reconnect.

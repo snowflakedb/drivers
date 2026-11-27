@@ -3,6 +3,15 @@ import { logger } from './logging/index.js';
 export interface SnowflakeError extends Error {
   code?: string | number;
   sqlState?: string;
+  /**
+   * `true` when the connection can't be used anymore, so you have to create a new one.
+   * Every later call on the connection fails, and `isUp()` returns `false`.
+   *
+   * The driver sets it when:
+   * - `connect()` fails, or is called on a connection that can't be used anymore.
+   * - Snowflake ends the session, for example when the master token expires.
+   * - you use a connection that was destroyed or whose login failed.
+   */
   isFatal?: boolean;
   /**
    * Extra details about the HTTP response, such as the status code.

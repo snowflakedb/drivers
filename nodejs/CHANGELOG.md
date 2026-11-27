@@ -18,6 +18,7 @@
 
 #### Bugfixes
 
+- Fixed inconsistencies of the `isFatal` flag on errors. It now means one thing only: the connection object can't be used anymore, because its login failed, it was destroyed, or its session ended. When an error has `isFatal: true`, create a new connection.
 - Fixed the `Query result precision loss detected` warning being logged for large `NUMBER` values when `fetchAsString` includes `'Number'`. These values are returned as exact strings, so no precision is lost. The warning is still logged when such a value is returned as a JavaScript `Number`.
 
 ### Beta Changes

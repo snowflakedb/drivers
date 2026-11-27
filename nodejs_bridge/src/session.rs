@@ -184,7 +184,7 @@ impl Session {
                     .await;
             }
         }
-        result.map_err(BridgeError::from)
+        result.map_err(|error| BridgeError::ConnectFailed(Arc::new(error)))
     }
 
     pub(crate) async fn ready(&self) -> Result<Ready, BridgeError> {

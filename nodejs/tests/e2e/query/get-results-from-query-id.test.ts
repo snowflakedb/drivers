@@ -94,6 +94,7 @@ describe('getResultsFromQueryId', () => {
       message: isRunningNewDriverWithBD('BD#43')
         ? `Cannot retrieve data. No information returned from server for query ${queryId}`
         : `Cannot retrieve data. No information returned from server for query ${queryId} NO_QUERY_DATA`,
+      ...(isRunningNewDriverWithBD('BD#184') ? {} : { isFatal: true }),
     } satisfies Partial<SnowflakeError>);
   });
 });
@@ -156,6 +157,7 @@ describe('getResultsFromQueryId with Wiremock', () => {
       name: 'ClientError',
       code: 460003,
       message: `Status of query ${queryId} is RESTARTED, results are unavailable`,
+      ...(isRunningNewDriverWithBD('BD#184') ? {} : { isFatal: true }),
     } satisfies Partial<SnowflakeError>);
   });
 

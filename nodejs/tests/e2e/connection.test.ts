@@ -32,6 +32,7 @@ describe('Connection', () => {
       name: 'OperationFailedError',
       code: '390144',
       message: expect.stringContaining('JWT token is invalid'),
+      ...(isRunningNewDriverWithBD('BD#184') ? { isFatal: true } : {}),
     });
   });
 
@@ -52,6 +53,7 @@ describe('Connection', () => {
       name: 'OperationFailedError',
       code: '390144',
       message: expect.stringContaining('JWT token is invalid'),
+      ...(isRunningNewDriverWithBD('BD#184') ? { isFatal: true } : {}),
     };
     if (isRunningNewDriverWithBD('BD#11')) {
       await expect(connection.connectAsync()).rejects.toMatchObject(expectedError);
@@ -142,6 +144,7 @@ describe('Connection', () => {
               },
             }
           : {}),
+        ...(isRunningNewDriverWithBD('BD#184') ? { isFatal: true } : {}),
       });
     });
   });

@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { createConnection, createLiveConnection } from './utils/fixtures.js';
-import { connectAsyncWithErrorBD, destroyConnectionAsync, executeAsync } from './utils/index.js';
+import {
+  connectAsyncWithErrorBD,
+  destroyConnectionAsync,
+  executeAsync,
+  isRunningNewDriverWithBD,
+} from './utils/index.js';
 import {
   LOGIN_REQUEST_PATH,
   loginRequestFail,
@@ -31,6 +36,7 @@ describe('Connection State Errors', () => {
       code: 405503,
       sqlState: '08003',
       message: 'Connection already terminated. Cannot connect again.',
+      ...(isRunningNewDriverWithBD('BD#184') ? { isFatal: true } : {}),
     });
   });
 
@@ -45,6 +51,7 @@ describe('Connection State Errors', () => {
       code: 405503,
       sqlState: '08003',
       message: 'Connection already terminated. Cannot connect again.',
+      ...(isRunningNewDriverWithBD('BD#184') ? { isFatal: true } : {}),
     });
   });
 
