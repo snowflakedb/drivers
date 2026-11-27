@@ -1061,6 +1061,30 @@ async fn upload_to_xp_backend_or_skip(
     ))
 }
 
+/// Lists the files under `stage_location` through `backend`, prefix match. Each
+/// name is a full stage path in the form of `stage_location`.
+pub async fn list_xp_backend_stage_files(
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+    stage_location: &str,
+) -> Result<Vec<String>, FileManagerError> {
+    #[derive(serde::Deserialize)]
+    struct StageFile {
+        name: String,
+    }
+    let listing = backend
+        .list_stage_files(stage_location, false)
+        .await
+        .context(XpBackendTransferSnafu)?;
+    let files: Vec<StageFile> = serde_json::from_str(&listing)
+        .map_err(|e| {
+            BackendError::protocol(format!(
+                "list_stage_files: expected a JSON array of objects with a name: {e}"
+            ))
+        })
+        .context(XpBackendTransferSnafu)?;
+    Ok(files.into_iter().map(|file| file.name).collect())
+}
+
 fn stage_listing_is_nonempty(listing: &str) -> Result<bool, BackendError> {
     let rows: Vec<serde_json::Value> = serde_json::from_str(listing).map_err(|e| {
         BackendError::protocol(format!("list_stage_files: expected a JSON array: {e}"))
@@ -1942,9 +1966,32 @@ async fn download_single_file_to(
             };
             (cloud_byte_count, output_byte_len)
         }
+        // The backend returns the whole plaintext object in one call; it is
+        // written to `.part` and renamed like the S3 arm's in-memory SSE case.
         LocationType::XpBackend => {
-            return Err(BackendError::unsupported("download_stream"))
-                .context(XpBackendTransferSnafu);
+            let backend = tx.backend.context(XpBackendMissingSnafu)?;
+            let bytes = backend
+                .download_stream(data.src_location.as_str(), "{}")
+                .await
+                .context(XpBackendTransferSnafu)?;
+            let byte_count = bytes.len() as i64;
+
+            let partial_for_write = partial_path.clone();
+            let output_for_rename = output_path.clone();
+            tokio::task::spawn_blocking(move || -> Result<(), FileManagerError> {
+                let mut output_file =
+                    create_output_file(&partial_for_write, unsafe_file_write).context(IoSnafu)?;
+                let result = output_file
+                    .write_all(&bytes)
+                    .map(|()| byte_count)
+                    .context(IoSnafu);
+                write_or_cleanup(output_file, &partial_for_write, result)?;
+                finalize_rename(&partial_for_write, &output_for_rename).context(IoSnafu)
+            })
+            .await
+            .context(BlockingTaskSnafu)??;
+
+            (byte_count, byte_count)
         }
     };
 
@@ -1975,10 +2022,12 @@ pub struct DownloadStreamOpen {
     pub task: tokio::task::JoinHandle<()>,
     /// Abort handle for the *inner* producer task reading the cloud body
     /// (see `cloud_http::spawn_s3_byte_stream_producer` /
-    /// `spawn_admitted_byte_stream_producer`). Aborting `task` alone stops the
-    /// decrypt/gunzip pipeline but leaves this parked on `body.next()` if
-    /// the connection stalled — abort both.
-    pub producer_abort: tokio::task::AbortHandle,
+    /// `spawn_admitted_byte_stream_producer`), when there is one. Aborting
+    /// `task` alone stops the decrypt/gunzip pipeline but leaves a producer
+    /// parked on `body.next()` if the connection stalled, so a stream with a
+    /// producer aborts both. An XP backend stream has none: its bytes are
+    /// already in memory when the stream opens.
+    pub producer_abort: Option<tokio::task::AbortHandle>,
     pub cloud_byte_count: i64,
 }
 
@@ -2018,7 +2067,7 @@ pub async fn open_s3_download_stream(
 
     Ok(spawn_download_stream_pipeline(
         reader,
-        producer_abort,
+        Some(producer_abort),
         encryption_material,
         cse_info,
         decompress,
@@ -2123,7 +2172,7 @@ fn open_cloud_download_stream(
 
     Ok(spawn_download_stream_pipeline(
         reader,
-        producer_abort,
+        Some(producer_abort),
         encryption_material,
         cse_info,
         decompress,
@@ -2133,8 +2182,9 @@ fn open_cloud_download_stream(
 
 /// Dispatches to the right cloud's [`open_s3_download_stream`] /
 /// [`open_gcs_download_stream`] / [`open_azure_download_stream`] based on
-/// `stage_info.location_type`. `LocationType` is exhaustive (S3/Gcs/Azure),
-/// so this `match` needs no fallback arm.
+/// `stage_info.location_type`. An XP backend stage is opened by
+/// [`open_xp_backend_download_stream`] instead, since this function has no
+/// backend to read it from.
 ///
 /// The opened stream's GET holds a governor permit until the consumer closes it.
 #[allow(clippy::too_many_arguments)]
@@ -2186,10 +2236,33 @@ pub async fn open_download_stream_for_stage(
             )
             .await
         }
-        LocationType::XpBackend => {
-            Err(BackendError::unsupported("download_stream")).context(XpBackendTransferSnafu)
-        }
+        LocationType::XpBackend => XpBackendStreamMisroutedSnafu.fail(),
     }
+}
+
+/// Opens a chunked download of `src_location` through the XP backend.
+///
+/// The backend returns the whole file in one call, so the stream replays that
+/// buffer through the same pipeline the cloud streams use, with no producer
+/// task.
+pub async fn open_xp_backend_download_stream(
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+    src_location: &str,
+    decompress: bool,
+) -> Result<DownloadStreamOpen, FileManagerError> {
+    let bytes = backend
+        .download_stream(src_location, "{}")
+        .await
+        .context(XpBackendTransferSnafu)?;
+    let cloud_byte_count = bytes.len() as i64;
+    Ok(spawn_download_stream_pipeline(
+        std::io::Cursor::new(bytes),
+        None,
+        None,
+        None,
+        decompress,
+        cloud_byte_count,
+    ))
 }
 
 /// Wires a live cloud body into a background `spawn_blocking` decrypt/gunzip
@@ -2201,7 +2274,7 @@ pub async fn open_download_stream_for_stage(
 /// so this task parks instead of spinning when it runs ahead of either end.
 fn spawn_download_stream_pipeline<R: Read + Send + 'static>(
     reader: R,
-    producer_abort: tokio::task::AbortHandle,
+    producer_abort: Option<tokio::task::AbortHandle>,
     encryption_material: Option<EncryptionMaterial>,
     cse_info: Option<CseDownloadInfo>,
     decompress: bool,
@@ -2793,6 +2866,14 @@ pub enum FileManagerError {
     },
     #[snafu(display("XP backend transfer requested but no backend was provided to the transfer"))]
     XpBackendMissing {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "an XP backend stage is streamed by open_xp_backend_download_stream, \
+         not open_download_stream_for_stage"
+    ))]
+    XpBackendStreamMisrouted {
         #[snafu(implicit)]
         location: Location,
     },

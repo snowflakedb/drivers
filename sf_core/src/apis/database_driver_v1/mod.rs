@@ -27,10 +27,12 @@ mod query_submit;
 pub(crate) use self::query::test_counting_coordinator;
 pub(crate) mod result_set;
 pub mod spcs_token;
-mod stage_upload;
+mod stage_transfer;
 pub(crate) mod statement;
 mod stream_transfer;
 pub(crate) mod validation;
+#[cfg(test)]
+mod xp_stage_test_support;
 
 pub use crate::chunks::FetchChunkInput;
 pub use crate::config::settings::Setting;
@@ -58,6 +60,6 @@ pub use result_set::{
     AsyncArrowBatchFetcher, ChunkData, ChunkDataWithDescriptor, ColumnMetadata, ExecuteQueryResult,
     InlineData, ResultSetDescriptor, ResultSetInfo,
 };
-pub use stage_upload::StageUploadOptions;
+pub use stage_transfer::StageTransferOptions;
 pub use statement::{AsyncExecuteResult, BindingType, DataPtr};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

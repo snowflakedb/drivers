@@ -719,6 +719,28 @@ message ConnectionStageUploadResponse {
   ResultSetDescriptor result_descriptor = 2;
 }
 
+// Downloads stage files to a local directory without the caller rendering GET
+// SQL. The core builds the GET when it must ask GS for stage credentials, and
+// lists and downloads the files directly when a host backend serves stage I/O.
+//
+// `stage_location` names a stage file or a prefix, interpreted as in
+// `ConnectionStageUploadRequest.stage_location`. `options` carries GET options
+// by name (`PARALLEL`, `PATTERN`), as in `ConnectionStageUploadRequest.options`.
+// A host backend does not support a non-empty `PATTERN`.
+message ConnectionStageDownloadRequest {
+  ConnectionHandle conn_handle = 1;
+  string stage_location = 2;
+  // Local directory, optionally `file://`-prefixed and single-quoted.
+  string target_directory = 3;
+  map<string, string> options = 4;
+}
+
+// Same shape as `ResultSetResponse`: the standard GET rowset.
+message ConnectionStageDownloadResponse {
+  ResultSetHandle result_set_handle = 1;
+  ResultSetDescriptor result_descriptor = 2;
+}
+
 // Handle for a chunked download stream session opened by
 // ConnectionDownloadStreamBegin. Opaque outside sf_core, same shape as the
 // other handle types.
@@ -731,10 +753,12 @@ message DownloadStreamHandle {
 // session that streams the file from cloud storage without ever landing the
 // whole file on local disk or fully buffering it in memory. The core keeps
 // only a small bounded window of bytes in flight regardless of file size.
-// Supports S3, GCS, and Azure-backed stages.
+// Supports S3, GCS, and Azure-backed stages. A stage served by a host backend
+// is also supported, but the host hands the core the whole file at once.
 // Cancelling the operation while the GET runs aborts it on the server.
-// Cancelling while the cloud download opens sends no abort-request. In both
-// cases the call reports CANCELLED and opens no session.
+// Cancelling while the cloud download opens, or while a host backend reads the
+// file, sends no abort-request. In every case the call reports CANCELLED and
+// opens no session.
 message ConnectionDownloadStreamBeginRequest {
   ConnectionHandle conn_handle = 1;
   string stage_name = 2;
@@ -1300,9 +1324,12 @@ service DatabaseDriver {
   rpc ConnectionStageUpload(ConnectionStageUploadRequest) returns (ConnectionStageUploadResponse) {
     option (async_first) = true;
   }
+  rpc ConnectionStageDownload(ConnectionStageDownloadRequest) returns (ConnectionStageDownloadResponse) {
+    option (async_first) = true;
+  }
   // Chunked streaming GET: begin a session, pull chunks, then close.
   // Zero-disk, bounded-memory streaming download. Supports S3, GCS, and
-  // Azure-backed stages.
+  // Azure-backed stages, and stages served by a host backend.
   rpc ConnectionDownloadStreamBegin(ConnectionDownloadStreamBeginRequest) returns (ConnectionDownloadStreamBeginResponse) {
     option (async_first) = true;
   }

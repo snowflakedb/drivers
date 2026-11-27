@@ -9,7 +9,9 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use sf_core::xp_backend::ffi::{SfCoreFfiError, XP_BACKEND_ABI_VERSION, XpBackendCallbacks};
+use sf_core::xp_backend::ffi::{
+    RESERVED_CALLBACK_SLOTS, SfCoreFfiError, XP_BACKEND_ABI_VERSION, XpBackendCallbacks,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Call {
@@ -57,6 +59,8 @@ pub struct HostState {
     upload_in_flight: AtomicUsize,
     max_concurrent_uploads: AtomicUsize,
     aborted_uploads: AtomicUsize,
+    /// Bytes `download_stream` reports, keyed by source location.
+    stream_bodies: Mutex<HashMap<String, Vec<u8>>>,
     /// Bytes `download_query_chunk` reports, keyed by chunk URL.
     chunk_bodies: Mutex<HashMap<String, Vec<u8>>>,
     /// `headers_json` observed by the most recent `download_query_chunk` call
@@ -93,6 +97,14 @@ impl HostState {
     /// success; the adapter then substitutes its PROTOCOL code.
     pub fn fail_next(&self, code: i32, message: Option<&str>) {
         *self.scripted_failure.lock().unwrap() = Some((code, message.map(str::to_string)));
+    }
+
+    /// Body `download_stream` returns for `source`.
+    pub fn set_stream_body(&self, source: impl Into<String>, bytes: impl Into<Vec<u8>>) {
+        self.stream_bodies
+            .lock()
+            .unwrap()
+            .insert(source.into(), bytes.into());
     }
 
     /// Body `download_query_chunk` returns for `url`.
@@ -208,10 +220,10 @@ pub fn callbacks_for(state: &'static HostState) -> XpBackendCallbacks {
         upload_stream_write: Some(upload_stream_write),
         upload_stream_finish: Some(upload_stream_finish),
         upload_stream_abort: Some(upload_stream_abort),
-        // Null on purpose: the trait's "unsupported" defaults must answer.
-        download_stream: None,
+        download_stream: Some(download_stream),
         list_stage_files: Some(list_stage_files),
         download_query_chunk: Some(download_query_chunk),
+        reserved: [None; RESERVED_CALLBACK_SLOTS],
     }
 }
 
@@ -434,6 +446,43 @@ unsafe extern "C" fn download_query_chunk(
                 (*error_out).code = 999;
                 (*error_out).message =
                     host_strdup(&format!("test did not script a chunk body for {url_str}"));
+                999
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn download_stream(
+    host_state: *mut c_void,
+    source: *const c_char,
+    metadata_json: *const c_char,
+    data_out: *mut *mut u8,
+    data_len_out: *mut usize,
+    error_out: *mut SfCoreFfiError,
+) -> i32 {
+    unsafe {
+        let host = state(host_state);
+        let source = borrow_str(source).unwrap_or_default();
+        host.record(
+            "download_stream",
+            Some(source.clone()),
+            borrow_str(metadata_json),
+        );
+        if let Some(code) = maybe_fail(host, error_out) {
+            return code;
+        }
+        match host.stream_bodies.lock().unwrap().get(&source).cloned() {
+            Some(bytes) => {
+                let (ptr, len) = host_buffer(&bytes);
+                *data_out = ptr;
+                *data_len_out = len;
+                0
+            }
+            None => {
+                (*error_out).code = 999;
+                (*error_out).message = host_strdup(&format!(
+                    "test did not script a download_stream body for {source}"
+                ));
                 999
             }
         }

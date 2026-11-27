@@ -63,6 +63,8 @@ from ..protobuf_gen.database_driver_v1_pb2 import (
     ConnectionSetOptionsResponse,
     ConnectionSetSessionParametersRequest,
     ConnectionSetSessionParametersResponse,
+    ConnectionStageDownloadRequest,
+    ConnectionStageDownloadResponse,
     ConnectionStageUploadRequest,
     ConnectionStageUploadResponse,
     ConnectionTokenRequest,
@@ -490,6 +492,17 @@ class CoreDriver:
             options=options,
         )
         return self.client.connection_stage_upload(request)
+
+    def stage_download(
+        self, conn_handle: ConnectionHandle, stage_location: str, target_directory: str, options: Mapping[str, str]
+    ) -> ConnectionStageDownloadResponse:
+        request = ConnectionStageDownloadRequest(
+            conn_handle=conn_handle,
+            stage_location=stage_location,
+            target_directory=target_directory,
+            options=options,
+        )
+        return self.client.connection_stage_download(request)
 
     def upload_stream_chunk(
         self, upload_handle: UploadStreamHandle, data: bytes

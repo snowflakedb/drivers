@@ -57,12 +57,18 @@ use crate::rest::snowflake::{
 use crate::sensitive::SensitiveString;
 
 /// Bump on any change to [`XpBackendCallbacks`]'s layout or a callback signature.
-/// A mismatched host is rejected at registration, so a layout mismatch is an
-/// error message rather than undefined behaviour.
+/// A driver build accepts exactly one layout: this version, this struct size,
+/// and null reserved slots. A host that loads several driver builds passes each
+/// the layout it was built with; any other is rejected at registration, so a
+/// layout mismatch is an error message rather than undefined behaviour.
 pub const XP_BACKEND_ABI_VERSION: u32 = 1;
 
 /// Largest buffer the driver passes to one `upload_stream_write` call.
 pub const UPLOAD_STREAM_CHUNK_LEN: usize = 4 * 1024 * 1024;
+
+/// Null slots at the end of [`XpBackendCallbacks`] for callbacks a later driver
+/// may add without changing `struct_size`.
+pub const RESERVED_CALLBACK_SLOTS: usize = 4;
 
 #[repr(C)]
 struct XpBackendCallbacksHeader {
@@ -327,6 +333,9 @@ pub struct XpBackendCallbacks {
             error_out: *mut SfCoreFfiError,
         ) -> i32,
     >,
+    /// Slots for callbacks a later driver may add. Hosts leave them null;
+    /// registration rejects a set slot.
+    pub reserved: [Option<unsafe extern "C" fn()>; RESERVED_CALLBACK_SLOTS],
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +504,14 @@ unsafe fn adapter_from_host(
     }
 
     // SAFETY: the validated size and the caller's contract guarantee the full layout.
-    CBackendAdapter::new(unsafe { &*callbacks })
+    let callbacks = unsafe { &*callbacks };
+    if let Some(slot) = callbacks.reserved.iter().position(Option::is_some) {
+        return Err(BackendError::new(
+            error_codes::ABI_MISMATCH,
+            format!("reserved callback slot {slot} is set; this driver defines no callback there"),
+        ));
+    }
+    CBackendAdapter::new(callbacks)
 }
 
 /// Returns `0`, or a negative [`error_codes`] value.
@@ -1446,10 +1462,10 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     fn callbacks_layout_is_pinned_to_the_declared_abi_version() {
         assert_eq!(XP_BACKEND_ABI_VERSION, 1);
-        // u32 + 4 padding + struct_size + context + 13 function pointers.
+        // u32 + 4 padding + struct_size + context + 13 function pointers + 4 reserved slots.
         assert_eq!(
             std::mem::size_of::<XpBackendCallbacks>(),
-            4 + 4 + 8 + 8 + 13 * 8,
+            4 + 4 + 8 + 8 + (13 + 4) * 8,
             "layout changed: update this size and regenerate \
              include/sf_core_providers.h"
         );
@@ -1614,6 +1630,7 @@ mod tests {
             download_stream: None,
             list_stage_files: None,
             download_query_chunk: None,
+            reserved: [None; RESERVED_CALLBACK_SLOTS],
         }
     }
 

@@ -64,11 +64,30 @@
  *   - download_stream: GET fetches one whole file. The result is a
  *     host-allocated byte buffer.
  *   - list_stage_files: PUT with overwrite=false and GET enumerate stage files.
- *     The result is a JSON array of {"name": "..."} objects.
+ *     The result is a JSON array of {"name": "..."} objects. Each name is the
+ *     full stage path of a file, in the form of the input (@stage/dir/a.csv
+ *     for @stage/dir), and GET passes it to download_stream as the source.
  *   - download_query_chunk: fetches a query result chunk that is not inline.
  *     headers_json is a JSON object of header name to value. The result is a
  *     host-allocated byte buffer holding the chunk exactly as the server
  *     serves it; the driver detects gzip and inflates it.
+ *
+ * Reserved slots
+ * ==============
+ *
+ * The reserved array at the end of the struct holds space for callbacks a later
+ * driver may add, so adding one does not change struct_size. Leave every slot
+ * null: registration rejects a set slot with ABI_MISMATCH, since this driver
+ * defines no callback there.
+ *
+ * ABI changes
+ * ===========
+ *
+ * A driver build accepts exactly one layout: its XP_BACKEND_ABI_VERSION, its
+ * sizeof(XpBackendCallbacks), and null reserved slots. Anything else is
+ * rejected with ABI_MISMATCH and nothing is registered. The host supports
+ * several driver builds, so a layout change lands in the host before a driver
+ * that requires it ships.
  *
  * Ownership follows the rules above: a byte buffer written to data_out is
  * host-allocated with malloc and freed by the driver, and a non-zero return
@@ -88,8 +107,10 @@
 
 /**
  * Bump on any change to [`XpBackendCallbacks`]'s layout or a callback signature.
- * A mismatched host is rejected at registration, so a layout mismatch is an
- * error message rather than undefined behaviour.
+ * A driver build accepts exactly one layout: this version, this struct size,
+ * and null reserved slots. A host that loads several driver builds passes each
+ * the layout it was built with; any other is rejected at registration, so a
+ * layout mismatch is an error message rather than undefined behaviour.
  */
 #define XP_BACKEND_ABI_VERSION 1
 
@@ -97,6 +118,12 @@
  * Largest buffer the driver passes to one `upload_stream_write` call.
  */
 #define UPLOAD_STREAM_CHUNK_LEN ((4 * 1024) * 1024)
+
+/**
+ * Null slots at the end of [`XpBackendCallbacks`] for callbacks a later driver
+ * may add without changing `struct_size`.
+ */
+#define RESERVED_CALLBACK_SLOTS 4
 
 /**
  * `message` is host-allocated and freed by the driver. `code` should be a
@@ -141,6 +168,11 @@ typedef struct XpBackendCallbacks {
     int32_t (*download_stream)(void *ctx, const char *source, const char *metadata_json, uint8_t **data_out, uintptr_t *data_len_out, struct SfCoreFfiError *error_out);
     int32_t (*list_stage_files)(void *ctx, const char *stage_location, int32_t is_exact_match, char **result_out, struct SfCoreFfiError *error_out);
     int32_t (*download_query_chunk)(void *ctx, const char *url, const char *headers_json, uint8_t **data_out, uintptr_t *data_len_out, struct SfCoreFfiError *error_out);
+    /**
+     * Slots for callbacks a later driver may add. Hosts leave them null;
+     * registration rejects a set slot.
+     */
+    void (*reserved[RESERVED_CALLBACK_SLOTS])(void);
 } XpBackendCallbacks;
 
 #ifdef __cplusplus

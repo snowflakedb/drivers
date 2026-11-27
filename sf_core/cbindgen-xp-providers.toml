@@ -72,11 +72,30 @@ header = """/**
  *   - download_stream: GET fetches one whole file. The result is a
  *     host-allocated byte buffer.
  *   - list_stage_files: PUT with overwrite=false and GET enumerate stage files.
- *     The result is a JSON array of {"name": "..."} objects.
+ *     The result is a JSON array of {"name": "..."} objects. Each name is the
+ *     full stage path of a file, in the form of the input (@stage/dir/a.csv
+ *     for @stage/dir), and GET passes it to download_stream as the source.
  *   - download_query_chunk: fetches a query result chunk that is not inline.
  *     headers_json is a JSON object of header name to value. The result is a
  *     host-allocated byte buffer holding the chunk exactly as the server
  *     serves it; the driver detects gzip and inflates it.
+ *
+ * Reserved slots
+ * ==============
+ *
+ * The reserved array at the end of the struct holds space for callbacks a later
+ * driver may add, so adding one does not change struct_size. Leave every slot
+ * null: registration rejects a set slot with ABI_MISMATCH, since this driver
+ * defines no callback there.
+ *
+ * ABI changes
+ * ===========
+ *
+ * A driver build accepts exactly one layout: its XP_BACKEND_ABI_VERSION, its
+ * sizeof(XpBackendCallbacks), and null reserved slots. Anything else is
+ * rejected with ABI_MISMATCH and nothing is registered. The host supports
+ * several driver builds, so a layout change lands in the host before a driver
+ * that requires it ships.
  *
  * Ownership follows the rules above: a byte buffer written to data_out is
  * host-allocated with malloc and freed by the driver, and a non-zero return

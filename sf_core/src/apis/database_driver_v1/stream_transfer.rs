@@ -63,14 +63,14 @@ use super::connection::Connection;
 use super::error::*;
 use super::global_state::{DatabaseDriverV1, PutGetResultsetFlavor};
 use super::query::{
-    StageInfoRefreshContext, build_and_upload_stream, remote_file_not_found,
-    stream_stage_info_refresher,
+    StageInfoRefreshContext, build_and_upload_stream, open_download_stream_via_xp_backend,
+    remote_file_not_found, stream_stage_info_refresher,
 };
 use super::query_submit::{
     AbortReport, QueryTransport, query_context, run_reporting_abort, submit_query, update_caches,
 };
 use super::result_set::{ResultSetInfo, resolve_reader_ctx, response_to_descriptor};
-use super::stage_upload::{StageUploadOptions, XpStreamUpload};
+use super::stage_transfer::{StageTransferOptions, XpStreamUpload, xp_download_stream_source};
 use super::statement::skip_leading_whitespace_and_comments;
 use crate::apis::operation_ctx::OperationCtx;
 use crate::file_manager::{self, ByteSource, SPOOL_MEM_THRESHOLD, SpooledBuffer};
@@ -124,18 +124,20 @@ pub(super) struct DownloadStreamSession {
     done: bool,
 }
 
-/// Handles for the two background tasks behind a chunked download: the cloud
-/// producer and the decrypt/gunzip pipeline. Always aborted together via
-/// [`Self::abort`] — aborting only the pipeline could leave the producer
-/// stuck forever on a stalled cloud read.
+/// Handles for the background tasks behind a chunked download: the
+/// decrypt/gunzip pipeline and, for a cloud stream, the producer reading the
+/// cloud body. [`Self::abort`] aborts both, since aborting only the pipeline
+/// could leave the producer stuck forever on a stalled cloud read.
 pub(super) struct DownloadAborter {
-    producer: tokio::task::AbortHandle,
+    producer: Option<tokio::task::AbortHandle>,
     pipeline: tokio::task::AbortHandle,
 }
 
 impl DownloadAborter {
     fn abort(&self) {
-        self.producer.abort();
+        if let Some(producer) = &self.producer {
+            producer.abort();
+        }
         self.pipeline.abort();
     }
 }
@@ -261,7 +263,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         stage_location: String,
-        options: StageUploadOptions,
+        options: StageTransferOptions,
     ) -> Result<Handle, ApiError> {
         let conn = self
             .connections
@@ -500,15 +502,18 @@ impl DatabaseDriverV1 {
     /// storage instead of writing to a tempdir, and registers a session for
     /// `download_stream_chunk` to drain. Dispatches on the stage's
     /// `location_type` (S3/GCS/Azure) via `file_manager::open_download_stream_for_stage`.
+    /// With an XP backend the stage is named as an XP GET names it, the file is
+    /// read through the backend, and no GET is submitted.
     ///
     /// Returns the new handle plus the on-cloud byte count
     /// (pre-decompression), if the cloud response reported one.
     ///
     /// Cancelling through `operation_ctx` while the GET is in flight aborts it
-    /// on the server. Cancelling while the cloud stream opens drops the open
-    /// and registers no session: the background tasks are spawned only once
-    /// the cloud GET has answered, and the session is registered without an
-    /// intervening await.
+    /// on the server. Cancelling while the cloud stream opens, or while the
+    /// XP backend reads the file, drops the open and registers no session: the
+    /// background tasks are spawned only once the cloud GET or the backend has
+    /// answered, and the session is registered without an intervening await.
+    /// The backend's read is not interrupted; its bytes are discarded.
     pub async fn download_stream_begin(
         &self,
         operation_ctx: Option<&OperationCtx>,
@@ -550,6 +555,23 @@ impl DatabaseDriverV1 {
                     argument: "Connection handle not found",
                 })?;
 
+            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
+
+            let query_transport = query_context(&conn_ptr).await?;
+
+            if let Some(backend) = &query_transport.xp_backend {
+                let source = xp_download_stream_source(&stage_name, &source_filename);
+                let opened =
+                    open_download_stream_via_xp_backend(&source, decompress, backend.as_ref())
+                        .await
+                        .context(QueryResponseProcessSnafu)?;
+                return Ok(self.register_download_stream(
+                    conn_handle,
+                    opened,
+                    self.governor.register_command(1),
+                ));
+            }
+
             let stage_path = build_stage_path(&stage_name, &source_filename);
             // GET requires a syntactically valid local target even though
             // the streaming path never writes to it — created and discarded
@@ -566,10 +588,6 @@ impl DatabaseDriverV1 {
             // tempfile::tempdir(), not the caller.
             let get_sql = build_get_sql(&stage_path, tmp_dir.path());
             drop(tmp_dir);
-
-            let _session_guard = self.lock_session_if_needed(&conn_ptr).await;
-
-            let query_transport = query_context(&conn_ptr).await?;
 
             let response =
                 run_sql_against_gs(cancellation, &conn_ptr, &query_transport, get_sql.clone())
@@ -617,12 +635,6 @@ impl DatabaseDriverV1 {
             // `refresher` only needs to cover opening the stream — it's
             // dropped when this block returns, before the background
             // producer (which has no refresher of its own) is spawned.
-            if query_transport.xp_backend.is_some() {
-                return Err(crate::rest::snowflake::RestError::from(
-                    crate::xp_backend::BackendError::unsupported("download_stream"),
-                ))
-                .context(QuerySnafu);
-            }
             let opened = file_manager::open_download_stream_for_stage(
                 &resolved.stage_info,
                 &resolved.src_location,
@@ -636,30 +648,39 @@ impl DatabaseDriverV1 {
             .await
             .map_err(map_open_download_stream_error)?;
 
-            let total_len = (opened.cloud_byte_count > 0).then_some(opened.cloud_byte_count);
             // Keep the command registration on the stream, not `StageTransport`,
             // so it outlives begin and any later command-scoped work.
-            let transfer = transport.transfer;
-            let stream = DownloadStream::new(
-                conn_handle,
-                DownloadAborter {
-                    producer: opened.producer_abort,
-                    pipeline: opened.task.abort_handle(),
-                },
-                opened.chunks,
-                transfer,
-            );
-            // `opened.task` runs detached: the pipeline drives itself via
-            // `rx`/`ChannelWriter`, and is only cancelled through
-            // `stream.aborter`'s `AbortHandle` (not this `JoinHandle`).
-            let handle = self.download_streams.add_handle(stream);
-            Ok((handle, total_len))
+            Ok(self.register_download_stream(conn_handle, opened, transport.transfer))
         }
         .instrument(crate::snowflake_op_span!(
             "download_stream_begin",
             telemetry_id
         ))
         .await
+    }
+
+    /// Registers an opened download for `download_stream_chunk` to drain and
+    /// returns its handle plus the on-cloud byte count, if one was reported.
+    fn register_download_stream(
+        &self,
+        conn_handle: Handle,
+        opened: file_manager::DownloadStreamOpen,
+        transfer: TransferOp,
+    ) -> (Handle, Option<i64>) {
+        let total_len = (opened.cloud_byte_count > 0).then_some(opened.cloud_byte_count);
+        let stream = DownloadStream::new(
+            conn_handle,
+            DownloadAborter {
+                producer: opened.producer_abort,
+                pipeline: opened.task.abort_handle(),
+            },
+            opened.chunks,
+            transfer,
+        );
+        // `opened.task` runs detached: the pipeline drives itself via
+        // `rx`/`ChannelWriter`, and is only cancelled through
+        // `stream.aborter`'s `AbortHandle` (not this `JoinHandle`).
+        (self.download_streams.add_handle(stream), total_len)
     }
 
     /// Pulls up to `max_len` bytes from a session opened by
@@ -1200,7 +1221,7 @@ mod tests {
             .connection_stage_upload_stream_begin(
                 conn_handle,
                 "'st/dir/name.csv'".into(),
-                StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+                StageTransferOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
             )
             .await
             .expect("a stage file destination must open a session");
@@ -1222,7 +1243,7 @@ mod tests {
                 .connection_stage_upload_stream_begin(
                     conn_handle,
                     destination.into(),
-                    StageUploadOptions::default(),
+                    StageTransferOptions::default(),
                 )
                 .await;
             assert!(result.is_err(), "{destination:?} must be rejected at begin");
@@ -1535,7 +1556,7 @@ mod tests {
         let stream = DownloadStream::new(
             conn_handle,
             DownloadAborter {
-                producer: abort_handle.clone(),
+                producer: Some(abort_handle.clone()),
                 pipeline: abort_handle,
             },
             rx,
@@ -1559,6 +1580,71 @@ mod tests {
         assert!(
             result.is_err(),
             "unknown connection handle must be rejected before any GS round trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn xp_download_stream_reads_the_stage_file_an_xp_get_names() {
+        use crate::apis::database_driver_v1::xp_stage_test_support::{
+            StageBackend, xp_stage_driver,
+        };
+        let backend = Arc::new(StageBackend::new("[]", b"bytes"));
+        let (driver, conn) = xp_stage_driver(Default::default(), Arc::clone(&backend));
+        for stage_name in ["'@st/dir'", "st/dir", "@st/dir/", "'@st/it\\'s'"] {
+            let (handle, total_len) = driver
+                .download_stream_begin(None, conn, stage_name.into(), "f.csv".into(), false)
+                .await
+                .expect("open an XP download stream");
+            assert_eq!(total_len, Some(5));
+            driver
+                .download_stream_close(handle)
+                .await
+                .expect("close the stream");
+        }
+        assert_eq!(
+            backend.download_sources(),
+            [
+                "@st/dir/f.csv",
+                "@st/dir/f.csv",
+                "@st/dir/f.csv",
+                "@st/it's/f.csv"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_the_xp_backend_reads_reports_cancelled() {
+        use crate::apis::database_driver_v1::xp_stage_test_support::{
+            StageBackend, xp_stage_driver,
+        };
+        let backend = Arc::new(StageBackend {
+            hang_downloads: true,
+            ..StageBackend::new("[]", b"")
+        });
+        let (driver, conn) = xp_stage_driver(Default::default(), Arc::clone(&backend));
+        let token = tokio_util::sync::CancellationToken::new();
+        let operation_ctx = OperationCtx::from_registered(1, token.clone());
+
+        let begin = driver.download_stream_begin(
+            Some(&operation_ctx),
+            conn,
+            "@st".into(),
+            "f.csv".into(),
+            false,
+        );
+        let cancel_once_the_backend_reads = async {
+            while backend.download_sources().is_empty() {
+                tokio::task::yield_now().await;
+            }
+            token.cancel();
+        };
+        let (result, ()) = tokio::join!(begin, cancel_once_the_backend_reads);
+
+        let err = result.expect_err("a cancelled open must not return a stream");
+        assert_eq!(err.kind(), super::super::ErrorKind::Cancelled);
+        assert!(
+            driver.download_streams.drain_matching(|_| true).is_empty(),
+            "a cancelled open must register no session"
         );
     }
 
@@ -1676,7 +1762,7 @@ mod tests {
         let stream = DownloadStream::new(
             bogus_handle(),
             DownloadAborter {
-                producer: producer_abort.clone(),
+                producer: Some(producer_abort.clone()),
                 pipeline: pipeline_abort.clone(),
             },
             rx,
@@ -1731,7 +1817,10 @@ mod tests {
             tokio::sync::mpsc::channel::<Result<Vec<u8>, file_manager::FileManagerError>>(8);
         DownloadStream::new(
             conn_handle,
-            DownloadAborter { producer, pipeline },
+            DownloadAborter {
+                producer: Some(producer),
+                pipeline,
+            },
             rx,
             transfer,
         )
@@ -1854,7 +1943,7 @@ mod tests {
         let stream = DownloadStream::new(
             bogus_handle(),
             DownloadAborter {
-                producer,
+                producer: Some(producer),
                 pipeline: pipeline.clone(),
             },
             rx,

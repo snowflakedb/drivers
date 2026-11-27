@@ -4918,9 +4918,9 @@ class TestQueryResultFormat:
 class TestSnowparkDirectFileTransfer:
     """Unit tests for `_upload`/`_download`/`_upload_stream`/`_download_stream`.
 
-    `_upload`/`_upload_stream` hand their arguments to the core driver's
-    stage-upload RPCs; `_download` builds a GET statement and `_download_stream`
-    delegates to `download_stream`. These tests only check that the right call is
+    `_upload`/`_upload_stream`/`_download` hand their arguments to the core
+    driver's stage-transfer RPCs, and `_download_stream` delegates to
+    `download_stream`. These tests only check that the right call is
     made with the right arguments — execution, chunking and abort behavior belong
     to TestFileStreamUpload and TestDownloadStream.
     """
@@ -5024,29 +5024,29 @@ class TestSnowparkDirectFileTransfer:
         mock_core_client.connection_upload_stream_finish.assert_not_called()
 
     @pytest.mark.parametrize(
-        ("stage_location", "target_directory", "options", "expected_sql"),
+        ("stage_location", "target_directory", "options", "expected_options"),
         [
+            pytest.param("@mystage/prefix1", "/tmp/target", {"parallel": 10}, {"parallel": "10"}, id="plain-get"),
             pytest.param(
-                "@mystage/prefix1",
-                "/tmp/target",
-                {"parallel": 10},
-                "GET @mystage/prefix1 file:///tmp/target parallel=10",
-                id="plain-get",
-            ),
-            pytest.param(
-                "@mystage",
-                "/tmp/target",
+                "mystage",
+                "'file:///tmp/my target'",
                 {"parallel": 10, "pattern": "'.*test.*[.]csv'"},
-                "GET @mystage file:///tmp/target parallel=10 pattern='.*test.*[.]csv'",
+                {"parallel": "10", "pattern": "'.*test.*[.]csv'"},
                 id="with-a-pattern-option",
             ),
         ],
     )
-    def test_download_calls_execute_with_a_get(self, cursor, stage_location, target_directory, options, expected_sql):
-        with patch.object(cursor, "execute") as execute:
+    def test_download_sends_its_arguments_to_the_core_driver_unchanged(
+        self, cursor, mock_core_client, stage_location, target_directory, options, expected_options
+    ):
+        with patch.object(SnowflakeCursor, "_apply_result_set"):
             cursor._download(stage_location, target_directory, options)
 
-        execute.assert_called_once_with(expected_sql, file_stream=None)
+        mock_core_client.connection_stage_download.assert_called_once()
+        request = mock_core_client.connection_stage_download.call_args.args[0]
+        assert request.stage_location == stage_location
+        assert request.target_directory == target_directory
+        assert dict(request.options) == expected_options
 
     @pytest.mark.parametrize(
         ("stage_location", "decompress", "expected_stage_location"),
@@ -5084,8 +5084,15 @@ class TestSnowparkDirectFileTransfer:
         assert exc_info.value.errno == ER_CURSOR_IS_CLOSED
 
     @pytest.mark.parametrize("do_reset", [True, False])
-    def test_upload_honors_do_reset(self, cursor, mock_core_client, do_reset):
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda c, r: c._upload("/tmp/data.csv", "@stage", {}, _do_reset=r), id="_upload"),
+            pytest.param(lambda c, r: c._download("@stage", "/tmp/target", {}, _do_reset=r), id="_download"),
+        ],
+    )
+    def test_stage_transfers_honor_do_reset(self, cursor, mock_core_client, call, do_reset):
         with patch.object(SnowflakeCursor, "_apply_result_set"), patch.object(cursor, "reset") as reset:
-            cursor._upload("/tmp/data.csv", "@stage", {}, _do_reset=do_reset)
+            call(cursor, do_reset)
 
         assert reset.called is do_reset

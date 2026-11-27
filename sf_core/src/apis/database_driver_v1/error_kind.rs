@@ -208,6 +208,7 @@ fn kind_of(error: &ApiError) -> ErrorKind {
         ApiError::InvalidArgument { .. } | ApiError::ConnectionClosed { .. } => {
             ErrorKind::InvalidArgument
         }
+        ApiError::NotImplemented { .. } => ErrorKind::NotImplemented,
 
         ApiError::HttpRequest { .. } | ApiError::FileTransfersDisabled { .. } => ErrorKind::Io,
         ApiError::StageBinding { .. } => ErrorKind::StageBinding,

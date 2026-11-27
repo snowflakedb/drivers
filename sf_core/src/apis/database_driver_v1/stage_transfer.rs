@@ -1,11 +1,11 @@
-//! Stage uploads that take a local file or byte stream plus a stage location and
-//! PUT options, instead of PUT SQL.
+//! Stage uploads and downloads that take local paths or a byte stream plus a
+//! stage location and PUT/GET options, instead of PUT/GET SQL.
 //!
-//! With an XP backend registered the upload runs straight against the backend:
+//! With an XP backend registered the transfer runs straight against the backend:
 //! stage names and options are interpreted as the 4.x stored-procedure connector
 //! did, and no query is submitted. Without one, the arguments are rendered into
-//! a single PUT statement that takes the normal GS path, with the stage location
-//! and file name passed through to GS as the caller wrote them.
+//! a single PUT or GET statement that takes the normal GS path, with the stage
+//! location and local paths passed through to GS as the caller wrote them.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -17,7 +17,10 @@ use tracing::Instrument;
 use super::connection::Connection;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
-use super::query::{upload_files_via_xp_backend, upload_stream_via_xp_backend};
+use super::query::{
+    download_files_via_xp_backend, list_stage_files_via_xp_backend, remote_file_not_found,
+    upload_files_via_xp_backend, upload_stream_via_xp_backend,
+};
 use super::result_set::{
     ExecuteQueryResult, ResultSetInfo, resolve_reader_ctx, response_to_descriptor,
 };
@@ -33,11 +36,11 @@ const SNOWFLAKE_NESTED_STAGE_PREFIX: &str = "snow://";
 const FILE_URI_PREFIX: &str = "file://";
 const MAX_PARALLEL: i64 = 99;
 
-/// PUT options by name, with values written as in PUT SQL.
+/// PUT or GET options by name, with values written as in PUT/GET SQL.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StageUploadOptions(BTreeMap<String, String>);
+pub struct StageTransferOptions(BTreeMap<String, String>);
 
-impl StageUploadOptions {
+impl StageTransferOptions {
     pub fn new(options: impl IntoIterator<Item = (String, String)>) -> Self {
         Self(options.into_iter().collect())
     }
@@ -51,7 +54,7 @@ impl StageUploadOptions {
     }
 
     /// Reads the options an XP upload honors. Other names are ignored.
-    fn resolve_for_xp(&self) -> Result<XpPutOptions, ApiError> {
+    fn resolve_for_xp_put(&self) -> Result<XpPutOptions, ApiError> {
         let mut resolved = XpPutOptions::default();
         for (name, value) in &self.0 {
             match name.to_ascii_uppercase().as_str() {
@@ -68,6 +71,24 @@ impl StageUploadOptions {
             }
         }
         Ok(resolved)
+    }
+
+    /// Checks the options an XP download honors. A non-empty `PATTERN` is not
+    /// supported, and other names are ignored.
+    fn check_for_xp_get(&self) -> Result<(), ApiError> {
+        for (name, value) in &self.0 {
+            match name.to_ascii_uppercase().as_str() {
+                "PARALLEL" => validate_parallel(value)?,
+                "PATTERN" if !value.trim().is_empty() => {
+                    return NotImplementedSnafu {
+                        feature: "GET with PATTERN in stored procedures",
+                    }
+                    .fail();
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -187,6 +208,13 @@ fn normalize_stage_location(name: &str) -> String {
     }
 }
 
+/// The stage file an XP download stream reads: `source_filename` inside the
+/// stage location `stage_name`, named as an XP GET names it.
+pub(super) fn xp_download_stream_source(stage_name: &str, source_filename: &str) -> String {
+    let stage = normalize_stage_location(stage_name);
+    format!("{}/{source_filename}", stage.trim_end_matches('/'))
+}
+
 fn local_path(name: &str) -> String {
     let unquoted = unquote(name);
     unquoted
@@ -212,24 +240,23 @@ fn gs_stage_ref(stage_location: &str) -> String {
     }
 }
 
-// PUT takes no bind parameters for its file and stage operands, so they and the
-// options are written into the statement. The local path and stage location go
-// in as the caller wrote them, quoting included, and option names and values
-// are not checked: the 4.x connector wrote options and the local path the same
-// way, and GS parses the statement.
-fn render_put_sql(
-    local_file_name: &str,
-    stage_location: &str,
-    options: &StageUploadOptions,
-) -> String {
-    let local = local_file_name.trim();
-    let local = if local.starts_with('\'') || local.starts_with(FILE_URI_PREFIX) {
+// PUT and GET take no bind parameters for their file and stage operands, so
+// they and the options are written into the statement. The local path and stage
+// location go in as the caller wrote them, quoting included, and option names
+// and values are not checked: the 4.x connector wrote options and the local
+// path the same way, and GS parses the statement.
+fn sql_local_operand(local_path: &str) -> String {
+    let local = local_path.trim();
+    if local.starts_with('\'') || local.starts_with(FILE_URI_PREFIX) {
         local.to_string()
     } else {
         format!("{FILE_URI_PREFIX}{local}")
-    };
+    }
+}
+
+fn sql_stage_operand(stage_location: &str) -> String {
     let stage = stage_location.trim();
-    let stage = if stage.starts_with('\'')
+    if stage.starts_with('\'')
         || stage.starts_with('@')
         || stage.starts_with(SNOWFLAKE_NESTED_STAGE_PREFIX)
         || stage.starts_with('/')
@@ -237,13 +264,43 @@ fn render_put_sql(
         stage.to_string()
     } else {
         format!("@{stage}")
-    };
-    format!("PUT {local} {stage} {}", options.render())
-        .trim_end()
-        .to_string()
+    }
 }
 
-fn render_stream_put_sql(destination: &StreamDestination, options: &StageUploadOptions) -> String {
+fn render_put_sql(
+    local_file_name: &str,
+    stage_location: &str,
+    options: &StageTransferOptions,
+) -> String {
+    format!(
+        "PUT {} {} {}",
+        sql_local_operand(local_file_name),
+        sql_stage_operand(stage_location),
+        options.render()
+    )
+    .trim_end()
+    .to_string()
+}
+
+fn render_get_sql(
+    stage_location: &str,
+    target_directory: &str,
+    options: &StageTransferOptions,
+) -> String {
+    format!(
+        "GET {} {} {}",
+        sql_stage_operand(stage_location),
+        sql_local_operand(target_directory),
+        options.render()
+    )
+    .trim_end()
+    .to_string()
+}
+
+fn render_stream_put_sql(
+    destination: &StreamDestination,
+    options: &StageTransferOptions,
+) -> String {
     format!(
         "PUT {FILE_URI_PREFIX}{} {} {}",
         destination.filename,
@@ -254,11 +311,29 @@ fn render_stream_put_sql(destination: &StreamDestination, options: &StageUploadO
     .to_string()
 }
 
-/// Settings every XP upload reads from the connection.
+#[derive(Debug, Clone, Copy)]
+enum TransferDirection {
+    Upload,
+    Download,
+}
+
+impl TransferDirection {
+    /// The `command` a GS PUT or GET response carries, which shapes the
+    /// result set's columns.
+    fn gs_command(self) -> &'static str {
+        match self {
+            Self::Upload => "UPLOAD",
+            Self::Download => "DOWNLOAD",
+        }
+    }
+}
+
+/// Settings every XP transfer reads from the connection.
 struct XpTransferSettings {
     retry_policy: RetryPolicy,
     put_compress_level: u32,
     put_tempdir: Option<std::path::PathBuf>,
+    unsafe_file_write: bool,
     transport: file_manager::StageTransport,
 }
 
@@ -271,6 +346,7 @@ impl DatabaseDriverV1 {
             put_compress_level: conn
                 .put_compress_level(self.wrapper_presets.put_compress_level_default),
             put_tempdir: conn.put_tempdir(),
+            unsafe_file_write: conn.unsafe_file_write(),
             transport: conn.stage_transport(&self.crl_manager, &self.root_store_provider, transfer),
         }
     }
@@ -282,13 +358,14 @@ impl DatabaseDriverV1 {
         conn.lock().await.xp_backend_arc().context(QuerySnafu)
     }
 
-    async fn xp_upload_result(
+    async fn xp_transfer_result(
         &self,
         conn: &Arc<Mutex<Connection>>,
+        direction: TransferDirection,
         rowset_data: RowsetData,
     ) -> Result<ResultSetInfo, ApiError> {
         let descriptor = response_to_descriptor(
-            &query_response::Data::command_only("UPLOAD"),
+            &query_response::Data::command_only(direction.gs_command()),
             &self.wrapper_presets,
         );
         let reader_ctx = resolve_reader_ctx(conn).await?;
@@ -303,7 +380,7 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         local_file_name: String,
         stage_location: String,
-        options: StageUploadOptions,
+        options: StageTransferOptions,
     ) -> Result<ResultSetInfo, ApiError> {
         let telemetry_id = self.telemetry_id_for_conn(conn_handle).await;
         async {
@@ -316,12 +393,12 @@ impl DatabaseDriverV1 {
             let Some(backend) = self.xp_backend_for(&conn).await? else {
                 let sql = render_put_sql(&local_file_name, &stage_location, &options);
                 return self
-                    .stage_upload_via_statement(operation_ctx, conn_handle, sql)
+                    .stage_transfer_via_statement(operation_ctx, conn_handle, sql)
                     .await;
             };
 
             let _session_guard = self.lock_session_if_needed(&conn).await;
-            let xp_options = options.resolve_for_xp()?;
+            let xp_options = options.resolve_for_xp_put()?;
             let settings = self.xp_transfer_settings(&conn).await;
             let upload_data = file_manager::UploadData {
                 src_location_pattern: local_path(&local_file_name),
@@ -353,10 +430,93 @@ impl DatabaseDriverV1 {
             )
             .await
             .context(QueryResponseProcessSnafu)?;
-            self.xp_upload_result(&conn, rowset_data).await
+            self.xp_transfer_result(&conn, TransferDirection::Upload, rowset_data)
+                .await
         }
         .instrument(crate::snowflake_op_span!(
             "connection_stage_upload",
+            telemetry_id
+        ))
+        .await
+    }
+
+    /// Downloads the stage file, or every file under the stage prefix,
+    /// `stage_location` names into the local directory `target_directory`.
+    ///
+    /// With an XP backend the files are the ones `list_stage_files` reports for
+    /// the prefix, downloaded one at a time. No match follows the same rule as
+    /// a GET through GS: an empty result for wrappers with
+    /// `legacy_empty_get_on_missing`, otherwise a remote-file-not-found error.
+    pub async fn connection_stage_download(
+        &self,
+        operation_ctx: Option<&OperationCtx>,
+        conn_handle: Handle,
+        stage_location: String,
+        target_directory: String,
+        options: StageTransferOptions,
+    ) -> Result<ResultSetInfo, ApiError> {
+        let telemetry_id = self.telemetry_id_for_conn(conn_handle).await;
+        async {
+            let conn = self
+                .connections
+                .get_obj(conn_handle)
+                .context(InvalidArgumentSnafu {
+                    argument: "Connection handle not found",
+                })?;
+            let Some(backend) = self.xp_backend_for(&conn).await? else {
+                let sql = render_get_sql(&stage_location, &target_directory, &options);
+                return self
+                    .stage_transfer_via_statement(operation_ctx, conn_handle, sql)
+                    .await;
+            };
+
+            let _session_guard = self.lock_session_if_needed(&conn).await;
+            options.check_for_xp_get()?;
+            let stage = normalize_stage_location(&stage_location);
+            let src_locations = list_stage_files_via_xp_backend(&stage, backend.as_ref())
+                .await
+                .context(QueryResponseProcessSnafu)?;
+            if src_locations.is_empty() {
+                if !self.wrapper_presets.legacy_empty_get_on_missing {
+                    return Err(remote_file_not_found()).context(QueryResponseProcessSnafu);
+                }
+                return self
+                    .xp_transfer_result(
+                        &conn,
+                        TransferDirection::Download,
+                        RowsetData::Download(Vec::new()),
+                    )
+                    .await;
+            }
+
+            let settings = self.xp_transfer_settings(&conn).await;
+            let file_count = src_locations.len();
+            let download_data = file_manager::DownloadData {
+                src_locations,
+                local_location: local_path(&target_directory),
+                stage_info: StageInfo::for_xp_backend(&stage, &settings.transport),
+                encryption_materials: vec![None; file_count],
+                presigned_urls: vec![None; file_count],
+                flavor: self.wrapper_presets.put_get_resultset_flavor.clone(),
+                multipart: MultipartParams::from_server(None, Some(1)),
+                unsafe_file_write: settings.unsafe_file_write,
+                get_fastfail: true,
+                cwd: None,
+                transfer: settings.transport.transfer.clone(),
+            };
+            let rowset_data = download_files_via_xp_backend(
+                download_data,
+                &settings.retry_policy,
+                backend.as_ref(),
+                operation_ctx,
+            )
+            .await
+            .context(QueryResponseProcessSnafu)?;
+            self.xp_transfer_result(&conn, TransferDirection::Download, rowset_data)
+                .await
+        }
+        .instrument(crate::snowflake_op_span!(
+            "connection_stage_download",
             telemetry_id
         ))
         .await
@@ -369,7 +529,7 @@ impl DatabaseDriverV1 {
         &self,
         conn: &Arc<Mutex<Connection>>,
         stage_location: &str,
-        options: StageUploadOptions,
+        options: StageTransferOptions,
     ) -> Result<UploadStreamTarget, ApiError> {
         let Some(backend) = self.xp_backend_for(conn).await? else {
             let destination = parse_stream_destination(stage_location, StageNaming::Gs)?;
@@ -381,7 +541,7 @@ impl DatabaseDriverV1 {
         Ok(UploadStreamTarget::Xp(XpStreamUpload {
             backend,
             destination: parse_stream_destination(stage_location, StageNaming::Xp)?,
-            options: options.resolve_for_xp()?,
+            options: options.resolve_for_xp_put()?,
         }))
     }
 
@@ -429,11 +589,12 @@ impl DatabaseDriverV1 {
         )
         .await
         .context(QueryResponseProcessSnafu)?;
-        self.xp_upload_result(&conn, rowset_data).await
+        self.xp_transfer_result(&conn, TransferDirection::Upload, rowset_data)
+            .await
     }
 
     /// Runs `sql` through a short-lived statement and returns its result set.
-    async fn stage_upload_via_statement(
+    async fn stage_transfer_via_statement(
         &self,
         operation_ctx: Option<&OperationCtx>,
         conn_handle: Handle,
@@ -450,7 +611,7 @@ impl DatabaseDriverV1 {
         match result? {
             ExecuteQueryResult::Single { info, .. } => Ok(info),
             ExecuteQueryResult::Multi { .. } => InvalidArgumentSnafu {
-                argument: "A stage upload returned multiple result sets",
+                argument: "A stage transfer returned multiple result sets",
             }
             .fail(),
         }
@@ -460,9 +621,12 @@ impl DatabaseDriverV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::apis::database_driver_v1::ErrorKind;
+    use crate::apis::database_driver_v1::global_state::WrapperPresets;
+    use crate::apis::database_driver_v1::xp_stage_test_support::{StageBackend, xp_stage_driver};
 
-    fn options(pairs: &[(&str, &str)]) -> StageUploadOptions {
-        StageUploadOptions::new(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())))
+    fn options(pairs: &[(&str, &str)]) -> StageTransferOptions {
+        StageTransferOptions::new(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())))
     }
 
     #[test]
@@ -480,6 +644,25 @@ mod tests {
         assert_eq!(
             normalize_stage_location("@\"my stage\"/dir"),
             "@\"my stage\"/dir"
+        );
+    }
+
+    #[test]
+    fn xp_download_stream_source_names_the_stage_as_an_xp_get_does() {
+        for stage_name in ["'@st/dir'", "st/dir", "@st/dir/", "  '@st/dir/'  "] {
+            assert_eq!(
+                xp_download_stream_source(stage_name, "f.csv"),
+                "@st/dir/f.csv",
+                "{stage_name:?}"
+            );
+        }
+        assert_eq!(
+            xp_download_stream_source("'@st/it\\'s'", "f.csv"),
+            "@st/it's/f.csv"
+        );
+        assert_eq!(
+            xp_download_stream_source("snow://x/y", "f.csv"),
+            "snow://x/y/f.csv"
         );
     }
 
@@ -543,7 +726,7 @@ mod tests {
     #[test]
     fn xp_options_default_to_put_defaults() {
         assert_eq!(
-            options(&[]).resolve_for_xp().unwrap(),
+            options(&[]).resolve_for_xp_put().unwrap(),
             XpPutOptions::default()
         );
     }
@@ -556,7 +739,7 @@ mod tests {
             ("source_compression", "gzip"),
             ("NOT_A_PUT_OPTION", "whatever"),
         ])
-        .resolve_for_xp()
+        .resolve_for_xp_put()
         .unwrap();
         assert_eq!(
             resolved,
@@ -579,11 +762,11 @@ mod tests {
             ("PARALLEL", "four"),
         ] {
             assert!(
-                options(&[(name, value)]).resolve_for_xp().is_err(),
+                options(&[(name, value)]).resolve_for_xp_put().is_err(),
                 "{name}={value} must be rejected"
             );
         }
-        assert!(options(&[("PARALLEL", "99")]).resolve_for_xp().is_ok());
+        assert!(options(&[("PARALLEL", "99")]).resolve_for_xp_put().is_ok());
     }
 
     #[test]
@@ -612,5 +795,91 @@ mod tests {
             ),
             "PUT file://name.csv @st/dir PARALLEL=2"
         );
+    }
+
+    #[test]
+    fn get_sql_passes_caller_quoting_through() {
+        assert_eq!(
+            render_get_sql(
+                "mystage/prefix1",
+                "/tmp/target",
+                &options(&[("parallel", "10"), ("pattern", "'.*test.*[.]csv'")]),
+            ),
+            "GET @mystage/prefix1 file:///tmp/target parallel=10 pattern='.*test.*[.]csv'"
+        );
+        assert_eq!(
+            render_get_sql("'@st/it\\'s'", "'file:///tmp/my dir'", &options(&[])),
+            "GET '@st/it\\'s' 'file:///tmp/my dir'"
+        );
+    }
+
+    #[test]
+    fn xp_get_options_reject_a_pattern_and_a_malformed_parallel() {
+        let pattern = options(&[("pattern", "'.*[.]csv'")])
+            .check_for_xp_get()
+            .expect_err("a PATTERN must be rejected");
+        assert_eq!(pattern.kind(), ErrorKind::NotImplemented);
+        for (name, value) in [("PARALLEL", "0"), ("PARALLEL", "100"), ("parallel", "four")] {
+            let err = options(&[(name, value)])
+                .check_for_xp_get()
+                .expect_err("a malformed PARALLEL must be rejected");
+            assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn xp_get_options_accept_an_empty_pattern_and_ignore_unknown_names() {
+        assert!(
+            options(&[
+                ("PATTERN", ""),
+                ("parallel", "4"),
+                ("NOT_A_GET_OPTION", "x")
+            ])
+            .check_for_xp_get()
+            .is_ok()
+        );
+    }
+
+    async fn xp_get_with_an_empty_listing(presets: WrapperPresets) -> Result<usize, ApiError> {
+        let (driver, conn) = xp_stage_driver(presets, Arc::new(StageBackend::new("[]", b"")));
+        let target = tempfile::tempdir().expect("tempdir");
+        let info = driver
+            .connection_stage_download(
+                None,
+                conn,
+                "@st/none".to_string(),
+                target.path().display().to_string(),
+                StageTransferOptions::default(),
+            )
+            .await?;
+        let mut fetcher = driver
+            .result_set_get_async_stream(info.handle)
+            .await
+            .expect("GET result set stream");
+        let mut rows = 0;
+        while let Some(batch) = fetcher.next_batch().await.expect("GET result batch") {
+            rows += batch.num_rows();
+        }
+        assert_eq!(
+            std::fs::read_dir(target.path()).expect("read dir").count(),
+            0
+        );
+        Ok(rows)
+    }
+
+    #[tokio::test]
+    async fn xp_get_with_an_empty_listing_is_an_empty_result_for_legacy_wrappers() {
+        let rows = xp_get_with_an_empty_listing(WrapperPresets::jdbc())
+            .await
+            .expect("a legacy wrapper gets an empty GET result");
+        assert_eq!(rows, 0);
+    }
+
+    #[tokio::test]
+    async fn xp_get_with_an_empty_listing_is_a_missing_remote_file_otherwise() {
+        let err = xp_get_with_an_empty_listing(WrapperPresets::python())
+            .await
+            .expect_err("an empty listing must fail the GET");
+        assert_eq!(err.kind(), ErrorKind::RemoteFileNotFound);
     }
 }

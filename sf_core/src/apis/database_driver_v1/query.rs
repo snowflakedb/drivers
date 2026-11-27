@@ -283,6 +283,43 @@ pub(super) async fn upload_files_via_xp_backend(
     Ok(RowsetData::Upload(results))
 }
 
+/// Lists the files under `stage_location` through `backend`.
+pub(super) async fn list_stage_files_via_xp_backend(
+    stage_location: &str,
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+) -> Result<Vec<String>, QueryResponseProcessingError> {
+    file_manager::list_xp_backend_stage_files(backend, stage_location)
+        .await
+        .context(FileDownloadSnafu)
+}
+
+/// Downloads the files named by `download_data` through `backend`.
+pub(super) async fn download_files_via_xp_backend(
+    download_data: file_manager::DownloadData,
+    retry_policy: &RetryPolicy,
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+    operation_ctx: Option<&OperationCtx>,
+) -> Result<RowsetData, QueryResponseProcessingError> {
+    let transfer_ctx =
+        file_manager::TransferCtx::new(None, operation_ctx.map(OperationCtx::cleanup_scope))
+            .with_backend(backend);
+    let results = download_files(download_data, retry_policy, transfer_ctx)
+        .await
+        .context(FileDownloadSnafu)?;
+    Ok(RowsetData::Download(results))
+}
+
+/// Opens a chunked download of the stage file `stage_path` through `backend`.
+pub(super) async fn open_download_stream_via_xp_backend(
+    stage_path: &str,
+    decompress: bool,
+    backend: &dyn crate::xp_backend::SnowflakeBackend,
+) -> Result<file_manager::DownloadStreamOpen, QueryResponseProcessingError> {
+    file_manager::open_xp_backend_download_stream(backend, stage_path, decompress)
+        .await
+        .context(FileDownloadSnafu)
+}
+
 /// Uploads one in-memory or spooled `source` through `backend`.
 pub(super) async fn upload_stream_via_xp_backend(
     source: ByteSource,

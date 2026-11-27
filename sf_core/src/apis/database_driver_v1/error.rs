@@ -65,6 +65,13 @@ pub enum ApiError {
         location: Location,
     },
     #[non_exhaustive]
+    #[snafu(display("{feature} is not supported"))]
+    NotImplemented {
+        feature: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[non_exhaustive]
     #[snafu(display("Failed to login: {source}"))]
     Login {
         #[snafu(implicit)]
@@ -354,6 +361,7 @@ impl ApiError {
             | ApiError::RuntimeCreation { .. }
             | ApiError::Configuration { .. }
             | ApiError::InvalidArgument { .. }
+            | ApiError::NotImplemented { .. }
             | ApiError::ConnectionLock { .. }
             | ApiError::ConnectionNotInitialized { .. }
             | ApiError::ConnectionClosed { .. }
@@ -398,6 +406,7 @@ impl ApiError {
             ApiError::FileTransfersDisabled { .. }
             | ApiError::RuntimeCreation { .. }
             | ApiError::InvalidArgument { .. }
+            | ApiError::NotImplemented { .. }
             | ApiError::Login { .. }
             | ApiError::ConnectionLock { .. }
             | ApiError::ConnectionNotInitialized { .. }

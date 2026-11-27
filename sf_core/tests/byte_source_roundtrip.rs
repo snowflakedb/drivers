@@ -1475,7 +1475,11 @@ async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
     .expect("open must not hang")
     .expect("header phase must succeed (200 received before the connection wedges)");
 
-    opened.producer_abort.abort();
+    let producer_abort = opened
+        .producer_abort
+        .clone()
+        .expect("cloud downloads have a producer task");
+    producer_abort.abort();
     opened.task.abort();
 
     // `task` is a `spawn_blocking` closure parked in a *synchronous*
@@ -1490,12 +1494,12 @@ async fn abort_stops_a_hanging_download_for(cloud: Cloud) {
     // actually waiting on it).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline
-        && !(opened.producer_abort.is_finished() && opened.task.is_finished())
+        && !(producer_abort.is_finished() && opened.task.is_finished())
     {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert!(
-        opened.producer_abort.is_finished(),
+        producer_abort.is_finished(),
         "{cloud:?}: abort must stop the still-pending producer task"
     );
     assert!(

@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use sf_core::apis::database_driver_v1::{
-    AsyncArrowBatchFetcher, DatabaseDriverV1, ErrorKind, ExecuteQueryResult, StageUploadOptions,
+    AsyncArrowBatchFetcher, DatabaseDriverV1, ErrorKind, ExecuteQueryResult, StageTransferOptions,
 };
 #[cfg(target_os = "linux")]
 use sf_core::config::settings::Setting;
@@ -53,33 +53,8 @@ use fake_host::{HostState, callbacks_for};
 #[cfg(target_os = "linux")]
 use fixtures::{
     MONITORING_RUNNING_RESPONSE, SECRET_PASSWORD, SELECT_ONE_RESPONSE, SESSION_INFO,
-    login_parameters, query_parameters, set_running_inside_xp,
+    login_parameters, query_parameters, result_rows, set_running_inside_xp,
 };
-
-#[cfg(target_os = "linux")]
-async fn upload_rows(
-    driver: &DatabaseDriverV1,
-    handle: sf_core::handle_manager::Handle,
-) -> Vec<Vec<String>> {
-    let mut fetcher: AsyncArrowBatchFetcher = driver
-        .result_set_get_async_stream(handle)
-        .await
-        .expect("PUT result set stream");
-    let mut rows = Vec::new();
-    while let Some(batch) = fetcher.next_batch().await.expect("PUT result batch") {
-        for row in 0..batch.num_rows() {
-            rows.push(
-                (0..batch.num_columns())
-                    .map(|col| {
-                        arrow::util::display::array_value_to_string(batch.column(col), row)
-                            .expect("render PUT cell")
-                    })
-                    .collect(),
-            );
-        }
-    }
-    rows
-}
 
 #[cfg(target_os = "linux")]
 // `multi_thread`, not `current_thread`: the chunked-upload-stream coverage
@@ -116,6 +91,15 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         unsafe { sf_core_register_xp_backend(&wrong_size) },
         error_codes::ABI_MISMATCH,
         "a struct-size mismatch must be rejected before any field is read"
+    );
+
+    unsafe extern "C" fn unknown_callback() {}
+    let mut reserved_slot_set = callbacks_for(host);
+    reserved_slot_set.reserved[0] = Some(unknown_callback);
+    assert_eq!(
+        unsafe { sf_core_register_xp_backend(&reserved_slot_set) },
+        error_codes::ABI_MISMATCH,
+        "a callback this driver does not define must be rejected, not ignored"
     );
 
     let mut missing_required = callbacks_for(host);
@@ -540,11 +524,11 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             format!("'file://{}'", put_file.display()),
             "mystage/sub".to_string(),
-            StageUploadOptions::default(),
+            StageTransferOptions::default(),
         )
         .await
         .expect("PUT should route through the backend, never GS");
-    let rows = upload_rows(&driver, default_put.handle).await;
+    let rows = result_rows(&driver, default_put.handle).await;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], "data.csv");
     assert_eq!(rows[0][1], "data.csv.gz");
@@ -575,11 +559,11 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             padded_file.display().to_string(),
             "@mystage".to_string(),
-            StageUploadOptions::default(),
+            StageTransferOptions::default(),
         )
         .await
         .expect("PUT should succeed");
-    assert_eq!(upload_rows(&driver, padded_put.handle).await[0][3], "4096");
+    assert_eq!(result_rows(&driver, padded_put.handle).await[0][3], "4096");
 
     // The stored size is part of the host contract: a result without it fails.
     host.set_upload_stream_response(Some(r#"{"status":"UPLOADED"}"#));
@@ -589,7 +573,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             padded_file.display().to_string(),
             "@mystage".to_string(),
-            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+            StageTransferOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
         )
         .await;
     assert!(
@@ -610,7 +594,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             large_file.display().to_string(),
             "@mystage/large".to_string(),
-            StageUploadOptions::new([
+            StageTransferOptions::new([
                 ("AUTO_COMPRESS".to_string(), "FALSE".to_string()),
                 ("OVERWRITE".to_string(), "TRUE".to_string()),
             ]),
@@ -626,7 +610,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
     );
     assert_eq!(host.upload_write_count("@mystage/large/large.bin"), Some(3));
     assert_eq!(
-        upload_rows(&driver, large_put.handle).await[0][3],
+        result_rows(&driver, large_put.handle).await[0][3],
         large_bytes.len().to_string()
     );
 
@@ -639,7 +623,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             large_file.display().to_string(),
             "@mystage/broken".to_string(),
-            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+            StageTransferOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
         )
         .await
         .err()
@@ -659,11 +643,11 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             skip_file.display().to_string(),
             "mystage/sub".to_string(),
-            StageUploadOptions::new([("auto_compress".to_string(), "False".to_string())]),
+            StageTransferOptions::new([("auto_compress".to_string(), "False".to_string())]),
         )
         .await
         .expect("an existing target must SKIP, not error");
-    let skip_rows = upload_rows(&driver, skip_put.handle).await;
+    let skip_rows = result_rows(&driver, skip_put.handle).await;
     assert_eq!(skip_rows[0][6], "SKIPPED");
     assert_eq!(
         skip_rows[0][3], "0",
@@ -695,7 +679,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             skip_file.display().to_string(),
             "mystage/sub".to_string(),
-            StageUploadOptions::default(),
+            StageTransferOptions::default(),
         )
         .await;
     assert!(malformed.is_err(), "a malformed listing must fail the PUT");
@@ -709,7 +693,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             skip_file.display().to_string(),
             "snow://stage/dir".to_string(),
-            StageUploadOptions::default(),
+            StageTransferOptions::default(),
         )
         .await
         .err()
@@ -725,7 +709,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             skip_file.display().to_string(),
             "mystage/sub".to_string(),
-            StageUploadOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
+            StageTransferOptions::new([("OVERWRITE".to_string(), "TRUE".to_string())]),
         )
         .await
         .err()
@@ -743,14 +727,14 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             conn,
             format!("file://{}/*.csv", glob_dir.path().display()),
             "mystage/glob".to_string(),
-            StageUploadOptions::new([
+            StageTransferOptions::new([
                 ("PARALLEL".to_string(), "8".to_string()),
                 ("OVERWRITE".to_string(), "TRUE".to_string()),
             ]),
         )
         .await
         .expect("glob PUT should succeed");
-    assert_eq!(upload_rows(&driver, glob_put.handle).await.len(), 4);
+    assert_eq!(result_rows(&driver, glob_put.handle).await.len(), 4);
     assert_eq!(
         host.max_concurrent_uploads(),
         1,
@@ -763,7 +747,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .connection_stage_upload_stream_begin(
             conn,
             "'@mystage/chunked/chunked.csv'".to_string(),
-            StageUploadOptions::new([("AUTO_COMPRESS".to_string(), "FALSE".to_string())]),
+            StageTransferOptions::new([("AUTO_COMPRESS".to_string(), "FALSE".to_string())]),
         )
         .await
         .expect("begin a chunked upload");
@@ -783,7 +767,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .uploaded_blob("@mystage/chunked/chunked.csv")
         .expect("the assembled chunks must reach upload_stream as one body");
     assert_eq!(chunked_bytes, b"first,second");
-    let stream_rows = upload_rows(&driver, stream_put.handle).await;
+    let stream_rows = result_rows(&driver, stream_put.handle).await;
     assert_eq!(stream_rows[0][1], "chunked.csv");
     assert_eq!(stream_rows[0][6], "UPLOADED");
 
@@ -796,7 +780,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
         .connection_stage_upload_stream_begin(
             conn,
             "@db.sch.\"my stage\"/udfs/lib.zip".to_string(),
-            StageUploadOptions::new([
+            StageTransferOptions::new([
                 ("auto_compress".to_string(), "False".to_string()),
                 ("source_compression".to_string(), "NONE".to_string()),
                 ("overwrite".to_string(), "True".to_string()),
@@ -827,7 +811,7 @@ async fn xp_mode_registers_once_and_routes_query_and_login_to_the_host() {
             .connection_stage_upload_stream_begin(
                 conn,
                 "@mystage/dir/".to_string(),
-                StageUploadOptions::default(),
+                StageTransferOptions::default(),
             )
             .await
             .is_err()

@@ -406,6 +406,10 @@ name = "xp_backend_mode_xp_unregistered"
 path = "tests/xp_backend_mode_xp_unregistered.rs"
 
 [[test]]
+name = "xp_backend_mode_xp_stage_download"
+path = "tests/xp_backend_mode_xp_stage_download.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 

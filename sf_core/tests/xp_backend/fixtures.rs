@@ -1,4 +1,4 @@
-//! Request fixtures shared by the `xp_backend_mode_*` binaries.
+//! Request fixtures and helpers shared by the `xp_backend_mode_*` binaries.
 
 #![allow(dead_code)] // each binary uses a different subset
 
@@ -126,3 +126,28 @@ pub const SESSION_INFO: &str = r#"{
     "role_name": "TESTROLE",
     "server_version": "9.1.0"
 }"#;
+
+/// Every row of a PUT/GET result set, rendered as strings.
+pub async fn result_rows(
+    driver: &sf_core::apis::database_driver_v1::DatabaseDriverV1,
+    handle: sf_core::handle_manager::Handle,
+) -> Vec<Vec<String>> {
+    let mut fetcher: sf_core::apis::database_driver_v1::AsyncArrowBatchFetcher = driver
+        .result_set_get_async_stream(handle)
+        .await
+        .expect("PUT/GET result set stream");
+    let mut rows = Vec::new();
+    while let Some(batch) = fetcher.next_batch().await.expect("PUT/GET result batch") {
+        for row in 0..batch.num_rows() {
+            rows.push(
+                (0..batch.num_columns())
+                    .map(|col| {
+                        arrow::util::display::array_value_to_string(batch.column(col), row)
+                            .expect("render PUT/GET cell")
+                    })
+                    .collect(),
+            );
+        }
+    }
+    rows
+}

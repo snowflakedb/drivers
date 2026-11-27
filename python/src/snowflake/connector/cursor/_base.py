@@ -357,7 +357,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _do_reset: bool = True,
     ) -> None:
         """Upload what ``session.file.put`` names; the core driver decides how the PUT is carried out."""
-        from .._internal.snowpark_backcompat_helpers import stage_upload_options
+        from .._internal.snowpark_backcompat_helpers import stage_transfer_options
 
         if _do_reset:
             self.reset()
@@ -365,7 +365,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             local_file_name=local_file_name,
             stage_location=stage_location,
-            options=stage_upload_options(options),
+            options=stage_transfer_options(options),
         )
         self._apply_result_set(response, None)  # type: ignore[arg-type]
         self._rownumber = -1
@@ -380,11 +380,19 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         options: dict[str, Any],
         _do_reset: bool = True,
     ) -> None:
-        """Synthesize and run the GET that ``session.file.get`` would otherwise issue as SQL."""
-        from .._internal.snowpark_backcompat_helpers import file_uri, put_get_options, stage_ref
+        """Download what ``session.file.get`` names; the core driver decides how the GET is carried out."""
+        from .._internal.snowpark_backcompat_helpers import stage_transfer_options
 
-        sql = f"GET {stage_ref(stage_location)} {file_uri(target_directory)} {put_get_options(options)}"
-        self._execute_file_transfer(sql.rstrip(), _do_reset=_do_reset)
+        if _do_reset:
+            self.reset()
+        response = core_driver.stage_download(
+            conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
+            stage_location=stage_location,
+            target_directory=target_directory,
+            options=stage_transfer_options(options),
+        )
+        self._apply_result_set(response, None)  # type: ignore[arg-type]
+        self._rownumber = -1
 
     @snowpark_compat
     @backward_compatibility
@@ -397,7 +405,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         _do_reset: bool = True,
     ) -> None:
         """Stream-upload to the file named by *stage_location* (a file, not a directory)."""
-        from .._internal.snowpark_backcompat_helpers import stage_upload_options
+        from .._internal.snowpark_backcompat_helpers import stage_transfer_options
 
         if _do_reset:
             self.reset()
@@ -405,7 +413,7 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         upload_handle = core_driver.upload_stream_begin(
             conn_handle=self._connection.conn_handle,  # type: ignore[arg-type]
             stage_location=stage_location,
-            options=stage_upload_options(options),
+            options=stage_transfer_options(options),
         ).upload_handle
         self._send_upload_stream(upload_handle, input_stream, None)
         self._rownumber = -1
@@ -429,19 +437,6 @@ class SnowflakeCursorBase(CursorBaseMixin, abc.ABC):
         from .._internal.snowpark_backcompat_helpers import unquoted_stage_ref
 
         return self.download_stream(unquoted_stage_ref(stage_location), decompress)
-
-    def _execute_file_transfer(
-        self,
-        sql: str,
-        *,
-        _do_reset: bool,
-        file_stream: BinaryIO | None = None,
-    ) -> None:
-        """Run a synthesized PUT/GET, resetting the cursor first unless told not to."""
-        if _do_reset:
-            self.execute(sql, file_stream=file_stream)
-        else:
-            self._execute(sql, file_stream=file_stream)
 
     def _execute_query(
         self, stmt_handle: StatementHandle, bindings: QueryBindings | None, query: str
