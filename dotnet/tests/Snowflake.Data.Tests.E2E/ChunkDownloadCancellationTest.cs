@@ -97,8 +97,6 @@ public sealed class ChunkDownloadCancellationTest : LiveE2ETestBase, IDisposable
     [SnowflakeFact]
     public async Task ShouldThrowBeforeChunkDownloadWhenTokenIsAlreadyCancelledAsync()
     {
-        // TODO(SNOW-4382591): SnowflakeDbException constructors throw NotImplementedException
-        Skip.FutureMilestone();
         // TODO(SNOW-4382580): the new driver ignores DOTNET_QUERY_RESULT_FORMAT, so JSON results cannot be selected
         Skip.FutureMilestone();
 

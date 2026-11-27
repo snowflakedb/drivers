@@ -237,7 +237,6 @@ public class DataReaderTest : IClassFixture<ITFixture>
         {
             Assert.Equal(1, reader.GetOrdinal("second_col"));
             Assert.Equal(2L, reader["second_col"]);
-            Skip.UntilPublicExceptionsExist();
             Assert.Equal(270002, Assert.Throws<SnowflakeDbException>(() => reader.GetOrdinal("MISSING")).ErrorCode);
             Assert.Equal(270002, Assert.Throws<SnowflakeDbException>(() => reader["MISSING"]).ErrorCode);
         }
@@ -256,7 +255,6 @@ public class DataReaderTest : IClassFixture<ITFixture>
     public async Task ReadingAValueWithNoCurrentRowIsDataReaderNoCurrentRowAsync(bool readAsync)
     {
         Skip.OnOldDriver("BD#reader-access-without-current-row-error-code", "the old driver throws an exception that depends on the result format the server picks");
-        Skip.UntilPublicExceptionsExist();
         var ct = TestContext.Current.CancellationToken;
         using var connection = Fixture.Factory.Create(Output);
         await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -295,7 +293,6 @@ public class DataReaderTest : IClassFixture<ITFixture>
         }
 
         var newReader = Assert.IsType<SnowflakeDbDataReader>(reader);
-        Skip.UntilPublicExceptionsExist();
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt32(0)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt64(1)).ErrorCode);
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetInt64(2)).ErrorCode);
@@ -363,7 +360,6 @@ public class DataReaderTest : IClassFixture<ITFixture>
             return;
         }
 
-        Skip.UntilPublicExceptionsExist();
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => reader.GetValue(0)).ErrorCode);
     }
 }

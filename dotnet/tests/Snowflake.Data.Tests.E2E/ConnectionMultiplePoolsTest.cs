@@ -314,7 +314,7 @@ public sealed class ConnectionMultiplePoolsTest : LiveE2ETestBase
             ? Assert.IsType<OldSnowflakeDbException>(exception).ErrorCode
             : Assert.IsType<NewSnowflakeDbException>(exception).ErrorCode;
 
-    private static string SnowflakeDbSqlState(Exception exception) =>
+    private static string? SnowflakeDbSqlState(Exception exception) =>
         TestDriver.Current == TestDriver.Kind.Old
             ? Assert.IsType<OldSnowflakeDbException>(exception).SqlState
             : Assert.IsType<NewSnowflakeDbException>(exception).SqlState;

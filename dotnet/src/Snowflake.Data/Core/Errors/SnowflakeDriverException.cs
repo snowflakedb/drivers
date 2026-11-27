@@ -1,4 +1,5 @@
 using Snowflake.Data.Client;
+using Snowflake.Data.Core.Extensions;
 
 namespace Snowflake.Data.Core.Errors;
 
@@ -22,15 +23,6 @@ internal sealed class SnowflakeDriverException : SnowflakeException
     /// <summary>Values formatted into the message of <see cref="Error"/>.</summary>
     internal object[] Args { get; }
 
-    public override Exception ToPublicException()
-    {
-        var exception = InnerException is null
-            ? new SnowflakeDbException(Error, Args)
-            : new SnowflakeDbException(InnerException, Error, Args);
-
-        if (QueryId is not null)
-            exception.QueryId = QueryId;
-
-        return exception;
-    }
+    public override Exception ToPublicException() =>
+        new SnowflakeDbException(null, Error.GetErrorCode(), Error.FormatMessage(Args), QueryId, InnerException);
 }

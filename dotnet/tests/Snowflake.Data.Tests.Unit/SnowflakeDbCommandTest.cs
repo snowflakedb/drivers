@@ -21,9 +21,6 @@ public sealed class SnowflakeDbCommandTest : IDisposable
     private const string Sql = "SELECT 1";
     private const string ValidQueryId = "01bf4a3e-0001-2c4f-0000-00a1b2c3d4e5";
 
-    private const string PublicExceptionSkipReason =
-        "Does not work yet: every SnowflakeDbException constructor throws NotImplementedException (TODO next milestone), so no test can observe the SnowflakeDbException this path throws.";
-
     private readonly ISnowflakeStatement _statement = Substitute.For<ISnowflakeStatement>();
     private readonly SnowflakeDbCommand _command;
 
@@ -292,7 +289,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(UpdateRowSource.None, _command.UpdatedRowSource);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public async Task AsyncDriverFailureFromTheStatementReachesTheCallerAsSnowflakeDbExceptionAsync()
     {
         _statement.ExecuteNonQueryAsync(default, default, default).ReturnsForAnyArgs(
@@ -303,7 +300,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(SFError.STATEMENT_ALREADY_RUNNING_QUERY.GetErrorCode(), exception.ErrorCode);
     }
 
-    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
     [InlineData(null)]
     [InlineData("")]
     public void ExecutionWithoutCommandTextFailsWithCommandTextNotSet(string? commandText)
@@ -316,7 +313,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Empty(_statement.ReceivedCalls());
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ExecutionOnAConnectionThatIsNotOpenFailsWithExecuteCommandOnClosedConnection()
     {
         using var command = new SnowflakeDbCommand(_statement, NullLogger<SnowflakeDbCommand>.Instance)
@@ -331,7 +328,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Empty(_statement.ReceivedCalls());
     }
 
-    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
     [InlineData(nameof(SnowflakeDbCommand.GetQueryStatus))]
     [InlineData(nameof(SnowflakeDbCommand.GetQueryStatusAsync))]
     [InlineData(nameof(SnowflakeDbCommand.GetResultsFromQueryId))]
@@ -353,7 +350,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Empty(_statement.ReceivedCalls());
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DriverFailureFromTheStatementReachesTheCallerAsSnowflakeDbException()
     {
         _statement.ExecuteNonQuery(default, default).ThrowsForAnyArgs(new SnowflakeDriverException(SFError.STATEMENT_ALREADY_RUNNING_QUERY, null));
@@ -363,7 +360,7 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(SFError.STATEMENT_ALREADY_RUNNING_QUERY.GetErrorCode(), exception.ErrorCode);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ServerFailureKeepsTheSqlStateVendorCodeAndQueryId()
     {
         _statement.ExecuteNonQuery(default, default).ThrowsForAnyArgs(new SnowflakeServerException("42000", 1003, "SQL compilation error", ValidQueryId));
@@ -375,12 +372,12 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(ValidQueryId, exception.QueryId);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public async Task CancellationSurfacesAsOperationCanceledExceptionWrappingSnowflakeDbExceptionAsync()
     {
         using var caller = new CancellationTokenSource();
         _statement.ExecuteNonQueryAsync(default, default, default).ReturnsForAnyArgs(Task.FromException<int>(
-            new SnowflakeCancellationException(SFError.QUERY_CANCELLED, ValidQueryId, null)));
+            new SnowflakeCancellationException(SFError.QUERY_CANCELLED, ValidQueryId, new OperationCanceledException(caller.Token))));
 
         var exception = await Assert.ThrowsAsync<OperationCanceledException>(
             () => _command.ExecuteNonQueryAsync(CancellationToken.None)).ConfigureAwait(false);
@@ -391,18 +388,18 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(ValidQueryId, inner.QueryId);
     }
 
-    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
-    [InlineData(CommandType.StoredProcedure)]
-    [InlineData(CommandType.TableDirect)]
-    public void CommandTypeOtherThanTextIsRejected(CommandType commandType)
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData((int)CommandType.StoredProcedure)]
+    [InlineData((int)CommandType.TableDirect)]
+    public void CommandTypeOtherThanTextIsRejected(int commandType)
     {
-        var exception = Assert.Throws<SnowflakeDbException>(() => _command.CommandType = commandType);
+        var exception = Assert.Throws<SnowflakeDbException>(() => _command.CommandType = (CommandType)commandType);
 
         Assert.Equal(SFError.UNSUPPORTED_FEATURE.GetErrorCode(), exception.ErrorCode);
         Assert.Equal(CommandType.Text, _command.CommandType);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DesignTimeVisibleCannotBeEnabled()
     {
         var exception = Assert.Throws<SnowflakeDbException>(() => _command.DesignTimeVisible = true);
@@ -410,18 +407,18 @@ public sealed class SnowflakeDbCommandTest : IDisposable
         Assert.Equal(SFError.UNSUPPORTED_FEATURE.GetErrorCode(), exception.ErrorCode);
     }
 
-    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
-    [InlineData(UpdateRowSource.OutputParameters)]
-    [InlineData(UpdateRowSource.FirstReturnedRecord)]
-    [InlineData(UpdateRowSource.Both)]
-    public void UpdatedRowSourceOtherThanNoneIsRejected(UpdateRowSource updatedRowSource)
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData((int)UpdateRowSource.OutputParameters)]
+    [InlineData((int)UpdateRowSource.FirstReturnedRecord)]
+    [InlineData((int)UpdateRowSource.Both)]
+    public void UpdatedRowSourceOtherThanNoneIsRejected(int updatedRowSource)
     {
-        var exception = Assert.Throws<SnowflakeDbException>(() => _command.UpdatedRowSource = updatedRowSource);
+        var exception = Assert.Throws<SnowflakeDbException>(() => _command.UpdatedRowSource = (UpdateRowSource)updatedRowSource);
 
         Assert.Equal(SFError.UNSUPPORTED_FEATURE.GetErrorCode(), exception.ErrorCode);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ConnectionCannotBeReplacedOrUnset()
     {
         var original = _command.Connection;

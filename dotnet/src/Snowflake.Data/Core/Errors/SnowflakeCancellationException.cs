@@ -1,4 +1,5 @@
 using Snowflake.Data.Client;
+using Snowflake.Data.Core.Extensions;
 
 namespace Snowflake.Data.Core.Errors;
 
@@ -20,15 +21,15 @@ internal sealed class SnowflakeCancellationException : SnowflakeException
     /// <summary>Values formatted into the message of <see cref="Error"/>.</summary>
     internal object[] Args { get; }
 
+    /// <remarks>
+    /// The result carries the token of the <see cref="OperationCanceledException"/> that caused the cancellation,
+    /// and <see cref="CancellationToken.None"/> when the cause is another exception or there is none.
+    /// </remarks>
     public override Exception ToPublicException()
     {
-        var snowflakeDbException = InnerException is null
-            ? new SnowflakeDbException(Error, Args)
-            : new SnowflakeDbException(InnerException, Error, Args);
+        var snowflakeDbException = new SnowflakeDbException(null, Error.GetErrorCode(), Error.FormatMessage(Args), QueryId, InnerException);
+        var token = InnerException is OperationCanceledException cancelled ? cancelled.CancellationToken : CancellationToken.None;
 
-        if (QueryId is not null)
-            snowflakeDbException.QueryId = QueryId;
-
-        return new OperationCanceledException(snowflakeDbException.Message, snowflakeDbException);
+        return new OperationCanceledException(snowflakeDbException.Message, snowflakeDbException, token);
     }
 }

@@ -56,8 +56,6 @@ public sealed class DataReaderChunkFetchTest : E2ETestBase
         for (var attempt = 0; attempt < 3; attempt++)
             failures.Add(await Record.ExceptionAsync(read).ConfigureAwait(false));
 
-        Assert.All(failures, AssertMappedAtPublicBoundary);
-        Skip.UntilPublicExceptionsExist();
         Assert.All(failures, failure =>
         {
             var exception = Assert.IsType<NewSnowflakeDbException>(failure);
@@ -105,8 +103,6 @@ public sealed class DataReaderChunkFetchTest : E2ETestBase
             return;
         }
 
-        AssertMappedAtPublicBoundary(overlappingFailure);
-        Skip.UntilPublicExceptionsExist();
         Assert.Equal(270074, Assert.IsType<NewSnowflakeDbException>(overlappingFailure).ErrorCode);
     }
 
@@ -132,8 +128,6 @@ public sealed class DataReaderChunkFetchTest : E2ETestBase
         }
 
         var failure = await Record.ExceptionAsync(() => pending).ConfigureAwait(false);
-        AssertMappedAtPublicBoundary(failure);
-        Skip.UntilPublicExceptionsExist();
         Assert.Equal(270010, Assert.IsType<NewSnowflakeDbException>(failure).ErrorCode);
     }
 
@@ -143,10 +137,6 @@ public sealed class DataReaderChunkFetchTest : E2ETestBase
             "auth/login_success_any.json",
             "session/logout_success.json",
             queryMapping);
-
-    // TODO(SNOW-4382591): every SnowflakeDbException constructor throws NotImplementedException, so the public boundary surfaces each carrier as that exception.
-    private static void AssertMappedAtPublicBoundary(Exception? failure) =>
-        Assert.IsType<NotImplementedException>(failure);
 
     private static DbDataReader ExecuteReader(ISnowflakeDbConnection connection, string sql)
     {

@@ -40,12 +40,6 @@ public enum SFError
     [SFError(ErrorCode = 270066)] WIF_ATTESTATION_ERROR,
     [SFError(ErrorCode = 270067)] TLS_CONFIGURATION_NOT_SUPPORTED,
     [SFError(ErrorCode = 270068)] CREDENTIAL_WRITE_ERROR,
-    // TODO(SNOW-4382591): add messages for the codes below. The classic driver threw a bare System.Exception with:
-    //   COMMAND_TEXT_NOT_SET => "Unable to execute command due to command text not being set"
-    //   INVALID_QUERY_ID_FORMAT => "Invalid query id format. Expected a UUID."
-    //   UNKNOWN_QUERY_STATUS => "The query status returned by the server is not recognized"
-    //   QUERY_RESULT_NO_DATA_RETRIES_EXCEEDED => "Max retry for no data is reached"
-    // DATA_READER_NO_CURRENT_ROW, DATA_READER_FETCH_IN_PROGRESS and QUERY_RESULT_FETCH_FAILED have no classic counterpart.
     [SFError(ErrorCode = 270069)] COMMAND_TEXT_NOT_SET,
     [SFError(ErrorCode = 270070)] INVALID_QUERY_ID_FORMAT,
     [SFError(ErrorCode = 270071)] UNKNOWN_QUERY_STATUS,

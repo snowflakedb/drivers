@@ -19,5 +19,5 @@ internal sealed class SnowflakeServerException : SnowflakeException
     internal int VendorCode { get; }
 
     public override Exception ToPublicException() =>
-        new SnowflakeDbException(SqlState ?? string.Empty, VendorCode, Message, QueryId ?? string.Empty);
+        new SnowflakeDbException(SqlState, VendorCode, Message, QueryId, InnerException);
 }

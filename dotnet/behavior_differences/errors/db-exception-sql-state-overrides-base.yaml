@@ -1,0 +1,17 @@
+name: "SnowflakeDbException.SqlState read through DbException returns the Snowflake SQL state"
+status: unknown
+type: bugfix
+reviewed: false
+is_breaking_change: false
+impact: low
+rationale: |
+  `SnowflakeDbException.SqlState` overrides `DbException.SqlState` on .NET 5 and later, so
+  generic ADO.NET code that handles `DbException` reads the same SQL state as code that
+  handles `SnowflakeDbException`.
+old_driver_behavior: |
+  `SnowflakeDbException.SqlState` hides `DbException.SqlState`. Reading `SqlState` through a
+  `DbException` reference returns null on .NET 5 and later, whatever SQL state the failure has.
+new_driver_behavior: |
+  Reading `SqlState` through a `DbException` reference returns the same value as
+  `SnowflakeDbException.SqlState` on .NET 5 and later. On .NET Framework, `DbException` has no
+  `SqlState` property and `SnowflakeDbException.SqlState` behaves as before.

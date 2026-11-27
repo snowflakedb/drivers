@@ -10,9 +10,6 @@ namespace Snowflake.Data.Tests;
 [Trait("Category", "Unit")]
 public sealed class SnowflakeDbParameterCollectionTest
 {
-    private const string PublicExceptionSkipReason =
-        "Does not work yet: every SnowflakeDbException constructor throws NotImplementedException (TODO next milestone), so no test can observe the SnowflakeDbException this path throws.";
-
     private readonly SnowflakeDbParameterCollection _parameters = new();
     private readonly DbParameter _otherProviderParameter = Substitute.For<DbParameter>();
 
@@ -57,30 +54,17 @@ public sealed class SnowflakeDbParameterCollectionTest
         Assert.Equal(-1, _parameters.IndexOf(_otherProviderParameter));
     }
 
-    // TODO(SNOW-4382591): the SnowflakeDbException constructors throw NotImplementedException until public exceptions exist.
     [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
     [MemberData(nameof(MembersThatTakeAParameter))]
-    public void ParameterOfAnotherProviderIsRejectedBeforeTheCollectionChanges(string member)
+    public void ParameterOfAnotherProviderIsRejectedAsUnsupportedBeforeTheCollectionChanges(string member)
     {
         var parameter = new SnowflakeDbParameter { ParameterName = "1" };
         _parameters.Add(parameter);
 
-        var exception = Assert.Throws<NotImplementedException>(() => PassOtherProviderParameterTo(member));
-
-        Assert.Equal(typeof(SnowflakeDbException), exception.TargetSite?.DeclaringType);
-        Assert.Same(parameter, Assert.Single(_parameters));
-    }
-
-    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
-    [MemberData(nameof(MembersThatTakeAParameter))]
-    public void ParameterOfAnotherProviderIsRejectedAsUnsupported(string member)
-    {
-        _parameters.Add(new SnowflakeDbParameter { ParameterName = "1" });
-
         var exception = Assert.Throws<SnowflakeDbException>(() => PassOtherProviderParameterTo(member));
 
         Assert.Equal(SFError.UNSUPPORTED_FEATURE.GetErrorCode(), exception.ErrorCode);
-        Assert.Single(_parameters);
+        Assert.Same(parameter, Assert.Single(_parameters));
     }
 
     private void PassOtherProviderParameterTo(string member)

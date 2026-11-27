@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="BROWSER_RESPONSE_INVALID_PREFIX" xml:space="preserve">
+    <value>Expect ?token=, but got {0}</value>
+  </data>
+  <data name="BROWSER_RESPONSE_WRONG_METHOD" xml:space="preserve">
+    <value>Expect GET, but got {0}</value>
+  </data>
+  <data name="COLUMN_INDEX_OUT_OF_BOUND" xml:space="preserve">
+    <value>Column index {0} is out of bound of valid index.</value>
+  </data>
+  <data name="DATA_READER_ALREADY_CLOSED" xml:space="preserve">
+    <value>Data reader has already been closed.</value>
+  </data>
+  <data name="IDP_SAML_POSTBACK_INVALID" xml:space="preserve">
+    <value>Scheme/Hostname mismatch: postback lrl: {0}  session url: {1}</value>
+  </data>
+  <data name="IDP_SAML_POSTBACK_NOTFOUND" xml:space="preserve">
+    <value>Cannot found the postback url from the SAML response</value>
+  </data>
+  <data name="IDP_SSO_TOKEN_URL_MISMATCH" xml:space="preserve">
+    <value>Scheme/Hostname mismatch: token/sso url 1: {0}  session url: {1}</value>
+  </data>
+  <data name="INTERNAL_ERROR" xml:space="preserve">
+    <value>Snowflake Internal Error: {0}</value>
+  </data>
+  <data name="INVALID_CONNECTION_STRING" xml:space="preserve">
+    <value>Connection string is invalid: {0}</value>
+  </data>
+  <data name="INVALID_CONNECTION_PARAMETER_VALUE" xml:space="preserve">
+    <value>Invalid parameter value {0} for {1}</value>
+  </data>
+  <data name="INVALID_DATA_CONVERSION" xml:space="preserve">
+    <value>Failed to convert data {0} from type {1} to type {2}.</value>
+  </data>
+  <data name="MISSING_CONNECTION_PROPERTY" xml:space="preserve">
+    <value>Required property {0} is not provided.</value>
+  </data>
+  <data name="QUERY_CANCELLED" xml:space="preserve">
+    <value>Query was cancelled.</value>
+  </data>
+  <data name="REQUEST_TIMEOUT" xml:space="preserve">
+    <value>Request timed out after {0}s.</value>
+  </data>
+  <data name="STATEMENT_ALREADY_RUNNING_QUERY" xml:space="preserve">
+    <value>Another query is already running against this statement.</value>
+  </data>
+  <data name="UNKNOWN_AUTHENTICATOR" xml:space="preserve">
+    <value>Unknown authenticator: {0}</value>
+  </data>
+  <data name="UNSUPPORTED_FEATURE" xml:space="preserve">
+    <value>Feature is not supported. </value>
+  </data>
+  <data name="UNSUPPORTED_PLATFORM" xml:space="preserve">
+    <value>OS platform is not supported.</value>
+  </data>
+  <data name="JWT_ERROR_READING_PK" xml:space="preserve">
+    <value>Could not read private key ({0}). {1}</value>
+  </data>
+  <data name="UNSUPPORTED_DOTNET_TYPE" xml:space="preserve">
+    <value>No corresponding Snowflake type for type {0}.</value>
+  </data>
+  <data name="UNSUPPORTED_SNOWFLAKE_TYPE_FOR_PARAM" xml:space="preserve">
+    <value>Snowflake type {0} is not supported for parameters.</value>
+  </data>
+  <data name="INVALID_BROWSER_URL" xml:space="preserve">
+    <value>Invalid browser url "{0}" cannot be used for authentication.</value>
+  </data>
+  <data name="BROWSER_RESPONSE_TIMEOUT" xml:space="preserve">
+    <value>Browser response timed out after {0} seconds.</value>
+  </data>
+  <data name="INCONSISTENT_RESULT_ERROR" xml:space="preserve">
+    <value>Cannot return result set as a scalar value: {0}</value>
+  </data>
+  <data name="IO_ERROR_ON_GETPUT_COMMAND" xml:space="preserve">
+    <value>IO operation failed. Error: {0}</value>
+  </data>
+  <data name="EXECUTE_COMMAND_ON_CLOSED_CONNECTION" xml:space="preserve">
+    <value>Executing command on a non-opened connection.</value>
+  </data>
+  <data name="STRUCTURED_TYPE_READ_ERROR" xml:space="preserve">
+    <value>Failed to read structured type {0}.</value>
+  </data>
+  <data name="STRUCTURED_TYPE_READ_DETAILED_ERROR" xml:space="preserve">
+    <value>Failed to read structured type {0}. \n : Error : {1}</value>
+  </data>
+  <data name="BROWSER_RESPONSE_ERROR" xml:space="preserve">
+    <value>Invalid response from browser: {0}.</value>
+  </data>
+  <data name="OAUTH_TOKEN_REQUEST_ERROR" xml:space="preserve">
+    <value>Error on getting an OAuth token from IDP: {0}.</value>
+  </data>
+  <data name="EXPERIMENTAL_AUTHENTICATION_DISABLED" xml:space="preserve">
+    <value>Experimental authentication of '{0}' is disabled. You can enable it by SF_ENABLE_EXPERIMENTAL_AUTHENTICATION environmental variable.</value>
+  </data>
+  <data name="WIF_ATTESTATION_ERROR" xml:space="preserve">
+    <value>Retrieving attestation for {0} failed. {1}</value>
+  </data>
+  <data name="TLS_CONFIGURATION_NOT_SUPPORTED" xml:space="preserve">
+    <value>The requested TLS configuration ({0}) cannot be applied: {1} The request was rejected instead of continuing with the TLS configuration chosen by the operating system.</value>
+  </data>
+  <data name="SESSION_GONE" xml:space="preserve">
+    <value>Session no longer exists.</value>
+  </data>
+  <data name="CREDENTIAL_WRITE_ERROR" xml:space="preserve">
+    <value>Failed to write credentials to Windows Credential Manager: {0}</value>
+  </data>
+  <data name="COMMAND_TEXT_NOT_SET" xml:space="preserve">
+    <value>Unable to execute command due to command text not being set</value>
+  </data>
+  <data name="INVALID_QUERY_ID_FORMAT" xml:space="preserve">
+    <value>Invalid query id format. Expected a UUID.</value>
+  </data>
+  <data name="UNKNOWN_QUERY_STATUS" xml:space="preserve">
+    <value>The query status returned by the server is not recognized</value>
+  </data>
+  <data name="QUERY_RESULT_NO_DATA_RETRIES_EXCEEDED" xml:space="preserve">
+    <value>Max retry for no data is reached</value>
+  </data>
+  <data name="DATA_READER_NO_CURRENT_ROW" xml:space="preserve">
+    <value>The data reader has no current row. Call Read and check that it returns true before reading column values.</value>
+  </data>
+  <data name="DATA_READER_FETCH_IN_PROGRESS" xml:space="preserve">
+    <value>Another call is already fetching rows from this data reader. Wait for it to complete before reading from the reader again.</value>
+  </data>
+  <data name="QUERY_RESULT_FETCH_FAILED" xml:space="preserve">
+    <value>Failed to fetch the query result (status {1}): {0}</value>
+  </data>
+</root>

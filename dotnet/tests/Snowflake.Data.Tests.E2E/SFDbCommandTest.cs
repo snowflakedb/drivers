@@ -331,7 +331,7 @@ public sealed class SFDbCommandTest : LiveE2ETestBase
         return (DbException)exception;
     }
 
-    private static string QueryIdOf(DbException exception) => exception switch
+    private static string? QueryIdOf(DbException exception) => exception switch
     {
         OldSnowflakeDbException old => old.QueryId,
         NewSnowflakeDbException current => current.QueryId,

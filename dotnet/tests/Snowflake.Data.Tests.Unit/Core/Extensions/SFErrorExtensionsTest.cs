@@ -1,3 +1,4 @@
+using System.Globalization;
 using Snowflake.Data.Compatibility;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Extensions;
@@ -49,5 +50,59 @@ public sealed class SFErrorExtensionsTest
     public void UndefinedErrorHasNoVendorCode(int value)
     {
         Assert.Throws<KeyNotFoundException>(() => ((SFError)value).GetErrorCode());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void EveryDriverErrorHasAMessageTemplate()
+    {
+        var withoutTemplate = EnumHelper.GetValues<SFError>()
+            .Where(error => error.GetErrorCode() is >= 270000 and <= 279999)
+            .Where(error => error.FormatMessage("a", "b", "c") == error.ToString())
+            .ToList();
+
+        Assert.Empty(withoutTemplate);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void MessageWithoutPlaceholdersIsTheTemplate()
+    {
+        Assert.Equal("Query was cancelled.", SFError.QUERY_CANCELLED.FormatMessage());
+        Assert.Equal("Unable to execute command due to command text not being set", SFError.COMMAND_TEXT_NOT_SET.FormatMessage());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void MessageIsTheTemplateFormattedWithTheArguments()
+    {
+        Assert.Equal("Request timed out after 30s.", SFError.REQUEST_TIMEOUT.FormatMessage(30));
+        Assert.Equal("Failed to convert data NULL from type FIXED to type Int32.", SFError.INVALID_DATA_CONVERSION.FormatMessage("NULL", "FIXED", "Int32"));
+        Assert.Equal("Failed to fetch the query result (status 22): Failed to read chunk data", SFError.QUERY_RESULT_FETCH_FAILED.FormatMessage("Failed to read chunk data", 22));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ServerErrorWithoutATemplateIsNamedAfterItself()
+    {
+        Assert.Equal(nameof(SFError.EXT_AUTHN_DENIED), SFError.EXT_AUTHN_DENIED.FormatMessage());
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void TemplateWithMorePlaceholdersThanArgumentsFailsToFormat()
+    {
+        Assert.Throws<FormatException>(() => SFError.INVALID_DATA_CONVERSION.FormatMessage("NULL"));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void MessageFormatsNumbersIndependentlyOfTheCurrentCulture()
+    {
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+
+            Assert.Equal("Request timed out after 1.5s.", SFError.REQUEST_TIMEOUT.FormatMessage(1.5));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 }

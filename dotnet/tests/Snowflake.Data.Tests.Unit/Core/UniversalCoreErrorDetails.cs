@@ -3,7 +3,7 @@ using Snowflake.Data.Proto;
 namespace Snowflake.Data.Tests.Core;
 
 /// <summary>
-/// A core error whose fields other than the message, vendor code, SQL state and query ID all hold
+/// A core error whose fields other than the message, root cause, vendor code, SQL state and query ID all hold
 /// <see cref="Marker"/>. Those fields appear in the message of a <see cref="ServiceException"/> built from it.
 /// </summary>
 internal static class UniversalCoreErrorDetails
@@ -14,7 +14,7 @@ internal static class UniversalCoreErrorDetails
     {
         Message = "SQL compilation error",
         ErrorTrace = { new ErrorTraceEntry { File = Marker, Line = 1, Column = 1, Message = Marker } },
-        RootCause = Marker,
+        RootCause = "certificate verify failed",
         RequestId = Marker,
         Parameter = Marker,
         ParameterValue = Marker,

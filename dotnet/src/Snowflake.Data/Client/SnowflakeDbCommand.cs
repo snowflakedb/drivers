@@ -368,8 +368,6 @@ public sealed class SnowflakeDbCommand : DbCommand
     private Exception ToPublicException(SnowflakeException carrier, string method, Activity? activity)
     {
         _logger.LogError(carrier, "The command {Method} failed to execute.", method);
-        // TODO SNOW-4382591 next milestone: every SnowflakeDbException constructor throws NotImplementedException until
-        // the public exception gets its real implementation, so today this line throws instead of returning.
         var exception = carrier.ToPublicException();
         activity?.SetException(exception);
         return exception;

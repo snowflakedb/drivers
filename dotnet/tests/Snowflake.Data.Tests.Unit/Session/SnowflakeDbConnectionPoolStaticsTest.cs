@@ -1,4 +1,6 @@
 using Snowflake.Data.Client;
+using Snowflake.Data.Core;
+using Snowflake.Data.Core.Extensions;
 using Snowflake.Data.Core.Session;
 
 namespace Snowflake.Data.Tests.Session;
@@ -113,21 +115,18 @@ public sealed class SnowflakeDbConnectionPoolStaticsTest : IDisposable
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void InvalidPoolSettingLeavesTheDefaultRegistryEmpty()
     {
-        // TODO(SNOW-4382591): the pool throws a SnowflakeDbException with vendor code 270008, but every
-        // SnowflakeDbException constructor throws NotImplementedException, so callers see that instead.
         const string connectionString = "account=bad;maxPoolSize=nope";
 
-        var fromPartition = Assert.Throws<NotImplementedException>(() =>
+        var fromPartition = Assert.Throws<SnowflakeDbException>(() =>
             SnowflakeDbConnectionPool.GetPoolPartition(connectionString));
-        Assert.Equal("TODO next milestone", fromPartition.Message);
 #pragma warning disable CS0618
-        var fromPool = Assert.Throws<NotImplementedException>(() => SnowflakeDbConnectionPool.GetPool(connectionString));
+        var fromPool = Assert.Throws<SnowflakeDbException>(() => SnowflakeDbConnectionPool.GetPool(connectionString));
 #pragma warning restore CS0618
-        var fromStatic = Assert.Throws<NotImplementedException>(() =>
+        var fromStatic = Assert.Throws<SnowflakeDbException>(() =>
             SnowflakeDbConnectionPool.GetMaxPoolSize(connectionString));
 
-        Assert.Equal("TODO next milestone", fromPool.Message);
-        Assert.Equal("TODO next milestone", fromStatic.Message);
+        Assert.All([fromPartition, fromPool, fromStatic], exception =>
+            Assert.Equal(SFError.INVALID_CONNECTION_STRING.GetErrorCode(), exception.ErrorCode));
         Assert.Equal(0, SnowflakeDbConnectionPool.GetCurrentPoolSize());
         Assert.Equal(ConnectionPoolConfig.Default.MaxPoolSize, SnowflakeDbConnectionPool.GetMaxPoolSize());
         Assert.Equal(0, SnowflakeDbConnectionPool.Default.RegisteredKeyCount);
@@ -168,8 +167,6 @@ public sealed class SnowflakeDbConnectionPoolStaticsTest : IDisposable
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DifferingPartitionsThrowFromThePublicAggregate()
     {
-        // TODO(SNOW-4382591): the pool throws a SnowflakeDbException with vendor code 270060, but every
-        // SnowflakeDbException constructor throws NotImplementedException, so callers see that instead.
         SnowflakeDbConnectionPool.Default.GetOrCreate(
             PoolKeyFactory.From("account=max-a"),
             ConnectionPoolConfig.Default with { MaxPoolSize = 3 });
@@ -177,9 +174,9 @@ public sealed class SnowflakeDbConnectionPoolStaticsTest : IDisposable
             PoolKeyFactory.From("account=max-b"),
             ConnectionPoolConfig.Default with { MaxPoolSize = 4 });
 
-        var exception = Assert.Throws<NotImplementedException>(() => SnowflakeDbConnectionPool.GetMaxPoolSize());
+        var exception = Assert.Throws<SnowflakeDbException>(() => SnowflakeDbConnectionPool.GetMaxPoolSize());
 
-        Assert.Equal("TODO next milestone", exception.Message);
+        Assert.Equal(SFError.INCONSISTENT_RESULT_ERROR.GetErrorCode(), exception.ErrorCode);
     }
 
     private static void AssertNullConnectionString(Action call)

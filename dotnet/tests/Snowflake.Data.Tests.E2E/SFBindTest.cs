@@ -762,8 +762,6 @@ public sealed class SFBindTest : LiveE2ETestBase
     [SnowflakeFact]
     public async Task ShouldRejectParameterOfAnotherProviderAsync()
     {
-        Skip.UntilPublicExceptionsExist();
-
         // Given
         using var conn = await OpenConnectionAsync(null, TestContext.Current.CancellationToken).ConfigureAwait(false);
         using var command = conn.CreateCommand();

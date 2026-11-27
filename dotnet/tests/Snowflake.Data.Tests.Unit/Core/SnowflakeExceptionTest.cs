@@ -12,9 +12,6 @@ public sealed class SnowflakeExceptionTest
 {
     private const string QueryId = "01bf4a3e-0001-2c4f-0000-00a1b2c3d4e5";
 
-    private const string PublicExceptionSkipReason =
-        "Does not work yet: every SnowflakeDbException constructor throws NotImplementedException (TODO SNOW-4382591 next milestone), so ToPublicException cannot build its result.";
-
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ServerErrorWithAVendorCodeBecomesAServerException()
     {
@@ -81,6 +78,31 @@ public sealed class SnowflakeExceptionTest
         Assert.DoesNotContain(UniversalCoreErrorDetails.Marker, exception.ToString());
     }
 
+    [SnowflakeTheory(RetriesCount = RetriesCount.NoRetries)]
+    [InlineData("Failed to login", "received fatal alert: ProtocolVersion", "Failed to login. received fatal alert: ProtocolVersion")]
+    [InlineData("Failed to login.", "received fatal alert: ProtocolVersion", "Failed to login. received fatal alert: ProtocolVersion")]
+    [InlineData("Division by zero: division by zero", "division by zero", "Division by zero: division by zero")]
+    [InlineData("", "division by zero", "division by zero")]
+    [InlineData("handle not found", "", "handle not found")]
+    public void RootCauseEndsTheMessageUnlessTheMessageAlreadyContainsIt(string message, string rootCause, string expected)
+    {
+        var core = new ServiceException(new DriverException { Message = message, RootCause = rootCause });
+
+        var exception = Assert.IsType<SnowflakeDriverException>(SnowflakeException.FromCore(core));
+
+        Assert.Equal([expected], exception.Args);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void RootCauseEndsTheMessageOfAServerError()
+    {
+        var core = new ServiceException(new DriverException { Message = "SQL execution internal error", VendorCode = 300002, RootCause = "file not found" });
+
+        var exception = Assert.IsType<SnowflakeServerException>(SnowflakeException.FromCore(core));
+
+        Assert.Equal("SQL execution internal error. file not found", exception.Message);
+    }
+
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ErrorWithoutAVendorCodeOrQueryIdHasNoQueryId()
     {
@@ -145,7 +167,7 @@ public sealed class SnowflakeExceptionTest
         Assert.Equal(QueryId, exception.QueryId);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DriverExceptionBecomesASnowflakeDbExceptionWithItsErrorCodeAndQueryId()
     {
         var cause = new TransportException("transport down");
@@ -155,10 +177,12 @@ public sealed class SnowflakeExceptionTest
 
         Assert.Equal(SFError.INTERNAL_ERROR.GetErrorCode(), exception.ErrorCode);
         Assert.Equal(QueryId, exception.QueryId);
+        Assert.Null(exception.SqlState);
         Assert.Same(cause, exception.InnerException);
+        Assert.Equal($"Error: Snowflake Internal Error: transport down SqlState: , VendorCode: 270001, QueryId: {QueryId}", exception.Message);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ServerExceptionBecomesASnowflakeDbExceptionWithItsSqlStateAndVendorCode()
     {
         var carrier = new SnowflakeServerException("42000", 1003, "SQL compilation error", QueryId);
@@ -168,13 +192,27 @@ public sealed class SnowflakeExceptionTest
         Assert.Equal("42000", exception.SqlState);
         Assert.Equal(1003, exception.ErrorCode);
         Assert.Equal(QueryId, exception.QueryId);
+        Assert.Equal($"Error: SQL compilation error SqlState: 42000, VendorCode: 1003, QueryId: {QueryId}", exception.Message);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ServerExceptionWithoutSqlStateOrQueryIdLeavesThemUnsetOnThePublicException()
+    {
+        var carrier = new SnowflakeServerException(null, 606, "warehouse suspended", null);
+
+        var exception = Assert.IsType<SnowflakeDbException>(carrier.ToPublicException());
+
+        Assert.Null(exception.SqlState);
+        Assert.Null(exception.QueryId);
+        Assert.Equal(606, exception.ErrorCode);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void CancellationExceptionBecomesAnOperationCanceledExceptionWrappingASnowflakeDbException()
     {
         using var source = new CancellationTokenSource();
-        var carrier = new SnowflakeCancellationException(SFError.QUERY_CANCELLED, QueryId, null);
+        var cause = new OperationCanceledException(source.Token);
+        var carrier = new SnowflakeCancellationException(SFError.QUERY_CANCELLED, QueryId, cause);
 
         var exception = Assert.IsType<OperationCanceledException>(carrier.ToPublicException());
 
@@ -182,6 +220,21 @@ public sealed class SnowflakeExceptionTest
         var inner = Assert.IsType<SnowflakeDbException>(exception.InnerException);
         Assert.Equal(SFError.QUERY_CANCELLED.GetErrorCode(), inner.ErrorCode);
         Assert.Equal(QueryId, inner.QueryId);
+        Assert.Same(cause, inner.InnerException);
+        Assert.Equal(inner.Message, exception.Message);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void CancellationWithoutACancelledCauseHasNoToken()
+    {
+        var carrier = new SnowflakeCancellationException(SFError.REQUEST_TIMEOUT, null, new TransportException("transport down"), 30);
+
+        var exception = Assert.IsType<OperationCanceledException>(carrier.ToPublicException());
+
+        Assert.Equal(CancellationToken.None, exception.CancellationToken);
+        var inner = Assert.IsType<SnowflakeDbException>(exception.InnerException);
+        Assert.Equal(SFError.REQUEST_TIMEOUT.GetErrorCode(), inner.ErrorCode);
+        Assert.Equal("Error: Request timed out after 30s. SqlState: , VendorCode: 270007, QueryId: ", inner.Message);
     }
 
     [Trait("Category", "Unit")]

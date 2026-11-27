@@ -3,6 +3,7 @@ using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using Snowflake.Data.Core;
 using Snowflake.Data.Core.Errors;
+using Snowflake.Data.Core.Extensions;
 using Snowflake.Data.Interfaces;
 
 namespace Snowflake.Data.Tests.Unit;
@@ -10,9 +11,6 @@ namespace Snowflake.Data.Tests.Unit;
 [Trait("Category", "Unit")]
 public sealed class SnowflakeDbDataReaderTest
 {
-    private const string PublicExceptionSkipReason =
-        "Does not work yet: every SnowflakeDbException constructor throws NotImplementedException (TODO next milestone), so no test can observe the SnowflakeDbException this path throws.";
-
     private const string QueryId = "01bf4a3e-0001-2c4f-0000-00a1b2c3d4e5";
 
     private static readonly Guid SomeGuid = Guid.Parse("4b7e2c0e-8f3a-4d55-9b1e-2a6c7d8e9f01");
@@ -260,10 +258,10 @@ public sealed class SnowflakeDbDataReaderTest
     {
         _resultSet.GetSchemaTable().Throws(new SnowflakeDriverException(SFError.INTERNAL_ERROR, null, "Unknown column type: geography"));
 
-        AssertNotACarrier(Record.Exception(() => _reader.GetSchemaTable()));
+        AssertNotACarrier(Record.Exception(() => _reader.GetSchemaTable()), SFError.INTERNAL_ERROR);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ACarrierFromAGetterIsConvertedToThePublicException()
     {
         _resultSet.GetFieldValue<int>(0).Throws(new SnowflakeDriverException(SFError.INVALID_DATA_CONVERSION, null, "[value hidden]", "FIXED", "Int32"));
@@ -271,7 +269,7 @@ public sealed class SnowflakeDbDataReaderTest
         Assert.Equal(270003, Assert.Throws<SnowflakeDbException>(() => _reader.GetInt32(0)).ErrorCode);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ACarrierFromReadIsConvertedToThePublicException()
     {
         _resultSet.Read().Throws(new SnowflakeDriverException(SFError.QUERY_RESULT_FETCH_FAILED, null, "Failed to read chunk data", 22));
@@ -279,7 +277,7 @@ public sealed class SnowflakeDbDataReaderTest
         Assert.Equal(270075, Assert.Throws<SnowflakeDbException>(() => _reader.Read()).ErrorCode);
     }
 
-    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries, Skip = PublicExceptionSkipReason)]
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public async Task ACarrierFromAnAwaitedFetchIsConvertedToThePublicExceptionAsync()
     {
         _resultSet.ReadNextBatchAsync(Arg.Any<CancellationToken>())
@@ -300,11 +298,11 @@ public sealed class SnowflakeDbDataReaderTest
         _resultSet.TryAdvanceWithinBatch().Returns(_ => throw carrier, _ => false);
         _resultSet.ReadNextBatchAsync(Arg.Any<CancellationToken>()).Returns(Task.FromException<bool>(carrier));
 
-        AssertNotACarrier(Record.Exception(() => _reader.Read()));
-        AssertNotACarrier(Record.Exception(() => _reader.GetValue(0)));
-        AssertNotACarrier(Record.Exception(() => _reader.GetOrdinal("ID")));
-        AssertNotACarrier(Record.Exception(() => { _ = _reader.ReadAsync(CancellationToken.None); }));
-        AssertNotACarrier(await Record.ExceptionAsync(() => _reader.ReadAsync(CancellationToken.None)).ConfigureAwait(false));
+        AssertNotACarrier(Record.Exception(() => _reader.Read()), SFError.DATA_READER_ALREADY_CLOSED);
+        AssertNotACarrier(Record.Exception(() => _reader.GetValue(0)), SFError.DATA_READER_ALREADY_CLOSED);
+        AssertNotACarrier(Record.Exception(() => _reader.GetOrdinal("ID")), SFError.DATA_READER_ALREADY_CLOSED);
+        AssertNotACarrier(Record.Exception(() => { _ = _reader.ReadAsync(CancellationToken.None); }), SFError.DATA_READER_ALREADY_CLOSED);
+        AssertNotACarrier(await Record.ExceptionAsync(() => _reader.ReadAsync(CancellationToken.None)).ConfigureAwait(false), SFError.DATA_READER_ALREADY_CLOSED);
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
@@ -337,11 +335,10 @@ public sealed class SnowflakeDbDataReaderTest
         Assert.Equal(_logger.Entries[5], (LogLevel.Debug, $"The reader ReadAsync failed for query {QueryId}.", carrier));
     }
 
-    private static void AssertNotACarrier(Exception? exception)
+    private static void AssertNotACarrier(Exception? exception, SFError expected)
     {
-        // SnowflakeDbException construction throws NotImplementedException until SNOW-4382591, so the
-        // boundary shows as that exception; the carrier itself must never reach the caller.
-        Assert.IsType<NotImplementedException>(exception);
+        var publicException = Assert.IsType<SnowflakeDbException>(exception);
+        Assert.Equal(expected.GetErrorCode(), publicException.ErrorCode);
     }
 
     private sealed class RecordingLogger : ILogger<SnowflakeDbDataReader>
