@@ -10,6 +10,7 @@ from .._common.extras import pyarrow
 from .arrow_context import ArrowConverterContext
 from .arrow_stream_iterator import ArrowStreamIterator as CythonArrowStreamIterator
 from .arrow_stream_iterator import ArrowStreamTableIterator as CythonArrowStreamTableIterator
+from .native_blocking import offload_row_iterator, offload_table_iterator, run_native_blocking
 from .type_codes import FIXED
 
 
@@ -69,20 +70,25 @@ def create_row_iterator(
         if iterator_cls is None:
             release_arrow_stream(stream_ptr)
             raise _missing_native_class("ArrowStreamIterator")
-        return cast(
-            "ArrowRowIterator",
-            iterator_cls(
-                stream_ptr,
-                session_timezone=context.timezone,
-                use_dict_result=use_dict_result,
-                use_numpy=use_numpy,
-            ),
+        return offload_row_iterator(
+            cast(
+                "ArrowRowIterator",
+                run_native_blocking(
+                    iterator_cls,
+                    stream_ptr,
+                    session_timezone=context.timezone,
+                    use_dict_result=use_dict_result,
+                    use_numpy=use_numpy,
+                ),
+            )
         )
-    return CythonArrowStreamIterator(
-        stream_ptr,
-        context,
-        use_dict_result=use_dict_result,
-        use_numpy=use_numpy,
+    return offload_row_iterator(
+        CythonArrowStreamIterator(
+            stream_ptr,
+            context,
+            use_dict_result=use_dict_result,
+            use_numpy=use_numpy,
+        )
     )
 
 
@@ -96,15 +102,18 @@ def create_row_iterator_from_result_set(
     iterator_cls = getattr(sf_core_python, "ArrowStreamIterator", None)
     if iterator_cls is None:
         raise _missing_native_class("ArrowStreamIterator")
-    return cast(
-        "ArrowRowIterator",
-        iterator_cls.from_result_set(
-            result_set_handle.id,
-            result_set_handle.magic,
-            session_timezone=context.timezone,
-            use_dict_result=use_dict_result,
-            use_numpy=use_numpy,
-        ),
+    return offload_row_iterator(
+        cast(
+            "ArrowRowIterator",
+            run_native_blocking(
+                iterator_cls.from_result_set,
+                result_set_handle.id,
+                result_set_handle.magic,
+                session_timezone=context.timezone,
+                use_dict_result=use_dict_result,
+                use_numpy=use_numpy,
+            ),
+        )
     )
 
 
@@ -118,15 +127,18 @@ def create_table_iterator_from_result_set(
     iterator_cls = getattr(sf_core_python, "ArrowStreamTableIterator", None)
     if iterator_cls is None:
         raise _missing_native_class("ArrowStreamTableIterator")
-    return cast(
-        "ArrowTableIterator",
-        iterator_cls.from_result_set(
-            result_set_handle.id,
-            result_set_handle.magic,
-            session_timezone=context.timezone,
-            number_to_decimal=number_to_decimal,
-            force_microsecond_precision=force_microsecond_precision,
-        ),
+    return offload_table_iterator(
+        cast(
+            "ArrowTableIterator",
+            run_native_blocking(
+                iterator_cls.from_result_set,
+                result_set_handle.id,
+                result_set_handle.magic,
+                session_timezone=context.timezone,
+                number_to_decimal=number_to_decimal,
+                force_microsecond_precision=force_microsecond_precision,
+            ),
+        )
     )
 
 
@@ -151,20 +163,25 @@ def create_table_iterator(
         if iterator_cls is None:
             release_arrow_stream(stream_ptr)
             raise _missing_native_class("ArrowStreamTableIterator")
-        return cast(
-            "ArrowTableIterator",
-            iterator_cls(
-                stream_ptr,
-                session_timezone=context.timezone,
-                number_to_decimal=number_to_decimal,
-                force_microsecond_precision=force_microsecond_precision,
-            ),
+        return offload_table_iterator(
+            cast(
+                "ArrowTableIterator",
+                run_native_blocking(
+                    iterator_cls,
+                    stream_ptr,
+                    session_timezone=context.timezone,
+                    number_to_decimal=number_to_decimal,
+                    force_microsecond_precision=force_microsecond_precision,
+                ),
+            )
         )
-    return CythonArrowStreamTableIterator(
-        stream_ptr,
-        context,
-        number_to_decimal=number_to_decimal,
-        force_microsecond_precision=force_microsecond_precision,
+    return offload_table_iterator(
+        CythonArrowStreamTableIterator(
+            stream_ptr,
+            context,
+            number_to_decimal=number_to_decimal,
+            force_microsecond_precision=force_microsecond_precision,
+        )
     )
 
 

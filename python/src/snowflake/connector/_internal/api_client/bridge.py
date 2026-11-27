@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from snowflake.connector.errors import OperationalError
 
+from ..native_blocking import run_native_blocking
 from ..protobuf_gen.proto_exception import ProtoTransportException
 
 
@@ -24,7 +25,9 @@ class ProtoTransport:
         cancelling the surrounding asyncio task does) cancels the operation's
         token in core.
 
-    :meth:`handle_message` — blocking call (releases the GIL).
+    :meth:`handle_message` — blocking call (releases the GIL). In a gevent-patched
+        process the call runs on a gevent thread pool and the calling greenlet yields
+        until it returns; see :mod:`native_blocking`.
     """
 
     async def handle_message_async(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
@@ -35,7 +38,7 @@ class ProtoTransport:
         raise ProtoTransportException(f"Unknown error code: {status}")
 
     def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
-        status, response_bytes = sf_core_python.call_proto(api, method, message)
+        status, response_bytes = run_native_blocking(sf_core_python.call_proto, api, method, message)
         if status in (0, 1, 2):
             return status, response_bytes
         raise ProtoTransportException(f"Unknown error code: {status}")

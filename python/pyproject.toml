@@ -67,6 +67,8 @@ test = [
     "zstandard",
     "tomlkit",
     "tzdata",
+    # No free-threaded wheels (3.14t/3.15t), so installing gevent there would build it from source.
+    "gevent>=25.9.1; python_version < '3.14'",
     "numpy>=1.23.0; python_version < '3.12'",
     "numpy>=1.26.0; python_version >= '3.12' and python_version < '3.13'",
     "numpy>=2.1.0; python_version >= '3.13'",
@@ -244,7 +246,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*", "numpy", "numpy.*", "sqlalchemy", "sqlalchemy.*"]
+module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*", "numpy", "numpy.*", "sqlalchemy", "sqlalchemy.*", "gevent", "gevent.*"]
 ignore_missing_imports = true
 
 # ===== Hatch Configuration =====
