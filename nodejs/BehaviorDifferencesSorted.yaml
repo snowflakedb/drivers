@@ -353,33 +353,6 @@ behavior_differences:
          "Expected type Int for parameter 'timeout'".
       It applies to each attempt of login, query, and other requests.
 
-  130:
-    name: 'LargeResultSetError has the HTTP status on cause instead of the raw response object'
-    status: allowed
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: low
-    old_driver_behavior: |
-      When cloud storage answers a result chunk download with an error status after retries,
-      the query fails with LargeResultSetError 402002 "Request to S3/Blob failed." and the
-      axios response object on `response` (status, headers, body). There is no `cause`.
-    new_driver_behavior: |
-      The query fails with LargeResultSetError 402002 "Request to S3/Blob failed." without a
-      `response` property. The HTTP status, for example "HTTP status 404 Not Found", is on
-      `cause`. Name, code and message match the old driver.
-    description: |
-      Chunks are downloaded by the Rust core, which does not hand the HTTP response to Node.
-      The status is the part of that response that tells the application what went wrong.
-
-      The public types changed too, for every error, not only this one:
-      - The old `index.d.ts` declares `data`, `response`, `responseBody` and `externalize()` on
-        `SnowflakeError`. The new `SnowflakeError` type declares only `code`, `sqlState` and
-        `isFatal`.
-      - The `SnowflakeErrorExternal` type, returned by `externalize()`, no longer exists.
-      - TypeScript code that reads `err.response` or calls `err.externalize()` no longer
-        compiles.
-
   131:
     name: 'An expired result chunk URL fails the query instead of being refreshed'
     status: todo
@@ -394,7 +367,7 @@ behavior_differences:
       continues reading. It does this up to 3 times per result stream
       (resultStreamInterrupts).
     new_driver_behavior: |
-      The query fails at once with LargeResultSetError 402002 "Request to S3/Blob failed.",
+      The query fails at once with RequestFailedError 402002 "Request to S3/Blob failed.",
       with "HTTP status 403 Forbidden" on `cause`. Chunk URLs are not refreshed.
     status_rationale: |
       Needs a core change: on 403 from a chunk URL, fetch the query result again for fresh

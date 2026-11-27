@@ -48,18 +48,18 @@ describe('Large Result Set Errors', () => {
   }
 
   // Neither driver retries 404 or treats it as an expired chunk URL.
-  it('should report LargeResultSetError when cloud storage answers a chunk download with an error status', async () => {
+  it('should report a request failure when cloud storage answers a chunk download with an error status', async () => {
     await stubResultWithOneRemoteChunk(jsonResponse(404, {}));
     const connection = await createLiveConnection(wiremock.connectionOptions);
 
     await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
       error: {
-        name: 'LargeResultSetError',
         code: 402002,
         message: 'Request to S3/Blob failed.',
+        response: { statusCode: 404, statusText: 'Not Found' },
         ...(isRunningNewDriverWithBD('BD#130')
-          ? { cause: { message: 'HTTP status 404 Not Found' } }
-          : { response: expect.objectContaining({ statusCode: 404 }) }),
+          ? { name: 'RequestFailedError', cause: { message: 'HTTP status 404 Not Found' } }
+          : { name: 'LargeResultSetError' }),
       },
     });
   });
@@ -80,9 +80,10 @@ describe('Large Result Set Errors', () => {
     if (isRunningNewDriverWithBD('BD#131')) {
       await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
         error: {
-          name: 'LargeResultSetError',
+          name: 'RequestFailedError',
           code: 402002,
           message: 'Request to S3/Blob failed.',
+          response: { statusCode: 403, statusText: 'Forbidden' },
           cause: { message: 'HTTP status 403 Forbidden' },
         },
       });
@@ -96,7 +97,7 @@ describe('Large Result Set Errors', () => {
 
   // TODO(SNOW-4334410): the new driver reads this chunk as zero rows and the query succeeds.
   it.skipIf(NOT_IMPLEMENTED_IN_NEW_DRIVER)(
-    'should report LargeResultSetError when cloud storage answers a chunk download with an XML document',
+    'should report a request failure when cloud storage answers a chunk download with an XML document',
     async () => {
       await stubResultWithOneRemoteChunk({
         status: 200,
@@ -107,12 +108,14 @@ describe('Large Result Set Errors', () => {
 
       await expect(executeAsync(connection, 'select 1')).rejects.toMatchObject({
         error: {
-          name: 'LargeResultSetError',
           code: 402002,
           message: 'Request to S3/Blob failed.',
           ...(isRunningNewDriverWithBD('BD#130')
-            ? {}
-            : { response: expect.objectContaining({ statusCode: 200 }) }),
+            ? { name: 'RequestFailedError' }
+            : {
+                name: 'LargeResultSetError',
+                response: expect.objectContaining({ statusCode: 200 }),
+              }),
         },
       });
     },

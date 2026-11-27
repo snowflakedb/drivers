@@ -307,10 +307,11 @@ impl ClientError {
 
     fn of_cloud_storage_error_status(status: HttpStatus) -> Self {
         Self {
-            name: Some("LargeResultSetError"),
+            name: Some("RequestFailedError"),
             message: "Request to S3/Blob failed.".to_string(),
             code: Some(ErrorCode::Driver(402002)),
             cause: Some(format!("HTTP status {status}")),
+            http_status: Some(status),
             ..Default::default()
         }
     }
@@ -790,6 +791,20 @@ mod tests {
                  max attempts (3) reached; last status 503 Service Unavailable"
             )
         );
+        assert_eq!(error.http_status, Some(status));
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn an_error_status_from_cloud_storage_is_a_request_failed_error() {
+        let status = HttpStatus::from(StatusCode::NOT_FOUND);
+        let error = ClientError::of_cloud_storage_error_status(status);
+
+        assert_eq!(error.name, Some("RequestFailedError"));
+        assert_eq!(code_of(&error), Some("402002".to_string()));
+        assert_eq!(error.message, "Request to S3/Blob failed.");
+        assert_eq!(error.sql_state, None);
+        assert_eq!(error.cause.as_deref(), Some("HTTP status 404 Not Found"));
         assert_eq!(error.http_status, Some(status));
         assert!(!error.is_fatal);
     }

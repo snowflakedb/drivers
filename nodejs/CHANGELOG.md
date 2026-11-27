@@ -9,6 +9,7 @@
 #### Breaking Changes
 
 - Errors
+  - Removed `LargeResultSetError`. When cloud storage answers the download of a large query result with an HTTP error status, the query now fails with `RequestFailedError`, the same error the driver uses for other failed requests. The `code` `402002` and the message are the same as in 3.x. If your code checks `error.name === 'LargeResultSetError'`, check `error.code === 402002` instead.
   - Changed `err.response` on `RequestFailedError` to a plain object with only `statusCode` and `statusText`. The driver no longer sends requests with axios, so `err.response` is no longer an `AxiosResponse`. It has no body or headers, so they can't end up in logs by accident. To find out why a request failed, read `err.cause.message`.
 
 #### New Features

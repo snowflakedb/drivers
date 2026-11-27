@@ -1105,8 +1105,9 @@ behavior_differences:
         RequestFailedError 401002.
       - Retries that run out of time (the retry timeout, or a Retry-After longer than
         the time left) have no HTTP status and still reject with a plain Error.
-      A server that rejects an abort is covered by BD#116, and a 2xx response whose body
-      the driver cannot read or parse by BD#187, not by this entry.
+      A server that rejects an abort is covered by BD#116, a 2xx response whose body the
+      driver cannot read or parse by BD#187, and a result chunk download that cloud storage
+      answers with an HTTP error status by BD#130, not by this entry.
 
   47:
     name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
@@ -2892,31 +2893,42 @@ behavior_differences:
       honors it, so this is a bugfix and no code needs to change.
 
   130:
-    name: 'LargeResultSetError has the HTTP status on cause instead of the raw response object'
+    name: 'A chunk download that gets an HTTP error status is RequestFailedError 402002, not LargeResultSetError'
     status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
       When cloud storage answers a result chunk download with an error status after retries,
-      the query fails with LargeResultSetError 402002 "Request to S3/Blob failed." and the
-      axios response object on `response` (status, headers, body). There is no `cause`.
+      the query fails with LargeResultSetError 402002 "Request to S3/Blob failed.".
+      `response` is the axios response object (status, headers, body). There is no `cause`.
+      A chunk that is an XML document with status 200 fails the same way.
+      When cloud storage cannot be reached, the query fails with NetworkError 402001, not
+      LargeResultSetError.
     new_driver_behavior: |
-      The query fails with LargeResultSetError 402002 "Request to S3/Blob failed." without a
-      `response` property. The HTTP status, for example "HTTP status 404 Not Found", is on
-      `cause`. Name, code and message match the old driver.
+      The query fails with RequestFailedError 402002 "Request to S3/Blob failed.". Code and
+      message are the same as in the old driver.
+      `response` is a plain object with only `statusCode` and `statusText`, as on
+      RequestFailedError 401002 (BD#46). `cause` has the HTTP status, for example
+      "HTTP status 404 Not Found".
+    status_rationale: |
+      LargeResultSetError means that a server answered a request with an HTTP error status.
+      For Snowflake that is RequestFailedError 401002, so the two names meant the same kind of
+      failure. The old driver was not consistent here: a chunk download that cannot reach
+      cloud storage already fails with NetworkError 402001, not LargeResultSetError.
+      In the new driver the name tells what kind of failure it is, and the code tells which
+      server:
+      - NetworkError 401001 or 402001 when Snowflake or cloud storage cannot be reached.
+      - RequestFailedError 401002 or 402002 when it answers with an HTTP error status.
+      Code that checks `err.code === 402002` or reads `err.response.statusCode` keeps
+      working. Code that checks `err.name === 'LargeResultSetError'` has to check the code
+      instead.
     description: |
-      Chunks are downloaded by the Rust core, which does not hand the HTTP response to Node.
-      The status is the part of that response that tells the application what went wrong.
-
-      The public types changed too, for every error, not only this one:
-      - The old `index.d.ts` declares `data`, `response`, `responseBody` and `externalize()` on
-        `SnowflakeError`. The new `SnowflakeError` type declares only `code`, `sqlState` and
-        `isFatal`.
-      - The `SnowflakeErrorExternal` type, returned by `externalize()`, no longer exists.
-      - TypeScript code that reads `err.response` or calls `err.externalize()` no longer
-        compiles.
+      Chunks are downloaded by the Rust core, which passes only the HTTP status to Node, not
+      the whole response.
+      A 403 from an expired chunk URL also fails this way, see BD#131. The new driver reads
+      an XML chunk with status 200 as zero rows, and the query succeeds (SNOW-4334410).
 
   131:
     name: 'An expired result chunk URL fails the query instead of being refreshed'
@@ -2932,7 +2944,7 @@ behavior_differences:
       continues reading. It does this up to 3 times per result stream
       (resultStreamInterrupts).
     new_driver_behavior: |
-      The query fails at once with LargeResultSetError 402002 "Request to S3/Blob failed.",
+      The query fails at once with RequestFailedError 402002 "Request to S3/Blob failed.",
       with "HTTP status 403 Forbidden" on `cause`. Chunk URLs are not refreshed.
     status_rationale: |
       Needs a core change: on 403 from a chunk URL, fetch the query result again for fresh
