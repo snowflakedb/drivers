@@ -461,22 +461,7 @@ impl Data {
             stage_info.use_s3_regional_url = true;
         }
 
-        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
-            .encryption_material
-        {
-            Some(materials) => {
-                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
-                match converted.len() {
-                    0 => None,
-                    1 => converted.into_iter().next(),
-                    _ => InvalidFormatSnafu {
-                        message: "Expected exactly one encryption material for upload".to_string(),
-                    }
-                    .fail()?,
-                }
-            }
-            None => None,
-        };
+        let encryption_material = self.upload_encryption_material()?;
 
         let auto_compress = self.auto_compress.context(MissingParameterSnafu {
             parameter: "auto compress",
@@ -516,6 +501,22 @@ impl Data {
         })
     }
 
+    fn upload_encryption_material(
+        &self,
+    ) -> Result<Option<file_manager::EncryptionMaterial>, QueryResponseError> {
+        let Some(materials) = &self.encryption_material else {
+            return Ok(None);
+        };
+        let mut converted: Vec<Option<file_manager::EncryptionMaterial>> = materials.into();
+        match converted.len() {
+            0 | 1 => Ok(converted.pop().flatten()),
+            _ => InvalidFormatSnafu {
+                message: "Expected exactly one encryption material for upload".to_string(),
+            }
+            .fail(),
+        }
+    }
+
     /// Build a `SingleUploadData` for an internal `SYSTEM$BIND` CSV upload.
     ///
     /// Unlike user-facing PUT commands, `SYSTEM$BIND` uploads are internal
@@ -546,22 +547,7 @@ impl Data {
             stage_info.use_s3_regional_url = true;
         }
 
-        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
-            .encryption_material
-        {
-            Some(materials) => {
-                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
-                match converted.len() {
-                    0 => None,
-                    1 => converted.into_iter().next(),
-                    _ => InvalidFormatSnafu {
-                        message: "Expected exactly one encryption material for upload".to_string(),
-                    }
-                    .fail()?,
-                }
-            }
-            None => None,
-        };
+        let encryption_material = self.upload_encryption_material()?;
 
         let overwrite = self.overwrite.unwrap_or(false);
 
@@ -635,7 +621,7 @@ impl Data {
         let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
             match &self.encryption_material {
                 Some(materials) => {
-                    let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                    let converted: Vec<Option<file_manager::EncryptionMaterial>> = materials.into();
                     if converted.is_empty() {
                         vec![None; src_locations.len()]
                     } else if src_locations.len() != converted.len() {
@@ -646,7 +632,7 @@ impl Data {
                     }
                     .fail()?
                     } else {
-                        converted.into_iter().map(Some).collect()
+                        converted
                     }
                 }
                 None => vec![None; src_locations.len()],
@@ -1388,28 +1374,25 @@ impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
     }
 }
 
-impl From<&OneOrMany<EncryptionMaterial>> for Vec<file_manager::EncryptionMaterial> {
+impl From<&OneOrMany<EncryptionMaterial>> for Vec<Option<file_manager::EncryptionMaterial>> {
     fn from(value: &OneOrMany<EncryptionMaterial>) -> Self {
-        value.as_slice().iter().map(|em| em.into()).collect()
+        match value {
+            OneOrMany::One(item) => vec![Some(item.into())],
+            OneOrMany::Many(items) => items
+                .iter()
+                .map(|item| item.as_ref().map(Into::into))
+                .collect(),
+        }
     }
 }
 
-// Snowflake API can return a single object or an array for some fields - for example EncryptionMaterial
+// Snowflake API can return a single object or an array for some fields - for example EncryptionMaterial.
+// Array entries can be null: GET from a stage without client-side encryption sends one null per file.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub enum OneOrMany<T> {
     One(T),
-    Many(Vec<T>),
-}
-
-impl<T> OneOrMany<T> {
-    /// Returns a slice of the items without consuming the enum.
-    fn as_slice(&self) -> &[T] {
-        match self {
-            OneOrMany::One(item) => std::slice::from_ref(item),
-            OneOrMany::Many(vec) => vec.as_slice(),
-        }
-    }
+    Many(Vec<Option<T>>),
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
@@ -1857,6 +1840,26 @@ mod tests {
     }
 
     #[test]
+    fn upload_encryption_material_array_of_null_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": [null],"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data
+            .to_file_upload_data(
+                PutGetResultsetFlavor::default(),
+                false,
+                false,
+                false,
+                false,
+                9,
+                None,
+                None,
+                &file_manager::StageTransport::for_test(),
+            )
+            .unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
     fn upload_encryption_material_array_of_many_returns_error() {
         let json = make_upload_json(
             r#""encryptionMaterial": [
@@ -2085,6 +2088,88 @@ mod tests {
             )
             .unwrap();
         assert_eq!(download.flavor, PutGetResultsetFlavor::Odbc);
+    }
+
+    fn make_download_json_with_encryption(
+        src_locations: &str,
+        encryption_material_field: &str,
+    ) -> String {
+        format!(
+            r#"{{
+                "src_locations": {src_locations},
+                "stageInfo": {{
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "creds": {{}},
+                    "region": "us-central1"
+                }},
+                "encryptionMaterial": {encryption_material_field},
+                "localLocation": "/tmp/dl"
+            }}"#
+        )
+    }
+
+    fn download_encryption_materials(json: &str) -> Vec<Option<String>> {
+        let data: Data = serde_json::from_str(json).unwrap();
+        data.to_file_download_data(
+            &PutGetResultsetFlavor::Python,
+            false,
+            false,
+            false,
+            None,
+            &file_manager::StageTransport::for_test(),
+        )
+        .unwrap()
+        .encryption_materials
+        .into_iter()
+        .map(|material| material.map(|m| m.smk_id))
+        .collect()
+    }
+
+    #[test]
+    fn download_encryption_material_single_null_entry_returns_none() {
+        let json = make_download_json_with_encryption(r#"["data.csv"]"#, "[null]");
+        assert_eq!(download_encryption_materials(&json), vec![None]);
+    }
+
+    #[test]
+    fn download_encryption_material_all_null_entries_return_none_per_file() {
+        let json = make_download_json_with_encryption(r#"["a", "b"]"#, "[null, null]");
+        assert_eq!(download_encryption_materials(&json), vec![None, None]);
+    }
+
+    #[test]
+    fn download_encryption_material_mixed_entries_keep_file_alignment() {
+        let json = make_download_json_with_encryption(
+            r#"["a", "b"]"#,
+            r#"[null, {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": "42"}]"#,
+        );
+        assert_eq!(
+            download_encryption_materials(&json),
+            vec![None, Some("42".to_string())]
+        );
+    }
+
+    #[test]
+    fn download_encryption_material_count_mismatch_returns_error() {
+        let json = make_download_json_with_encryption(r#"["a", "b"]"#, "[null]");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let err = data
+            .to_file_download_data(
+                &PutGetResultsetFlavor::Python,
+                false,
+                false,
+                false,
+                None,
+                &file_manager::StageTransport::for_test(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            err.contains("Number of source locations must match number of encryption materials"),
+            "unexpected error: {err}"
+        );
     }
 
     // ---- presignedUrls[] alignment (gap 2.2) ----

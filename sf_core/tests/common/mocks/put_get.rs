@@ -216,3 +216,41 @@ pub async fn mount_azure_put_pointing_at(
         .mount(server)
         .await;
 }
+
+/// Mounts a GET response that simulates an external stage without client-side
+/// encryption: `encryptionMaterial` is `[null]`, one `null` per source file.
+pub async fn mount_gcs_download_with_null_encryption_material(
+    server: &MockServer,
+    gcs_presigned_url: &str,
+    local_location: &str,
+) {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/queries/v1/query-request.*"))
+        .and(body_string_contains("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "success": true,
+                    "data": {
+                        "command": "DOWNLOAD",
+                        "src_locations": ["file.csv"],
+                        "stageInfo": {
+                            "locationType": "GCS",
+                            "location": "test-bucket/prefix/",
+                            "path": "prefix/",
+                            "region": "us-central1",
+                            "isClientSideEncrypted": false,
+                            "creds": { "GCS_ACCESS_TOKEN": null },
+                            "presignedUrl": null,
+                            "endPoint": null
+                        },
+                        "encryptionMaterial": [null],
+                        "localLocation": local_location,
+                        "presignedUrls": [gcs_presigned_url]
+                    }
+                }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(server)
+        .await;
+}
