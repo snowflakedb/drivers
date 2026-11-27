@@ -106,6 +106,12 @@ async fn request_text_with_retry(
 /// `odbc/src/api/error.rs`. Matches the reference driver's
 /// `Statement::S_QUERY_CANCELED`.
 pub const QUERY_CANCELED: i32 = 604;
+/// GS error code returned for a missing or unauthorized object.
+pub const OBJECT_NOT_FOUND: i32 = 2003;
+/// GS error code returned when a SHOW command has no matching object.
+pub const SHOW_NO_MATCH: i32 = 2043;
+/// GS error code returned when a shared database is no longer available.
+pub const SHARED_DATABASE_UNAVAILABLE: i32 = 3030;
 /// GS error code returned when a session no longer exists on the server.
 /// Logout callers treat this as success — the goal (an invalidated session) is achieved.
 pub const SESSION_GONE: i32 = 390111;
