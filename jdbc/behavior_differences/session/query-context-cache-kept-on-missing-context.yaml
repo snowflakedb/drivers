@@ -1,0 +1,18 @@
+name: "A response without a query context leaves the query-context cache unchanged"
+status: unknown
+type: enhancement
+reviewed: false
+is_breaking_change: false
+impact: low
+old_driver_behavior: |
+  A successful query response whose data.queryContext is missing or JSON null empties the
+  query-context cache, so the next request sends no queryContextDTO entries. A response with
+  queryContext.entries set to an empty array leaves the cache unchanged.
+new_driver_behavior: |
+  A missing or null data.queryContext leaves the cache unchanged, and the next request re-sends
+  the cached entries. A response with queryContext.entries set to an empty array empties the
+  cache. A response with queryContext.entries set to null leaves the cache unchanged.
+description: |
+  Callers need no change; the cache is internal to query submission. A kept entry is replaced
+  when a later response carries the same id with a newer timestamp. No documented server
+  contract defines a missing or null queryContext as a request to reset the cache.
