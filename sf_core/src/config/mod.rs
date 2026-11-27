@@ -1,6 +1,7 @@
 pub mod config_manager;
 pub mod configured_redirect_uri;
 pub mod connection_config;
+pub mod dsn;
 mod error_context;
 pub(crate) use error_context::{ConfigErrorClass, ConfigErrorContext};
 pub mod ini_loader;
@@ -10,6 +11,7 @@ pub mod param_registry;
 pub mod param_store;
 mod private_key;
 mod token;
+pub use dsn::{DsnError, ParsedDsn, parse_dsn};
 pub use ini_loader::{IniConfig, get_ini_config, load_ini_files, read_ini_snapshot};
 pub use logging_config_loader::{logging_config_from_ini, logging_config_from_toml_section};
 pub use param_registry::ParamKey;
