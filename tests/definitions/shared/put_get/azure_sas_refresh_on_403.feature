@@ -1,6 +1,6 @@
 # This feature asserts Azure 403 SAS refresh at the HTTP layer via WireMock.
 # ODBC PUT/GET does not intercept Azure responses in this suite.
-@core @odbc_not_needed
+@core @odbc_not_needed @dotnet_not_needed
 Feature: Azure SAS refresh on 403
 
   An expired Azure SAS in a stage URL surfaces as HTTP 403. On ANY 403
@@ -11,7 +11,7 @@ Feature: Azure SAS refresh on 403
   # warn (non-token 403) or error (refresh itself failed), carrying status,
   # Azure <Code>, and a SAS-redacted URL.
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should refresh SAS and succeed when Azure PUT returns 403 on the first attempt
     Given Snowflake client is logged in to an Azure-backed deployment
     And Stage SAS is configured to return HTTP 403 on the first PUT attempt
@@ -21,6 +21,7 @@ Feature: Azure SAS refresh on 403
     And No warn-level log line is emitted for the recovered 403
     And The request body is rebuilt for the post-refresh attempt
 
+  @dotnet_not_needed
   Scenario Outline: should recover when Azure PUT returns 403 regardless of the reason phrase
     # Any 403 triggers a SAS refresh; the reason phrase is irrelevant — the trigger is
     # status-only. Legacy Python only refreshes when the reason matches specific
@@ -41,7 +42,7 @@ Feature: Azure SAS refresh on 403
       |                                                       |
 
   # Azure download is a single non-Range GET; a 403 surfaces before any body bytes.
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should refresh SAS and re-drive the GET once when Azure returns 403
     Given Snowflake client is logged in to an Azure-backed deployment
     And File is uploaded to an Azure-backed stage
@@ -52,7 +53,7 @@ Feature: Azure SAS refresh on 403
     And File should be downloaded with correct content
     And No warn-level log line is emitted for the recovered 403
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should surface terminal error when GET SAS refresh itself fails
     Given Snowflake client is logged in to an Azure-backed deployment
     And File is uploaded to an Azure-backed stage
@@ -63,7 +64,7 @@ Feature: Azure SAS refresh on 403
     And An error is raised indicating SAS refresh failed
     And An error-level log line is emitted naming the refresh-failure reason
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should retry then fail when Azure GET 403 is not caused by SAS expiry
     # UD's status-only trigger always fires one refresh, even for non-token 403s.
     # Legacy Python's reason-gate would skip refresh entirely on the GET path.
@@ -80,7 +81,7 @@ Feature: Azure SAS refresh on 403
     And The warn log names the Azure error code
     And The warn log carries a SAS-redacted URL
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should recover both concurrent PUTs via the shared refreshed SAS
     Given Snowflake client is logged in to an Azure-backed deployment
     And Two PUT operations are running in parallel against the same Azure stage
@@ -89,7 +90,7 @@ Feature: Azure SAS refresh on 403
     Then Both PUTs carry the shared refreshed SAS at the wire
     And Both operations succeed with the shared refreshed SAS
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should surface terminal error when PUT SAS refresh itself fails
     Given Snowflake client is logged in to an Azure-backed deployment
     And Stage SAS is configured to return HTTP 403 on the PUT
@@ -99,7 +100,7 @@ Feature: Azure SAS refresh on 403
     And An error is raised indicating SAS refresh failed
     And An error-level log line is emitted naming the refresh-failure reason
 
-  @core_int
+  @core_int @dotnet_not_needed
   Scenario: should retry then fail when Azure PUT 403 is not caused by SAS expiry
     # Any 403 triggers one refresh; if the new SAS still 403s (e.g. bucket-policy
     # denial), the terminal 403 surfaces and logs at warn (the contract-drift signal).
@@ -114,6 +115,7 @@ Feature: Azure SAS refresh on 403
     And The warn log carries a SAS-redacted URL
 
   # Multi-chunk PUT mid-batch SAS resume (SNOW-3406384).
+  @dotnet_not_needed
   Scenario: should resume a multi-chunk PUT from the failed chunk after a mid-batch SAS expiry
     Given Snowflake client is logged in to an Azure-backed deployment
     And A multi-chunk PUT upload is in progress against an Azure stage
@@ -123,6 +125,7 @@ Feature: Azure SAS refresh on 403
     And File should be uploaded successfully
 
   # Coalescing beyond the single-cursor case (>2 parallel cursors, queued ops).
+  @dotnet_not_needed
   Scenario: should coalesce SAS refresh across more than two parallel cursors
     Given Snowflake client is logged in to an Azure-backed deployment
     And More than two PUT operations are running in parallel against the same Azure stage
@@ -132,6 +135,7 @@ Feature: Azure SAS refresh on 403
     And All operations succeed with the shared refreshed SAS
 
   # Contract-drift telemetry event (deferred follow-up wave).
+  @dotnet_not_needed
   Scenario: should emit a contract-drift telemetry event when a 403 is outside the token-expiry set
     Given Snowflake client is logged in to an Azure-backed deployment
     And Stage SAS is configured to return HTTP 403 whose Azure error code is outside the known token-expiry set
