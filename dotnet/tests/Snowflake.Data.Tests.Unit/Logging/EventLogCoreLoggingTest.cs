@@ -24,7 +24,7 @@ public sealed class EventLogCoreLoggingTest : IDisposable
     [SnowflakeFact(SkipCondition.RunOnlyOnWindows)]
     public async Task DeliversCoreOutboundHttpCallAsync()
     {
-        using var session = EventLogSession.Start(LogLevel.Information);
+        using var session = EventLogSession.Start(LogLevel.Debug);
         SnowflakeDbLoggerConfig.SetCustomLogger(session.Logger);
 
         await _server.OpenConnectionAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);

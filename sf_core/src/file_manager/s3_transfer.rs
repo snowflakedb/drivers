@@ -284,7 +284,7 @@ impl S3ConditionalWrite<'_> {
             return Err(S3AttemptError::Other(error));
         };
 
-        tracing::warn!(
+        tracing::debug!(
             multipart = matches!(self.protocol, S3WriteProtocol::Multipart { .. }),
             attempt = budget.attempts,
             key = ?self.key,
@@ -759,7 +759,7 @@ async fn probe_remote_object(
     deadline: Deadline,
     permit: &RequestPermit,
 ) -> Result<Option<S3RemoteObject>, UploadFileError> {
-    tracing::info!(
+    tracing::debug!(
         method = "HEAD",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -1257,7 +1257,7 @@ async fn s3_create_multipart_upload(
             .metadata("x-amz-matdesc", mat_desc);
     }
 
-    tracing::info!(
+    tracing::debug!(
         method = "POST",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -1528,7 +1528,7 @@ async fn s3_complete_multipart_upload(
         .set_parts(Some(completed))
         .build();
 
-    tracing::info!(
+    tracing::debug!(
         method = "POST",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -1606,7 +1606,7 @@ async fn upload_one_part(
     let content_length = part.body.len() as i64;
     let body = ByteStream::new(aws_smithy_types::body::SdkBody::from(part.body));
 
-    tracing::info!(
+    tracing::debug!(
         method = "PUT",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -1675,7 +1675,7 @@ async fn s3_abort_multipart_upload(
             return;
         }
     };
-    tracing::info!(
+    tracing::debug!(
         method = "DELETE",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -2079,7 +2079,7 @@ async fn s3_get_streaming(
     ),
     S3AttemptError<DownloadFileError>,
 > {
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -2170,7 +2170,7 @@ async fn s3_head_object(
     permit: &RequestPermit,
 ) -> Result<aws_sdk_s3::operation::head_object::HeadObjectOutput, S3AttemptError<DownloadFileError>>
 {
-    tracing::info!(
+    tracing::debug!(
         method = "HEAD",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -2231,7 +2231,7 @@ async fn s3_get_whole(
     deadline: Deadline,
     permit: &RequestPermit,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         bucket = %stage_info.bucket,
         key = ?s3_key,
@@ -2326,7 +2326,7 @@ async fn s3_get_range(
     permit: &RequestPermit,
 ) -> Result<Bytes, S3AttemptError<DownloadFileError>> {
     let range_header = format!("bytes={}-{}", range.start, range.end);
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         bucket = %stage_info.bucket,
         key = ?s3_key,

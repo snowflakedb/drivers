@@ -24,14 +24,14 @@ public abstract class LoggingProviderCoreScenarios : IDisposable
     [SnowflakeFact]
     public async Task DeliversCoreOutboundHttpCallAsync()
     {
-        using var session = Factory.Start(LogLevel.Information);
+        using var session = Factory.Start(LogLevel.Debug);
         SnowflakeDbLoggerConfig.SetCustomLogger(session.Logger);
 
         await _server.OpenConnectionAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
 
         Assert.Contains(
             session.GetEvents(),
-            evt => evt.Level == LogLevel.Information
+            evt => evt.Level == LogLevel.Debug
                    && evt.Message.Contains("outbound HTTP call", StringComparison.Ordinal));
     }
 

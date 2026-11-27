@@ -598,7 +598,7 @@ pub(super) async fn get_chunk_data_with_policy(
                 } else {
                     "transport error while reading the body"
                 };
-                tracing::warn!(
+                tracing::debug!(
                     attempt,
                     path = chunk.url.split(['?', '#']).next().unwrap_or(""),
                     reason,

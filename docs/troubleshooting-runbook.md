@@ -343,9 +343,9 @@ jdbc:snowflake://myaccount.snowflakecomputing.com/?TRACING=ALL
 Applies to the native per-wrapper configuration above. Troubleshooting mode
 ([§1](#1-troubleshooting-logs)) always captures every level regardless.
 
-- `INFO` — connection lifecycle, each HTTP call (host + path only; query
-  strings stripped), response codes, auth steps, retries.
-- `DEBUG` — core API entry/exit, verbose diagnostics. The connection
+- `INFO` — connection lifecycle, auth steps.
+- `DEBUG` — each HTTP call and response code (host + path only; query
+  strings stripped), core API entry/exit, verbose diagnostics. The connection
   diagnostic's own events reach no log at any level; read its report file
   ([§2.5](#25-reading-the-report)).
 - `TRACE` — finest-grained internal tracing; core-file-layer vocabulary. Over

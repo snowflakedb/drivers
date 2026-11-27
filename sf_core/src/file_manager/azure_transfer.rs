@@ -1387,7 +1387,7 @@ where
             .await
             .map_err(map_http_error)?;
 
-    tracing::info!(status = response.status().as_u16(), "HTTP response");
+    tracing::debug!(status = response.status().as_u16(), "HTTP response");
 
     if response.status().is_success() {
         return Ok(response);

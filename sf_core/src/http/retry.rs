@@ -344,12 +344,7 @@ where
             req_builder = req_builder.timeout(t);
         }
 
-        // Every outbound HTTP call is logged at INFO so driver-generated traffic
-        // is always visible (ud-log-every-http-call-at-info). `http_ctx.path` may be a
-        // full URL for some callers (e.g. chunk downloads), so strip any query
-        // string / fragment — those can carry presigned auth tokens and the rule
-        // permits only host + path.
-        tracing::info!(
+        tracing::debug!(
             method = %http_ctx.method,
             path = %log_path,
             attempt = retry_state.attempt,
@@ -376,7 +371,7 @@ where
                             .build()
                             .into());
                         }
-                        tracing::warn!(
+                        tracing::debug!(
                             method = %http_ctx.method,
                             path = %log_path,
                             attempt = retry_state.attempt,
@@ -401,7 +396,11 @@ where
         match result {
             Ok(resp) => {
                 let status = resp.status();
-                tracing::info!(status = status.as_u16(), "HTTP response");
+                tracing::debug!(
+                    status = status.as_u16(),
+                    attempt = retry_state.attempt,
+                    "HTTP response"
+                );
                 if status.is_success()
                     || !(may_retry
                         && rules.retries_status(status, &policy.extra_retryable_statuses))
@@ -496,7 +495,7 @@ fn transport_kind(err: &reqwest::Error) -> &'static str {
 }
 
 fn log_retry(http_ctx: &HttpContext, attempt: u32, cause: impl std::fmt::Display, delay: Duration) {
-    tracing::warn!(
+    tracing::debug!(
         method = %http_ctx.method,
         path = %strip_query(&http_ctx.path),
         attempt,

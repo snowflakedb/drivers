@@ -297,7 +297,7 @@ pub(super) async fn upload_to_gcs_or_skip_admitted(
         return first;
     }
 
-    tracing::warn!("GCS PUT returned 400 in presigned mode; refreshing per-file URL and retrying");
+    tracing::debug!("GCS PUT returned 400 in presigned mode; refreshing per-file URL and retrying");
     let refreshed_stage_info = {
         let Some(r) = refresher else {
             // Invariant: needs_url_refresh is only true when has_refresher
@@ -491,7 +491,7 @@ async fn gcs_get_with_refresh(
         // same URL and fail. The two-strike guard here is more conservative —
         // fail rather than misroute — and aligns with the legacy "fail fast"
         // stance.
-        tracing::warn!(
+        tracing::debug!(
             "GCS GET returned 400 in presigned mode; refreshing per-file URL and retrying"
         );
         let (refreshed_stage_info, refreshed_per_file_url) = {

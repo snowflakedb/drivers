@@ -184,9 +184,9 @@ impl HttpConnector for ReqwestConnector {
                 .map_err(|err| ConnectorError::user(err.into()))?;
 
             // Every S3 HTTP call the SDK makes funnels through here, so log it at
-            // INFO (host + path only, no query string — it can carry presigned
-            // auth) per ud-log-every-http-call-at-info, matching Azure/GCS.
-            tracing::info!(
+            // DEBUG (host + path only, no query string — it can carry presigned
+            // auth) per ud-log-http-traffic-at-debug, matching Azure/GCS.
+            tracing::debug!(
                 method = %request.method(),
                 host = request.url().host_str().unwrap_or("<none>"),
                 path = %request.url().path(),
@@ -197,7 +197,7 @@ impl HttpConnector for ReqwestConnector {
                 .execute(request)
                 .await
                 .map_err(|err| ConnectorError::io(err.into()))?;
-            tracing::info!(status = response.status().as_u16(), "HTTP response");
+            tracing::debug!(status = response.status().as_u16(), "HTTP response");
 
             // `reqwest::Response` → `http::Response<SdkBody>` → smithy response.
             let response = http::Response::from(response).map(SdkBody::from_body_1_x);

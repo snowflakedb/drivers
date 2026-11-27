@@ -128,7 +128,7 @@ impl DPoPBinding {
                 return Ok(response);
             }
         }
-        tracing::info!(
+        tracing::debug!(
             method = %retry.method(),
             host = retry.url().host_str().unwrap_or_default(),
             path = retry.url().path(),

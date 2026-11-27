@@ -905,6 +905,8 @@ where
     let max_attempts = policy.max_attempts;
     let mut sleep_ms = policy.backoff.base.as_millis() as f64;
 
+    // Only the host + path may be logged (ud-log-http-traffic-at-debug); the
+    // query string can carry a SAS token / signature, so strip it.
     let log_path = url.split(['?', '#']).next().unwrap_or("");
 
     for attempt in 1..=max_attempts {
@@ -930,7 +932,7 @@ where
         }
         let req = req.timeout(timeout);
 
-        tracing::info!(method = %method, path = %log_path, attempt, "outbound HTTP call");
+        tracing::debug!(method = %method, path = %log_path, attempt, "outbound HTTP call");
 
         let send_result = match deadline.timeout_at() {
             Some(absolute) => match tokio::time::timeout_at(absolute, req.send()).await {
@@ -947,7 +949,7 @@ where
 
         match send_result {
             Ok(resp) => {
-                tracing::info!(status = resp.status().as_u16(), "HTTP response");
+                tracing::debug!(status = resp.status().as_u16(), "HTTP response");
                 if resp.status().is_success() {
                     return Ok(());
                 }

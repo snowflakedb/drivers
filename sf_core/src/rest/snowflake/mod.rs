@@ -3065,7 +3065,7 @@ pub async fn snowflake_cancel_query(
             path: ABORT_REQUEST_PATH,
         })?;
 
-    tracing::info!(
+    tracing::debug!(
         method = %Method::POST,
         host = abort_url.host_str().unwrap_or("<none>"),
         path = abort_url.path(),
@@ -3107,7 +3107,7 @@ pub async fn snowflake_cancel_query(
         context: "Failed to execute cancel query request",
     })?;
 
-    tracing::info!(status = response.status().as_u16(), "HTTP response");
+    tracing::debug!(status = response.status().as_u16(), "HTTP response");
 
     let cancel_response: query_response::AbortQueryResponse = read_response_json(response).await?;
 

@@ -420,7 +420,7 @@ async fn fetch_saml_with_retries(
         let (saml_status, saml_html) = match saml_result {
             Ok(result) => result,
             Err(e) if saml_attempt < base_policy.max_attempts => {
-                tracing::warn!(
+                tracing::debug!(
                     error = %e,
                     attempt = saml_attempt,
                     elapsed_ms = start.elapsed().as_millis(),
@@ -448,7 +448,7 @@ async fn fetch_saml_with_retries(
                 }
                 .fail();
             }
-            tracing::warn!(
+            tracing::debug!(
                 status = %saml_status,
                 attempt = saml_attempt,
                 elapsed_ms = start.elapsed().as_millis(),
@@ -460,7 +460,7 @@ async fn fetch_saml_with_retries(
         // Step 4b: destination/postback validation (unless disabled).
         let Some(postback) = extract_form_action(&saml_html) else {
             if saml_attempt < base_policy.max_attempts {
-                tracing::warn!(
+                tracing::debug!(
                     attempt = saml_attempt,
                     elapsed_ms = start.elapsed().as_millis(),
                     "SAML HTML missing form action, re-minting token and retrying"

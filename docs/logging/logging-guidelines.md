@@ -6,7 +6,7 @@ Knowledge base and source of truth for client-side logging practices across the 
 
 - **Access credentials never leave the process.** Tokens, passwords, passcodes, and private keys must never appear in logs, on any level. Query result data (values, schema metadata, rowsets, record batches) must never appear in logs - there is no opt-in. Other sensitive data (e.g. query text, bindings) may appear in logs only when the user explicitly opts in.
 - **Redact at the source.** Wrap or redact sensitive values before they enter the logging pipeline - never pass secrets through as plain strings for downstream filtering.
-- **Log at boundaries and lifecycle transitions.** Public API entry points, HTTP calls, and exceptions are must-log events. Significant internal lifecycle events - retries, re-authentication, token refresh, connection recovery - should be logged at **INFO** or **WARN** as appropriate.
+- **Log at boundaries and lifecycle transitions.** Public API entry points, HTTP calls, and exceptions are must-log events (HTTP calls at **DEBUG**, see [HTTP traffic](#http-traffic)). Significant internal lifecycle events - re-authentication, token refresh, connection recovery - should be logged at **INFO** or **WARN** as appropriate. HTTP request retries are the exception: they are logged at **DEBUG** with the rest of the HTTP traffic.
 - **The host application stays in control.** The core forwards logs to the wrapper's own logging system.
 - **Default safe, opt in to verbose.** Risky output is off by default and only enabled deliberately, with the trade-off
   made explicit to the end user.
@@ -27,15 +27,15 @@ The default customer-visible level is **INFO**, so ERROR, WARN, and INFO reach c
 | Event | Level |
 | --- | --- |
 | Unrecovered failure that escapes to the caller | ERROR |
-| Retry decision / recovered failure, fallback, or dangerous opt-out | WARN |
+| Recovered failure, fallback, or dangerous opt-out | WARN |
 | Once per connection/request/auth step | INFO |
 | Leaf API happy path, per-row/per-cell, GetInfo/cursor-name | DEBUG |
 | Third-party error message on a handled path | DEBUG (type stays at WARN/ERROR) |
 
 - **ERROR** - unrecovered failures that escape to the caller.
-- **WARN** - retry decisions, recovered failures, fallbacks, and dangerous opt-outs.
-- **INFO** - once-per-connection, once-per-request, or once-per-auth-step operational events. Examples: HTTP round-trips (each attempt, including retries in `retry.rs`), connection lifecycle, authentication steps, token refresh, opt-in query text/parameters.
-- **DEBUG** - leaf API happy path (GetInfo, cursor-name), per-row/per-cell work, core API entry/exit, third-party error cause messages, verbose diagnostics.
+- **WARN** - recovered failures, fallbacks, and dangerous opt-outs. HTTP request retries are not WARN; see [HTTP traffic](#http-traffic).
+- **INFO** - once-per-connection, once-per-request, or once-per-auth-step operational events. Examples: connection lifecycle, authentication steps, token refresh, opt-in query text/parameters. Per-call traffic such as HTTP requests and responses is not INFO.
+- **DEBUG** - leaf API happy path (GetInfo, cursor-name), per-row/per-cell work, core API entry/exit, HTTP requests and responses, third-party error cause messages, verbose diagnostics.
 - **TRACE** (Rust) / **DEBUG** (Python, JDBC, Node.js) - wrapper public API entry/exit. These stay off at the default INFO level so high-frequency calls (fetch, getData) do not flood logs. Python and JDBC have no finer level than DEBUG; inbound `tracing::trace!` is delivered as DEBUG (see [logging-architecture.md](logging-architecture.md)).
 
 #### Rules
@@ -43,7 +43,7 @@ The default customer-visible level is **INFO**, so ERROR, WARN, and INFO reach c
 - `.ai/review/universal-driver-logging-rust.yaml` (`ud-log-core-uses-tracing-not-stdio`) - core emits logs via
   `tracing` (not the `log` crate) and never writes to stdout/stderr (except logging-init failures).
 - `.ai/review/universal-driver-logging.yaml` (`ud-log-level-matches-event-class`) - leaf/per-row/per-cell
-  `info!`/`warn!` (and language equivalents) are DEBUG; recovered failure / dangerous opt-out is WARN, not INFO.
+  `info!`/`warn!` (and language equivalents) are DEBUG; recovered failure / dangerous opt-out is WARN, not INFO; HTTP request retries are DEBUG.
 
 ---
 
@@ -176,7 +176,7 @@ Public API entry points should be logged on both entry and exit, so a single cal
 
 ## Exceptions
 
-All exceptions must be logged - at **ERROR** for unrecoverable failures, **WARN** for handled/retried ones (see [Log levels](#log-levels)).
+All exceptions must be logged - at **ERROR** for unrecoverable failures, **WARN** for handled ones (see [Log levels](#log-levels)). An HTTP request that is retried is logged at DEBUG, not WARN (see [HTTP traffic](#http-traffic)).
 
 The exception **type / class name** should always be logged.
 How the **message** is handled depends on who authored the exception:
@@ -227,20 +227,22 @@ When a URL is part of an error message, apply the same rule as [HTTP traffic](#h
 
 ## HTTP traffic
 
-Every HTTP call made by the driver should be logged on the INFO level.
+Every HTTP call made by the driver should be logged on the DEBUG level. A single user operation (one query, one file transfer) produces several HTTP calls, so logging each one at INFO would dominate the default-level stream. INFO is reserved for the events listed under [Log levels](#log-levels).
+
 Log the URL **host and path**. Strip **query strings and fragments** before logging - they can carry tokens, passcodes, and other identifiers.
 
 A request that already passes through a central logger (`ReqwestConnector` / `ReqwestHttpConnector` in `sf_core/src/tls/aws_http_client.rs`, the retry loop in `sf_core/src/http/retry.rs`, or `sf_core/src/file_manager/cloud_http.rs`) satisfies the request-presence requirement at the call site. The host-and-path-only rule still applies to that central log line.
 
-Every HTTP response code must be logged at the appropriate level, regardless of whether the response is further handled (e.g. retried).
+Every HTTP response code is logged at DEBUG, regardless of whether the response is further handled (e.g. retried).
+
+HTTP request retries are logged at DEBUG, never at INFO or WARN. Retries on 429, 503 and connection resets are routine, and customers who forward driver logs to alerting systems page on every WARN or ERROR.
 
 > [TODO(SNOW-3725854)]: To view the HTTP traffic we should expose proper integration with some tools (e.g. mitmproxy).
 
 ### Rules
 
-- `.ai/review/universal-driver-logging.yaml` (`ud-log-every-http-call-at-info`) - every outbound HTTP call must
-  be logged at INFO (host and path, query strings and fragments stripped); a call site that already goes through
-  a central INFO logger is not a missing-log finding; every response code must be logged at the
-  appropriate level.
+- `.ai/review/universal-driver-logging.yaml` (`ud-log-http-traffic-at-debug`) - every outbound HTTP call must
+  be logged at DEBUG, never INFO (host and path, query strings and fragments stripped); a call site that already goes
+  through a central DEBUG logger is not a missing-log finding; every response code must be logged at DEBUG.
 
 ---

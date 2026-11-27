@@ -181,7 +181,7 @@ async fn generate_identity_token(
         "delegates": delegate_names,
     });
     let parsed = reqwest::Url::parse(&url).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "POST",
         host = parsed
             .as_ref()
@@ -203,7 +203,7 @@ async fn generate_identity_token(
     .context(RequestSnafu { context: CTX })?;
 
     let status = resp.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     // TODO: SNOW-3965609 — route this IAM `generateIdToken` response body read
     // through `read_body_capped` (as the GCE metadata GET now does) so it is
     // bounded by a size limit.
@@ -231,7 +231,7 @@ async fn metadata_get(
     context: &'static str,
 ) -> Result<String, GcpAttestationError> {
     let parsed = reqwest::Url::parse(url).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         host = parsed
             .as_ref()
@@ -253,7 +253,7 @@ async fn metadata_get(
 
     const MAX_METADATA_RESPONSE_BODY_BYTES: u64 = 20 * 1024 * 1024;
     let status = resp.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     // Stream the body against a fixed size limit so an oversized response is
     // bounded even under chunked transfer-encoding or an omitted `Content-Length`,
     // which a bare `content_length()` check does not cover.
@@ -645,12 +645,12 @@ mod tests {
         }
     }
 
-    /// Proves the GCE metadata identity-token call is logged at INFO per
-    /// `ud-log-every-http-call-at-info`, and that the URL query string
+    /// Proves the GCE metadata identity-token call is logged at DEBUG per
+    /// `ud-log-http-traffic-at-debug`, and that the URL query string
     /// (`audience` / `format`) is stripped so only host and path are logged.
     #[tokio::test]
     #[tracing_test::traced_test]
-    async fn metadata_call_is_logged_at_info_without_query_string() {
+    async fn metadata_call_is_logged_at_debug_without_query_string() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path(
@@ -697,6 +697,14 @@ mod tests {
         );
         assert!(logs_contain("HTTP response"), "response log missing");
         assert!(logs_contain("status=200"), "response status not logged");
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|l| l.contains("outbound HTTP call") || l.contains("HTTP response"))
+                .all(|l| l.contains("DEBUG"))
+                .then_some(())
+                .ok_or_else(|| "HTTP traffic not logged at DEBUG".to_string())
+        });
         assert!(
             !logs_contain("format=full"),
             "query string leaked into logs"

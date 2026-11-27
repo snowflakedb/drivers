@@ -369,7 +369,7 @@ async fn exchange_client_assertion(
     ];
 
     let parsed = reqwest::Url::parse(&url).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "POST",
         host = parsed
             .as_ref()
@@ -387,7 +387,7 @@ async fn exchange_client_assertion(
     .context(RequestSnafu { context })?;
 
     let status = response.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -426,7 +426,7 @@ async fn get_from_azure_functions(
     }
 
     let parsed = reqwest::Url::parse(&url).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         host = parsed
             .as_ref()
@@ -447,7 +447,7 @@ async fn get_from_azure_functions(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -493,7 +493,7 @@ async fn get_from_azure_ml(
     }
 
     let parsed = reqwest::Url::parse(endpoint).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         host = parsed
             .as_ref()
@@ -516,7 +516,7 @@ async fn get_from_azure_ml(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -561,7 +561,7 @@ async fn get_from_imds(
     }
 
     let parsed = reqwest::Url::parse(&url).ok();
-    tracing::info!(
+    tracing::debug!(
         method = "GET",
         host = parsed
             .as_ref()
@@ -579,7 +579,7 @@ async fn get_from_imds(
     .context(RequestSnafu { context: CTX })?;
 
     let status = response.status();
-    tracing::info!(status = status.as_u16(), "HTTP response");
+    tracing::debug!(status = status.as_u16(), "HTTP response");
     let body = response
         .text()
         .await
@@ -1842,13 +1842,13 @@ mod tests {
         .await;
     }
 
-    /// Proves the IMDS token call is logged at INFO per
-    /// `ud-log-every-http-call-at-info`, and that the URL query string — which
+    /// Proves the IMDS token call is logged at DEBUG per
+    /// `ud-log-http-traffic-at-debug`, and that the URL query string — which
     /// carries the managed-identity `client_id` — is stripped so only host and
     /// path appear in the log.
     #[tokio::test]
     #[tracing_test::traced_test]
-    async fn imds_call_is_logged_at_info_without_query_string() {
+    async fn imds_call_is_logged_at_debug_without_query_string() {
         const CLIENT_ID_CANARY: &str = "client-id-canary-DEADBEEF";
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1911,6 +1911,14 @@ mod tests {
         );
         assert!(logs_contain("HTTP response"), "response log missing");
         assert!(logs_contain("status=200"), "response status not logged");
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|l| l.contains("outbound HTTP call") || l.contains("HTTP response"))
+                .all(|l| l.contains("DEBUG"))
+                .then_some(())
+                .ok_or_else(|| "HTTP traffic not logged at DEBUG".to_string())
+        });
         assert!(
             !logs_contain(CLIENT_ID_CANARY),
             "client_id query param leaked into logs"
