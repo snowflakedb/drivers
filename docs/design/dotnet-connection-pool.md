@@ -172,12 +172,13 @@ and `ISnowflakeDbConnectionPoolPartition` stays internal. Migration replaces
 the `TimeSpan` properties.
 
 The per-key static members and `GetPool` / `GetPoolPartition` take the connection
-string, then optional `password`, `oauthClientSecret`, and `token`. Lookup checks
-only that the connection string is non-null: a null string throws
-`ArgumentNullException`, and any other string, including one that omits `account`,
-selects a partition. The legacy `GetPool` parses the string and throws
-`SnowflakeDbException` when a required property is missing, and `GetPool(null)`
-throws `NullReferenceException`. That difference is recorded in
+string, then optional `password`, `oauthClientSecret`, and `token`. A null
+connection string throws `ArgumentNullException`. Lookup reads and validates the
+pool keys below. It does not validate the rest of the string: a string that omits
+`account` still selects a partition. The legacy `GetPool` parses the whole string
+and throws `SnowflakeDbException` when a required property is missing, and
+`GetPool(null)` throws `SnowflakeDbException` 270006 for the missing `ACCOUNT`.
+That difference is recorded in
 `dotnet/behavior_differences/session/pool-lookup-connection-string-not-validated.yaml`.
 A null secret and an empty secret are both absent, so
 `GetPoolPartition(connectionString)` selects the same partition as a call that
@@ -206,8 +207,12 @@ expiration timeouts that truncate to the same whole second agree.
 `GetPooling()` returns true and does not read the partitions.
 
 `ClearAllPools()` removes each partition and then clears it, so a partition is
-not dropped without `Clear()`. A partition created after its key was visited
-stays registered. A later lookup of a removed key creates a new partition.
+not dropped without `Clear()`. The registry takes no lock. A lookup that misses
+parses the connection string and then adds the partition atomically, so
+concurrent first lookups of one key may each parse and one partition is kept.
+A failed parse registers nothing. A lookup that runs while `ClearAllPools()`
+runs registers a new partition. A later lookup of a removed key creates a new
+partition.
 `Clear()` on a partition does not remove it from the registry.
 
 ## Pool keys
@@ -231,9 +236,41 @@ pinned buffer, hashed, cleared, and the unmanaged memory is zeroed. When all thr
 secrets are absent the digest is null. Secret text is not stored on the key,
 and `PoolKey.ToString()` returns the type name only.
 
-Connection-string pool keys are not read. Every new partition receives
-`ConnectionPoolConfig.Default`. `ConnectionStringParser` still forwards every
-key to `sf_core`. Reading and validating the keys is planned.
+A new partition reads these keys from the connection string through
+`ConnectionStringParser`. The lookup is case-insensitive. A missing or empty
+value uses the default. `ms`, `s`, and `m` name the timeout unit, and a timeout
+with no unit is seconds. A negative expiration or connection timeout does not
+elapse. A zero connection timeout does not elapse. A negative wait for an idle
+session fails lookup. `MinPoolSize` above `MaxPoolSize` fails lookup. `MaxPoolSize`
+must be positive and `MinPoolSize` must not be negative. `ChangedSession` is
+`Destroy` or `OriginalPool`, ignoring case. The numbers `0` (`OriginalPool`) and
+`1` (`Destroy`) are accepted. Any other number is rejected. `PoolingEnabled` is
+a boolean.
+
+`PoolingEnabled` defaults to false when the key is absent and the authenticator
+is `externalbrowser`, `oauth_authorization_code`, or `snowflake_jwt` with
+`PRIVATE_KEY_FILE` and no `PRIVATE_KEY_PWD`. Setting it to true for those
+authenticators keeps pooling on and logs a warning. `oauth_authorization_code`
+with pooling explicitly true and no `USER` fails lookup.
+
+An invalid pool setting throws `SnowflakeDriverException` with
+`SFError.INVALID_CONNECTION_STRING`. The message for a bad value names the key.
+A connection string that cannot be parsed uses the same error and includes the
+parser failure, which reports an index and does not include the connection
+string. `GetPool`, `GetPoolPartition`, and the per-key statics convert that
+carrier with `ToPublicException()`. The settings are parsed only when the key
+is new. A failed parse registers nothing, and the next lookup parses again.
+
+`ConnectionStringParser` still forwards every key to `sf_core`, including the
+pool keys. `sf_core` reports a key that is not in its parameter registry as a
+warning and does not fail the connection. The pool keys are not stripped.
+
+`RETRY_TIMEOUT` defaults to 300 seconds. A positive value below 300 seconds is
+raised to 300 seconds. Zero or a negative value does not elapse. A finite
+connection timeout is then lowered to the retry timeout when that timeout is
+finite and smaller, so `connection_timeout=600` with the default retry timeout
+is 300 seconds, and `retry_timeout=0` leaves the connection timeout uncapped.
+Checking a passcode against `MinPoolSize` is planned for session acquisition.
 
 ## The cache-pool variant is not ported
 
@@ -260,12 +297,11 @@ enforced:
 | Changed session | `Destroy` |
 | Wait for idle session timeout | 30 seconds |
 | Expiration timeout | 60 minutes |
-| Pooling enabled | true |
+| Pooling enabled | true, or false for the authenticators above when the key is absent |
 | Connection timeout | 300 seconds |
 
 `GetTimeout()` returns that expiration timeout in whole seconds, 3600, when the
 registry is empty.
 
 Acquiring and releasing sessions, minimum and maximum enforcement, waiting for
-an idle session, expiration, and changed-session handling are planned. Parsing
-pool keys from the connection string is planned.
+an idle session, expiration, and changed-session handling are planned.

@@ -98,6 +98,42 @@ public sealed class SnowflakeDbConnectionPoolStaticsTest : IDisposable
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void GetPoolPartitionReadsMaxPoolSizeFromTheConnectionString()
+    {
+        const string connectionString = "account=parsed;maxPoolSize=7";
+
+        var partition = SnowflakeDbConnectionPool.GetPoolPartition(connectionString);
+
+        Assert.Equal(7, partition.MaxPoolSize);
+#pragma warning disable CS0618
+        Assert.Equal(7, SnowflakeDbConnectionPool.GetPool(connectionString).GetMaxPoolSize());
+#pragma warning restore CS0618
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void InvalidPoolSettingLeavesTheDefaultRegistryEmpty()
+    {
+        // TODO(SNOW-4382591): the pool throws a SnowflakeDbException with vendor code 270008, but every
+        // SnowflakeDbException constructor throws NotImplementedException, so callers see that instead.
+        const string connectionString = "account=bad;maxPoolSize=nope";
+
+        var fromPartition = Assert.Throws<NotImplementedException>(() =>
+            SnowflakeDbConnectionPool.GetPoolPartition(connectionString));
+        Assert.Equal("TODO next milestone", fromPartition.Message);
+#pragma warning disable CS0618
+        var fromPool = Assert.Throws<NotImplementedException>(() => SnowflakeDbConnectionPool.GetPool(connectionString));
+#pragma warning restore CS0618
+        var fromStatic = Assert.Throws<NotImplementedException>(() =>
+            SnowflakeDbConnectionPool.GetMaxPoolSize(connectionString));
+
+        Assert.Equal("TODO next milestone", fromPool.Message);
+        Assert.Equal("TODO next milestone", fromStatic.Message);
+        Assert.Equal(0, SnowflakeDbConnectionPool.GetCurrentPoolSize());
+        Assert.Equal(ConnectionPoolConfig.Default.MaxPoolSize, SnowflakeDbConnectionPool.GetMaxPoolSize());
+        Assert.Equal(0, SnowflakeDbConnectionPool.Default.RegisteredKeyCount);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void NullConnectionStringThrowsArgumentNullException()
     {
         AssertNullConnectionString(() => SnowflakeDbConnectionPool.GetPoolPartition(null!));
@@ -132,7 +168,8 @@ public sealed class SnowflakeDbConnectionPoolStaticsTest : IDisposable
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void DifferingPartitionsThrowFromThePublicAggregate()
     {
-        // ToPublicException builds a SnowflakeDbException, and that constructor throws NotImplementedException.
+        // TODO(SNOW-4382591): the pool throws a SnowflakeDbException with vendor code 270060, but every
+        // SnowflakeDbException constructor throws NotImplementedException, so callers see that instead.
         SnowflakeDbConnectionPool.Default.GetOrCreate(
             PoolKeyFactory.From("account=max-a"),
             ConnectionPoolConfig.Default with { MaxPoolSize = 3 });

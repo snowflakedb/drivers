@@ -1,0 +1,22 @@
+name: "Invalid pool settings throw SnowflakeDbException"
+status: unknown
+type: api_incompatibility
+reviewed: false
+is_breaking_change: true
+impact: medium
+rationale: |
+  The old driver's pool uses System.Exception for a format or range error and
+  SnowflakeDbException for only a few pool rules. One exception type for every
+  invalid pool setting lets a caller handle a bad lookup the same way as any
+  other invalid connection string.
+old_driver_behavior: |
+  GetPool throws System.Exception with "Invalid value of parameter X" when a
+  pool setting has the wrong format or is outside the accepted range. It throws
+  SnowflakeDbException when MinPoolSize is above MaxPoolSize, when the wait for
+  an idle session is infinite, and when oauth authorization code pooling is
+  enabled with no user. Enum.Parse accepts any numeric ChangedSession value,
+  including a number other than OriginalPool (0) or Destroy (1).
+new_driver_behavior: |
+  GetPool, GetPoolPartition, and the per-key statics throw SnowflakeDbException
+  with INVALID_CONNECTION_STRING for every invalid pool setting. A ChangedSession
+  number other than 0 or 1 is rejected.

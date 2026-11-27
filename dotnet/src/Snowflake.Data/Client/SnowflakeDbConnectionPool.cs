@@ -15,9 +15,8 @@ namespace Snowflake.Data.Client;
 /// The static members delegate to <see cref="Default"/>.
 /// <see cref="GetPool"/> and <see cref="SnowflakeDbSessionPool"/> remain for callers of the legacy
 /// connector and are obsolete. A null connection string throws <see cref="ArgumentNullException"/>.
-/// Connection-string pool settings are not read, so a new partition uses
-/// <see cref="ConnectionPoolConfig.Default"/>. Opening a connection does not take a session from a
-/// partition; acquiring and releasing sessions is planned.
+/// A new partition reads its pool settings from the connection string. Opening a connection does not
+/// take a session from a partition; acquiring and releasing sessions is planned.
 /// </remarks>
 public class SnowflakeDbConnectionPool : ISnowflakeDbConnectionPoolPartition
 {
@@ -169,12 +168,23 @@ public class SnowflakeDbConnectionPool : ISnowflakeDbConnectionPoolPartition
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when a secret is longer than <c>int.MaxValue / 2</c> characters.
     /// </exception>
+    /// <remarks>An invalid pool setting in <paramref name="connectionString"/> throws an exception whose type is not yet defined.</remarks>
     public static SnowflakeDbConnectionPool GetPoolPartition(
         string connectionString,
         SecureString? password,
         SecureString? oauthClientSecret = null,
-        SecureString? token = null) =>
-        s_default.GetOrCreate(PoolKeyFactory.From(connectionString, password, oauthClientSecret, token));
+        SecureString? token = null)
+    {
+        var key = PoolKeyFactory.From(connectionString, password, oauthClientSecret, token);
+        try
+        {
+            return s_default.GetOrCreate(key);
+        }
+        catch (SnowflakeDriverException carrier)
+        {
+            throw carrier.ToPublicException();
+        }
+    }
 
     /// <summary>Returns whether pooling is enabled for the partition of <paramref name="connectionString"/>.</summary>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="connectionString"/> is null.</exception>
@@ -292,12 +302,17 @@ public class SnowflakeDbConnectionPool : ISnowflakeDbConnectionPoolPartition
         {
         }
 
+        /// <summary>Returns the number of keys in this registry.</summary>
+        internal int RegisteredKeyCount => _partitions.Count;
+
         /// <summary>
-        /// Returns the partition for <paramref name="key"/>, creating it with
-        /// <see cref="ConnectionPoolConfig.Default"/> when the key is new.
+        /// Returns the partition for <paramref name="key"/>.
+        /// The connection string is parsed only when the key is new, and a failed parse registers nothing.
+        /// Concurrent first lookups of one key may each parse; one partition is kept.
         /// </summary>
+        /// <exception cref="SnowflakeDriverException">A pool setting in the connection string is invalid.</exception>
         internal SnowflakeDbConnectionPool GetOrCreate(PoolKey key) =>
-            GetOrCreate(key, ConnectionPoolConfig.Default);
+            GetOrCreate(key, () => ConnectionPoolConfigParser.Parse(key.ConnectionString));
 
         /// <summary>
         /// Returns the partition for <paramref name="key"/>. A key that is already registered keeps
@@ -307,7 +322,21 @@ public class SnowflakeDbConnectionPool : ISnowflakeDbConnectionPoolPartition
         internal SnowflakeDbConnectionPool GetOrCreate(PoolKey key, ConnectionPoolConfig config)
         {
             ArgumentNullExceptionHelper.ThrowIfNull(config, nameof(config));
-            return _partitions.GetOrAdd(key, k => new SnowflakeDbConnectionPool(k, config));
+            return GetOrCreate(key, () => config);
+        }
+
+        /// <summary>
+        /// Returns the partition for <paramref name="key"/>.
+        /// <paramref name="configFactory"/> runs only when the key is new, without holding a lock; a factory that
+        /// throws registers nothing. Concurrent first lookups of one key may each run the factory; one partition is kept.
+        /// </summary>
+        internal SnowflakeDbConnectionPool GetOrCreate(PoolKey key, Func<ConnectionPoolConfig> configFactory)
+        {
+            ArgumentNullExceptionHelper.ThrowIfNull(configFactory, nameof(configFactory));
+            if (_partitions.TryGetValue(key, out var partition))
+                return partition;
+
+            return _partitions.GetOrAdd(key, new SnowflakeDbConnectionPool(key, configFactory()));
         }
 
         /// <summary>Returns the number of sessions across the partitions in this registry.</summary>
@@ -353,16 +382,19 @@ public class SnowflakeDbConnectionPool : ISnowflakeDbConnectionPoolPartition
         }
 
         /// <summary>
-        /// Removes each partition and clears it.
-        /// A partition created after its key was visited stays in the registry.
+        /// Removes every partition and then clears each one. A lookup that runs concurrently registers a new partition.
         /// </summary>
         internal void ClearAll()
         {
+            var removed = new List<SnowflakeDbConnectionPool>();
             foreach (var key in _partitions.Keys)
             {
                 if (_partitions.TryRemove(key, out var partition))
-                    partition.Clear();
+                    removed.Add(partition);
             }
+
+            foreach (var partition in removed)
+                partition.Clear();
         }
     }
 }

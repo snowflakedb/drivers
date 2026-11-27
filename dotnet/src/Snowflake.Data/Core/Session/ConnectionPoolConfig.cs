@@ -2,8 +2,9 @@ namespace Snowflake.Data.Core.Session;
 
 /// <summary>Pool settings for one partition.</summary>
 /// <remarks>
-/// <see cref="Default"/> is what a new partition receives. The values are stored and not enforced;
-/// enforcing them is planned. Connection-string keys are not read.
+/// <see cref="Default"/> is the configuration of a connection string that sets no pool key.
+/// <see cref="ConnectionPoolConfigParser"/> reads the keys. The values are stored and not enforced;
+/// enforcing them is planned.
 /// </remarks>
 internal sealed record ConnectionPoolConfig
 {
@@ -28,6 +29,6 @@ internal sealed record ConnectionPoolConfig
     /// <summary>How long opening a session may take.</summary>
     internal TimeSpan ConnectionTimeout { get; init; } = TimeSpan.FromSeconds(300);
 
-    /// <summary>The configuration a new partition receives.</summary>
+    /// <summary>The configuration used when the connection string sets no pool key.</summary>
     internal static ConnectionPoolConfig Default { get; } = new();
 }

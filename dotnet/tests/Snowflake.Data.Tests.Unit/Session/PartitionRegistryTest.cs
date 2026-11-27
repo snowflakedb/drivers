@@ -136,6 +136,85 @@ public sealed class PartitionRegistryTest
     }
 
     [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ParsedPoolSettingsAreStoredOnThePartition()
+    {
+        var registry = new SnowflakeDbConnectionPool.PartitionRegistry();
+
+        var partition = registry.GetOrCreate(PoolKeyFactory.From("maxPoolSize=5;expirationTimeout=90"));
+
+        Assert.Equal(5, partition.MaxPoolSize);
+        Assert.Equal(TimeSpan.FromSeconds(90), partition.ExpirationTimeout);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ParsedValuesDriveTheAggregate()
+    {
+        var sizes = new SnowflakeDbConnectionPool.PartitionRegistry();
+        sizes.GetOrCreate(PoolKeyFactory.From("account=one;maxPoolSize=4"));
+        sizes.GetOrCreate(PoolKeyFactory.From("account=two;maxPoolSize=4"));
+        Assert.Equal(4, sizes.UniformMaxPoolSize());
+
+        sizes.GetOrCreate(PoolKeyFactory.From("account=three;maxPoolSize=9"));
+        var sizeException = Assert.Throws<SnowflakeDriverException>(() => sizes.UniformMaxPoolSize());
+        Assert.Equal(SFError.INCONSISTENT_RESULT_ERROR, sizeException.Error);
+        Assert.Equal("Multiple pools have different Max Pool Size values", Assert.Single(sizeException.Args));
+
+        var timeouts = new SnowflakeDbConnectionPool.PartitionRegistry();
+        timeouts.GetOrCreate(PoolKeyFactory.From("account=t1;expirationTimeout=60"));
+        timeouts.GetOrCreate(PoolKeyFactory.From("account=t2;expirationTimeout=60s"));
+        Assert.Equal(60, timeouts.UniformTimeoutSeconds());
+
+        timeouts.GetOrCreate(PoolKeyFactory.From("account=t3;expirationTimeout=61"));
+        var timeoutException = Assert.Throws<SnowflakeDriverException>(() => timeouts.UniformTimeoutSeconds());
+        Assert.Equal(SFError.INCONSISTENT_RESULT_ERROR, timeoutException.Error);
+        Assert.Equal("Multiple pools have different Timeout values", Assert.Single(timeoutException.Args));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void AFailedParseIsNotCached()
+    {
+        var registry = new SnowflakeDbConnectionPool.PartitionRegistry();
+        var key = PoolKeyFactory.From("maxPoolSize=nope");
+
+        var first = Assert.Throws<SnowflakeDriverException>(() => registry.GetOrCreate(key));
+        var second = Assert.Throws<SnowflakeDriverException>(() => registry.GetOrCreate(key));
+
+        Assert.Equal(SFError.INVALID_CONNECTION_STRING, first.Error);
+        Assert.Equal(SFError.INVALID_CONNECTION_STRING, second.Error);
+        Assert.NotSame(first, second);
+        Assert.Equal(0, registry.CurrentPoolSize());
+        Assert.Equal(0, registry.RegisteredKeyCount);
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
+    public void ACreationInProgressDoesNotBlockOtherLookupsOrClearAll()
+    {
+        var registry = new SnowflakeDbConnectionPool.PartitionRegistry();
+        var slowKey = PoolKeyFactory.From("account=slow");
+        var existingKey = PoolKeyFactory.From("account=existing");
+        var existing = registry.GetOrCreate(existingKey);
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        var slow = Task.Run(() => registry.GetOrCreate(slowKey, () =>
+        {
+            entered.Set();
+            Assert.True(release.Wait(TimeSpan.FromSeconds(5)));
+            return ConnectionPoolConfig.Default;
+        }));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+
+        var other = Task.Run(() => registry.GetOrCreate(PoolKeyFactory.From("account=other")));
+        var clear = Task.Run(registry.ClearAll);
+        var finished = Task.WaitAll([other, clear], TimeSpan.FromSeconds(5));
+        release.Set();
+
+        Assert.True(finished);
+        Assert.True(slow.Wait(TimeSpan.FromSeconds(5)));
+        Assert.NotSame(existing, registry.GetOrCreate(existingKey));
+        Assert.Same(slow.Result, registry.GetOrCreate(slowKey));
+    }
+
+    [SnowflakeFact(RetriesCount = RetriesCount.NoRetries)]
     public void ConcurrentLookupOfOneKeyCreatesOnePartition()
     {
         var registry = new SnowflakeDbConnectionPool.PartitionRegistry();

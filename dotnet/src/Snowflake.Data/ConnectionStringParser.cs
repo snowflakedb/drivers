@@ -36,4 +36,20 @@ internal sealed class ConnectionStringParser
 
         return options;
     }
+
+    /// <summary>
+    /// Reads <paramref name="key"/>. The lookup is case-insensitive.
+    /// </summary>
+    /// <returns><see langword="true"/> when the key is present, including when its value is empty.</returns>
+    internal bool TryGetValue(string key, out string value)
+    {
+        if (!_builder.TryGetValue(key, out var raw))
+        {
+            value = string.Empty;
+            return false;
+        }
+
+        value = raw?.ToString() ?? string.Empty;
+        return true;
+    }
 }
