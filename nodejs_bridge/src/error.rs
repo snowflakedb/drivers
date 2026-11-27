@@ -2,7 +2,7 @@ use crate::rows::RowDecodeError;
 use crate::session::Session;
 use arrow::error::ArrowError;
 use napi::bindgen_prelude::*;
-use sf_core::apis::database_driver_v1::{ApiError, ErrorKind};
+use sf_core::apis::database_driver_v1::{ApiError, ErrorKind, HttpStatus};
 use sf_core::chunks::ChunkError;
 use sf_core::http::retry::HttpError;
 use sf_core::rest::snowflake::RestError;
@@ -111,6 +111,7 @@ enum ErrorCode {
     Driver(i32),
 }
 
+#[derive(Default)]
 pub(crate) struct ClientError {
     name: Option<&'static str>,
     message: String,
@@ -118,6 +119,7 @@ pub(crate) struct ClientError {
     sql_state: Option<String>,
     cause: Option<String>,
     is_fatal: bool,
+    http_status: Option<HttpStatus>,
 }
 
 impl ClientError {
@@ -134,6 +136,12 @@ impl ClientError {
             }
             None => {}
         }
+        if let Some(status) = error.http_status() {
+            return Self {
+                is_fatal: error.terminates_session(),
+                ..Self::of_request_failed(status, full_message(error))
+            };
+        }
         if matches!(error.kind(), ErrorKind::Cancelled) {
             return Self::of_cancelled();
         }
@@ -144,6 +152,7 @@ impl ClientError {
             sql_state: error.sql_state(),
             cause: error.root_cause(),
             is_fatal: error.terminates_session(),
+            ..Default::default()
         }
     }
 
@@ -205,8 +214,8 @@ impl ClientError {
             message: message.to_string(),
             code: Some(ErrorCode::Driver(code)),
             sql_state: sql_state.map(str::to_string),
-            cause: None,
             is_fatal,
+            ..Default::default()
         }
     }
 
@@ -221,9 +230,7 @@ impl ClientError {
                 .clone()
                 .unwrap_or_else(|| format!("Query {query_id} failed")),
             code: error_code.map(ErrorCode::Server),
-            sql_state: None,
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -233,9 +240,7 @@ impl ClientError {
             message: format!("Invalid {field}: {value}"),
             // TODO: move error codes enum to bridge
             code: Some(ErrorCode::Driver(460001)),
-            sql_state: None,
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -245,8 +250,7 @@ impl ClientError {
             message: "Already connected.".to_string(),
             code: Some(ErrorCode::Driver(405502)),
             sql_state: Some("08002".to_string()),
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -256,8 +260,7 @@ impl ClientError {
             message: "Connection already in progress.".to_string(),
             code: Some(ErrorCode::Driver(405501)),
             sql_state: Some("08002".to_string()),
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -267,8 +270,7 @@ impl ClientError {
             message: "Connection already terminated. Cannot connect again.".to_string(),
             code: Some(ErrorCode::Driver(405503)),
             sql_state: Some("08003".to_string()),
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -277,9 +279,19 @@ impl ClientError {
             name: Some("NetworkError"),
             message: "Network error. Could not reach Snowflake.".to_string(),
             code: Some(ErrorCode::Driver(401001)),
-            sql_state: None,
             cause,
-            is_fatal: false,
+            ..Default::default()
+        }
+    }
+
+    fn of_request_failed(status: HttpStatus, cause: String) -> Self {
+        Self {
+            name: Some("RequestFailedError"),
+            message: "Request to Snowflake failed.".to_string(),
+            code: Some(ErrorCode::Driver(401002)),
+            cause: Some(cause),
+            http_status: Some(status),
+            ..Default::default()
         }
     }
 
@@ -288,20 +300,18 @@ impl ClientError {
             name: Some("NetworkError"),
             message: "Network error. Could not reach S3/Blob.".to_string(),
             code: Some(ErrorCode::Driver(402001)),
-            sql_state: None,
             cause,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
-    fn of_cloud_storage_error_status(status: String) -> Self {
+    fn of_cloud_storage_error_status(status: HttpStatus) -> Self {
         Self {
             name: Some("LargeResultSetError"),
             message: "Request to S3/Blob failed.".to_string(),
             code: Some(ErrorCode::Driver(402002)),
-            sql_state: None,
             cause: Some(format!("HTTP status {status}")),
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -311,8 +321,7 @@ impl ClientError {
             message: "SQL execution canceled".to_string(),
             code: Some(ErrorCode::Server(604)),
             sql_state: Some("57014".to_string()),
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -323,9 +332,8 @@ impl ClientError {
                 "Cannot retrieve data. No information returned from server for query {query_id}"
             ),
             code: Some(ErrorCode::Driver(460002)),
-            sql_state: None,
-            cause: None,
             is_fatal: true,
+            ..Default::default()
         }
     }
 
@@ -334,20 +342,15 @@ impl ClientError {
             name: Some("ClientError"),
             message: format!("Status of query {query_id} is {status}, results are unavailable"),
             code: Some(ErrorCode::Driver(460003)),
-            sql_state: None,
-            cause: None,
             is_fatal: true,
+            ..Default::default()
         }
     }
 
     fn unnamed(message: String) -> Self {
         Self {
-            name: None,
             message,
-            code: None,
-            sql_state: None,
-            cause: None,
-            is_fatal: false,
+            ..Default::default()
         }
     }
 
@@ -374,6 +377,12 @@ impl ClientError {
         if self.is_fatal {
             error.set_named_property("isFatal", true)?;
         }
+        if let Some(status) = self.http_status {
+            let mut response = Object::new(&env)?;
+            response.set_named_property("statusCode", u32::from(status.code()))?;
+            response.set_named_property("statusText", status.reason().unwrap_or(""))?;
+            error.set_named_property("response", response)?;
+        }
         Ok(napi::Error::from(error.to_unknown()))
     }
 }
@@ -394,7 +403,7 @@ fn construct_js_error_fail(err: napi::Error) -> napi::Error {
 
 enum ChunkDownloadFailure {
     Unreachable,
-    ErrorStatus(String),
+    ErrorStatus(HttpStatus),
 }
 
 fn chunk_download_failure(error: &ApiError) -> Option<ChunkDownloadFailure> {
@@ -413,9 +422,16 @@ fn chunk_download_failure(error: &ApiError) -> Option<ChunkDownloadFailure> {
             Some(ChunkDownloadFailure::Unreachable)
         }
         ChunkError::UnsuccessfulHttpStatusCode { status, .. } => {
-            Some(ChunkDownloadFailure::ErrorStatus(status.to_string()))
+            Some(ChunkDownloadFailure::ErrorStatus(HttpStatus::from(*status)))
         }
         _ => None,
+    }
+}
+
+fn full_message(error: &ApiError) -> String {
+    match error.root_cause() {
+        Some(cause) => format!("{error}: {cause}"),
+        None => error.to_string(),
     }
 }
 
@@ -546,6 +562,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::StatusCode;
 
     fn code_of(error: &ClientError) -> Option<String> {
         match error.code {
@@ -750,6 +767,38 @@ mod tests {
         assert_eq!(error.sql_state, None);
         assert_eq!(error.cause.as_deref(), Some("connection refused"));
         assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn an_error_status_from_snowflake_is_a_request_failed_error() {
+        let status = HttpStatus::from(StatusCode::SERVICE_UNAVAILABLE);
+        let error = ClientError::of_request_failed(
+            status,
+            "HTTP request failed after retries: query status: \
+             max attempts (3) reached; last status 503 Service Unavailable"
+                .to_string(),
+        );
+
+        assert_eq!(error.name, Some("RequestFailedError"));
+        assert_eq!(code_of(&error), Some("401002".to_string()));
+        assert_eq!(error.message, "Request to Snowflake failed.");
+        assert_eq!(error.sql_state, None);
+        assert_eq!(
+            error.cause.as_deref(),
+            Some(
+                "HTTP request failed after retries: query status: \
+                 max attempts (3) reached; last status 503 Service Unavailable"
+            )
+        );
+        assert_eq!(error.http_status, Some(status));
+        assert!(!error.is_fatal);
+    }
+
+    #[test]
+    fn errors_that_are_not_failed_requests_have_no_http_status() {
+        let error = ClientError::of(&ApiError::invalid_argument("row mode"));
+
+        assert_eq!(error.http_status, None);
     }
 
     #[test]

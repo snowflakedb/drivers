@@ -1,14 +1,17 @@
-//! Exhaustive walk of [`RestError`] for vendor / SQLSTATE / query id / request id
+//! Exhaustive walk of [`RestError`] for vendor / SQLSTATE / query id / request id / HTTP status
 //!
 //! Adding a variant is a compile error until it is classified,
 //! as there is no wildcard that silently drops those fields.
+
+use reqwest::StatusCode;
 
 use super::sql_state::sql_state_from_code;
 use super::{
     CREDENTIAL_REJECTION_GS_CODES, GS_CODE_UNAVAILABLE, QueryIds, RestError, SESSION_TOKEN_EXPIRED,
     SQLSTATE_AUTHORIZATION_FAILURE, SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED,
-    SQLSTATE_TIMEOUT_EXPIRED,
+    SQLSTATE_TIMEOUT_EXPIRED, SnowflakeResponseError,
 };
+use crate::http::retry::HttpError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct SnowflakeErrorContext {
@@ -16,6 +19,7 @@ pub(crate) struct SnowflakeErrorContext {
     pub sql_state: Option<String>,
     pub query_id: Option<String>,
     pub request_id: Option<String>,
+    pub http_status: Option<StatusCode>,
 }
 
 impl SnowflakeErrorContext {
@@ -42,10 +46,36 @@ impl SnowflakeErrorContext {
         self.request_id = ids.request_id.map(|id| id.to_string());
         self
     }
+
+    fn of_http_status(status: StatusCode) -> Self {
+        Self {
+            http_status: Some(status),
+            ..Default::default()
+        }
+    }
+}
+
+fn retry_http_status(error: &HttpError) -> Option<StatusCode> {
+    match error {
+        HttpError::MaxAttempts { last_status, .. } => Some(*last_status),
+        HttpError::Transport { .. }
+        | HttpError::DeadlineExceeded { .. }
+        | HttpError::RetryAfterExceeded { .. }
+        | HttpError::ResponseTooLarge { .. }
+        | HttpError::ResponseTimeout { .. } => None,
+    }
+}
+
+fn response_http_status(error: &SnowflakeResponseError) -> Option<StatusCode> {
+    match error {
+        SnowflakeResponseError::ResponseStatus { status, .. } => Some(*status),
+        SnowflakeResponseError::ResponseFormat { .. }
+        | SnowflakeResponseError::ResponseText { .. } => None,
+    }
 }
 
 impl RestError {
-    /// Vendor code, SQLSTATE, query id, and request id for a [`RestError`].
+    /// Vendor code, SQLSTATE, query id, request id, and HTTP status for a [`RestError`].
     ///
     /// SQLSTATE resolution order (first hit wins):
     ///   1. The `sqlState` the server included in its response (verbatim).
@@ -129,8 +159,20 @@ impl RestError {
                 vendor_code: Some(source.code),
                 ..Default::default()
             },
-            RestError::HttpRetry { ids, .. }
-            | RestError::AsyncPollResultNotFound { ids, .. }
+            RestError::HttpRetry { ids, source, .. } => SnowflakeErrorContext {
+                http_status: retry_http_status(source),
+                ..Default::default()
+            }
+            .with_ids(ids),
+            RestError::InvalidSnowflakeResponse { source, .. } => SnowflakeErrorContext {
+                http_status: response_http_status(source),
+                ..Default::default()
+            },
+            RestError::SessionRefresh { status, .. }
+            | RestError::TokenRequestHttp { status, .. } => {
+                SnowflakeErrorContext::of_http_status(*status)
+            }
+            RestError::AsyncPollResultNotFound { ids, .. }
             | RestError::MissingResultUrl { ids, .. }
             | RestError::MissingQueryId { ids, .. } => {
                 SnowflakeErrorContext::default().with_ids(ids)
@@ -144,7 +186,6 @@ impl RestError {
             | RestError::DPoPBindingUnsupported { .. }
             | RestError::DPoPSessionNotBound { .. }
             | RestError::WorkloadIdentityAttestation { .. }
-            | RestError::InvalidSnowflakeResponse { .. }
             | RestError::Communication { .. }
             | RestError::RequestConstruction { .. }
             | RestError::InvalidHeaderValue { .. }
@@ -152,8 +193,6 @@ impl RestError {
             | RestError::WifSdkHttpClient { .. }
             | RestError::UrlJoin { .. }
             | RestError::MissingMasterToken { .. }
-            | RestError::SessionRefresh { .. }
-            | RestError::TokenRequestHttp { .. }
             | RestError::Heartbeat { .. }
             | RestError::MissingResponseField { .. }
             | RestError::Logout { .. }
@@ -195,6 +234,7 @@ mod tests {
                 sql_state: Some("42000".to_owned()),
                 query_id: Some("01abc".to_owned()),
                 request_id: Some(request_id.to_string()),
+                http_status: None,
             }
         );
     }
@@ -355,6 +395,7 @@ mod tests {
                 sql_state: None,
                 query_id: None,
                 request_id: Some(request_id.to_string()),
+                http_status: Some(StatusCode::SERVICE_UNAVAILABLE),
             }
         );
     }
@@ -371,7 +412,89 @@ mod tests {
             },
             location: loc(),
         };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::of_http_status(StatusCode::SERVICE_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn http_retry_without_a_final_status_has_no_http_status() {
+        for source in [
+            HttpError::DeadlineExceeded {
+                configured: std::time::Duration::from_secs(1),
+                elapsed: std::time::Duration::from_secs(2),
+                location: loc(),
+            },
+            HttpError::RetryAfterExceeded {
+                retry_after: std::time::Duration::from_secs(60),
+                remaining: std::time::Duration::from_secs(1),
+                location: loc(),
+            },
+            HttpError::ResponseTimeout {
+                timeout: std::time::Duration::from_secs(1),
+                attempts: 3,
+                location: loc(),
+            },
+        ] {
+            let err = RestError::HttpRetry {
+                context: "query request",
+                ids: QueryIds::default(),
+                source,
+                location: loc(),
+            };
+            assert_eq!(err.snowflake_context().http_status, None, "{err:?}");
+        }
+    }
+
+    #[test]
+    fn error_status_from_snowflake_is_exposed_as_http_status() {
+        let err = RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::ResponseStatus {
+                status: StatusCode::BAD_REQUEST,
+                message: "Unexpected response, body length 2.".to_owned(),
+                location: loc(),
+            },
+            location: loc(),
+        };
+        assert_eq!(
+            err.snowflake_context(),
+            SnowflakeErrorContext::of_http_status(StatusCode::BAD_REQUEST)
+        );
+    }
+
+    #[test]
+    fn unparseable_snowflake_response_has_no_http_status() {
+        let parse_error = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let err = RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::ResponseFormat {
+                source: parse_error,
+                location: loc(),
+            },
+            location: loc(),
+        };
         assert_eq!(err.snowflake_context(), SnowflakeErrorContext::default());
+    }
+
+    #[test]
+    fn session_refresh_and_token_request_statuses_are_exposed_as_http_status() {
+        let refresh = RestError::SessionRefresh {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            location: loc(),
+        };
+        let token = RestError::TokenRequestHttp {
+            operation: "RENEW".to_owned(),
+            status: StatusCode::FORBIDDEN,
+            location: loc(),
+        };
+        assert_eq!(
+            refresh.snowflake_context(),
+            SnowflakeErrorContext::of_http_status(StatusCode::SERVICE_UNAVAILABLE)
+        );
+        assert_eq!(
+            token.snowflake_context(),
+            SnowflakeErrorContext::of_http_status(StatusCode::FORBIDDEN)
+        );
     }
 
     #[test]
@@ -403,6 +526,7 @@ mod tests {
                     sql_state: None,
                     query_id: Some("01abc".to_owned()),
                     request_id: Some(request_id.to_string()),
+                    http_status: None,
                 },
                 "ids dropped on {err:?}"
             );
@@ -424,6 +548,7 @@ mod tests {
                 sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
                 query_id: None,
                 request_id: None,
+                http_status: None,
             }
         );
     }
@@ -459,6 +584,7 @@ mod tests {
                 sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
                 query_id: Some("01abc".to_owned()),
                 request_id: Some(request_id.to_string()),
+                http_status: None,
             }
         );
     }

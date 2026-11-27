@@ -168,17 +168,20 @@ describe('getResultsFromQueryId with Wiremock', () => {
       }),
     );
 
-    await expect(getResultFromQueryIdForTest(connection, { queryId })).rejects.toMatchObject(
-      isRunningNewDriverWithBD('BD#46')
+    await expect(getResultFromQueryIdForTest(connection, { queryId })).rejects.toMatchObject({
+      name: 'RequestFailedError',
+      code: 401002,
+      message: 'Request to Snowflake failed.',
+      ...(isRunningNewDriverWithBD('BD#46')
         ? {
-            name: 'Error',
-            message: 'HTTP request failed after retries: query status',
+            response: { statusCode: 500, statusText: 'Internal Server Error' },
+            cause: {
+              message:
+                'HTTP request failed after retries: query status: ' +
+                'max attempts (6) reached; last status 500 Internal Server Error',
+            },
           }
-        : {
-            name: 'RequestFailedError',
-            code: 401002,
-            message: 'Request to Snowflake failed.',
-          },
-    );
+        : { response: { statusCode: 500, statusText: 'Server Error' } }),
+    });
   });
 });

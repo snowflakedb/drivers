@@ -252,18 +252,21 @@ describe.each(['getQueryStatus', 'getQueryStatusThrowIfError'] as const)(
       );
 
       const connection = await createLiveConnection(wiremock.connectionOptions);
-      await expect(connection[method](queryId)).rejects.toMatchObject(
-        isRunningNewDriverWithBD('BD#46')
+      await expect(connection[method](queryId)).rejects.toMatchObject({
+        name: 'RequestFailedError',
+        code: 401002,
+        message: 'Request to Snowflake failed.',
+        ...(isRunningNewDriverWithBD('BD#46')
           ? {
-              name: 'Error',
-              message: 'HTTP request failed after retries: query status',
+              response: { statusCode: 500, statusText: 'Internal Server Error' },
+              cause: {
+                message:
+                  'HTTP request failed after retries: query status: ' +
+                  'max attempts (6) reached; last status 500 Internal Server Error',
+              },
             }
-          : {
-              name: 'RequestFailedError',
-              code: 401002,
-              message: 'Request to Snowflake failed.',
-            },
-      );
+          : { response: { statusCode: 500, statusText: 'Server Error' } }),
+      });
     });
 
     it('should reject when monitoring returns HTTP 400', async () => {
@@ -276,18 +279,21 @@ describe.each(['getQueryStatus', 'getQueryStatusThrowIfError'] as const)(
       );
 
       const connection = await createLiveConnection(wiremock.connectionOptions);
-      await expect(connection[method](queryId)).rejects.toMatchObject(
-        isRunningNewDriverWithBD('BD#46')
+      await expect(connection[method](queryId)).rejects.toMatchObject({
+        name: 'RequestFailedError',
+        code: 401002,
+        message: 'Request to Snowflake failed.',
+        response: { statusCode: 400, statusText: 'Bad Request' },
+        ...(isRunningNewDriverWithBD('BD#46')
           ? {
-              name: 'Error',
-              message: 'Invalid Snowflake response',
+              cause: {
+                message:
+                  'Invalid Snowflake response: Snowflake responded with error status: ' +
+                  '400 Bad Request, message: Unexpected response, body length 95.',
+              },
             }
-          : {
-              name: 'RequestFailedError',
-              code: 401002,
-              message: 'Request to Snowflake failed.',
-            },
-      );
+          : {}),
+      });
     });
   },
 );

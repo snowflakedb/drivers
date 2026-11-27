@@ -1054,59 +1054,59 @@ behavior_differences:
       Bugfixes in the changelog, next to the isAnError(status) type fix (BD#42).
 
   46:
-    name: 'RequestFailedError is not implemented'
-    status: unknown
+    name: 'RequestFailedError has only the HTTP status on response, and has a cause'
+    status: allowed
     type: api_incompatibility
-    reviewed: false
+    reviewed: true
     is_breaking_change: true
-    impact: medium
+    impact: low
     old_driver_behavior: |
       Any request to Snowflake (login, query, query status, abort, and others) that gets
       an HTTP status other than 200 rejects with RequestFailedError, code 401002, and
       message `Request to Snowflake failed.` Retryable statuses (5xx, 429) are retried
-      first. err.response holds the HTTP response, so callers can read
-      err.response.statusCode.
+      first.
+      `response` is the axios response object (AxiosResponse), with the request data and
+      headers removed. It has `statusCode`, `statusText` (the reason phrase the server
+      sent), `body`, `headers`, `getResponseHeader()`, `config` and the other axios
+      fields. There is no `cause`.
       A 401 whose body has code 390104 uses code 401004 and message
       `Request to Snowflake failed.  Invalid token`.
       No HTTP response at all is NetworkError 401001. A 200 with `success: false` is
       OperationFailedError.
     new_driver_behavior: |
-      The same failures reject with a plain Error. code is undefined and there is no
-      response field:
-      - A retryable status (5xx, 408, 429, 307, 308), after the last retry: message
-        `HTTP request failed after retries: <operation>`, for example
-        `... query status`. cause.message is
-        `max attempts (N) reached; last status 500 Internal Server Error`.
-      - Any other 4xx: message `Invalid Snowflake response`. cause.message is
-        `Snowflake responded with error status: 400 Bad Request, message: ...`.
-      - A 401 refreshes the session and retries the request. If the refresh fails,
-        the error comes from the session refresh. No test checks this case yet.
-      The HTTP status appears only in the cause text. NetworkError 401001 is the same
-      as in the old driver. ErrorCode.ERR_SF_RESPONSE_FAILURE is still exported, but
-      nothing throws it.
+      A login, query, query status, session refresh or token request that gets an HTTP
+      error status rejects with RequestFailedError, code 401002, and message
+      `Request to Snowflake failed.`, as in the old driver. A retryable status (5xx, 408,
+      429, 307, 308) rejects this way after the last retry.
+      `response` is no longer an AxiosResponse, because the new driver doesn't send
+      requests with axios. It is a plain object with only two keys:
+      - `statusCode`, the same as in the old driver.
+      - `statusText`, the standard reason phrase for the code, for example
+        "Internal Server Error" for 500, not the phrase the server sent.
+      It has no body or headers, so they can't end up in logs by accident.
+      `cause` is an Error that describes the failed request, including the status, for
+      example "HTTP request failed after retries: query status: max attempts (6) reached;
+      last status 500 Internal Server Error".
+      NetworkError 401001 and OperationFailedError are the same as in the old driver.
+    status_rationale: |
+      The new driver doesn't use axios, so it can't return an AxiosResponse. The status is
+      the part of the response that tells the application what went wrong, and
+      `err.response.statusCode` works as in the old driver. The body and headers are left
+      out because they can contain secrets, and errors are often logged as a whole.
     description: |
-      Status is unknown: this needs more investigation before a decision.
-      Without RequestFailedError, a failed request looks the same as other errors with
-      no name or code (invalid argument, row decode), so callers can only match the
-      message text. They also cannot write "retry on 5xx or 429" logic, because the
-      status is not a field.
-      The first reason given for this difference, fewer custom error types, does not
-      fit well. The bridge already keeps NetworkError 401001 and LargeResultSetError
-      402002, and RequestFailedError is an existing type that callers check for.
-      To check before deciding:
-      - Map the core errors that carry a Snowflake HTTP status to RequestFailedError
-        401002 in nodejs_bridge/src/error.rs: RestError::HttpRetry with
-        HttpError::MaxAttempts, InvalidSnowflakeResponse with
-        SnowflakeResponseError::ResponseStatus, SessionRefresh, and TokenRequestHttp.
-        InvalidSnowflakeResponse also wraps bodies the core cannot parse. Those are
-        not failed requests and stay out.
-      - Decide what err.response holds. The old driver attaches the whole response.
-        The body can contain sensitive data, so { statusCode } may be enough.
-      - Decide what to do with retries that end on time (HttpError::DeadlineExceeded,
-        RetryAfterExceeded). These carry no status.
-      - Check what a failed session refresh after a 401 shows, and whether 401004 is
-        needed.
-      A server that rejects an abort is covered by BD#116, not by this entry.
+      The `SnowflakeError` type declares `response` as
+      `{ statusCode: number; statusText: string }`. The old `index.d.ts` declares it as
+      `Record<string, any>`, so TypeScript code that reads other keys, such as
+      `err.response.body` or `err.response.headers`, no longer compiles.
+
+      Cases that still differ, too small for their own entry:
+      - A 401 makes the new driver refresh the session and retry the request, so it
+        never rejects with 401004. If the refresh gets an HTTP error status, that is
+        RequestFailedError 401002.
+      - Retries that run out of time (the retry timeout, or a Retry-After longer than
+        the time left) have no HTTP status and still reject with a plain Error.
+      A server that rejects an abort is covered by BD#116, and a 2xx response whose body
+      the driver cannot read or parse by BD#187, not by this entry.
 
   47:
     name: 'getQueryStatusThrowIfError may not propagate snowflake server error code'
@@ -4201,3 +4201,35 @@ behavior_differences:
     description: |
       Environment-variable proxy changes still build a new client, and Linux
       is unaffected because no OS proxy store is queried there.
+  187:
+    name: 'A 2xx response with a body the driver cannot read or parse rejects with a plain Error'
+    status: unknown
+    type: api_incompatibility
+    reviewed: false
+    is_breaking_change: true
+    impact: low
+    old_driver_behavior: |
+      A request to Snowflake that gets a 200 with a JSON content type and a body that is
+      not valid JSON rejects with NetworkError 401001
+      "Network error. Could not reach Snowflake.". The JSON.parse SyntaxError is wrapped
+      as if no response had arrived.
+    new_driver_behavior: |
+      A request to Snowflake that gets a 2xx status rejects with a plain Error, with no
+      `code`, when:
+      - the body cannot be read, for example because the connection drops while the body
+        is sent.
+      - the body is not valid JSON, or does not have the shape of a Snowflake response.
+      The message is `Invalid Snowflake response`, with the prefix "Failed to login: " on
+      login. `cause` is the message of the underlying read or JSON error, for example
+      "expected value at line 1 column 1".
+    description: |
+      These responses have a 2xx status, so they are not failed requests and are not
+      RequestFailedError (BD#46). A non-2xx response is RequestFailedError even when its
+      body cannot be parsed, because the driver checks the status before it reads the body.
+      To investigate:
+      - Whether these errors should have a name and code, for example NetworkError 401001
+        as in the old driver, or UnexpectedContentError 401003, which the old driver
+        declares for a response that is not JSON.
+      - What the old driver does with a body that is not JSON and has no JSON content
+        type. It does not parse such a body, so it takes a different path.
+      No test covers this case yet.

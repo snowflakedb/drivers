@@ -346,6 +346,7 @@ impl ApiError {
                 sql_state: Some(SQLSTATE_TIMEOUT_EXPIRED.to_string()),
                 query_id: None,
                 request_id: Some(request_id.clone()),
+                http_status: None,
             },
             ApiError::MasterTokenTerminal {
                 master_token_gs_code,
@@ -355,6 +356,7 @@ impl ApiError {
                 sql_state: Some(SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED.to_string()),
                 query_id: None,
                 request_id: None,
+                http_status: None,
             },
             // no wildcard - explicit empty arms
             ApiError::FileTransfersDisabled { .. }

@@ -6,6 +6,11 @@
 
 > Differences from 3.x that are new in this release or were missing from earlier beta notes. Read them together with the notes of earlier 4.0.0 beta releases.
 
+#### Breaking Changes
+
+- Errors
+  - Changed `err.response` on `RequestFailedError` to a plain object with only `statusCode` and `statusText`. The driver no longer sends requests with axios, so `err.response` is no longer an `AxiosResponse`. It has no body or headers, so they can't end up in logs by accident. To find out why a request failed, read `err.cause.message`.
+
 #### New Features
 
 - Added support for the `MANAGED_IDENTITY_CLIENT_ID` environment variable in Azure workload identity login. When `workloadIdentityAzureClientId` is not set, the driver selects the managed identity from `MANAGED_IDENTITY_CLIENT_ID`, then `AZURE_CLIENT_ID`. On Azure ML, it then uses `DEFAULT_IDENTITY_CLIENT_ID`.
@@ -20,6 +25,7 @@
 
 #### Bugfixes
 
+- Fixed requests that Snowflake answers with an HTTP error status rejecting with a plain `Error` without a `code`. A login, query or query status request that fails this way now rejects with `RequestFailedError` and code `401002`, as in 3.x. For a status that the driver retries, such as `500` or `429`, this happens after the last retry.
 - Fixed Azure workload identity login on Azure ML, where the driver sent its token request to `MSI_ENDPOINT` in the App Service format instead of the Azure ML format, and didn't use `DEFAULT_IDENTITY_CLIENT_ID`.
 - Fixed Azure workload identity login ignoring `AZURE_CLIENT_ID` when selecting the managed identity. `MANAGED_IDENTITY_CLIENT_ID` still takes precedence.
 

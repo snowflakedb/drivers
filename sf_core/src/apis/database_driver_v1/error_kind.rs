@@ -6,6 +6,7 @@ use crate::config::ConfigErrorClass;
 use crate::config::connection_config::ValidationCode;
 use crate::file_manager::FileManagerError;
 use crate::rest::snowflake::{self, RestError};
+use std::fmt;
 
 /// Classification of an [`ApiError`] for wrapper exception mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,35 @@ pub enum ErrorKind {
     StageBinding,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HttpStatus(reqwest::StatusCode);
+
+impl HttpStatus {
+    pub fn code(&self) -> u16 {
+        self.0.as_u16()
+    }
+
+    pub fn reason(&self) -> Option<&'static str> {
+        self.0.canonical_reason()
+    }
+}
+
+impl From<reqwest::StatusCode> for HttpStatus {
+    fn from(status: reqwest::StatusCode) -> Self {
+        Self(status)
+    }
+}
+
+impl fmt::Display for HttpStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.code())?;
+        if let Some(reason) = self.reason() {
+            write!(f, " {reason}")?;
+        }
+        Ok(())
+    }
+}
+
 impl ApiError {
     pub fn kind(&self) -> ErrorKind {
         kind_of(self)
@@ -47,6 +77,10 @@ impl ApiError {
 
     pub fn request_id(&self) -> Option<String> {
         self.snowflake_context().request_id
+    }
+
+    pub fn http_status(&self) -> Option<HttpStatus> {
+        self.snowflake_context().http_status.map(HttpStatus::from)
     }
 
     pub fn parameter(&self) -> Option<String> {
@@ -503,5 +537,33 @@ mod tests {
         };
         assert_eq!(err.kind(), ErrorKind::AuthenticationError);
         assert!(err.reauthentication_required());
+    }
+
+    #[test]
+    fn error_status_from_snowflake_projects_code_and_standard_reason() {
+        let err = query(RestError::InvalidSnowflakeResponse {
+            source: snowflake::SnowflakeResponseError::ResponseStatus {
+                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+                message: "Server Error".to_owned(),
+                location: loc(),
+            },
+            location: loc(),
+        });
+        let status = err.http_status().expect("status is projected");
+        assert_eq!(status.code(), 500);
+        assert_eq!(status.reason(), Some("Internal Server Error"));
+        assert_eq!(status.to_string(), "500 Internal Server Error");
+    }
+
+    #[test]
+    fn http_status_without_a_standard_reason_displays_only_the_code() {
+        let status = HttpStatus::from(reqwest::StatusCode::from_u16(599).expect("valid code"));
+        assert_eq!(status.reason(), None);
+        assert_eq!(status.to_string(), "599");
+    }
+
+    #[test]
+    fn errors_without_an_http_response_have_no_http_status() {
+        assert_eq!(ApiError::invalid_argument("row mode").http_status(), None);
     }
 }

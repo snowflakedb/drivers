@@ -188,3 +188,14 @@ describe('Column', () => {
     expectTypeOf<Exclude<keyof oldSnowflakeSdk.Column, keyof Column>>().toEqualTypeOf<never>();
   });
 });
+
+describe('SnowflakeError', () => {
+  type SnowflakeError = newSnowflakeSdk.SnowflakeError;
+
+  it('should type response as the HTTP status only', () => {
+    // BD#46
+    expectTypeOf<SnowflakeError['response']>().toEqualTypeOf<
+      { statusCode: number; statusText: string } | undefined
+    >();
+  });
+});

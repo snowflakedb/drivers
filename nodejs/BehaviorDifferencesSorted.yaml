@@ -26,61 +26,6 @@ behavior_differences:
       `PUT file:///data/link.csv @stage` the stage has `real.csv`, and
       `GET @stage/link.csv file:///out/` fails because the file does not exist.
 
-  46:
-    name: 'RequestFailedError is not implemented'
-    status: unknown
-    type: api_incompatibility
-    reviewed: false
-    is_breaking_change: true
-    impact: medium
-    old_driver_behavior: |
-      Any request to Snowflake (login, query, query status, abort, and others) that gets
-      an HTTP status other than 200 rejects with RequestFailedError, code 401002, and
-      message `Request to Snowflake failed.` Retryable statuses (5xx, 429) are retried
-      first. err.response holds the HTTP response, so callers can read
-      err.response.statusCode.
-      A 401 whose body has code 390104 uses code 401004 and message
-      `Request to Snowflake failed.  Invalid token`.
-      No HTTP response at all is NetworkError 401001. A 200 with `success: false` is
-      OperationFailedError.
-    new_driver_behavior: |
-      The same failures reject with a plain Error. code is undefined and there is no
-      response field:
-      - A retryable status (5xx, 408, 429, 307, 308), after the last retry: message
-        `HTTP request failed after retries: <operation>`, for example
-        `... query status`. cause.message is
-        `max attempts (N) reached; last status 500 Internal Server Error`.
-      - Any other 4xx: message `Invalid Snowflake response`. cause.message is
-        `Snowflake responded with error status: 400 Bad Request, message: ...`.
-      - A 401 refreshes the session and retries the request. If the refresh fails,
-        the error comes from the session refresh. No test checks this case yet.
-      The HTTP status appears only in the cause text. NetworkError 401001 is the same
-      as in the old driver. ErrorCode.ERR_SF_RESPONSE_FAILURE is still exported, but
-      nothing throws it.
-    description: |
-      Status is unknown: this needs more investigation before a decision.
-      Without RequestFailedError, a failed request looks the same as other errors with
-      no name or code (invalid argument, row decode), so callers can only match the
-      message text. They also cannot write "retry on 5xx or 429" logic, because the
-      status is not a field.
-      The first reason given for this difference, fewer custom error types, does not
-      fit well. The bridge already keeps NetworkError 401001 and LargeResultSetError
-      402002, and RequestFailedError is an existing type that callers check for.
-      To check before deciding:
-      - Map the core errors that carry a Snowflake HTTP status to RequestFailedError
-        401002 in nodejs_bridge/src/error.rs: RestError::HttpRetry with
-        HttpError::MaxAttempts, InvalidSnowflakeResponse with
-        SnowflakeResponseError::ResponseStatus, SessionRefresh, and TokenRequestHttp.
-        InvalidSnowflakeResponse also wraps bodies the core cannot parse. Those are
-        not failed requests and stay out.
-      - Decide what err.response holds. The old driver attaches the whole response.
-        The body can contain sensitive data, so { statusCode } may be enough.
-      - Decide what to do with retries that end on time (HttpError::DeadlineExceeded,
-        RetryAfterExceeded). These carry no status.
-      - Check what a failed session refresh after a 401 shows, and whether 401004 is
-        needed.
-      A server that rejects an abort is covered by BD#116, not by this entry.
-
   59:
     name: 'browserActionTimeout still accepted (ms) but bounds core authentication_timeout'
     status: allowed

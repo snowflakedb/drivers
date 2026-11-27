@@ -1,6 +1,12 @@
-import { describe, it, expect, onTestFinished } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, it, expect, onTestFinished } from 'vitest';
 import { createConnection } from './utils/fixtures.js';
-import { destroyConnectionAsync, isRunningNewDriverWithBD, snowflake } from './utils/index.js';
+import {
+  connectAsyncWithErrorBD,
+  destroyConnectionAsync,
+  isRunningNewDriverWithBD,
+  snowflake,
+} from './utils/index.js';
+import { loginRequestFail, WiremockServer, withResponse } from './utils/wiremock/index.js';
 
 describe('Connection', () => {
   it('should connect with .connect() on valid parameters', async () => {
@@ -101,6 +107,42 @@ describe('Connection', () => {
       await connection.connectAsync();
       await destroyConnectionAsync(connection);
       await expect(connection.isValidAsync()).resolves.toBe(false);
+    });
+  });
+
+  describe('wiremock', () => {
+    let wiremock: WiremockServer;
+
+    beforeAll(async () => {
+      wiremock = await WiremockServer.spawn();
+    });
+
+    afterEach(async () => {
+      await wiremock.reset();
+    });
+
+    afterAll(async () => {
+      await wiremock.destroy();
+    });
+
+    it('should reject login when Snowflake answers with HTTP 400', async () => {
+      await wiremock.stub(withResponse(loginRequestFail(), { status: 400 }));
+      const connection = createConnection(wiremock.connectionOptions);
+      await expect(connectAsyncWithErrorBD(connection)).rejects.toMatchObject({
+        name: 'RequestFailedError',
+        code: 401002,
+        message: 'Request to Snowflake failed.',
+        response: { statusCode: 400, statusText: 'Bad Request' },
+        ...(isRunningNewDriverWithBD('BD#46')
+          ? {
+              cause: {
+                message:
+                  'Failed to login: Invalid Snowflake response: Snowflake responded with error status: ' +
+                  '400 Bad Request, message: Unexpected response, body length 17.',
+              },
+            }
+          : {}),
+      });
     });
   });
 });
