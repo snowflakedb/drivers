@@ -1,10 +1,8 @@
 import { XMLParser, XMLValidator, X2jOptions } from 'fast-xml-parser';
-import ErrorCode from './constants/ErrorCode.js';
-import ErrorMessage from './constants/ErrorMessage.js';
 import { coreSetCustomCredentialManager, type CustomCredentialManager } from './core/index.js';
 import { invalidParameterError } from './error.js';
 import { defaultLogger } from './logging/default-logger.js';
-import { parseLogLevel, type LogLevel } from './logging/log-level.js';
+import { LOG_LEVEL_TO_CORE_VALUE, type LogLevel } from './logging/log-level.js';
 import { logger, logRouter, type SnowflakeLogger } from './logging/logger.js';
 
 export type CustomParser = (rawColumnValue: string) => any;
@@ -183,7 +181,7 @@ export const GlobalConfig: ResolvedConfig = {
 
 export function updateGlobalConfig({ customCredentialManager, ...options }: ConfigureOptions) {
   if (customCredentialManager != null) {
-    setCustomCredentialManager(customCredentialManager);
+    coreSetCustomCredentialManager(customCredentialManager);
   }
   const logLevel = parseLogLevel(options.logLevel);
   Object.assign(GlobalConfig, options, logLevel && { logLevel });
@@ -191,6 +189,19 @@ export function updateGlobalConfig({ customCredentialManager, ...options }: Conf
   if (LOGGING_OPTIONS.some((key) => key in options)) {
     applyLoggingOptions();
   }
+}
+
+// Backward compatibility with the 3.x driver, which accepted
+// lowercase log levels even though TypeScript requires uppercase.
+function parseLogLevel(value?: string): LogLevel | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const level = value.toUpperCase();
+  if (!(level in LOG_LEVEL_TO_CORE_VALUE)) {
+    throw invalidParameterError(`Invalid logLevel: ${value}`);
+  }
+  return level as LogLevel;
 }
 
 function applyLoggingOptions() {
@@ -205,15 +216,6 @@ function applyLoggingOptions() {
     GlobalConfig.additionalLogToConsole,
     GlobalConfig.customLogger !== undefined,
   );
-}
-
-function setCustomCredentialManager(manager: CustomCredentialManager) {
-  try {
-    coreSetCustomCredentialManager(manager);
-  } catch (cause) {
-    const code = ErrorCode.ERR_GLOBAL_CONFIGURE_INVALID_CUSTOM_CREDENTIAL_MANAGER;
-    throw Object.assign(invalidParameterError(ErrorMessage[code], code), { cause });
-  }
 }
 
 export const resetGlobalConfig = () => {

@@ -1,6 +1,4 @@
 import type { ConnectionTokenInfo } from './core/binary-types.generated.js';
-import ErrorCode from './constants/ErrorCode.js';
-import ErrorMessage from './constants/ErrorMessage.js';
 import { invalidParameterError } from './error.js';
 
 export function serializeTokenInfo(info: ConnectionTokenInfo | null): string {
@@ -60,7 +58,7 @@ function isOptionalNumber(value: unknown): value is number | undefined {
 }
 
 function throwDeserializeError(): never {
-  // TODO: We don't want InvalidParameterError to have error codes.
-  const code = ErrorCode.ERR_CONN_DESERIALIZE_INVALID_CONFIG_FORM;
-  throw invalidParameterError(ErrorMessage[code], code);
+  throw invalidParameterError(
+    "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
+  );
 }

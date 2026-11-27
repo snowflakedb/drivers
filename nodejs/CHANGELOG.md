@@ -9,8 +9,10 @@
 #### Breaking Changes
 
 - Errors
+  - Changed `InvalidParameterError` to have no `code` in every case. In 3.x, each check threw its own code, such as `403001` for an invalid `logLevel` in `snowflake.configure()`, `408003` for a string that `snowflake.deserializeConnection()` can't read, or `460001` for a `queryId` that is not a UUID. The new driver can report several invalid values in one error, so a single code can't identify it. If your code checks these codes, check `error.name === 'InvalidParameterError'` instead.
   - Removed `LargeResultSetError`. When cloud storage answers the download of a large query result with an HTTP error status, the query now fails with `RequestFailedError`, the same error the driver uses for other failed requests. The `code` `402002` and the message are the same as in 3.x. If your code checks `error.name === 'LargeResultSetError'`, check `error.code === 402002` instead.
   - Changed `err.response` on `RequestFailedError` to a plain object with only `statusCode` and `statusText`. The driver no longer sends requests with axios, so `err.response` is no longer an `AxiosResponse`. It has no body or headers, so they can't end up in logs by accident. To find out why a request failed, read `err.cause.message`.
+  - Removed the `snowflake.ErrorCode` members for codes the driver never returns, for example `ERR_CONN_CREATE_MISSING_ACCOUNT` and `ERR_OCSP_REVOKED`. `ErrorCode` now lists only the 13 codes the driver can return, with the same names and values as in 3.x. If your TypeScript code uses a removed member, it no longer compiles. Remove that check, because the error can't happen.
 
 #### New Features
 

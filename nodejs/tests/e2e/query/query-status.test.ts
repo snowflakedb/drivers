@@ -150,18 +150,18 @@ describe('Query status', () => {
   });
 
   describe('invalid query ID', () => {
-    it('should reject getQueryStatus with 460001 for a malformed query id', async () => {
+    it('should reject getQueryStatus for a malformed query id', async () => {
       await expect(connection.getQueryStatus('invalidQueryId')).rejects.toMatchObject({
         name: 'InvalidParameterError',
-        code: 460001,
+        code: isRunningNewDriverWithBD('BD#134') ? undefined : 460001,
         message: 'Invalid queryId: invalidQueryId',
       });
     });
 
-    it('should reject getQueryStatusThrowIfError with 460001 for a malformed query id', async () => {
+    it('should reject getQueryStatusThrowIfError for a malformed query id', async () => {
       await expect(connection.getQueryStatusThrowIfError('invalidQueryId')).rejects.toMatchObject({
         name: 'InvalidParameterError',
-        code: 460001,
+        code: isRunningNewDriverWithBD('BD#134') ? undefined : 460001,
         message: 'Invalid queryId: invalidQueryId',
       });
     });

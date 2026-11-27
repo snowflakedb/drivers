@@ -1285,13 +1285,13 @@ behavior_differences:
       HTTP 400, which the driver surfaces as RequestFailedError `401002`.
       Only a UUID from `getRequestId()` actually resubmits.
     new_driver_behavior: |
-      `execute()` throws synchronously with `460001` / InvalidParameterError and
+      `execute()` throws synchronously with InvalidParameterError, no `code`, and
       `Invalid requestId: {id}` for a malformed `requestId`. No statement is
       returned and no HTTP call is made.
     status_rationale: |
       The old client check was wrong. GS never executed a non-UUID `requestId`;
-      rejecting up front with the same code as a bad `queryId` is the fix, not
-      an incompatibility.
+      rejecting up front with the same error as a bad `queryId` (BD#134) is the
+      fix, not an incompatibility.
       No changelog entry. The general note about different error messages and
       codes in the new architecture covers it:
       - A call with a non-UUID `requestId` failed in both drivers. No working app
@@ -1649,7 +1649,7 @@ behavior_differences:
       driver API returns it. Sending it after login means connect does not wait for detection.
 
   71:
-    name: 'deserializeConnection either restores the session or throws 408003'
+    name: 'deserializeConnection either restores the session or throws InvalidParameterError'
     status: allowed
     type: bugfix
     reviewed: false
@@ -1671,7 +1671,9 @@ behavior_differences:
       - When all four are present, the connection starts connected, even if the tokens are
         empty strings or numbers. The first request then fails with a server error.
     new_driver_behavior: |
-      Every payload that cannot restore a session throws InvalidParameterError 408003.
+      Every payload that cannot restore a session throws InvalidParameterError with no `code`
+      and the message "Invalid serializedConnection. The value must be a string obtained by
+      calling another connection's serialize() method.".
       The payload must have a tokenInfo object with `sessionToken` and `masterToken` as
       non-empty strings. The expiration times are optional, but must be numbers when present.
       A payload with both tokens and no expiration times is restored (BD#84 writes such
@@ -1684,11 +1686,9 @@ behavior_differences:
       at once instead of on the first request.
 
       The TypeScript signature only accepts a string. The driver does not check the type at
-      runtime and reports every payload it cannot read with one error code.
+      runtime and reports every payload it cannot read with one error.
 
-      We probably want to remove error code completely and throw a plain Error instead.
-
-      InvalidParameterError probably should never have error codes.
+      The error has no code (BD#134).
 
   72:
     name: 'First use of a logged-out serialized session returns GS 390111'
@@ -2992,22 +2992,38 @@ behavior_differences:
       configure option, so code that sets logging options in several calls gets what it asks for.
 
   134:
-    name: 'An invalid logLevel throws an InvalidParameterError without an error code'
+    name: 'InvalidParameterError has no error code'
     status: allowed
     type: api_incompatibility
     reviewed: true
     is_breaking_change: true
     impact: low
     old_driver_behavior: |
-      configure({ logLevel }) with an unknown level throws an InvalidParameterError with code 403001
-      (ERR_GLOBAL_CONFIGURE_INVALID_LOG_LEVEL) and the message "Invalid logLevel. The specified
-      value must be one of these five levels: error, warn, debug, info and trace."
+      Each check stops at the first invalid value and throws an error with its own code. When
+      several values are wrong, the caller fixes one, retries, and gets the next error. For example:
+      - configure({ logLevel }) with an unknown level throws InvalidParameterError 403001 and the
+        message "Invalid logLevel. The specified value must be one of these five levels: error,
+        warn, debug, info and trace."
+      - deserializeConnection with a payload it cannot read throws 408001, 408002 or 408003.
+      - getQueryStatus(), getQueryStatusThrowIfError() and getResultsFromQueryId() with a queryId
+        that is not a UUID reject with 460001 and "Invalid queryId: <value>".
+      snowflake.ErrorCode has 147 members, one for every code the old driver declares.
     new_driver_behavior: |
-      The same call throws an InvalidParameterError with no `code` and the message
-      "Invalid logLevel: <value>".
+      InvalidParameterError has `code` undefined. When several values are invalid, one error
+      names all of them, for example "Configuration validation failed (2 issue(s)): ...".
+      An unknown logLevel throws the message "Invalid logLevel: <value>".
+
+      The driver checks at runtime mostly what the TypeScript types cannot express, such as a UUID
+      format or values read from a connection profile. TypeScript reports a value of the wrong
+      type when it compiles. configure({ customCredentialManager }) still checks at runtime that
+      read, write and remove are functions, because the driver needs them to call the manager.
+
+      snowflake.ErrorCode lists only the 13 codes the driver can return, with the same names and
+      values as in the old driver.
     status_rationale: |
-      The old driver also throws InvalidParameterError, so only the code and the message text
-      differ. New driver errors for invalid parameters do not carry error codes.
+      One error can describe several invalid values, so a single code cannot identify it. Callers
+      check `error.name === 'InvalidParameterError'` instead. Each removed ErrorCode member belongs
+      to an error the new driver never returns, so code that compares against it can never match.
 
   135:
     name: 'HTTP connect phase times out after 60 seconds'
@@ -3670,11 +3686,16 @@ behavior_differences:
     old_driver_behavior: |
       customCredentialManager in snowflake.configure() is typed as object. At runtime
       configure() throws InvalidParameterError when the object does not have read, write
-      and remove functions as its own properties.
+      and remove functions as its own properties. The message is "Invalid custom credential
+      manager value. The specified value must be an object, and it should have three methods:
+      write, read, remove".
     new_driver_behavior: |
       The exported CustomCredentialManager type declares read, write and remove, and
       customCredentialManager is typed with it. TypeScript reports a manager without these
-      methods when it compiles. The runtime check in configure() is the same.
+      methods when it compiles. At runtime configure() still throws InvalidParameterError,
+      with no `code` (BD#134). The message names the first missing method, for example
+      "Object property 'read' type mismatch. Expect value to be Function, but received
+      Undefined".
     status_rationale: |
       The type only describes what configure() already checked at runtime, so no working
       code breaks.

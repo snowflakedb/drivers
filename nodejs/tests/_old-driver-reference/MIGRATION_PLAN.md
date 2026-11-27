@@ -630,8 +630,9 @@ called out explicitly.
 
 ### Miscellaneous
 
-- [`unit/errors_test.ts`](./unit/errors_test.ts) — unclear whether this is still needed.
-  Migrate to the new driver only if a concrete need surfaces.
+- `unit/errors_test.ts` — removed. The new driver sets the SQL state in the same place as the
+  error code, and the tests in `nodejs_bridge/src/error.rs` check the code and the SQL state
+  together.
 - [`unit/libc_details_test.ts`](./unit/libc_details_test.ts) — must be implemented in `sf_core`
   and covered there.
 - [`unit/util_test.js`](./unit/util_test.js) — after beta, validate which utilities are still

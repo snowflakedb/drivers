@@ -189,6 +189,20 @@ describe('Column', () => {
   });
 });
 
+describe('ErrorCode', () => {
+  type OldErrorCode = typeof oldSnowflakeSdk.ErrorCode;
+  type NewErrorCode = typeof newSnowflakeSdk.ErrorCode;
+  // Numeric enums also have a number index signature, for the reverse mapping.
+  type MemberNames<E> = Exclude<keyof E, number>;
+
+  it('should keep the old driver value of every code', () => {
+    // Members of two different enums never match each other, so the values are compared as text.
+    expectTypeOf<{ [K in MemberNames<NewErrorCode>]: `${NewErrorCode[K]}` }>().toEqualTypeOf<{
+      [K in MemberNames<NewErrorCode>]: `${OldErrorCode[K & keyof OldErrorCode]}`;
+    }>();
+  });
+});
+
 describe('SnowflakeError', () => {
   type SnowflakeError = newSnowflakeSdk.SnowflakeError;
 

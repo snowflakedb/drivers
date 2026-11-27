@@ -112,7 +112,7 @@ describe('Connection Serialization & Deserialization', () => {
         expect(() => deserializeConnection(PAYLOAD_WITHOUT_TOKENS)).toThrow(
           expect.objectContaining({
             name: 'InvalidParameterError',
-            code: 408003,
+            code: undefined,
             message:
               "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
           }),
@@ -165,7 +165,7 @@ describe('Connection Serialization & Deserialization', () => {
       expect(() => deserializeConnection(payload)).toThrow(
         expect.objectContaining({
           name: 'InvalidParameterError',
-          code: 408003,
+          code: isRunningNewDriverWithBD('BD#134') ? undefined : 408003,
           message:
             "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
         }),
@@ -200,7 +200,7 @@ describe('Connection Serialization & Deserialization', () => {
           isRunningNewDriverWithBD('BD#71')
             ? {
                 name: 'InvalidParameterError',
-                code: 408003,
+                code: undefined,
                 message:
                   "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
               }

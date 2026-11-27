@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { deserializeTokenInfo, serializeTokenInfo } from '../../src/connection-serialization.js';
-import ErrorMessage from '../../src/constants/ErrorMessage.js';
-
 describe('connection serialization', () => {
   it('should map core expiry fields onto the legacy payload names', () => {
     expect(
@@ -124,8 +122,9 @@ describe('connection serialization', () => {
     expect(() => deserializeTokenInfo(payload as string)).toThrow(
       expect.objectContaining({
         name: 'InvalidParameterError',
-        code: 408003,
-        message: ErrorMessage[408003],
+        code: undefined,
+        message:
+          "Invalid serializedConnection. The value must be a string obtained by calling another connection's serialize() method.",
       }),
     );
   });

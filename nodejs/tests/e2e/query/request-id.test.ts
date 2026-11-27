@@ -92,7 +92,7 @@ describe('requestId', () => {
         ).toThrow(
           expect.objectContaining({
             name: 'InvalidParameterError',
-            code: 460001,
+            code: undefined,
             message: 'Invalid requestId: foobar',
           } satisfies Partial<SnowflakeError>),
         );

@@ -47,9 +47,10 @@ export function tryWithErrorReporter<T>(
   }
 }
 
-export function invalidParameterError(message: string, code?: number): SnowflakeError {
+export function invalidParameterError(message: string): SnowflakeError {
   return Object.assign(new Error(message), {
     name: 'InvalidParameterError',
-    code,
+    // Every driver error has a `code` key, even when it has no code, as in 3.x.
+    code: undefined,
   });
 }

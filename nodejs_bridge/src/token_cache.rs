@@ -1,3 +1,5 @@
+use crate::error::{BridgeError, ToJsError};
+use napi::Env;
 use napi::bindgen_prelude::{
     Either, FnArgs, FromNapiValue, Function, JsObjectValue, JsValuesTupleIntoVec, Object, Promise,
     TypeName, ValidateNapiValue, ValueType, block_on,
@@ -171,7 +173,7 @@ pub struct CustomCredentialManager {
 }
 
 #[napi(ts_args_type = "manager: CustomCredentialManager | null")]
-pub fn set_custom_credential_manager(manager: Option<Object>) -> napi::Result<()> {
+pub fn set_custom_credential_manager(env: Env, manager: Option<Object>) -> napi::Result<()> {
     let callbacks = manager
         .map(|manager| -> napi::Result<_> {
             Ok(CredentialManagerCallbacks {
@@ -180,7 +182,8 @@ pub fn set_custom_credential_manager(manager: Option<Object>) -> napi::Result<()
                 remove: threadsafe(manager, "remove")?,
             })
         })
-        .transpose()?;
+        .transpose()
+        .map_err(|e| BridgeError::InvalidParameter(e.reason.clone()).to_js_error(env, None))?;
     crate::BRIDGE.token_cache.set_callbacks(callbacks);
     Ok(())
 }

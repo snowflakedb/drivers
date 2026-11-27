@@ -30,12 +30,12 @@ describe('getResultsFromQueryId', () => {
     await destroyConnectionAsync(connection);
   });
 
-  it('should reject with 460001 for a malformed query id', async () => {
+  it('should reject a malformed query id', async () => {
     await expect(
       connection.getResultsFromQueryId({ queryId: 'fakeQueryId' }),
     ).rejects.toMatchObject({
       name: 'InvalidParameterError',
-      code: 460001,
+      code: isRunningNewDriverWithBD('BD#134') ? undefined : 460001,
       message: 'Invalid queryId: fakeQueryId',
     } satisfies Partial<SnowflakeError>);
   });

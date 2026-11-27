@@ -61,7 +61,7 @@ behavior_differences:
       Authentication timeout exceeded (budget <n>s)". No error.code.
 
   71:
-    name: 'deserializeConnection either restores the session or throws 408003'
+    name: 'deserializeConnection either restores the session or throws InvalidParameterError'
     status: allowed
     type: bugfix
     reviewed: false
@@ -83,7 +83,9 @@ behavior_differences:
       - When all four are present, the connection starts connected, even if the tokens are
         empty strings or numbers. The first request then fails with a server error.
     new_driver_behavior: |
-      Every payload that cannot restore a session throws InvalidParameterError 408003.
+      Every payload that cannot restore a session throws InvalidParameterError with no `code`
+      and the message "Invalid serializedConnection. The value must be a string obtained by
+      calling another connection's serialize() method.".
       The payload must have a tokenInfo object with `sessionToken` and `masterToken` as
       non-empty strings. The expiration times are optional, but must be numbers when present.
       A payload with both tokens and no expiration times is restored (BD#84 writes such
@@ -96,11 +98,9 @@ behavior_differences:
       at once instead of on the first request.
 
       The TypeScript signature only accepts a string. The driver does not check the type at
-      runtime and reports every payload it cannot read with one error code.
+      runtime and reports every payload it cannot read with one error.
 
-      We probably want to remove error code completely and throw a plain Error instead.
-
-      InvalidParameterError probably should never have error codes.
+      The error has no code (BD#134).
 
   72:
     name: 'First use of a logged-out serialized session returns GS 390111'

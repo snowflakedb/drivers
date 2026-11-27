@@ -1,6 +1,4 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import ErrorCode from '../../src/constants/ErrorCode.js';
-import ErrorMessage from '../../src/constants/ErrorMessage.js';
 import { GlobalConfig, updateGlobalConfig, resetGlobalConfig } from '../../src/global-config.js';
 import snowflake from '../../src/index.js';
 
@@ -60,20 +58,18 @@ describe('GlobalConfig', () => {
   });
 
   describe('customCredentialManager', () => {
-    const code = ErrorCode.ERR_GLOBAL_CONFIGURE_INVALID_CUSTOM_CREDENTIAL_MANAGER;
-
     it.each([
-      ['a string', 'unsupported'],
-      ['an empty object', {}],
-      ['a manager missing read', { write() {}, remove() {} }],
-      ['a manager missing write', { read() {}, remove() {} }],
-      ['a manager missing remove', { read() {}, write() {} }],
-    ])('should reject %s', (_, manager) => {
+      ['a string', 'unsupported', 'read'],
+      ['an empty object', {}, 'read'],
+      ['a manager missing read', { write() {}, remove() {} }, 'read'],
+      ['a manager missing write', { read() {}, remove() {} }, 'write'],
+      ['a manager missing remove', { read() {}, write() {} }, 'remove'],
+    ])('should reject %s', (_, manager, method) => {
       expect(() => snowflake.configure({ customCredentialManager: manager as never })).toThrow(
         expect.objectContaining({
           name: 'InvalidParameterError',
-          code,
-          message: ErrorMessage[code],
+          code: undefined,
+          message: `Object property '${method}' type mismatch. Expect value to be Function, but received Undefined`,
         }),
       );
     });
