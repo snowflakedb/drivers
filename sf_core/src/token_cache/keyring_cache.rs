@@ -12,6 +12,27 @@ use super::{
 
 const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
 
+fn stores_as_utf8_blob(token_value: &str) -> bool {
+    !token_value.is_empty() && token_value.is_ascii()
+}
+
+/// Decodes a Windows Credential Manager blob written either as UTF-8 bytes
+/// (ASCII tokens) or as UTF-16LE (`set_password`). A blob made only of
+/// non-NUL ASCII bytes is UTF-8; every other blob is UTF-16LE.
+fn decode_windows_blob(bytes: Vec<u8>) -> keyring::Result<String> {
+    if bytes.iter().all(|b| b.is_ascii() && *b != 0) {
+        return String::from_utf8(bytes).map_err(|e| keyring::Error::BadEncoding(e.into_bytes()));
+    }
+    if !bytes.len().is_multiple_of(2) {
+        return Err(keyring::Error::BadEncoding(bytes));
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|_| keyring::Error::BadEncoding(bytes))
+}
+
 /// A token cache implementation using the system keyring.
 ///
 /// This implementation uses the `keyring` crate to store tokens securely
@@ -65,10 +86,13 @@ impl TokenCache for KeyringTokenCache {
     fn add_token(&self, key: &CacheKey, token_value: &str) -> Result<(), TokenCacheError> {
         info!("Saving secret for {:?}", key.token_type);
         let entry = self.create_entry(key)?;
-        entry
-            .set_password(token_value)
-            .boxed()
-            .context(TokenStorageSnafu)
+        if cfg!(windows) && stores_as_utf8_blob(token_value) {
+            entry.set_secret(token_value.as_bytes())
+        } else {
+            entry.set_password(token_value)
+        }
+        .boxed()
+        .context(TokenStorageSnafu)
     }
 
     fn remove_token(&self, key: &CacheKey) -> Result<(), TokenCacheError> {
@@ -130,10 +154,162 @@ impl TokenCache for KeyringTokenCache {
     fn get_token(&self, key: &CacheKey) -> Result<Option<String>, TokenCacheError> {
         debug!("Retrieving secret for {:?}", key.token_type);
         let entry = self.create_entry(key)?;
-        match entry.get_password() {
+        let result = if cfg!(windows) {
+            entry.get_secret().and_then(decode_windows_blob)
+        } else {
+            entry.get_password()
+        };
+        match result {
             Ok(password) => Ok(Some(password)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e).boxed().context(TokenRetrievalSnafu),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(windows)]
+    use crate::token_cache::{CacheKey, TokenCache, TokenType};
+
+    #[cfg(windows)]
+    fn unique(prefix: &str) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{prefix}_{timestamp}")
+    }
+
+    #[cfg(windows)]
+    fn oauth_key(snowflake: &str, username: &str) -> CacheKey {
+        CacheKey {
+            token_type: TokenType::OAuthAccessToken,
+            idp: snowflake.to_string(),
+            snowflake: snowflake.to_string(),
+            username: username.to_string(),
+            role: String::new(),
+        }
+    }
+
+    #[test]
+    fn decodes_ascii_blob_as_utf8() {
+        assert_eq!(decode_windows_blob(b"abc123".to_vec()).unwrap(), "abc123");
+    }
+
+    #[test]
+    fn decodes_utf16le_blob() {
+        let blob: Vec<u8> = "abc".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode_windows_blob(blob).unwrap(), "abc");
+        let blob: Vec<u8> = "zażółć".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode_windows_blob(blob).unwrap(), "zażółć");
+    }
+
+    #[test]
+    fn decodes_empty_blob_as_empty_string() {
+        assert_eq!(decode_windows_blob(Vec::new()).unwrap(), "");
+    }
+
+    #[test]
+    fn rejects_malformed_blob() {
+        assert!(matches!(
+            decode_windows_blob(vec![0x61, 0x00, 0x62]),
+            Err(keyring::Error::BadEncoding(_))
+        ));
+        assert!(matches!(
+            decode_windows_blob(vec![0x00, 0xD8]),
+            Err(keyring::Error::BadEncoding(_))
+        ));
+    }
+
+    #[test]
+    fn only_non_empty_ascii_is_stored_as_utf8_blob() {
+        assert!(stores_as_utf8_blob("token"));
+        assert!(!stores_as_utf8_blob(""));
+        assert!(!stores_as_utf8_blob("zażółć"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn stores_ascii_oauth_token_larger_than_utf16_limit() {
+        let cache = KeyringTokenCache::new().expect("cache");
+        let snowflake = unique("utf8_host");
+        let username = unique("utf8_user");
+        let key = oauth_key(&snowflake, &username);
+        let token = "a".repeat(1583);
+        let _ = cache.remove_token(&key);
+
+        cache
+            .add_token(&key, &token)
+            .expect("ascii token should fit as UTF-8 bytes");
+        assert_eq!(cache.get_token(&key).expect("read"), Some(token.clone()));
+
+        cache.remove_token(&key).expect("remove");
+        assert_eq!(cache.get_token(&key).expect("read after remove"), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn reads_legacy_utf16_password_entry() {
+        let cache = KeyringTokenCache::new().expect("cache");
+        let snowflake = unique("legacy_host");
+        let username = unique("legacy_user");
+        let key = oauth_key(&snowflake, &username);
+        let token = "legacy_utf16_token";
+        let _ = cache.remove_token(&key);
+
+        cache
+            .create_entry(&key)
+            .expect("legacy entry")
+            .set_password(token)
+            .expect("legacy write");
+        assert_eq!(
+            cache.get_token(&key).expect("read"),
+            Some(token.to_string())
+        );
+
+        cache.remove_token(&key).expect("remove");
+        assert_eq!(cache.get_token(&key).expect("read after remove"), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn ascii_write_overwrites_legacy_utf16_entry() {
+        let cache = KeyringTokenCache::new().expect("cache");
+        let snowflake = unique("replace_host");
+        let username = unique("replace_user");
+        let key = oauth_key(&snowflake, &username);
+        let _ = cache.remove_token(&key);
+
+        let entry = cache.create_entry(&key).expect("entry");
+        entry.set_password("old").expect("legacy write");
+        cache.add_token(&key, "new_ascii").expect("utf8 write");
+        assert_eq!(
+            cache.get_token(&key).expect("read"),
+            Some("new_ascii".to_string())
+        );
+        assert_eq!(entry.get_secret().expect("raw"), b"new_ascii".to_vec());
+
+        cache.remove_token(&key).expect("remove");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn non_ascii_token_round_trips_as_utf16() {
+        let cache = KeyringTokenCache::new().expect("cache");
+        let snowflake = unique("utf16_host");
+        let username = unique("utf16_user");
+        let key = oauth_key(&snowflake, &username);
+        let _ = cache.remove_token(&key);
+
+        cache.add_token(&key, "zażółć").expect("write");
+        assert_eq!(
+            cache.get_token(&key).expect("read"),
+            Some("zażółć".to_string())
+        );
+
+        cache.remove_token(&key).expect("remove");
     }
 }
