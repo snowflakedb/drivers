@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { deepMerge, type DeepPartial } from './deep-merge.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'ANY';
 
@@ -51,6 +52,16 @@ export interface StubMapping {
   priority?: number;
   request: RequestPattern;
   response: ResponseDefinition;
+}
+
+export const LOGIN_REQUEST_PATH = '/session/v1/login-request.*';
+
+/** Returns a copy of `mapping` with `patch` deep-merged into its response */
+export function withResponse(
+  mapping: StubMapping,
+  patch: DeepPartial<ResponseDefinition>,
+): StubMapping {
+  return { ...mapping, response: deepMerge(mapping.response, patch) };
 }
 
 export function proxyAllTo(proxyBaseUrl: string): StubMapping {
@@ -119,7 +130,7 @@ export function loginSuccess(dataOverrides: Record<string, unknown> = {}): StubM
   return {
     request: {
       method: 'POST',
-      urlPathPattern: '/session/v1/login-request.*',
+      urlPathPattern: LOGIN_REQUEST_PATH,
     },
     response: jsonResponse(200, {
       success: true,
@@ -142,35 +153,17 @@ export function loginSuccess(dataOverrides: Record<string, unknown> = {}): StubM
   };
 }
 
-export function delayedLoginSuccess(delayMs: number): StubMapping {
-  const mapping = loginSuccess();
-  return {
-    ...mapping,
-    response: {
-      ...mapping.response,
-      fixedDelayMilliseconds: delayMs,
-    },
-  };
-}
-
-export function delayedLoginFailure(delayMs: number): StubMapping {
+export function loginRequestFail(): StubMapping {
   return {
     request: {
       method: 'POST',
-      urlPathPattern: '/session/v1/login-request.*',
+      urlPathPattern: LOGIN_REQUEST_PATH,
     },
-    response: {
-      ...jsonResponse(200, {
-        success: false,
-        code: '390100',
-        message: 'Incorrect username or password was specified.',
-      }),
-      fixedDelayMilliseconds: delayMs,
-    },
+    response: jsonResponse(200, { success: false }),
   };
 }
 
-export function queryRequestFail(code: string, message: string): StubMapping {
+export function queryRequestFail(code?: string, message?: string): StubMapping {
   return {
     request: {
       method: 'POST',

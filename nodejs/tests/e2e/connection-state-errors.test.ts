@@ -2,10 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished }
 import { createConnection, createLiveConnection } from './utils/fixtures.js';
 import { connectAsyncWithErrorBD, destroyConnectionAsync, executeAsync } from './utils/index.js';
 import {
-  delayedLoginFailure,
-  delayedLoginSuccess,
+  LOGIN_REQUEST_PATH,
+  loginRequestFail,
+  loginSuccess,
   logoutSuccess,
   WiremockServer,
+  withResponse,
 } from './utils/wiremock/index.js';
 
 describe('Connection State Errors', () => {
@@ -120,9 +122,6 @@ describe('Connection State Errors', () => {
   });
 });
 
-const LOGIN_IN_FLIGHT_DELAY_MS = 1000;
-const LOGIN_REQUEST_PATH = '/session/v1/login-request.*';
-
 describe('Connection State Errors with a delayed login', () => {
   let wiremock: WiremockServer;
 
@@ -137,8 +136,10 @@ describe('Connection State Errors with a delayed login', () => {
   describe('that succeeds', () => {
     beforeEach(async () => {
       await wiremock.reset();
-      await wiremock.stub(delayedLoginSuccess(LOGIN_IN_FLIGHT_DELAY_MS));
-      await wiremock.stub(logoutSuccess());
+      await wiremock.stub([
+        withResponse(loginSuccess(), { fixedDelayMilliseconds: 1000 }),
+        logoutSuccess(),
+      ]);
     });
 
     it('should refuse a second connect while login is in progress', async () => {
@@ -191,7 +192,7 @@ describe('Connection State Errors with a delayed login', () => {
   describe('that fails', () => {
     beforeEach(async () => {
       await wiremock.reset();
-      await wiremock.stub(delayedLoginFailure(LOGIN_IN_FLIGHT_DELAY_MS));
+      await wiremock.stub(withResponse(loginRequestFail(), { fixedDelayMilliseconds: 1000 }));
     });
 
     it('should refuse to destroy a connection whose login in flight failed', async () => {
